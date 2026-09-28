@@ -40,6 +40,7 @@ final class EditorTableIndex {
 
     private var entries: [String: Entry] = [:]
     private var attributes: [String: String] = [:]
+    private(set) var attributeObjects: [String: [String: Any]] = [:]
     private var extents: [String: FfiTableExtent] = [:]
     private var origins: [String: Origin] = [:]
     private var roots: [String] = []
@@ -64,12 +65,23 @@ final class EditorTableIndex {
         }
         var next = full ? [:] : entries
         var pool = full ? [:] : attributes
+        var objects = full ? [:] : attributeObjects
         var nextExtents = full ? [:] : extents
         var removed = Set<String>()
         var replaced = Set<String>()
         var changed: [String: IndexSet] = [:]
-        for key in frame.removedAttributeKeys { pool.removeValue(forKey: key) }
-        for attribute in frame.attributes { pool[attribute.key] = attribute.json }
+        for key in frame.removedAttributeKeys {
+            pool.removeValue(forKey: key)
+            objects.removeValue(forKey: key)
+        }
+        for attribute in frame.attributes {
+            guard let data = attribute.json.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                throw TableFrameRejection.missingAttribute(attribute.key)
+            }
+            pool[attribute.key] = attribute.json
+            objects[attribute.key] = object
+        }
         for key in frame.removedTableKeys {
             guard removed.insert(key).inserted else { throw TableFrameRejection.duplicateTableKey(key) }
             guard next.removeValue(forKey: key) != nil else { throw TableFrameRejection.unknownTable(key) }
@@ -212,6 +224,7 @@ final class EditorTableIndex {
         }
         entries = next
         attributes = pool
+        attributeObjects = objects
         extents = nextExtents
         origins = nextOrigins
         roots = orderedRoots
@@ -319,6 +332,22 @@ final class EditorTableIndex {
     private static func relativeDocStart(_ entry: Entry, _ index: Int) -> UInt64 {
         UInt64(nodeBoundarySize) * (UInt64(entry.record.cells[index].sourceRow) + 1) + UInt64(entry.docPrefix[index])
     }
+
+    var tableKeys: Set<String> { Set(entries.keys) }
+    var rootExtents: [String: FfiTableExtent] { extents }
+
+    func copy() -> EditorTableIndex {
+        let result = EditorTableIndex()
+        result.entries = entries
+        result.attributes = attributes
+        result.attributeObjects = attributeObjects
+        result.extents = extents
+        result.origins = origins
+        result.roots = roots
+        return result
+    }
+
+    func tableDocStart(tableKey: String) -> UInt32? { origins[tableKey]?.doc }
 
     func record(tableKey: String) -> FfiTableRecord? { entries[tableKey]?.record }
 

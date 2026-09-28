@@ -42,7 +42,7 @@ extension EditorV2Adapter {
             && tableResetGeneration == admission.presentationGeneration
             && nativeOwnerId == admission.ownerID
             && nativeOwnerToken == admission.ownerToken
-            && cachedTableRecords[admission.tableID]?["readOnlyDescendants"] as? Bool == false
+            && tableIndex.record(tableKey: admission.tableID)?.readOnlyDescendants == false
     }
 
     func tableMutationAdmission(tableID: String) -> TableMutationAdmission? {
@@ -58,7 +58,7 @@ extension EditorV2Adapter {
 
     func selectedTableCellsMutationAdmission() -> TableMutationAdmission? {
         guard let selection = cachedAtomicRenderSelection(),
-              case let .drawable(tableID, _) = EditorCellSelection.resolve(selection, records: cachedTableRecords),
+              case let .drawable(tableID, _) = EditorCellSelection.resolve(selection, index: tableIndex),
               let admission = tableMutationAdmission(tableID: tableID)
         else { return nil }
         return admitsTableMutation(admission) ? admission : nil
@@ -70,7 +70,7 @@ extension EditorV2Adapter {
               endpoints.anchor == anchor,
               endpoints.head == head,
               case let .drawable(selectedTableID, _) = EditorCellSelection.resolve(
-                selection, records: cachedTableRecords
+                selection, index: tableIndex
               )
         else { return false }
         return selectedTableID == tableID
@@ -104,9 +104,10 @@ extension EditorV2Adapter {
         guard beginRuntimeOperation() else { return nil }
         defer { endRuntimeOperation() }
         guard admitsTableCellSelection(admission),
-              let cells = cachedTableRecords[admission.tableID]?["cells"] as? [[String: Any]],
-              cells.contains(where: { Self.uint32Field($0, "sourcePos") == anchor }),
-              cells.contains(where: { Self.uint32Field($0, "sourcePos") == head })
+              let first = tableIndex.cellIndex(tableKey: admission.tableID, containingDoc: anchor),
+              let last = tableIndex.cellIndex(tableKey: admission.tableID, containingDoc: head),
+              tableIndex.docStart(tableKey: admission.tableID, cellIndex: first) == anchor,
+              tableIndex.docStart(tableKey: admission.tableID, cellIndex: last) == head
         else { return nil }
         let update = applySelectionEnvelope(Self.exactCellSelectionEnvelope(anchor: anchor, head: head))
         if update != nil {
@@ -130,8 +131,7 @@ extension EditorV2Adapter {
         guard admitsTableMutation(admission) else { return nil }
         var request = command
         if targetsTable {
-            guard let record = cachedTableRecords[admission.tableID],
-                  let tablePos = Self.uint32Field(record, "tablePos")
+            guard let tablePos = tableIndex.tableDocStart(tableKey: admission.tableID)
             else { return nil }
             request["tablePos"] = Int(tablePos)
         }
@@ -234,7 +234,7 @@ extension EditorV2Adapter {
             lastSyncedScalarSelection = (clampedAnchor, clampedHead)
             return .ok
         case .failure(let error):
-            if error.code == "REVISION_MISMATCH" {
+            if error.code == Self.revisionMismatchCode {
                 if let update = refreshInternal(
                     mirrorSelection: nil,
                     strippingViewSelection: false

@@ -58,7 +58,7 @@ enum TableToolbarTestItems {
 
 extension EditorV2Adapter {
     func editableTableID() throws -> String {
-        try XCTUnwrap(cachedTableRecords.first { $0.value["readOnlyDescendants"] as? Bool == false }?.key)
+        try XCTUnwrap(tableRecordsForTesting.first { $0.value["readOnlyDescendants"] as? Bool == false }?.key)
     }
 
     func tableCellPositions() throws -> [UInt32] {
@@ -177,7 +177,7 @@ extension EditorV2Adapter {
     }
 
     func tableCellPositions(tableID: String) throws -> [UInt32] {
-        let cells = try XCTUnwrap(cachedTableRecords[tableID]?["cells"] as? [[String: Any]])
+        let cells = try XCTUnwrap(tableRecordsForTesting[tableID]?["cells"] as? [[String: Any]])
         return try cells.map { try XCTUnwrap(EditorV2Adapter.uint32Field($0, "sourcePos")) }
     }
 }
@@ -218,7 +218,8 @@ extension EditorTextView {
 
 extension RichTextEditorView {
     var activeTableCellPosition: UInt32? {
-        activeTextInput.tableCellPositionMap?.binding.cellSourcePosition
+        guard let adapter = EditorV2Registry.adapter(forLegacyId: editorId) else { return nil }
+        return activeTextInput.tableCellPositionMap?.binding.documentPosition(in: adapter)
     }
 }
 
@@ -226,5 +227,92 @@ extension NativeEditorExpoView {
     func deliverRemoteCommit(editorId: UInt64) {
         NativeEditorViewRegistry.shared.applyRemoteCommitRefresh(editorId: editorId)
         layoutIfNeeded()
+    }
+}
+
+struct TableMappingProbe {
+    struct Exclusion {
+        let elementIndex: UInt32
+        let tableID: String
+        let extent: TableScalarExtent?
+    }
+    struct Cell {
+        let cellIndex: UInt32
+        let sourcePos: UInt32
+        let sourceEnd: UInt32
+        let blocks: [FfiCellInputBlock]
+        let excluded: [Exclusion]
+    }
+    struct Table {
+        let extent: TableScalarExtent?
+        let cells: [Cell]
+    }
+    let tables: [String: Table]
+}
+
+extension EditorV2Adapter {
+    var tableMappingsForTesting: TableMappingProbe? {
+        guard !tableIndex.tableKeys.isEmpty else { return nil }
+        var tables: [String: TableMappingProbe.Table] = [:]
+        for key in tableIndex.tableKeys {
+            guard let record = tableIndex.record(tableKey: key) else { continue }
+            let cells = record.cells.enumerated().map { index, cell -> TableMappingProbe.Cell in
+                let doc = tableIndex.docStart(tableKey: key, cellIndex: index)!
+                let scalar = tableIndex.scalarStart(tableKey: key, cellIndex: index) ?? 0
+                let blocks = cell.inputBlocks.map { relative -> FfiCellInputBlock in
+                    var block = relative
+                    block.docStart += doc
+                    block.docEnd += doc
+                    block.scalarStart += scalar
+                    block.contentScalarStart += scalar
+                    block.scalarEnd += scalar
+                    block.breakScalarEnd += scalar
+                    return block
+                }
+                let excluded = cell.nestedTables.map { nested in
+                    TableMappingProbe.Exclusion(elementIndex: nested.elementIndex, tableID: nested.tableKey,
+                        extent: nested.scalarStart.flatMap { start in nested.scalarEnd.map {
+                            TableScalarExtent(scalarStart: scalar + start, scalarEnd: scalar + $0)
+                        } })
+                }
+                return .init(cellIndex: UInt32(index), sourcePos: doc, sourceEnd: doc + cell.docSize, blocks: blocks, excluded: excluded)
+            }
+            let root = tableIndex.rootExtents[key]
+            let start = root?.scalarStart ?? cells.first?.blocks.first?.scalarStart
+            let end = root?.scalarEnd ?? cells.last?.blocks.last?.scalarEnd
+            let extent: TableScalarExtent?
+            if let start, let end, start < end { extent = .init(scalarStart: start, scalarEnd: end) }
+            else { extent = nil }
+            tables[key] = .init(extent: extent, cells: cells)
+        }
+        return TableMappingProbe(tables: tables)
+    }
+
+    var tableRecordsForTesting: [String: [String: Any]] {
+        Dictionary(uniqueKeysWithValues: tableIndex.tableKeys.compactMap { key in
+            guard let record = tableIndex.record(tableKey: key), let start = tableIndex.tableDocStart(tableKey: key) else { return nil }
+            let cells: [[String: Any]] = record.cells.enumerated().map { index, cell in
+                let doc = tableIndex.docStart(tableKey: key, cellIndex: index)!
+                return ["sourcePos": Int(doc), "sourceEnd": Int(doc + cell.docSize), "row": Int(cell.row), "column": Int(cell.column),
+                        "rowspan": Int(cell.rowspan), "colspan": Int(cell.colspan), "header": cell.header,
+                        "attrsKey": cell.attrsKey, "contentKey": cell.contentKey,
+                        "elements": RenderBridge.inputElements(cell.elements, cellDocStart: doc)!]
+            }
+            return (key, ["tablePos": Int(start), "sourceEnd": Int(start + record.docSize), "rows": Int(record.rows), "columns": Int(record.columns),
+                          "columnWidths": record.columnWidths.map { $0.map { $0 as Any } ?? NSNull() },
+                          "irregular": record.irregular, "readOnlyDescendants": record.readOnlyDescendants, "cells": cells,
+                          "failure": record.failure.map { String(describing: $0) } as Any? ?? NSNull(),
+                          "attrsKey": record.attrsKey, "direction": record.direction as Any? ?? NSNull(),
+                          "syntheticRegions": record.syntheticRegions.map { region -> [String: Any] in
+                              ["row": Int(region.row), "column": Int(region.column), "rowspan": Int(region.rowspan),
+                               "colspan": Int(region.colspan), "header": region.header, "attrsKey": region.attrsKey]
+                          }])
+        })
+    }
+}
+
+extension TableCellPositionMap.Binding {
+    func documentPosition(in adapter: EditorV2Adapter) -> UInt32? {
+        adapter.tableIndex.docStart(tableKey: tableKey, cellIndex: Int(cellIndex))
     }
 }

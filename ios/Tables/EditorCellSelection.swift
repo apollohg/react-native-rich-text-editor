@@ -31,44 +31,28 @@ enum EditorCellSelection: Equatable {
         }
     }
 
-    static func resolve(_ value: Any, records: [String: [String: Any]]) -> EditorCellSelection? {
+    static func resolve(_ value: Any, index: EditorTableIndex) -> EditorCellSelection? {
         guard let endpoints = endpointPositions(value)
         else { return nil }
-        return resolve(anchor: endpoints.anchor, head: endpoints.head, records: records)
+        return resolve(anchor: endpoints.anchor, head: endpoints.head, index: index)
     }
 
-    static func resolve(anchor: UInt32, head: UInt32, records: [String: [String: Any]]) -> EditorCellSelection? {
+    static func resolve(anchor: UInt32, head: UInt32, index: EditorTableIndex) -> EditorCellSelection? {
         var drawable: [EditorCellSelection] = []
         var unavailable: [(extent: UInt32, selection: EditorCellSelection)] = []
-        for (tableID, record) in records {
-            guard let tableStart = EditorV2Adapter.uint32Field(record, "tablePos"),
-                  let tableEnd = EditorV2Adapter.uint32Field(record, "sourceEnd"),
-                  tableStart < tableEnd
-            else { continue }
-            if !(record["failure"] is NSNull) {
+        for tableID in index.tableKeys {
+            guard let record = index.record(tableKey: tableID), let tableStart = index.tableDocStart(tableKey: tableID) else { continue }
+            let tableEnd = tableStart + record.docSize
+            if record.failure != nil {
                 if tableStart <= anchor && anchor < tableEnd && tableStart <= head && head < tableEnd {
-                    unavailable.append((tableEnd - tableStart, .unavailable(tableID: tableID)))
+                    unavailable.append((record.docSize, .unavailable(tableID: tableID)))
                 }
                 continue
             }
-            guard let rows = EditorV2Adapter.uint32Field(record, "rows"),
-                  let columns = EditorV2Adapter.uint32Field(record, "columns"),
-                  let rawCells = record["cells"] as? [[String: Any]]
-            else { continue }
-            var cells: [Cell] = []
-            for (index, raw) in rawCells.enumerated() {
-                guard let source = EditorV2Adapter.uint32Field(raw, "sourcePos"),
-                      let row = EditorV2Adapter.uint32Field(raw, "row"),
-                      let column = EditorV2Adapter.uint32Field(raw, "column"),
-                      let rowspan = EditorV2Adapter.uint32Field(raw, "rowspan"),
-                      let colspan = EditorV2Adapter.uint32Field(raw, "colspan"),
-                      rowspan > 0, colspan > 0,
-                      row < rows, column < columns,
-                      rowspan <= rows - row, colspan <= columns - column,
-                      tableStart < source, source < tableEnd
-                else { return nil }
-                cells.append(Cell(sourceIndex: index, documentPosition: source, top: row, left: column,
-                                  bottom: row + rowspan, right: column + colspan))
+            let cells = record.cells.enumerated().compactMap { cellIndex, cell -> Cell? in
+                guard let source = index.docStart(tableKey: tableID, cellIndex: cellIndex) else { return nil }
+                return Cell(sourceIndex: cellIndex, documentPosition: source, top: cell.row, left: cell.column,
+                            bottom: cell.row + cell.rowspan, right: cell.column + cell.colspan)
             }
             guard cells.filter({ $0.documentPosition == anchor }).count == 1,
                   cells.filter({ $0.documentPosition == head }).count == 1,

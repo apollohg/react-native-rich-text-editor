@@ -92,7 +92,7 @@ final class TableIntegrationTests: XCTestCase {
         }
 
         func tablePos() throws -> UInt32 {
-            try XCTUnwrap(adapter.cachedTableRecords[tableID].flatMap { EditorV2Adapter.uint32Field($0, "tablePos") })
+            try XCTUnwrap(adapter.tableRecordsForTesting[tableID].flatMap { EditorV2Adapter.uint32Field($0, "tablePos") })
         }
 
         func presentedCell(_ position: UInt32) throws -> ViewerTablePresentedCell {
@@ -150,7 +150,7 @@ final class TableIntegrationTests: XCTestCase {
         }
     }
 
-    func testRemoteRectangleFillsItsResolvedCellsInThePeerColorInsteadOfTheCursorFallback() throws {
+    func testRemoteRectangleResolvesByIndex() throws {
         try withTable(Integration.gridDocument) { fixture in
             let positions = try fixture.positions()
             let first = positions[Integration.gridFirst]
@@ -213,7 +213,7 @@ final class TableIntegrationTests: XCTestCase {
             try fixture.applyRemoteCommand(["type": Integration.mergeTableCells])
             fixture.deliverRemoteCommit()
 
-            let mergedRecord = try XCTUnwrap((fixture.adapter.cachedTableRecords[fixture.tableID]?["cells"] as? [[String: Any]])?
+            let mergedRecord = try XCTUnwrap((fixture.adapter.tableRecordsForTesting[fixture.tableID]?["cells"] as? [[String: Any]])?
                 .first { EditorV2Adapter.uint32Field($0, "sourcePos") == first })
             XCTAssertEqual(EditorV2Adapter.uint32Field(mergedRecord, "colspan"), UInt32(Integration.mergedColumnCount),
                            "the remote merge must land")
@@ -324,7 +324,7 @@ final class TableIntegrationTests: XCTestCase {
             fixture.expo.setEditorId(otherEditorId)
             XCTAssertTrue(fixture.view.textView.applyUpdateJSON(try XCTUnwrap(other.refreshFromRustState(mirrorSelection: nil))))
             fixture.expo.layoutIfNeeded()
-            let otherOpenings = try XCTUnwrap(other.cachedTableRecords.values.first?["cells"] as? [[String: Any]])
+            let otherOpenings = try XCTUnwrap(other.tableRecordsForTesting.values.first?["cells"] as? [[String: Any]])
                 .compactMap { EditorV2Adapter.uint32Field($0, "sourcePos") }
             XCTAssertFalse(otherOpenings.contains(first), "the fixture must move the openings")
             XCTAssertTrue(fixture.drawing.remoteTableCellSelections.isEmpty,
@@ -482,7 +482,7 @@ final class TableIntegrationTests: XCTestCase {
             try fixture.setPeers([Peer(clientId: Integration.firstPeer, color: Integration.firstPeerColor,
                                        anchor: tablePos, head: tablePos, cellRectangle: staleRectangle)])
 
-            XCTAssertTrue(fixture.adapter.cachedTableRecords.isEmpty, "the remote peer deleted the table")
+            XCTAssertTrue(fixture.adapter.tableRecordsForTesting.isEmpty, "the remote peer deleted the table")
             XCTAssertEqual(fixture.adapter.baseDocumentRevision, revision + 1, "only the remote change was applied")
             XCTAssertFalse(fixture.view.textView.authoritativeCellSelectionActive)
             XCTAssertTrue(fixture.drawing.selectedTableCellSourceIndices.isEmpty)
@@ -504,7 +504,7 @@ final class TableIntegrationTests: XCTestCase {
             input.unmarkText()
 
             assertCancelledComposition(input, landedOn: remoteDocument, revision: revision, fixture)
-            XCTAssertTrue(fixture.adapter.cachedTableRecords.isEmpty)
+            XCTAssertTrue(fixture.adapter.tableRecordsForTesting.isEmpty)
         }
     }
 
@@ -519,7 +519,7 @@ final class TableIntegrationTests: XCTestCase {
             input.unmarkText()
 
             assertCancelledComposition(input, landedOn: remoteDocument, revision: revision, fixture)
-            XCTAssertTrue(fixture.adapter.cachedTableRecords.isEmpty)
+            XCTAssertTrue(fixture.adapter.tableRecordsForTesting.isEmpty)
         }
     }
 

@@ -12,7 +12,7 @@ final class TableCellPositionMapTests: XCTestCase {
         ], range: NSRange(location: 0, length: 1))
         _ = view.applyAttributedRender(text, usedPatch: false, positionCacheUpdate: .invalidate)
         view.tableCellPositionMap = TableCellPositionMap(
-            binding: .init(cellSourcePosition: 2, documentRevision: adapter.baseDocumentRevision, positionEpoch: try XCTUnwrap(adapter.positionEpoch)),
+            binding: .init(tableKey: "test-table", cellIndex: 2, documentRevision: adapter.baseDocumentRevision, positionEpoch: try XCTUnwrap(adapter.positionEpoch)),
             segments: [.init(localScalarRange: 0..<4, globalScalarStart: 10)]
         )
         return view
@@ -43,7 +43,7 @@ final class TableCellPositionMapTests: XCTestCase {
         XCTAssertNil(view.adjacentVoidBlockDeleteRangeForBackwardDelete(cursorUtf16Offset: 0, cursorScalar: 10))
         XCTAssertNil(view.trailingVoidBlockDeleteRangeForBackwardDelete(cursorUtf16Offset: 3))
         view.tableCellPositionMap = TableCellPositionMap(
-            binding: .init(cellSourcePosition: binding.cellSourcePosition, documentRevision: binding.documentRevision, positionEpoch: binding.positionEpoch + 1),
+            binding: .init(tableKey: binding.tableKey, cellIndex: binding.cellIndex, documentRevision: binding.documentRevision, positionEpoch: binding.positionEpoch + 1),
             segments: [.init(localScalarRange: 0..<4, globalScalarStart: 10)]
         )
         XCTAssertNil(view.adjacentVoidBlockDeleteRangeForBackwardDelete(cursorUtf16Offset: 0, cursorScalar: 10))
@@ -52,7 +52,7 @@ final class TableCellPositionMapTests: XCTestCase {
 
     private func map(_ segments: [TableCellPositionMap.Segment]) -> TableCellPositionMap {
         TableCellPositionMap(
-            binding: .init(cellSourcePosition: 2, documentRevision: 4, positionEpoch: 9),
+            binding: .init(tableKey: "test-table", cellIndex: 2, documentRevision: 4, positionEpoch: 9),
             segments: segments
         )
     }

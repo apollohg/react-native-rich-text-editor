@@ -38,6 +38,31 @@ final class EditorTableIndexTests: XCTestCase {
                       removedAttributeKeys: [], tables: [], removedTableKeys: [], cellUpdates: [], extents: frame().extents)
     }
 
+    func testFrameCellDocumentResolvesRelativeAtomPosition() throws {
+        let config = TableInputTestSchema.tableConfig.replacingOccurrences(
+            of: #"{"name":"text""#,
+            with: #"{"name":"horizontal_rule","content":"","group":"block","role":"block","isVoid":true},{"name":"text""#
+        )
+        let editorId = makeV2Editor(configJson: config)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let source = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"horizontal_rule"},{"type":"paragraph"}]}]}]}]}"#
+        XCTAssertNotNil(adapter.setContentJson(source))
+        let key = try XCTUnwrap(adapter.tableIndex.tableKeys.first)
+        let record = try XCTUnwrap(adapter.tableIndex.record(tableKey: key))
+        let cell = try XCTUnwrap(TableSurfaceSource(frameRecord: record).cells.first)
+        let doc = ViewerDocument(semanticKey: "frame-atom", blocks: [], isEmpty: false, retainedBytes: 0,
+                                 frameIndex: adapter.tableIndex)
+        let child = try doc.cellDocument(for: cell, in: key)
+        guard case let .atom(_, actual, _, _) = child.blocks.first?.inlines.first else {
+            return XCTFail("the real horizontal rule must remain an atom in the cell document")
+        }
+        guard case let .blockAtom(_, relative, _, _) = cell.elements.first else {
+            return XCTFail("the frame must expose the cell-relative atom coordinate")
+        }
+        XCTAssertEqual(actual, adapter.tableIndex.absoluteDocPos(tableKey: key, cellIndex: 0, relative: relative))
+    }
+
     func testEngineFramePositionsMatchLegacyMappings() throws {
         let editorId = makeV2Editor(configJson: TableInputTestSchema.tableConfig)
         defer { destroyV2Editor(id: editorId) }
@@ -48,21 +73,28 @@ final class EditorTableIndexTests: XCTestCase {
         XCTAssertNil(result.error)
         let native = try XCTUnwrap(result.frame)
         let table = try XCTUnwrap(native.tables.tables.first)
-        let oldTable = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.values.first)
+        let legacyJSON = try XCTUnwrap(editorV2RenderUpdate(editorId: adapter.editorId, mirrorScalarAnchor: nil, mirrorScalarHead: nil).value)
+        let legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(legacyJSON.utf8)) as? [String: Any])
+        let mappings = try XCTUnwrap(legacy["tableInputMappings"] as? [String: Any])
+        let tables = try XCTUnwrap(mappings["tables"] as? [String: [String: Any]])
+        let oldCells = try XCTUnwrap(tables.values.first?["cells"] as? [[String: Any]])
         let index = EditorTableIndex()
         _ = try index.adopt(native.tables, installedRevision: nil, frameRevision: adapter.baseDocumentRevision).get()
-        XCTAssertEqual(table.cells.count, oldTable.cells.count)
-        for (cellIndex, oldCell) in oldTable.cells.enumerated() {
-            XCTAssertEqual(index.docStart(tableKey: table.tableKey, cellIndex: cellIndex), oldCell.sourcePos)
+        XCTAssertEqual(table.cells.count, oldCells.count)
+        for (cellIndex, oldCell) in oldCells.enumerated() {
+            XCTAssertEqual(index.docStart(tableKey: table.tableKey, cellIndex: cellIndex), EditorV2Adapter.uint32Field(oldCell, "sourcePos"))
             let scalar = try XCTUnwrap(index.scalarStart(tableKey: table.tableKey, cellIndex: cellIndex))
-            XCTAssertEqual(scalar, oldCell.blocks.first?.scalarStart)
+            let blocks = try XCTUnwrap(oldCell["blocks"] as? [[String: Any]])
+            XCTAssertEqual(scalar, blocks.first.flatMap { EditorV2Adapter.uint32Field($0, "scalarStart") })
             let segments = try XCTUnwrap(index.inputSegments(tableKey: table.tableKey, cellIndex: cellIndex))
-            XCTAssertEqual(segments.count, oldCell.blocks.count)
-            for (segment, block) in zip(segments, oldCell.blocks) {
-                XCTAssertEqual(index.cellIndex(tableKey: table.tableKey, containingScalar: block.scalarEnd), cellIndex,
+            XCTAssertEqual(segments.count, blocks.count)
+            for (segment, block) in zip(segments, blocks) {
+                let scalarStart = try XCTUnwrap(EditorV2Adapter.uint32Field(block, "scalarStart"))
+                let scalarEnd = try XCTUnwrap(EditorV2Adapter.uint32Field(block, "scalarEnd"))
+                XCTAssertEqual(index.cellIndex(tableKey: table.tableKey, containingScalar: scalarEnd), cellIndex,
                                "the terminal caret of each real input block belongs to its cell")
-                XCTAssertEqual(segment.globalScalarStart, block.scalarStart)
-                XCTAssertEqual(segment.localScalarRange.count, Int(block.scalarEnd - block.scalarStart + 1))
+                XCTAssertEqual(segment.globalScalarStart, scalarStart)
+                XCTAssertEqual(segment.localScalarRange.count, Int(scalarEnd - scalarStart + 1))
             }
         }
     }
@@ -78,17 +110,14 @@ final class EditorTableIndexTests: XCTestCase {
         XCTAssertNil(result.error)
         let native = try XCTUnwrap(result.frame)
         let root = try XCTUnwrap(native.tables.tables.first { $0.host == nil })
-        let legacyKey = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.first { entry in
-            entry.value.cells.contains { !$0.excluded.isEmpty }
-        }?.key)
+        let index = EditorTableIndex()
+        _ = try index.adopt(native.tables, installedRevision: nil, frameRevision: adapter.baseDocumentRevision).get()
         let projection = try XCTUnwrap(EditorTableInputCoordinator.projection(
-            cellIndex: 0, table: try XCTUnwrap(adapter.cachedTableRecords[legacyKey]),
-            mapping: try XCTUnwrap(adapter.cachedTableInputMappings?.tables[legacyKey]),
+            cellIndex: 0, tableKey: root.tableKey, index: index,
             documentRevision: adapter.baseDocumentRevision, positionEpoch: adapter.positionEpoch ?? 1,
             baseFont: .systemFont(ofSize: 17), textColor: .black, theme: nil, atomConfiguration: nil
         ))
-        let index = EditorTableIndex()
-        _ = try index.adopt(native.tables, installedRevision: nil, frameRevision: adapter.baseDocumentRevision).get()
+        XCTAssertEqual(projection.positionMap.segments.map(\.localScalarRange), [0..<7, 9..<15])
         XCTAssertEqual(index.inputSegments(tableKey: root.tableKey, cellIndex: 0), projection.positionMap.segments,
                        "nested scalar widths must collapse to the one rendered marker before later input blocks")
     }

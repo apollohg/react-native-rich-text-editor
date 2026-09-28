@@ -636,36 +636,16 @@ extension EditorTextView {
         guard tableCellPositionMap == nil else {
             return .init(extents: [:], tableIDs: [])
         }
-        guard let mappings = update["tableInputMappings"] as? [String: Any],
-              let tables = mappings["tables"] as? [String: Any]
-        else { return .init(extents: [:], tableIDs: []) }
-
-        var extents: [String: TableScalarExtent] = [:]
-        var tableIDs = Set<String>()
-        for (tableID, rawTable) in tables {
-            guard let table = rawTable as? [String: Any],
-                  Set(table.keys) == ["extent", "cells"],
-                  let cells = table["cells"] as? [[String: Any]]
-            else { return nil }
-            tableIDs.insert(tableID)
-            if table["extent"] is NSNull {
-                guard cells.allSatisfy({ cell in
-                    guard let blocks = cell["blocks"] as? [[String: Any]],
-                          let excluded = cell["excluded"] as? [[String: Any]]
-                    else { return false }
-                    return blocks.isEmpty && excluded.allSatisfy { $0["extent"] is NSNull }
-                }) else { return nil }
-                continue
-            }
-            guard let rawExtent = table["extent"] as? [String: Any],
-                  Set(rawExtent.keys) == ["scalarStart", "scalarEnd"],
-                  let scalarStart = v2ExactUInt32(rawExtent["scalarStart"] as? NSNumber),
-                  let scalarEnd = v2ExactUInt32(rawExtent["scalarEnd"] as? NSNumber),
-                  scalarStart <= scalarEnd
-            else { return nil }
-            extents[tableID] = .init(scalarStart: scalarStart, scalarEnd: scalarEnd)
+        guard let adapter = EditorV2Registry.adapter(forLegacyId: editorId) else { return .init(extents: [:], tableIDs: []) }
+        guard EditorV2Adapter.uint64Field(update, "documentVersion") == adapter.installedFrameRevision else {
+            return adapter.tableIndex.tableKeys.isEmpty ? .init(extents: [:], tableIDs: []) : nil
         }
-        return .init(extents: extents, tableIDs: tableIDs)
+        let roots = adapter.tableIndex.rootExtents
+        let extents = roots.compactMapValues { extent -> TableScalarExtent? in
+            guard extent.scalarStart < extent.scalarEnd else { return nil }
+            return .init(scalarStart: extent.scalarStart, scalarEnd: extent.scalarEnd)
+        }
+        return .init(extents: extents, tableIDs: Set(roots.keys))
     }
 
     private func rootTableIDs(

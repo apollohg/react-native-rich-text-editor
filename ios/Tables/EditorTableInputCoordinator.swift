@@ -2,8 +2,8 @@ import UIKit
 
 enum TableInputPhase: Equatable {
     case inactive
-    case bound(cellSourcePos: UInt32, documentRevision: String, positionEpoch: String)
-    case composing(cellSourcePos: UInt32, documentRevision: String, positionEpoch: String)
+    case bound(tableKey: String, cellIndex: UInt32, documentRevision: String, positionEpoch: String)
+    case composing(tableKey: String, cellIndex: UInt32, documentRevision: String, positionEpoch: String)
 }
 
 final class EditorTableInputCoordinator {
@@ -32,8 +32,8 @@ final class EditorTableInputCoordinator {
 
     static func projection(
         cellIndex: UInt32,
-        table: [String: Any],
-        mapping: EditorV2Adapter.TableInputTable,
+        tableKey: String,
+        index: EditorTableIndex,
         documentRevision: UInt64,
         positionEpoch: UInt64,
         baseFont: UIFont,
@@ -41,22 +41,20 @@ final class EditorTableInputCoordinator {
         theme: EditorTheme?,
         atomConfiguration: AtomRenderConfiguration?
     ) -> Projection? {
-        guard Int(cellIndex) < mapping.cells.count,
-              let cells = table["cells"] as? [[String: Any]],
-              Int(cellIndex) < cells.count,
-              let elements = cells[Int(cellIndex)]["elements"] as? [[String: Any]]
+        guard let table = index.record(tableKey: tableKey), Int(cellIndex) < table.cells.count,
+              let cellDocStart = index.docStart(tableKey: tableKey, cellIndex: Int(cellIndex)),
+              let segments = index.inputSegments(tableKey: tableKey, cellIndex: Int(cellIndex))
         else { return nil }
-        let inputCell = mapping.cells[Int(cellIndex)]
+        let inputCell = table.cells[Int(cellIndex)]
         let target = Target(
-            binding: .init(cellSourcePosition: inputCell.sourcePos, documentRevision: documentRevision, positionEpoch: positionEpoch),
-            isSynthetic: false,
-            isNestedTarget: table["readOnlyDescendants"] as? Bool ?? false
+            binding: .init(tableKey: tableKey, cellIndex: cellIndex, documentRevision: documentRevision, positionEpoch: positionEpoch),
+            isSynthetic: false, isNestedTarget: table.readOnlyDescendants
         )
-        guard canBind(target), !inputCell.blocks.isEmpty else { return nil }
-
-        let tableIDs = Set(inputCell.excluded.map(\.tableID))
-        guard tableIDs.count == inputCell.excluded.count,
-              inputCell.excluded.allSatisfy({ $0.extent != nil }) else { return nil }
+        guard canBind(target), !inputCell.inputBlocks.isEmpty,
+              let elements = RenderBridge.inputElements(inputCell.elements, cellDocStart: cellDocStart) else { return nil }
+        let tableIDs = Set(inputCell.nestedTables.map(\.tableKey))
+        guard tableIDs.count == inputCell.nestedTables.count,
+              inputCell.nestedTables.allSatisfy({ $0.scalarStart != nil && $0.scalarEnd != nil }) else { return nil }
 
         var blockRanges: [Int: NSRange] = [:]
         let renderedWithMarkers = RenderBridge.renderElements(
@@ -82,21 +80,13 @@ final class EditorTableInputCoordinator {
             }
         }
         guard markersValid, observedTables == tableIDs else { return nil }
-        var segments: [TableCellPositionMap.Segment] = []
-        for block in inputCell.blocks {
+        for (block, segment) in zip(inputCell.inputBlocks, segments) {
             guard let range = blockRanges[Int(block.elementIndex)] else { return nil }
             let localStart = PositionBridge.utf16OffsetToScalar(range.location, in: rendered)
             let localEnd = PositionBridge.utf16OffsetToScalar(NSMaxRange(range), in: rendered)
             let prefixLength = block.contentScalarStart - block.scalarStart
             guard localStart >= prefixLength,
-                  localEnd >= localStart,
-                  localEnd - (localStart - prefixLength) == block.scalarEnd - block.scalarStart,
-                  localEnd < UInt32.max
-            else { return nil }
-            segments.append(.init(
-                localScalarRange: (localStart - prefixLength)..<(localEnd + 1),
-                globalScalarStart: block.scalarStart
-            ))
+                  segment.localScalarRange == (localStart - prefixLength)..<(localEnd + 1) else { return nil }
         }
         return Projection(target: target, text: rendered, positionMap: .init(binding: target.binding, segments: segments))
     }
@@ -122,7 +112,7 @@ final class EditorTableInputCoordinator {
         cellInput.tableCellPositionMap = positionMap
         cellInput.tableCellInputAuthority = inputAuthority
         _ = cellInput.applyAttributedRender(text, usedPatch: false, positionCacheUpdate: .invalidate)
-        phase = .bound(cellSourcePos: target.binding.cellSourcePosition, documentRevision: String(target.binding.documentRevision), positionEpoch: String(target.binding.positionEpoch))
+        phase = .bound(tableKey: target.binding.tableKey, cellIndex: target.binding.cellIndex, documentRevision: String(target.binding.documentRevision), positionEpoch: String(target.binding.positionEpoch))
         return true
     }
 
@@ -139,20 +129,21 @@ final class EditorTableInputCoordinator {
     }
 
     func beginComposition() {
-        guard case let .bound(cellSourcePos, documentRevision, positionEpoch) = phase else { return }
-        phase = .composing(cellSourcePos: cellSourcePos, documentRevision: documentRevision, positionEpoch: positionEpoch)
+        guard case let .bound(tableKey, cellIndex, documentRevision, positionEpoch) = phase else { return }
+        phase = .composing(tableKey: tableKey, cellIndex: cellIndex, documentRevision: documentRevision, positionEpoch: positionEpoch)
     }
 
     func refreshPositionMap(_ map: TableCellPositionMap) -> Bool {
         guard case .bound = phase,
               let previous = positionMap,
-              previous.binding.cellSourcePosition == map.binding.cellSourcePosition,
+              previous.binding.tableKey == map.binding.tableKey,
+              previous.binding.cellIndex == map.binding.cellIndex,
               previous.binding.documentRevision == map.binding.documentRevision,
               cellInput.tableCellPositionMap != nil
         else { return false }
         positionMap = map
         cellInput.tableCellPositionMap = map
-        phase = .bound(cellSourcePos: map.binding.cellSourcePosition,
+        phase = .bound(tableKey: map.binding.tableKey, cellIndex: map.binding.cellIndex,
                        documentRevision: String(map.binding.documentRevision),
                        positionEpoch: String(map.binding.positionEpoch))
         return true

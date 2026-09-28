@@ -16,7 +16,7 @@ extension EditorTableInputTests {
 
     func testDeleteTableRemovesAnEmptyFrameByItsPositionInOneUndoableMutation() throws {
         try withMountedTable(document: TableDeletion.emptyFrameDocument, cellSelection: nil) { fixture in
-            let record = try XCTUnwrap(fixture.adapter.cachedTableRecords[fixture.tableID])
+            let record = try XCTUnwrap(fixture.adapter.tableRecordsForTesting[fixture.tableID])
             XCTAssertEqual(record["rows"] as? Int, 0, "the fixture must be an empty frame: \(record)")
             XCTAssertTrue(fixture.positions.isEmpty, "an empty frame has no cell to anchor a delete")
             let before = try fixture.documentObject()
@@ -27,7 +27,7 @@ extension EditorTableInputTests {
             XCTAssertTrue(fixture.view.textView.applyUpdateJSON(update))
 
             XCTAssertEqual(try blocks(fixture), TableDeletion.remainingProse)
-            XCTAssertTrue(fixture.adapter.cachedTableRecords.isEmpty, "the frame's record is gone")
+            XCTAssertTrue(fixture.adapter.tableRecordsForTesting.isEmpty, "the frame's record is gone")
             XCTAssertEqual(fixture.adapter.historyFlags()?.canUndo, true)
             XCTAssertTrue(fixture.view.textView.applyUpdateJSON(try XCTUnwrap(fixture.adapter.undo())))
             XCTAssertEqual(try fixture.documentObject(), before, "one undo restores the frame")
@@ -38,7 +38,7 @@ extension EditorTableInputTests {
     func testDeleteTableRefusesStaleOwnerStaleRevisionAndNestedAdmissions() throws {
         try withMountedTable(document: TableDeletion.nestedDocument, cellSelection: nil) { fixture in
             let before = try fixture.documentObject()
-            let nestedID = try XCTUnwrap(fixture.adapter.cachedTableRecords.first {
+            let nestedID = try XCTUnwrap(fixture.adapter.tableRecordsForTesting.first {
                 $0.value["readOnlyDescendants"] as? Bool == true
             }?.key)
             let nested = try XCTUnwrap(fixture.adapter.tableMutationAdmission(tableID: nestedID))

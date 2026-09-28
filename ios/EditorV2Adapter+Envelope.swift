@@ -57,11 +57,11 @@ extension EditorV2Adapter {
     func bindAutonomousErrorOwner(token: UUID, _ callback: @escaping (FfiError) -> Void) {
         guard beginRuntimeOperation() else { return }
         defer { endRuntimeOperation() }
-        claimNativeBinding(token: token, replaceExisting: true)
         autonomousErrorLock.lock()
         autonomousErrorOwnerToken = token
         autonomousErrorCallback = callback
         autonomousErrorLock.unlock()
+        claimNativeBinding(token: token, replaceExisting: true)
     }
 
     func clearAutonomousErrorOwner(token: UUID) {
@@ -120,21 +120,21 @@ extension EditorV2Adapter {
         nativeOwnerId = Self.nextNativeOwnerId
         nativeOwnerToken = token
         Self.nativeOwnerLock.unlock()
-        if let presentation = cachedTablePresentation, positionEpoch == nil {
-            guard presentation.documentRevision == baseDocumentRevision,
-                  pinCurrentPositionEpoch(presentation.documentRevision)
-            else {
-                releaseNativeOwner()
-                return
+        if let revision = installedFrameRevision, revision == baseDocumentRevision, let ownerId = nativeOwnerId {
+            let result = editorV2SeedNativeRenderCursor(editorId: editorId, ownerId: String(ownerId), documentRevision: String(revision))
+            switch (result.value, result.error) {
+            case (.some(true), .none): break
+            case let (.none, .some(error)) where error.code == Self.revisionMismatchCode: return
+            case let (.none, .some(error)): emit(error); return
+            default: emit(Self.contractError("native render cursor seed violates the frozen unit-result shape")); return
             }
-            cachedTablePresentation = EditorTablePresentationSnapshot(
-                documentRevision: presentation.documentRevision,
-                positionEpoch: positionEpoch,
-                tableAttributes: presentation.tableAttributes,
-                tableRecords: presentation.tableRecords,
-                tableSourceIDs: presentation.tableSourceIDs,
-                tableInputMappings: presentation.tableInputMappings
-            )
+            guard pinCurrentPositionEpoch(revision) else { return }
+            if let presentation = cachedTablePresentation {
+                cachedTablePresentation = EditorTablePresentationSnapshot(
+                    documentRevision: revision, positionEpoch: positionEpoch,
+                    index: presentation.index, changes: presentation.changes
+                )
+            }
         }
     }
 
@@ -157,11 +157,6 @@ extension EditorV2Adapter {
     }
 
     func releaseNativeOwner() {
-        cachedSemanticRenderBlocks = nil
-        cachedTableAttributes = [:]
-        cachedTableRecords = [:]
-        cachedTableInputMappings = nil
-        cachedTablePresentation = nil
         guard let ownerId = nativeOwnerId else { return }
         nativeOwnerId = nil
         nativeOwnerToken = nil

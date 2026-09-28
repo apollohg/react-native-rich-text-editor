@@ -165,6 +165,42 @@ final class RenderBridge {
     ///   - textColor: The default text color.
     /// - Returns: The rendered attributed string. Returns an empty attributed
     ///   string if the JSON is invalid.
+    static func inputElements(_ elements: [FfiViewerElement], cellDocStart: UInt32) -> [[String: Any]]? {
+        func object(_ json: String) -> [String: Any]? {
+            guard let data = json.data(using: .utf8) else { return nil }
+            return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        }
+        var result: [[String: Any]] = []
+        for element in elements {
+            switch element {
+            case let .table(tableId): result.append(["type": "table", "tableId": tableId])
+            case .blockEnd: result.append(["type": "blockEnd"])
+            case let .blockStart(nodeType, language, depth, context):
+                var value: [String: Any] = ["type": "blockStart", "nodeType": nodeType, "depth": depth]
+                value["language"] = language
+                if let context {
+                    guard let parsed = object(context) else { return nil }
+                    value["listContext"] = parsed
+                }
+                result.append(value)
+            case let .textRun(text, marks):
+                var values: [[String: Any]] = []
+                for mark in marks {
+                    guard var attrs = object(mark.attrsJson) else { return nil }
+                    attrs["type"] = mark.markType
+                    values.append(attrs)
+                }
+                result.append(["type": "textRun", "text": text, "marks": values])
+            case let .inlineAtom(nodeType, docPos, attrsJson, label), let .blockAtom(nodeType, docPos, attrsJson, label):
+                guard let attrs = object(attrsJson), let position = UInt32(exactly: UInt64(cellDocStart) + UInt64(docPos)) else { return nil }
+                let type: String
+                if case .inlineAtom = element { type = "opaqueInlineAtom" } else { type = "opaqueBlockAtom" }
+                result.append(["type": type, "nodeType": nodeType, "docPos": position, "attrs": attrs, "label": label])
+            }
+        }
+        return result
+    }
+
     static func renderElements(
         fromJSON json: String,
         baseFont: UIFont,

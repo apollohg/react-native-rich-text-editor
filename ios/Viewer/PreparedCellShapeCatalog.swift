@@ -278,9 +278,9 @@ func preparedCellShapeKey(
                     images.append("\(Double(resolved?.width ?? 0).bitPattern):\(Double(resolved?.height ?? 0).bitPattern)")
                 }
             }
-            guard let table = block.table else { continue }
-            for cell in TableSurfaceSource(viewerTable: table).cells {
-                if let child = try? current.cellDocument(for: cell, in: "t\(table.tablePos)") { append(child) }
+            guard let table = block.tableSurfaceSource, let tableKey = block.tableKey else { continue }
+            for cell in table.cells {
+                if let child = try? current.cellDocument(for: cell, in: tableKey) { append(child) }
             }
         }
     }

@@ -126,7 +126,7 @@ final class TableAcceptanceTests: XCTestCase {
         }
 
         func tableEnd() throws -> UInt32 {
-            try XCTUnwrap(adapter.cachedTableRecords[try tableID].flatMap { EditorV2Adapter.uint32Field($0, "sourceEnd") })
+            try XCTUnwrap(adapter.tableRecordsForTesting[try tableID].flatMap { EditorV2Adapter.uint32Field($0, "sourceEnd") })
         }
 
         func engineSelection() throws -> [String: Any] {
@@ -248,7 +248,7 @@ final class TableAcceptanceTests: XCTestCase {
         defer { harness.close() }
         harness.expo.layoutIfNeeded()
         XCTAssertEqual(try harness.blocks().count, Acceptance.trailingParagraphs + 1, "the room opens on its seed")
-        XCTAssertTrue(adapter.cachedTableRecords.isEmpty, "the seed holds no table yet")
+        XCTAssertTrue(adapter.tableRecordsForTesting.isEmpty, "the seed holds no table yet")
 
         harness.root.selectedRange = NSRange(location: Acceptance.introText.count, length: 0)
         harness.root.syncSelectionImmediately()
@@ -647,7 +647,7 @@ final class TableAcceptanceTests: XCTestCase {
         harness.expo.layoutIfNeeded()
         let raw = try harness.grid()
         XCTAssertEqual(raw.map { $0.map(\.colspan).reduce(0, +) }, [3, 2, 4], "the import keeps its raw row widths: \(raw)")
-        let record = try XCTUnwrap(adapter.cachedTableRecords[try harness.tableID])
+        let record = try XCTUnwrap(adapter.tableRecordsForTesting[try harness.tableID])
         XCTAssertEqual(record["irregular"] as? Bool, true)
         XCTAssertFalse((record["syntheticRegions"] as? [Any] ?? []).isEmpty, "the projection fills the raw gaps")
         let revision = adapter.baseDocumentRevision

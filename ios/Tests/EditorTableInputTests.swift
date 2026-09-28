@@ -1412,23 +1412,21 @@ final class EditorTableInputTests: XCTestCase {
         view.layoutIfNeeded()
         let tableSurface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
         let drawing = try XCTUnwrap(tableSurface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
-        let initialTableID = try XCTUnwrap(adapter.cachedTableRecords.keys.first)
-        let sourceID = try XCTUnwrap(adapter.cachedTableRecords[initialTableID]?["sourceId"] as? String)
+        let initialTableID = try XCTUnwrap(adapter.tableRecordsForTesting.keys.first)
+        let sourceID = initialTableID
         drawing.setTableLogicalOffset(100, sourceIdentity: initialTableID)
         XCTAssertEqual(drawing.tableLogicalOffset(for: initialTableID), 100, accuracy: 1)
 
         view.textView.selectedRange = NSRange(location: 0, length: 0)
         view.textView.insertText("X")
         view.layoutIfNeeded()
-        let shiftedTableID = try XCTUnwrap(adapter.cachedTableRecords.first {
-            $0.value["sourceId"] as? String == sourceID
-        }?.key)
-        XCTAssertNotEqual(shiftedTableID, initialTableID)
+        let shiftedTableID = try XCTUnwrap(adapter.tableIndex.tableKeys.first { $0 == sourceID })
+        XCTAssertEqual(shiftedTableID, initialTableID)
         XCTAssertEqual(drawing.tableLogicalOffset(for: shiftedTableID), 100, accuracy: 1)
 
         XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
         view.layoutIfNeeded()
-        let resetTableID = try XCTUnwrap(adapter.cachedTableRecords.keys.first)
+        let resetTableID = try XCTUnwrap(adapter.tableRecordsForTesting.keys.first)
         XCTAssertEqual(drawing.tableLogicalOffset(for: resetTableID), 0, accuracy: 1)
     }
 
@@ -1440,7 +1438,7 @@ final class EditorTableInputTests: XCTestCase {
         view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
         XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(wideTwoCellDocument))))
         view.layoutIfNeeded()
-        let tableID = try XCTUnwrap(adapter.cachedTableRecords.keys.first)
+        let tableID = try XCTUnwrap(adapter.tableRecordsForTesting.keys.first)
         let surface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
         let drawing = try XCTUnwrap(surface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
         let first = try XCTUnwrap(surface.cellFrame(tableID: tableID, cellIndex: 0))
@@ -1481,7 +1479,7 @@ final class EditorTableInputTests: XCTestCase {
         view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
         XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
         view.layoutIfNeeded()
-        let tableID = try XCTUnwrap(adapter.cachedTableRecords.keys.first)
+        let tableID = try XCTUnwrap(adapter.tableRecordsForTesting.keys.first)
         let tableSurface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
         let drawing = try XCTUnwrap(tableSurface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
         let firstCell = try XCTUnwrap(tableSurface.cellFrame(tableID: tableID, cellIndex: 0))
@@ -1566,7 +1564,7 @@ final class EditorTableInputTests: XCTestCase {
         view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
         XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
         view.layoutIfNeeded()
-        let tableID = try XCTUnwrap(adapter.cachedTableRecords.keys.first)
+        let tableID = try XCTUnwrap(adapter.tableRecordsForTesting.keys.first)
         let surface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
         let drawing = try XCTUnwrap(surface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
         let first = try XCTUnwrap(surface.cellFrame(tableID: tableID, cellIndex: 0))
@@ -1609,7 +1607,7 @@ final class EditorTableInputTests: XCTestCase {
         let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 360, height: 180))
         view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
         XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
-        let record = try XCTUnwrap(adapter.cachedTableRecords.values.first)
+        let record = try XCTUnwrap(adapter.tableRecordsForTesting.values.first)
         let cells = try XCTUnwrap(record["cells"] as? [[String: Any]])
         let first = try XCTUnwrap(cells[0]["sourcePos"] as? Int)
         let second = try XCTUnwrap(cells[1]["sourcePos"] as? Int)
@@ -1699,8 +1697,8 @@ final class EditorTableInputTests: XCTestCase {
         view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
         XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
         XCTAssertTrue(view.applyTheme(EditorTheme(dictionary: ["table": ["selectionColor": "#FF000080"]])))
-        let tableID = try XCTUnwrap(adapter.cachedTableRecords.keys.first)
-        let cells = try XCTUnwrap(adapter.cachedTableRecords[tableID]?["cells"] as? [[String: Any]])
+        let tableID = try XCTUnwrap(adapter.tableRecordsForTesting.keys.first)
+        let cells = try XCTUnwrap(adapter.tableRecordsForTesting[tableID]?["cells"] as? [[String: Any]])
         let anchor = try XCTUnwrap(cells[0]["sourcePos"] as? Int)
         let head = try XCTUnwrap(cells[1]["sourcePos"] as? Int)
         let request = #"{"version":1,"requestId":"991107","baseDocumentRevision":"\#(adapter.baseDocumentRevision)","selection":{"type":"cell","anchorCell":{"offset":\#(anchor),"kind":"document"},"headCell":{"offset":\#(head),"kind":"document"}}}"#
@@ -1753,8 +1751,8 @@ final class EditorTableInputTests: XCTestCase {
         defer { window.isHidden = true }
         view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
         XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
-        let cells = try XCTUnwrap(adapter.cachedTableRecords[tableID]?["cells"] as? [[String: Any]])
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
+        let cells = try XCTUnwrap(adapter.tableRecordsForTesting[tableID]?["cells"] as? [[String: Any]])
         let first = try XCTUnwrap(cells[0]["sourcePos"] as? Int)
         let second = try XCTUnwrap(cells[1]["sourcePos"] as? Int)
         XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: CGRect(x: 0, y: 0, width: 100, height: 50)))
@@ -1831,7 +1829,36 @@ final class EditorTableInputTests: XCTestCase {
         XCTAssertFalse(try XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: topLevel[1]), encoding: .utf8)).contains("?"))
     }
 
-    func testCellSelectionResolverUsesRealSourceCellsAndClosesMergedSpans() {
+    func testCellSelectionResolverUsesRealSourceCellsAndClosesMergedSpans() throws {
+        func index(_ records: [String: [String: Any]]) throws -> EditorTableIndex {
+            var tables: [FfiTableRecord] = []
+            var extents: [FfiTableExtent] = []
+            for (key, raw) in records {
+                let start = (raw["tablePos"] as! Int)
+                let end = (raw["sourceEnd"] as! Int)
+                let failure: TableRenderFailure? = raw["failure"] is NSNull ? nil : .gridLimit
+                let rawCells = raw["cells"] as! [[String: Any]]
+                let cells = rawCells.enumerated().map { index, cell -> FfiTableCellRecord in
+                    let position = cell["sourcePos"] as! Int
+                    let next = index + 1 < rawCells.count ? rawCells[index + 1]["sourcePos"] as! Int : end - 2
+                    return .init(sourceRow: 0, row: UInt32(cell["row"] as! Int), column: UInt32(cell["column"] as! Int),
+                        rowspan: UInt32(cell["rowspan"] as! Int), colspan: UInt32(cell["colspan"] as! Int), header: false,
+                        attrsKey: "empty", contentKey: "cell-\(index)", docSize: UInt32(next - position), scalarStride: 0,
+                        elements: [], inputBlocks: [], nestedTables: [])
+                }
+                tables.append(.init(tableKey: key, host: nil, docSize: UInt32(end - start),
+                    rows: UInt32(raw["rows"] as? Int ?? 0), columns: UInt32(raw["columns"] as? Int ?? 0), columnWidths: [],
+                    direction: raw["direction"] as? String, irregular: false, readOnlyDescendants: false, attrsKey: "empty",
+                    sourceRows: failure == nil ? [.init(attrsKey: "empty", cellCount: UInt32(cells.count))] : [],
+                    cells: cells, syntheticRegions: [], failure: failure, compatibilityDiagnostic: nil))
+                extents.append(.init(tableKey: key, docStart: UInt32(start), docSize: UInt32(end - start), scalarStart: 0, scalarEnd: 0))
+            }
+            let result = EditorTableIndex()
+            _ = try result.adopt(.init(kind: .full, baseDocumentRevision: nil, attributes: [.init(key: "empty", json: "{}")],
+                removedAttributeKeys: [], tables: tables, removedTableKeys: [], cellUpdates: [], extents: extents),
+                installedRevision: nil, frameRevision: 1).get()
+            return result
+        }
         func cell(_ pos: Int, _ row: Int, _ column: Int, colspan: Int = 1) -> [String: Any] {
             ["sourcePos": pos, "row": row, "column": column, "rowspan": 1, "colspan": colspan]
         }
@@ -1845,14 +1872,14 @@ final class EditorTableInputTests: XCTestCase {
                     "failure": NSNull(), "cells": [cell(42, 0, 0)]]
         ]
         let selection: [String: Any] = ["type": "cell", "anchorCell": 3, "headCell": 17]
-        XCTAssertEqual(EditorCellSelection.resolve(selection, records: records),
+        XCTAssertEqual(EditorCellSelection.resolve(selection, index: try index(records)),
                        .drawable(tableID: "t1", sourceIndices: Set([0, 1, 2, 3, 4])))
-        XCTAssertNil(EditorCellSelection.resolve(selection.merging(["anchorScalar": 0]) { _, new in new }, records: records))
-        XCTAssertNil(EditorCellSelection.resolve(["type": "cell", "anchorCell": 3.5, "headCell": 17], records: records))
-        XCTAssertNil(EditorCellSelection.resolve(["type": "cell", "anchorCell": 3, "headCell": 42], records: records))
+        XCTAssertNil(EditorCellSelection.resolve(selection.merging(["anchorScalar": 0]) { _, new in new }, index: try index(records)))
+        XCTAssertNil(EditorCellSelection.resolve(["type": "cell", "anchorCell": 3.5, "headCell": 17], index: try index(records)))
+        XCTAssertNil(EditorCellSelection.resolve(["type": "cell", "anchorCell": 3, "headCell": 42], index: try index(records)))
         let failed: [String: [String: Any]] = ["t1": ["tablePos": 1, "sourceEnd": 40,
                                                    "failure": "gridLimit", "cells": []]]
-        XCTAssertEqual(EditorCellSelection.resolve(selection, records: failed), .unavailable(tableID: "t1"))
+        XCTAssertEqual(EditorCellSelection.resolve(selection, index: try index(failed)), .unavailable(tableID: "t1"))
         let chained: [String: [String: Any]] = ["t1": ["tablePos": 1, "sourceEnd": 40,
             "rows": 3, "columns": 3, "failure": NSNull(), "direction": "rtl",
             "cells": [
@@ -1864,8 +1891,8 @@ final class EditorTableInputTests: XCTestCase {
         let forward: [String: Any] = ["type": "cell", "anchorCell": 11, "headCell": 15]
         let backward: [String: Any] = ["type": "cell", "anchorCell": 15, "headCell": 11]
         let closed = EditorCellSelection.drawable(tableID: "t1", sourceIndices: Set([0, 1, 2, 3]))
-        XCTAssertEqual(EditorCellSelection.resolve(forward, records: chained), closed)
-        XCTAssertEqual(EditorCellSelection.resolve(backward, records: chained), closed)
+        XCTAssertEqual(EditorCellSelection.resolve(forward, index: try index(chained)), closed)
+        XCTAssertEqual(EditorCellSelection.resolve(backward, index: try index(chained)), closed)
     }
 
     func testExpoOwnerPublishesAuthoritativeCellSelectionShape() throws {
@@ -1877,8 +1904,8 @@ final class EditorTableInputTests: XCTestCase {
         expoHost.setEditorId(editorId)
         let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]}]}]}"#
         XCTAssertTrue(expoHost.richTextView.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
-        let cells = try XCTUnwrap(adapter.cachedTableRecords[tableID]?["cells"] as? [[String: Any]])
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
+        let cells = try XCTUnwrap(adapter.tableRecordsForTesting[tableID]?["cells"] as? [[String: Any]])
         let first = try XCTUnwrap(cells[0]["sourcePos"] as? Int)
         let second = try XCTUnwrap(cells[1]["sourcePos"] as? Int)
         XCTAssertTrue(expoHost.richTextView.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: .zero))
@@ -1897,6 +1924,9 @@ final class EditorTableInputTests: XCTestCase {
         XCTAssertEqual(event["editorId"] as? String, adapter.editorId)
         let atomic = try XCTUnwrap(event["updateJson"] as? String)
         let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(atomic.utf8)) as? [String: Any])
+        XCTAssertNil(payload["tableRecords"])
+        XCTAssertNil(payload["tableAttributes"])
+        XCTAssertNil(payload["tableInputMappings"])
         let selection = try XCTUnwrap(payload["selection"] as? [String: Any])
         XCTAssertEqual(Set(selection.keys), ["type", "anchorCell", "headCell"])
         XCTAssertEqual(selection["anchorCell"] as? Int, first)
@@ -2038,7 +2068,7 @@ final class EditorTableInputTests: XCTestCase {
             XCTAssertEqual(payload["editorId"] as? String, fixture.adapter.editorId)
             XCTAssertEqual(payload["documentRevision"] as? String, String(fixture.adapter.baseDocumentRevision))
             XCTAssertEqual(payload["layoutEpoch"] as? String, try XCTUnwrap(fixture.adapter.positionEpoch).description)
-            let record = try XCTUnwrap(fixture.adapter.cachedTableRecords[fixture.tableID])
+            let record = try XCTUnwrap(fixture.adapter.tableRecordsForTesting[fixture.tableID])
             XCTAssertEqual(payload["tablePos"] as? Int,
                            Int(try XCTUnwrap(EditorV2Adapter.uint32Field(record, "tablePos"))))
             XCTAssertEqual(payload["coordinateSpace"] as? String, "window")
@@ -2340,7 +2370,7 @@ final class EditorTableInputTests: XCTestCase {
             XCTAssertEqual(fixture.recorder.payloads.count, 1, "\(fixture.recorder.payloads)")
             let payload = try XCTUnwrap(fixture.recorder.payloads.first)
             XCTAssertEqual(payload["editorId"] as? String, fixture.adapter.editorId)
-            let record = try XCTUnwrap(fixture.adapter.cachedTableRecords[fixture.tableID])
+            let record = try XCTUnwrap(fixture.adapter.tableRecordsForTesting[fixture.tableID])
             XCTAssertEqual(payload["tablePos"] as? Int,
                            Int(try XCTUnwrap(EditorV2Adapter.uint32Field(record, "tablePos"))))
             assertRects(try fixture.recorder.rects(at: 0),
@@ -2763,34 +2793,25 @@ final class EditorTableInputTests: XCTestCase {
         let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
         let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]}]}]}"#
         _ = try XCTUnwrap(adapter.setContentJson(document))
-        let tableID = try XCTUnwrap(adapter.cachedTableRecords.keys.first)
-        let cells = try XCTUnwrap(adapter.cachedTableRecords[tableID]?["cells"] as? [[String: Any]])
+        let tableID = try XCTUnwrap(adapter.tableRecordsForTesting.keys.first)
+        let cells = try XCTUnwrap(adapter.tableRecordsForTesting[tableID]?["cells"] as? [[String: Any]])
         let first = try XCTUnwrap(cells[0]["sourcePos"] as? Int)
         let second = try XCTUnwrap(cells[1]["sourcePos"] as? Int)
         let request = #"{"version":1,"requestId":"991106","baseDocumentRevision":"\#(adapter.baseDocumentRevision)","selection":{"type":"cell","anchorCell":{"offset":\#(EditorV2Shadow.docToScalar(id: editorId, docPos: UInt32(first + 2))),"kind":"scalar"},"headCell":{"offset":\#(EditorV2Shadow.docToScalar(id: editorId, docPos: UInt32(second + 2))),"kind":"scalar"}}}"#
         XCTAssertNil(editorV2SetSelection(editorId: adapter.editorId, requestJson: request).error)
-        let raw = try XCTUnwrap(editorV2RenderUpdate(editorId: adapter.editorId, mirrorScalarAnchor: nil, mirrorScalarHead: nil).value)
-        var snapshot = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
-        var records = try XCTUnwrap(snapshot["tableRecords"] as? [String: [String: Any]])
-        var record = try XCTUnwrap(records[tableID])
-        record["rows"] = 0
-        record["columns"] = 0
-        record["columnWidths"] = []
-        record["sourceRows"] = []
-        record["cells"] = []
-        record["syntheticRegions"] = []
-        record["failure"] = "gridLimit"
-        record["compatibilityDiagnostic"] = NSNull()
-        records[tableID] = record
-        snapshot["tableRecords"] = records
-        let attributes = try XCTUnwrap(snapshot["tableAttributes"] as? [String: String])
-        let tableAttrsKey = try XCTUnwrap(record["attrsKey"] as? String)
-        snapshot["tableAttributes"] = attributes.filter { $0.key == tableAttrsKey }
-        snapshot.removeValue(forKey: "tableInputMappings")
+        let native = try XCTUnwrap(editorV2RenderNativeFrame(editorId: adapter.editorId, ownerId: nil,
+            mirrorScalarAnchor: nil, mirrorScalarHead: nil).frame)
+        var frame = native.tables
+        let recordIndex = try XCTUnwrap(frame.tables.firstIndex { $0.tableKey == tableID })
+        frame.tables[recordIndex].failure = .gridLimit
+        frame.tables[recordIndex].cells = []
+        frame.tables[recordIndex].sourceRows = []
+        let index = EditorTableIndex()
+        _ = try index.adopt(frame, installedRevision: nil, frameRevision: adapter.baseDocumentRevision).get()
+        let snapshot = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(native.snapshotJson.utf8)) as? [String: Any])
         let selection = try XCTUnwrap(snapshot["selection"] as? [String: Any])
-        XCTAssertEqual(EditorCellSelection.resolve(selection, records: records), .unavailable(tableID: tableID))
-        let failureJSON = try XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: snapshot), encoding: .utf8))
-        XCTAssertNotNil(EditorV2Adapter.parseAtomicRenderSnapshot(failureJSON))
+        XCTAssertEqual(EditorCellSelection.resolve(selection, index: index), .unavailable(tableID: tableID))
+        XCTAssertNotNil(EditorV2Adapter.parseAtomicRenderSnapshot(native.snapshotJson))
 
         var malformed = snapshot
         malformed["selection"] = selection.merging(["anchorScalar": 0]) { _, new in new }
@@ -2808,8 +2829,8 @@ final class EditorTableInputTests: XCTestCase {
         let update = try XCTUnwrap(adapter.setContentJson(document))
         XCTAssertTrue(view.textView.applyUpdateJSON(update))
 
-        XCTAssertNotNil(adapter.cachedTableInputMappings, "rebuilt engine must publish the snapshot sidecar")
-        XCTAssertTrue(view.bindTableCell(tableID: "t8", cellIndex: 1, contentRect: CGRect(x: 8, y: 8, width: 140, height: 40)))
+        XCTAssertNotNil(adapter.tableMappingsForTesting, "rebuilt engine must publish the snapshot sidecar")
+        XCTAssertTrue(view.bindTableCell(tableID: try adapter.editableTableID(), cellIndex: 1, contentRect: CGRect(x: 8, y: 8, width: 140, height: 40)))
         XCTAssertEqual(view.activeTextInput.currentLogicalScalarSelection()?.head, 13)
         view.activeTextInput.insertText("!")
 
@@ -2866,8 +2887,8 @@ final class EditorTableInputTests: XCTestCase {
         XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
         view.layoutIfNeeded()
 
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
-        let extent = try XCTUnwrap(adapter.cachedTableInputMappings?.tables[tableID]?.extent)
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
+        let extent = try XCTUnwrap(adapter.tableMappingsForTesting?.tables[tableID]?.extent)
         let marker = (view.textView.text as NSString).range(of: "\u{200B}")
         XCTAssertNotEqual(marker.location, NSNotFound)
         XCTAssertEqual(PositionBridge.utf16OffsetToScalar(marker.location, in: view.textView), extent.scalarStart)
@@ -2987,7 +3008,7 @@ final class EditorTableInputTests: XCTestCase {
         XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
         view.layoutIfNeeded()
 
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
         let tableSurface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
         let drawing = try XCTUnwrap(tableSurface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
         let block = try XCTUnwrap(drawing.layout?.blocks.first)
@@ -3049,7 +3070,7 @@ final class EditorTableInputTests: XCTestCase {
         let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 320, height: 180))
         view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
         XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
 
         for color in [UIColor.red, UIColor.clear] {
             view.textView.baseBackgroundColor = color
@@ -3131,7 +3152,7 @@ final class EditorTableInputTests: XCTestCase {
         XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
         view.layoutIfNeeded()
 
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
         let tableSurface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
         let drawing = try XCTUnwrap(tableSurface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
         let initialFrame = try XCTUnwrap(tableSurface.cellFrame(tableID: tableID, cellIndex: 0))
@@ -3180,7 +3201,7 @@ final class EditorTableInputTests: XCTestCase {
         XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
         view.layoutIfNeeded()
 
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
         let tableSurface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
         let frame = try XCTUnwrap(tableSurface.cellFrame(tableID: tableID, cellIndex: 0))
         XCTAssertTrue(view.hitTest(CGPoint(x: frame.midX, y: frame.midY), with: nil) === view.textView)
@@ -3199,7 +3220,7 @@ final class EditorTableInputTests: XCTestCase {
         XCTAssertTrue(view.applyTheme(EditorTheme(dictionary: ["contentInsets": ["top": 12, "left": 20]])))
         view.layoutIfNeeded()
 
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
         let tableSurface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
         let drawing = try XCTUnwrap(tableSurface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
         let preparedSurface = try XCTUnwrap(drawing.layout?.blocks.first?.tableSurface)
@@ -3239,7 +3260,7 @@ final class EditorTableInputTests: XCTestCase {
         let secondSurface = try XCTUnwrap(drawing.layout?.blocks.first?.tableSurface)
         XCTAssertFalse(firstSurface === secondSurface)
         XCTAssertTrue(String(describing: secondSurface.sourceTable).contains("second"))
-        let secondTableID = try XCTUnwrap(second.cachedTableInputMappings?.tables.keys.first)
+        let secondTableID = try XCTUnwrap(second.tableMappingsForTesting?.tables.keys.first)
         XCTAssertNotNil(second.positionEpoch)
         XCTAssertTrue(view.bindTableCell(tableID: secondTableID, cellIndex: 0, contentRect: .zero))
         XCTAssertTrue(view.textView.ownsNativeBinding(second))
@@ -3260,7 +3281,7 @@ final class EditorTableInputTests: XCTestCase {
         let tableSurface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
         let drawing = try XCTUnwrap(tableSurface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
         XCTAssertTrue(String(describing: drawing.layout?.blocks.first?.tableSurface?.sourceTable).contains("preloaded"))
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
         XCTAssertNotNil(adapter.positionEpoch)
         XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: .zero))
         XCTAssertTrue(view.textView.ownsNativeBinding(adapter))
@@ -3301,7 +3322,7 @@ final class EditorTableInputTests: XCTestCase {
         XCTAssertTrue(owner.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
 
         stale.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
 
         XCTAssertTrue(owner.textView.ownsNativeBinding(adapter))
         XCTAssertFalse(stale.textView.ownsNativeBinding(adapter))
@@ -3316,7 +3337,7 @@ final class EditorTableInputTests: XCTestCase {
         let view = RichTextEditorView(frame: .zero)
         view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
         XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
         XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: .zero))
         let cell = view.activeTextInput
         EditorV2Shadow.setSelectionScalar(id: editorId, scalarAnchor: 6, scalarHead: 6)
@@ -3328,7 +3349,7 @@ final class EditorTableInputTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
     }
 
-    func testProjectedUpdateAfterCellSourceMovesRebindsTheCellHoldingTheCaret() throws {
+    func testStructuralReplacementRebindsBeforeInput() throws {
         let editorId = makeV2Editor(configJson: tableConfig)
         defer { destroyV2Editor(id: editorId) }
         let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
@@ -3337,13 +3358,14 @@ final class EditorTableInputTests: XCTestCase {
         let view = RichTextEditorView(frame: .zero)
         view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
         XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(initial))))
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
         XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 1, contentRect: .zero))
         let oldInput = view.activeTextInput
-        let oldSource = try XCTUnwrap(adapter.cachedTableInputMappings?.tables[tableID]?.cells[1].sourcePos)
+        let oldSource = try XCTUnwrap(adapter.tableMappingsForTesting?.tables[tableID]?.cells[1].sourcePos)
 
         _ = try XCTUnwrap(adapter.setContentJson(replacement))
-        let movedCell = try XCTUnwrap(adapter.cachedTableInputMappings?.tables[tableID]?.cells[1])
+        let replacementKey = try adapter.editableTableID()
+        let movedCell = try XCTUnwrap(adapter.tableMappingsForTesting?.tables[replacementKey]?.cells[1])
         XCTAssertNotEqual(movedCell.sourcePos, oldSource)
         let newSelection = try XCTUnwrap(movedCell.blocks.first?.contentScalarStart)
         EditorV2Shadow.setSelectionScalar(id: editorId, scalarAnchor: newSelection, scalarHead: newSelection)
@@ -3365,8 +3387,8 @@ final class EditorTableInputTests: XCTestCase {
         let view = RichTextEditorView(frame: .zero)
         view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
         XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
-        let table = try XCTUnwrap(adapter.cachedTableInputMappings?.tables[tableID])
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
+        let table = try XCTUnwrap(adapter.tableMappingsForTesting?.tables[tableID])
         let interior = try XCTUnwrap(table.cells.first?.blocks.first?.contentScalarStart) + 1
         let extent = try XCTUnwrap(table.extent)
         XCTAssertTrue(extent.scalarStart < interior && interior < extent.scalarEnd)
@@ -3412,7 +3434,7 @@ final class EditorTableInputTests: XCTestCase {
         let view = RichTextEditorView(frame: .zero)
         view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
         XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
-        let extent = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.values.first?.extent)
+        let extent = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.values.first?.extent)
         let before = try XCTUnwrap(adapter.documentJson())
 
         for scalar in [extent.scalarStart, extent.scalarEnd] {
@@ -3484,7 +3506,7 @@ final class EditorTableInputTests: XCTestCase {
         view.layoutIfNeeded()
         view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
         XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
         XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: CGRect(x: 0, y: 0, width: 140, height: 50)))
         let cell = view.activeTextInput
         XCTAssertTrue(cell.becomeFirstResponder())
@@ -3515,7 +3537,7 @@ final class EditorTableInputTests: XCTestCase {
         let view = RichTextEditorView(frame: .zero)
         view.bindEditor(id: firstEditorId, initialUpdateJSON: try XCTUnwrap(firstAdapter.initialUpdateJSON()))
         XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(firstAdapter.setContentJson(document))))
-        let tableID = try XCTUnwrap(firstAdapter.cachedTableInputMappings?.tables.keys.first)
+        let tableID = try XCTUnwrap(firstAdapter.tableMappingsForTesting?.tables.keys.first)
         XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: .zero))
         let staleCellInput = view.activeTextInput
         XCTAssertNotNil(staleCellInput.tableCellPositionMap)
@@ -3546,7 +3568,7 @@ final class EditorTableInputTests: XCTestCase {
         let originalHost = RichTextEditorView(frame: .zero)
         originalHost.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
         XCTAssertTrue(originalHost.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
         XCTAssertTrue(originalHost.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: .zero))
         let staleCellInput = originalHost.activeTextInput
         staleCellInput.setMarkedText("!", selectedRange: NSRange(location: 1, length: 0))
@@ -3585,7 +3607,7 @@ final class EditorTableInputTests: XCTestCase {
         XCTAssertTrue(expoHost.richTextView.textView.applyUpdateJSON(
             try XCTUnwrap(adapter.setContentJson(document))
         ))
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
         XCTAssertTrue(expoHost.richTextView.bindTableCell(
             tableID: tableID,
             cellIndex: 0,
@@ -3612,7 +3634,7 @@ final class EditorTableInputTests: XCTestCase {
         let view = RichTextEditorView(frame: .zero)
         view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
         XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(initialDocument))))
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
         XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: .zero))
         let staleCellInput = view.activeTextInput
         staleCellInput.setMarkedText("!", selectedRange: NSRange(location: 1, length: 0))
@@ -3634,13 +3656,13 @@ final class EditorTableInputTests: XCTestCase {
         view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
         let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]},{"type":"paragraph"},{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]}]}]}"#
         XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
-        let mapping = try XCTUnwrap(adapter.cachedTableInputMappings?.tables[tableID])
-        let table = try XCTUnwrap(adapter.cachedTableRecords[tableID])
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
+        let mapping = try XCTUnwrap(adapter.tableMappingsForTesting?.tables[tableID])
+        let table = try XCTUnwrap(adapter.tableRecordsForTesting[tableID])
         let projection = try XCTUnwrap(EditorTableInputCoordinator.projection(
             cellIndex: 0,
-            table: table,
-            mapping: mapping,
+            tableKey: tableID,
+            index: adapter.tableIndex,
             documentRevision: adapter.baseDocumentRevision,
             positionEpoch: try XCTUnwrap(adapter.positionEpoch),
             baseFont: view.textView.baseFont,
@@ -3664,7 +3686,7 @@ final class EditorTableInputTests: XCTestCase {
         view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
         let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"alpha"}]}]}]}]}]}"#
         XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
         XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: .zero))
         let map = try XCTUnwrap(view.activeTextInput.tableCellPositionMap)
         let cellStart = try XCTUnwrap(map.globalScalar(forLocalScalar: 0))
@@ -3690,13 +3712,13 @@ final class EditorTableInputTests: XCTestCase {
         view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
         let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]}]}]}]}]}"#
         XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
-        let mapping = try XCTUnwrap(adapter.cachedTableInputMappings?.tables[tableID])
-        let table = try XCTUnwrap(adapter.cachedTableRecords[tableID])
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
+        let mapping = try XCTUnwrap(adapter.tableMappingsForTesting?.tables[tableID])
+        let table = try XCTUnwrap(adapter.tableRecordsForTesting[tableID])
         let projection = try XCTUnwrap(EditorTableInputCoordinator.projection(
             cellIndex: 0,
-            table: table,
-            mapping: mapping,
+            tableKey: tableID,
+            index: adapter.tableIndex,
             documentRevision: adapter.baseDocumentRevision,
             positionEpoch: try XCTUnwrap(adapter.positionEpoch),
             baseFont: view.textView.baseFont,
@@ -3716,7 +3738,7 @@ final class EditorTableInputTests: XCTestCase {
 
     func testPositionMapConvertsEmojiUtf16IntoCurrentGlobalScalarRange() throws {
         let map = TableCellPositionMap(
-            binding: .init(cellSourcePosition: 10, documentRevision: 4, positionEpoch: 9),
+            binding: .init(tableKey: "test-table", cellIndex: 10, documentRevision: 4, positionEpoch: 9),
             segments: [.init(localScalarRange: 0..<5, globalScalarStart: 40)]
         )
 
@@ -3730,7 +3752,7 @@ final class EditorTableInputTests: XCTestCase {
 
     func testPositionMapRejectsStaleAndNestedOrSyntheticTargets() {
         let binding = TableCellPositionMap.Binding(
-            cellSourcePosition: 10,
+            tableKey: "test-table", cellIndex: 10,
             documentRevision: 4,
             positionEpoch: 9
         )
@@ -3753,7 +3775,7 @@ final class EditorTableInputTests: XCTestCase {
         let input = coordinator.cellInput
         let target = { (position: UInt32) in
             EditorTableInputCoordinator.Target(
-                binding: .init(cellSourcePosition: position, documentRevision: 4, positionEpoch: 9),
+                binding: .init(tableKey: "test-table", cellIndex: position, documentRevision: 4, positionEpoch: 9),
                 isSynthetic: false,
                 isNestedTarget: false
             )
@@ -3765,7 +3787,7 @@ final class EditorTableInputTests: XCTestCase {
 
         XCTAssertTrue(coordinator.cellInput === input)
         XCTAssertEqual(coordinator.inputInstanceCountForTesting, 1)
-        XCTAssertEqual(coordinator.phase, .bound(cellSourcePos: 30, documentRevision: "4", positionEpoch: "9"))
+        XCTAssertEqual(coordinator.phase, .bound(tableKey: "test-table", cellIndex: 30, documentRevision: "4", positionEpoch: "9"))
     }
 }
 

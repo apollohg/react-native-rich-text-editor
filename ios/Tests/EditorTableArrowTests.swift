@@ -21,7 +21,7 @@ extension EditorTableNavigationTests {
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
         XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: .zero))
         let input = view.activeTextInput
         select(NSRange(location: ("one" as NSString).length, length: 0), in: input)
@@ -31,8 +31,8 @@ extension EditorTableNavigationTests {
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
         XCTAssertTrue(view.activeTextInput === input)
         XCTAssertTrue(input.isFirstResponder)
-        XCTAssertEqual(input.tableCellPositionMap?.binding.cellSourcePosition,
-                       adapter.cachedTableInputMappings?.tables[tableID]?.cells[1].sourcePos)
+        XCTAssertEqual(input.tableCellPositionMap?.binding.documentPosition(in: adapter),
+                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[1].sourcePos)
         view.activeTextInput.insertText("!")
         let edited = try XCTUnwrap(adapter.documentJson())
         XCTAssertTrue(edited.contains(#""text":"!two""#), edited)
@@ -44,7 +44,7 @@ extension EditorTableNavigationTests {
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
         XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 1, contentRect: .zero))
         let input = view.activeTextInput
         select(NSRange(location: 0, length: 0), in: input)
@@ -52,8 +52,8 @@ extension EditorTableNavigationTests {
         let before = try XCTUnwrap(adapter.documentJson())
         try pressArrow(.left, in: input)
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
-        XCTAssertEqual(input.tableCellPositionMap?.binding.cellSourcePosition,
-                       adapter.cachedTableInputMappings?.tables[tableID]?.cells[0].sourcePos)
+        XCTAssertEqual(input.tableCellPositionMap?.binding.documentPosition(in: adapter),
+                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[0].sourcePos)
         XCTAssertTrue(input.isFirstResponder)
         input.insertText("!")
         let edited = try XCTUnwrap(adapter.documentJson())
@@ -66,7 +66,7 @@ extension EditorTableNavigationTests {
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
         XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 1, contentRect: .zero))
         let input = view.activeTextInput
         select(NSRange(location: 0, length: 0), in: input)
@@ -79,13 +79,13 @@ extension EditorTableNavigationTests {
         XCTAssertTrue(input.becomeFirstResponder())
         let before = try XCTUnwrap(adapter.documentJson())
         try pressArrow(.down, in: input)
-        XCTAssertEqual(input.tableCellPositionMap?.binding.cellSourcePosition,
-                       adapter.cachedTableInputMappings?.tables[tableID]?.cells[3].sourcePos)
+        XCTAssertEqual(input.tableCellPositionMap?.binding.documentPosition(in: adapter),
+                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[3].sourcePos)
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
         select(NSRange(location: 0, length: 0), in: input)
         try pressArrow(.up, in: input)
-        XCTAssertEqual(input.tableCellPositionMap?.binding.cellSourcePosition,
-                       adapter.cachedTableInputMappings?.tables[tableID]?.cells[1].sourcePos)
+        XCTAssertEqual(input.tableCellPositionMap?.binding.documentPosition(in: adapter),
+                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[1].sourcePos)
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
         XCTAssertTrue(input.isFirstResponder)
     }
@@ -96,7 +96,7 @@ extension EditorTableNavigationTests {
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
         XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: .zero))
         let input = view.activeTextInput
         select(NSRange(location: 1, length: 0), in: input)
@@ -116,7 +116,7 @@ extension EditorTableNavigationTests {
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
         XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: .zero))
         let input = view.activeTextInput
         select(NSRange(location: 3, length: 0), in: input)
@@ -136,19 +136,19 @@ extension EditorTableNavigationTests {
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
         XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 1, contentRect: .zero))
         let input = view.activeTextInput
         select(NSRange(location: ("top-right" as NSString).length, length: 0), in: input)
         let before = try XCTUnwrap(adapter.documentJson())
         try pressArrow(.right, in: input)
-        XCTAssertEqual(input.tableCellPositionMap?.binding.cellSourcePosition,
-                       adapter.cachedTableInputMappings?.tables[tableID]?.cells[2].sourcePos)
+        XCTAssertEqual(input.tableCellPositionMap?.binding.documentPosition(in: adapter),
+                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[2].sourcePos)
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
         select(NSRange(location: 0, length: 0), in: input)
         try pressArrow(.left, in: input)
-        XCTAssertEqual(input.tableCellPositionMap?.binding.cellSourcePosition,
-                       adapter.cachedTableInputMappings?.tables[tableID]?.cells[1].sourcePos)
+        XCTAssertEqual(input.tableCellPositionMap?.binding.documentPosition(in: adapter),
+                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[1].sourcePos)
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
     }
 
@@ -167,7 +167,7 @@ extension EditorTableNavigationTests {
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
         let tableSurface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
         let drawing = try XCTUnwrap(tableSurface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
         let prepared = try XCTUnwrap(drawing.layout?.blocks.first?.tableSurface)
@@ -199,19 +199,19 @@ extension EditorTableNavigationTests {
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
         XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 2, contentRect: .zero))
         let input = view.activeTextInput
         select(NSRange(location: ("bottom-left" as NSString).length, length: 0), in: input)
         let before = try XCTUnwrap(adapter.documentJson())
         try pressArrow(.right, in: input)
-        XCTAssertEqual(input.tableCellPositionMap?.binding.cellSourcePosition,
-                       adapter.cachedTableInputMappings?.tables[tableID]?.cells[1].sourcePos)
+        XCTAssertEqual(input.tableCellPositionMap?.binding.documentPosition(in: adapter),
+                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[1].sourcePos)
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
         select(NSRange(location: 0, length: 0), in: input)
         try pressArrow(.left, in: input)
-        XCTAssertEqual(input.tableCellPositionMap?.binding.cellSourcePosition,
-                       adapter.cachedTableInputMappings?.tables[tableID]?.cells[2].sourcePos)
+        XCTAssertEqual(input.tableCellPositionMap?.binding.documentPosition(in: adapter),
+                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[2].sourcePos)
     }
 
     func testDownArrowUsesMergedRowspanGeometry() throws {
@@ -221,14 +221,14 @@ extension EditorTableNavigationTests {
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
         XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 1, contentRect: .zero))
         let input = view.activeTextInput
         select(NSRange(location: 1, length: 0), in: input)
         let before = try XCTUnwrap(adapter.documentJson())
         try pressArrow(.down, in: input)
-        XCTAssertEqual(input.tableCellPositionMap?.binding.cellSourcePosition,
-                       adapter.cachedTableInputMappings?.tables[tableID]?.cells[2].sourcePos)
+        XCTAssertEqual(input.tableCellPositionMap?.binding.documentPosition(in: adapter),
+                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[2].sourcePos)
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
     }
 
@@ -240,8 +240,8 @@ extension EditorTableNavigationTests {
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first { key in
-            adapter.cachedTableInputMappings?.tables[key]?.cells.count == 2
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first { key in
+            adapter.tableMappingsForTesting?.tables[key]?.cells.count == 2
         })
         XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: .zero))
         let input = view.activeTextInput
@@ -249,8 +249,8 @@ extension EditorTableNavigationTests {
         let before = try XCTUnwrap(adapter.documentJson())
         let nestedBefore = try nestedTableContent(in: before, outerCellIndex: 1)
         try pressArrow(.right, in: input)
-        XCTAssertEqual(input.tableCellPositionMap?.binding.cellSourcePosition,
-                       adapter.cachedTableInputMappings?.tables[tableID]?.cells[1].sourcePos)
+        XCTAssertEqual(input.tableCellPositionMap?.binding.documentPosition(in: adapter),
+                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[1].sourcePos)
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
         input.insertText("!")
         let edited = try XCTUnwrap(adapter.documentJson())
@@ -264,7 +264,7 @@ extension EditorTableNavigationTests {
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
         XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: .zero))
         let input = view.activeTextInput
         select(NSRange(location: 0, length: 0), in: input)
@@ -279,7 +279,7 @@ extension EditorTableNavigationTests {
         let bare = try makeFixture(config: tableConfig, document: TableInputTestSchema.twoCellDocument,
                                    size: Self.editorSize, windowed: true)
         defer { bare.close() }
-        let bareID = try XCTUnwrap(bare.adapter.cachedTableInputMappings?.tables.keys.first)
+        let bareID = try XCTUnwrap(bare.adapter.tableMappingsForTesting?.tables.keys.first)
         XCTAssertTrue(bare.view.bindTableCell(tableID: bareID, cellIndex: 0, contentRect: .zero))
         let bareInput = bare.view.activeTextInput
         select(NSRange(location: 0, length: 0), in: bareInput)
@@ -295,7 +295,7 @@ extension EditorTableNavigationTests {
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
         XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: .zero))
         let input = view.activeTextInput
         select(NSRange(location: 0, length: 0), in: input)
@@ -325,7 +325,7 @@ extension EditorTableNavigationTests {
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.min(by: {
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.min(by: {
             ($0.value.extent?.scalarStart ?? UInt32.max) < ($1.value.extent?.scalarStart ?? UInt32.max)
         })?.key)
         XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 1, contentRect: .zero))
@@ -343,7 +343,7 @@ extension EditorTableNavigationTests {
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
         XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: .zero))
         let input = view.activeTextInput
         select(NSRange(location: 3, length: 0), in: input)
@@ -354,8 +354,8 @@ extension EditorTableNavigationTests {
         let before = try XCTUnwrap(adapter.documentJson())
         _ = input.perform(command.action)
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
-        XCTAssertEqual(input.tableCellPositionMap?.binding.cellSourcePosition,
-                       adapter.cachedTableInputMappings?.tables[tableID]?.cells[0].sourcePos)
+        XCTAssertEqual(input.tableCellPositionMap?.binding.documentPosition(in: adapter),
+                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[0].sourcePos)
 
         view.editorId = 0
         let second = RichTextEditorView(frame: view.frame)
@@ -372,7 +372,7 @@ extension EditorTableNavigationTests {
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
         XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: .zero))
         let input = view.activeTextInput
         select(NSRange(location: 3, length: 0), in: input)
@@ -381,8 +381,8 @@ extension EditorTableNavigationTests {
         let before = try XCTUnwrap(adapter.documentJson())
         _ = input.perform(command.action)
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
-        XCTAssertEqual(input.tableCellPositionMap?.binding.cellSourcePosition,
-                       adapter.cachedTableInputMappings?.tables[tableID]?.cells[0].sourcePos)
+        XCTAssertEqual(input.tableCellPositionMap?.binding.documentPosition(in: adapter),
+                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[0].sourcePos)
         input.isEditable = true
         let replacement = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"replacement"}]}]}"#
         XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(replacement))))
@@ -398,7 +398,7 @@ extension EditorTableNavigationTests {
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
         XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: .zero))
         let input = view.activeTextInput
         select(NSRange(location: 3, length: 0), in: input)
@@ -413,7 +413,7 @@ extension EditorTableNavigationTests {
         _ = input.cancelExternalTextComposition(sessionId: "arrow-composition", cause: "consumer")
         XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: .zero))
         select(NSRange(location: 3, length: 0), in: input)
-        let next = try XCTUnwrap(adapter.cachedTableInputMappings?.tables[tableID]?.cells[1].blocks.first?.contentScalarStart)
+        let next = try XCTUnwrap(adapter.tableMappingsForTesting?.tables[tableID]?.cells[1].blocks.first?.contentScalarStart)
         let delegate = TableArrowSelectionDelegate()
         input.editorDelegate = delegate
         delegate.onSelection = {
@@ -435,7 +435,7 @@ extension EditorTableNavigationTests {
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
         XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: .zero))
         let input = view.activeTextInput
         let text = input.textStorage.string as NSString
@@ -462,7 +462,7 @@ extension EditorTableNavigationTests {
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
         XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: .zero))
         let input = view.activeTextInput
         input.layoutManager.ensureLayout(for: input.textContainer)
@@ -505,15 +505,15 @@ extension EditorTableNavigationTests {
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
         XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: .zero))
         let input = view.activeTextInput
         select(NSRange(location: 0, length: 0), in: input)
         let before = try XCTUnwrap(adapter.documentJson())
         let command = try XCTUnwrap(input.keyCommands?.first { $0.input == UIKeyCommand.inputRightArrow })
         _ = input.perform(command.action)
-        XCTAssertEqual(input.tableCellPositionMap?.binding.cellSourcePosition,
-                       adapter.cachedTableInputMappings?.tables[tableID]?.cells[1].sourcePos)
+        XCTAssertEqual(input.tableCellPositionMap?.binding.documentPosition(in: adapter),
+                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[1].sourcePos)
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
         XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: .zero))
         select(NSRange(location: 0, length: 0), in: input)
@@ -547,10 +547,10 @@ extension EditorTableNavigationTests {
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
-        let record = try XCTUnwrap(adapter.cachedTableRecords[tableID])
+        let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
+        let record = try XCTUnwrap(adapter.tableRecordsForTesting[tableID])
         XCTAssertEqual(record["irregular"] as? Bool, true)
-        XCTAssertEqual(adapter.cachedTableInputMappings?.tables[tableID]?.cells.count, 5)
+        XCTAssertEqual(adapter.tableMappingsForTesting?.tables[tableID]?.cells.count, 5)
         let tableSurface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
         let drawing = try XCTUnwrap(tableSurface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
         let prepared = try XCTUnwrap(drawing.layout?.blocks.first?.tableSurface)
@@ -566,8 +566,8 @@ extension EditorTableNavigationTests {
         select(NSRange(location: rightToLeft ? 0 : 1, length: 0), in: input)
         let before = try XCTUnwrap(adapter.documentJson())
         try pressArrow(direction, in: input)
-        XCTAssertEqual(input.tableCellPositionMap?.binding.cellSourcePosition,
-                       adapter.cachedTableInputMappings?.tables[tableID]?.cells[3].sourcePos)
+        XCTAssertEqual(input.tableCellPositionMap?.binding.documentPosition(in: adapter),
+                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[3].sourcePos)
         XCTAssertTrue(view.activeTextInput === input)
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
     }

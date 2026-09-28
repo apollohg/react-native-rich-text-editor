@@ -151,7 +151,7 @@ extension EditorTableInputTests {
         UIPasteboard.general.string = CellMenu.pastedGridTSV
         defer { UIPasteboard.general.items = [] }
         try withMountedTable(document: CellMenu.nestedDocument, size: CellMenu.editorSize, cellSelection: nil) { fixture in
-            let nested = try XCTUnwrap(fixture.adapter.cachedTableRecords.values.first {
+            let nested = try XCTUnwrap(fixture.adapter.tableRecordsForTesting.values.first {
                 $0["readOnlyDescendants"] as? Bool == true
             })
             let opening = try XCTUnwrap(EditorV2Adapter.uint32Field(
@@ -216,7 +216,7 @@ extension EditorTableInputTests {
             XCTAssertTrue(fixture.view.activeTextInput !== fixture.view.textView, "the double tap edits a cell")
             XCTAssertTrue(fixture.view.activeTextInput.isFirstResponder)
             let map = try XCTUnwrap(fixture.view.activeTextInput.tableCellPositionMap)
-            XCTAssertEqual(map.binding.cellSourcePosition, fixture.positions[CellMenu.lastCell],
+            XCTAssertEqual(map.binding.documentPosition(in: fixture.adapter), fixture.positions[CellMenu.lastCell],
                            "the caret lands in the double-tapped cell")
         }
     }

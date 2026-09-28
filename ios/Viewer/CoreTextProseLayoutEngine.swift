@@ -26,9 +26,9 @@ final class CoreTextProseLayoutEngine {
         func preassign(document: ViewerDocument) {
             for (index, block) in document.blocks.enumerated() {
                 register(document: document, index: index, block: block)
-                guard let table = block.table else { continue }
-                for cell in TableSurfaceSource(viewerTable: table).cells {
-                    guard let child = try? document.cellDocument(for: cell, in: "t\(table.tablePos)") else { continue }
+                guard let table = block.tableSurfaceSource, let tableKey = block.tableKey else { continue }
+                for cell in table.cells {
+                    guard let child = try? document.cellDocument(for: cell, in: tableKey) else { continue }
                     preassign(document: child)
                 }
             }
@@ -151,7 +151,7 @@ final class CoreTextProseLayoutEngine {
             let top = opening.reduce(CGFloat.zero) { $0 + (theme.styleSheet?.box($1.nodeType, ancestors: block.ancestors(before: $1)).outerInsets.top ?? 0) }
             let bottom = closing.reduce(CGFloat.zero) { $0 + (theme.styleSheet?.box($1.nodeType, ancestors: block.ancestors(before: $1)).outerInsets.bottom ?? 0) }
             cursorY += top
-            if let table = block.table {
+            if let table = block.tableSurfaceSource, let tableKey = block.tableKey {
                 var cellTheme = theme
                 cellTheme.contentInsets = .zero
                 let tableBox = theme.styleSheet?.box(block.nodeType, ancestors: block.styleAncestors.map(\.nodeType)) ?? EditorStyleBox()
@@ -162,12 +162,12 @@ final class CoreTextProseLayoutEngine {
                 let tableX = theme.contentInsets.left + tableAncestors.left + tableBox.margin.left + placement.listInset + placement.quoteInset + tableBox.inset.left
                 let tableWidth = max(1, canonicalWidth - theme.contentInsets.left - theme.contentInsets.right
                     - tableAncestors.left - tableAncestors.right - tableBox.margin.left - tableBox.margin.right - tableBox.inset.left - tableBox.inset.right - placement.listInset - placement.quoteInset)
-                let surfaceSource = TableSurfaceSource(viewerTable: table)
+                let surfaceSource = table
                 let record = TableGridRecord(table: surfaceSource, documentOwner: document.semanticKey)
                 let cellsByIndex = Dictionary(uniqueKeysWithValues: surfaceSource.cells.map { ($0.sourceIndex, $0) })
                 let surface = ViewerTableSurface(
-                    identity: "t\(table.tablePos)",
-                    scrollIdentity: document.tableSourceIDs["t\(table.tablePos)"],
+                    identity: tableKey,
+                    scrollIdentity: document.tableSourceIDs[tableKey],
                     record: record,
                     viewportWidth: tableWidth,
                     style: theme.tableStyle,
@@ -185,7 +185,7 @@ final class CoreTextProseLayoutEngine {
                         return reused
                     }
                     guard let source = cellsByIndex[cell.sourceIndex],
-                          let child = try? document.cellDocument(for: source, in: "t\(table.tablePos)").withPreparedTheme(cellTheme)
+                          let child = try? document.cellDocument(for: source, in: tableKey).withPreparedTheme(cellTheme)
                     else {
                         return .error(key: key, width: cellWidth, error: .layout(message: "Invalid table cell."))
                     }
@@ -416,11 +416,12 @@ final class CoreTextProseLayoutEngine {
             }
 
             var tableSurface: ViewerTableSurface?
-            if let table = current.table {
+            if let table = current.tableSurfaceSource, let tableKey = current.tableKey {
                 guard let cachedSurface = localBlock.tableSurface,
                       let tableBounds = localBlock.tableBounds,
                       let bound = bindTableSurface(
                         table,
+                        tableKey: tableKey,
                         document: document,
                         cachedSurface: cachedSurface,
                         tableBounds: tableBounds,
@@ -507,7 +508,8 @@ final class CoreTextProseLayoutEngine {
     }
 
     private func bindTableSurface(
-        _ table: FfiViewerTable,
+        _ table: TableSurfaceSource,
+        tableKey: String,
         document: ViewerDocument,
         cachedSurface: ViewerTableSurface,
         tableBounds: CGRect,
@@ -517,13 +519,13 @@ final class CoreTextProseLayoutEngine {
         warningSemanticGeneration: String,
         context: PreparedCellShapeBuildContext
     ) -> ViewerTableSurface? {
-        let surfaceSource = TableSurfaceSource(viewerTable: table)
+        let surfaceSource = table
         let cellsByIndex = Dictionary(uniqueKeysWithValues: surfaceSource.cells.map { ($0.sourceIndex, $0) })
         var childTheme = theme
         childTheme.contentInsets = .zero
         let surface = ViewerTableSurface(
-            identity: "t\(table.tablePos)",
-            scrollIdentity: document.tableSourceIDs["t\(table.tablePos)"],
+            identity: tableKey,
+            scrollIdentity: document.tableSourceIDs[tableKey],
             record: TableGridRecord(table: surfaceSource, documentOwner: document.semanticKey),
             viewportWidth: cachedSurface.hostViewportWidth,
             style: cachedSurface.style,
@@ -536,7 +538,7 @@ final class CoreTextProseLayoutEngine {
             sourceAttributes: document.tableAttributes
         ) { cell, cellWidth in
             guard let source = cellsByIndex[cell.sourceIndex],
-                  let child = try? document.cellDocument(for: source, in: "t\(table.tablePos)").withPreparedTheme(childTheme),
+                  let child = try? document.cellDocument(for: source, in: tableKey).withPreparedTheme(childTheme),
                   let widthPixels = ProseLayoutMetrics.widthPixels(widthPoints: cellWidth, scale: displayScale)
             else { return .error(key: key, width: cellWidth, error: .layout(message: "Invalid table cell.")) }
             let childKey = ProseLayoutKey(

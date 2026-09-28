@@ -163,10 +163,10 @@ final class RemoteSelectionOverlayView: UIView {
         var selectionRects: [ColoredRect] = []
         var caretRects: [ColoredRect] = []
         var cellSelections: [RemoteTableCellSelection] = []
-        let tableRecords = EditorV2Registry.adapter(forLegacyId: editorId)?.cachedTableRecords ?? [:]
+        let tableIndex = EditorV2Registry.adapter(forLegacyId: editorId)?.tableIndex ?? EditorTableIndex()
 
         for selection in selections {
-            if let cells = drawableCells(for: selection, records: tableRecords) {
+            if let cells = drawableCells(for: selection, index: tableIndex) {
                 cellSelections.append(cells)
                 continue
             }
@@ -206,11 +206,11 @@ final class RemoteSelectionOverlayView: UIView {
 
     private func drawableCells(
         for selection: RemoteSelectionDecoration,
-        records: [String: [String: Any]]
+        index: EditorTableIndex
     ) -> RemoteTableCellSelection? {
         guard let rectangle = selection.cellRectangle,
               case let .drawable(tableID, sourceIndices) = EditorCellSelection.resolve(
-                  anchor: rectangle.anchorCell, head: rectangle.headCell, records: records
+                  anchor: rectangle.anchorCell, head: rectangle.headCell, index: index
               )
         else { return nil }
         return RemoteTableCellSelection(

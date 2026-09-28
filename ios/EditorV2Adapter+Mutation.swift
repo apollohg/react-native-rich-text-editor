@@ -37,7 +37,7 @@ extension EditorV2Adapter {
     }
 
     private func handleMutationError(_ error: FfiError) -> String? {
-        if error.code == "REVISION_MISMATCH" {
+        if error.code == Self.revisionMismatchCode {
             let update = refreshInternal(
                 mirrorSelection: nil,
                 strippingViewSelection: false

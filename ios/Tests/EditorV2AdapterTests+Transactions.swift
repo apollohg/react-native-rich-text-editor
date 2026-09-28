@@ -2,6 +2,29 @@ import UIKit
 import XCTest
 
 extension EditorV2AdapterTests {
+    func testNativeKeystrokeAdoptsOneCellDelta() throws {
+        let adapter = makeAdapter(configJson: TableInputTestSchema.tableConfig)
+        XCTAssertNotNil(adapter.setContentJson(TableInputTestSchema.twoCellDocument))
+        let owner = UUID()
+        adapter.claimNativeBindingIfUnowned(token: owner)
+        defer { adapter.releaseNativeBindingOwner(token: owner) }
+        XCTAssertNotNil(adapter.initialUpdateJSON())
+        let presentation = try XCTUnwrap(adapter.cachedTablePresentation)
+        let key = try XCTUnwrap(presentation.index.tableKeys.first)
+        let cellStart = try XCTUnwrap(presentation.index.scalarStart(tableKey: key, cellIndex: 0))
+        let fullBefore = adapter.fullFrameAdoptionCountForTesting
+        let deltaBefore = adapter.deltaFrameAdoptionCountForTesting
+        XCTAssertNotNil(adapter.insertText("X", atScalar: cellStart))
+        XCTAssertEqual(adapter.fullFrameAdoptionCountForTesting, fullBefore)
+        XCTAssertEqual(adapter.deltaFrameAdoptionCountForTesting, deltaBefore + 1)
+        XCTAssertEqual(adapter.cachedTablePresentation?.changes.changedCells[key], IndexSet(integer: 0))
+        let atomic = try XCTUnwrap(adapter.atomicRenderJSON(matchingDocumentRevision: adapter.baseDocumentRevision))
+        let object = parseObject(atomic)
+        XCTAssertNil(object["tableAttributes"])
+        XCTAssertNil(object["tableRecords"])
+        XCTAssertNil(object["tableInputMappings"])
+    }
+
     func testAttachesDecimalV2HandleAndDetachedLocalState() {
         let adapter = makeAdapter(
             configJson: #"{"initialization":{"type":"localEmpty"},"policy":{"readOnly":false}}"#
@@ -408,7 +431,7 @@ extension EditorV2AdapterTests {
             line: #line
         )
         XCTAssertNotNil(adapter.setContentJson(document))
-        let cells = try XCTUnwrap(adapter.cachedTableRecords.values.first?["cells"] as? [[String: Any]])
+        let cells = try XCTUnwrap(adapter.tableRecordsForTesting.values.first?["cells"] as? [[String: Any]])
         let openings = try cells.map { try XCTUnwrap(EditorV2Adapter.uint32Field($0, "sourcePos")) }
         return (adapter, openings)
     }
@@ -472,7 +495,7 @@ extension EditorV2AdapterTests {
         let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]}]},{"type":"image","attrs":{"src":"https://example.com/cat.png"}},{"type":"paragraph"}]}"#
         let (adapter, openings) = try makeCellPresenceAdapter(recorder, document: document)
         let tableEnd = try XCTUnwrap(EditorV2Adapter.uint32Field(
-            try XCTUnwrap(adapter.cachedTableRecords.values.first), "sourceEnd"
+            try XCTUnwrap(adapter.tableRecordsForTesting.values.first), "sourceEnd"
         ))
         try adoptEngineCellSelection(adapter, anchor: openings[0], head: openings[1])
         XCTAssertNotNil(adapter.publishedCollaborationCells)

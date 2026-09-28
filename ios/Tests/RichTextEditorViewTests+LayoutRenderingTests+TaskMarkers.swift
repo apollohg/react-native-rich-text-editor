@@ -26,7 +26,7 @@ extension RichTextEditorViewTests {
         _ = view.applyAttributedRender(projected, usedPatch: false, positionCacheUpdate: .invalidate)
         let epoch = try XCTUnwrap(adapter.positionEpoch)
         view.tableCellPositionMap = TableCellPositionMap(
-            binding: .init(cellSourcePosition: 11, documentRevision: adapter.baseDocumentRevision, positionEpoch: stale ? epoch + 1 : epoch),
+            binding: .init(tableKey: "test-table", cellIndex: 11, documentRevision: adapter.baseDocumentRevision, positionEpoch: stale ? epoch + 1 : epoch),
             segments: [.init(localScalarRange: 0..<9, globalScalarStart: 8)]
         )
         view.layoutManager.ensureLayout(for: view.textContainer)

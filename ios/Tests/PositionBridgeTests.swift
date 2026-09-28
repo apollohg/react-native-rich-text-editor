@@ -95,7 +95,7 @@ final class PositionBridgeTests: XCTestCase {
         let document = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"left"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"right"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"#
         XCTAssertTrue(textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
 
-        let table = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.values.first)
+        let table = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.values.first)
         let extent = try XCTUnwrap(table.extent)
         let afterOffset = (textView.text as NSString).range(of: "after").location
         XCTAssertNotEqual(afterOffset, NSNotFound)
@@ -120,7 +120,7 @@ final class PositionBridgeTests: XCTestCase {
                 rootTableDocument(before: fixture.before, cellTexts: ["cell"], after: fixture.after)
             ))))
 
-            let extent = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.values.first?.extent)
+            let extent = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.values.first?.extent)
             let anchor = try XCTUnwrap(rootTableAnchorOffsets(in: textView).first)
             XCTAssertEqual(PositionBridge.utf16OffsetToScalar(anchor, in: textView), extent.scalarStart)
             XCTAssertEqual(PositionBridge.utf16OffsetToScalar(anchor + 1, in: textView), extent.scalarEnd)
@@ -155,7 +155,7 @@ final class PositionBridgeTests: XCTestCase {
             try XCTUnwrap(String(data: document, encoding: .utf8))
         ))))
 
-        let extents = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.values)
+        let extents = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.values)
             .compactMap(\.extent)
             .sorted { $0.scalarStart < $1.scalarStart }
         XCTAssertEqual(extents.count, 2)
@@ -176,7 +176,7 @@ final class PositionBridgeTests: XCTestCase {
             rootTableDocument(before: "before", cellTexts: ["left", "right"], after: "after")
         ))))
 
-        let extent = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.values.first?.extent)
+        let extent = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.values.first?.extent)
         XCTAssertTrue(PositionBridge.isScalarPositionRepresentable(extent.scalarStart, in: textView))
         XCTAssertTrue(PositionBridge.isScalarPositionRepresentable(extent.scalarEnd, in: textView))
         XCTAssertFalse(PositionBridge.isScalarPositionRepresentable(extent.scalarStart + 1, in: textView))
@@ -211,12 +211,12 @@ final class PositionBridgeTests: XCTestCase {
         XCTAssertTrue(textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(
             rootTableDocument(before: "before", cellTexts: ["a"], after: "after")
         ))))
-        let firstExtent = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.values.first?.extent)
+        let firstExtent = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.values.first?.extent)
 
         XCTAssertTrue(textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(
             rootTableDocument(before: "before", cellTexts: ["expanded"], after: "after")
         ))))
-        let secondExtent = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.values.first?.extent)
+        let secondExtent = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.values.first?.extent)
         let afterOffset = (textView.text as NSString).range(of: "after").location
         XCTAssertNotEqual(firstExtent, secondExtent)
         XCTAssertEqual(PositionBridge.utf16OffsetToScalar(afterOffset, in: textView), secondExtent.scalarEnd + 1)
@@ -251,13 +251,11 @@ final class PositionBridgeTests: XCTestCase {
             rootTableDocument(before: "before", cellTexts: ["a"], after: "after")
         ))))
         let beforeText = NSAttributedString(attributedString: textView.textStorage)
-        let oldExtent = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.values.first?.extent)
+        let oldExtent = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.values.first?.extent)
         var applications = 0
         textView.onApplyingRustTextForTesting = { applications += 1 }
-        XCTAssertTrue(textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(
-            rootTableDocument(before: "before", cellTexts: ["expanded"], after: "after")
-        ))))
-        let newExtent = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.values.first?.extent)
+        XCTAssertTrue(textView.applyUpdateJSON(try XCTUnwrap(adapter.insertText("expanded", atScalar: oldExtent.scalarStart))))
+        let newExtent = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.values.first?.extent)
         XCTAssertNotEqual(oldExtent, newExtent)
         XCTAssertEqual(applications, 0, "only the root position map should change")
         XCTAssertTrue(beforeText.isEqual(to: textView.textStorage))
@@ -274,7 +272,7 @@ final class PositionBridgeTests: XCTestCase {
         XCTAssertTrue(textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(
             rootTableDocument(before: "before", cellTexts: ["cell"], after: "after")
         ))))
-        let extent = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.values.first?.extent)
+        let extent = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.values.first?.extent)
         var rootRenderApplications = 0
         textView.onApplyingRustTextForTesting = { rootRenderApplications += 1 }
 
@@ -299,7 +297,7 @@ final class PositionBridgeTests: XCTestCase {
             rootTableDocument(before: "before", cellTexts: [], after: "after")
         ))))
 
-        XCTAssertNil(adapter.cachedTableInputMappings?.tables.values.first?.extent)
+        XCTAssertNil(adapter.tableMappingsForTesting?.tables.values.first?.extent)
         XCTAssertEqual(rootTableAnchorOffsets(in: textView), [])
         XCTAssertEqual(textView.text, "before\nafter")
         XCTAssertEqual(
@@ -318,7 +316,7 @@ final class PositionBridgeTests: XCTestCase {
             rootTableDocument(before: "before", cellTexts: [""], after: "after")
         ))))
 
-        let extent = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.values.first?.extent)
+        let extent = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.values.first?.extent)
         let anchor = try XCTUnwrap(rootTableAnchorOffsets(in: textView).first)
         XCTAssertEqual(PositionBridge.utf16OffsetToScalar(anchor, in: textView), extent.scalarStart)
         XCTAssertEqual(PositionBridge.utf16OffsetToScalar(anchor + 1, in: textView), extent.scalarEnd)
@@ -350,7 +348,7 @@ final class PositionBridgeTests: XCTestCase {
             ), encoding: .utf8))
             XCTAssertTrue(textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
 
-            let mappings = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.values)
+            let mappings = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.values)
             XCTAssertEqual(mappings.filter { $0.extent == nil }.count, 1)
             let extent = try XCTUnwrap(mappings.compactMap(\.extent).first)
             let anchor = try XCTUnwrap(rootTableAnchorOffsets(in: textView).first)
@@ -369,7 +367,7 @@ final class PositionBridgeTests: XCTestCase {
         XCTAssertTrue(textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(
             rootTableDocument(before: "before", cellTexts: ["left", "right"], after: "after")
         ))))
-        let extent = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.values.first?.extent)
+        let extent = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.values.first?.extent)
 
         func updateSelecting(_ scalar: UInt32, type: String = "text") throws -> String {
             var update = try XCTUnwrap(
@@ -489,51 +487,12 @@ final class PositionBridgeTests: XCTestCase {
         var update = try XCTUnwrap(
             JSONSerialization.jsonObject(with: updateJSON.data(using: .utf8)!) as? [String: Any]
         )
-        let originalMapping = try XCTUnwrap(update["tableInputMappings"] as? [String: Any])
-        var mapping = originalMapping
-        mapping["tables"] = [:]
-        update["tableInputMappings"] = mapping
+        update["documentVersion"] = String(adapter.baseDocumentRevision + 1)
         let malformed = try XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: update), encoding: .utf8))
-
         XCTAssertFalse(textView.applyUpdateJSON(malformed))
         XCTAssertEqual(textView.text, originalText)
         XCTAssertEqual(rootTableAnchorOffsets(in: textView), originalAnchors)
-
-        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
-        for invalidExtent: [String: Any] in [
-            [:],
-            ["scalarStart": 9, "scalarEnd": 8]
-        ] {
-            var invalidUpdate = update
-            var invalidMapping = originalMapping
-            var tables = try XCTUnwrap(invalidMapping["tables"] as? [String: Any])
-            var table = try XCTUnwrap(tables[tableID] as? [String: Any])
-            table["extent"] = invalidExtent
-            tables[tableID] = table
-            invalidMapping["tables"] = tables
-            invalidUpdate["tableInputMappings"] = invalidMapping
-            let invalidJSON = try XCTUnwrap(String(
-                data: JSONSerialization.data(withJSONObject: invalidUpdate),
-                encoding: .utf8
-            ))
-            XCTAssertFalse(textView.applyUpdateJSON(invalidJSON))
-            XCTAssertEqual(textView.text, originalText)
-            XCTAssertEqual(rootTableAnchorOffsets(in: textView), originalAnchors)
-        }
-
-        var nullExtentUpdate = update
-        var nullExtentMapping = originalMapping
-        var tables = try XCTUnwrap(nullExtentMapping["tables"] as? [String: Any])
-        var table = try XCTUnwrap(tables[tableID] as? [String: Any])
-        table["extent"] = NSNull()
-        tables[tableID] = table
-        nullExtentMapping["tables"] = tables
-        nullExtentUpdate["tableInputMappings"] = nullExtentMapping
-        let nullExtentJSON = try XCTUnwrap(String(
-            data: JSONSerialization.data(withJSONObject: nullExtentUpdate), encoding: .utf8
-        ))
-        XCTAssertFalse(textView.applyUpdateJSON(nullExtentJSON))
-        XCTAssertEqual(textView.text, originalText)
+        XCTAssertTrue(textView.applyUpdateJSON(updateJSON))
         XCTAssertEqual(rootTableAnchorOffsets(in: textView), originalAnchors)
     }
 

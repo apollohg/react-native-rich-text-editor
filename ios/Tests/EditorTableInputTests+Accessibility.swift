@@ -271,7 +271,7 @@ extension EditorTableInputTests {
             let blocks = try XCTUnwrap(try fixture.documentObject()["content"] as? [[String: Any]])
             XCTAssertEqual(blocks.map { $0["type"] as? String }, ["paragraph", "table", "paragraph"])
             XCTAssertEqual(try rowCount(fixture), 1, "the neighbouring table survives")
-            XCTAssertEqual(fixture.adapter.cachedTableRecords.count, 1)
+            XCTAssertEqual(fixture.adapter.tableRecordsForTesting.count, 1)
             XCTAssertEqual(fixture.updates.updates.count, 1)
             XCTAssertEqual(fixture.adapter.baseDocumentRevision, revision + 1)
             XCTAssertTrue(fixture.view.textView.applyUpdateJSON(try XCTUnwrap(fixture.adapter.undo())))

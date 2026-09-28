@@ -248,6 +248,12 @@ struct ViewerStyleAncestor: Hashable {
 
 struct ViewerBlock: Hashable {
     let table: FfiViewerTable?
+    let frameTable: FfiTableRecord?
+    var tableKey: String? { frameTable?.tableKey ?? table.map { "t\($0.tablePos)" } }
+    var tableSurfaceSource: TableSurfaceSource? {
+        if let frameTable { return TableSurfaceSource(frameRecord: frameTable) }
+        return table.map(TableSurfaceSource.init(viewerTable:))
+    }
     let styleAncestors: [ViewerStyleAncestor]
     let language: String?
     let isBlockAtom: Bool
@@ -274,8 +280,10 @@ struct ViewerBlock: Hashable {
         isBlockAtom: Bool = false,
         styleAncestors: [ViewerStyleAncestor] = [],
         language: String? = nil,
-        table: FfiViewerTable? = nil
+        table: FfiViewerTable? = nil,
+        frameTable: FfiTableRecord? = nil
     ) {
+        self.frameTable = frameTable
         self.table = table
         self.language = language
         self.styleAncestors = styleAncestors
@@ -305,7 +313,8 @@ struct ViewerBlock: Hashable {
             isBlockAtom: isBlockAtom,
             styleAncestors: styleAncestors,
             language: language,
-            table: table
+            table: table,
+            frameTable: frameTable
         )
     }
 }
@@ -316,6 +325,7 @@ struct ViewerBlock: Hashable {
 struct ViewerDocument {
     let tableAttributes: [String: [String: Any]]
     let tableRecords: [String: FfiViewerTable]
+    let frameIndex: EditorTableIndex?
     let tableSourceIDs: [String: String]
     let semanticKey: String
     let blocks: [ViewerBlock]
@@ -340,6 +350,7 @@ struct ViewerDocument {
     init(semanticKey: String, paragraphs: [ViewerParagraph], isEmpty: Bool, retainedBytes: Int) {
         tableAttributes = [:]
         tableRecords = [:]
+        frameIndex = nil
         tableSourceIDs = [:]
         self.semanticKey = semanticKey
         blocks = paragraphs.map {
@@ -368,9 +379,11 @@ struct ViewerDocument {
         preparedTheme: PreparedProseTheme? = nil,
         tableAttributes: [String: [String: Any]] = [:],
         tableRecords: [String: FfiViewerTable] = [:],
+        frameIndex: EditorTableIndex? = nil,
         tableSourceIDs: [String: String] = [:],
         preferredTextBlockName: String = "paragraph"
     ) {
+        self.frameIndex = frameIndex
         self.tableAttributes = tableAttributes
         self.tableRecords = tableRecords
         self.tableSourceIDs = tableSourceIDs
@@ -384,6 +397,7 @@ struct ViewerDocument {
     }
 
     init(compiled: ViewerCompiledDocument) throws {
+        frameIndex = nil
         let elements = compiled.elements()
         var tableRecords: [String: FfiViewerTable] = [:]
         for record in compiled.tableRecords() {
@@ -419,8 +433,16 @@ struct ViewerDocument {
         _ elements: [FfiViewerElement],
         preferredTextBlockName: String,
         tableRecords: [String: FfiViewerTable],
+        frameIndex: EditorTableIndex? = nil,
+        atomDocOffset: UInt32 = 0,
         isEmpty: Bool
     ) throws -> [ViewerBlock] {
+        func atomPosition(_ relative: UInt32) throws -> UInt32 {
+            guard let position = UInt32(exactly: UInt64(atomDocOffset) + UInt64(relative)) else {
+                throw ProseViewerError.hostContract(message: "The table atom position exceeds the document coordinate range.")
+            }
+            return position
+        }
         struct Builder {
             let language: String?
             let styleIdentity: Int
@@ -444,7 +466,8 @@ struct ViewerDocument {
             nodeType: String,
             inlines: [ViewerInline],
             isBlockAtom: Bool,
-            table: FfiViewerTable? = nil
+            table: FfiViewerTable? = nil,
+            frameTable: FfiTableRecord? = nil
         ) {
             let listContext = stack.reversed().compactMap(\.listContext).first
             let listItemIdentity = stack.reversed().compactMap(\.listItemIdentity).first
@@ -472,7 +495,8 @@ struct ViewerDocument {
                     values.append(ViewerStyleAncestor(identity: builder.styleIdentity, nodeType: builder.nodeType))
                     return values
                 },
-                table: table
+                table: table,
+                frameTable: frameTable
             ))
             if let listItemIdentity {
                 renderableLeavesByListItem[listItemIdentity, default: []].append(rendered.count - 1)
@@ -481,10 +505,12 @@ struct ViewerDocument {
         for element in elements {
             switch element {
             case let .table(tableId):
-                guard let table = tableRecords[tableId] else {
+                let table = tableRecords[tableId]
+                let frameTable = frameIndex?.record(tableKey: tableId)
+                guard table != nil || frameTable != nil else {
                     throw ProseViewerError.hostContract(message: "The compiler returned a dangling semantic table reference.")
                 }
-                appendRenderableLeaf(nodeType: "table", inlines: [], isBlockAtom: true, table: table)
+                appendRenderableLeaf(nodeType: "table", inlines: [], isBlockAtom: true, table: table, frameTable: frameTable)
             case let .blockStart(nodeType: nodeType, language: language, depth: depth, listContextJson: listContextJSON):
                 let listContext = Self.listContext(from: listContextJSON)
                 let parentIdentity = stack.last?.styleIdentity ?? -1
@@ -520,12 +546,12 @@ struct ViewerDocument {
             case let .inlineAtom(nodeType: nodeType, docPos: docPos, attrsJson: attrsJson, label: label):
                 guard !stack.isEmpty else { continue }
                 stack[stack.count - 1].inlines.append(
-                    .atom(nodeType: nodeType, docPos: docPos, attrsJSON: attrsJson, label: label)
+                    .atom(nodeType: nodeType, docPos: try atomPosition(docPos), attrsJSON: attrsJson, label: label)
                 )
             case let .blockAtom(nodeType: nodeType, docPos: docPos, attrsJson: attrsJson, label: label):
                 appendRenderableLeaf(
                     nodeType: nodeType,
-                    inlines: [.atom(nodeType: nodeType, docPos: docPos, attrsJSON: attrsJson, label: label)],
+                    inlines: [.atom(nodeType: nodeType, docPos: try atomPosition(docPos), attrsJSON: attrsJson, label: label)],
                     isBlockAtom: true
                 )
             case .blockEnd:
@@ -639,18 +665,27 @@ struct ViewerDocument {
     }
 
     func cellDocument(for cell: TableSurfaceCell, in tableID: String) throws -> ViewerDocument {
-        ViewerDocument(
+        let atomDocOffset: UInt32 = try frameIndex.map { index in
+            guard let position = index.docStart(tableKey: tableID, cellIndex: cell.sourceIndex) else {
+                throw ProseViewerError.hostContract(message: "The table cell is missing from the installed frame.")
+            }
+            return position
+        } ?? 0
+        return ViewerDocument(
             semanticKey: "\(semanticKey):\(tableID):\(cell.sourceIndex):\(cell.contentKey)",
             blocks: try Self.lowerElements(
                 cell.elements,
                 preferredTextBlockName: preferredTextBlockName,
                 tableRecords: tableRecords,
+                frameIndex: frameIndex,
+                atomDocOffset: atomDocOffset,
                 isEmpty: cell.elements.isEmpty
             ),
             isEmpty: cell.elements.isEmpty,
             retainedBytes: 0,
             tableAttributes: tableAttributes,
             tableRecords: tableRecords,
+            frameIndex: frameIndex,
             tableSourceIDs: tableSourceIDs,
             preferredTextBlockName: preferredTextBlockName
         )
@@ -666,6 +701,7 @@ struct ViewerDocument {
             preparedTheme: theme,
             tableAttributes: tableAttributes,
             tableRecords: tableRecords,
+            frameIndex: frameIndex,
             tableSourceIDs: tableSourceIDs,
             preferredTextBlockName: preferredTextBlockName
         )

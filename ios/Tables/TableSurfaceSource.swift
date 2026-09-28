@@ -42,4 +42,22 @@ struct TableSurfaceSource {
         failure = viewerTable.failure
         compatibilityDiagnostic = viewerTable.compatibilityDiagnostic
     }
+    init(frameRecord: FfiTableRecord) {
+        rows = Int(frameRecord.rows)
+        columns = Int(frameRecord.columns)
+        columnWidths = frameRecord.columnWidths.map { $0.map(CGFloat.init) }
+        direction = frameRecord.direction
+        irregular = frameRecord.irregular
+        readOnlyDescendants = frameRecord.readOnlyDescendants
+        attrsKey = frameRecord.attrsKey
+        cells = frameRecord.cells.enumerated().map { index, cell in
+            TableSurfaceCell(sourceIndex: index, row: Int(cell.row), column: Int(cell.column),
+                             rowspan: Int(cell.rowspan), colspan: Int(cell.colspan), header: cell.header,
+                             attrsKey: cell.attrsKey, contentKey: cell.contentKey, elements: cell.elements)
+        }
+        syntheticRegions = frameRecord.syntheticRegions
+        failure = frameRecord.failure
+        compatibilityDiagnostic = frameRecord.compatibilityDiagnostic
+    }
+
 }

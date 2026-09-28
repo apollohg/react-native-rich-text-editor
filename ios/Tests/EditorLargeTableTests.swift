@@ -153,6 +153,40 @@ final class EditorLargeTableTests: XCTestCase {
         }
     }
 
+    func testFramePositionsMatchEngineForTwentyThousandCellsAndMultipleParagraphs() throws {
+        let size = Self.twentyThousandSlotTables[0]
+        let multiParagraph = TableInputTestSchema.twoCellDocument.replacingOccurrences(
+            of: #""text":"one"}]}"#,
+            with: #""text":"one"}]},{"type":"paragraph"},{"type":"paragraph","content":[{"type":"text","text":"😀two"}]}"#
+        )
+        for document in [try plainTableDocument(rows: size.rows, columns: size.columns), multiParagraph] {
+            let editorId = makeV2Editor(configJson: TableInputTestSchema.tableConfig)
+            defer { destroyV2Editor(id: editorId) }
+            let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+            XCTAssertNotNil(adapter.setContentJson(document))
+            let revision = adapter.baseDocumentRevision
+            for key in adapter.tableIndex.tableKeys {
+                let record = try XCTUnwrap(adapter.tableIndex.record(tableKey: key))
+                for (cellIndex, cell) in record.cells.enumerated() {
+                    let docStart = try XCTUnwrap(adapter.tableIndex.docStart(tableKey: key, cellIndex: cellIndex))
+                    let scalarStart = try XCTUnwrap(adapter.tableIndex.scalarStart(tableKey: key, cellIndex: cellIndex))
+                    for block in cell.inputBlocks {
+                        let doc = docStart + block.docStart
+                        let scalar = scalarStart + block.contentScalarStart
+                        let canonicalScalar = scalarStart + (block.docStart == block.docEnd ? block.scalarEnd : block.contentScalarStart)
+                        XCTAssertEqual(adapter.scalarPosition(forDoc: doc), canonicalScalar, "cell \(cellIndex) doc \(doc)")
+                        let result = editorV2ScalarToDoc(editorId: adapter.editorId, scalar: scalar)
+                        XCTAssertNil(result.error)
+                        let json = try XCTUnwrap(result.value)
+                        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+                        XCTAssertEqual(try XCTUnwrap(EditorV2Adapter.uint32Field(object, "doc")), doc, "cell \(cellIndex) scalar \(scalar)")
+                    }
+                }
+            }
+            XCTAssertEqual(adapter.installedFrameRevision, revision)
+        }
+    }
+
     func testTypingInOneCellPreparesOnlyThatCell() throws {
         let editorId = makeV2Editor(configJson: TableInputTestSchema.tableConfig)
         defer { destroyV2Editor(id: editorId) }
@@ -175,11 +209,16 @@ final class EditorLargeTableTests: XCTestCase {
         var prepared: [Int] = []
         surface.onTableCellPreparedForTesting = { prepared.append($0) }
 
+        let fullBefore = adapter.fullFrameAdoptionCountForTesting
+        let deltaBefore = adapter.deltaFrameAdoptionCountForTesting
         input.insertText(EditedTable.typed)
         view.layoutIfNeeded()
 
         let editedText = try adapter.tableCellTexts().joined().filter { $0.contains(EditedTable.typed) }
         print("typing into cell \(edited.cellIndex) prepared cells \(prepared) of \(EditedTable.rows * EditedTable.columns)")
+        XCTAssertEqual(adapter.fullFrameAdoptionCountForTesting, fullBefore)
+        XCTAssertEqual(adapter.deltaFrameAdoptionCountForTesting, deltaBefore + 1)
+        XCTAssertEqual(adapter.cachedTablePresentation?.changes.changedCells[edited.tableID], IndexSet(integer: Int(edited.cellIndex)))
         XCTAssertEqual(editedText.count, 1, "the keystroke lands in exactly one cell")
         XCTAssertEqual(prepared.count, 1, "only the edited cell is measured again: \(prepared)")
     }

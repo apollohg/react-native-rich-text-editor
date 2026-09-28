@@ -2,7 +2,8 @@ import Foundation
 
 struct TableCellPositionMap {
     struct Binding: Equatable {
-        let cellSourcePosition: UInt32
+        let tableKey: String
+        let cellIndex: UInt32
         let documentRevision: UInt64
         let positionEpoch: UInt64
     }

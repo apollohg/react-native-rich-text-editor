@@ -158,7 +158,7 @@ extension EditorTableInputTests {
 
     func testNestedReadOnlyCellsCopyButNeverReachThePlannerForCutOrPaste() throws {
         try withClipboardTable(TableClipboard.nestedDocument) { fixture in
-            let nested = try XCTUnwrap(fixture.adapter.cachedTableRecords.values.first {
+            let nested = try XCTUnwrap(fixture.adapter.tableRecordsForTesting.values.first {
                 $0["readOnlyDescendants"] as? Bool == true
             })
             let cell = try XCTUnwrap((nested["cells"] as? [[String: Any]])?.first)

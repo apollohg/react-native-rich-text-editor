@@ -282,14 +282,12 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         guard editorId != 0,
               let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
               hasTableCellBindingAuthority(adapter),
-              let mappings = adapter.cachedTableInputMappings,
-              let mapping = mappings.tables[tableID],
-              let table = adapter.cachedTableRecords[tableID],
+              let table = adapter.tableIndex.record(tableKey: tableID),
               let epoch = adapter.positionEpoch,
               let projection = EditorTableInputCoordinator.projection(
                 cellIndex: cellIndex,
-                table: table,
-                mapping: mapping,
+                tableKey: tableID,
+                index: adapter.tableIndex,
                 documentRevision: adapter.baseDocumentRevision,
                 positionEpoch: epoch,
                 baseFont: textView.baseFont,
@@ -299,7 +297,7 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
               )
         else { return false }
         let nestedHeights = tableSurface.nestedTableHeights(tableID: tableID, cellIndex: cellIndex) ?? [:]
-        guard mapping.cells[Int(cellIndex)].excluded.allSatisfy({ nestedHeights[$0.tableID] != nil }) else {
+        guard table.cells[Int(cellIndex)].nestedTables.allSatisfy({ nestedHeights[$0.tableKey] != nil }) else {
             return false
         }
         if let selection, !selectionFitsTableCell(selection, map: projection.positionMap) {
@@ -365,12 +363,9 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
               let oldMap = tableInputCoordinator.positionMap,
               oldMap.binding.documentRevision == adapter.baseDocumentRevision,
               let epoch = adapter.positionEpoch,
-              let mapping = adapter.cachedTableInputMappings?.tables[tableID],
-              let table = adapter.cachedTableRecords[tableID],
-              Int(cellIndex) < mapping.cells.count,
-              mapping.cells[Int(cellIndex)].sourcePos == oldMap.binding.cellSourcePosition,
+              oldMap.binding.tableKey == tableID, oldMap.binding.cellIndex == cellIndex,
               let projection = EditorTableInputCoordinator.projection(
-                cellIndex: cellIndex, table: table, mapping: mapping,
+                cellIndex: cellIndex, tableKey: tableID, index: adapter.tableIndex,
                 documentRevision: adapter.baseDocumentRevision, positionEpoch: epoch,
                 baseFont: textView.baseFont, textColor: textView.baseTextColor,
                 theme: textView.theme, atomConfiguration: textView.atomRenderConfiguration
@@ -662,7 +657,7 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
             return
         }
         guard let cellIndex = tableInputCoordinator.activeCellIndex,
-              let boundSourcePos = tableInputCoordinator.positionMap?.binding.cellSourcePosition,
+              let binding = tableInputCoordinator.positionMap?.binding,
               let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
               let selection
         else {
@@ -672,9 +667,8 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         let frame = tableSurface.convert(tableInputCoordinator.cellInput.bounds,
                                          from: tableInputCoordinator.cellInput)
         guard isApplyingActiveTableCellUpdate,
-              let cells = adapter.cachedTableInputMappings?.tables[tableID]?.cells,
-              Int(cellIndex) < cells.count,
-              cells[Int(cellIndex)].sourcePos == boundSourcePos,
+              binding.tableKey == tableID, binding.cellIndex == cellIndex,
+              adapter.cachedTablePresentation?.changes.replacedTables.contains(tableID) != true,
               bindTableCell(tableID: tableID, cellIndex: cellIndex, contentRect: frame, selection: selection)
         else {
             moveActiveTableCell(to: selection, adapter: adapter, fallback: frame)
@@ -704,7 +698,7 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
               editorId != 0,
               let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
               hasTableCellBindingAuthority(adapter),
-              adapter.cachedTableInputMappings?.tables.isEmpty == false,
+              !adapter.tableIndex.tableKeys.isEmpty,
               let data = updateJSON.data(using: .utf8),
               let update = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let selection = update["selection"] as? [String: Any]
@@ -715,23 +709,15 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
     private func bindTableCell(holding selection: [String: Any], adapter: EditorV2Adapter,
                                fallback: CGRect, focus: Bool) -> Bool {
         guard let range = selectionScalarRange(selection),
-              let tables = adapter.cachedTableInputMappings?.tables
-        else { return false }
+              let tableID = adapter.tableIndex.tableKey(containingScalar: range.start),
+              let index = adapter.tableIndex.cellIndex(tableKey: tableID, containingScalar: range.start),
+              let cellIndex = UInt32(exactly: index) else { return false }
+        let contentRect = tableSurface.cellFrame(tableID: tableID, cellIndex: cellIndex) ?? fallback
+        guard bindTableCell(tableID: tableID, cellIndex: cellIndex, contentRect: contentRect, selection: selection) else { return false }
         let cellInput = tableInputCoordinator.cellInput
-        for (tableID, table) in tables {
-            for cell in table.cells where cell.blocks.contains(where: {
-                range.start >= $0.scalarStart && range.start <= $0.breakScalarEnd
-            }) {
-                let contentRect = tableSurface.cellFrame(tableID: tableID, cellIndex: cell.cellIndex) ?? fallback
-                guard bindTableCell(tableID: tableID, cellIndex: cell.cellIndex,
-                                    contentRect: contentRect, selection: selection)
-                else { continue }
-                _ = cellInput.applySelectionFromJSON(selection)
-                if focus { _ = cellInput.becomeFirstResponder() }
-                return true
-            }
-        }
-        return false
+        _ = cellInput.applySelectionFromJSON(selection)
+        if focus { _ = cellInput.becomeFirstResponder() }
+        return true
     }
 
     // MARK: - Initialization
@@ -1349,7 +1335,7 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         }
         let selectionValue = adapter.cachedAtomicRenderSelection()
         let selection = selectionValue.flatMap {
-            EditorCellSelection.resolve($0, records: adapter.cachedTableRecords)
+            EditorCellSelection.resolve($0, index: adapter.tableIndex)
         }
         tableSurface.present(
             presentation, selection: selection,

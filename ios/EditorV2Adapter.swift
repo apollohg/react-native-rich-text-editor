@@ -79,9 +79,11 @@ final class EditorV2Adapter {
     var cachedAtomicRenderSelectionObject: [String: Any]?
     var cachedAtomicRenderDocumentRevision: UInt64?
     var cachedSemanticRenderBlocks: [[[String: Any]]]?
-    var cachedTableAttributes: [String: [String: Any]] = [:]
-    var cachedTableRecords: [String: [String: Any]] = [:]
-    var cachedTableInputMappings: TableInputMappings?
+    var tableIndex = EditorTableIndex()
+    var installedFrameRevision: UInt64?
+    var fullFrameAdoptionCountForTesting = 0
+    var deltaFrameAdoptionCountForTesting = 0
+    var transformNativeFrameForTesting: ((FfiNativeRenderFrame) -> FfiNativeRenderFrame)?
     var cachedTablePresentation: EditorTablePresentationSnapshot?
     var tableResetGeneration: UInt64 = 0
     /// Diagnostics: structured notes for adapter-path failures
@@ -95,6 +97,7 @@ final class EditorV2Adapter {
     private var lifecycleState = LifecycleState.active
     var destroyed = false
 
+    static let revisionMismatchCode = "REVISION_MISMATCH"
     static let nativeOwnerLock = NSLock()
     static var nextNativeOwnerId: UInt64 = 0
 
@@ -271,6 +274,12 @@ final class EditorV2Adapter {
                 error: contractError("v2 destroy result violates the frozen unit-result shape")
             )
         }
+        if destroyed {
+            tableIndex = EditorTableIndex()
+            installedFrameRevision = nil
+            cachedTablePresentation = nil
+            cachedSemanticRenderBlocks = nil
+        }
         runtimeLock.unlock()
         return normalized
     }
@@ -371,13 +380,8 @@ final class EditorV2Adapter {
             "selection": selection,
             "activeState": cachedActiveState ?? NSNull(),
             "historyState": history,
-            "tableAttributes": cachedTableAttributes,
-            "tableRecords": cachedTableRecords,
-            "tableInputMappings": cachedTableInputMappings.map { mappings in
-                mappings.tables.mapValues { table in
-                    ["cellCount": table.cells.count]
-                }
-            } ?? NSNull(),
+            "tableKeys": tableIndex.tableKeys.sorted(),
+            "installedFrameRevision": installedFrameRevision.map(String.init) ?? NSNull(),
             "semanticRenderBlocks": cachedSemanticRenderBlocks ?? NSNull(),
             "viewUpdateJSON": cachedViewUpdateJSON ?? NSNull()
         ]

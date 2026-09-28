@@ -271,7 +271,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         }
         drawingView.tableAccessibilityEditing = self
         drawingView.tableDocumentPosition = { [weak self] tableID in
-            self?.latestPresentation?.tableRecords[tableID]?.tablePos
+            self?.latestPresentation?.index.tableDocStart(tableKey: tableID)
         }
         drawingView.tableCellDocumentPosition = { [weak self] tableID, sourceIndex in
             self?.cellDocumentPosition(tableID: tableID, sourceIndex: sourceIndex)
@@ -279,9 +279,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     }
 
     func cellDocumentPosition(tableID: String, sourceIndex: Int) -> UInt32? {
-        guard let cells = latestPresentation?.tableRecords[tableID]?.cells,
-              cells.indices.contains(sourceIndex) else { return nil }
-        return cells[sourceIndex].sourcePos
+        latestPresentation?.index.docStart(tableKey: tableID, cellIndex: sourceIndex)
     }
 
     override var accessibilityElements: [Any]? {
@@ -468,7 +466,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
               let presentation = latestPresentation,
               let layoutEpoch = presentation.positionEpoch,
               let anchor = toolbarAnchorCells(),
-              let tablePos = presentation.tableRecords[anchor.tableID]?.tablePos,
+              let tablePos = presentation.index.tableDocStart(tableKey: anchor.tableID),
               let visible = drawingView.tableSelectionViewport(),
               let rects = clipped(drawingView.tableCellRects(tableID: anchor.tableID,
                                                              sourceIndices: anchor.sourceIndices),
@@ -1217,7 +1215,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         theme.tableDirection = hostTableDirection
         let appearanceDigest = "editor-table-\(appearanceRevision)-\(textView.renderAppearanceRevision)"
         return tableIDs.reduce(into: [:]) { entries, tableID in
-            guard var table = presentation.tableRecords[tableID] else { return }
+            guard var table = presentation.index.record(tableKey: tableID) else { return }
             var themeDigest = appearanceDigest
             if let preview = resizePreview, preview.edge.tableID == tableID,
                preview.edge.column >= 0, preview.edge.column < table.columnWidths.count,
@@ -1234,14 +1232,13 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
                     listContext: nil,
                     listItemBoundary: nil,
                     inlines: [],
-                    table: table
+                    frameTable: table
                 )],
                 isEmpty: false,
                 retainedBytes: 256,
                 preparedTheme: theme,
-                tableAttributes: presentation.tableAttributes,
-                tableRecords: presentation.tableRecords,
-                tableSourceIDs: presentation.tableSourceIDs
+                tableAttributes: presentation.index.attributeObjects,
+                frameIndex: presentation.index
             )
             guard let widthPixels = ProseLayoutMetrics.widthPixels(widthPoints: width, scale: displayScale) else { return }
             var reusable = ReusableCellContents(self.entries[tableID], themeDigest: themeDigest)
@@ -1492,25 +1489,21 @@ extension EditorTableSurface: TableAccessibilityEditing {
     }
 
     private func unanchoredTableIDs() -> Set<String> {
-        guard let host = interactionHost, host.editorId != 0,
-              let mappings = EditorV2Registry.adapter(forLegacyId: host.editorId)?.cachedTableInputMappings?.tables
-        else { return [] }
-        return Set(mappings.filter { $0.value.extent == nil }.keys)
+        guard let presentation = latestPresentation else { return [] }
+        return Set(presentation.index.rootExtents.filter { $0.value.scalarStart == $0.value.scalarEnd }.keys)
     }
 
     func detachedTableAccessibilityFrames() -> [TableAccessibilityDetachedFrame] {
         guard let presentation = latestPresentation else { return [] }
-        let unanchored = unanchoredTableIDs()
-        return presentation.tableRecords
-            .filter { !$0.value.readOnlyDescendants && unanchored.contains($0.key) }
-            .map { tableID, record in
-                let unfilled = record.failure == nil && (record.rows == 0 || record.columns == 0)
-                let tablePos = record.tablePos
-                return TableAccessibilityDetachedFrame(
-                    tableID: tableID, tablePos: tablePos, frame: unfilled ? .empty : .failed,
-                    screenFrame: { [weak self] in self?.detachedFrameScreenRect(tablePos: tablePos) ?? .zero }
-                )
-            }
+        return unanchoredTableIDs().compactMap { tableID in
+            guard let record = presentation.index.record(tableKey: tableID),
+                  let tablePos = presentation.index.tableDocStart(tableKey: tableID) else { return nil }
+            let unfilled = record.failure == nil && (record.rows == 0 || record.columns == 0)
+            return TableAccessibilityDetachedFrame(
+                tableID: tableID, tablePos: tablePos, frame: unfilled ? .empty : .failed,
+                screenFrame: { [weak self] in self?.detachedFrameScreenRect(tablePos: tablePos) ?? .zero }
+            )
+        }
     }
 
     private func detachedFrameScreenRect(tablePos: UInt32) -> CGRect {

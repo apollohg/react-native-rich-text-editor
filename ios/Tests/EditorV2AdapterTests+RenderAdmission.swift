@@ -19,496 +19,139 @@ extension EditorV2AdapterTests {
         XCTAssertTrue(adapter.isAutonomousErrorOwner(token: secondOwner))
     }
 
-    func testTablePresentationSnapshotLowersAdoptedRenderAndClearsAtomically() throws {
-        let adapter = makeAdapter()
+    func testDestroyReleasesTheRetainedFrameIndex() throws {
+        let adapter = makeAdapter(configJson: TableInputTestSchema.tableConfig)
+        XCTAssertNotNil(adapter.setContentJson(TableInputTestSchema.twoCellDocument))
+        XCTAssertFalse(adapter.tableIndex.tableKeys.isEmpty)
+        XCTAssertNil(adapter.destroy())
+        XCTAssertTrue(adapter.tableIndex.tableKeys.isEmpty)
+        XCTAssertNil(adapter.installedFrameRevision)
+        XCTAssertNil(adapter.cachedTablePresentation)
+        XCTAssertNil(adapter.cachedSemanticRenderBlocks)
+    }
+
+    func testClaimWithAStaleCachedFrameDefersToTheNextFullRefresh() throws {
+        let adapter = makeAdapter(configJson: TableInputTestSchema.tableConfig)
+        XCTAssertNotNil(adapter.setContentJson(TableInputTestSchema.twoCellDocument))
+        var oldErrors: [FfiError] = []
+        var newErrors: [FfiError] = []
+        adapter.bindAutonomousErrorOwner(token: UUID()) { oldErrors.append($0) }
+        let mutation = adapter.callWithEnvelope(["text": "X"]) { editorV2ApplyInput(editorId: adapter.editorId, requestJson: $0) }
+        XCTAssertNil(mutation.error)
+        let owner = UUID()
+        adapter.bindAutonomousErrorOwner(token: owner) { newErrors.append($0) }
+        defer { adapter.releaseNativeBindingOwner(token: owner) }
+        XCTAssertTrue(oldErrors.isEmpty)
+        XCTAssertTrue(newErrors.isEmpty)
+        let calls = adapter.renderUpdateCallCountForTesting
+        XCTAssertNotNil(adapter.initialUpdateJSON())
+        XCTAssertEqual(adapter.renderUpdateCallCountForTesting, calls + 1)
+        XCTAssertTrue(oldErrors.isEmpty)
+        XCTAssertTrue(newErrors.isEmpty)
+    }
+
+    func testMatchingExternalResetAdoptsTheSingleFetchedFrame() throws {
+        let adapter = makeAdapter(configJson: TableInputTestSchema.tableConfig)
+        XCTAssertNotNil(adapter.setContentJson(TableInputTestSchema.twoCellDocument))
         let owner = UUID()
         adapter.claimNativeBindingIfUnowned(token: owner)
-        let valid = mutatedObjectJSON(try tableInputMappingSnapshot()) { $0["positionEpoch"] = "17" }
-
-        XCTAssertNotNil(adapter.adoptExternalRender(valid))
-        for sourceId in [nil, "", "t0", "y01-2", "y1-02", "y18446744073709551616-2", "y1-4294967296", "y1-2\n", "y1-2\r", "y١-2"] as [String?] {
-            let invalid = mutatedObjectJSON(valid) { object in
-                var records = object["tableRecords"] as! [String: Any]
-                var record = records["t0"] as! [String: Any]
-                record["sourceId"] = sourceId
-                records["t0"] = record
-                object["tableRecords"] = records
-            }
-            XCTAssertNil(adapter.adoptExternalRender(invalid), String(describing: sourceId))
-        }
-        let maxIdentity = mutatedObjectJSON(valid) { object in
-            var records = object["tableRecords"] as! [String: Any]
-            var record = records["t0"] as! [String: Any]
-            record["sourceId"] = "y18446744073709551615-4294967295"
-            records["t0"] = record
-            object["tableRecords"] = records
-        }
-        XCTAssertNotNil(EditorV2Adapter.parseAtomicRenderSnapshot(maxIdentity))
-        let presentation = try XCTUnwrap(adapter.cachedTablePresentation)
-        XCTAssertEqual(presentation.documentRevision, 1)
-        XCTAssertEqual(presentation.positionEpoch, 17)
-        XCTAssertEqual(presentation.tableInputMappings?.tables["t0"]?.cells.count, 1)
-        XCTAssertEqual(presentation.tableAttributes.count, 1)
-        let cell = try XCTUnwrap(presentation.tableRecords["t0"]?.cells.first)
-        guard case let .textRun(text, _) = cell.elements[1] else {
-            return XCTFail("expected typed table cell text")
-        }
-        XCTAssertEqual(text, "base")
-
-        let replacement = mutatedObjectJSON(valid) { object in
-            object.removeValue(forKey: "tableAttributes")
-            object.removeValue(forKey: "tableRecords")
-            object.removeValue(forKey: "tableInputMappings")
-            object["renderBlocks"] = [[
-                ["type": "blockStart", "nodeType": "paragraph", "depth": 0],
-                ["type": "textRun", "text": "replacement", "marks": []],
-                ["type": "blockEnd"]
-            ]]
-            object["documentVersion"] = "2"
-            object["stateRevision"] = "2"
-            object["positionEpoch"] = "18"
-        }
-        XCTAssertNotNil(adapter.adoptExternalRender(replacement))
-        XCTAssertNil(adapter.cachedTablePresentation)
-        XCTAssertTrue(adapter.cachedTableAttributes.isEmpty)
-        XCTAssertTrue(adapter.cachedTableRecords.isEmpty)
-        XCTAssertNil(adapter.cachedTableInputMappings)
-
-        XCTAssertNotNil(adapter.adoptExternalRender(valid))
-        let baseline = adapter.cacheStateForTesting
-        let baselinePresentation = try XCTUnwrap(adapter.cachedTablePresentation)
-        let stale = mutatedObjectJSON(valid) {
-            $0.removeValue(forKey: "positionEpoch")
-            $0["documentVersion"] = "999"
-        }
-        XCTAssertNil(adapter.adoptExternalRender(stale))
-        XCTAssertEqual(adapter.cacheStateForTesting, baseline)
-        XCTAssertEqual(adapter.cachedTablePresentation?.documentRevision, baselinePresentation.documentRevision)
-        XCTAssertEqual(adapter.cachedTablePresentation?.positionEpoch, baselinePresentation.positionEpoch)
-
-        let malformed = mutatedObjectJSON(valid) {
-            var records = $0["tableRecords"] as! [String: Any]
-            var table = records["t0"] as! [String: Any]
-            var cells = table["cells"] as! [[String: Any]]
-            cells[0]["elements"] = [["type": "textRun", "text": 1, "marks": []]]
-            table["cells"] = cells
-            records["t0"] = table
-            $0["tableRecords"] = records
-        }
-        XCTAssertNil(adapter.adoptExternalRender(malformed))
-        XCTAssertEqual(adapter.cacheStateForTesting, baseline)
-        XCTAssertEqual(adapter.cachedTablePresentation?.tableRecords["t0"]?.cells.first?.elements, baselinePresentation.tableRecords["t0"]?.cells.first?.elements)
-
-        let matchingAdapter = makeAdapter()
-        let matchingSnapshot = try tableInputMappingSnapshot(for: matchingAdapter)
-        matchingAdapter.claimNativeBindingIfUnowned(token: UUID())
-        let revision = try XCTUnwrap(EditorV2Adapter.parseAtomicRenderSnapshot(matchingSnapshot)).documentRevision
-        XCTAssertTrue(matchingAdapter.pinCurrentPositionEpoch(revision))
-        matchingAdapter.positionEpoch = try XCTUnwrap(matchingAdapter.positionEpoch) + 1_000
-        let baselineEpoch = matchingAdapter.positionEpoch
-        let lowerInvalid = mutatedObjectJSON(matchingSnapshot) { object in
-            object.removeValue(forKey: "positionEpoch")
-            var records = object["tableRecords"] as! [String: Any]
-            var table = records["t0"] as! [String: Any]
-            var cells = table["cells"] as! [[String: Any]]
-            var elements = cells[0]["elements"] as! [[String: Any]]
-            elements[0]["depth"] = 65_536
-            cells[0]["elements"] = elements
-            table["cells"] = cells
-            records["t0"] = table
-            object["tableRecords"] = records
-        }
-        XCTAssertNotNil(EditorV2Adapter.parseAtomicRenderSnapshot(lowerInvalid))
-        XCTAssertNil(matchingAdapter.adoptExternalRender(lowerInvalid))
-        XCTAssertEqual(matchingAdapter.positionEpoch, baselineEpoch)
-        XCTAssertNil(matchingAdapter.cachedTablePresentation)
-        let beforePreflight = matchingAdapter.cacheStateForTesting
-        XCTAssertFalse(matchingAdapter.validateExternalRender(lowerInvalid))
-        XCTAssertEqual(matchingAdapter.cacheStateForTesting, beforePreflight)
-        XCTAssertEqual(matchingAdapter.positionEpoch, baselineEpoch)
-
-        let withoutEpoch = mutatedObjectJSON(matchingSnapshot) { $0.removeValue(forKey: "positionEpoch") }
-        XCTAssertNotNil(matchingAdapter.adoptExternalRender(withoutEpoch))
-        XCTAssertNotEqual(matchingAdapter.positionEpoch, baselineEpoch)
-        XCTAssertEqual(matchingAdapter.cachedTablePresentation?.positionEpoch, matchingAdapter.positionEpoch)
-
-        let withMention = mutatedObjectJSON(valid) { object in
-            var records = object["tableRecords"] as! [String: Any]
-            var table = records["t0"] as! [String: Any]
-            var cells = table["cells"] as! [[String: Any]]
-            cells[0]["elements"] = [
-                ["type": "blockStart", "nodeType": "paragraph", "depth": 0],
-                ["type": "textRun", "text": "linked", "marks": [["type": "link", "href": "https://example.com"]]],
-                ["type": "voidInline", "nodeType": "mention", "docPos": 4,
-                 "attrs": ["label": "Ada", "mentionSuggestionChar": "@"]],
-                ["type": "blockEnd"]
-            ]
-            table["cells"] = cells
-            records["t0"] = table
-            object["tableRecords"] = records
-        }
-        XCTAssertNotNil(adapter.adoptExternalRender(withMention))
-        let mentionElements = try XCTUnwrap(adapter.cachedTablePresentation?.tableRecords["t0"]?.cells.first?.elements)
-        guard case let .textRun(_, marks) = mentionElements[1],
-              case let .inlineAtom(_, _, _, label) = mentionElements[2] else {
-            return XCTFail("expected typed mention atom")
-        }
-        XCTAssertEqual(marks.first?.markType, "link")
-        let markAttrs = try XCTUnwrap(marks.first?.attrsJson.data(using: .utf8))
-        XCTAssertEqual((try JSONSerialization.jsonObject(with: markAttrs) as? [String: String])?["href"], "https://example.com")
-        XCTAssertEqual(label, "@Ada")
-
-        adapter.releaseNativeBindingOwner(token: owner)
-        XCTAssertNil(adapter.cachedTablePresentation)
+        defer { adapter.releaseNativeBindingOwner(token: owner) }
+        let reset = "{\"history\":\"resetAndClear\",\"documentRevision\":\"\(adapter.baseDocumentRevision)\",\"setJson\":\(TableInputTestSchema.twoCellDocument)}"
+        let notice = try XCTUnwrap(adapter.cachedAtomicRenderJSON)
+        let calls = adapter.renderUpdateCallCountForTesting
+        XCTAssertNotNil(adapter.adoptExternalReset(notice, resetJSON: reset))
+        XCTAssertEqual(adapter.renderUpdateCallCountForTesting, calls + 1)
     }
 
-    func testTableInputMappingIsRetainedInAtomicAndViewSnapshots() throws {
-        let adapter = makeAdapter()
-        let snapshot = try tableInputMappingSnapshot()
-
-        XCTAssertNotNil(adapter.adoptExternalRender(snapshot))
-        XCTAssertEqual(adapter.cachedTableInputMappings?.tables["t0"]?.cells.count, 1)
-        let atomic = try XCTUnwrap(adapter.atomicRenderJSON(matchingDocumentRevision: 1))
-        XCTAssertNotNil(parseObject(atomic)["tableInputMappings"])
-        XCTAssertNotNil(parseObject(try XCTUnwrap(adapter.cachedViewUpdateJSON))["tableInputMappings"])
-    }
-
-    func testTableInputMappingRejectsOrphansAndInvalidCoordinatesAtomically() throws {
-        let adapter = makeAdapter()
-        let valid = try tableInputMappingSnapshot()
-        XCTAssertNotNil(adapter.adoptExternalRender(valid))
-        let baseline = adapter.cacheStateForTesting
-
-        for mutate in [
-            { (mapping: inout [String: Any]) in mapping["tables"] = [:] },
-            { (mapping: inout [String: Any]) in
-                var tables = mapping["tables"] as! [String: Any]
-                var table = tables["t0"] as! [String: Any]
-                var cells = table["cells"] as! [[String: Any]]
-                cells[0]["sourceEnd"] = 7
-                table["cells"] = cells
-                tables["t0"] = table
-                mapping["tables"] = tables
-            },
-            { (mapping: inout [String: Any]) in
-                var tables = mapping["tables"] as! [String: Any]
-                var table = tables["t0"] as! [String: Any]
-                var cells = table["cells"] as! [[String: Any]]
-                var blocks = cells[0]["blocks"] as! [[String: Any]]
-                blocks[0]["scalarEnd"] = 5
-                cells[0]["blocks"] = blocks
-                table["cells"] = cells
-                tables["t0"] = table
-                mapping["tables"] = tables
-            },
-            { (mapping: inout [String: Any]) in
-                var tables = mapping["tables"] as! [String: Any]
-                var table = tables["t0"] as! [String: Any]
-                table["extent"] = ["scalarStart": -1, "scalarEnd": 4]
-                tables["t0"] = table
-                mapping["tables"] = tables
-            }
-        ] {
-            let malformed = mutatedObjectJSON(valid) { object in
-                var mapping = object["tableInputMappings"] as! [String: Any]
-                mutate(&mapping)
-                object["tableInputMappings"] = mapping
-            }
-            XCTAssertNil(adapter.adoptExternalRender(malformed))
-            XCTAssertEqual(adapter.cacheStateForTesting, baseline)
-        }
-    }
-
-    func testMissingTableInputMappingAndOwnerReleaseClearCachedMapping() throws {
-        let adapter = makeAdapter()
-        let snapshot = try tableInputMappingSnapshot(for: adapter)
-        XCTAssertNotNil(adapter.adoptExternalRender(snapshot))
-        XCTAssertNotNil(adapter.cachedTableInputMappings)
-
-        let legacy = mutatedObjectJSON(snapshot) { $0.removeValue(forKey: "tableInputMappings") }
-        XCTAssertNotNil(adapter.adoptExternalRender(legacy))
-        XCTAssertNil(adapter.cachedTableInputMappings)
-
+    func testStaleFrameBaseRecoversWithExactlyOneFullFrame() throws {
+        let adapter = makeAdapter(configJson: TableInputTestSchema.tableConfig)
+        XCTAssertNotNil(adapter.setContentJson(TableInputTestSchema.twoCellDocument))
         let owner = UUID()
         adapter.claimNativeBindingIfUnowned(token: owner)
-        XCTAssertTrue(adapter.isNativeBindingOwner(token: owner))
-        XCTAssertNil(adapter.cachedTableInputMappings)
-        let epoch = try XCTUnwrap(adapter.positionEpoch)
-        let native = mutatedObjectJSON(snapshot) { $0["positionEpoch"] = String(epoch) }
-        XCTAssertNotNil(adapter.adoptExternalRender(native))
-        adapter.releaseNativeBindingOwner(token: owner)
-        XCTAssertNil(adapter.cachedTableInputMappings)
+        defer { adapter.releaseNativeBindingOwner(token: owner) }
+        var observed: [FfiTableFrameKind] = []
+        adapter.transformNativeFrameForTesting = { incoming in
+            var frame = incoming
+            observed.append(frame.tables.kind)
+            if observed.count == 1 { frame.tables.baseDocumentRevision = "0" }
+            return frame
+        }
+        let before = adapter.fullFrameAdoptionCountForTesting
+        XCTAssertNotNil(adapter.initialUpdateJSON())
+        XCTAssertEqual(observed, [.delta, .full])
+        XCTAssertEqual(adapter.fullFrameAdoptionCountForTesting, before + 1)
     }
 
-    func testFailedNativeRecoveryClearsTableInputMapping() throws {
-        let adapter = makeAdapter()
-        adapter.claimNativeBindingIfUnowned(token: UUID())
-        let native = mutatedObjectJSON(try tableInputMappingSnapshot()) { $0["positionEpoch"] = "1" }
-        XCTAssertNotNil(adapter.adoptExternalRender(native))
-        XCTAssertNotNil(adapter.cachedTableInputMappings)
-        XCTAssertNil(editorV2Destroy(editorId: adapter.editorId).error)
-
-        XCTAssertNil(adapter.recoverNativeRender())
-        XCTAssertNil(adapter.cachedTableInputMappings)
+    func testCorruptFullSnapshotKeepsRootAndIndexWithOneError() throws {
+        let adapter = makeAdapter(configJson: TableInputTestSchema.tableConfig)
+        XCTAssertNotNil(adapter.setContentJson(TableInputTestSchema.twoCellDocument))
+        let key = try XCTUnwrap(adapter.tableIndex.tableKeys.first)
+        let original = adapter.tableIndex.record(tableKey: key)
+        let root = adapter.cachedViewUpdateJSON
+        let spy = ErrorSpy()
+        adapter.onAutonomousError = spy.record
+        var calls = 0
+        adapter.transformNativeFrameForTesting = { incoming in
+            calls += 1
+            var frame = incoming
+            frame.snapshotJson = "{"
+            frame.tables.tables[0].cells[0].contentKey = "must-not-install"
+            return frame
+        }
+        XCTAssertNil(adapter.initialUpdateJSON())
+        XCTAssertEqual(calls, 1)
+        XCTAssertEqual(spy.errors.count, 1)
+        XCTAssertEqual(spy.last?.message, "native table frame violates the frozen shape")
+        XCTAssertEqual(adapter.cachedViewUpdateJSON, root)
+        XCTAssertEqual(adapter.tableIndex.record(tableKey: key), original)
     }
 
-    func testFailedExternalPositionPinClearsTableInputMapping() throws {
-        let adapter = makeAdapter()
-        adapter.claimNativeBindingIfUnowned(token: UUID())
-        let stale = mutatedObjectJSON(try tableInputMappingSnapshot()) { $0["documentVersion"] = "999" }
-
-        XCTAssertNil(adapter.adoptExternalRender(stale))
-        XCTAssertNil(adapter.cachedTableInputMappings)
+    func testReclaimedOwnerAndRefusedCellBackspaceUseDeltaFrames() throws {
+        let adapter = makeAdapter(configJson: TableInputTestSchema.tableConfig)
+        XCTAssertNotNil(adapter.setContentJson(TableInputTestSchema.twoCellDocument))
+        let first = UUID()
+        adapter.claimNativeBindingIfUnowned(token: first)
+        adapter.releaseNativeBindingOwner(token: first)
+        let second = UUID()
+        adapter.claimNativeBindingIfUnowned(token: second)
+        defer { adapter.releaseNativeBindingOwner(token: second) }
+        let fullBefore = adapter.fullFrameAdoptionCountForTesting
+        XCTAssertNotNil(adapter.initialUpdateJSON())
+        let key = try XCTUnwrap(adapter.tableIndex.tableKeys.first)
+        let start = try XCTUnwrap(adapter.tableIndex.scalarStart(tableKey: key, cellIndex: 0))
+        XCTAssertNotNil(adapter.syncSelection(anchor: start, head: start))
+        let before = adapter.documentJson()
+        _ = adapter.deleteBackward(anchor: start, head: start)
+        XCTAssertEqual(adapter.documentJson(), before)
+        XCTAssertEqual(adapter.fullFrameAdoptionCountForTesting, fullBefore)
     }
 
-    func testTableInputMappingAllowsSparseListBlockMappingWithZeroLeafSibling() throws {
-        let adapter = makeAdapter()
-        let snapshot = try tableInputMappingSnapshot()
-        let valid = mutatedObjectJSON(snapshot) { object in
-            var records = object["tableRecords"] as! [String: Any]
-            var table = records["t0"] as! [String: Any]
-            var cells = table["cells"] as! [[String: Any]]
-            var first = cells[0]
-            first["sourceEnd"] = 14
-            first["elements"] = [
-                ["type": "blockStart", "nodeType": "customList", "depth": 0],
-                ["type": "blockStart", "nodeType": "item", "depth": 1,
-                 "listContext": ["ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true]],
-                ["type": "blockStart", "nodeType": "paragraph", "depth": 2],
-                ["type": "textRun", "text": "base", "marks": []],
-                ["type": "blockEnd"], ["type": "blockEnd"], ["type": "blockEnd"]
-            ]
-            cells[0] = first
-            var zeroLeaf = first
-            zeroLeaf["sourcePos"] = 14
-            zeroLeaf["sourceEnd"] = 16
-            zeroLeaf["column"] = 1
-            zeroLeaf["contentKey"] = "zero-leaf"
-            zeroLeaf["elements"] = []
-            cells.append(zeroLeaf)
-            table["sourceEnd"] = 18
-            table["columns"] = 2
-            table["columnWidths"] = [NSNull(), NSNull()]
-            table["sourceRows"] = [["sourcePos": 1, "sourceEnd": 17, "attrsKey": String(repeating: "a", count: 64)]]
-            table["cells"] = cells
-            records["t0"] = table
-            object["tableRecords"] = records
-
-            var mapping = object["tableInputMappings"] as! [String: Any]
-            var tables = mapping["tables"] as! [String: Any]
-            var mappedTable = tables["t0"] as! [String: Any]
-            var mappedCells = mappedTable["cells"] as! [[String: Any]]
-            mappedTable["extent"] = ["scalarStart": 0, "scalarEnd": 6]
-            mappedCells[0]["sourceEnd"] = 14
-            mappedCells[0]["blocks"] = [["elementIndex": 2, "docStart": 6, "docEnd": 10,
-                "scalarStart": 0, "contentScalarStart": 2, "scalarEnd": 6,
-                "breakScalarEnd": 6, "void": false]]
-            mappedCells.append(["cellIndex": 1, "sourcePos": 14, "sourceEnd": 16, "blocks": [], "excluded": []])
-            mappedTable["cells"] = mappedCells
-            tables["t0"] = mappedTable
-            mapping["tables"] = tables
-            object["tableInputMappings"] = mapping
-            object["scalarLength"] = 6
-        }
-        XCTAssertNotNil(adapter.adoptExternalRender(valid))
-        XCTAssertEqual(adapter.cachedTablePresentation?.tableRecords["t0"]?.cells.last?.elements.count, 0)
-        let elements = try XCTUnwrap(adapter.cachedTablePresentation?.tableRecords["t0"]?.cells.first?.elements)
-        guard case let .blockStart(_, _, _, listContextJSON) = elements[1] else {
-            return XCTFail("expected typed list context")
-        }
-        XCTAssertEqual(listContextJSON, #"{"checked":null,"index":1,"isFirst":true,"isLast":true,"kind":null,"ordered":false,"start":1,"total":1}"#)
+    func testExternalRenderNoticeNeverInstallsJavascriptTableContent() throws {
+        let adapter = makeAdapter(configJson: TableInputTestSchema.tableConfig)
+        XCTAssertNotNil(adapter.setContentJson(TableInputTestSchema.twoCellDocument))
+        let key = try XCTUnwrap(adapter.tableIndex.tableKeys.first)
+        let original = adapter.tableIndex.record(tableKey: key)
+        let notice = "{\"documentVersion\":\"\(adapter.baseDocumentRevision)\",\"tableRecords\":{\"forged\":false},\"renderBlocks\":[[{}]]}"
+        XCTAssertNotNil(adapter.adoptExternalRender(notice))
+        XCTAssertEqual(adapter.tableIndex.record(tableKey: key), original)
+        XCTAssertEqual(adapter.tableIndex.tableKeys, [key])
+        XCTAssertNil(parseObject(adapter.cachedAtomicRenderJSON)["tableRecords"])
     }
 
-    func testTableInputMappingRequiresNestedTableExclusionWithMatchingExtent() throws {
-        let adapter = makeAdapter()
-        let snapshot = try tableInputMappingSnapshot()
-        let valid = mutatedObjectJSON(snapshot) { object in
-            let attrsKey = String(repeating: "a", count: 64)
-            var records = object["tableRecords"] as! [String: Any]
-            var outer = records["t0"] as! [String: Any]
-            var cells = outer["cells"] as! [[String: Any]]
-            var cell = cells[0]
-            var elements = cell["elements"] as! [[String: Any]]
-            cell["sourceEnd"] = 12
-            elements.append(["type": "table", "tableId": "t9"])
-            cell["elements"] = elements
-            cells[0] = cell
-            outer["cells"] = cells
-            outer["sourceEnd"] = 14
-            outer["sourceRows"] = [["sourcePos": 1, "sourceEnd": 13, "attrsKey": attrsKey]]
-            records["t0"] = outer
-            records["t9"] = [
-                "tablePos": 9, "sourceId": "y1-3", "sourceEnd": 11, "rows": 0, "columns": 0, "columnWidths": [],
-                "direction": NSNull(), "irregular": false, "readOnlyDescendants": true, "attrsKey": attrsKey,
-                "sourceRows": [], "cells": [], "syntheticRegions": [], "failure": "invalidStructure", "compatibilityDiagnostic": NSNull()
-            ]
-            object["tableRecords"] = records
-            var mapping = object["tableInputMappings"] as! [String: Any]
-            var tables = mapping["tables"] as! [String: Any]
-            var outerMapping = tables["t0"] as! [String: Any]
-            var mappedCells = outerMapping["cells"] as! [[String: Any]]
-            mappedCells[0]["sourceEnd"] = 12
-            mappedCells[0]["excluded"] = [["elementIndex": 3, "tableId": "t9", "extent": NSNull()]]
-            outerMapping["cells"] = mappedCells
-            tables["t0"] = outerMapping
-            tables["t9"] = ["extent": NSNull(), "cells": []]
-            mapping["tables"] = tables
-            object["tableInputMappings"] = mapping
+    func testFailedTableFullFrameAdoptsWithoutCells() throws {
+        let adapter = makeAdapter(configJson: TableInputTestSchema.tableConfig)
+        XCTAssertNotNil(adapter.setContentJson(TableInputTestSchema.twoCellDocument))
+        adapter.transformNativeFrameForTesting = { incoming in
+            var frame = incoming
+            frame.tables.tables[0].failure = .gridLimit
+            frame.tables.tables[0].cells = []
+            frame.tables.tables[0].sourceRows = []
+            return frame
         }
-        XCTAssertNotNil(adapter.adoptExternalRender(valid))
-        let retained = mutatedObjectJSON(valid) { $0.removeValue(forKey: "tableInputMappings") }
-        let patchBlocks: [[[String: Any]]] = [
-            [],
-            [["type": "blockStart", "nodeType": "paragraph", "depth": 0],
-             ["type": "textRun", "text": "changed", "marks": []],
-             ["type": "blockEnd"]]
-        ]
-        for (patchIndex, elements) in patchBlocks.enumerated() {
-            let patch = mutatedObjectJSON(retained) { object in
-                object["renderBlocks"] = NSNull()
-                object["renderPatch"] = ["baseDocumentVersion": object["documentVersion"]!,
-                    "startIndex": 0, "deleteCount": patchIndex,
-                    "renderBlocks": elements.isEmpty ? [] : [elements]]
-            }
-            XCTAssertNotNil(EditorV2Adapter.parseAtomicRenderSnapshot(patch), "valid patch \(patchIndex)")
-            XCTAssertTrue(adapter.validateExternalRender(patch), "valid patch \(patchIndex)")
-
-            for tableID in ["t0", "t9"] {
-                for sourceID in [nil, "y01-2"] as [String?] {
-                    let invalid = mutatedObjectJSON(patch) { object in
-                        var records = object["tableRecords"] as! [String: Any]
-                        var record = records[tableID] as! [String: Any]
-                        record["sourceId"] = sourceID
-                        records[tableID] = record
-                        object["tableRecords"] = records
-                    }
-                    XCTAssertNil(EditorV2Adapter.parseAtomicRenderSnapshot(invalid), "patch \(patchIndex) \(tableID) \(String(describing: sourceID))")
-                    XCTAssertFalse(adapter.validateExternalRender(invalid), "patch \(patchIndex) \(tableID) \(String(describing: sourceID))")
-                }
-            }
-            let duplicate = mutatedObjectJSON(patch) { object in
-                var records = object["tableRecords"] as! [String: Any]
-                var nested = records["t9"] as! [String: Any]
-                nested["sourceId"] = (records["t0"] as! [String: Any])["sourceId"]
-                records["t9"] = nested
-                object["tableRecords"] = records
-            }
-            XCTAssertNil(EditorV2Adapter.parseAtomicRenderSnapshot(duplicate), "patch \(patchIndex) duplicate sourceId")
-            XCTAssertFalse(adapter.validateExternalRender(duplicate), "patch \(patchIndex) duplicate sourceId")
-        }
-        let tableFree = mutatedObjectJSON(snapshot) { object in
-            object.removeValue(forKey: "tableAttributes")
-            object.removeValue(forKey: "tableRecords")
-            object.removeValue(forKey: "tableInputMappings")
-            object["renderBlocks"] = NSNull()
-            object["renderPatch"] = ["baseDocumentVersion": object["documentVersion"]!,
-                "startIndex": 0, "deleteCount": 0, "renderBlocks": []]
-        }
-        XCTAssertTrue(adapter.validateExternalRender(tableFree))
-        let missingExclusion = mutatedObjectJSON(valid) { object in
-            var mapping = object["tableInputMappings"] as! [String: Any]
-            var tables = mapping["tables"] as! [String: Any]
-            var outer = tables["t0"] as! [String: Any]
-            var cells = outer["cells"] as! [[String: Any]]
-            cells[0]["excluded"] = []
-            outer["cells"] = cells
-            tables["t0"] = outer
-            mapping["tables"] = tables
-            object["tableInputMappings"] = mapping
-        }
-        XCTAssertNil(adapter.adoptExternalRender(missingExclusion))
-        let duplicateSource = mutatedObjectJSON(valid) { object in
-            var records = object["tableRecords"] as! [String: Any]
-            var nested = records["t9"] as! [String: Any]
-            nested["sourceId"] = (records["t0"] as! [String: Any])["sourceId"]
-            records["t9"] = nested
-            object["tableRecords"] = records
-        }
-        XCTAssertNil(adapter.adoptExternalRender(duplicateSource))
-    }
-
-    private func tableInputMappingSnapshot(for providedAdapter: EditorV2Adapter? = nil) throws -> String {
-        let adapter = providedAdapter ?? makeAdapter()
-        _ = adapter.setContentHtml("<p>base</p>")
-        let raw = try XCTUnwrap(editorV2RenderUpdate(editorId: adapter.editorId, mirrorScalarAnchor: nil, mirrorScalarHead: nil).value)
-        let attrsKey = String(repeating: "a", count: 64)
-        let table: [String: Any] = [
-            "tablePos": 0, "sourceId": "y1-2", "sourceEnd": 12, "rows": 1, "columns": 1,
-            "columnWidths": [NSNull()], "direction": NSNull(), "irregular": false,
-            "readOnlyDescendants": false, "attrsKey": attrsKey,
-            "sourceRows": [["sourcePos": 1, "sourceEnd": 11, "attrsKey": attrsKey]],
-            "syntheticRegions": [], "failure": NSNull(), "compatibilityDiagnostic": NSNull(),
-            "cells": [["sourcePos": 2, "sourceEnd": 10, "row": 0, "column": 0,
-                "rowspan": 1, "colspan": 1, "header": false, "attrsKey": attrsKey,
-                "contentKey": "cell", "elements": [["type": "blockStart", "nodeType": "paragraph", "depth": 0], ["type": "textRun", "text": "base", "marks": []], ["type": "blockEnd"]]]]
-        ]
-        return mutatedObjectJSON(raw) { object in
-            object["renderBlocks"] = [[ ["type": "table", "tableId": "t0"] ]]
-            object["tableAttributes"] = [attrsKey: "{}"]
-            object["tableRecords"] = ["t0": table]
-            object["scalarLength"] = 4
-            object["tableInputMappings"] = ["version": 1, "tables": ["t0": [
-                "extent": ["scalarStart": 0, "scalarEnd": 4],
-                "cells": [["cellIndex": 0, "sourcePos": 2, "sourceEnd": 10,
-                    "blocks": [["elementIndex": 0, "docStart": 4, "docEnd": 8,
-                        "scalarStart": 0, "contentScalarStart": 0, "scalarEnd": 4,
-                        "breakScalarEnd": 4, "void": false]], "excluded": []]]
-            ]]]
-        }
-    }
-
-    func testSemanticTableAdmissionRetainsSnapshotOnMalformedPatch() throws {
-        let adapter = makeAdapter()
-        let attrsKey = String(repeating: "a", count: 64)
-        _ = adapter.setContentHtml("<p>base</p>")
-        let raw = try XCTUnwrap(editorV2RenderUpdate(editorId: adapter.editorId, mirrorScalarAnchor: nil, mirrorScalarHead: nil).value)
-        let table: [String: Any] = [
-            "tablePos": 0, "sourceId": "y1-2", "sourceEnd": 10, "rows": 1, "columns": 1,
-            "columnWidths": [NSNull()], "direction": NSNull(), "irregular": false,
-            "readOnlyDescendants": false, "attrsKey": attrsKey,
-            "sourceRows": [["sourcePos": 1, "sourceEnd": 9, "attrsKey": attrsKey]],
-            "syntheticRegions": [], "failure": NSNull(), "compatibilityDiagnostic": NSNull(),
-            "cells": [["sourcePos": 2, "sourceEnd": 8, "row": 0, "column": 0,
-                       "rowspan": 1, "colspan": 1, "header": false, "attrsKey": attrsKey,
-                       "contentKey": "same", "elements": [["type": "textRun", "text": "base", "marks": []]]]]
-        ]
-        let valid = mutatedObjectJSON(raw) {
-            $0["renderBlocks"] = [[ ["type": "table", "tableId": "t0"] ]]
-            $0["tableAttributes"] = [attrsKey: "{}"]
-            $0["tableRecords"] = ["t0": table]
-        }
-        let pool = try XCTUnwrap(EditorV2Adapter.parseTableAttributes([attrsKey: "{}"]))
-        XCTAssertTrue(EditorV2Adapter.validSemanticRenderElements([["type": "table", "tableId": "t0"]], tableAttributes: pool, tableRecords: ["t0": table]))
-        XCTAssertNotNil(EditorV2Adapter.parseAtomicRenderSnapshot(valid))
-        XCTAssertNotNil(adapter.adoptExternalRender(valid))
-        let retainedNoop = mutatedObjectJSON(valid) {
-            $0["renderBlocks"] = NSNull()
-            $0["renderPatch"] = ["baseDocumentVersion": $0["documentVersion"]!, "startIndex": 0,
-                "deleteCount": 0, "renderBlocks": []]
-        }
-        XCTAssertNotNil(adapter.adoptExternalRender(retainedNoop))
-        let baseline = adapter.cacheStateForTesting
-        let missingRetainedReference = mutatedObjectJSON(valid) {
-            $0["renderBlocks"] = NSNull()
-            $0["tableAttributes"] = [String: String]()
-            $0["renderPatch"] = ["baseDocumentVersion": $0["documentVersion"]!, "startIndex": 0,
-                "deleteCount": 0, "renderBlocks": []]
-        }
-        XCTAssertNil(adapter.adoptExternalRender(missingRetainedReference))
-        XCTAssertEqual(adapter.cacheStateForTesting, baseline)
-        for invalid in ["failure", "compatibilityDiagnostic", "columns", "attrsJson"] {
-            var changed = table
-            changed[invalid] = invalid == "columns" ? 0 : invalid == "attrsJson" ? "{\"width\":1e309}" : "unknown"
-            let patch = mutatedObjectJSON(raw) { object in
-                object["renderBlocks"] = NSNull()
-                object["tableAttributes"] = [attrsKey: "{}"]
-                object["tableRecords"] = ["t0": changed]
-                object["renderPatch"] = ["baseDocumentVersion": object["documentVersion"]!, "startIndex": 0,
-                    "deleteCount": 1, "renderBlocks": [[ ["type": "table", "tableId": "t0"] ]]]
-            }
-            XCTAssertNil(adapter.adoptExternalRender(patch), invalid)
-            XCTAssertEqual(adapter.cacheStateForTesting, baseline, invalid)
-        }
+        XCTAssertNotNil(adapter.initialUpdateJSON())
+        let key = try XCTUnwrap(adapter.tableIndex.tableKeys.first)
+        XCTAssertEqual(adapter.tableIndex.record(tableKey: key)?.failure, .gridLimit)
+        XCTAssertTrue(try XCTUnwrap(adapter.tableIndex.record(tableKey: key)).cells.isEmpty)
     }
 
     func testRevisionMismatchRefusesSelectionRelativeInputWithoutReplay() {
@@ -628,7 +271,7 @@ extension EditorV2AdapterTests {
             ]
         }
 
-        XCTAssertNotNil(adapter.adoptExternalRender(withPatch))
+        XCTAssertNotNil(EditorV2Adapter.parseAtomicRenderSnapshot(withPatch))
     }
 
     /// Rust emits `attrs` on every void/opaque element, so an inserted mention
@@ -661,7 +304,7 @@ extension EditorV2AdapterTests {
             ]]
         }
 
-        XCTAssertNotNil(adapter.adoptExternalRender(withMention))
+        XCTAssertNotNil(EditorV2Adapter.parseAtomicRenderSnapshot(withMention))
     }
 
     func testAtomicRenderValidationAcceptsAtomIdOnlyOnVoidBlock() {
@@ -676,7 +319,7 @@ extension EditorV2AdapterTests {
             let snapshot = mutatedObjectJSON(raw) { object in
                 object["renderBlocks"] = [[element]]
             }
-            return adapter.adoptExternalRender(snapshot)
+            return EditorV2Adapter.parseAtomicRenderSnapshot(snapshot)?.viewUpdateJSON
         }
 
         XCTAssertNotNil(adopt([
@@ -711,7 +354,6 @@ extension EditorV2AdapterTests {
         ).value!
         XCTAssertNotNil(adapter.adoptExternalRender(raw))
         let baseline = adapter.cacheStateForTesting
-        let baselineDebugNotes = adapter.debugNotes
 
         let variants: [(String, (inout [String: Any]) throws -> Void)] = [
             ("extra top-level field", { $0["legacyRevision"] = 1 }),
@@ -871,9 +513,13 @@ extension EditorV2AdapterTests {
         for (name, mutate) in variants {
             let errorsBefore = spy.errors.count
             let malformed = try mutatedObjectJSON(raw, mutate)
-            XCTAssertNil(adapter.adoptExternalRender(malformed), name)
+            adapter.transformNativeFrameForTesting = { incoming in
+                var frame = incoming
+                frame.snapshotJson = malformed
+                return frame
+            }
+            XCTAssertNil(adapter.initialUpdateJSON(), name)
             XCTAssertEqual(adapter.cacheStateForTesting, baseline, name)
-            XCTAssertEqual(adapter.debugNotes, baselineDebugNotes, name)
             XCTAssertEqual(spy.errors.count, errorsBefore + 1, name)
             XCTAssertEqual(spy.last?.domain, "boundary", name)
             XCTAssertEqual(spy.last?.code, "FFI_RESULT_INVALID", name)
