@@ -26,6 +26,7 @@ extension EditorTextView {
                 .releaseNativeBindingOwner(token: nativeBindingToken)
             discardTransientNativeInputForEditorRebind()
             invalidateCurrentRenderBlocks()
+            PositionBridge.setRootTablePositionMap(nil, in: self)
             rootTableSelectionInputBlocked = false
             authoritativeCellSelectionActive = false
         }
@@ -57,6 +58,7 @@ extension EditorTextView {
         EditorV2Registry.adapter(forLegacyId: editorId)?
             .releaseNativeBindingOwner(token: nativeBindingToken)
         invalidateCurrentRenderBlocks()
+        PositionBridge.setRootTablePositionMap(nil, in: self)
         rootTableSelectionInputBlocked = false
         authoritativeCellSelectionActive = false
         editorId = 0

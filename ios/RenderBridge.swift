@@ -62,7 +62,7 @@ enum RenderBridgeAttributes {
 
     /// Stores the owning top-level document child index for partial native patching.
     static let topLevelChildIndex = NSAttributedString.Key("com.apollohg.editor.topLevelChildIndex")
-    static let rootTableScalarExtent = NSAttributedString.Key("com.apollohg.editor.rootTableScalarExtent")
+    static let rootTableMarker = NSAttributedString.Key("com.apollohg.editor.rootTableMarker")
 }
 
 /// Layout constants for paragraph styles.
@@ -153,17 +153,7 @@ struct AtomRenderConfiguration: Equatable {
 /// ]
 /// ```
 final class RenderBridge {
-    final class RootTableScalarExtent: NSObject {
-        let scalarStart: UInt32
-        let scalarEnd: UInt32
-        let tableID: String?
-
-        init(scalarStart: UInt32, scalarEnd: UInt32, tableID: String? = nil) {
-            self.scalarStart = scalarStart
-            self.scalarEnd = scalarEnd
-            self.tableID = tableID
-        }
-    }
+    static let rootTableAnchor = "\u{200B}"
 
     // MARK: - Public API
 
@@ -181,7 +171,6 @@ final class RenderBridge {
         textColor: UIColor,
         theme: EditorTheme? = nil,
         atomConfiguration: AtomRenderConfiguration? = nil,
-        rootTableScalarExtents: [String: RootTableScalarExtent] = [:],
         rootTableIDs: Set<String> = []
     ) -> NSAttributedString {
         guard let data = json.data(using: .utf8),
@@ -196,7 +185,6 @@ final class RenderBridge {
             textColor: textColor,
             theme: theme,
             atomConfiguration: atomConfiguration,
-            rootTableScalarExtents: rootTableScalarExtents,
             rootTableIDs: rootTableIDs
         )
     }
@@ -217,7 +205,6 @@ final class RenderBridge {
         textColor: UIColor,
         theme: EditorTheme? = nil,
         atomConfiguration: AtomRenderConfiguration? = nil,
-        rootTableScalarExtents: [String: RootTableScalarExtent] = [:],
         rootTableIDs: Set<String> = [],
         blockRangeObserver: ((Int, NSRange) -> Void)? = nil
     ) -> NSAttributedString {
@@ -234,8 +221,7 @@ final class RenderBridge {
             switch type {
             case "table":
                 guard let tableID = element["tableId"] as? String,
-                      rootTableIDs.contains(tableID),
-                      let extent = rootTableScalarExtents[tableID]
+                      rootTableIDs.contains(tableID)
                 else { continue }
                 if !isFirstBlock {
                     result.append(
@@ -250,15 +236,11 @@ final class RenderBridge {
                 }
                 isFirstBlock = false
                 let anchor = NSAttributedString(
-                    string: "\u{200B}",
+                    string: rootTableAnchor,
                     attributes: [
                         .font: UIFont.systemFont(ofSize: 0.1),
                         .foregroundColor: UIColor.clear,
-                        RenderBridgeAttributes.rootTableScalarExtent: RootTableScalarExtent(
-                            scalarStart: extent.scalarStart,
-                            scalarEnd: extent.scalarEnd,
-                            tableID: tableID
-                        )
+                        RenderBridgeAttributes.rootTableMarker: tableID
                     ]
                 )
                 result.append(
@@ -628,7 +610,6 @@ final class RenderBridge {
         textColor: UIColor,
         theme: EditorTheme? = nil,
         atomConfiguration: AtomRenderConfiguration? = nil,
-        rootTableScalarExtents: [String: RootTableScalarExtent] = [:],
         rootTableIDs: Set<String> = []
     ) -> NSAttributedString {
         var flattened: [[String: Any]] = []
@@ -649,7 +630,6 @@ final class RenderBridge {
             textColor: textColor,
             theme: theme,
             atomConfiguration: atomConfiguration,
-            rootTableScalarExtents: rootTableScalarExtents,
             rootTableIDs: rootTableIDs
         )
         let needsLeadingInterBlockSeparator = includeLeadingInterBlockSeparator && startIndex > 0

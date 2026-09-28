@@ -705,11 +705,10 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         var precedingSpacing: [String: CGFloat] = [:]
         if let input, input.textStorage.length > 0 {
             input.textStorage.enumerateAttribute(
-                RenderBridgeAttributes.rootTableScalarExtent,
+                RenderBridgeAttributes.rootTableMarker,
                 in: NSRange(location: 0, length: input.textStorage.length)
             ) { value, range, _ in
-                guard let marker = value as? RenderBridge.RootTableScalarExtent,
-                      let identity = marker.tableID,
+                guard let identity = value as? String,
                       range.location > 0
                 else { return }
                 let paragraph = input.textStorage.attribute(
@@ -1340,12 +1339,11 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         var frames: [String: CGRect] = [:]
         let fullRange = NSRange(location: 0, length: textView.textStorage.length)
         textView.textStorage.enumerateAttribute(
-            RenderBridgeAttributes.rootTableScalarExtent,
+            RenderBridgeAttributes.rootTableMarker,
             in: fullRange,
             options: []
         ) { value, range, _ in
-            guard let extent = value as? RenderBridge.RootTableScalarExtent,
-                  let tableID = extent.tableID,
+            guard let tableID = value as? String,
                   self.entries[tableID] != nil
             else { return }
             textView.layoutManager.ensureLayout(forCharacterRange: range)
@@ -1369,11 +1367,11 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         guard textView.textStorage.length > 0 else { return [] }
         var tableIDs = Set<String>()
         textView.textStorage.enumerateAttribute(
-            RenderBridgeAttributes.rootTableScalarExtent,
+            RenderBridgeAttributes.rootTableMarker,
             in: NSRange(location: 0, length: textView.textStorage.length),
             options: []
         ) { value, _, _ in
-            if let tableID = (value as? RenderBridge.RootTableScalarExtent)?.tableID {
+            if let tableID = value as? String {
                 tableIDs.insert(tableID)
             }
         }

@@ -39,10 +39,7 @@ extension EditorV2Adapter {
         let positionEpoch: UInt64?
     }
 
-    struct TableInputExtent: Equatable {
-        let scalarStart: UInt32
-        let scalarEnd: UInt32
-    }
+    typealias TableInputExtent = TableScalarExtent
 
     struct TableInputBlock: Equatable {
         let elementIndex: UInt32

@@ -76,10 +76,10 @@ final class PositionBridgeTests: XCTestCase {
         guard textView.textStorage.length > 0 else { return [] }
         var offsets: [Int] = []
         textView.textStorage.enumerateAttribute(
-            RenderBridgeAttributes.rootTableScalarExtent,
+            RenderBridgeAttributes.rootTableMarker,
             in: NSRange(location: 0, length: textView.textStorage.length)
         ) { value, range, _ in
-            if value is RenderBridge.RootTableScalarExtent {
+            if value is String {
                 offsets.append(range.location)
             }
         }
@@ -223,6 +223,48 @@ final class PositionBridgeTests: XCTestCase {
         XCTAssertFalse(textView.lastRenderAppliedPatchForTesting)
     }
 
+    func testUnbindingAndBareRenderingReleaseTheExternalRootPositionMap() throws {
+        let editorId = makeV2Editor(configJson: tablePositionConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let textView = EditorTextView(frame: .zero, textContainer: nil)
+        textView.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        XCTAssertTrue(textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(
+            rootTableDocument(cellTexts: ["cell"], after: "after")
+        ))))
+        XCTAssertTrue(PositionBridge.hasRootTableScalarExtents(in: textView))
+        textView.unbindEditor()
+        XCTAssertNil(PositionBridge.rootTablePositionMap(in: textView))
+        textView.bindEditor(id: editorId, initialUpdateJSON: EditorV2Shadow.getCurrentState(id: editorId))
+        XCTAssertTrue(PositionBridge.hasRootTableScalarExtents(in: textView))
+        textView.applyRenderJSON("[]")
+        XCTAssertNil(PositionBridge.rootTablePositionMap(in: textView))
+    }
+
+    func testUnchangedRootBlocksDoNotRerenderWhenOnlyExtentsChange() throws {
+        let editorId = makeV2Editor(configJson: tablePositionConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let textView = EditorTextView(frame: .zero, textContainer: nil)
+        textView.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        XCTAssertTrue(textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(
+            rootTableDocument(before: "before", cellTexts: ["a"], after: "after")
+        ))))
+        let beforeText = NSAttributedString(attributedString: textView.textStorage)
+        let oldExtent = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.values.first?.extent)
+        var applications = 0
+        textView.onApplyingRustTextForTesting = { applications += 1 }
+        XCTAssertTrue(textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(
+            rootTableDocument(before: "before", cellTexts: ["expanded"], after: "after")
+        ))))
+        let newExtent = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.values.first?.extent)
+        XCTAssertNotEqual(oldExtent, newExtent)
+        XCTAssertEqual(applications, 0, "only the root position map should change")
+        XCTAssertTrue(beforeText.isEqual(to: textView.textStorage))
+        let after = (textView.text as NSString).range(of: "after").location
+        XCTAssertEqual(PositionBridge.utf16OffsetToScalar(after, in: textView), newExtent.scalarEnd + 1)
+    }
+
     func testRootTableSelectionOnlyUpdateKeepsTheExistingAttributedRender() throws {
         let editorId = makeV2Editor(configJson: tablePositionConfig)
         defer { destroyV2Editor(id: editorId) }
@@ -285,21 +327,6 @@ final class PositionBridgeTests: XCTestCase {
             to: extent.scalarEnd,
             in: textView
         ))
-    }
-
-    func testZeroWidthTableExtentKeepsBothAnchorEdgesAtOneScalar() {
-        let attributedText = NSMutableAttributedString(string: "a\u{200B}b")
-        attributedText.addAttribute(
-            RenderBridgeAttributes.rootTableScalarExtent,
-            value: RenderBridge.RootTableScalarExtent(scalarStart: 1, scalarEnd: 1),
-            range: NSRange(location: 1, length: 1)
-        )
-        let textView = makeTextView(with: attributedText)
-
-        XCTAssertEqual(PositionBridge.utf16OffsetToScalar(1, in: textView), 1)
-        XCTAssertEqual(PositionBridge.utf16OffsetToScalar(2, in: textView), 1)
-        XCTAssertEqual(PositionBridge.utf16OffsetToScalar(3, in: textView), 2)
-        XCTAssertFalse(PositionBridge.isRootTextInputRangeSafe(from: 1, to: 1, in: textView))
     }
 
     func testRootAdjacentZeroLeafAndMappedTablesKeepOnlyTheMappedAnchor() throws {

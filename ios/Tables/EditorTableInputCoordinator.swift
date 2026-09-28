@@ -54,18 +54,9 @@ final class EditorTableInputCoordinator {
         )
         guard canBind(target), !inputCell.blocks.isEmpty else { return nil }
 
-        var tableExtents: [String: RenderBridge.RootTableScalarExtent] = [:]
-        for excluded in inputCell.excluded {
-            guard let extent = excluded.extent,
-                  extent.scalarStart < extent.scalarEnd,
-                  tableExtents[excluded.tableID] == nil
-            else { return nil }
-            tableExtents[excluded.tableID] = .init(
-                scalarStart: 0,
-                scalarEnd: extent.scalarEnd - extent.scalarStart,
-                tableID: excluded.tableID
-            )
-        }
+        let tableIDs = Set(inputCell.excluded.map(\.tableID))
+        guard tableIDs.count == inputCell.excluded.count,
+              inputCell.excluded.allSatisfy({ $0.extent != nil }) else { return nil }
 
         var blockRanges: [Int: NSRange] = [:]
         let renderedWithMarkers = RenderBridge.renderElements(
@@ -74,43 +65,23 @@ final class EditorTableInputCoordinator {
             textColor: textColor,
             theme: theme,
             atomConfiguration: atomConfiguration,
-            rootTableScalarExtents: tableExtents,
-            rootTableIDs: Set(tableExtents.keys)
+            rootTableIDs: tableIDs
         ) { elementIndex, range in
             blockRanges[elementIndex] = range
         }
-        let rendered = NSMutableAttributedString(attributedString: renderedWithMarkers)
+        let rendered = renderedWithMarkers
         var observedTables = Set<String>()
         var markersValid = true
-        if rendered.length > 0 {
-            renderedWithMarkers.enumerateAttribute(
-                RenderBridgeAttributes.rootTableScalarExtent,
-                in: NSRange(location: 0, length: rendered.length)
-            ) { value, range, _ in
-                guard let marker = value as? RenderBridge.RootTableScalarExtent else { return }
-                guard let tableID = marker.tableID,
-                      range.length == 1,
-                      observedTables.insert(tableID).inserted
-                else {
-                    markersValid = false
-                    return
-                }
-                let localStart = PositionBridge.utf16OffsetToScalar(range.location, in: renderedWithMarkers)
-                let width = marker.scalarEnd - marker.scalarStart
-                guard let localEnd = UInt32(exactly: UInt64(localStart) + UInt64(width)) else {
-                    markersValid = false
-                    return
-                }
-                rendered.addAttribute(
-                    RenderBridgeAttributes.rootTableScalarExtent,
-                    value: RenderBridge.RootTableScalarExtent(
-                        scalarStart: localStart, scalarEnd: localEnd, tableID: tableID
-                    ),
-                    range: range
-                )
+        rendered.enumerateAttribute(RenderBridgeAttributes.rootTableMarker,
+                                    in: NSRange(location: 0, length: rendered.length)) { value, range, _ in
+            guard let value else { return }
+            guard let tableID = value as? String, range.length == 1,
+                  observedTables.insert(tableID).inserted else {
+                markersValid = false
+                return
             }
         }
-        guard markersValid, observedTables == Set(tableExtents.keys) else { return nil }
+        guard markersValid, observedTables == tableIDs else { return nil }
         var segments: [TableCellPositionMap.Segment] = []
         for block in inputCell.blocks {
             guard let range = blockRanges[Int(block.elementIndex)] else { return nil }

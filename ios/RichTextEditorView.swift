@@ -595,11 +595,11 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         guard root.textStorage.length > 0 else { return nil }
         var result: UInt32?
         root.textStorage.enumerateAttribute(
-            RenderBridgeAttributes.rootTableScalarExtent,
+            RenderBridgeAttributes.rootTableMarker,
             in: NSRange(location: 0, length: root.textStorage.length)
         ) { value, range, stop in
-            guard let extent = value as? RenderBridge.RootTableScalarExtent,
-                  extent.tableID == tableID
+            guard value as? String == tableID,
+                  let extent = PositionBridge.rootTablePositionMap(in: root)?.extents[tableID]
             else { return }
             var neighbor = forward ? NSMaxRange(range) : range.location - 1
             let rendered = root.textStorage.string as NSString
@@ -611,7 +611,7 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
             guard neighbor >= 0,
                   neighbor < rendered.length,
                   root.textStorage.attribute(
-                    RenderBridgeAttributes.rootTableScalarExtent, at: neighbor, effectiveRange: nil
+                    RenderBridgeAttributes.rootTableMarker, at: neighbor, effectiveRange: nil
                   ) == nil
             else { return }
             let scalar = forward ? extent.scalarEnd.addingReportingOverflow(1)

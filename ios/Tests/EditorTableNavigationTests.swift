@@ -268,22 +268,21 @@ final class EditorTableNavigationTests: XCTestCase {
         let input = view.activeTextInput
         let map = try XCTUnwrap(input.tableCellPositionMap)
         XCTAssertEqual(map.segments.count, 2)
-        var marker: RenderBridge.RootTableScalarExtent?
+        var marker: String?
         var markerRange: NSRange?
         input.textStorage.enumerateAttribute(
-            RenderBridgeAttributes.rootTableScalarExtent,
+            RenderBridgeAttributes.rootTableMarker,
             in: NSRange(location: 0, length: input.textStorage.length)
         ) { value, range, _ in
-            if let extent = value as? RenderBridge.RootTableScalarExtent {
+            if let extent = value as? String {
                 marker = extent
                 markerRange = range
             }
         }
         let extent = try XCTUnwrap(marker)
         let utf16Range = try XCTUnwrap(markerRange)
-        XCTAssertEqual(extent.tableID, nested.tableID)
-        XCTAssertGreaterThan(extent.scalarEnd - extent.scalarStart, 1)
-        let interior = extent.scalarStart + 1
+        XCTAssertEqual(extent, nested.tableID)
+        let interior = PositionBridge.utf16OffsetToScalar(utf16Range.location, in: input)
         XCTAssertNil(input.inputScalar(atLocalScalar: interior))
         XCTAssertNil(input.inputScalarRange(fromLocal: map.segments[0].localScalarRange.lowerBound,
                                             toLocal: map.segments[1].localScalarRange.lowerBound))
@@ -332,10 +331,10 @@ final class EditorTableNavigationTests: XCTestCase {
                                                              in: input.textContainer).minY
                 var currentMarkerHeight: CGFloat?
                 input.textStorage.enumerateAttribute(
-                    RenderBridgeAttributes.rootTableScalarExtent,
+                    RenderBridgeAttributes.rootTableMarker,
                     in: NSRange(location: 0, length: input.textStorage.length)
                 ) { value, range, _ in
-                    guard value is RenderBridge.RootTableScalarExtent else { return }
+                    guard value is String else { return }
                     currentMarkerHeight = (input.textStorage.attribute(
                         .paragraphStyle, at: range.location, effectiveRange: nil
                     ) as? NSParagraphStyle)?.minimumLineHeight

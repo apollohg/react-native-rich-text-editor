@@ -2,7 +2,7 @@ import os
 import UIKit
 
 private struct RootTablePositionMapping {
-    let extents: [String: RenderBridge.RootTableScalarExtent]
+    let extents: [String: TableScalarExtent]
     let tableIDs: Set<String>
 }
 
@@ -16,12 +16,11 @@ extension EditorTextView {
         defer { isApplyingRustState = wasApplyingRustState }
         textStorage.beginEditing()
         textStorage.enumerateAttribute(
-            RenderBridgeAttributes.rootTableScalarExtent,
+            RenderBridgeAttributes.rootTableMarker,
             in: fullRange,
             options: []
         ) { value, range, _ in
-            guard let extent = value as? RenderBridge.RootTableScalarExtent,
-                  let tableID = extent.tableID,
+            guard let tableID = value as? String,
                   let height = heights[tableID],
                   height.isFinite,
                   height > 0
@@ -338,7 +337,6 @@ extension EditorTextView {
         guard let rootTablePositionMapping = rootTablePositionMapping(from: update) else {
             return false
         }
-        let rootTableScalarExtents = rootTablePositionMapping.extents
         let selectionFromUpdate = (update["selection"] as? [String: Any])
             .map(self.selectionSummary(from:)) ?? "none"
         Self.updateLog.debug(
@@ -387,20 +385,49 @@ extension EditorTextView {
         } else {
             nil
         }
-        let tablePositionSnapshotIsUnchanged = if let updateDocumentVersion,
-            let currentRenderBlocksDocumentVersion {
-            updateDocumentVersion == currentRenderBlocksDocumentVersion
-        } else {
-            false
-        }
         let shouldSkipRender = if case .unchanged? = derivedRenderPatch {
-            (rootTableScalarExtents.isEmpty && !currentHasRootTableMarkers
-                || tablePositionSnapshotIsUnchanged)
-                && textStorage.string == lastAuthorizedText
+            textStorage.string == lastAuthorizedText
                 && lastAppliedRenderAppearanceRevision == renderAppearanceRevision
         } else {
             false
         }
+        let rootTableScalarExtents = rootTablePositionMapping.extents.filter { incomingRootTableIDs.contains($0.key) }
+        let prebuiltRootStartedAt = DispatchTime.now().uptimeNanoseconds
+        let prebuiltRootRender: NSAttributedString?
+        if !shouldSkipRender, !incomingRootTableIDs.isEmpty {
+            prebuiltRootRender = withImageLoadOwner {
+                if let resolvedRenderBlocks {
+                    return RenderBridge.renderBlocks(
+                        fromArray: resolvedRenderBlocks, baseFont: baseFont, textColor: baseTextColor,
+                        theme: theme, atomConfiguration: atomRenderConfiguration,
+                        rootTableIDs: Set(rootTableScalarExtents.keys)
+                    )
+                }
+                return RenderBridge.renderElements(
+                    fromArray: renderElements ?? [],
+                    baseFont: baseFont, textColor: baseTextColor, theme: theme,
+                    atomConfiguration: atomRenderConfiguration,
+                    rootTableIDs: Set(rootTableScalarExtents.keys)
+                )
+            }
+        } else {
+            prebuiltRootRender = nil
+        }
+        let prebuiltRootNanos = prebuiltRootRender == nil ? 0 : DispatchTime.now().uptimeNanoseconds - prebuiltRootStartedAt
+        let rootMapStartedAt = DispatchTime.now().uptimeNanoseconds
+        let nextRootMap: RootTablePositionMap?
+        if !incomingRootTableIDs.isEmpty {
+            guard let scalarLength = v2ExactUInt32(update["scalarLength"] as? NSNumber)
+                    ?? EditorV2Registry.adapter(forLegacyId: editorId)?.cachedScalarLength,
+                  let map = RootTablePositionMap.fromRendered(
+                    prebuiltRootRender ?? textStorage, extents: rootTableScalarExtents, scalarLength: scalarLength
+                  ) else { return false }
+            nextRootMap = map
+        } else {
+            nextRootMap = nil
+        }
+
+        let rootMapNanos = DispatchTime.now().uptimeNanoseconds - rootMapStartedAt
 
         let patchTrace: PatchApplyTrace? = if !shouldSkipRender
             && rootTableScalarExtents.isEmpty
@@ -437,7 +464,14 @@ extension EditorTextView {
         } else if !appliedPatch {
             let buildStartedAt = DispatchTime.now().uptimeNanoseconds
             let attrStr: NSAttributedString
-            if let resolvedRenderBlocks {
+            if let prebuiltRootRender {
+                attrStr = prebuiltRootRender
+                if let resolvedRenderBlocks {
+                    retainCurrentRenderBlocks(resolvedRenderBlocks, documentVersion: updateDocumentVersion)
+                } else {
+                    invalidateCurrentRenderBlocks()
+                }
+            } else if let resolvedRenderBlocks {
                 attrStr = withImageLoadOwner {
                     RenderBridge.renderBlocks(
                         fromArray: resolvedRenderBlocks,
@@ -445,8 +479,7 @@ extension EditorTextView {
                         textColor: baseTextColor,
                         theme: theme,
                         atomConfiguration: atomRenderConfiguration,
-                        rootTableScalarExtents: rootTableScalarExtents,
-                        rootTableIDs: rootTablePositionMapping.tableIDs
+                        rootTableIDs: Set(rootTableScalarExtents.keys)
                     )
                 }
                 retainCurrentRenderBlocks(
@@ -461,15 +494,14 @@ extension EditorTextView {
                         textColor: baseTextColor,
                         theme: theme,
                         atomConfiguration: atomRenderConfiguration,
-                        rootTableScalarExtents: rootTableScalarExtents,
-                        rootTableIDs: rootTablePositionMapping.tableIDs
+                        rootTableIDs: Set(rootTableScalarExtents.keys)
                     )
                 }
                 invalidateCurrentRenderBlocks()
             } else {
                 return false
             }
-            buildRenderNanos = DispatchTime.now().uptimeNanoseconds - buildStartedAt
+            buildRenderNanos = prebuiltRootNanos + DispatchTime.now().uptimeNanoseconds - buildStartedAt
             let applyTrace = applyAttributedRender(
                 attrStr,
                 usedPatch: false,
@@ -507,6 +539,8 @@ extension EditorTextView {
             // The next update will take the full safe path after cache reset.
             currentTopLevelChildMetadata = nil
         }
+
+        PositionBridge.setRootTablePositionMap(nextRootMap, in: self)
 
         // The core is the authority on empty state; adopt it before the
         // placeholder is reconsidered.
@@ -553,7 +587,7 @@ extension EditorTextView {
                 applyRenderReplaceUtf16Length: applyRenderReplaceUtf16Length,
                 applyRenderReplacementUtf16Length: applyRenderReplacementUtf16Length,
                 parseNanos: parseNanos,
-                resolveRenderBlocksNanos: resolveRenderBlocksNanos,
+                resolveRenderBlocksNanos: resolveRenderBlocksNanos + rootMapNanos,
                 patchEligibilityNanos: patchTrace?.eligibilityNanos ?? 0,
                 patchTrimNanos: patchTrace?.trimNanos ?? 0,
                 patchMetadataNanos: patchTrace?.metadataNanos ?? 0,
@@ -606,7 +640,7 @@ extension EditorTextView {
               let tables = mappings["tables"] as? [String: Any]
         else { return .init(extents: [:], tableIDs: []) }
 
-        var extents: [String: RenderBridge.RootTableScalarExtent] = [:]
+        var extents: [String: TableScalarExtent] = [:]
         var tableIDs = Set<String>()
         for (tableID, rawTable) in tables {
             guard let table = rawTable as? [String: Any],
@@ -698,6 +732,7 @@ extension EditorTextView {
             )
         }
         _ = applyAttributedRender(attrStr, usedPatch: false)
+        PositionBridge.setRootTablePositionMap(nil, in: self)
         invalidateCurrentRenderBlocks()
         refreshTopLevelChildMetadata(from: attrStr)
         lastAppliedRenderAppearanceRevision = renderAppearanceRevision
