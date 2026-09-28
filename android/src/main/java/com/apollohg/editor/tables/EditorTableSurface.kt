@@ -1016,9 +1016,9 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             PreparedProseBlock(emptyList(), rect, tableSurface = entry.surface, tableBounds = rect)
         }.sortedBy { it.bounds.top }
         val width = host.editorContentFrame.width.coerceAtLeast(input.measuredWidth)
-            .coerceAtLeast(blocks.maxOfOrNull { it.bounds.right } ?: 0).coerceAtLeast(1)
+            .coerceAtLeast(blocks.maxOfOrNull { it.bounds.right } ?: 0).coerceIn(1, View.MEASURED_SIZE_MASK)
         val height = host.editorContentFrame.height.coerceAtLeast(input.measuredHeight)
-            .coerceAtLeast(blocks.maxOfOrNull { it.bounds.bottom } ?: 0).coerceAtLeast(1)
+            .coerceAtLeast(blocks.maxOfOrNull { it.bounds.bottom } ?: 0).coerceIn(1, View.MEASURED_SIZE_MASK)
         val installed = drawingView.preparedLayout
         if (blocks == positionedBlocks && installed != null && installed.widthPx == width && installed.heightPx == height) {
             host.layoutEditorContentChild(drawingView)
