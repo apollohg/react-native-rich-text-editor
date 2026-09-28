@@ -203,6 +203,8 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
     internal var staticLayoutsBuilt: Int = 0
         private set
     internal var tableCellPreparationObserver: ((Int) -> Unit)? = null
+    internal var incrementalTableSurface: ((String) -> Pair<ViewerTableSurface, Set<Int>>?)? = null
+    internal var tableIncrementalRelayoutObserver: (() -> Unit)? = null
     internal var reusableTableCellContent: ((TableSurfaceCell, Int) -> PreparedProseLayout?)? = null
 
     override fun prepare(
@@ -423,24 +425,15 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                 val shapeStyleDigest by lazy {
                     cellShapeStyleDigest(childTheme, key.nativeFontRevision, key.fontEnvironmentRevision)
                 }
-                val surface = ViewerTableSurface(
-                    document.tablePresentationIdentity(tableKey),
-                    TableGridRecord.from(surfaceSource, document.semanticKey).physical(density),
-                    tableWidth.toFloat(),
-                    theme.tableStyle.physical(density),
-                    TableLayoutDirection.isRightToLeft(surfaceSource.direction, theme.tableDirection),
-                    displayScale = 1f,
-                    sourceTable = surfaceSource,
-                    editorTableId = tableKey,
-                    sourceAttributes = document.tableAttributes
-                ) { cell, cellWidth ->
+                fun prepareCell(cell: com.apollohg.editor.tables.TableGridCell, cellWidth: Float,
+                                reuseContent: Boolean): PreparedProseLayout {
                     val source = surfaceSource.cells.getOrNull(cell.sourceIndex)
                     val childWidth = cellWidth.toInt().coerceAtLeast(1)
-                    if (!cellMode) {
-                        source?.let { reusableTableCellContent?.invoke(it, childWidth) }?.let { return@ViewerTableSurface it }
+                    if (reuseContent && !cellMode) {
+                        source?.let { reusableTableCellContent?.invoke(it, childWidth) }?.let { return it }
                     }
                     val child = source?.let { document.cellDocument(it, tableKey) }
-                    if (child == null) return@ViewerTableSurface PreparedProseLayout.error(
+                    if (child == null) return PreparedProseLayout.error(
                         key, cellWidth.toInt(), ProseViewerError.layout("Invalid table cell.")
                     )
                     val childKey = key.copy(semanticKey = child.semanticKey, widthPx = childWidth)
@@ -451,7 +444,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                             warningSemanticGeneration, true, cellShapeContext
                         )
                     }
-                    if (cellShapeContext == null || theme.codeHighlighting != null) {
+                    return if (cellShapeContext == null || theme.codeHighlighting != null) {
                         build()
                     } else {
                         val shapeKey = cellShapeKey(cell.contentKey, child, childWidth, childTheme, density, shapeStyleDigest)
@@ -461,6 +454,31 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                                 warningSemanticGeneration, cellShapeContext
                             )
                         }
+                    }
+                }
+                val record = TableGridRecord.from(surfaceSource, document.semanticKey).physical(density)
+                val tableStyle = theme.tableStyle.physical(density)
+                val rtl = TableLayoutDirection.isRightToLeft(surfaceSource.direction, theme.tableDirection)
+                val retainedSurface = incrementalTableSurface?.invoke(tableKey)?.takeIf { (surface, _) ->
+                    surface.identity == document.tablePresentationIdentity(tableKey) &&
+                        surface.hostViewportWidth == tableWidth.toFloat() && surface.style == tableStyle &&
+                        surface.isRightToLeft == rtl
+                }
+                val surface = if (retainedSurface != null) {
+                    val (previous, changed) = retainedSurface
+                    val contents = changed.associateWith { index ->
+                        val cell = record.cells[index]
+                        val frame = requireNotNull(previous.frameOfCell(index))
+                        prepareCell(cell, maxOf(0f, frame.width - 2f * (tableStyle.cellPadding + tableStyle.borderWidth)), false)
+                    }
+                    tableIncrementalRelayoutObserver?.invoke()
+                    previous.replacingCells(contents, contents.mapValues { it.value.heightPx.toFloat() },
+                        record, surfaceSource, document.tableAttributes)
+                } else {
+                    ViewerTableSurface(document.tablePresentationIdentity(tableKey), record, tableWidth.toFloat(),
+                        tableStyle, rtl, displayScale = 1f, sourceTable = surfaceSource,
+                        editorTableId = tableKey, sourceAttributes = document.tableAttributes) { cell, width ->
+                        prepareCell(cell, width, true)
                     }
                 }
                 if (surface.preparationError != null) return PreparedProseLayout.error(key, widthPx, surface.preparationError!!)

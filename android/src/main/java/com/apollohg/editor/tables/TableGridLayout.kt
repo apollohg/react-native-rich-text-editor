@@ -67,6 +67,30 @@ class TableGridLayout(private val displayScale: Float = 1f, private val cache: T
     fun layout(record: TableGridRecord, viewportWidth: Float, style: TableStyle, rtl: Boolean,
                themeDigest: String = "", fontEnvironmentRevision: Long = 0, textScale: Float = 1f,
                measureCell: (TableGridCell, Float) -> Float?): TableLayoutResult {
+        val heights = mutableMapOf<Int, Float>()
+        if (record.failure == null && style.isValid() && viewportWidth.isFinite() && viewportWidth >= 0f &&
+            record.columns > 0 && record.rows > 0 && record.cells.all { valid(it, record) } &&
+            record.columnWidths.all { it == null || it.isFinite() && it >= 0f }) {
+            columnGeometry(record, viewportWidth, style)?.let { (_, offsets) ->
+                for (cell in record.cells.sortedBy { it.sourceIndex }) {
+                    val inner = maxOf(0f, offsets[cell.column + cell.colspan] - offsets[cell.column] -
+                        2 * (style.cellPadding + style.borderWidth))
+                    val pixels = inner * scale()
+                    if (!pixels.isFinite() || pixels < 0f || pixels > Int.MAX_VALUE.toFloat()) break
+                    val pixelWidth = kotlin.math.round(pixels).toInt()
+                    val key = TableCellMeasurementKey(record.documentOwner, cell.contentKey, pixelWidth,
+                        themeDigest, fontEnvironmentRevision, textScale, cell.attachmentRevision)
+                    val measured = cache.get(key) ?: measureCell(cell, pixelWidth / scale())
+                        ?.takeIf { it.isFinite() && it >= 0f }?.also { cache.put(key, it) } ?: break
+                    heights[cell.sourceIndex] = measured
+                }
+            }
+        }
+        return relayout(record, viewportWidth, style, rtl, heights)
+    }
+
+    fun relayout(record: TableGridRecord, viewportWidth: Float, style: TableStyle, rtl: Boolean,
+                 cachedContentHeights: Map<Int, Float>): TableLayoutResult {
         val minimumRow = style.cellPadding * 2f + style.borderWidth * 2f
         val fallbackHeight = if (minimumRow.isFinite() && minimumRow >= 1f) minimumRow else 1f
         val fallbackWidth = if (viewportWidth.isFinite() && viewportWidth >= 0f) {
@@ -78,46 +102,24 @@ class TableGridLayout(private val displayScale: Float = 1f, private val cache: T
         if (invalidInput || record.failure != null) {
             return fallback(record.failure ?: TableLayoutFailure.INVALID_ATTRIBUTES, record, fallbackWidth, fallbackHeight)
         }
-        val widths = MutableList(record.columns) { index -> maxOf(style.minColumnWidth, record.columnWidths.getOrNull(index) ?: 0f) }
-        val unspecified = (0 until record.columns).filter { record.columnWidths.getOrNull(it) == null }
-        val minimumWidth = widths.fold(0f) { total, width -> total + width }
-        if (!minimumWidth.isFinite()) return fallback(TableLayoutFailure.INVALID_ATTRIBUTES, record, fallbackWidth, fallbackHeight)
-        val surplus = viewportWidth - minimumWidth
-        if (surplus > 0f && unspecified.isNotEmpty()) unspecified.forEach { widths[it] += surplus / unspecified.size }
-        for (index in widths.indices) widths[index] = snapOutward(widths[index])
-        if (widths.any { !it.isFinite() }) return fallback(TableLayoutFailure.INVALID_ATTRIBUTES, record, fallbackWidth, fallbackHeight)
-        val xOffsets = mutableListOf(0f)
-        for (width in widths) {
-            val offset = xOffsets.last() + width
-            if (!offset.isFinite()) return fallback(TableLayoutFailure.INVALID_ATTRIBUTES, record, fallbackWidth, fallbackHeight)
-            xOffsets += offset
-        }
+        val geometry = columnGeometry(record, viewportWidth, style)
+            ?: return fallback(TableLayoutFailure.INVALID_ATTRIBUTES, record, fallbackWidth, fallbackHeight)
+        val (widths, xOffsets) = geometry
         val heights = MutableList(record.rows) { minimumRow }
         val ordered = record.cells.sortedBy { it.sourceIndex }
         if (!ordered.all { valid(it, record) }) {
             return fallback(TableLayoutFailure.INVALID_STRUCTURE, record, fallbackWidth, fallbackHeight)
         }
-        fun contentHeight(cell: TableGridCell, inner: Float): Float? {
-            val pixels = inner * scale()
-            if (!pixels.isFinite() || pixels < 0f || pixels > Int.MAX_VALUE.toFloat()) return null
-            val pixelWidth = kotlin.math.round(pixels).toInt()
-            val measuredWidth = pixelWidth / scale()
-            val key = TableCellMeasurementKey(record.documentOwner, cell.contentKey, pixelWidth, themeDigest, fontEnvironmentRevision, textScale, cell.attachmentRevision)
-            cache.get(key)?.let { return it }
-            val content = measureCell(cell, measuredWidth)?.takeIf { it.isFinite() && it >= 0f } ?: return null
-            cache.put(key, content)
-            return content
-        }
+        fun contentHeight(cell: TableGridCell): Float? = cachedContentHeights[cell.sourceIndex]
+            ?.takeIf { it.isFinite() && it >= 0f }
         ordered.filter { it.rowspan == 1 }.forEach { cell ->
-            val inner = maxOf(0f, xOffsets[cell.column + cell.colspan] - xOffsets[cell.column] - 2 * (style.cellPadding + style.borderWidth))
-            val content = contentHeight(cell, inner) ?: return fallback(TableLayoutFailure.INVALID_ATTRIBUTES, record, fallbackWidth, fallbackHeight)
+            val content = contentHeight(cell) ?: return fallback(TableLayoutFailure.INVALID_ATTRIBUTES, record, fallbackWidth, fallbackHeight)
             val wanted = maxOf(fallbackHeight, content + 2 * (style.cellPadding + style.borderWidth))
             if (!wanted.isFinite()) return fallback(TableLayoutFailure.INVALID_ATTRIBUTES, record, fallbackWidth, fallbackHeight)
             heights[cell.row] = maxOf(heights[cell.row], wanted)
         }
         ordered.filter { it.rowspan > 1 }.forEach { cell ->
-            val inner = maxOf(0f, xOffsets[cell.column + cell.colspan] - xOffsets[cell.column] - 2 * (style.cellPadding + style.borderWidth))
-            val content = contentHeight(cell, inner) ?: return fallback(TableLayoutFailure.INVALID_ATTRIBUTES, record, fallbackWidth, fallbackHeight)
+            val content = contentHeight(cell) ?: return fallback(TableLayoutFailure.INVALID_ATTRIBUTES, record, fallbackWidth, fallbackHeight)
             val wanted = maxOf(fallbackHeight, content + 2 * (style.cellPadding + style.borderWidth))
             if (!wanted.isFinite()) return fallback(TableLayoutFailure.INVALID_ATTRIBUTES, record, fallbackWidth, fallbackHeight)
             val current = (cell.row until cell.row + cell.rowspan).sumOf { heights[it].toDouble() }.toFloat()
@@ -140,6 +142,24 @@ class TableGridLayout(private val displayScale: Float = 1f, private val cache: T
             cell.sourceIndex to TableCellRect(tablePhysicalX(logical, width, total, rtl), rows[cell.row], width, rows[cell.row + cell.rowspan] - rows[cell.row])
         }
         return TableLayoutResult(widths, xOffsets, rows, rectangles, ordered.map { it.sourceIndex }, total, rows.last(), null, record.compatibilityDiagnostic, null)
+    }
+
+    private fun columnGeometry(record: TableGridRecord, viewportWidth: Float, style: TableStyle): Pair<List<Float>, List<Float>>? {
+        val widths = MutableList(record.columns) { index -> maxOf(style.minColumnWidth, record.columnWidths.getOrNull(index) ?: 0f) }
+        val unspecified = (0 until record.columns).filter { record.columnWidths.getOrNull(it) == null }
+        val minimumWidth = widths.fold(0f) { total, width -> total + width }
+        if (!minimumWidth.isFinite()) return null
+        val surplus = viewportWidth - minimumWidth
+        if (surplus > 0f && unspecified.isNotEmpty()) unspecified.forEach { widths[it] += surplus / unspecified.size }
+        for (index in widths.indices) widths[index] = snapOutward(widths[index])
+        if (widths.any { !it.isFinite() }) return null
+        val xOffsets = mutableListOf(0f)
+        for (width in widths) {
+            val offset = xOffsets.last() + width
+            if (!offset.isFinite()) return null
+            xOffsets += offset
+        }
+        return widths to xOffsets
     }
 
     private fun fallback(failure: TableLayoutFailure, record: TableGridRecord, width: Float, height: Float) =

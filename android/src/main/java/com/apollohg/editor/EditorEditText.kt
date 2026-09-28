@@ -205,6 +205,7 @@ class EditorEditText @JvmOverloads constructor(
      * The plain text from the last Rust-authorized render.
      * Used by [ReconciliationWatcher] to detect unauthorized divergence.
      */
+    internal var inputRerendersForTesting = 0
     internal var lastAuthorizedText: String = ""
 
     /**

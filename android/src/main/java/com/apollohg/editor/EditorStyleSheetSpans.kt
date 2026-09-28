@@ -12,7 +12,7 @@ import android.text.style.LeadingMarginSpan
 import android.text.style.LineHeightSpan
 import android.text.style.MetricAffectingSpan
 
-internal class EditorResolvedTextSpan(val style: EditorTextStyle, private val density: Float) :
+internal class EditorResolvedTextSpan(val style: EditorTextStyle, internal val density: Float) :
     MetricAffectingSpan() {
     val lineHeightPx: Int? get() = style.lineHeight?.times(density)?.toInt()
 

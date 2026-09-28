@@ -1,6 +1,7 @@
 package com.apollohg.editor.tables
 
 import com.apollohg.editor.TableScalarExtent
+import com.apollohg.editor.renderedTextMatches
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
@@ -158,10 +159,12 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         fun take(cell: TableSurfaceCell, widthPx: Int): PreparedProseLayout? =
             contents[Key(cell.contentKey, cell.header, cell.attrsKey, widthPx)]?.removeFirstOrNull()
 
-        private fun isPositionFree(layout: PreparedProseLayout): Boolean =
-            layout.error == null && layout.viewerAtoms.isEmpty() &&
-                layout.blocks.all { it.imageAttachment == null && it.tableSurface == null } &&
-                layout.interactions.all { it.docPos == null }
+        companion object {
+            fun isPositionFree(layout: PreparedProseLayout): Boolean =
+                layout.error == null && layout.viewerAtoms.isEmpty() &&
+                    layout.blocks.all { it.imageAttachment == null && it.tableSurface == null } &&
+                    layout.interactions.all { it.docPos == null }
+        }
     }
     private data class TableResizePreview(val edge: TableResizeEdge, val width: Int)
     private data class PreparationKey(val adapter: EditorV2Adapter, val revision: ULong,
@@ -205,6 +208,8 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
     private var pendingCellDrag: PendingCellDrag? = null
     private var cellDragLifted = false
     val isCellEditMenuVisible: Boolean get() = cellEditMenu.isVisible
+    internal var incrementalRelayoutsForTesting = 0
+        private set
     internal var onTableCellPreparedForTesting: ((Int) -> Unit)? = null
     private val cellShapes = PreparedCellShapeCatalog()
     private data class ActiveCell(val tableId: String, val cellIndex: Int)
@@ -935,6 +940,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
                     tableDirection = tableDirection)
             val engine = StaticLayoutAndroidProseLayoutEngine().apply {
                 tableCellPreparationObserver = onTableCellPreparedForTesting
+                tableIncrementalRelayoutObserver = { incrementalRelayoutsForTesting += 1 }
             }
             val appearance = "${input.renderAppearanceRevision}:$tableDirection:$density"
             val presentationIdentities = index.tableKeys.associateWith { tableKey ->
@@ -962,8 +968,17 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
                     val layoutKey = ProseLayoutKey(semantic, width, "editor-table-${input.renderAppearanceRevision}",
                         0, 0, density.toBits().toLong(), revision.toLong(), semantic,
                         tableDirection = tableDirection)
-                    val reusable = ReusableCellContents(entries[id], appearance)
-                    engine.reusableTableCellContent = reusable::take
+                    val reusable by lazy { ReusableCellContents(entries[id], appearance) }
+                    engine.reusableTableCellContent = { cell, cellWidth -> reusable.take(cell, cellWidth) }
+                    val changes = adapter.cachedTablePresentation?.changes
+                    engine.incrementalTableSurface = { tableKey ->
+                        val previous = entries[tableKey]?.takeIf { it.appearance == appearance }
+                        if (preview == null && key?.resizePreview == null && previous != null &&
+                            changes != null && !changes.fullReset && tableKey !in changes.replacedTables &&
+                            previous.surface.cells.all { ReusableCellContents.isPositionFree(it.content) }) {
+                            previous.surface to changes.changedCells[tableKey].orEmpty()
+                        } else null
+                    }
                     val result = engine.prepare(document, layoutKey, preparedTheme, width, density, false,
                         layoutKey.semanticGenerationIdentity, shapes)
                     val block = result.blocks.firstOrNull { it.tableSurface != null }
@@ -1483,7 +1498,9 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         }
         val sameText = input.text.toString() == projected.text.toString()
         val appearanceChanged = activeAppearanceRevision != root.renderAppearanceRevision
-        if (!composing && sameText && (localUpdate || appearanceChanged)) {
+        val matchesAuthorized = !appearanceChanged && renderedTextMatches(input.text, projected.text) &&
+            renderedTextMatches(input.lastAuthorizedRenderedText, projected.text)
+        if (!composing && sameText && (localUpdate || appearanceChanged) && !matchesAuthorized) {
             if (appearanceChanged) applyRootAppearance(input, root)
             val previousStyleOnly = input.reuseImagesDuringThemeUpdate
             input.reuseImagesDuringThemeUpdate = true

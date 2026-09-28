@@ -87,6 +87,19 @@ class TableGridLayoutTest {
         assertEquals(98f, result.rectangles[10]?.height)
     }
 
+    @Test fun `cached relayout preserves rowspan geometry and rejects missing heights`() {
+        val cells = listOf(TableGridCell(0, 0, 0, 2, 1, "span"),
+            TableGridCell(1, 0, 1, contentKey = "first"), TableGridCell(2, 1, 1, contentKey = "second"))
+        val source = record(rows = 2, cells = cells)
+        val heights = mapOf(0 to 80f, 1 to 20f, 2 to 20f)
+        val grid = TableGridLayout()
+        val cached = grid.relayout(source, 160f, TableStyle(), true, heights)
+        assertEquals(listOf(0f, 38f, 98f), cached.rowOffsets)
+        assertEquals(grid.layout(source, 160f, TableStyle(), true) { cell, _ -> heights[cell.sourceIndex] }, cached)
+        assertEquals(TableLayoutFailure.INVALID_ATTRIBUTES,
+            grid.relayout(source, 160f, TableStyle(), true, heights - 2).failure)
+    }
+
     @Test fun `rtl mirrors x while retaining source order`() {
         val cells = listOf(TableGridCell(10, 0, 0, contentKey = "a"), TableGridCell(20, 0, 1, contentKey = "b"))
         val result = TableGridLayout().layout(record(cells = cells), 160f, TableStyle(), true) { _, _ -> 10f }

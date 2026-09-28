@@ -95,9 +95,10 @@ internal class EditorTableSurfaceMountTest {
 
     private fun withMountedView(
         document: String = tableDocument,
+        configJSON: String = config,
         block: (RichTextEditorView, EditorV2Adapter, String) -> Unit
     ) {
-        val created = UniffiEditorV2Backend.create(config, null) as EditorV2CallResult.Ok
+        val created = UniffiEditorV2Backend.create(configJSON, null) as EditorV2CallResult.Ok
         val adapter = requireNotNull(EditorV2Adapter.attach(
             UniffiEditorV2Backend, JSONObject(created.value).getString("editorId"), false
         ))
@@ -477,6 +478,7 @@ internal class EditorTableSurfaceMountTest {
         cellInput.setSelection(cellInput.text.length)
         val prepared = mutableListOf<Int>()
         view.editorTableSurface.onTableCellPreparedForTesting = { prepared += it }
+        val relayouts = view.editorTableSurface.incrementalRelayoutsForTesting
 
         assertTrue(requireNotNull(cellInput.onCreateInputConnection(EditorInfo())).commitText(TYPED, 1))
         measure(view, 600)
@@ -484,6 +486,71 @@ internal class EditorTableSurfaceMountTest {
         println("typing into cell ${cell.sourceIndex} prepared cells $prepared of $GRID_CELLS")
         assertEquals("the keystroke lands in the tapped cell", GRID_TEXT + TYPED, firstCellText(adapter))
         assertEquals("only the edited cell is measured again: $prepared", 1, prepared.size)
+        assertEquals(relayouts + 1, view.editorTableSurface.incrementalRelayoutsForTesting)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `wrapping delta relayouts cached cells without preparing them`() = withMountedView(gridDocument) { view, _, _ ->
+        tapFirstCell(view)
+        val input = view.activeTextInput
+        input.setSelection(input.text.length)
+        val before = requireNotNull(drawing(view)?.preparedLayout?.blocks?.single()?.tableSurface)
+        val prepared = mutableListOf<Int>()
+        view.editorTableSurface.onTableCellPreparedForTesting = { prepared += it }
+        val relayouts = view.editorTableSurface.incrementalRelayoutsForTesting
+        assertTrue(requireNotNull(input.onCreateInputConnection(EditorInfo())).commitText(" wrapping text".repeat(GRID_ROWS), 1))
+        measure(view, TABLE_HOST_WIDTH)
+        val after = requireNotNull(drawing(view)?.preparedLayout?.blocks?.single()?.tableSurface)
+        assertEquals(listOf(0), prepared)
+        assertEquals(relayouts + 1, view.editorTableSurface.incrementalRelayoutsForTesting)
+        assertTrue("the next row moves after wrapping", after.layout.rowOffsets[1] > before.layout.rowOffsets[1])
+        for (index in 1 until GRID_CELLS) assertSame("unchanged cell $index", before.cells[index].content, after.cells[index].content)
+    }
+
+    @Test
+    fun `matching authorized cell input skips rendering but appearance changes render`() = withMountedView(gridDocument) { view, adapter, _ ->
+        tapFirstCell(view)
+        val input = view.activeTextInput
+        val before = input.inputRerendersForTesting
+        assertTrue(input.applyUpdateJSON(requireNotNull(adapter.refreshFromRustState(null))))
+        assertEquals(before, input.inputRerendersForTesting)
+        view.editorEditText.setBaseStyle(view.editorEditText.baseFontSize, Color.RED, Color.TRANSPARENT)
+        assertTrue(input.applyUpdateJSON(requireNotNull(adapter.refreshFromRustState(null))))
+        assertTrue("appearance must still reach the input", input.inputRerendersForTesting > before)
+    }
+
+    @Test
+    fun `same text with changed marks refreshes the cell input`() = withMountedView(
+        gridDocument, config.replace("\"marks\":[]", "\"marks\":[{\"name\":\"bold\"}]")
+    ) { view, adapter, _ ->
+        tapFirstCell(view)
+        val input = view.activeTextInput
+        val before = input.inputRerendersForTesting
+        val key = adapter.tableIndex.rootExtents.keys.single()
+        val scalar = requireNotNull(adapter.tableIndex.scalarStart(key, 0)).toInt()
+        val update = requireNotNull(adapter.toggleMark("bold", scalar, scalar + GRID_TEXT.length))
+        assertTrue(input.applyUpdateJSON(update))
+        assertEquals(GRID_TEXT, input.text.toString())
+        assertTrue("changed marks render despite identical text", input.inputRerendersForTesting > before)
+        assertTrue(input.text.getSpans(0, input.text.length, android.text.style.StyleSpan::class.java)
+            .any { it.style == android.graphics.Typeface.BOLD })
+    }
+
+    @Test
+    fun `structural row insertion retains original prepared content`() = withMountedView(gridDocument) { view, adapter, _ ->
+        tapFirstCell(view)
+        val before = requireNotNull(drawing(view)?.preparedLayout?.blocks?.single()?.tableSurface)
+        val key = adapter.tableIndex.rootExtents.keys.single()
+        val command = com.apollohg.editor.tables.TableAccessibilityAction.ALL.first {
+            it.id == R.id.table_accessibility_add_row_after
+        }.commandJson()
+        val update = requireNotNull(adapter.applyTableCommandAtSelection(command, adapter.tableMutationAdmission(key)))
+        assertTrue(view.activeTextInput.applyUpdateJSON(update))
+        measure(view, TABLE_HOST_WIDTH)
+        val after = requireNotNull(drawing(view)?.preparedLayout?.blocks?.single()?.tableSurface)
+        assertEquals(GRID_CELLS + GRID_COLUMNS, after.cells.size)
+        assertEquals(GRID_CELLS, after.cells.count { next -> before.cells.any { it.content === next.content } })
     }
 
     @Test

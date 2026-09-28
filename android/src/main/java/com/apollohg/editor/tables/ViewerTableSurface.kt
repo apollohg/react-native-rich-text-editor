@@ -34,7 +34,8 @@ internal class ViewerTableSurface(
     val preparationError: ProseViewerError?,
     val sourceTable: TableSurfaceSource? = null,
     val sourceAttributes: Map<String, org.json.JSONObject> = emptyMap(),
-    val editorTableId: String? = null
+    val editorTableId: String? = null,
+    val displayScale: Float = 1f
 ) {
     private data class Preparation(
         val layout: TableLayoutResult,
@@ -45,9 +46,9 @@ internal class ViewerTableSurface(
     private constructor(
         identity: String, hostViewportWidth: Float, style: TableStyle, isRightToLeft: Boolean,
         prepared: Preparation, sourceTable: TableSurfaceSource?,
-        sourceAttributes: Map<String, org.json.JSONObject>, editorTableId: String?
+        sourceAttributes: Map<String, org.json.JSONObject>, editorTableId: String?, displayScale: Float
     ) : this(identity, hostViewportWidth, style, isRightToLeft, prepared.layout, prepared.cells,
-        prepared.error, sourceTable, sourceAttributes, editorTableId)
+        prepared.error, sourceTable, sourceAttributes, editorTableId, displayScale)
 
     constructor(
         identity: String, record: TableGridRecord, hostViewportWidth: Float, style: TableStyle,
@@ -60,7 +61,22 @@ internal class ViewerTableSurface(
     ) : this(identity, hostViewportWidth, style, isRightToLeft,
         prepare(record, hostViewportWidth, style, isRightToLeft, displayScale, themeDigest,
             fontEnvironmentRevision, textScale, sourceTable, prepareCell),
-        sourceTable, sourceAttributes, editorTableId)
+        sourceTable, sourceAttributes, editorTableId, displayScale)
+
+    fun replacingCells(contents: Map<Int, PreparedProseLayout>, contentHeights: Map<Int, Float>,
+                       record: TableGridRecord, sourceTable: TableSurfaceSource,
+                       sourceAttributes: Map<String, org.json.JSONObject>): ViewerTableSurface {
+        val updated = cells.map { cell ->
+            val source = sourceTable.cells[cell.sourceIndex]
+            cell.copy(content = contents[cell.sourceIndex] ?: cell.content,
+                isHeader = source.header, attributesKey = source.attrsKey)
+        }
+        val heights = updated.associate { it.sourceIndex to
+            (contentHeights[it.sourceIndex] ?: it.content.heightPx.toFloat()) }
+        val next = TableGridLayout(displayScale).relayout(record, hostViewportWidth, style, isRightToLeft, heights)
+        return ViewerTableSurface(identity, hostViewportWidth, style, isRightToLeft, next, updated,
+            updated.firstNotNullOfOrNull { it.content.error }, sourceTable, sourceAttributes, editorTableId, displayScale)
+    }
 
     val bounds: RectF get() = RectF(0f, 0f, layout.contentWidth, layout.contentHeight)
     val columnEdgeHandleRows: Map<Int, Int> = sourceTable?.cells.orEmpty()
