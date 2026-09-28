@@ -422,6 +422,10 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                 )
                 val tableX = placement.textX
                 val tableWidth = placement.availableWidth
+                val childTheme = theme.copy(insetTopPx = 0, insetRightPx = 0, insetBottomPx = 0, insetLeftPx = 0)
+                val shapeStyleDigest by lazy {
+                    cellShapeStyleDigest(childTheme, key.nativeFontRevision, key.fontEnvironmentRevision)
+                }
                 val surface = ViewerTableSurface(
                     document.tablePresentationIdentity(table),
                     TableGridRecord.from(table, document.semanticKey).physical(density),
@@ -442,12 +446,6 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                         key, cellWidth.toInt(), ProseViewerError.layout("Invalid table cell.")
                     )
                     val childKey = key.copy(semanticKey = child.semanticKey, widthPx = childWidth)
-                    val childTheme = theme.copy(
-                        insetTopPx = 0,
-                        insetRightPx = 0,
-                        insetBottomPx = 0,
-                        insetLeftPx = 0
-                    )
                     val build = {
                         tableCellPreparationObserver?.invoke(cell.sourcePosition)
                         prepare(
@@ -458,10 +456,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                     if (cellShapeContext == null || theme.codeHighlighting != null) {
                         build()
                     } else {
-                        val shapeKey = cellShapeKey(
-                            cell.contentKey, child, childWidth, childTheme, density,
-                            key.nativeFontRevision, key.fontEnvironmentRevision
-                        )
+                        val shapeKey = cellShapeKey(cell.contentKey, child, childWidth, childTheme, density, shapeStyleDigest)
                         cellShapeContext.resolve(shapeKey, build) { shape ->
                             bindCellShape(
                                 shape, child, childKey, childTheme, childWidth, density,
@@ -797,6 +792,10 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
             val tableSurface = current.table?.let { table ->
                 val tableBounds = localBlock.tableBounds ?: return null
                 val cellsByPosition = table.cells.associateBy { it.sourcePos.toInt() }
+                val childTheme = theme.copy(insetTopPx = 0, insetRightPx = 0, insetBottomPx = 0, insetLeftPx = 0)
+                val shapeStyleDigest by lazy {
+                    cellShapeStyleDigest(childTheme, key.nativeFontRevision, key.fontEnvironmentRevision)
+                }
                 val surface = ViewerTableSurface(
                     document.tablePresentationIdentity(table),
                     TableGridRecord.from(table, document.semanticKey).physical(density),
@@ -813,16 +812,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                     val child = document.cellDocument(source)
                     val childWidth = cellWidth.toInt().coerceAtLeast(1)
                     val childKey = key.copy(semanticKey = child.semanticKey, widthPx = childWidth)
-                    val childTheme = theme.copy(
-                        insetTopPx = 0,
-                        insetRightPx = 0,
-                        insetBottomPx = 0,
-                        insetLeftPx = 0
-                    )
-                    val childShapeKey = cellShapeKey(
-                        cell.contentKey, child, childWidth, childTheme, density,
-                        key.nativeFontRevision, key.fontEnvironmentRevision
-                    )
+                    val childShapeKey = cellShapeKey(cell.contentKey, child, childWidth, childTheme, density, shapeStyleDigest)
                     context.resolve(childShapeKey, {
                         tableCellPreparationObserver?.invoke(cell.sourcePosition)
                         prepare(

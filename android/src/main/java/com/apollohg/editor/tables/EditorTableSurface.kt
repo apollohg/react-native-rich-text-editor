@@ -56,6 +56,7 @@ import com.apollohg.editor.isAuthorizedForRootTableInput
 import com.apollohg.editor.hasAuthorizedNativeTableOwner
 import com.apollohg.editor.retireInputConnectionForEditor
 import com.apollohg.editor.updateAtomBoundaryCursorVisibility
+import com.apollohg.editor.viewer.PreparedCellShapeCatalog
 import com.apollohg.editor.viewer.PreparedProseBlock
 import com.apollohg.editor.viewer.PreparedProseDrawingView
 import com.apollohg.editor.viewer.RemoteTableCellSelection
@@ -197,6 +198,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
     private var cellDragLifted = false
     val isCellEditMenuVisible: Boolean get() = cellEditMenu.isVisible
     internal var onTableCellPreparedForTesting: ((Int) -> Unit)? = null
+    private val cellShapes = PreparedCellShapeCatalog()
     private data class ActiveCell(val tableId: String, val cellIndex: Int, val sourcePos: Long)
     private var activeCell: ActiveCell? = null
     private var applyingCellUpdate = false
@@ -936,33 +938,40 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             val minimumColumnWidth = ceil(preparedTheme.tableStyle.minColumnWidth).toInt()
                 .coerceAtMost(MAXIMUM_COLUMN_WIDTH)
             val preview = resizePreview
-            val prepared = markers.mapNotNull { (id, _) ->
-                val source = records[id] ?: return@mapNotNull null
-                val table = preview?.takeIf {
-                    it.edge.tableId == id && it.edge.column in source.columnWidths.indices
-                }?.let { resized ->
-                    source.copy(columnWidths = source.columnWidths.toMutableList().apply {
-                        set(resized.edge.column, resized.width.toUInt())
-                    })
-                } ?: source
-                val semantic = "editor-table-$id-$revision"
-                val document = ViewerDocument(semantic,
-                    listOf(ViewerBlock("table", 0, false, null, null, emptyList(), table = table)),
-                    false, 256, tableAttributes = adapter.cachedTableAttributes,
-                    tableRecords = records, tablePresentationIdentities = presentationIdentities)
-                val layoutKey = ProseLayoutKey(semantic, width, "editor-table-${input.renderAppearanceRevision}",
-                    0, 0, density.toBits().toLong(), revision.toLong(), semantic,
-                    tableDirection = tableDirection)
-                val reusable = ReusableCellContents(entries[id], appearance)
-                engine.reusableTableCellContent = reusable::take
-                val result = engine.prepare(document, layoutKey, preparedTheme, width, density, false)
-                val block = result.blocks.firstOrNull { it.tableSurface != null }
-                    ?: return@mapNotNull null
-                val bounds = block.tableBounds ?: return@mapNotNull null
-                if (result.error != null || result.heightPx <= 0) return@mapNotNull null
-                id to Entry(requireNotNull(block.tableSurface), bounds, result.heightPx,
-                    minimumColumnWidth, appearance)
-            }.toMap()
+            val shapes = cellShapes.newBuildContext()
+            val prepared = try {
+                markers.mapNotNull { (id, _) ->
+                    val source = records[id] ?: return@mapNotNull null
+                    val table = preview?.takeIf {
+                        it.edge.tableId == id && it.edge.column in source.columnWidths.indices
+                    }?.let { resized ->
+                        source.copy(columnWidths = source.columnWidths.toMutableList().apply {
+                            set(resized.edge.column, resized.width.toUInt())
+                        })
+                    } ?: source
+                    val semantic = "editor-table-$id-$revision"
+                    val document = ViewerDocument(semantic,
+                        listOf(ViewerBlock("table", 0, false, null, null, emptyList(), table = table)),
+                        false, 256, tableAttributes = adapter.cachedTableAttributes,
+                        tableRecords = records, tablePresentationIdentities = presentationIdentities)
+                    val layoutKey = ProseLayoutKey(semantic, width, "editor-table-${input.renderAppearanceRevision}",
+                        0, 0, density.toBits().toLong(), revision.toLong(), semantic,
+                        tableDirection = tableDirection)
+                    val reusable = ReusableCellContents(entries[id], appearance)
+                    engine.reusableTableCellContent = reusable::take
+                    val result = engine.prepare(document, layoutKey, preparedTheme, width, density, false,
+                        layoutKey.semanticGenerationIdentity, shapes)
+                    val block = result.blocks.firstOrNull { it.tableSurface != null }
+                        ?: return@mapNotNull null
+                    val bounds = block.tableBounds ?: return@mapNotNull null
+                    if (result.error != null || result.heightPx <= 0) return@mapNotNull null
+                    id to Entry(requireNotNull(block.tableSurface), bounds, result.heightPx,
+                        minimumColumnWidth, appearance)
+                }.toMap()
+            } finally {
+                shapes.close()
+            }
+            cellShapes.synchronizeOwners(prepared.values.flatMap { entry -> entry.surface.cells.map { it.content } })
             entries = prepared
             key = nextKey
         }

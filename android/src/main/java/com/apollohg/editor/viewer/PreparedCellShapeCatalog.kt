@@ -15,14 +15,38 @@ internal data class PreparedCellShapeKey(
     val format: Int = 1
 )
 
+private val EMPTY_GEOMETRY_DIGEST: String by lazy { sha256("") }
+
+private fun geometryDigest(parts: List<String>): String =
+    if (parts.isEmpty()) EMPTY_GEOMETRY_DIGEST else sha256(parts.joinToString("|"))
+
+internal fun cellShapeStyleDigest(
+    theme: PreparedProseTheme,
+    nativeFontRevision: Long,
+    fontEnvironmentRevision: Long
+): String = sha256(listOf(
+    theme.density, theme.fontDensity, theme.text, theme.paragraph, theme.headings,
+    theme.blockquote, theme.code, theme.insetTopPx, theme.insetRightPx, theme.insetBottomPx,
+    theme.insetLeftPx, theme.listIndentPx, theme.listBaseIndentMultiplier, theme.listItemSpacingPx,
+    theme.listSpacingAfterPx, theme.listMarkerColor, theme.listMarkerScale, theme.listMarkerGapPx,
+    theme.quoteIndentPx, theme.quoteBorderColor, theme.quoteBorderWidthPx, theme.quoteMarkerGapPx,
+    theme.codeBackground, theme.codeRadiusPx, theme.codePaddingHorizontalPx, theme.codePaddingVerticalPx,
+    theme.ruleColor, theme.ruleThicknessPx, theme.ruleMarginPx, theme.link, theme.mention,
+    theme.atomPaddingHorizontalPx, theme.atomPaddingVerticalPx,
+    theme.orderedListMarker?.let { marker ->
+        marker.schemes.joinToString(",") { it.name } + ":${marker.suffix}"
+    },
+    theme.sourceTheme?.styleSheet?.shapingDigest(),
+    theme.tableDirection
+).joinToString("|") + "|$nativeFontRevision|$fontEnvironmentRevision")
+
 internal fun cellShapeKey(
     contentKey: String,
     document: ViewerDocument,
     widthPx: Int,
     theme: PreparedProseTheme,
     density: Float,
-    nativeFontRevision: Long,
-    fontEnvironmentRevision: Long
+    styleDigest: String
 ): PreparedCellShapeKey {
     val safeWidth = widthPx.coerceAtLeast(1)
     fun atomGeometry(current: ViewerDocument): List<String> = buildList {
@@ -49,28 +73,13 @@ internal fun cellShapeKey(
             block.table?.cells?.forEach { addAll(imageGeometry(current.cellDocument(it))) }
         }
     }
-    val style = listOf(
-        theme.density, theme.fontDensity, theme.text, theme.paragraph, theme.headings,
-        theme.blockquote, theme.code, theme.insetTopPx, theme.insetRightPx, theme.insetBottomPx,
-        theme.insetLeftPx, theme.listIndentPx, theme.listBaseIndentMultiplier, theme.listItemSpacingPx,
-        theme.listSpacingAfterPx, theme.listMarkerColor, theme.listMarkerScale, theme.listMarkerGapPx,
-        theme.quoteIndentPx, theme.quoteBorderColor, theme.quoteBorderWidthPx, theme.quoteMarkerGapPx,
-        theme.codeBackground, theme.codeRadiusPx, theme.codePaddingHorizontalPx, theme.codePaddingVerticalPx,
-        theme.ruleColor, theme.ruleThicknessPx, theme.ruleMarginPx, theme.link, theme.mention,
-        theme.atomPaddingHorizontalPx, theme.atomPaddingVerticalPx,
-        theme.orderedListMarker?.let { marker ->
-            marker.schemes.joinToString(",") { it.name } + ":${marker.suffix}"
-        },
-        theme.sourceTheme?.styleSheet?.shapingDigest(),
-        theme.tableDirection
-    ).joinToString("|") + "|$nativeFontRevision|$fontEnvironmentRevision"
     return PreparedCellShapeKey(
         contentKey,
         safeWidth,
         density.toRawBits(),
-        sha256(style),
-        sha256(atomGeometry(document).joinToString("|")),
-        sha256(imageGeometry(document).joinToString("|"))
+        styleDigest,
+        geometryDigest(atomGeometry(document)),
+        geometryDigest(imageGeometry(document))
     )
 }
 

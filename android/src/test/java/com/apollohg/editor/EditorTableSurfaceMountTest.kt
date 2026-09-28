@@ -64,6 +64,7 @@ internal class EditorTableSurfaceMountTest {
         private const val GRID_CELLS = GRID_ROWS * GRID_COLUMNS
         private const val GRID_TEXT = "Cell text"
         private const val TYPED = "X"
+        private const val UNIQUE_GRID_SHAPES = 1
         const val TABLE_HOST_WIDTH = 600
         const val REFLOW_WIDTH = 400
         const val SWIPE_STEPS = 4
@@ -482,6 +483,18 @@ internal class EditorTableSurfaceMountTest {
         println("typing into cell ${cell.sourcePosition} prepared cells $prepared of $GRID_CELLS")
         assertEquals("the keystroke lands in the tapped cell", GRID_TEXT + TYPED, firstCellText(adapter))
         assertEquals("only the edited cell is measured again: $prepared", 1, prepared.size)
+    }
+
+    @Test
+    fun `identical cells shape once when the table reflows`() = withMountedView(gridDocument) { view, _, _ ->
+        measure(view, TABLE_HOST_WIDTH)
+        val prepared = mutableListOf<Int>()
+        view.editorTableSurface.onTableCellPreparedForTesting = { prepared += it }
+
+        measure(view, REFLOW_WIDTH)
+
+        println("reflowing $GRID_CELLS cells of identical content prepared $prepared")
+        assertEquals("identical cells are shaped once: $prepared", UNIQUE_GRID_SHAPES, prepared.size)
     }
 
     @Test

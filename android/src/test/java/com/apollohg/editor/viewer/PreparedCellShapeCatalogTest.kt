@@ -83,10 +83,12 @@ internal class PreparedCellShapeCatalogTest {
         val document = ViewerDocument("document", emptyList(), true, 0)
 
         val first = cellShapeKey(
-            "content", document, 100, PreparedProseTheme.resolve(themeJson, 1f), 1f, 0, 0
+            "content", document, 100, PreparedProseTheme.resolve(themeJson, 1f), 1f,
+            cellShapeStyleDigest(PreparedProseTheme.resolve(themeJson, 1f), 0, 0)
         )
         val second = cellShapeKey(
-            "content", document, 100, PreparedProseTheme.resolve(themeJson, 1f), 1f, 0, 0
+            "content", document, 100, PreparedProseTheme.resolve(themeJson, 1f), 1f,
+            cellShapeStyleDigest(PreparedProseTheme.resolve(themeJson, 1f), 0, 0)
         )
 
         assertEquals(first, second)
@@ -97,10 +99,12 @@ internal class PreparedCellShapeCatalogTest {
         val document = ViewerDocument("document", emptyList(), true, 0)
 
         val normal = cellShapeKey(
-            "content", document, 100, PreparedProseTheme.resolve(null, 1f, 1f), 1f, 7, 0
+            "content", document, 100, PreparedProseTheme.resolve(null, 1f, 1f), 1f,
+            cellShapeStyleDigest(PreparedProseTheme.resolve(null, 1f, 1f), 7, 0)
         )
         val scaled = cellShapeKey(
-            "content", document, 100, PreparedProseTheme.resolve(null, 1f, 1.5f), 1f, 7, 0
+            "content", document, 100, PreparedProseTheme.resolve(null, 1f, 1.5f), 1f,
+            cellShapeStyleDigest(PreparedProseTheme.resolve(null, 1f, 1.5f), 7, 0)
         )
 
         assertNotEquals(normal, scaled)
@@ -110,29 +114,20 @@ internal class PreparedCellShapeCatalogTest {
     fun `ordered list marker formatting is a shape dependency`() {
         val document = ViewerDocument("document", emptyList(), true, 0)
         val decimal = cellShapeKey(
-            "content",
-            document,
-            100,
-            PreparedProseTheme.resolve(
+            "content", document, 100, PreparedProseTheme.resolve(
                 """{"list":{"orderedMarker":{"schemes":["decimal"],"suffix":"."}}}""",
                 1f
-            ),
-            1f,
-            0,
-            0
-        )
-        val roman = cellShapeKey(
-            "content",
-            document,
-            100,
-            PreparedProseTheme.resolve(
-                """{"list":{"orderedMarker":{"schemes":["upperRoman"],"suffix":")"}}}""",
+            ), 1f,
+            cellShapeStyleDigest(PreparedProseTheme.resolve(
+                """{"list":{"orderedMarker":{"schemes":["decimal"],"suffix":"."}}}""",
                 1f
-            ),
-            1f,
-            0,
-            0
+            ), 0, 0)
         )
+        val romanTheme = PreparedProseTheme.resolve(
+            """{"list":{"orderedMarker":{"schemes":["upperRoman"],"suffix":")"}}}""",
+            1f
+        )
+        val roman = cellShapeKey("content", document, 100, romanTheme, 1f, cellShapeStyleDigest(romanTheme, 0, 0))
 
         assertNotEquals(decimal, roman)
     }
