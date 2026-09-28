@@ -390,7 +390,7 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
             assertEquals(setOf(GRID_FIRST), restored.sourceIndices)
             assertEquals(1, fixture.remoteRects(restored).size)
 
-            val created = UniffiEditorV2Backend.create(TABLE_CONFIG, null) as EditorV2CallResult.Ok
+            val created = UniffiEditorV2Backend.create(PlainTableFixture.CONFIG, null) as EditorV2CallResult.Ok
             val other = requireNotNull(EditorV2Adapter.attach(
                 UniffiEditorV2Backend, JSONObject(created.value).getString("editorId"), false
             ))
@@ -692,7 +692,7 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
 
     private fun withTable(document: String, viewport: Size = Size(VIEW_WIDTH, VIEW_HEIGHT), block: (Fixture) -> Unit) {
         val activity = Robolectric.buildActivity(Activity::class.java).setup()
-        val created = UniffiEditorV2Backend.create(TABLE_CONFIG, null) as EditorV2CallResult.Ok
+        val created = UniffiEditorV2Backend.create(PlainTableFixture.CONFIG, null) as EditorV2CallResult.Ok
         val adapter = requireNotNull(EditorV2Adapter.attach(
             UniffiEditorV2Backend, JSONObject(created.value).getString("editorId"), false
         ))
@@ -796,7 +796,7 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
         const val HEADER_CELL_NODE = "\"type\":\"table_header\""
         const val MERGE_TABLE_CELLS = "mergeTableCells"
         val CELL_MENU_ITEMS = listOf(android.R.id.cut, android.R.id.copy, android.R.id.paste)
-        const val TABLE_CONFIG = """{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock","htmlTag":"p"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table","htmlTag":"table"},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row","htmlTag":"tr"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","htmlTag":"td","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","htmlTag":"th","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"""
+
         const val GRID_LAST_TEXT = "D"
         const val PROSE_BEFORE_TABLE_TEXT = "before"
         const val TALL_TEXT = "tall"
