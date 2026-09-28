@@ -1226,6 +1226,7 @@ final class EditorTableInputTests: XCTestCase {
     private static let liveProbeHostFrame = CGRect(x: 0, y: 120, width: 360, height: 380)
     private static let liveProbeWindowSize = CGSize(width: 360, height: 500)
     private static let liveScrollThreshold: CGFloat = 40
+    private static let liveResizeDistance: CGFloat = 30
 
     private func awaitLiveGesture(_ banner: String, from start: CGPoint, to end: CGPoint, in fixture: MountedTableFixture,
                                   until done: @escaping () -> Bool) -> Bool {
@@ -1250,6 +1251,27 @@ final class EditorTableInputTests: XCTestCase {
         }
     }
 
+    func testTextInputGesturesWaitForTheColumnResizeHandle() throws {
+        try withMountedTable(document: try narrowColumnGridDocument(headerRow: false), cellSelection: nil) { fixture in
+            XCTAssertTrue(fixture.view.textView.becomeFirstResponder())
+            let resize = try XCTUnwrap(fixture.view.gestureRecognizers?.first {
+                $0 is TableHorizontalPanGestureRecognizer && $0.delegate === fixture.surface
+            }, "the resize recognizer is installed on the editor view")
+            func recognizers(in view: UIView) -> [UIGestureRecognizer] {
+                (view.gestureRecognizers ?? []) + view.subviews.flatMap(recognizers(in:))
+            }
+            let textGestures = fixture.view.textInputs.flatMap(recognizers(in:)).filter { !($0 is UIPanGestureRecognizer) }
+            XCTAssertTrue(textGestures.contains { $0 is UILongPressGestureRecognizer },
+                          "the editing root carries the text loupe: \(textGestures.map { type(of: $0) })")
+            for recognizer in textGestures {
+                XCTAssertTrue(fixture.surface.gestureRecognizer(resize, shouldBeRequiredToFailBy: recognizer),
+                              "\(type(of: recognizer)) must wait for a drag that starts on a resize handle")
+            }
+            XCTAssertFalse(fixture.surface.gestureRecognizer(resize, shouldBeRequiredToFailBy: UITapGestureRecognizer()),
+                           "gestures outside the editor's text inputs do not wait for the resize handle")
+        }
+    }
+
     func testLiveSlowSwipesFromAMidCellAndABodyRowColumnEdgeScrollTheTable() throws {
         try withLiveProbeTable { fixture in
             let before = try fixture.documentObject()
@@ -1270,6 +1292,22 @@ final class EditorTableInputTests: XCTestCase {
                                            in: fixture) { offset() > Self.liveScrollThreshold },
                           "a slow swipe from a body-row column edge must scroll the table, offset \(offset())")
             XCTAssertEqual(try fixture.documentObject(), before, "scrolling never mutates the document")
+        }
+    }
+
+    func testLiveSlowFirstRowEdgeDragResizesWhileTheRootIsEditing() throws {
+        try withLiveProbeTable { fixture in
+            XCTAssertTrue(fixture.view.textView.becomeFirstResponder())
+            XCTAssertTrue(fixture.view.textView.isFirstResponder, "the root text view is editing")
+            let edge = try fixture.trailingEdgeHostPoint(cellIndex: 0)
+            XCTAssertNotNil(fixture.drawing.hitResizeEdge(at: fixture.drawing.convert(edge, from: fixture.view)))
+            XCTAssertTrue(awaitLiveGesture("SLOW_RESIZE", from: edge,
+                                           to: CGPoint(x: edge.x + Self.liveResizeDistance, y: edge.y),
+                                           in: fixture) {
+                ((try? fixture.columnWidths(row: 0).first)??.first ?? 0) > Self.narrowColumnWidth
+            }, "a slow drag from a first-row handle must resize, widths \(String(describing: try? fixture.columnWidths(row: 0)))")
+            XCTAssertEqual(fixture.drawing.tableLogicalOffset(for: fixture.tableID), 0, accuracy: 1,
+                           "a resize does not scroll the table")
         }
     }
 

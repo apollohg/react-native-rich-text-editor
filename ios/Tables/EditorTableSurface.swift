@@ -825,9 +825,13 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         _ gestureRecognizer: UIGestureRecognizer,
         shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer
     ) -> Bool {
-        gestureRecognizer === resizeGesture
-            && otherGestureRecognizer !== resizeGesture
-            && otherGestureRecognizer is UIPanGestureRecognizer
+        guard gestureRecognizer === resizeGesture, otherGestureRecognizer !== resizeGesture else { return false }
+        return otherGestureRecognizer is UIPanGestureRecognizer || isTextInputGesture(otherGestureRecognizer)
+    }
+
+    private func isTextInputGesture(_ recognizer: UIGestureRecognizer) -> Bool {
+        guard let view = recognizer.view, let host = interactionHost else { return false }
+        return host.textInputs.contains { view.isDescendant(of: $0) }
     }
 
     func gestureRecognizer(
