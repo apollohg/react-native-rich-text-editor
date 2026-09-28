@@ -401,10 +401,6 @@ final class TableAccessibilityTableElement: TableAccessibilityGeneratedElement, 
         materializedCellElements.forEach { $1.refresh(table.cells[$0], tableID: table.identity) }
     }
 
-    var cellElements: [TableAccessibilityCellElement] {
-        table.cells.indices.compactMap(cellElement(at:))
-    }
-
     var materializedElements: [TableAccessibilityCellElement] {
         Array(materializedCellElements.values)
     }

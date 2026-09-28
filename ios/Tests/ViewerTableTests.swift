@@ -642,7 +642,7 @@ final class ViewerTableTests: XCTestCase {
         XCTAssertEqual(drawing.accessibilityElementCount(), 3, "before link, one table element, after link")
         let table = try XCTUnwrap(drawing.accessibilityElement(at: 1) as? TableAccessibilityTableElement)
         XCTAssertEqual(drawing.index(ofAccessibilityElement: table), 1)
-        let cell = try XCTUnwrap(table.cellElements.first)
+        let cell = try XCTUnwrap(table.allCellElements.first)
         XCTAssertEqual(cell.accessibilityLabel, "same")
         let open = try action(named: TableAccessibilityText.openLink("same").localized, on: cell)
         XCTAssertTrue(perform(open))
@@ -653,13 +653,13 @@ final class ViewerTableTests: XCTestCase {
         XCTAssertEqual(drawing.index(ofAccessibilityElement: table), 1, "a scroll keeps the same table element")
         XCTAssertTrue(try tableElement(in: drawing) === table)
         XCTAssertFalse(perform(open), "the reused action follows the scrolled geometry, so the clipped link refuses")
-        let clippedCell = try XCTUnwrap(try tableElement(in: drawing).cellElements.first)
+        let clippedCell = try XCTUnwrap(try tableElement(in: drawing).allCellElements.first)
         XCTAssertFalse(perform(try action(named: TableAccessibilityText.openLink("same").localized, on: clippedCell)),
                        "a link scrolled out of its cell clip must not activate")
         XCTAssertNil(activated)
 
         drawing.linkInteractionsEnabled = false
-        let readOnlyCell = try XCTUnwrap(try tableElement(in: drawing).cellElements.first)
+        let readOnlyCell = try XCTUnwrap(try tableElement(in: drawing).allCellElements.first)
         XCTAssertEqual(readOnlyCell.accessibilityLabel, "same", "disabled links stay readable")
         XCTAssertEqual(readOnlyCell.accessibilityCustomActions?.count, 0)
         XCTAssertEqual((drawing.accessibilityElement(at: 0) as? UIAccessibilityElement)?.accessibilityTraits, .staticText)
@@ -675,7 +675,7 @@ final class ViewerTableTests: XCTestCase {
         defer { window.isHidden = true }
         drawing.install(layout: layout)
         let table = try tableElement(in: drawing)
-        let cell = try XCTUnwrap(table.cellElements.first)
+        let cell = try XCTUnwrap(table.allCellElements.first)
         let initialCellFrame = cell.accessibilityFrame
         let initialTableFrame = table.accessibilityFrame
         let offset = (surface.bounds.width - surface.hostViewportWidth) / 2
@@ -708,8 +708,8 @@ final class ViewerTableTests: XCTestCase {
         let table = try tableElement(in: drawing)
         let expected: [NSObject] = [
             try XCTUnwrap(drawing.accessibilityElement(at: 0) as? NSObject),
-            table.cellElements[0],
-            table.cellElements[1],
+            table.allCellElements[0],
+            table.allCellElements[1],
             try XCTUnwrap(drawing.accessibilityElement(at: 2) as? NSObject)
         ]
         var visited: [NSObject] = []
@@ -721,8 +721,8 @@ final class ViewerTableTests: XCTestCase {
         }
         XCTAssertEqual(visited.count, expected.count, "every root and in-cell link must be a rotor stop: \(visited)")
         XCTAssertTrue(zip(visited, expected).allSatisfy { $0 === $1 }, "rotor order must follow document order")
-        let back = rotor.itemSearchBlock(predicate(.previous, from: table.cellElements[1]))
-        XCTAssertTrue(back?.targetElement === table.cellElements[0])
+        let back = rotor.itemSearchBlock(predicate(.previous, from: table.allCellElements[1]))
+        XCTAssertTrue(back?.targetElement === table.allCellElements[0])
     }
 
     func testViewerTableAccessibilityExposesGridSpansHeadersAndLogicalOrderInBothDirections() throws {
@@ -749,7 +749,7 @@ final class ViewerTableTests: XCTestCase {
             XCTAssertEqual(table.accessibilityContainerType, .dataTable)
             XCTAssertEqual(table.accessibilityRowCount(), 3)
             XCTAssertEqual(table.accessibilityColumnCount(), 3)
-            let cells = table.cellElements
+            let cells = table.allCellElements
             XCTAssertEqual(cells.compactMap(\.accessibilityLabel), ["A", "B", "C", "D", "E", "F", "G"],
                            "\(direction): traversal follows document order")
             XCTAssertEqual(cells.map { [$0.accessibilityRowRange().location, $0.accessibilityRowRange().length,
@@ -787,13 +787,13 @@ final class ViewerTableTests: XCTestCase {
         let drawing = PreparedProseDrawingView(frame: CGRect(origin: .zero, size: layout.size))
         drawing.install(layout: layout)
         let table = try tableElement(in: drawing)
-        XCTAssertEqual(table.cellElements.compactMap(\.accessibilityLabel), ["tall", "wide", "later"])
+        XCTAssertEqual(table.allCellElements.compactMap(\.accessibilityLabel), ["tall", "wide", "later"])
         XCTAssertEqual(table.accessibilityElementCount(), 3, "synthetic slots expose no element")
         for region in surface.syntheticRegions {
             XCTAssertNil(table.accessibilityDataTableCellElement(forRow: Int(region.row), column: Int(region.column)),
                          "synthetic slot \(region.row),\(region.column) must not resolve to a cell")
         }
-        XCTAssertTrue(table.accessibilityDataTableCellElement(forRow: 1, column: 0) === table.cellElements[0])
+        XCTAssertTrue(table.accessibilityDataTableCellElement(forRow: 1, column: 0) === table.allCellElements[0])
     }
 
     func testViewerTableAccessibilityReadsNestedContentWithoutNestedElementsOrActions() throws {
@@ -807,10 +807,10 @@ final class ViewerTableTests: XCTestCase {
         drawing.install(layout: layout)
         XCTAssertEqual(drawing.accessibilityElementCount(), 1, "the nested table is not a separate element")
         let table = try tableElement(in: drawing)
-        XCTAssertEqual(table.cellElements.count, 2)
-        XCTAssertEqual(table.cellElements[0].accessibilityLabel, "outer inner", "nested content is read inside its cell")
-        XCTAssertEqual(table.cellElements[0].accessibilityCustomActions?.count, 0)
-        XCTAssertFalse(table.cellElements[0].accessibilityActivate())
+        XCTAssertEqual(table.allCellElements.count, 2)
+        XCTAssertEqual(table.allCellElements[0].accessibilityLabel, "outer inner", "nested content is read inside its cell")
+        XCTAssertEqual(table.allCellElements[0].accessibilityCustomActions?.count, 0)
+        XCTAssertFalse(table.allCellElements[0].accessibilityActivate())
     }
 
     func testCompilerBackedTableInteractionsAndAccessibilityRejectClippedAndStalePresentation() throws {
@@ -869,8 +869,8 @@ final class ViewerTableTests: XCTestCase {
         XCTAssertEqual(activated.last?.href, "https://before.example")
         let initialTable = try tableElement(in: drawing)
         XCTAssertEqual(drawing.index(ofAccessibilityElement: initialTable), 1)
-        XCTAssertEqual(initialTable.cellElements.count, 3, "nested cells fold into their outer cell")
-        XCTAssertTrue(perform(try action(named: openLink, on: initialTable.cellElements[0])))
+        XCTAssertEqual(initialTable.allCellElements.count, 3, "nested cells fold into their outer cell")
+        XCTAssertTrue(perform(try action(named: openLink, on: initialTable.allCellElements[0])))
         XCTAssertEqual(activated.last?.href, "https://cell-one.example")
         let after = try XCTUnwrap(drawing.accessibilityElement(at: 2) as? UIAccessibilityElement)
         XCTAssertTrue(after.accessibilityActivate())
@@ -889,7 +889,7 @@ final class ViewerTableTests: XCTestCase {
         XCTAssertLessThan(partialFrame.width, initialFirst.rects.reduce(CGRect.null) { $0.union($1) }.width)
         drawing.setTableLogicalOffset(partialOffset, sourceIdentity: surface.identity)
         let partialCell = try XCTUnwrap(partiallyShifted.cells.first { $0.surface === surface })
-        let partiallyVisible = try tableElement(in: drawing).cellElements[0]
+        let partiallyVisible = try tableElement(in: drawing).allCellElements[0]
         XCTAssertEqual(
             partiallyVisible.accessibilityFrame,
             UIAccessibility.convertToScreenCoordinates(partialCell.bounds.intersection(partialCell.clip), in: drawing)
@@ -916,12 +916,12 @@ final class ViewerTableTests: XCTestCase {
         XCTAssertEqual(drawing.index(ofAccessibilityElement: initialTable), 1, "scrolling reuses the table element")
         let shiftedTable = try tableElement(in: drawing)
         XCTAssertTrue(shiftedTable === initialTable)
-        let clippedElement = shiftedTable.cellElements[0]
+        let clippedElement = shiftedTable.allCellElements[0]
         let callbacksBeforeClippedActivation = activated.count
         XCTAssertFalse(perform(try action(named: openLink, on: clippedElement)))
         XCTAssertEqual(activated.count, callbacksBeforeClippedActivation)
 
-        let freshSecond = shiftedTable.cellElements[1]
+        let freshSecond = shiftedTable.allCellElements[1]
         XCTAssertTrue(freshSecond.accessibilityLabel?.contains(mentionLabel) == true, "nested mention text is readable")
         XCTAssertTrue(perform(try action(named: openLink, on: freshSecond)))
         XCTAssertEqual(activated.last?.href, "https://cell-two.example")
@@ -938,7 +938,7 @@ final class ViewerTableTests: XCTestCase {
         XCTAssertFalse(perform(staleLink))
         XCTAssertEqual(activated.count, callbacksBeforeStaleCapabilityActivation)
         XCTAssertEqual((drawing.accessibilityElement(at: 0) as? UIAccessibilityElement)?.accessibilityTraits, .staticText)
-        let enabledMentionCell = try tableElement(in: drawing).cellElements[1]
+        let enabledMentionCell = try tableElement(in: drawing).allCellElements[1]
         XCTAssertEqual(enabledMentionCell.accessibilityCustomActions?.map(\.name), [openMention])
         XCTAssertTrue(perform(try action(named: openMention, on: enabledMentionCell)))
         XCTAssertEqual(activated.last?.kind, .mention)
@@ -2961,4 +2961,10 @@ private final class IndividuallyHoldingImageTransport: ImageLoadingTransport {
 
 private final class DeferredImageLoadingTask: ImageLoadingTask {
     func cancel() {}
+}
+
+extension TableAccessibilityTableElement {
+    var allCellElements: [TableAccessibilityCellElement] {
+        (0..<accessibilityElementCount()).compactMap(cellElement(at:))
+    }
 }

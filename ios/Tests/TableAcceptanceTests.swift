@@ -212,7 +212,7 @@ final class TableAcceptanceTests: XCTestCase {
         }
 
         private func cellElement(_ position: UInt32) throws -> TableAccessibilityCellElement {
-            try XCTUnwrap(try tableElement().cellElements.first { $0.cell.sourcePosition == Int(position) },
+            try XCTUnwrap(try tableElement().allCellElements.first { $0.cell.sourcePosition == Int(position) },
                           "cell \(position) has no accessibility element")
         }
 
