@@ -55,8 +55,11 @@ internal fun EditorV2Adapter.adopt(
     return updateJson
 }
 
-internal fun EditorV2Adapter?.parsedUpdate(updateJson: String): JSONObject =
+internal fun EditorV2Adapter?.readOnlyParsedUpdate(updateJson: String): JSONObject =
     this?.cachedViewUpdateObject?.takeIf { updateJson === cachedViewUpdateJson } ?: parseSharedStringJsonObject(updateJson)
+
+internal fun EditorV2Adapter?.updateSelection(updateJson: String): JSONObject? =
+    readOnlyParsedUpdate(updateJson).optJSONObject("selection")?.let { JSONObject(it.toString()) }
 
 internal fun EditorV2Adapter.fetchDocumentJson(): String? =
     when (val result = backend.getDocumentJson(editorId)) {

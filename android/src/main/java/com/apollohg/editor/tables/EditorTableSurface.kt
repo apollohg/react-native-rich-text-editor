@@ -44,7 +44,8 @@ import com.apollohg.editor.tableMutationAdmission
 import com.apollohg.editor.admitsTableMutation
 import com.apollohg.editor.adoptCurrentRootTableMapEpoch
 import com.apollohg.editor.cachedAtomicRenderSelection
-import com.apollohg.editor.parsedUpdate
+import com.apollohg.editor.readOnlyParsedUpdate
+import com.apollohg.editor.updateSelection
 import com.apollohg.editor.cellSelectionEndpoints
 import com.apollohg.editor.RichTextEditorView
 import com.apollohg.editor.canonicalV2U64
@@ -1231,7 +1232,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             invalidateCell()
             return true
         }
-        val targetSelection = runCatching { adapter.parsedUpdate(update).optJSONObject("selection") }
+        val targetSelection = runCatching { adapter.updateSelection(update) }
             .getOrNull() ?: run { invalidateCell(); return true }
         val scalar = exactV2ScalarInt(targetSelection.opt("anchorScalar") as? Number)
             ?: run { invalidateCell(); return true }
@@ -1356,7 +1357,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         val adapter = root.v2Driver as? EditorV2Adapter ?: return false
         val editorId = root.editorId
         val boundMap = coordinator?.positionMap ?: return false
-        val revision = runCatching { adapter.parsedUpdate(update).optString("documentVersion") }
+        val revision = runCatching { adapter.readOnlyParsedUpdate(update).optString("documentVersion") }
             .getOrNull()?.takeIf { canonicalV2U64(it) != null } ?: return false
         val cellWasFocused = activeInput?.hasFocus() == true
         applyingCellUpdate = true
@@ -1372,7 +1373,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             adapter.baseDocumentRevision.toString() == revision &&
             adapter.cachedAtomicRenderDocumentRevision == adapter.baseDocumentRevision
         val coherent = rootCoherent && activeCell == active && coordinator?.positionMap === boundMap
-        val selection = adapter.parsedUpdate(update).optJSONObject("selection")
+        val selection = adapter.updateSelection(update)
         val range = selection?.let(::selectionScalarRange)
         if (coherent && (range == null || projection(active.tableId, active.cellIndex)?.holds(range) != false)) {
             reconcileActiveCell(selection, localUpdate = true)

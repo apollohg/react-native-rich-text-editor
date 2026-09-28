@@ -306,7 +306,7 @@ internal fun EditorEditText.scheduleDeferredRustUpdateApplication() {
 
 internal fun EditorEditText.advanceRenderBlocksThroughDeferredUpdate(updateJSON: String) {
     val update = try {
-        (v2Driver as? EditorV2Adapter).parsedUpdate(updateJSON)
+        (v2Driver as? EditorV2Adapter).readOnlyParsedUpdate(updateJSON)
     } catch (_: Exception) {
         invalidateCurrentRenderBlocks()
         return

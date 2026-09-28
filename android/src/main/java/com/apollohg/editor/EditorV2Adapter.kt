@@ -510,7 +510,7 @@ internal class EditorV2Adapter private constructor(
             )
                 ?: return null
         return try {
-            parsedUpdate(update).getJSONObject("selection").toString()
+            requireNotNull(updateSelection(update)).toString()
         } catch (error: Exception) {
             null
         }

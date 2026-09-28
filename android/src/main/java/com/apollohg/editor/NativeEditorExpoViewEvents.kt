@@ -100,7 +100,7 @@ internal fun NativeEditorExpoView.documentVersionFromUpdateJSON(updateJSON: Stri
         if (updateJSON == null) {
             null
         } else {
-            canonicalV2U64((richTextView.editorEditText.v2Driver as? EditorV2Adapter).parsedUpdate(updateJSON).opt("documentVersion") as? String)
+            canonicalV2U64((richTextView.editorEditText.v2Driver as? EditorV2Adapter).readOnlyParsedUpdate(updateJSON).opt("documentVersion") as? String)
         }
     } catch (_: Throwable) {
         null

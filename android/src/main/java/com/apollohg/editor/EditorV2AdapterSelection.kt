@@ -73,7 +73,7 @@ internal fun EditorV2Adapter.selectExactTableCells(
         return null
     }
     val update = refreshFromRustState(null) ?: return null
-    val admitted = runCatching { parsedUpdate(update).getJSONObject("selection") }.getOrNull()
+    val admitted = runCatching { updateSelection(update) }.getOrNull()
         ?: return null
     if (cellSelectionEndpoints(admitted) != anchorCell to headCell ||
         !admitsTableMutation(admission) || positionEpoch == null) return null
@@ -137,7 +137,7 @@ internal fun EditorV2Adapter.selectAtomNode(docPos: Int): String? {
         is EditorV2CallResult.Ok -> {
             invalidateCachedAtomicState(null)
             recoverNativeRender()?.also { update ->
-                val selection = runCatching { parsedUpdate(update).getJSONObject("selection") }.getOrNull()
+                val selection = runCatching { updateSelection(update) }.getOrNull()
                 val pos = exactV2ScalarInt(selection?.opt("pos") as? Number)
                 if (selection?.optString("type") == "node" && pos != null) {
                     publishCollaborationSelection(pos, pos + 1)
