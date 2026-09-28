@@ -90,7 +90,10 @@ internal class ViewerTableSurface(
         }
     }
 
-    private val cellIndex = ViewerTableCellIndex(cells)
+    private val cellIndex = ViewerTableCellIndex(
+        cells,
+        record.cells.filter { it.rowspan > 1 || it.colspan > 1 }.mapTo(HashSet()) { it.sourcePosition }
+    )
 
     val nestedTableCells: List<PreparedViewerTableCell>
         get() = cellIndex.nestedTableCells.map { cells[it] }
@@ -149,14 +152,16 @@ internal class ViewerTableSurface(
     }
 }
 
-private class ViewerTableCellIndex(cells: List<PreparedViewerTableCell>) {
+private class ViewerTableCellIndex(cells: List<PreparedViewerTableCell>, spanningPositions: Set<Int>) {
     private class Band(val top: Float, val cells: List<Int>)
 
-    private val bands: List<Band> = cells.indices.groupBy { cells[it].frame.top }.entries
+    private val spanning: List<Int> = cells.indices.filter { cells[it].sourcePosition in spanningPositions }
+    private val slotted: List<Int> = cells.indices.filter { cells[it].sourcePosition !in spanningPositions }
+    private val bands: List<Band> = slotted.groupBy { cells[it].frame.top }.entries
         .sortedBy { it.key }
         .map { (top, indexes) -> Band(top, indexes.sortedBy { cells[it].frame.left }) }
-    private val maximumHeight = cells.maxOfOrNull { it.frame.height } ?: 0f
-    private val maximumWidth = cells.maxOfOrNull { it.frame.width } ?: 0f
+    private val maximumHeight = slotted.maxOfOrNull { cells[it].frame.height } ?: 0f
+    private val maximumWidth = slotted.maxOfOrNull { cells[it].frame.width } ?: 0f
     val nestedTableCells: List<Int> = cells.indices.filter { index ->
         cells[index].content.blocks.any { it.tableSurface != null }
     }
@@ -176,7 +181,10 @@ private class ViewerTableCellIndex(cells: List<PreparedViewerTableCell>) {
         cells: List<PreparedViewerTableCell>
     ): List<Int> {
         if (right <= left || bottom <= top) return emptyList()
-        val result = mutableListOf<Int>()
+        val result = spanning.filterTo(mutableListOf()) {
+            val frame = cells[it].frame
+            frame.left < right && frame.left + frame.width > left && frame.top < bottom && frame.top + frame.height > top
+        }
         val firstBand = partition(bands.size) { bands[it].top > top - maximumHeight }
         for (bandIndex in firstBand until bands.size) {
             val band = bands[bandIndex]

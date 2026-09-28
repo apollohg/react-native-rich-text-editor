@@ -125,7 +125,10 @@ final class ViewerTableSurface {
                                            attributesKey: sourceCell?.attrsKey)
         }
         cells = preparedCells
-        cellIndex = ViewerTableCellIndex(cells: preparedCells)
+        cellIndex = ViewerTableCellIndex(
+            cells: preparedCells,
+            spanningPositions: Set(record.cells.filter { $0.rowspan > 1 || $0.colspan > 1 }.map(\.sourcePosition))
+        )
     }
 
     init(
@@ -145,7 +148,7 @@ final class ViewerTableSurface {
         self.direction = direction
         self.layout = layout
         self.cells = cells
-        self.cellIndex = ViewerTableCellIndex(cells: cells)
+        self.cellIndex = ViewerTableCellIndex(cells: cells, spanningPositions: Set(cells.map(\.sourcePosition)))
         self.sourceTable = nil
         self.sourceAttributes = [:]
         self.syntheticRegions = []
@@ -228,6 +231,7 @@ private struct ViewerTableCellIndex {
     }
 
     private let bands: [Band]
+    private let spanning: [Int]
     private let maximumHeight: CGFloat
     private let maximumWidth: CGFloat
     let nestedTableCells: [Int]
@@ -235,13 +239,15 @@ private struct ViewerTableCellIndex {
     let bySourceCellIndex: [Int: Int]
     let bySourcePosition: [Int: Int]
 
-    init(cells: [PreparedViewerTableCell]) {
-        let rows = Dictionary(grouping: cells.indices, by: { cells[$0].frame.minY })
+    init(cells: [PreparedViewerTableCell], spanningPositions: Set<Int>) {
+        spanning = cells.indices.filter { spanningPositions.contains(cells[$0].sourcePosition) }
+        let slotted = cells.indices.filter { !spanningPositions.contains(cells[$0].sourcePosition) }
+        let rows = Dictionary(grouping: slotted, by: { cells[$0].frame.minY })
         bands = rows.keys.sorted().map { minY in
             Band(minY: minY, cells: rows[minY, default: []].sorted { cells[$0].frame.minX < cells[$1].frame.minX })
         }
-        maximumHeight = cells.map(\.frame.height).max() ?? 0
-        maximumWidth = cells.map(\.frame.width).max() ?? 0
+        maximumHeight = slotted.map { cells[$0].frame.height }.max() ?? 0
+        maximumWidth = slotted.map { cells[$0].frame.width }.max() ?? 0
         nestedTableCells = cells.indices.filter { index in
             cells[index].content.blocks.contains { $0.tableSurface != nil }
         }
@@ -257,7 +263,7 @@ private struct ViewerTableCellIndex {
 
     func indexes(intersecting rect: CGRect, in cells: [PreparedViewerTableCell]) -> [Int] {
         guard !rect.isNull, !rect.isEmpty else { return [] }
-        var result: [Int] = []
+        var result = spanning.filter { cells[$0].frame.intersects(rect) }
         let firstBand = Self.partition(bands.count) { bands[$0].minY > rect.minY - maximumHeight }
         for band in bands[firstBand...] {
             guard band.minY < rect.maxY else { break }

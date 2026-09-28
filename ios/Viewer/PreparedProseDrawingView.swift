@@ -782,7 +782,9 @@ public final class PreparedProseDrawingView: UIView {
     }
 
     private func redrawIfVisibleRectLeftDrawnWindow() {
-        guard let visible = configuredVisibleRect(), drawnPresentationWindow?.contains(visible) != true else { return }
+        guard let visible = configuredVisibleRect(),
+              drawnPresentationWindow?.contains(visible.insetBy(dx: -visible.width / 2, dy: -visible.height / 2)) != true
+        else { return }
         setNeedsDisplay()
     }
 

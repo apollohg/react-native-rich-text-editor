@@ -193,7 +193,8 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
 
     private fun redrawIfVisibleRectLeftDrawnWindow() {
         val visible = (presentationViewport() as? ViewerTablePresentationViewport.Known)?.rect ?: return
-        if (drawnPresentationWindow?.contains(visible) != true) invalidate()
+        val margin = Rect(visible).apply { inset(-visible.width() / 2, -visible.height() / 2) }
+        if (drawnPresentationWindow?.contains(margin) != true) invalidate()
     }
 
     init {
