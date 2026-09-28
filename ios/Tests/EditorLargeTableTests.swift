@@ -187,7 +187,7 @@ final class EditorLargeTableTests: XCTestCase {
         }
     }
 
-    func testTypingInOneCellPreparesOnlyThatCell() throws {
+    func testOneCellDeltaPreparesOneCellAndRemeasuresNothingElse() throws {
         let editorId = makeV2Editor(configJson: TableInputTestSchema.tableConfig)
         defer { destroyV2Editor(id: editorId) }
         let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
@@ -209,6 +209,7 @@ final class EditorLargeTableTests: XCTestCase {
         var prepared: [Int] = []
         surface.onTableCellPreparedForTesting = { prepared.append($0) }
 
+        let replacementsBefore = surface.incrementalRelayoutsForTesting
         let fullBefore = adapter.fullFrameAdoptionCountForTesting
         let deltaBefore = adapter.deltaFrameAdoptionCountForTesting
         input.insertText(EditedTable.typed)
@@ -221,5 +222,65 @@ final class EditorLargeTableTests: XCTestCase {
         XCTAssertEqual(adapter.cachedTablePresentation?.changes.changedCells[edited.tableID], IndexSet(integer: Int(edited.cellIndex)))
         XCTAssertEqual(editedText.count, 1, "the keystroke lands in exactly one cell")
         XCTAssertEqual(prepared.count, 1, "only the edited cell is measured again: \(prepared)")
+        XCTAssertEqual(surface.incrementalRelayoutsForTesting, replacementsBefore + 1)
     }
+    func testWrappingEditMovesLaterRowsWithoutPreparingThem() throws {
+        try withMountedTable(rows: 4, columns: 2) { view, surface, drawing in
+            let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: view.editorId))
+            let before = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface)
+            let tableID = try adapter.editableTableID()
+            let later = try XCTUnwrap(before.cell(sourceIndex: 2))
+            let previousY = before.frame(ofCell: later).minY
+            XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: .zero))
+            let input = view.activeTextInput
+            input.selectedRange = NSRange(location: input.textStorage.length, length: 0)
+            var prepared: [Int] = []
+            surface.onTableCellPreparedForTesting = { prepared.append($0) }
+            input.insertText(String(repeating: " wrapping text", count: 12))
+            view.layoutIfNeeded()
+            let after = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface)
+            let shifted = try XCTUnwrap(after.cell(sourceIndex: 2))
+            XCTAssertGreaterThan(after.frame(ofCell: shifted).minY, previousY)
+            XCTAssertTrue(shifted.content === later.content, "unchanged rows retain their prepared layout")
+            XCTAssertEqual(prepared, [0])
+        }
+    }
+
+    func testMatchingInputTextSkipsInputRerender() throws {
+        try withMountedTable(rows: 2, columns: 2) { view, _, _ in
+            let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: view.editorId))
+            let key = try adapter.editableTableID()
+            XCTAssertTrue(view.bindTableCell(tableID: key, cellIndex: 0, contentRect: .zero))
+            let input = view.activeTextInput
+            let before = input.inputRerendersForTesting
+            let epoch = input.tableCellPositionMap?.binding.positionEpoch
+            XCTAssertNotNil(adapter.currentStateJSON())
+            XCTAssertTrue(view.bindTableCell(tableID: key, cellIndex: 0, contentRect: .zero))
+            XCTAssertEqual(input.inputRerendersForTesting, before)
+            XCTAssertNotEqual(input.tableCellPositionMap?.binding.positionEpoch, epoch)
+            view.textView.baseTextColor = .red
+            XCTAssertTrue(view.bindTableCell(tableID: key, cellIndex: 0, contentRect: .zero))
+            XCTAssertEqual(input.inputRerendersForTesting, before + 1, "format changes still render")
+        }
+    }
+
+    func testStructuralReplacementRemeasuresNoUnchangedContent() throws {
+        try withMountedTable(rows: 3, columns: 2) { view, surface, drawing in
+            let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: view.editorId))
+            let before = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface)
+            let retained = Set(before.cells.map { ObjectIdentifier($0.content) })
+            var prepared: [Int] = []
+            surface.onTableCellPreparedForTesting = { prepared.append($0) }
+            let key = try adapter.editableTableID()
+            let scalar = try XCTUnwrap(adapter.tableIndex.scalarStart(tableKey: key, cellIndex: 4))
+            XCTAssertNotNil(adapter.syncSelection(anchor: scalar, head: scalar))
+            XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.applyTableCommandAtSelection(
+                try XCTUnwrap(TableAccessibilityAction.all.first { $0.key == "addRowAfter" }).command, admission: try XCTUnwrap(adapter.tableMutationAdmission(tableID: key))))))
+            view.layoutIfNeeded()
+            let after = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface)
+            XCTAssertEqual(after.cells.filter { retained.contains(ObjectIdentifier($0.content)) }.count, before.cells.count)
+            XCTAssertEqual(prepared.count, 2, "only the new row is prepared")
+        }
+    }
+
 }

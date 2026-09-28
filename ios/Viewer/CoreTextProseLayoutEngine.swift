@@ -10,6 +10,8 @@ final class CoreTextProseLayoutEngine {
     var tableCellPreparationObserver: ((Int) -> Void)?
     var tableCellShapeBuildObserver: ((Int) -> Void)?
     var tableCellBindingObserver: ((Int) -> Void)?
+    var incrementalTableSurface: ((String) -> (ViewerTableSurface, IndexSet)?)?
+    var tableIncrementalRelayoutObserver: (() -> Void)?
     var reusableTableCellContent: ((TableSurfaceCell, Int) -> PreparedProseLayout?)?
 
     final class HighlightingScope {
@@ -165,21 +167,8 @@ final class CoreTextProseLayoutEngine {
                 let surfaceSource = table
                 let record = TableGridRecord(table: surfaceSource, documentOwner: document.semanticKey)
                 let cellsByIndex = Dictionary(uniqueKeysWithValues: surfaceSource.cells.map { ($0.sourceIndex, $0) })
-                let surface = ViewerTableSurface(
-                    identity: tableKey,
-                    scrollIdentity: document.tableSourceIDs[tableKey],
-                    record: record,
-                    viewportWidth: tableWidth,
-                    style: theme.tableStyle,
-                    direction: TableLayoutDirection.resolve(declared: table.direction, host: theme.tableDirection),
-                    displayScale: displayScale,
-                    themeDigest: key.themeDigest,
-                    fontEnvironmentRevision: Int(key.fontEnvironmentRevision),
-                    textScale: theme.fontScale,
-                    sourceTable: surfaceSource,
-                    sourceAttributes: document.tableAttributes
-                ) { cell, cellWidth in
-                    if !cellMode, let source = cellsByIndex[cell.sourceIndex],
+                func prepareCell(_ cell: TableGridCell, width cellWidth: CGFloat, reuseContent: Bool = true) -> PreparedProseLayout {
+                    if reuseContent, !cellMode, let source = cellsByIndex[cell.sourceIndex],
                        let widthPixels = ProseLayoutMetrics.widthPixels(widthPoints: cellWidth, scale: displayScale),
                        let reused = self.reusableTableCellContent?(source, widthPixels) {
                         return reused
@@ -247,6 +236,38 @@ final class CoreTextProseLayoutEngine {
                     } catch {
                         return .error(key: key, width: cellWidth, error: .layout(message: "Table cell preparation failed."))
                     }
+                }
+                let surface: ViewerTableSurface
+                if !cellMode, let (previous, changed) = incrementalTableSurface?(tableKey),
+                   previous.hostViewportWidth == tableWidth, previous.displayScale == displayScale,
+                   previous.direction == TableLayoutDirection.resolve(declared: table.direction, host: theme.tableDirection) {
+                    var contents: [Int: PreparedProseLayout] = [:]
+                    for index in changed {
+                        guard record.cells.indices.contains(index),
+                              let old = previous.cell(sourceIndex: index) else { continue }
+                        let cell = record.cells[index]
+                        let inner = max(0, previous.frame(ofCell: old).width - 2 * (theme.tableStyle.cellPadding + theme.tableStyle.borderWidth))
+                        contents[index] = prepareCell(cell, width: inner, reuseContent: false)
+                    }
+                    surface = previous.replacingCells(contents,
+                        contentHeights: contents.mapValues { $0.size.height },
+                        sourceTable: surfaceSource, sourceAttributes: document.tableAttributes)
+                    tableIncrementalRelayoutObserver?()
+                } else {
+                    surface = ViewerTableSurface(
+                        identity: tableKey,
+                        scrollIdentity: document.tableSourceIDs[tableKey],
+                        record: record,
+                        viewportWidth: tableWidth,
+                        style: theme.tableStyle,
+                        direction: TableLayoutDirection.resolve(declared: table.direction, host: theme.tableDirection),
+                        displayScale: displayScale,
+                        themeDigest: key.themeDigest,
+                        fontEnvironmentRevision: Int(key.fontEnvironmentRevision),
+                        textScale: theme.fontScale,
+                        sourceTable: surfaceSource,
+                        sourceAttributes: document.tableAttributes,
+                        prepareCell: { prepareCell($0, width: $1) })
                 }
                 let bounds = CGRect(x: tableX, y: cursorY + tableBox.margin.top, width: surface.bounds.width, height: surface.bounds.height)
                 if let error = surface.preparationError {

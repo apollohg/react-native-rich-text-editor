@@ -128,7 +128,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
             return contents[key]?.popLast()
         }
 
-        private static func isPositionFree(_ layout: PreparedProseLayout) -> Bool {
+        static func isPositionFree(_ layout: PreparedProseLayout) -> Bool {
             layout.error == nil
                 && layout.blocks.allSatisfy { $0.atomSlot == nil && $0.imageAttachment == nil && $0.tableSurface == nil }
                 && layout.interactions.allSatisfy { $0.docPos == nil }
@@ -139,6 +139,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     private let drawingView = PreparedProseDrawingView(frame: .zero)
     private let activeCellClipView = UIView(frame: .zero)
     private var entries: [String: Entry] = [:]
+    private(set) var incrementalRelayoutsForTesting = 0
     private var latestPresentation: EditorV2Adapter.EditorTablePresentationSnapshot?
     private var presentationRevision: UInt64?
     private var preparedWidth: CGFloat = 0
@@ -1241,11 +1242,22 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
                 frameIndex: presentation.index
             )
             guard let widthPixels = ProseLayoutMetrics.widthPixels(widthPoints: width, scale: displayScale) else { return }
-            var reusable = ReusableCellContents(self.entries[tableID], themeDigest: themeDigest)
+            let previousEntry = self.entries[tableID]
+            var reusable: ReusableCellContents?
             let engine = CoreTextProseLayoutEngine()
             engine.tableCellPreparationObserver = onTableCellPreparedForTesting
+            if let previous = self.entries[tableID], previous.themeDigest == themeDigest,
+               !presentation.changes.fullReset, !presentation.changes.replacedTables.contains(tableID),
+               previous.surface.cells.allSatisfy({ ReusableCellContents.isPositionFree($0.content) }) {
+                engine.incrementalTableSurface = { key in
+                    guard key == tableID else { return nil }
+                    return (previous.surface, presentation.changes.changedCells[key] ?? [])
+                }
+                engine.tableIncrementalRelayoutObserver = { self.incrementalRelayoutsForTesting += 1 }
+            }
             engine.reusableTableCellContent = { cell, widthPixels in
-                reusable.take(cell, widthPixels: widthPixels, displayScale: displayScale)
+                if reusable == nil { reusable = ReusableCellContents(previousEntry, themeDigest: themeDigest) }
+                return reusable?.take(cell, widthPixels: widthPixels, displayScale: displayScale)
             }
             let key = ProseLayoutKey(
                 semanticKey: document.semanticKey,

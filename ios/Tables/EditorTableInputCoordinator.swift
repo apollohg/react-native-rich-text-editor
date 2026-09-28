@@ -102,6 +102,19 @@ final class EditorTableInputCoordinator {
         inputAuthority: (() -> Bool)? = nil
     ) -> Bool {
         guard Self.canBind(target), let positionMap else { return false }
+        let sameCell = self.positionMap?.binding.tableKey == target.binding.tableKey
+            && self.positionMap?.binding.cellIndex == target.binding.cellIndex
+            && cellInput.editorId == editorId
+        if sameCell, cellInput.textStorage.isEqual(to: text),
+           cellInput.lastAuthorizedAttributedTextStorage.isEqual(to: text),
+           !cellInput.isComposing, cellInput.markedTextRange == nil {
+            self.positionMap = positionMap
+            cellInput.tableCellPositionMap = positionMap
+            cellInput.tableCellInputAuthority = inputAuthority
+            phase = .bound(tableKey: target.binding.tableKey, cellIndex: target.binding.cellIndex,
+                           documentRevision: String(target.binding.documentRevision), positionEpoch: String(target.binding.positionEpoch))
+            return true
+        }
         _ = cellInput.discardTransientNativeInputForEditorRebind()
         cellInput.finishTransientMarkedTextMutation()
         self.positionMap = positionMap

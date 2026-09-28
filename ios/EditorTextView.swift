@@ -161,6 +161,7 @@ class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegat
 
     /// The plain text from the last Rust render, used by the reconciliation
     /// fallback to detect unauthorized text storage mutations.
+    var inputRerendersForTesting = 0
     var lastAuthorizedTextStorage = NSMutableString()
     var lastAuthorizedAttributedTextStorage = NSMutableAttributedString()
     var lastAuthorizedText: String {

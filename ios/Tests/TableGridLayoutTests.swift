@@ -113,6 +113,15 @@ final class TableGridLayoutTests: XCTestCase {
         XCTAssertEqual(measuredWidths.first, 62)
         XCTAssertEqual(result.rowOffsets, [0, 38, 98])
         XCTAssertEqual(result.rectangles[10]?.height, 98)
+        let cached = TableGridLayout().relayout(record: record(rows: 2, cells: cells), viewportWidth: 160,
+                                                style: TableStyle(), direction: .leftToRight,
+                                                cachedContentHeights: [10: 80, 20: 20, 30: 20])
+        XCTAssertEqual(cached.rowOffsets, [0, 38, 98])
+        XCTAssertEqual(cached.rectangles, result.rectangles)
+        let invalid = TableGridLayout().relayout(record: record(rows: 2, cells: cells), viewportWidth: 160,
+                                                 style: TableStyle(), direction: .leftToRight,
+                                                 cachedContentHeights: [10: .nan, 20: 20, 30: 20])
+        XCTAssertEqual(invalid.failure, .invalidAttributes)
     }
 
     func testRtlMirrorsPhysicalXWithoutChangingSourceOrder() {

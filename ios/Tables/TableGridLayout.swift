@@ -77,6 +77,36 @@ final class TableGridLayout {
     func layout(record: TableGridRecord, viewportWidth: CGFloat, style: TableStyle, direction: TableLayoutDirection,
                 themeDigest: String = "", fontEnvironmentRevision: Int = 0, textScale: CGFloat = 1,
                 measureCell: (TableGridCell, CGFloat) -> CGFloat?) -> TableLayoutResult {
+        var heights: [Int: CGFloat] = [:]
+        if record.failure == nil, style.isValid, record.rows > 0,
+           record.cells.allSatisfy({ valid($0, in: record) }),
+           let geometry = columnGeometry(record: record, viewportWidth: viewportWidth, style: style) {
+            for cell in record.cells.sorted(by: { $0.sourceIndex < $1.sourceIndex }) {
+                let inner = max(0, geometry.offsets[cell.column + cell.colspan] - geometry.offsets[cell.column]
+                                - 2 * (style.cellPadding + style.borderWidth))
+                let roundedPixels = (inner * displayScale).rounded()
+                guard roundedPixels.isFinite, roundedPixels >= 0,
+                      let innerWidthPixels = Int(exactly: roundedPixels) else { break }
+                let key = TableCellMeasurementKey(documentOwner: record.documentOwner, contentKey: cell.contentKey,
+                                                  innerWidthPixels: innerWidthPixels, themeDigest: themeDigest,
+                                                  fontEnvironmentRevision: fontEnvironmentRevision, textScale: textScale,
+                                                  attachmentRevision: cell.attachmentRevision)
+                if let cached = cache.value(for: key) {
+                    heights[cell.sourceIndex] = cached
+                } else {
+                    guard let measured = measureCell(cell, CGFloat(innerWidthPixels) / displayScale),
+                          measured.isFinite, measured >= 0 else { break }
+                    cache.insert(measured, for: key)
+                    heights[cell.sourceIndex] = measured
+                }
+            }
+        }
+        return relayout(record: record, viewportWidth: viewportWidth, style: style, direction: direction,
+                        cachedContentHeights: heights)
+    }
+
+    func relayout(record: TableGridRecord, viewportWidth: CGFloat, style: TableStyle,
+                  direction: TableLayoutDirection, cachedContentHeights: [Int: CGFloat]) -> TableLayoutResult {
         let minimumRow = style.cellPadding * 2 + style.borderWidth * 2
         let fallbackHeight = minimumRow.isFinite && minimumRow >= 1 ? minimumRow : 1
         let fallbackWidth: CGFloat
@@ -89,59 +119,30 @@ final class TableGridLayout {
         guard !invalidInput, record.failure == nil else {
             return fallback(record.failure ?? .invalidAttributes, record, width: fallbackWidth, height: fallbackHeight)
         }
-        var widths = (0..<record.columns).map { index -> CGFloat in
-            let requested = index < record.columnWidths.count ? record.columnWidths[index] : nil
-            return max(style.minColumnWidth, requested ?? 0)
+        guard let geometry = columnGeometry(record: record, viewportWidth: viewportWidth, style: style) else {
+            return fallback(.invalidAttributes, record, width: fallbackWidth, height: fallbackHeight)
         }
-        let specified = widths.enumerated().filter { $0.offset < record.columnWidths.count && record.columnWidths[$0.offset] != nil }.map(\.offset)
-        let unspecified = Set(0..<record.columns).subtracting(specified)
-        let minimumWidth = widths.reduce(0, +)
-        guard minimumWidth.isFinite else { return fallback(.invalidAttributes, record, width: fallbackWidth, height: fallbackHeight) }
-        let surplus = viewportWidth - minimumWidth
-        if surplus > 0, !unspecified.isEmpty {
-            let share = surplus / CGFloat(unspecified.count)
-            for index in unspecified { widths[index] += share }
-        }
-        widths = widths.map { snapOutward($0) }
-        guard widths.allSatisfy(\.isFinite) else { return fallback(.invalidAttributes, record, width: fallbackWidth, height: fallbackHeight) }
-        var xOffsets: [CGFloat] = [0]
-        for width in widths {
-            let offset = xOffsets.last! + width
-            guard offset.isFinite else { return fallback(.invalidAttributes, record, width: fallbackWidth, height: fallbackHeight) }
-            xOffsets.append(offset)
-        }
+        let widths = geometry.widths
+        let xOffsets = geometry.offsets
         var heights = Array(repeating: fallbackHeight, count: record.rows)
         let ordered = record.cells.sorted { $0.sourceIndex < $1.sourceIndex }
         guard ordered.allSatisfy({ valid($0, in: record) }) else {
             return fallback(.invalidStructure, record, width: fallbackWidth, height: fallbackHeight)
         }
-        func contentHeight(_ cell: TableGridCell, _ inner: CGFloat) -> CGFloat? {
-            let pixels = inner * displayScale
-            let roundedPixels = pixels.rounded()
-            guard roundedPixels.isFinite, roundedPixels >= 0,
-                  let innerWidthPixels = Int(exactly: roundedPixels) else { return nil }
-            let measuredWidth = CGFloat(innerWidthPixels) / displayScale
-            let key = TableCellMeasurementKey(documentOwner: record.documentOwner, contentKey: cell.contentKey,
-                                              innerWidthPixels: innerWidthPixels, themeDigest: themeDigest,
-                                              fontEnvironmentRevision: fontEnvironmentRevision, textScale: textScale,
-                                              attachmentRevision: cell.attachmentRevision)
-            if let cached = cache.value(for: key) { return cached }
-            guard let measured = measureCell(cell, measuredWidth), measured.isFinite, measured >= 0 else { return nil }
-            let content = measured
-            cache.insert(content, for: key)
-            return content
+        func contentHeight(_ cell: TableGridCell) -> CGFloat? {
+            if let height = cachedContentHeights[cell.sourceIndex] {
+                return height.isFinite && height >= 0 ? height : nil
+            }
+            return nil
         }
         for cell in ordered where cell.rowspan == 1 {
-            let start = xOffsets[cell.column], end = xOffsets[cell.column + cell.colspan]
-            let inner = max(0, end - start - 2 * (style.cellPadding + style.borderWidth))
-            guard let content = contentHeight(cell, inner) else { return fallback(.invalidAttributes, record, width: fallbackWidth, height: fallbackHeight) }
+            guard let content = contentHeight(cell) else { return fallback(.invalidAttributes, record, width: fallbackWidth, height: fallbackHeight) }
             let wanted = max(fallbackHeight, content + 2 * (style.cellPadding + style.borderWidth))
             guard wanted.isFinite else { return fallback(.invalidAttributes, record, width: fallbackWidth, height: fallbackHeight) }
             heights[cell.row] = max(heights[cell.row], wanted)
         }
         for cell in ordered where cell.rowspan > 1 {
-            let inner = max(0, xOffsets[cell.column + cell.colspan] - xOffsets[cell.column] - 2 * (style.cellPadding + style.borderWidth))
-            guard let content = contentHeight(cell, inner) else { return fallback(.invalidAttributes, record, width: fallbackWidth, height: fallbackHeight) }
+            guard let content = contentHeight(cell) else { return fallback(.invalidAttributes, record, width: fallbackWidth, height: fallbackHeight) }
             let wanted = max(fallbackHeight, content + 2 * (style.cellPadding + style.borderWidth))
             guard wanted.isFinite else { return fallback(.invalidAttributes, record, width: fallbackWidth, height: fallbackHeight) }
             let covered = cell.row..<(cell.row + cell.rowspan)
@@ -166,6 +167,34 @@ final class TableGridLayout {
             rectangles[cell.sourceIndex] = CGRect(x: tablePhysicalX(logicalX: logical, width: width, totalWidth: total, rtl: direction == .rightToLeft), y: rows[cell.row], width: width, height: rows[cell.row + cell.rowspan] - rows[cell.row])
         }
         return TableLayoutResult(columnWidths: widths, columnOffsets: xOffsets, rowOffsets: rows, rectangles: rectangles, sourceOrder: ordered.map(\.sourceIndex), contentSize: CGSize(width: total, height: rows.last!), failure: nil, compatibilityDiagnostic: record.compatibilityDiagnostic)
+    }
+
+    private func columnGeometry(record: TableGridRecord, viewportWidth: CGFloat, style: TableStyle)
+        -> (widths: [CGFloat], offsets: [CGFloat])? {
+        guard viewportWidth.isFinite, viewportWidth >= 0, record.columns > 0,
+              record.columnWidths.allSatisfy({ width in width.map { $0.isFinite && $0 >= 0 } ?? true }) else { return nil }
+        var widths = (0..<record.columns).map { index -> CGFloat in
+            let requested = index < record.columnWidths.count ? record.columnWidths[index] : nil
+            return max(style.minColumnWidth, requested ?? 0)
+        }
+        let specified = widths.enumerated().filter { $0.offset < record.columnWidths.count && record.columnWidths[$0.offset] != nil }.map(\.offset)
+        let unspecified = Set(0..<record.columns).subtracting(specified)
+        let minimumWidth = widths.reduce(0, +)
+        guard minimumWidth.isFinite else { return nil }
+        let surplus = viewportWidth - minimumWidth
+        if surplus > 0, !unspecified.isEmpty {
+            let share = surplus / CGFloat(unspecified.count)
+            for index in unspecified { widths[index] += share }
+        }
+        widths = widths.map { snapOutward($0) }
+        guard widths.allSatisfy(\.isFinite) else { return nil }
+        var xOffsets: [CGFloat] = [0]
+        for width in widths {
+            let offset = xOffsets.last! + width
+            guard offset.isFinite else { return nil }
+            xOffsets.append(offset)
+        }
+        return (widths, xOffsets)
     }
 
     private func valid(_ cell: TableGridCell, in record: TableGridRecord) -> Bool {

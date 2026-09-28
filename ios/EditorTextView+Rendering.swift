@@ -162,6 +162,7 @@ extension EditorTextView {
         authorizedReplacementText: String? = nil,
         authorizedReplacementAttributedText: NSAttributedString? = nil
     ) -> ApplyRenderTrace {
+        if tableCellPositionMap != nil { inputRerendersForTesting += 1 }
         let totalStartedAt = DispatchTime.now().uptimeNanoseconds
         let replaceUtf16Length = replaceRange?.length ?? textStorage.length
         let replacementUtf16Length = attrStr.length

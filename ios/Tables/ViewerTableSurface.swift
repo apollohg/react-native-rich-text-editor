@@ -28,6 +28,7 @@ final class ViewerTableSurface {
     let columnEdgeHandleRows: [Int: Int]
     let preparationError: ProseViewerError?
     private let cellIndex: ViewerTableCellIndex
+    let displayScale: CGFloat
 
     var bounds: CGRect { CGRect(origin: .zero, size: layout.contentSize) }
     var retainedBytes: Int {
@@ -52,6 +53,7 @@ final class ViewerTableSurface {
         sourceAttributes: [String: [String: Any]] = [:],
         prepareCell: (TableGridCell, CGFloat) -> PreparedProseLayout
     ) {
+        self.displayScale = displayScale
         self.identity = identity
         self.scrollIdentity = scrollIdentity ?? identity
         self.hostViewportWidth = viewportWidth
@@ -134,8 +136,12 @@ final class ViewerTableSurface {
         direction: TableLayoutDirection,
         layout: TableLayoutResult,
         cells: [PreparedViewerTableCell],
-        preparationError: ProseViewerError?
+        preparationError: ProseViewerError?,
+        displayScale: CGFloat = UIScreen.main.scale,
+        sourceTable: TableSurfaceSource? = nil,
+        sourceAttributes: [String: [String: Any]] = [:]
     ) {
+        self.displayScale = displayScale
         self.identity = identity
         self.scrollIdentity = scrollIdentity ?? identity
         self.hostViewportWidth = hostViewportWidth
@@ -144,11 +150,44 @@ final class ViewerTableSurface {
         self.layout = layout
         self.cells = cells
         self.cellIndex = ViewerTableCellIndex(cells: cells, direction: direction)
-        self.sourceTable = nil
-        self.sourceAttributes = [:]
-        self.syntheticRegions = []
-        self.columnEdgeHandleRows = [:]
+        self.sourceTable = sourceTable
+        self.sourceAttributes = sourceAttributes
+        self.syntheticRegions = sourceTable?.syntheticRegions ?? []
+        self.columnEdgeHandleRows = Dictionary(
+            (sourceTable?.cells ?? []).map { (Int($0.column + $0.colspan) - 1, Int($0.row)) },
+            uniquingKeysWith: min
+        )
         self.preparationError = preparationError
+    }
+
+    func replacingCells(_ contents: [Int: PreparedProseLayout], contentHeights: [Int: CGFloat],
+                        sourceTable: TableSurfaceSource? = nil,
+                        sourceAttributes: [String: [String: Any]]? = nil) -> ViewerTableSurface {
+        let source = sourceTable ?? self.sourceTable
+        let updated = cells.map { cell in
+            PreparedViewerTableCell(sourceIndex: cell.sourceIndex, row: cell.row, column: cell.column,
+                                    rowspan: cell.rowspan, colspan: cell.colspan, contentOrigin: cell.contentOrigin,
+                                    content: contents[cell.sourceIndex] ?? cell.content,
+                                    isHeader: source?.cells[cell.sourceIndex].header ?? cell.isHeader,
+                                    attributesKey: source?.cells[cell.sourceIndex].attrsKey ?? cell.attributesKey)
+        }
+        let record = source.map { TableGridRecord(table: $0, documentOwner: identity) }
+            ?? TableGridRecord(documentOwner: identity, columns: layout.columnWidths.count,
+                               rows: layout.rowOffsets.count - 1, columnWidths: layout.columnWidths.map { $0 },
+                               cells: updated.map { TableGridCell(sourceIndex: $0.sourceIndex, row: $0.row,
+                                   column: $0.column, rowspan: $0.rowspan, colspan: $0.colspan,
+                                   contentKey: $0.content.key.semanticKey) })
+        let heights = Dictionary(uniqueKeysWithValues: updated.map {
+            ($0.sourceIndex, contentHeights[$0.sourceIndex] ?? $0.content.size.height)
+        })
+        let next = TableGridLayout(displayScale: displayScale).relayout(
+            record: record, viewportWidth: hostViewportWidth, style: style, direction: direction,
+            cachedContentHeights: heights)
+        return ViewerTableSurface(identity: identity, scrollIdentity: scrollIdentity,
+                                  hostViewportWidth: hostViewportWidth, style: style, direction: direction,
+                                  layout: next, cells: updated, preparationError: updated.compactMap { $0.content.error }.first,
+                                  displayScale: displayScale, sourceTable: source,
+                                  sourceAttributes: sourceAttributes ?? self.sourceAttributes)
     }
 
     func parentImageAttachments(offset: Int, tableOrigin: CGPoint) -> [ViewerImageAttachment] {
