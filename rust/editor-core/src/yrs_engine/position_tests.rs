@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde_json::{json, Value};
 use yrs::branch::{Branch, BranchPtr};
 use yrs::types::xml::{XmlElementRef, XmlFragment, XmlFragmentRef, XmlOut, XmlTextRef};
-use yrs::{Assoc, ReadTxn};
+use yrs::{Assoc, ReadTxn, StickyIndex};
 
 use super::{
     boundary_anchors_at, boundary_anchors_at_doc_positions, is_table_cell_element, scalar_len,
@@ -11,7 +11,7 @@ use super::{
     BOUNDARY_WALK_NODE_VISITS,
 };
 use crate::model::Node;
-use crate::position_epoch::BoundaryAnchors;
+use crate::position_epoch::{BoundaryAnchors, EpochBoundaries};
 use crate::schema::content_rule::ContentRule;
 use crate::schema::presets::prosemirror_table_schema;
 use crate::schema::{AttrSpec, NodeRole, NodeSpec, Schema};
@@ -394,12 +394,50 @@ fn every_doc_position(engine: &YrsDocumentEngine) -> Vec<u32> {
     (0..=document.content_size()).collect()
 }
 
+#[derive(Debug, PartialEq)]
+struct DescentAnchors {
+    before: StickyIndex,
+    after: StickyIndex,
+    ancestor_before: Vec<StickyIndex>,
+    ancestor_after: Vec<StickyIndex>,
+    table_cell_ancestors: Option<usize>,
+}
+
+impl DescentAnchors {
+    fn leaf(anchors: BoundaryAnchors) -> Self {
+        Self {
+            before: anchors.before,
+            after: anchors.after,
+            ancestor_before: Vec::new(),
+            ancestor_after: Vec::new(),
+            table_cell_ancestors: None,
+        }
+    }
+
+    fn batched(boundaries: &EpochBoundaries, anchors: &BoundaryAnchors) -> Self {
+        let chain = boundaries.ancestor_chain(anchors);
+        Self {
+            before: anchors.before.clone(),
+            after: anchors.after.clone(),
+            ancestor_before: chain
+                .clone()
+                .map(|ancestor| ancestor.before.clone())
+                .collect(),
+            ancestor_after: chain
+                .clone()
+                .map(|ancestor| ancestor.after.clone())
+                .collect(),
+            table_cell_ancestors: chain.clone().position(|ancestor| ancestor.table_cell),
+        }
+    }
+}
+
 fn anchors_by_descent<T: ReadTxn>(
     txn: &T,
     fragment: &XmlFragmentRef,
     doc_pos: u32,
     schema: &Schema,
-) -> Option<BoundaryAnchors> {
+) -> Option<DescentAnchors> {
     anchors_by_descent_in_sequence(
         txn,
         fragment.children(txn),
@@ -415,7 +453,7 @@ fn anchors_by_descent_in_sequence<'a, T: ReadTxn>(
     doc_pos: u32,
     branch: BranchPtr,
     schema: &Schema,
-) -> Option<BoundaryAnchors> {
+) -> Option<DescentAnchors> {
     let mut branch_index = 0u32;
     let mut consumed_pm = 0u32;
     let mut children = children.peekable();
@@ -436,13 +474,12 @@ fn anchors_by_descent_in_sequence<'a, T: ReadTxn>(
                             sticky_at(txn, branch, branch_index.checked_add(1)?, Assoc::After)
                         });
                     if let (Some(before), Some(after)) = (before, after) {
-                        return Some(BoundaryAnchors {
+                        return Some(DescentAnchors {
                             before,
                             after,
                             ancestor_before: Vec::new(),
                             ancestor_after: Vec::new(),
                             table_cell_ancestors: None,
-                            pinned_cell: None,
                         });
                     }
                     if doc_pos < consumed_pm + text_scalar_len {
@@ -459,7 +496,8 @@ fn anchors_by_descent_in_sequence<'a, T: ReadTxn>(
             XmlOut::Element(element) => {
                 let child_size = xml_out_pm_size(txn, &child, schema)?;
                 if doc_pos == consumed_pm {
-                    return boundary_anchors_at(txn, branch, branch_index);
+                    return boundary_anchors_at(txn, branch, branch_index)
+                        .map(DescentAnchors::leaf);
                 }
                 if doc_pos < consumed_pm.checked_add(child_size)? {
                     let mut anchors = anchors_by_descent_in_sequence(
@@ -494,7 +532,8 @@ fn anchors_by_descent_in_sequence<'a, T: ReadTxn>(
             XmlOut::Fragment(nested) => {
                 let child_size = xml_out_pm_size(txn, &child, schema)?;
                 if doc_pos == consumed_pm {
-                    return boundary_anchors_at(txn, branch, branch_index);
+                    return boundary_anchors_at(txn, branch, branch_index)
+                        .map(DescentAnchors::leaf);
                 }
                 if doc_pos < consumed_pm.checked_add(child_size)? {
                     let mut anchors = anchors_by_descent_in_sequence(
@@ -527,6 +566,7 @@ fn anchors_by_descent_in_sequence<'a, T: ReadTxn>(
     (doc_pos == consumed_pm)
         .then(|| boundary_anchors_at(txn, branch, branch_index))
         .flatten()
+        .map(DescentAnchors::leaf)
 }
 
 fn assert_batch_matches_descent(label: &str, engine: &YrsDocumentEngine, doc_positions: &[u32]) {
@@ -547,10 +587,11 @@ fn assert_batch_matches_descent(label: &str, engine: &YrsDocumentEngine, doc_pos
             );
             let batched = boundary_anchors_at_doc_positions(txn, fragment, doc_positions, schema)
                 .unwrap_or_else(|| panic!("{label}: the batched walk failed to anchor every position"));
-            assert_eq!(batched.len(), expected.len(), "{label}: one boundary per position");
-            for (index, (actual, wanted)) in batched.iter().zip(&expected).enumerate() {
+            assert_eq!(batched.anchors.len(), expected.len(), "{label}: one boundary per position");
+            for (index, (actual, wanted)) in batched.anchors.iter().zip(&expected).enumerate() {
                 assert_eq!(
-                    actual, wanted,
+                    &DescentAnchors::batched(&batched, actual),
+                    wanted,
                     "{label}: boundary {index} at doc position {} differs from per-position descent",
                     doc_positions[index]
                 );

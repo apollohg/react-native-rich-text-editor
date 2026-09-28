@@ -8,7 +8,7 @@ use yrs::{Any, Assoc, IndexScope, Offset, ReadTxn, StickyIndex};
 
 use crate::model::Document;
 use crate::position::PositionMap;
-use crate::position_epoch::BoundaryAnchors;
+use crate::position_epoch::{AncestorAnchors, BoundaryAnchors, EpochBoundaries};
 use crate::schema::{NodeRole, Schema};
 use crate::selection::Selection;
 use crate::tables::commands::{NODE_CLOSING_TOKENS, NODE_OPENING_TOKENS};
@@ -417,7 +417,7 @@ pub(crate) fn boundary_anchors_at_doc_positions<T: ReadTxn>(
     fragment: &XmlFragmentRef,
     doc_positions: &[u32],
     schema: &Schema,
-) -> Option<Vec<BoundaryAnchors>> {
+) -> Option<EpochBoundaries> {
     let mut targets = Vec::new();
     targets.try_reserve_exact(doc_positions.len()).ok()?;
     targets.extend_from_slice(doc_positions);
@@ -429,6 +429,7 @@ pub(crate) fn boundary_anchors_at_doc_positions<T: ReadTxn>(
         targets: &targets,
         anchors: Vec::new(),
         ancestors: Vec::new(),
+        open: Vec::new(),
     };
     walk.anchors.try_reserve_exact(targets.len()).ok()?;
     walk.walk_sequence(
@@ -446,13 +447,11 @@ pub(crate) fn boundary_anchors_at_doc_positions<T: ReadTxn>(
         let target = targets.binary_search(doc_pos).ok()?;
         boundaries.push(walk.anchors[target].clone());
     }
-    Some(boundaries)
-}
-
-struct AncestorAnchors {
-    before: StickyIndex,
-    after: StickyIndex,
-    table_cell: bool,
+    Some(EpochBoundaries {
+        anchors: boundaries,
+        ancestors: walk.ancestors,
+        cells: Vec::new(),
+    })
 }
 
 struct BoundaryAnchorWalk<'walk, T> {
@@ -461,6 +460,7 @@ struct BoundaryAnchorWalk<'walk, T> {
     targets: &'walk [u32],
     anchors: Vec<BoundaryAnchors>,
     ancestors: Vec<AncestorAnchors>,
+    open: Vec<u32>,
 }
 
 impl<T: ReadTxn> BoundaryAnchorWalk<'_, T> {
@@ -472,18 +472,7 @@ impl<T: ReadTxn> BoundaryAnchorWalk<'_, T> {
     }
 
     fn resolve(&mut self, mut leaf: BoundaryAnchors) {
-        let innermost_first = self.ancestors.iter().rev();
-        leaf.ancestor_before = innermost_first
-            .clone()
-            .map(|ancestor| ancestor.before.clone())
-            .collect();
-        leaf.ancestor_after = innermost_first
-            .clone()
-            .map(|ancestor| ancestor.after.clone())
-            .collect();
-        leaf.table_cell_ancestors = innermost_first
-            .clone()
-            .position(|ancestor| ancestor.table_cell);
+        leaf.ancestor = self.open.last().copied();
         self.anchors.push(leaf);
     }
 
@@ -501,12 +490,19 @@ impl<T: ReadTxn> BoundaryAnchorWalk<'_, T> {
     }
 
     fn enter(&mut self, branch: BranchPtr, index: u32, table_cell: bool) -> Option<()> {
+        let entered = u32::try_from(self.ancestors.len()).ok()?;
         self.ancestors.push(AncestorAnchors {
             before: sticky_at(self.txn, branch, index, Assoc::Before)?,
             after: sticky_at(self.txn, branch, index.checked_add(1)?, Assoc::After)?,
             table_cell,
+            parent: self.open.last().copied(),
         });
+        self.open.push(entered);
         Some(())
+    }
+
+    fn leave(&mut self) {
+        self.open.pop();
     }
 
     fn walk_sequence(
@@ -550,7 +546,7 @@ impl<T: ReadTxn> BoundaryAnchorWalk<'_, T> {
                             position.checked_add(NODE_OPENING_TOKENS)?,
                             None,
                         )?;
-                        self.ancestors.pop();
+                        self.leave();
                         content_end.checked_add(NODE_CLOSING_TOKENS)?
                     }
                 }
@@ -565,7 +561,7 @@ impl<T: ReadTxn> BoundaryAnchorWalk<'_, T> {
                         position,
                         Some(fragment_end),
                     )?;
-                    self.ancestors.pop();
+                    self.leave();
                     fragment_end
                 }
             };
@@ -608,9 +604,7 @@ impl<T: ReadTxn> BoundaryAnchorWalk<'_, T> {
                 Some((before, after)) => self.resolve(BoundaryAnchors {
                     before,
                     after,
-                    ancestor_before: Vec::new(),
-                    ancestor_after: Vec::new(),
-                    table_cell_ancestors: None,
+                    ancestor: None,
                     pinned_cell: None,
                 }),
                 None if target == text_end && followed_by_text => break,
@@ -629,9 +623,7 @@ fn boundary_anchors_at<T: ReadTxn>(
     Some(BoundaryAnchors {
         before: sticky_at(txn, branch, index, Assoc::Before)?,
         after: sticky_at(txn, branch, index, Assoc::After)?,
-        ancestor_before: Vec::new(),
-        ancestor_after: Vec::new(),
-        table_cell_ancestors: None,
+        ancestor: None,
         pinned_cell: None,
     })
 }

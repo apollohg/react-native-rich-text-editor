@@ -283,3 +283,82 @@ fn unchanged_nested_list_boundaries_resolve_to_the_exact_scalar() {
         assert!(!resolved.fallback);
     }
 }
+
+const LARGE_TABLE_CELL_TEXT: &str = "abcdefghijkl";
+const LARGE_TABLE_OWNER: u64 = 7;
+
+fn session_with_plain_table(rows: usize, columns: usize) -> EditorSession {
+    let config = EditorSessionConfig::local_for_test();
+    let mut session = EditorSession::new(
+        YrsDocumentEngine::new(YrsEngineConfig {
+            schema: crate::schema::presets::prosemirror_table_schema(),
+            fragment_name: "prosemirror".into(),
+            initialization_mode: InitializationMode::LocalEmpty,
+            resource_limits: ResourceLimits::default(),
+            editing_limits: EditingLimits::default(),
+            max_length: None,
+            scope: None,
+        })
+        .unwrap(),
+        SessionPolicy::from_config(&config),
+        DocumentState::LocalReady,
+        CollaborationLimits::default(),
+    )
+    .unwrap();
+    let cell = |kind: &str| {
+        serde_json::json!({
+            "type": kind,
+            "content": [{"type": "paragraph", "content": [{"type": "text", "text": LARGE_TABLE_CELL_TEXT}]}],
+        })
+    };
+    let table_rows: Vec<_> = (0..rows)
+        .map(|row| {
+            let kind = if row == 0 {
+                "table_header"
+            } else {
+                "table_cell"
+            };
+            serde_json::json!({"type": "table_row", "content": vec![cell(kind); columns]})
+        })
+        .collect();
+    let document = serde_json::json!({
+        "type": "doc",
+        "content": [{"type": "table", "content": table_rows}],
+    });
+    session
+        .replace_document_json(1, &document.to_string(), ReplacementHistory::ResetAndClear)
+        .unwrap();
+    session
+}
+
+#[test]
+fn twenty_thousand_slot_tables_pin_an_epoch_whose_ancestors_are_shared_per_element() {
+    for (rows, columns) in [(1000, 20), (100, 200)] {
+        let mut session = session_with_plain_table(rows, columns);
+        let boundaries = session.engine.build_position_epoch_boundaries().unwrap();
+        let cells = rows * columns;
+        let elements = 1 + rows + 2 * cells;
+        eprintln!(
+            "{rows}x{columns}: {} boundaries share {} ancestor anchors",
+            boundaries.anchors.len(),
+            boundaries.ancestors.len()
+        );
+        assert_eq!(
+            boundaries.ancestors.len(),
+            elements,
+            "{rows}x{columns}: one ancestor anchor per entered element, not per boundary"
+        );
+        let last = boundaries.anchors.len() - 2;
+        assert!(
+            boundaries.inside_table_cell(&boundaries.anchors[last]),
+            "{rows}x{columns}: the last cell's text keeps its table cell ancestry"
+        );
+
+        let pinned = session.pin_position_epoch(LARGE_TABLE_OWNER, session.engine.revision());
+
+        assert!(
+            pinned.is_ok(),
+            "{rows}x{columns}: the 20,000-slot fixture pins under the default budget, got {pinned:?}"
+        );
+    }
+}

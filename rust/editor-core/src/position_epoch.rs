@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use yrs::StickyIndex;
+use yrs::{IndexScope, StickyIndex};
 
 use crate::session::{ErrorDomain, SessionError};
 
@@ -8,10 +8,16 @@ use crate::session::{ErrorDomain, SessionError};
 pub(crate) struct BoundaryAnchors {
     pub(crate) before: StickyIndex,
     pub(crate) after: StickyIndex,
-    pub(crate) ancestor_before: Vec<StickyIndex>,
-    pub(crate) ancestor_after: Vec<StickyIndex>,
-    pub(crate) table_cell_ancestors: Option<usize>,
+    pub(crate) ancestor: Option<u32>,
     pub(crate) pinned_cell: Option<CellTextPosition>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AncestorAnchors {
+    pub(crate) before: StickyIndex,
+    pub(crate) after: StickyIndex,
+    pub(crate) table_cell: bool,
+    pub(crate) parent: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,13 +56,51 @@ pub(crate) struct PinnedTableCell {
 #[derive(Debug)]
 pub(crate) struct EpochBoundaries {
     pub(crate) anchors: Vec<BoundaryAnchors>,
+    pub(crate) ancestors: Vec<AncestorAnchors>,
     pub(crate) cells: Vec<PinnedTableCell>,
+}
+
+impl EpochBoundaries {
+    pub(crate) fn ancestor_chain<'epoch>(
+        &'epoch self,
+        boundary: &BoundaryAnchors,
+    ) -> impl Iterator<Item = &'epoch AncestorAnchors> + Clone + 'epoch {
+        ancestor_chain(&self.ancestors, boundary.ancestor)
+    }
+
+    pub(crate) fn inside_table_cell(&self, boundary: &BoundaryAnchors) -> bool {
+        self.ancestor_chain(boundary)
+            .any(|ancestor| ancestor.table_cell)
+    }
+}
+
+fn ancestor_chain(
+    ancestors: &[AncestorAnchors],
+    innermost: Option<u32>,
+) -> impl Iterator<Item = &AncestorAnchors> + Clone {
+    std::iter::successors(
+        innermost.and_then(|index| ancestors.get(usize::try_from(index).ok()?)),
+        move |ancestor| {
+            ancestor
+                .parent
+                .and_then(|index| ancestors.get(usize::try_from(index).ok()?))
+        },
+    )
 }
 
 pub(crate) struct EpochBoundary<'epoch> {
     pub(crate) anchors: &'epoch BoundaryAnchors,
+    pub(crate) ancestors: &'epoch [AncestorAnchors],
     pub(crate) pinned_cell: Option<PinnedCellBoundary<'epoch>>,
     pub(crate) document_revision: u64,
+}
+
+impl<'epoch> EpochBoundary<'epoch> {
+    pub(crate) fn ancestor_chain(
+        &self,
+    ) -> impl Iterator<Item = &'epoch AncestorAnchors> + Clone + 'epoch {
+        ancestor_chain(self.ancestors, self.anchors.ancestor)
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -229,6 +273,7 @@ impl PositionEpochStore {
             })?;
         Ok(EpochBoundary {
             anchors,
+            ancestors: &epoch.boundaries.ancestors,
             pinned_cell: anchors.pinned_cell.and_then(|position| {
                 Some(PinnedCellBoundary {
                     cell: epoch.boundaries.cells.get(position.cell)?,
@@ -256,28 +301,32 @@ impl PositionEpochStore {
 }
 
 fn retained_bytes(boundaries: &EpochBoundaries) -> Result<usize, SessionError> {
-    let mut total = std::mem::size_of_val(boundaries.anchors.as_slice())
-        .checked_add(std::mem::size_of_val(boundaries.cells.as_slice()))
-        .ok_or_else(|| limit_error("maxPositionEpochRetainedBytes", usize::MAX, usize::MAX))?;
-    for boundary in &boundaries.anchors {
-        for sticky in std::iter::once(&boundary.before)
-            .chain(std::iter::once(&boundary.after))
-            .chain(boundary.ancestor_before.iter())
-            .chain(boundary.ancestor_after.iter())
-        {
-            let bytes = serde_json::to_vec(sticky).map_err(|_| {
-                SessionError::new(
-                    ErrorDomain::Boundary,
-                    "POSITION_EPOCH_INVALID",
-                    "position epoch anchor could not be retained",
-                )
-            })?;
-            total = total.checked_add(bytes.len()).ok_or_else(|| {
-                limit_error("maxPositionEpochRetainedBytes", usize::MAX, usize::MAX)
-            })?;
-        }
+    let overflow = || limit_error("maxPositionEpochRetainedBytes", usize::MAX, usize::MAX);
+    let fixed = std::mem::size_of_val(boundaries.anchors.as_slice())
+        .checked_add(std::mem::size_of_val(boundaries.ancestors.as_slice()))
+        .and_then(|total| total.checked_add(std::mem::size_of_val(boundaries.cells.as_slice())))
+        .ok_or_else(overflow)?;
+    boundaries
+        .anchors
+        .iter()
+        .flat_map(|boundary| [&boundary.before, &boundary.after])
+        .chain(
+            boundaries
+                .ancestors
+                .iter()
+                .flat_map(|ancestor| [&ancestor.before, &ancestor.after]),
+        )
+        .try_fold(fixed, |total, sticky| {
+            total.checked_add(sticky_heap_bytes(sticky))
+        })
+        .ok_or_else(overflow)
+}
+
+fn sticky_heap_bytes(sticky: &StickyIndex) -> usize {
+    match sticky.scope() {
+        IndexScope::Root(name) => name.len(),
+        IndexScope::Relative(_) | IndexScope::Nested(_) => 0,
     }
-    Ok(total)
 }
 
 pub(crate) fn table_cell_removed(request_id: u64) -> SessionError {

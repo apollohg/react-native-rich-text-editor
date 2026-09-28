@@ -539,23 +539,23 @@ impl YrsDocumentEngine {
         let spans = self.cell_pinning(state).spans();
         for (cell, span) in spans.iter().enumerate() {
             for (scalar, point) in &span.points {
-                let Some(boundary) = usize::try_from(*scalar)
-                    .ok()
-                    .and_then(|index| boundaries.get_mut(index))
-                    .filter(|boundary| boundary.table_cell_ancestors.is_some())
-                else {
+                let Some(index) = usize::try_from(*scalar).ok().filter(|index| {
+                    boundaries
+                        .anchors
+                        .get(*index)
+                        .is_some_and(|boundary| boundaries.inside_table_cell(boundary))
+                }) else {
                     continue;
                 };
-                boundary.pinned_cell = Some(crate::position_epoch::CellTextPosition {
-                    cell,
-                    point: *point,
-                });
+                boundaries.anchors[index].pinned_cell =
+                    Some(crate::position_epoch::CellTextPosition {
+                        cell,
+                        point: *point,
+                    });
             }
         }
-        Some(crate::position_epoch::EpochBoundaries {
-            anchors: boundaries,
-            cells: spans.into_iter().map(|span| span.cell).collect(),
-        })
+        boundaries.cells = spans.into_iter().map(|span| span.cell).collect();
+        Some(boundaries)
     }
 
     #[cfg(test)]
@@ -591,34 +591,28 @@ impl YrsDocumentEngine {
         let txn = self.doc.transact();
         let fragment = txn.get_xml_fragment(self.fragment_name.as_str())?;
         let anchors = boundary.anchors;
-        let (leaf, ancestors, opposite_leaf, opposite_ancestors) = match affinity {
-            super::Affinity::Before => (
-                &anchors.before,
-                &anchors.ancestor_before,
-                &anchors.after,
-                &anchors.ancestor_after,
-            ),
-            super::Affinity::After => (
-                &anchors.after,
-                &anchors.ancestor_after,
-                &anchors.before,
-                &anchors.ancestor_before,
-            ),
+        let chain = boundary.ancestor_chain();
+        let table_cell_ancestors = chain.clone().position(|ancestor| ancestor.table_cell);
+        let side = |before: bool| {
+            chain.clone().enumerate().map(move |(depth, ancestor)| {
+                let sticky = if before {
+                    &ancestor.before
+                } else {
+                    &ancestor.after
+                };
+                (true, Some(depth), sticky)
+            })
+        };
+        let leading_before = matches!(affinity, super::Affinity::Before);
+        let (leaf, opposite_leaf) = if leading_before {
+            (&anchors.before, &anchors.after)
+        } else {
+            (&anchors.after, &anchors.before)
         };
         for (fallback, ancestor_depth, sticky) in std::iter::once((false, None, leaf))
-            .chain(
-                ancestors
-                    .iter()
-                    .enumerate()
-                    .map(|(depth, sticky)| (true, Some(depth), sticky)),
-            )
+            .chain(side(leading_before))
             .chain(std::iter::once((true, None, opposite_leaf)))
-            .chain(
-                opposite_ancestors
-                    .iter()
-                    .enumerate()
-                    .map(|(depth, sticky)| (true, Some(depth), sticky)),
-            )
+            .chain(side(!leading_before))
         {
             let Some(doc_pos) =
                 super::position::sticky_index_to_doc_pos(&txn, &fragment, sticky, &self.schema)
@@ -633,7 +627,7 @@ impl YrsDocumentEngine {
                     left_table_cell,
                 };
             let unmapped = state.position_map.doc_to_scalar(doc_pos, &state.document);
-            let Some((depth, cell_depth)) = ancestor_depth.zip(anchors.table_cell_ancestors) else {
+            let Some((depth, cell_depth)) = ancestor_depth.zip(table_cell_ancestors) else {
                 return Some(resolved(unmapped, false));
             };
             if depth < cell_depth {
@@ -653,7 +647,7 @@ impl YrsDocumentEngine {
         Some(crate::position_epoch::ResolvedBoundary {
             offset: original_offset.min(state.position_map.total_scalars()),
             fallback: true,
-            left_table_cell: anchors.table_cell_ancestors.is_some(),
+            left_table_cell: table_cell_ancestors.is_some(),
         })
     }
 
