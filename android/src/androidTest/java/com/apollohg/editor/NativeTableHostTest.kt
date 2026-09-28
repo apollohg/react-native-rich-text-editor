@@ -59,6 +59,9 @@ class NativeTableHostTest {
                         presented.size < surface.cells.size / LARGE_TABLE_WINDOW_FRACTION)
                     assertTrue("the cell under the viewport centre is presented at $fraction",
                         presented.any { it.bounds.contains(visible.exactCenterX(), visible.exactCenterY()) })
+                    val canvasHeight = requireNotNull(drawing.preparedLayout).heightPx
+                    assertTrue("the drawn canvas reaches the visible rows at $fraction: $canvasHeight < ${visible.bottom}",
+                        canvasHeight >= visible.bottom)
                 }
             }
             instrumentation.saveDeviceScreenshot("native-table-large-scrolled.png")

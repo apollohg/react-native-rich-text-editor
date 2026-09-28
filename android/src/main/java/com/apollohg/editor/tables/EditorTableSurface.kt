@@ -1005,13 +1005,16 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             val rect = Rect(x, y, x + entry.localBounds.width(), y + entry.localBounds.height())
             PreparedProseBlock(emptyList(), rect, tableSurface = entry.surface, tableBounds = rect)
         }.sortedBy { it.bounds.top }
-        if (blocks == positionedBlocks && drawingView.preparedLayout != null) {
+        val width = host.editorContentFrame.width.coerceAtLeast(input.measuredWidth)
+            .coerceAtLeast(blocks.maxOfOrNull { it.bounds.right } ?: 0).coerceAtLeast(1)
+        val height = host.editorContentFrame.height.coerceAtLeast(input.measuredHeight)
+            .coerceAtLeast(blocks.maxOfOrNull { it.bounds.bottom } ?: 0).coerceAtLeast(1)
+        val installed = drawingView.preparedLayout
+        if (blocks == positionedBlocks && installed != null && installed.widthPx == width && installed.heightPx == height) {
             host.layoutEditorContentChild(drawingView)
             return
         }
         positionedBlocks = blocks
-        val width = host.editorContentFrame.width.coerceAtLeast(input.measuredWidth).coerceAtLeast(1)
-        val height = host.editorContentFrame.height.coerceAtLeast(input.measuredHeight).coerceAtLeast(1)
         val key = ProseLayoutKey("editor-table-canvas", width, "editor-table-canvas", 0, 0,
             input.resources.displayMetrics.density.toBits().toLong(), 0, "editor-table-canvas")
         drawingView.install(PreparedProseLayout(key, width, height, blocks,
