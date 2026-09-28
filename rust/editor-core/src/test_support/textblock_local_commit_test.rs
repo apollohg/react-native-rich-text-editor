@@ -813,6 +813,31 @@ fn assert_large_table_edit_is_validated_locally(intent: &str) {
         CELL_PARAGRAPH_INDEX,
     ];
     let caret = caret_scalar(&session, &block_path, CaretOffset::At(MIDDLE_OFFSET));
+    let point = crate::yrs_engine::RevisionedPosition {
+        offset: caret,
+        kind: crate::yrs_engine::EditorOffsetKind::Scalar,
+        affinity: crate::yrs_engine::Affinity::After,
+    };
+    session
+        .engine
+        .apply_typed_transaction_with_result(crate::yrs_engine::TypedTransaction {
+            request_id: INSERT_REQUEST_ID - 1,
+            base_document_revision: session.engine.revision(),
+            origin: crate::yrs_engine::TransactionOrigin::LocalApi,
+            operations: Vec::new(),
+            selection_intent: crate::yrs_engine::SelectionIntent::Set(
+                crate::yrs_engine::SelectionInput::Text {
+                    anchor: point,
+                    head: point,
+                },
+            ),
+            history_policy: crate::yrs_engine::HistoryPolicy::Skip,
+        })
+        .unwrap();
+    session
+        .engine
+        .active_state()
+        .expect("the displayed caret has current command availability");
     let request = insert_request(&mut session, caret);
     let mut request: Value = serde_json::from_str(&request).expect("request is JSON");
     request["intent"]["type"] = json!(intent);
@@ -858,6 +883,18 @@ fn assert_large_table_edit_is_validated_locally(intent: &str) {
     );
     for (kind, count) in [
         ("yrs_tree_walks", passes.yrs_tree_walks),
+        (
+            "table_projection_derivations",
+            passes.table_projection_derivations,
+        ),
+        (
+            "table_command_availability_plans",
+            passes.table_command_availability_plans,
+        ),
+        (
+            "active_applicability_passes",
+            passes.active_applicability_passes,
+        ),
         ("document_validations", passes.document_validations),
         ("planner_simulations", passes.planner_simulations),
         (

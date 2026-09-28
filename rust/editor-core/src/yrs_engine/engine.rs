@@ -106,6 +106,12 @@ pub struct EngineCommit {
     pub revision: u64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DocumentChangeScope {
+    Textblock { block_index: usize },
+    Document,
+}
+
 pub struct YrsDocumentEngine {
     doc: Doc,
     fragment_name: String,
@@ -118,6 +124,11 @@ pub struct YrsDocumentEngine {
     canonical_schema: CanonicalSchemaContext,
     derived_state: Option<DerivedStateCache>,
     revision: u64,
+    document_scope_revision: u64,
+    last_recorded_revision: u64,
+    last_change_scope: DocumentChangeScope,
+    #[cfg(test)]
+    recorded_change_count: u64,
     state_revision: u64,
     yrs_state_epoch: u64,
     last_committed_origin: Option<TransactionOrigin>,
@@ -244,6 +255,11 @@ impl YrsDocumentEngine {
             canonical_schema,
             derived_state,
             revision: 0,
+            document_scope_revision: 0,
+            last_recorded_revision: 0,
+            last_change_scope: DocumentChangeScope::Document,
+            #[cfg(test)]
+            recorded_change_count: 0,
             state_revision: 0,
             yrs_state_epoch: 0,
             last_committed_origin: None,
@@ -257,8 +273,35 @@ impl YrsDocumentEngine {
         })
     }
 
+    fn record_document_change(&mut self, scope: DocumentChangeScope) {
+        debug_assert!(self.revision > self.last_recorded_revision);
+        self.last_recorded_revision = self.revision;
+        self.last_change_scope = scope;
+        if scope == DocumentChangeScope::Document {
+            self.document_scope_revision = self.revision;
+        }
+        #[cfg(test)]
+        {
+            self.recorded_change_count += 1;
+        }
+    }
+
+    pub(crate) fn document_scope_revision(&self) -> u64 {
+        self.document_scope_revision
+    }
+
     pub fn is_ready(&self) -> bool {
         self.derived_state.is_some()
+    }
+
+    pub(crate) fn active_state(&self) -> Option<crate::editor_state::ActiveState> {
+        let state = self.derived_state.as_ref()?;
+        Some(state.render_active_state(
+            &self.schema,
+            &self.resource_limits,
+            &self.editing_limits,
+            self.document_scope_revision(),
+        ))
     }
 
     pub fn render_state(&self) -> EngineRenderState {

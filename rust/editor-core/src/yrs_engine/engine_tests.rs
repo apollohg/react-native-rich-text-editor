@@ -649,3 +649,6 @@ mod localized_compilation;
 mod prepared_commands;
 #[path = "engine_tests/remote_updates.rs"]
 mod remote_updates;
+
+#[path = "engine_tests/document_revision.rs"]
+mod document_revision;

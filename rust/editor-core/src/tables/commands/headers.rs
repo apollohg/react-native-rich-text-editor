@@ -10,20 +10,33 @@ use crate::tables::commands::{
 fn surviving_selection(target: &TableTarget<'_>, selection: &Selection) -> Option<Selection> {
     let rect = target.rect()?;
     match selection {
-        Selection::Text { anchor, head } => {
-            let inside = |position: u32| {
-                rect.cells.iter().any(|source_pos| {
-                    target.cell_starting_at(*source_pos).is_some_and(|cell| {
-                        cell.source_pos < position && position < cell.source_end
-                    })
-                })
-            };
-            (inside(*anchor) && inside(*head)).then(|| selection.clone())
+        Selection::Text { .. } => {
+            text_selection_survives(selection, rect, &target.projected).then(|| selection.clone())
         }
         Selection::Cell { .. } | Selection::Node { .. } | Selection::All => {
             target.cell_selection_over(rect.top, rect.left, rect.bottom, rect.right)
         }
     }
+}
+
+pub(crate) fn text_selection_survives(
+    selection: &Selection,
+    rect: &crate::tables::selection::CellSelectionRect,
+    table: &crate::tables::projection::ProjectedTable,
+) -> bool {
+    let Selection::Text { anchor, head } = selection else {
+        return true;
+    };
+    let inside = |position: u32| {
+        rect.cells.iter().any(|source_pos| {
+            table
+                .cells
+                .iter()
+                .find(|cell| cell.source_pos == *source_pos)
+                .is_some_and(|cell| cell.source_pos < position && position < cell.source_end)
+        })
+    };
+    inside(*anchor) && inside(*head)
 }
 
 pub(crate) fn plan_toggle_header(

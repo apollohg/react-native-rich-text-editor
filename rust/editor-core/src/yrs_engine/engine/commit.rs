@@ -186,7 +186,17 @@ impl YrsDocumentEngine {
             .map(|transition| cached_transition_render_update(&transition.update))
             .unwrap_or(yrs_engine::RenderUpdate::None);
         let prepared_result = with_result
-            .then(|| self.prepare_typed_result(&compiled, render_update, &commit_authority))
+            .then(|| {
+                self.prepare_typed_result(
+                    &compiled,
+                    render_update,
+                    render_transition
+                        .as_ref()
+                        .map(|transition| &transition.cache)
+                        .unwrap_or(&installed.render_blocks),
+                    &commit_authority,
+                )
+            })
             .transpose()?;
         let (mut result, prepared_active_cache) = match prepared_result {
             Some((result, cache)) => (Some(result), cache),
@@ -936,6 +946,13 @@ impl YrsDocumentEngine {
             unreachable!()
         };
         next_derived_state.stored_marks = stored_marks;
+        if let Some(result) = &result {
+            next_derived_state.cache_render_active_state(
+                result.active_state.clone(),
+                &self.resource_limits,
+                &self.editing_limits,
+            );
+        }
         let prepared_active_state_certificate = prepared_active_state_install.and_then(|install| {
             let authority = yrs_engine::prepared_admission::InstalledDerivedStateAuthority::new(
                 &next_derived_state,
@@ -1009,6 +1026,10 @@ impl YrsDocumentEngine {
             yrs_state_epoch: next_yrs_state_epoch,
             encoded_state_seal: None,
         });
+        let change_scope = localized_block_index
+            .map_or(super::DocumentChangeScope::Document, |block_index| {
+                super::DocumentChangeScope::Textblock { block_index }
+            });
         let mut prepared = PreparedCompiledCommit {
             request_id,
             origin,
@@ -1018,6 +1039,7 @@ impl YrsDocumentEngine {
             history_update,
             history_after,
             next_derived_state: Some(next_derived_state),
+            change_scope,
             next_durable_client_ids,
             next_document_revision,
             next_state_revision,

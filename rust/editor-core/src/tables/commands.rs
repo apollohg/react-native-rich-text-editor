@@ -313,13 +313,6 @@ impl<'a> TableTarget<'a> {
             .checked_sub(NODE_CLOSING_TOKENS)
     }
 
-    pub(crate) fn cell_starting_at(&self, source_pos: u32) -> Option<&ProjectedCell> {
-        self.projected
-            .cells
-            .iter()
-            .find(|cell| cell.source_pos == source_pos)
-    }
-
     pub(crate) fn cells_in_rectangle(
         &self,
         top: u32,

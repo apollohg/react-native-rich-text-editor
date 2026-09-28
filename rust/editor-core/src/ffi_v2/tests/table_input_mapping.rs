@@ -616,6 +616,14 @@ fn a_render_after_a_keystroke_walks_the_yrs_tree_only_to_pin() {
     let rendered =
         super::render::editor_v2_render_native(editor_id.clone(), OWNER.into(), None, None);
     let counts = take_full_pass_counts_for_test();
+    assert_eq!(
+        counts.table_command_availability_plans, 0,
+        "mirror-less render reuses authoritative availability"
+    );
+    assert_eq!(
+        counts.active_applicability_passes, 0,
+        "mirror-less render reuses authoritative active state"
+    );
     assert!(super::editor::editor_v2_destroy(editor_id).error.is_none());
     let rendered = ffi_value(&rendered);
     assert!(rendered["renderPatch"].is_object());

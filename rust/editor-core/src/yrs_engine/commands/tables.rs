@@ -35,7 +35,7 @@ use crate::yrs_engine::{
     SelectionIntent, TypedTransaction,
 };
 
-const CLEAR_CELLS_FIELD: &str = "clearTableCells";
+pub(crate) const CLEAR_CELLS_FIELD: &str = "clearTableCells";
 const EXPLICIT_TABLE_COLUMN_FIELD: &str = "column";
 const UNREADABLE_GRID_IS_NOT_AVAILABLE: bool = false;
 const TABLE_COMMAND_OPERATION_INDEX: usize = 0;
@@ -55,7 +55,10 @@ pub(crate) fn anchor_from_selection(
     anchor_in(&index, selection)
 }
 
-fn anchor_in(index: &TableProjectionIndex, selection: &Selection) -> Option<TableAnchor> {
+pub(crate) fn anchor_in(
+    index: &TableProjectionIndex,
+    selection: &Selection,
+) -> Option<TableAnchor> {
     let (anchor, head) = match selection {
         Selection::Cell { anchor, head } => (*anchor, *head),
         Selection::Text { anchor, head } => {
@@ -745,9 +748,24 @@ impl<'a> TableCommandSurface<'a> {
         selection: &'a Selection,
         limits: &'a ResourceLimits,
     ) -> Self {
+        Self::resolve_in(
+            document,
+            schema,
+            selection,
+            limits,
+            TableProjectionIndex::derive_or_fallback(document, schema, limits),
+        )
+    }
+
+    pub(crate) fn resolve_in(
+        document: &'a Document,
+        schema: &'a Schema,
+        selection: &'a Selection,
+        limits: &'a ResourceLimits,
+        index: TableProjectionIndex,
+    ) -> Self {
         #[cfg(test)]
         crate::yrs_engine::observability::record_table_command_availability_plan();
-        let index = TableProjectionIndex::derive_or_fallback(document, schema, limits);
         let anchor = anchor_in(&index, selection);
         let target = anchor.as_ref().and_then(|anchor| {
             TableTarget::resolve_in(

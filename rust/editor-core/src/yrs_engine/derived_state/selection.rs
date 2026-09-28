@@ -81,6 +81,7 @@ impl DerivedStateCache {
         self.stored_marks = stored_marks;
         self.reseal_state_revision(state_revision);
         self.clear_active_state_certificate();
+        self.render_active_state.take();
     }
 
     pub fn resolve_relative_selection<T: ReadTxn>(

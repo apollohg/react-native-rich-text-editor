@@ -25,6 +25,7 @@ pub(super) struct PreparedCompiledCommit {
     pub(super) next_derived_state: Option<DerivedStateCache>,
     pub(super) next_durable_client_ids: HashSet<u64>,
     pub(super) next_document_revision: u64,
+    pub(super) change_scope: super::DocumentChangeScope,
     pub(super) next_state_revision: u64,
     pub(super) next_yrs_state_epoch: u64,
     pub(super) publish_active_state_install: bool,
@@ -99,6 +100,7 @@ impl YrsDocumentEngine {
         }
         self.durable_client_ids = prepared.next_durable_client_ids;
         self.revision = prepared.next_document_revision;
+        self.record_document_change(prepared.change_scope);
         self.state_revision = prepared.next_state_revision;
         self.yrs_state_epoch = prepared.next_yrs_state_epoch;
         self.last_committed_origin = Some(prepared.origin);

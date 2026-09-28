@@ -164,6 +164,25 @@ pub(crate) fn command_applicability_with_known_node_count(
         selection,
         limits,
         document_node_count,
+        None,
+    )
+}
+
+pub(crate) fn command_applicability_with_cached_tables(
+    document: &Document,
+    schema: &Schema,
+    selection: &Selection,
+    limits: &ResourceLimits,
+    document_node_count: usize,
+    table_commands: HashMap<String, bool>,
+) -> HashMap<String, bool> {
+    command_applicability_with_known_node_count_impl(
+        document,
+        schema,
+        selection,
+        limits,
+        document_node_count,
+        Some(table_commands),
     )
 }
 
@@ -173,6 +192,7 @@ fn command_applicability_with_known_node_count_impl(
     selection: &Selection,
     limits: &ResourceLimits,
     document_node_count: usize,
+    cached_table_commands: Option<HashMap<String, bool>>,
 ) -> HashMap<String, bool> {
     let text_position = selection.from(document);
     let list_context = text_position.and_then(|pos| list_item_context_at(document, schema, pos));
@@ -252,10 +272,14 @@ fn command_applicability_with_known_node_count_impl(
             root_wrap_range.as_ref(),
         ),
     );
-    let table_commands =
-        crate::yrs_engine::TableCommandSurface::resolve(document, schema, selection, limits);
-    for (name, command) in table_command_surface() {
-        commands.insert(name.into(), table_commands.is_available(command));
+    if let Some(table_commands) = cached_table_commands {
+        commands.extend(table_commands);
+    } else {
+        let table_commands =
+            crate::yrs_engine::TableCommandSurface::resolve(document, schema, selection, limits);
+        for (name, command) in table_command_surface() {
+            commands.insert(name.into(), table_commands.is_available(command));
+        }
     }
     commands.insert(
         "wrapTaskList".into(),
@@ -277,7 +301,7 @@ fn command_applicability_with_known_node_count_impl(
     commands
 }
 
-fn table_command_surface() -> [(&'static str, TableCommand); TABLE_COMMAND_ENTRIES] {
+pub(crate) fn table_command_surface() -> [(&'static str, TableCommand); TABLE_COMMAND_ENTRIES] {
     [
         (
             "insertTable",
@@ -369,6 +393,7 @@ pub(crate) fn active_state_for_debug_invariant(
         selection,
         limits,
         document_node_count,
+        None,
     );
     active_state_impl(document, schema, selection, stored_marks, commands, limits)
 }

@@ -7,6 +7,7 @@ mod localized_insert;
 mod observability;
 mod render_evidence;
 mod selection;
+mod table_availability;
 mod validation;
 
 use super::canonical::CanonicalArtifact;
@@ -127,6 +128,9 @@ pub(crate) struct DerivedStateCache {
 
     pub localized_text_index: Option<LocalizedTextLeafIndex>,
     active_state_certificate: Option<Arc<ActiveStateCertificate>>,
+    table_command_availability:
+        std::cell::RefCell<Option<table_availability::CachedTableCommandAvailability>>,
+    render_active_state: std::cell::OnceCell<table_availability::CachedRenderActiveState>,
 }
 
 impl DerivedStateCache {
@@ -270,6 +274,8 @@ impl DerivedStateCache {
             table_projection_index: self.table_projection_index.clone(),
             localized_text_index,
             active_state_certificate: None,
+            table_command_availability: self.table_command_availability.clone(),
+            render_active_state: std::cell::OnceCell::new(),
         }
     }
 
@@ -606,6 +612,8 @@ impl DerivedStateCache {
             table_projection_index,
             localized_text_index,
             active_state_certificate: None,
+            table_command_availability: std::cell::RefCell::new(None),
+            render_active_state: std::cell::OnceCell::new(),
         })
     }
 
@@ -819,6 +827,8 @@ impl DerivedStateCache {
             table_projection_index,
             localized_text_index,
             active_state_certificate: None,
+            table_command_availability: self.table_command_availability.clone(),
+            render_active_state: std::cell::OnceCell::new(),
         })
     }
 

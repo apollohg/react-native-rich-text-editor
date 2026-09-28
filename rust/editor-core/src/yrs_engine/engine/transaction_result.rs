@@ -35,13 +35,31 @@ impl YrsDocumentEngine {
             .as_ref()
             .ok_or_else(|| yrs_engine::OperationError::engine_not_ready(request_id))?;
         let legacy_selection = yrs_engine::derived_state::resolved_to_legacy(selection);
-        let commands = crate::editor_state::command_applicability_with_known_node_count(
+        let commands = match current.table_command_availability(
             &current.document,
             &self.schema,
             &legacy_selection,
             &self.resource_limits,
-            current.document_node_count,
-        );
+            self.editing_limits.max_derived_output_bytes,
+            &current.render_blocks,
+            self.document_scope_revision(),
+        ) {
+            Some(commands) => crate::editor_state::command_applicability_with_cached_tables(
+                &current.document,
+                &self.schema,
+                &legacy_selection,
+                &self.resource_limits,
+                current.document_node_count,
+                commands,
+            ),
+            None => crate::editor_state::command_applicability_with_known_node_count(
+                &current.document,
+                &self.schema,
+                &legacy_selection,
+                &self.resource_limits,
+                current.document_node_count,
+            ),
+        };
         let active_state = crate::editor_state::active_state(
             &current.document,
             &self.schema,
@@ -72,6 +90,7 @@ impl YrsDocumentEngine {
         &self,
         compiled: &CompiledTransaction,
         render_update: yrs_engine::RenderUpdate,
+        render: &crate::render::incremental::CachedRenderBlocks,
         commit_authority: &CompiledCommitAuthority<'_, '_>,
     ) -> yrs_engine::OperationResult<(
         yrs_engine::TypedTransactionResult,
@@ -147,9 +166,43 @@ impl YrsDocumentEngine {
                 &self.resource_limits,
             )
         };
-        let (active_state, prepared_active_cache) = if let Some(transition) =
-            &compiled.prepared_active_state_transition
+        let availability_scope_revision = if compiled.localized_textblock_edit_admission.is_some()
+            || compiled.preview.shares_root_storage_with(&current.document)
         {
+            self.document_scope_revision()
+        } else {
+            self.revision.saturating_add(1)
+        };
+        let table_commands = current.table_command_availability(
+            &compiled.preview,
+            &self.schema,
+            &legacy_selection,
+            &self.resource_limits,
+            self.editing_limits.max_derived_output_bytes,
+            render,
+            availability_scope_revision,
+        );
+        let (active_state, prepared_active_cache) = if let Some(table_commands) = table_commands {
+            let commands = crate::editor_state::command_applicability_with_cached_tables(
+                &compiled.preview,
+                &self.schema,
+                &legacy_selection,
+                &self.resource_limits,
+                document_node_count,
+                table_commands,
+            );
+            (
+                crate::editor_state::active_state(
+                    &compiled.preview,
+                    &self.schema,
+                    &legacy_selection,
+                    stored_marks.as_deref(),
+                    commands,
+                    &self.resource_limits,
+                ),
+                None,
+            )
+        } else if let Some(transition) = &compiled.prepared_active_state_transition {
             yrs_engine::derived_state::record_active_state_cache_attempt();
             let structural = compiled.localized_textblock_edit_admission.as_ref().map(
                 yrs_engine::derived_state::LocalizedTextblockEditAdmission::active_state_structural_seal,

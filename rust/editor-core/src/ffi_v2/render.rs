@@ -392,20 +392,24 @@ fn render_snapshot_json(
             )
         }
     };
-    let commands = crate::editor_state::command_applicability(
-        document,
-        &schema,
-        &selection,
-        engine.resource_limits(),
-    );
-    let active_state = crate::editor_state::active_state(
-        document,
-        &schema,
-        &selection,
-        stored_marks,
-        commands,
-        engine.resource_limits(),
-    );
+    let active_state = if mirror.is_none() {
+        engine.active_state().ok_or_else(engine_not_ready)?
+    } else {
+        let commands = crate::editor_state::command_applicability(
+            document,
+            &schema,
+            &selection,
+            engine.resource_limits(),
+        );
+        crate::editor_state::active_state(
+            document,
+            &schema,
+            &selection,
+            stored_marks,
+            commands,
+            engine.resource_limits(),
+        )
+    };
     let scalar_length = position_map.doc_to_scalar(u32::MAX, document);
     let document_is_empty = crate::editor_state::document_is_empty(document, &schema);
 

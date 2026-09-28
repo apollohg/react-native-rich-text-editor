@@ -314,6 +314,7 @@ impl YrsDocumentEngine {
         self.derived_state = next_derived_state;
         self.durable_client_ids = candidate.durable_client_ids;
         self.revision = next_revision;
+        self.record_document_change(super::DocumentChangeScope::Document);
         self.state_revision = next_state_revision;
         self.yrs_state_epoch = next_yrs_state_epoch;
         self.last_committed_origin = Some(origin);

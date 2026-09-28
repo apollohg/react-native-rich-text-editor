@@ -284,6 +284,11 @@ impl YrsDocumentEngine {
 
         candidate_history.accept_action(request_id, action, candidate_encoded_state)?;
         if let Some(result) = &mut result {
+            candidate_state.cache_render_active_state(
+                result.active_state.clone(),
+                &self.resource_limits,
+                &self.editing_limits,
+            );
             result.history_state = crate::editor_state::HistoryState {
                 can_undo: candidate_history.can_undo(),
                 can_redo: candidate_history.can_redo(),
@@ -421,6 +426,7 @@ impl YrsDocumentEngine {
         self.history = prepared.candidate_history;
         self.derived_state = Some(prepared.candidate_state);
         self.revision = prepared.next_document_revision;
+        self.record_document_change(super::DocumentChangeScope::Document);
         self.state_revision = prepared.next_state_revision;
         self.yrs_state_epoch = prepared.next_yrs_state_epoch;
         self.last_committed_origin = Some(TransactionOrigin::UndoRedo);
@@ -449,12 +455,31 @@ impl YrsDocumentEngine {
             .ok_or_else(|| yrs_engine::OperationError::engine_not_ready(request_id))?;
         let selection = candidate.resolved_selection.clone();
         let legacy_selection = candidate.legacy_selection();
-        let commands = crate::editor_state::command_applicability(
+        let commands = match candidate.table_command_availability(
             &candidate.document,
             &self.schema,
             &legacy_selection,
             &self.resource_limits,
-        );
+            self.editing_limits.max_derived_output_bytes,
+            &candidate.render_blocks,
+            candidate.document_revision,
+        ) {
+            Some(commands) => crate::editor_state::command_applicability_with_cached_tables(
+                &candidate.document,
+                &self.schema,
+                &legacy_selection,
+                &self.resource_limits,
+                candidate.document_node_count,
+                commands,
+            ),
+            None => crate::editor_state::command_applicability_with_known_node_count(
+                &candidate.document,
+                &self.schema,
+                &legacy_selection,
+                &self.resource_limits,
+                candidate.document_node_count,
+            ),
+        };
         let active_state = crate::editor_state::active_state(
             &candidate.document,
             &self.schema,

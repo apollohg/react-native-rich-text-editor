@@ -794,6 +794,8 @@ impl DerivedStateCache {
             table_projection_index,
             localized_text_index: None,
             active_state_certificate: None,
+            table_command_availability: std::cell::RefCell::new(None),
+            render_active_state: std::cell::OnceCell::new(),
         };
         Ok(Some(RestoredHistoryDocumentState {
             state,

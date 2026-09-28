@@ -335,6 +335,13 @@ impl YrsDocumentEngine {
                 next_stored_marks,
                 next_state_revision,
             );
+            if let Some(result) = &result {
+                current.cache_render_active_state(
+                    result.active_state.clone(),
+                    &self.resource_limits,
+                    &self.editing_limits,
+                );
+            }
             self.state_revision = next_state_revision;
             self.last_committed_origin = Some(transaction.origin);
         }
@@ -526,6 +533,13 @@ impl YrsDocumentEngine {
             }
             return Ok((commit, result));
         };
+        if let Some(result) = &result {
+            next.cache_render_active_state(
+                result.active_state.clone(),
+                &self.resource_limits,
+                &self.editing_limits,
+            );
+        }
         self.derived_state = Some(next);
         self.state_revision = next_state_revision;
         self.last_committed_origin = Some(compiled.origin);
