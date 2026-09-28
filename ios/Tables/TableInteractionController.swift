@@ -6,6 +6,7 @@ final class TableHorizontalPanGestureRecognizer: UIPanGestureRecognizer {
     }
 
     private var initialLocation: CGPoint?
+    var claimsDirection: ((CGFloat) -> Bool)?
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
         guard event.allTouches?.count == 1, let touch = touches.first else {
@@ -20,13 +21,17 @@ final class TableHorizontalPanGestureRecognizer: UIPanGestureRecognizer {
         if state == .possible, let initialLocation, let touch = touches.first {
             let location = touch.location(in: view)
             let delta = CGPoint(x: location.x - initialLocation.x, y: location.y - initialLocation.y)
-            if hypot(delta.x, delta.y) >= Constants.intentSlop,
-               !TableInteractionController.isHorizontalIntent(delta) {
+            guard claimsMovement(by: delta) else {
                 state = .failed
                 return
             }
         }
         super.touchesMoved(touches, with: event)
+    }
+
+    func claimsMovement(by delta: CGPoint) -> Bool {
+        guard hypot(delta.x, delta.y) >= Constants.intentSlop else { return true }
+        return TableInteractionController.isHorizontalIntent(delta) && claimsDirection?(delta.x) != false
     }
 
     override func reset() {
@@ -71,6 +76,7 @@ final class TableInteractionController: NSObject, UIGestureRecognizerDelegate {
         pan.addTarget(self, action: #selector(handlePan(_:)))
         pan.maximumNumberOfTouches = 1
         pan.delegate = self
+        pan.claimsDirection = { [weak self] delta in self?.claimsTouch(towards: delta) ?? false }
         host.addGestureRecognizer(pan)
     }
 
@@ -119,8 +125,7 @@ final class TableInteractionController: NSObject, UIGestureRecognizerDelegate {
         guard !selectedChain.isEmpty else { return false }
         let outer = horizontalScrollAncestors(of: host)
         guard Constants.scrollDirections.contains(where: { direction in
-            drawing.canScrollTables(in: selectedChain, by: direction)
-                || outer.contains { canScroll($0, by: direction) }
+            canScroll(selectedChain, outer, by: direction)
         }) else { return false }
         cancelMotion()
         chain = selectedChain
@@ -173,6 +178,16 @@ final class TableInteractionController: NSObject, UIGestureRecognizerDelegate {
         default:
             break
         }
+    }
+
+    private func claimsTouch(towards delta: CGFloat) -> Bool {
+        guard let drawing, let host else { return false }
+        return canScroll(drawing.tableChain(at: touchPoint), horizontalScrollAncestors(of: host), by: delta)
+    }
+
+    private func canScroll(_ chain: [String], _ outer: [UIScrollView], by delta: CGFloat) -> Bool {
+        guard let drawing else { return false }
+        return drawing.canScrollTables(in: chain, by: delta) || outer.contains { canScroll($0, by: delta) }
     }
 
     private func drawingChainAtTouch() -> [String] {

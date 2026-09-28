@@ -1273,6 +1273,61 @@ final class EditorTableInputTests: XCTestCase {
         }
     }
 
+    private final class ScriptedTouch: UITouch {
+        private let windowPoint: CGPoint
+        private let touchedView: UIView
+
+        init(at point: CGPoint, in view: UIView) {
+            touchedView = view
+            windowPoint = view.convert(point, to: nil)
+            super.init()
+        }
+
+        override var tapCount: Int { 1 }
+        override var view: UIView? { touchedView }
+        override var window: UIWindow? { touchedView.window }
+
+        override func location(in view: UIView?) -> CGPoint {
+            view.map { $0.convert(windowPoint, from: nil) } ?? windowPoint
+        }
+    }
+
+    func testTablePanBeginsAtTouchDownAndClaimsOnlyScrollableDirections() throws {
+        try withMountedTable(document: try narrowColumnGridDocument(headerRow: false), cellSelection: nil) { fixture in
+            let pan = try XCTUnwrap(fixture.view.gestureRecognizers?.compactMap {
+                $0 as? TableHorizontalPanGestureRecognizer
+            }.first { $0.delegate is TableInteractionController }, "the table pan is installed on the editor view")
+            let controller = try XCTUnwrap(pan.delegate as? TableInteractionController)
+            let swipe = Self.bodySwipeDistance
+            let leftward = CGPoint(x: -swipe, y: 0)
+            let rightward = CGPoint(x: swipe, y: 0)
+            let touchDown = {
+                let point = try fixture.hostPoint(inCell: Self.gridSize + 1)
+                let root = fixture.view.textView
+                let touch = ScriptedTouch(at: root.convert(point, from: fixture.view), in: root)
+                XCTAssertTrue(controller.gestureRecognizer(pan, shouldReceive: touch), "a touch on a table body cell")
+                XCTAssertEqual(pan.translation(in: fixture.view), .zero, "shouldBegin runs before any movement")
+                XCTAssertTrue(controller.gestureRecognizerShouldBegin(pan),
+                              "an overflowing table's pan may begin at touch-down with zero translation")
+            }
+
+            try touchDown()
+            XCTAssertTrue(pan.claimsMovement(by: leftward), "a leftward swipe scrolls the table forward")
+            XCTAssertFalse(pan.claimsMovement(by: rightward),
+                           "at offset 0 a rightward swipe cannot scroll, so the pan leaves it to other gestures")
+            XCTAssertFalse(pan.claimsMovement(by: CGPoint(x: 0, y: swipe)), "a vertical swipe is not a table pan")
+
+            let maximum = try XCTUnwrap(fixture.drawing.mountedTablePresentation()?.tables.first {
+                $0.surface.identity == fixture.tableID
+            }).surface.bounds.width
+            fixture.drawing.setTableLogicalOffset(maximum, sourceIdentity: fixture.tableID)
+            XCTAssertGreaterThan(fixture.drawing.tableLogicalOffset(for: fixture.tableID), 0)
+            try touchDown()
+            XCTAssertTrue(pan.claimsMovement(by: rightward), "at the far edge a rightward swipe scrolls back")
+            XCTAssertFalse(pan.claimsMovement(by: leftward), "at the far edge a leftward swipe cannot scroll")
+        }
+    }
+
     func testTextInputGesturesWaitForTheColumnResizeHandle() throws {
         try withMountedTable(document: try narrowColumnGridDocument(headerRow: false), cellSelection: nil) { fixture in
             XCTAssertTrue(fixture.view.textView.becomeFirstResponder())

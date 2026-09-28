@@ -825,7 +825,9 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         _ gestureRecognizer: UIGestureRecognizer,
         shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer
     ) -> Bool {
-        guard gestureRecognizer === resizeGesture, otherGestureRecognizer !== resizeGesture else { return false }
+        guard gestureRecognizer === resizeGesture, otherGestureRecognizer !== resizeGesture,
+              !(otherGestureRecognizer is UIScreenEdgePanGestureRecognizer)
+        else { return false }
         return otherGestureRecognizer is UIPanGestureRecognizer || isTextInputGesture(otherGestureRecognizer)
     }
 
