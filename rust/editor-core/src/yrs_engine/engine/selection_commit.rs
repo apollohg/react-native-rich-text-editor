@@ -408,6 +408,10 @@ impl YrsDocumentEngine {
                         commit_authority.fragment(),
                         selection,
                         context.schema,
+                        current
+                            .block_branch_index
+                            .as_deref()
+                            .map(|index| (index, &current.position_map, &current.document)),
                     ),
                     RelativeSelectionPlan::Unsealed
                     | RelativeSelectionPlan::Preserve

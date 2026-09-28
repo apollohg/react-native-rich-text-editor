@@ -563,6 +563,40 @@ impl YrsDocumentEngine {
     }
 
     #[cfg(test)]
+    pub(crate) fn mutation_lookup_matches_fresh_for_test(&self) -> bool {
+        let Some(state) = self.derived_state.as_ref() else {
+            return false;
+        };
+        self.read_fragment_for_test(|txn, fragment| {
+            let fresh = super::mutation::MutationLookupSeed::build(
+                0,
+                txn,
+                fragment,
+                &self.schema,
+                &state.document,
+                &self.resource_limits,
+                &self.editing_limits,
+                self.max_length,
+                &self.schema_fingerprint,
+                self.yrs_state_epoch,
+                self.revision,
+            )
+            .expect("ready document lookup builds");
+            state
+                .mutation_lookup_seed
+                .has_same_ready_payload_for_test(&fresh)
+        })
+        .unwrap_or(false)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn block_branch_index_for_test(
+        &self,
+    ) -> Option<&super::block_branch_index::BlockBranchIndex> {
+        self.derived_state.as_ref()?.block_branch_index.as_deref()
+    }
+
+    #[cfg(test)]
     pub(crate) fn read_fragment_for_test<R>(
         &self,
         read: impl FnOnce(&yrs::Transaction<'_>, &yrs::XmlFragmentRef) -> R,

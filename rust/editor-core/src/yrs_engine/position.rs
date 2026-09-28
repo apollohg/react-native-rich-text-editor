@@ -124,18 +124,25 @@ pub fn relative_selection_to_selection<T: ReadTxn>(
     document: &Document,
     position_map: &PositionMap,
 ) -> Option<Selection> {
+    relative_selection_with_resolver(relative, document, position_map, |point| {
+        relative_point_to_doc_pos(txn, fragment, point, schema)
+    })
+}
+
+pub(crate) fn relative_selection_with_resolver(
+    relative: &RelativeSelection,
+    document: &Document,
+    position_map: &PositionMap,
+    resolve: impl Fn(&RelativePoint) -> Option<u32>,
+) -> Option<Selection> {
     let selection = match relative {
-        RelativeSelection::Text { anchor, head } => Selection::text(
-            relative_point_to_doc_pos(txn, fragment, anchor, schema)?,
-            relative_point_to_doc_pos(txn, fragment, head, schema)?,
-        ),
-        RelativeSelection::Node { point } => {
-            Selection::node(relative_point_to_doc_pos(txn, fragment, point, schema)?)
+        RelativeSelection::Text { anchor, head } => {
+            Selection::text(resolve(anchor)?, resolve(head)?)
         }
-        RelativeSelection::Cell { anchor, head } => Selection::cell(
-            relative_point_to_doc_pos(txn, fragment, anchor, schema)?,
-            relative_point_to_doc_pos(txn, fragment, head, schema)?,
-        ),
+        RelativeSelection::Node { point } => Selection::node(resolve(point)?),
+        RelativeSelection::Cell { anchor, head } => {
+            Selection::cell(resolve(anchor)?, resolve(head)?)
+        }
         RelativeSelection::All => Selection::all(),
     };
     Some(selection.normalized(document, position_map))
@@ -235,7 +242,12 @@ fn offset_to_doc_pos<T: ReadTxn>(
     super::observability::record_yrs_tree_walk();
     let root_branch = BranchPtr::from(<XmlFragmentRef as AsRef<Branch>>::as_ref(fragment));
     if offset.branch == root_branch {
-        return sequence_branch_index_to_doc_pos(txn, fragment.children(txn), offset.index, schema);
+        return sequence_branch_index_to_doc_pos(
+            txn,
+            fragment.children(txn),
+            offset.index,
+            &|child| xml_out_pm_size(txn, child, schema),
+        );
     }
     let mut child_start = 0u32;
     for child in fragment.children(txn) {
@@ -283,7 +295,7 @@ fn sticky_index_to_doc_pos_in_node<T: ReadTxn>(
                     txn,
                     element.children(txn),
                     target_index,
-                    schema,
+                    &|child| xml_out_pm_size(txn, child, schema),
                 )
                 .map(|value| content_start + value);
             }
@@ -312,7 +324,7 @@ fn sticky_index_to_doc_pos_in_node<T: ReadTxn>(
                     txn,
                     fragment.children(txn),
                     target_index,
-                    schema,
+                    &|child| xml_out_pm_size(txn, child, schema),
                 )
                 .map(|value| node_start + value);
             }
@@ -336,11 +348,11 @@ fn sticky_index_to_doc_pos_in_node<T: ReadTxn>(
     }
 }
 
-fn sequence_branch_index_to_doc_pos<'a, T: ReadTxn>(
+pub(super) fn sequence_branch_index_to_doc_pos<'a, T: ReadTxn>(
     txn: &T,
     children: impl Iterator<Item = XmlOut> + 'a,
     target_index: u32,
-    schema: &Schema,
+    node_size: &impl Fn(&XmlOut) -> Option<u32>,
 ) -> Option<u32> {
     let mut branch_index = 0u32;
     let mut doc_pos = 0u32;
@@ -364,7 +376,7 @@ fn sequence_branch_index_to_doc_pos<'a, T: ReadTxn>(
                     return Some(doc_pos);
                 }
                 branch_index += 1;
-                doc_pos = doc_pos.checked_add(xml_out_pm_size(txn, &child, schema)?)?;
+                doc_pos = doc_pos.checked_add(node_size(&child)?)?;
                 if target_index == branch_index {
                     return Some(doc_pos);
                 }
@@ -412,7 +424,7 @@ fn forward_doc_pos_to_sticky_index<T: ReadTxn>(
         doc_pos,
         assoc,
         BranchPtr::from(<XmlFragmentRef as AsRef<Branch>>::as_ref(fragment)),
-        schema,
+        &|child| xml_out_pm_size(txn, child, schema),
     )
 }
 
@@ -665,13 +677,13 @@ pub(crate) fn cursor_sticky_index_from_doc_pos<T: ReadTxn>(
         .or_else(|| doc_pos_to_sticky_index(txn, fragment, doc_pos, Assoc::Before, schema))
 }
 
-fn doc_pos_to_sticky_index_in_sequence<'a, T: ReadTxn>(
+pub(super) fn doc_pos_to_sticky_index_in_sequence<'a, T: ReadTxn>(
     txn: &T,
     children: impl Iterator<Item = XmlOut> + 'a,
     doc_pos: u32,
     assoc: Assoc,
     branch: BranchPtr,
-    schema: &Schema,
+    node_size: &impl Fn(&XmlOut) -> Option<u32>,
 ) -> Option<StickyIndex> {
     let mut branch_index = 0u32;
     let mut consumed_pm = 0u32;
@@ -705,7 +717,7 @@ fn doc_pos_to_sticky_index_in_sequence<'a, T: ReadTxn>(
                 }
             }
             XmlOut::Element(element) => {
-                let child_size = xml_out_pm_size(txn, &child, schema)?;
+                let child_size = node_size(&child)?;
                 if doc_pos == consumed_pm {
                     return StickyIndex::at(txn, branch, branch_index, assoc);
                 }
@@ -716,14 +728,14 @@ fn doc_pos_to_sticky_index_in_sequence<'a, T: ReadTxn>(
                         doc_pos - consumed_pm - 1,
                         assoc,
                         BranchPtr::from(<XmlElementRef as AsRef<Branch>>::as_ref(element)),
-                        schema,
+                        node_size,
                     );
                 }
                 branch_index += 1;
                 consumed_pm += child_size;
             }
             XmlOut::Fragment(nested) => {
-                let child_size = xml_out_pm_size(txn, &child, schema)?;
+                let child_size = node_size(&child)?;
                 if doc_pos == consumed_pm {
                     return StickyIndex::at(txn, branch, branch_index, assoc);
                 }
@@ -734,7 +746,7 @@ fn doc_pos_to_sticky_index_in_sequence<'a, T: ReadTxn>(
                         doc_pos - consumed_pm,
                         assoc,
                         BranchPtr::from(<XmlFragmentRef as AsRef<Branch>>::as_ref(nested)),
-                        schema,
+                        node_size,
                     );
                 }
                 branch_index += 1;
@@ -782,7 +794,7 @@ fn is_void_element<T: ReadTxn>(element: &XmlElementRef, txn: &T, schema: &Schema
     true
 }
 
-fn xml_out_pm_size<T: ReadTxn>(txn: &T, node: &XmlOut, schema: &Schema) -> Option<u32> {
+pub(super) fn xml_out_pm_size<T: ReadTxn>(txn: &T, node: &XmlOut, schema: &Schema) -> Option<u32> {
     match node {
         XmlOut::Text(text) => Some(scalar_len(&xml_text_plain_string(text, txn)?)),
         XmlOut::Element(element) => {
@@ -869,7 +881,7 @@ fn collect_block_source_ids<T: ReadTxn>(
     Some(position)
 }
 
-fn xml_text_plain_string<T: ReadTxn>(text: &XmlTextRef, txn: &T) -> Option<String> {
+pub(super) fn xml_text_plain_string<T: ReadTxn>(text: &XmlTextRef, txn: &T) -> Option<String> {
     let mut value = String::new();
     for diff in text.diff(txn, YChange::identity) {
         let yrs::Out::Any(Any::String(run)) = diff.insert else {

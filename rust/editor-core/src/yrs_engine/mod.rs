@@ -1,4 +1,5 @@
 mod awareness;
+mod block_branch_index;
 mod canonical;
 mod codec;
 mod commands;
@@ -82,4 +83,12 @@ pub use snapshot::{DocumentScope, DocumentSnapshot, SNAPSHOT_FORMAT_VERSION};
 #[cfg(test)]
 pub(crate) use commands::{
     structural_edit_batch_for_test, table_action_plan_for_test, TableActionTestRequest,
+};
+
+#[cfg(test)]
+mod block_branch_index_tests;
+
+#[cfg(test)]
+pub(crate) use mutation::{
+    reset_import_lookup_event_count_for_test, take_import_lookup_event_count_for_test,
 };

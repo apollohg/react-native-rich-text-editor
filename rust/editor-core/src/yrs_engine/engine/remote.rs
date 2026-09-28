@@ -377,6 +377,7 @@ impl YrsDocumentEngine {
                         next_revision,
                         next_state_revision,
                         next_epoch,
+                        None,
                     )
                     .ok_or_else(|| {
                         yrs_engine::OperationError::selection_position_invalid(

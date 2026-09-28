@@ -198,7 +198,7 @@ fn existing_text_command_skips_every_proved_document_wide_compiler_pass() {
             render_top_level_start_scans: 0,
             active_applicability_passes: 1,
             ordinary_step_applications: 1,
-            table_projection_derivations: 3,
+            table_projection_derivations: 2,
             table_command_availability_plans: 38,
             yrs_tree_walks: 0,
             whole_state_encodings: 0,

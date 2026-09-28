@@ -729,6 +729,72 @@ impl MutationLookupSeed {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn with_textblock_replaced<C: ReadTxn, N: ReadTxn>(
+        &self,
+        request_id: u64,
+        current_txn: &C,
+        next_txn: &N,
+        element: &BranchID,
+        path_len: usize,
+        schema: &Schema,
+        next: &Self,
+    ) -> OperationResult<Self> {
+        let mismatch = || {
+            OperationError::engine_invariant_failed(
+                request_id,
+                None,
+                "localized textblock lookup promotion does not match its sealed subtree",
+            )
+        };
+        let payload = self.ready_payload().ok_or_else(mismatch)?;
+        if self.binding.store_token != current_txn.store() as *const _ as usize
+            || self.binding.fragment_id != next.binding.fragment_id
+            || self.binding.schema_fingerprint != next.binding.schema_fingerprint
+            || next.binding.document_revision <= self.binding.document_revision
+        {
+            return Err(mismatch());
+        }
+        let before = textblock_lookup_payload(request_id, current_txn, element, path_len, schema)?;
+        let after = textblock_lookup_payload(request_id, next_txn, element, path_len, schema)?;
+        let target_count = payload
+            .target_count
+            .checked_sub(before.target_count)
+            .and_then(|count| count.checked_add(after.target_count))
+            .ok_or_else(mismatch)?;
+        let pending_traversal_work = payload
+            .pending_traversal_work
+            .checked_sub(before.pending_traversal_work)
+            .and_then(|work| work.checked_add(after.pending_traversal_work))
+            .ok_or_else(mismatch)?;
+        let path_parent_widths = replace_lookup_entries(
+            request_id,
+            &payload.path_parent_widths,
+            &before.path_parent_widths,
+            &after.path_parent_widths,
+        )?;
+        let target_materialization_work = replace_lookup_entries(
+            request_id,
+            &payload.target_materialization_work,
+            &before.target_materialization_work,
+            &after.target_materialization_work,
+        )?;
+        probe_lookup_seed_publication(
+            request_id,
+            "bindingPublication",
+            std::mem::size_of::<MutationLookupBinding>(),
+        )?;
+        Ok(Self {
+            binding: next.binding.clone(),
+            state: MutationLookupSeedState::Ready(MutationLookupPayload {
+                target_count,
+                pending_traversal_work,
+                path_parent_widths: Arc::new(path_parent_widths),
+                target_materialization_work: Arc::new(target_materialization_work),
+            }),
+        })
+    }
+
     pub(crate) fn rebind_authoritative_store<T: ReadTxn>(
         &self,
         txn: &T,
@@ -834,4 +900,89 @@ impl MutationLookupSeed {
         )?;
         Ok(Arc::new(rebound))
     }
+}
+
+fn textblock_lookup_payload<T: ReadTxn>(
+    request_id: u64,
+    txn: &T,
+    element: &BranchID,
+    path_len: usize,
+    schema: &Schema,
+) -> OperationResult<MutationLookupPayload> {
+    let invalid = || {
+        OperationError::engine_invariant_failed(
+            request_id,
+            None,
+            "localized lookup target is not a surviving textblock",
+        )
+    };
+    let branch = element.get_branch(txn).ok_or_else(invalid)?;
+    if !matches!(branch.type_ref(), yrs::types::TypeRef::XmlElement(_)) {
+        return Err(invalid());
+    }
+    let node = XmlElementRef::from(branch);
+    if wire_element_semantics(&node, txn, schema) != (false, true) {
+        return Err(invalid());
+    }
+    let ancestor_depth = path_len.checked_sub(1).ok_or_else(invalid)?;
+    let mut collector = ImportLookupMaterializationCollector::for_subtree(
+        request_id,
+        element.clone(),
+        ancestor_depth,
+        node.len(txn) as usize,
+    );
+    drive_lookup_materialization_collector(
+        txn,
+        schema,
+        std::iter::once(XmlOut::Element(node)),
+        &mut collector,
+    );
+    collector.finish_payload()
+}
+
+fn replace_lookup_entries(
+    request_id: u64,
+    original: &HashMap<BranchID, usize>,
+    before: &HashMap<BranchID, usize>,
+    after: &HashMap<BranchID, usize>,
+) -> OperationResult<HashMap<BranchID, usize>> {
+    let mismatch = || {
+        OperationError::engine_invariant_failed(
+            request_id,
+            None,
+            "localized lookup subtree entries disagree with the retained payload",
+        )
+    };
+    let capacity = original
+        .len()
+        .checked_sub(before.len())
+        .and_then(|len| len.checked_add(after.len()))
+        .ok_or_else(mismatch)?;
+    let mut replaced = HashMap::new();
+    replaced
+        .try_reserve(capacity)
+        .map_err(|_| lookup_seed_allocation_error(request_id, "mapGrowth"))?;
+    for (key, value) in original {
+        if let Some(expected) = before.get(key) {
+            if expected != value {
+                return Err(mismatch());
+            }
+        } else {
+            replaced.insert(key.clone(), *value);
+        }
+    }
+    if before.keys().any(|key| !original.contains_key(key)) {
+        return Err(mismatch());
+    }
+    for (key, value) in after {
+        if replaced.insert(key.clone(), *value).is_some() {
+            return Err(mismatch());
+        }
+    }
+    probe_lookup_seed_publication(
+        request_id,
+        "mapPublication",
+        std::mem::size_of::<HashMap<BranchID, usize>>(),
+    )?;
+    Ok(replaced)
 }

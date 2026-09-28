@@ -395,10 +395,7 @@ fn localized_existing_textblock_targets<T: ReadTxn>(
     };
     let children = textblock.children(txn).collect::<Vec<_>>();
     path_parent_widths.insert(AsRef::<Branch>::as_ref(&textblock).id(), children.len());
-    if creates_text {
-        if !children.is_empty() {
-            return Ok(None);
-        }
+    if creates_text && children.is_empty() {
         let signature = parent_signature_from_children(&textblock, &branch_path, &children, 0, 0);
         return Ok(Some(LocalizedTextblockTargets {
             targets: vec![ResolvedText {

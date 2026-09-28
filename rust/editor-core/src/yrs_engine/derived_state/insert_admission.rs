@@ -95,6 +95,10 @@ pub(super) struct LocalizedTextblockEditAdmissionRequest<'a> {
 
 #[allow(dead_code)]
 impl LocalizedTextblockEditAdmission {
+    pub(crate) fn block_index(&self) -> usize {
+        self.plan.leaf.block_index
+    }
+
     pub(crate) fn lookup_seal_matches(
         &self,
         seed: &Arc<yrs_engine::mutation::MutationLookupSeed>,

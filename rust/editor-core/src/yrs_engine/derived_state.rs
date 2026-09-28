@@ -108,6 +108,7 @@ pub(crate) struct DerivedStateCache {
     pub document: Document,
     pub canonical_artifact: CanonicalArtifact,
     pub position_map: PositionMap,
+    pub block_branch_index: Option<Arc<super::block_branch_index::BlockBranchIndex>>,
     pub rendered_text: String,
     pub rendered_scalars: u32,
     pub document_text_bytes: usize,
@@ -251,6 +252,7 @@ impl DerivedStateCache {
             document: self.document.clone(),
             canonical_artifact: self.canonical_artifact.clone(),
             position_map: self.position_map.clone(),
+            block_branch_index: self.block_branch_index.clone(),
             rendered_text: self.rendered_text.clone(),
             rendered_scalars: self.rendered_scalars,
             document_text_bytes: self.document_text_bytes,
@@ -480,6 +482,13 @@ impl DerivedStateCache {
             || crate::editor_state::document_node_count(document.root()),
             |validation| validation.stats.node_count,
         );
+        let block_branch_index = super::block_branch_index::BlockBranchIndex::build(
+            txn,
+            fragment,
+            schema,
+            &position_map,
+        )
+        .map(Arc::new);
         let relative_selection = initial_relative_selection.unwrap_or_else(|| {
             let selection = (0..position_map.block_count())
                 .filter_map(|index| position_map.block(index))
@@ -491,7 +500,15 @@ impl DerivedStateCache {
                         .map(|block| Selection::node(block.doc_start))
                 })
                 .unwrap_or_else(Selection::all);
-            operation_result_to_relative(txn, fragment, &selection, schema)
+            operation_result_to_relative(
+                txn,
+                fragment,
+                &selection,
+                schema,
+                block_branch_index
+                    .as_deref()
+                    .map(|index| (index, &position_map, &document)),
+            )
         });
         let table_projection_index = render_blocks.table_projection_index.as_ref().clone();
         let resolved_selection = resolve_selection(
@@ -503,6 +520,7 @@ impl DerivedStateCache {
             &position_map,
             &rendered_text,
             &table_projection_index,
+            block_branch_index.as_deref(),
         )?;
         let legacy_selection = resolved_to_legacy(&resolved_selection);
         let mutation_lookup_seed = if admitted_validation.is_some() {
@@ -569,6 +587,7 @@ impl DerivedStateCache {
         Some(Self {
             document,
             canonical_artifact,
+            block_branch_index,
             position_map,
             rendered_text,
             rendered_scalars,
@@ -616,6 +635,7 @@ impl DerivedStateCache {
         document_revision: u64,
         state_revision: u64,
         yrs_state_epoch: u64,
+        prepared_block_branch_index: Option<Arc<super::block_branch_index::BlockBranchIndex>>,
     ) -> Option<Self> {
         if canonical_artifact.schema_fingerprint() != schema_fingerprint
             || canonical_artifact.format_version()
@@ -667,6 +687,10 @@ impl DerivedStateCache {
             return None;
         }
 
+        let block_branch_index = prepared_block_branch_index.or_else(|| {
+            super::block_branch_index::BlockBranchIndex::build(txn, fragment, schema, &position_map)
+                .map(Arc::new)
+        });
         let table_projection_index = render_blocks.table_projection_index.as_ref().clone();
         let (relative_selection, resolved_selection, legacy_selection) =
             if let Some(finalized) = finalized_selection {
@@ -685,6 +709,7 @@ impl DerivedStateCache {
                     &position_map,
                     &rendered_text,
                     &table_projection_index,
+                    block_branch_index.as_deref(),
                 );
                 if resolved_selection.is_none() {
                     let fallback = preserved_fallback?;
@@ -706,6 +731,7 @@ impl DerivedStateCache {
                         &position_map,
                         &rendered_text,
                         &table_projection_index,
+                        block_branch_index.as_deref(),
                     );
                 }
                 let resolved_selection = resolved_selection?;
@@ -774,6 +800,7 @@ impl DerivedStateCache {
         Some(Self {
             document,
             canonical_artifact,
+            block_branch_index,
             position_map,
             rendered_text,
             rendered_scalars,

@@ -348,6 +348,7 @@ fn assert_route(case: &TextblockEditCase, audit: &RunAudit, passes: &FullPassCou
         ("canonical_projections", passes.canonical_projections),
         ("canonical_serializations", passes.canonical_serializations),
         ("canonical_hashes", passes.canonical_hashes),
+        ("yrs_tree_walks", passes.yrs_tree_walks),
         ("document_validations", passes.document_validations),
         ("planner_simulations", passes.planner_simulations),
         (
@@ -856,6 +857,7 @@ fn assert_large_table_edit_is_validated_locally(intent: &str) {
         "an over-budget history snapshot retains one eager digest",
     );
     for (kind, count) in [
+        ("yrs_tree_walks", passes.yrs_tree_walks),
         ("document_validations", passes.document_validations),
         ("planner_simulations", passes.planner_simulations),
         (
@@ -964,4 +966,100 @@ fn a_textblock_edit_carries_the_table_projection() {
         fresh.table_projection_index
     );
     assert_eq!(carried.cache.materialize(), fresh.materialize());
+}
+
+#[test]
+fn the_first_keystroke_into_an_empty_cell_replaces_its_branch_entry() {
+    let case = textblock_edit_cases()
+        .into_iter()
+        .find(|case| case.name == "first keystroke into an empty cell")
+        .expect("empty cell case");
+    assert_next_keystroke_stays_indexed(&case, true);
+}
+
+#[test]
+fn range_edits_keep_the_next_keystroke_indexed() {
+    for case in textblock_range_cases()
+        .into_iter()
+        .filter(|case| case.route == ExpectedRoute::Localized && case.block_path.len() > 1)
+    {
+        assert_next_keystroke_stays_indexed(&case, false);
+    }
+}
+
+fn assert_next_keystroke_stays_indexed(case: &TextblockEditCase, creates_branch: bool) {
+    let (mut session, request) = prepared_session(case, true);
+    let block_index = (0..session.engine.position_map().unwrap().block_count())
+        .find(|index| {
+            session
+                .engine
+                .position_map()
+                .unwrap()
+                .block(*index)
+                .unwrap()
+                .node_path
+                .as_slice()
+                == case.block_path
+        })
+        .unwrap();
+    let before = session
+        .engine
+        .block_branch_index_for_test()
+        .unwrap()
+        .block_branches(block_index)
+        .unwrap()
+        .texts
+        .clone();
+    for keystroke in 0..2 {
+        let mut request: Value = serde_json::from_str(&request).unwrap();
+        request["requestId"] = json!((INSERT_REQUEST_ID + keystroke).to_string());
+        if keystroke != 0 {
+            let ResolvedSelection::Text { head, .. } = session.engine.resolved_selection().unwrap()
+            else {
+                panic!("{} leaves a text caret", case.name);
+            };
+            let caret = head.scalar;
+            request = serde_json::from_str(&insert_request(&mut session, caret)).unwrap();
+            request["requestId"] = json!((INSERT_REQUEST_ID + keystroke).to_string());
+        }
+        crate::yrs_engine::reset_import_lookup_event_count_for_test();
+        reset_full_pass_counts_for_test();
+        submit_insert(&mut session, &request.to_string()).unwrap();
+        let counts = take_full_pass_counts_for_test();
+        let lookup_events = crate::yrs_engine::take_import_lookup_event_count_for_test();
+        assert!(
+            session.engine.mutation_lookup_matches_fresh_for_test(),
+            "{} keystroke {keystroke}: retained lookup payload matches a fresh full build",
+            case.name
+        );
+        const LOCAL_LOOKUP_EVENT_CEILING: usize = 8;
+        assert!(
+            lookup_events <= LOCAL_LOOKUP_EVENT_CEILING,
+            "keystroke {keystroke}: full lookup hydration visited {lookup_events} nodes"
+        );
+        assert_eq!(
+            counts.yrs_tree_walks, 0,
+            "keystroke {keystroke}: {counts:#?}"
+        );
+        assert_eq!(
+            counts.document_validations, 0,
+            "keystroke {keystroke} remains local"
+        );
+        assert_eq!(
+            counts.cell_content_keys, 1,
+            "keystroke {keystroke} reuses other cells"
+        );
+        let after = session.engine.block_branch_index_for_test().unwrap();
+        if keystroke != 0 || creates_branch {
+            assert!(!after.block_branches(block_index).unwrap().texts.is_empty());
+        }
+        if keystroke == 0 && creates_branch {
+            assert_ne!(
+                before,
+                after.block_branches(block_index).unwrap().texts,
+                "new XmlText branch is indexed"
+            );
+        }
+        assert_render_matches_fresh(&session, &format!("{} keystroke {keystroke}", case.name));
+    }
 }

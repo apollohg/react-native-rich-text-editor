@@ -677,7 +677,7 @@ impl YrsDocumentEngine {
                         &self.resource_limits,
                     ),
                 );
-                operation_result_to_relative(&txn, &fragment, &surviving, &self.schema)
+                operation_result_to_relative(&txn, &fragment, &surviving, &self.schema, None)
             };
         let stored_marks = restored
             .stored_marks

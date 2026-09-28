@@ -549,6 +549,10 @@ impl YrsDocumentEngine {
             .unwrap_or(0);
 
         let outbound_update_upper_bound = compiled.outbound_update_upper_bound();
+        let localized_block_index = compiled
+            .localized_textblock_edit_admission
+            .as_ref()
+            .map(|admission| admission.block_index());
         let CompiledTransaction {
             request_id,
             origin,
@@ -765,6 +769,49 @@ impl YrsDocumentEngine {
                 self.doc.client_id(),
                 authored_clock_bound,
             )?;
+            if let (Some(block_index), Some(next_seed)) = (
+                localized_block_index,
+                prepared_mutation_lookup_seed.as_ref(),
+            ) {
+                if next_seed.is_unavailable() {
+                    if let Some((state, block)) = self.derived_state.as_ref().and_then(|state| {
+                        if state.mutation_lookup_seed.is_unavailable() {
+                            return None;
+                        }
+                        Some((
+                            state,
+                            state
+                                .block_branch_index
+                                .as_ref()?
+                                .block_branches(block_index)?,
+                        ))
+                    }) {
+                        let path_len = state
+                            .position_map
+                            .block(block_index)
+                            .ok_or_else(|| {
+                                yrs_engine::OperationError::engine_invariant_failed(
+                                    request_id,
+                                    None,
+                                    "localized lookup block is absent",
+                                )
+                            })?
+                            .node_path
+                            .len();
+                        prepared_mutation_lookup_seed = Some(Arc::new(
+                            state.mutation_lookup_seed.with_textblock_replaced(
+                                request_id,
+                                commit_authority.txn(),
+                                &txn,
+                                &block.element,
+                                path_len,
+                                &self.schema,
+                                next_seed,
+                            )?,
+                        ));
+                    }
+                }
+            }
             if prepared_mutation_lookup_seed.is_none() {
                 let candidate_seed = yrs_engine::mutation::MutationLookupSeed::build(
                     request_id,
@@ -794,6 +841,14 @@ impl YrsDocumentEngine {
                 request_id,
                 CompiledCommitPreparationStage::DerivedStateBuild,
             )?;
+            let next_block_branch_index = localized_block_index.and_then(|block_index| {
+                self.derived_state
+                    .as_ref()?
+                    .block_branch_index
+                    .as_ref()?
+                    .with_block_replaced(&txn, block_index, &self.schema)
+                    .map(Arc::new)
+            });
             let explicit_relative_selection = match (&selection_plan, &prepared_selection_state) {
                 (SelectionPlan::Explicit(_), Some(prepared)) => Some(prepared.relative().clone()),
                 (SelectionPlan::Explicit(_), None)
@@ -814,6 +869,10 @@ impl YrsDocumentEngine {
                     &fragment,
                     selection,
                     &self.schema,
+                    next_block_branch_index
+                        .as_deref()
+                        .zip(preview_derivations.as_ref())
+                        .map(|(index, derivations)| (index, &derivations.position_map, &preview)),
                 )),
                 (SelectionPlan::Mapped(_), _) | (SelectionPlan::Preserve, _) => None,
             };
@@ -861,6 +920,7 @@ impl YrsDocumentEngine {
                         next_document_revision,
                         next_state_revision,
                         next_yrs_state_epoch,
+                        next_block_branch_index,
                     )
                 })
                 .ok_or_else(|| {

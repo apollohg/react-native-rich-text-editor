@@ -15,7 +15,7 @@ use crate::tables::selection::{cell_pair_is_usable, snap_cell_selection, CellSel
 use crate::yrs_engine::compiler::selectable_void_at;
 use crate::yrs_engine::position::{
     cursor_sticky_index_from_doc_pos, doc_pos_to_relative_point, doc_pos_to_sticky_index,
-    relative_point_to_doc_pos, relative_selection_to_selection,
+    relative_point_to_doc_pos,
 };
 use crate::yrs_engine::{
     scalar_offset_to_utf16, Affinity, OperationError, OperationResult, RelativePoint,
@@ -99,6 +99,7 @@ impl DerivedStateCache {
             &self.position_map,
             &self.rendered_text,
             &self.table_projection_index,
+            self.block_branch_index.as_deref(),
         )
     }
 
@@ -332,10 +333,10 @@ pub(super) fn preserve_with_mapped_fallback<T: ReadTxn>(
         ) => {
             let snapped = snap_cell_selection(table_index, *mapped_anchor, *mapped_head)
                 .unwrap_or_else(|| Selection::cursor(*mapped_anchor));
-            operation_result_to_relative(txn, fragment, &snapped, schema)
+            operation_result_to_relative(txn, fragment, &snapped, schema, None)
         }
         (RelativeSelection::All, Selection::All) => RelativeSelection::All,
-        _ => operation_result_to_relative(txn, fragment, mapped, schema),
+        _ => operation_result_to_relative(txn, fragment, mapped, schema, None),
     }
 }
 
@@ -349,6 +350,7 @@ pub(crate) fn resolve_selection<T: ReadTxn>(
     position_map: &PositionMap,
     rendered_text: &str,
     table_index: &TableProjectionIndex,
+    block_index: Option<&crate::yrs_engine::block_branch_index::BlockBranchIndex>,
 ) -> Option<ResolvedSelection> {
     #[cfg(test)]
     RELATIVE_SELECTION_RESOLUTION_TRAVERSALS.set(
@@ -356,14 +358,34 @@ pub(crate) fn resolve_selection<T: ReadTxn>(
             .get()
             .saturating_add(1),
     );
-    let selection = relative_selection_to_selection(
-        txn,
-        fragment,
-        relative_selection,
-        schema,
-        document,
-        position_map,
-    )?;
+    let selection = if block_index.is_some() {
+        crate::yrs_engine::position::relative_selection_with_resolver(
+            relative_selection,
+            document,
+            position_map,
+            |point| {
+                block_index
+                    .and_then(|index| {
+                        index.doc_pos_of_offset(
+                            txn,
+                            &point.sticky.get_offset(txn)?,
+                            position_map,
+                            document,
+                        )
+                    })
+                    .or_else(|| relative_point_to_doc_pos(txn, fragment, point, schema))
+            },
+        )
+    } else {
+        crate::yrs_engine::position::relative_selection_to_selection(
+            txn,
+            fragment,
+            relative_selection,
+            schema,
+            document,
+            position_map,
+        )
+    }?;
     let point = |document_position| {
         let scalar = position_map.doc_to_scalar(document_position, document);
         Some(ResolvedPoint {
@@ -399,18 +421,38 @@ pub(crate) fn operation_result_to_relative<T: ReadTxn>(
     fragment: &XmlFragmentRef,
     selection: &Selection,
     schema: &Schema,
+    indexed_view: Option<(
+        &crate::yrs_engine::block_branch_index::BlockBranchIndex,
+        &PositionMap,
+        &Document,
+    )>,
 ) -> RelativeSelection {
     #[cfg(test)]
     OPERATION_RESULT_RELATIVE_TRAVERSALS
         .set(OPERATION_RESULT_RELATIVE_TRAVERSALS.get().saturating_add(1));
+    let sticky_at = |position, assoc| {
+        indexed_view
+            .and_then(|(index, map, document)| {
+                index.sticky_at_doc_pos(txn, position, assoc, map, document)
+            })
+            .or_else(|| doc_pos_to_sticky_index(txn, fragment, position, assoc, schema))
+    };
     let before = |position| {
-        doc_pos_to_sticky_index(txn, fragment, position, Assoc::Before, schema).expect(
+        sticky_at(position, Assoc::Before).expect(
             "compiler-normalized operation-result position has an exact Before Yrs association",
         )
     };
     match selection {
         Selection::Text { anchor, head } if anchor == head => {
-            let sticky = cursor_sticky_index_from_doc_pos(txn, fragment, *anchor, true, schema)
+            let sticky = indexed_view
+                .and_then(|(index, map, document)| {
+                    index
+                        .sticky_at_doc_pos(txn, *anchor, Assoc::After, map, document)
+                        .or_else(|| {
+                            index.sticky_at_doc_pos(txn, *anchor, Assoc::Before, map, document)
+                        })
+                })
+                .or_else(|| cursor_sticky_index_from_doc_pos(txn, fragment, *anchor, true, schema))
                 .expect("compiler-normalized cursor has a Yrs association");
             let point = RelativePoint {
                 affinity: affinity_from_assoc(sticky.assoc),

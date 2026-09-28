@@ -746,6 +746,7 @@ impl DerivedStateCache {
             &snapshot.position_map,
             &snapshot.rendered_text,
             &table_projection_index,
+            None,
         ) else {
             return Ok(None);
         };
@@ -769,6 +770,13 @@ impl DerivedStateCache {
             document: snapshot.document.clone(),
             canonical_artifact: snapshot.canonical_artifact.clone(),
             position_map: snapshot.position_map.clone(),
+            block_branch_index: crate::yrs_engine::block_branch_index::BlockBranchIndex::build(
+                txn,
+                fragment,
+                schema,
+                &snapshot.position_map,
+            )
+            .map(Arc::new),
             rendered_text: snapshot.rendered_text.clone(),
             rendered_scalars: snapshot.rendered_scalars,
             document_text_bytes: snapshot.document_text_bytes,
