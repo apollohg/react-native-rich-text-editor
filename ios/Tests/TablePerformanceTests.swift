@@ -189,7 +189,10 @@ final class TablePerformanceTests: XCTestCase {
             let table = try table()
             let cell = try XCTUnwrap(table.cell(sourceIndex: cellIndex))
             let frame = table.frame(ofCell: cell)
-            view.textView.contentOffset.y = max(0, frame.midY - Benchmark.viewport.height / 2)
+            let scroll = view.textView
+            let minimum = -scroll.adjustedContentInset.top
+            let maximum = max(minimum, scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)
+            scroll.contentOffset.y = min(max(frame.midY - scroll.bounds.height / 2, minimum), maximum)
             let horizontal = max(0, frame.midX - Benchmark.viewport.width / 2)
             _ = drawing.scrollTables(in: [table.scrollIdentity], by: -horizontal)
             view.layoutIfNeeded()
@@ -356,6 +359,48 @@ final class TablePerformanceTests: XCTestCase {
             "The rebuilt original second-row cell is unchanged after moving to the third row")
         XCTAssertEqual(counters.changedCellRemeasurements, 1,
             "The inserted empty cells share one newly prepared shape")
+    }
+
+    func testEndCellActivationAfterAnotherHostStaysWithinScrollBounds() throws {
+        clock = FrameClock()
+        defer { clock.close(); clock = nil }
+        let fixture = Fixture(rows: 1_000, columns: 20, rich: false)
+        let source = try fixture.source()
+        try cellChange(fixture, source: source, atEnd: false)
+        let host = try EditorHost()
+        defer { host.close() }
+        try host.load(source)
+        let scroll = host.view.textView
+        func scrollState() -> String {
+            "offset=\(scroll.contentOffset.y) presentation=\(String(describing: scroll.layer.presentation()?.bounds.origin.y)) size=\(scroll.contentSize.height) bounds=\(scroll.bounds.height) inset=\(scroll.adjustedContentInset) keyboard=\(scroll.keyboardBottomInset) drawing=\(host.drawing.bounds.origin.y)"
+        }
+        var trace: [String] = []
+        let notifications = [UIResponder.keyboardWillChangeFrameNotification,
+            UIResponder.keyboardDidChangeFrameNotification, UIResponder.keyboardWillHideNotification]
+        let observers = notifications.map { name in
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { notification in
+                trace.append("\(notification.name.rawValue) \(scrollState())")
+            }
+        }
+        defer { observers.forEach(NotificationCenter.default.removeObserver) }
+        let input = try host.bind(fixture.rows * fixture.columns - 1)
+        trace.append("bound \(scrollState())")
+        let minimum = -scroll.adjustedContentInset.top
+        let maximum = max(minimum, scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)
+        XCTAssertLessThanOrEqual(scroll.contentOffset.y, maximum, trace.joined(separator: "\n"))
+        _ = try measure(host.drawing) {}
+        trace.append("presented \(scrollState())")
+        let revision = host.adapter.baseDocumentRevision
+        var idleCounters = PreparedProseInstrumentation.TablePerformanceCounters()
+        _ = try measureChange(host, counters: &idleCounters) {}
+        trace.append("idle \(scrollState()) unchanged=\(idleCounters.unchangedCellRemeasurements)")
+        XCTAssertEqual(host.adapter.baseDocumentRevision, revision)
+        var editCounters = PreparedProseInstrumentation.TablePerformanceCounters()
+        _ = try edit(host, input: input, counters: &editCounters)
+        trace.append("edited \(scrollState()) unchanged=\(editCounters.unchangedCellRemeasurements)")
+        print("TABLE_ACTIVATION_TRACE " + trace.joined(separator: "\n"))
+        XCTAssertEqual(idleCounters.unchangedCellRemeasurements, 0, trace.joined(separator: "\n"))
+        XCTAssertEqual(editCounters.unchangedCellRemeasurements, 0, trace.joined(separator: "\n"))
     }
 
     func testLargeStructuralChangesReuseUnchangedGeometry() throws {
