@@ -66,7 +66,7 @@ final class EditorLargeTableTests: XCTestCase {
         let editorId = makeV2Editor(configJson: TableInputTestSchema.tableConfig)
         defer { destroyV2Editor(id: editorId) }
         let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
-        let window = UIWindow(frame: CGRect(origin: .zero, size: Window.viewport))
+        let window = makeTestWindow(frame: CGRect(origin: .zero, size: Window.viewport))
         let view = RichTextEditorView(frame: window.bounds)
         window.addSubview(view)
         window.makeKeyAndVisible()
@@ -269,7 +269,7 @@ final class EditorLargeTableTests: XCTestCase {
         let editorId = makeV2Editor(configJson: TableInputTestSchema.tableConfig)
         defer { destroyV2Editor(id: editorId) }
         let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
-        let window = UIWindow(frame: CGRect(origin: .zero, size: Window.viewport))
+        let window = makeTestWindow(frame: CGRect(origin: .zero, size: Window.viewport))
         let view = RichTextEditorView(frame: window.bounds)
         window.addSubview(view)
         window.makeKeyAndVisible()

@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		F20260930000000000000001 /* WindowTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20260930000000000000002 /* WindowTestSupport.swift */; };
 		A31000000000000000000011 /* TableCellPreparationBenchmarkTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A31000000000000000000001 /* TableCellPreparationBenchmarkTests.swift */; };
 		A39000000000000000000011 /* TablePerformanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A39000000000000000000001 /* TablePerformanceTests.swift */; };
 		A19000000000000000000012 /* EditorTableIndex.swift in Sources */ = {isa = PBXBuildFile; fileRef = A19000000000000000000002 /* EditorTableIndex.swift */; };
@@ -254,6 +255,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		F20260930000000000000002 /* WindowTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowTestSupport.swift; sourceTree = "<group>"; };
 		A31000000000000000000001 /* TableCellPreparationBenchmarkTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellPreparationBenchmarkTests.swift; sourceTree = "<group>"; };
 		A39000000000000000000001 /* TablePerformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TablePerformanceTests.swift; sourceTree = "<group>"; };
 		A19000000000000000000002 /* EditorTableIndex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTableIndex.swift; sourceTree = "<group>"; };
@@ -767,6 +769,7 @@
 				A22C00000000000000000002 /* TableIntegrationTests.swift */,
 				A23A00000000000000000002 /* TableAcceptanceTests.swift */,
 				A23B00000000000000000002 /* TableTestSupport.swift */,
+				F20260930000000000000002 /* WindowTestSupport.swift */,
 				A22F00000000000000000002 /* EditorTableInputTests+Deletion.swift */,
 				A22B00000000000000000002 /* EditorTableInputTests+Accessibility.swift */,
 				A18000000000000000000002 /* EditorTableArrowTests.swift */,
@@ -1381,6 +1384,7 @@
 				A22C00000000000000000012 /* TableIntegrationTests.swift in Sources */,
 				A23A00000000000000000012 /* TableAcceptanceTests.swift in Sources */,
 				A23B00000000000000000012 /* TableTestSupport.swift in Sources */,
+				F20260930000000000000001 /* WindowTestSupport.swift in Sources */,
 				A22F00000000000000000012 /* EditorTableInputTests+Deletion.swift in Sources */,
 				A22B00000000000000000012 /* EditorTableInputTests+Accessibility.swift in Sources */,
 				A18000000000000000000012 /* EditorTableArrowTests.swift in Sources */,
@@ -1411,7 +1415,7 @@
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = NativeEditorTestHost;
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = NO;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UIRequiresFullScreen = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.4;
@@ -1481,7 +1485,7 @@
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = NativeEditorTestHost;
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = NO;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UIRequiresFullScreen = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.4;

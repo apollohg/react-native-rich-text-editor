@@ -185,7 +185,7 @@ extension PreparedProseRevisionTests {
             frame: CGRect(x: 0, y: 0, width: 160, height: 80),
             layoutRegistry: registry
         )
-        let window = UIWindow(frame: viewer.bounds)
+        let window = makeTestWindow(frame: viewer.bounds)
         let host = UIViewController()
         window.rootViewController = host
         host.view.addSubview(viewer)

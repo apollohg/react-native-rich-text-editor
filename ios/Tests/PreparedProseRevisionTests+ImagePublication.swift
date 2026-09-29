@@ -59,7 +59,7 @@ extension PreparedProseRevisionTests {
         let scrollView = UIScrollView(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
         scrollView.contentSize = drawing.bounds.size
         scrollView.addSubview(drawing)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
         window.addSubview(scrollView)
         window.isHidden = false
         defer {
@@ -109,7 +109,7 @@ extension PreparedProseRevisionTests {
         let scrollView = UIScrollView(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
         scrollView.contentSize = viewer.bounds.size
         scrollView.addSubview(viewer)
-        let window = UIWindow(frame: scrollView.bounds)
+        let window = makeTestWindow(frame: scrollView.bounds)
         window.addSubview(scrollView)
         window.isHidden = false
         defer {
@@ -148,7 +148,7 @@ extension PreparedProseRevisionTests {
         scrollView.contentSize = drawing.bounds.size
         scrollView.addSubview(drawing)
         scrollView.contentOffset.y = 1_100
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
         window.addSubview(scrollView)
         window.isHidden = false
         defer { window.isHidden = true }
@@ -165,7 +165,7 @@ extension PreparedProseRevisionTests {
     func testWindowDetachmentReleasesMountedImagePixels() {
         let drawing = PreparedProseDrawingView(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
         drawing.install(layout: imageLayout(attachments: []))
-        let window = UIWindow(frame: drawing.bounds)
+        let window = makeTestWindow(frame: drawing.bounds)
         window.addSubview(drawing)
         window.isHidden = false
         drawing.imagePixels = ["mounted": UIImage()]

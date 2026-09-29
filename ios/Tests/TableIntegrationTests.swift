@@ -702,7 +702,7 @@ final class TableIntegrationTests: XCTestCase {
         let editorId = makeV2Editor(configJson: TableInputTestSchema.tableConfig)
         defer { destroyV2Editor(id: editorId) }
         let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
-        let window = UIWindow(frame: CGRect(origin: .zero, size: size))
+        let window = makeTestWindow(frame: CGRect(origin: .zero, size: size))
         let expo = NativeEditorExpoView()
         expo.frame = window.bounds
         window.addSubview(expo)

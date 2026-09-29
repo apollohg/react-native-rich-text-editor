@@ -59,7 +59,7 @@ extension RichTextEditorViewTests {
 
     func testAccessoryToolbarMenuGroupUsesEditMenuWithoutAttachingMenuToVisibleButton() {
         let toolbar = EditorAccessoryToolbarView(frame: CGRect(x: 0, y: 0, width: 320, height: 56))
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
         let viewController = UIViewController()
         window.rootViewController = viewController
         window.makeKeyAndVisible()

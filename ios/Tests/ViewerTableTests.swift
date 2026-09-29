@@ -296,7 +296,7 @@ final class ViewerTableTests: XCTestCase {
 
     func testMountedViewerInstallsTablePanOnItsHostAndRemovesItOnDetach() throws {
         let layout = try prepare(try nestedHeaderImageSource(nestedOverflow: true))
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 240))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 240))
         let host = UIView(frame: window.bounds)
         let drawing = PreparedProseDrawingView(frame: host.bounds)
         window.addSubview(host)
@@ -313,7 +313,7 @@ final class ViewerTableTests: XCTestCase {
         try LiveGestureProbe.requireOptIn()
         let layout = try prepare(try nestedHeaderImageSource(nestedOverflow: true))
         let surface = try XCTUnwrap(layout.blocks.first { $0.tableSurface != nil }?.tableSurface)
-        let window = UIWindow(frame: UIScreen.main.bounds)
+        let window = makeTestWindow(frame: UIScreen.main.bounds)
         window.backgroundColor = .systemBackground
         let viewport = CGRect(x: 0, y: 100, width: window.bounds.width, height: 240)
         let scroll = UIScrollView(frame: viewport)
@@ -355,7 +355,7 @@ final class ViewerTableTests: XCTestCase {
         try LiveGestureProbe.requireOptIn()
         let layout = try prepare(try nestedHeaderImageSource(nestedOverflow: true))
         let surface = try XCTUnwrap(layout.blocks.first { $0.tableSurface != nil }?.tableSurface)
-        let window = UIWindow(frame: UIScreen.main.bounds)
+        let window = makeTestWindow(frame: UIScreen.main.bounds)
         window.backgroundColor = .systemBackground
         let viewport = CGRect(x: 0, y: 100, width: window.bounds.width, height: 240)
         let scroll = UIScrollView(frame: viewport)
@@ -458,7 +458,7 @@ final class ViewerTableTests: XCTestCase {
         let source = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[500]},"content":[{"type":"card"}]},{"type":"table_cell","attrs":{"colwidth":[500]},"content":[{"type":"paragraph","content":[{"type":"text","text":"body"}]}]}]}]}]}"#
         let layout = try prepare(source, themeJSON: #"{"viewerAtoms":{"generation":"gesture","revision":"1","nodeTypes":["card"],"estimatedHeights":{"card":80}}}"#)
         let surface = try XCTUnwrap(layout.blocks.first { $0.tableSurface != nil }?.tableSurface)
-        let window = UIWindow(frame: UIScreen.main.bounds)
+        let window = makeTestWindow(frame: UIScreen.main.bounds)
         window.backgroundColor = .systemBackground
         let host = UIView(frame: CGRect(x: 0, y: 100, width: window.bounds.width, height: 240))
         let drawing = PreparedProseDrawingView(frame: CGRect(origin: .zero, size: layout.size))
@@ -508,7 +508,7 @@ final class ViewerTableTests: XCTestCase {
 
         let drawing = PreparedProseDrawingView(frame: CGRect(x: 0, y: 0, width: 120, height: 45))
         drawing.install(layout: layout)
-        let window = UIWindow(frame: drawing.bounds)
+        let window = makeTestWindow(frame: drawing.bounds)
         window.addSubview(drawing)
         window.isHidden = false
         defer { window.isHidden = true }
@@ -718,7 +718,7 @@ final class ViewerTableTests: XCTestCase {
         let drawing = PreparedProseDrawingView(frame: CGRect(origin: .zero, size: layout.size))
         drawing.install(layout: layout)
         drawing.configureImages(generation: "table-offset", imagesEnabled: true, policyJSON: nil)
-        let window = UIWindow(frame: CGRect(origin: .zero, size: layout.size))
+        let window = makeTestWindow(frame: CGRect(origin: .zero, size: layout.size))
         window.addSubview(drawing)
         window.isHidden = false
         defer {
@@ -784,7 +784,7 @@ final class ViewerTableTests: XCTestCase {
         let layout = try prepare(try twoLinkCellSource(), configJSON: config)
         let surface = try XCTUnwrap(layout.blocks.first { $0.tableSurface != nil }?.tableSurface)
         let drawing = PreparedProseDrawingView(frame: CGRect(origin: .zero, size: layout.size))
-        let window = UIWindow(frame: drawing.frame)
+        let window = makeTestWindow(frame: drawing.frame)
         window.addSubview(drawing)
         window.isHidden = false
         defer { window.isHidden = true }
@@ -821,7 +821,7 @@ final class ViewerTableTests: XCTestCase {
         let layout = try prepare(try twoLinkCellSource(), configJSON: Self.linkConfig)
         let surface = try XCTUnwrap(layout.blocks.first { $0.tableSurface != nil }?.tableSurface)
         let drawing = PreparedProseDrawingView(frame: CGRect(origin: .zero, size: layout.size))
-        let window = UIWindow(frame: drawing.frame)
+        let window = makeTestWindow(frame: drawing.frame)
         window.addSubview(drawing)
         window.isHidden = false
         defer { window.isHidden = true }
@@ -892,7 +892,7 @@ final class ViewerTableTests: XCTestCase {
         for direction in [TableLayoutDirection.leftToRight, .rightToLeft] {
             let layout = try prepare(document, tableDirection: direction)
             let drawing = PreparedProseDrawingView(frame: CGRect(origin: .zero, size: layout.size))
-            let window = UIWindow(frame: CGRect(origin: .zero, size: layout.size))
+            let window = makeTestWindow(frame: CGRect(origin: .zero, size: layout.size))
             window.addSubview(drawing)
             window.isHidden = false
             defer { window.isHidden = true }
@@ -997,7 +997,7 @@ final class ViewerTableTests: XCTestCase {
         let layout = try prepare(source, configJSON: config)
         let surface = try XCTUnwrap(layout.blocks.first { $0.tableSurface != nil }?.tableSurface)
         let drawing = PreparedProseDrawingView(frame: CGRect(origin: .zero, size: layout.size))
-        let window = UIWindow(frame: CGRect(origin: .zero, size: layout.size))
+        let window = makeTestWindow(frame: CGRect(origin: .zero, size: layout.size))
         window.addSubview(drawing)
         window.isHidden = false
         defer { window.isHidden = true }
@@ -2548,7 +2548,7 @@ final class ViewerTableTests: XCTestCase {
         XCTAssertEqual(oldMetrics.targetRow, 1)
         registry.registerDirectMounted("old-image-owner", layout: oldLayout)
         drawing.install(layout: oldLayout)
-        let window = UIWindow(frame: drawing.frame)
+        let window = makeTestWindow(frame: drawing.frame)
         window.addSubview(drawing)
         window.isHidden = false
         defer {
@@ -2633,7 +2633,7 @@ final class ViewerTableTests: XCTestCase {
         let surface = try XCTUnwrap(layout.blocks.first { $0.tableSurface != nil }?.tableSurface)
         let drawing = PreparedProseDrawingView(frame: CGRect(origin: .zero, size: layout.size))
         drawing.install(layout: layout)
-        let window = UIWindow(frame: drawing.bounds)
+        let window = makeTestWindow(frame: drawing.bounds)
         window.addSubview(drawing)
         window.isHidden = false
         defer { window.isHidden = true }

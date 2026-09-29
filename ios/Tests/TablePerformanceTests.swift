@@ -145,7 +145,7 @@ final class TablePerformanceTests: XCTestCase {
     private final class EditorHost {
         let id: UInt64
         let adapter: EditorV2Adapter
-        let window = UIWindow(frame: CGRect(origin: .zero, size: Benchmark.viewport))
+        let window = makeTestWindow(frame: CGRect(origin: .zero, size: Benchmark.viewport))
         let view = RichTextEditorView(frame: CGRect(origin: .zero, size: Benchmark.viewport))
         let surface: EditorTableSurface
         let drawing: PreparedProseDrawingView
@@ -525,7 +525,7 @@ final class TablePerformanceTests: XCTestCase {
             }
             try autoreleasepool {
                 let registry = PreparedProseLayoutRegistry()
-                let window = UIWindow(frame: CGRect(origin: .zero, size: Benchmark.viewport))
+                let window = makeTestWindow(frame: CGRect(origin: .zero, size: Benchmark.viewport))
                 let view = ProseViewerView(frame: window.bounds, layoutRegistry: registry)
                 window.addSubview(view)
                 window.makeKeyAndVisible()
@@ -616,7 +616,7 @@ final class TablePerformanceTests: XCTestCase {
 
     private func warm(_ fixture: Fixture, source: String) throws {
         let registry = PreparedProseLayoutRegistry()
-        let window = UIWindow(frame: CGRect(origin: .zero, size: Benchmark.viewport))
+        let window = makeTestWindow(frame: CGRect(origin: .zero, size: Benchmark.viewport))
         let view = ProseViewerView(frame: window.bounds, layoutRegistry: registry)
         window.addSubview(view)
         window.makeKeyAndVisible()

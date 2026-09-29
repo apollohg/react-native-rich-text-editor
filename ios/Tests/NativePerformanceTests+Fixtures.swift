@@ -333,7 +333,7 @@ func setSelection(in textView: UITextView, utf16Range: NSRange) {
 }
 
 func hostEditorView(_ view: RichTextEditorView, size: CGSize) -> UIWindow {
-    let window = UIWindow(frame: CGRect(origin: .zero, size: size))
+    let window = makeTestWindow(frame: CGRect(origin: .zero, size: size))
     let viewController = UIViewController()
     window.rootViewController = viewController
     window.makeKeyAndVisible()

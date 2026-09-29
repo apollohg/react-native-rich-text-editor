@@ -674,7 +674,7 @@ final class EditorTableNavigationTests: XCTestCase {
         defer { if !finished { destroyV2Editor(id: editorId) } }
         let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
         let frame = CGRect(origin: .zero, size: size)
-        let window = windowed ? UIWindow(frame: frame) : nil
+        let window = windowed ? makeTestWindow(frame: frame) : nil
         let view = RichTextEditorView(frame: frame)
         window?.addSubview(view)
         window?.makeKeyAndVisible()

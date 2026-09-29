@@ -265,7 +265,7 @@ final class PreparedProseAccessibilityTests: XCTestCase {
 
     func testRootProseLabelChangeRefreshesTheFocusedNodeInPlace() throws {
         let drawing = PreparedProseDrawingView(frame: CGRect(x: 0, y: 0, width: 180, height: 80))
-        let window = UIWindow(frame: drawing.frame)
+        let window = makeTestWindow(frame: drawing.frame)
         window.addSubview(drawing)
         window.isHidden = false
         defer { window.isHidden = true }
@@ -288,7 +288,7 @@ final class PreparedProseAccessibilityTests: XCTestCase {
 
     func testInvalidatingOffWindowReleasesTheSupersededLayout() throws {
         let drawing = PreparedProseDrawingView(frame: CGRect(x: 0, y: 0, width: 180, height: 80))
-        let window = UIWindow(frame: drawing.frame)
+        let window = makeTestWindow(frame: drawing.frame)
         window.addSubview(drawing)
         window.isHidden = false
         defer { window.isHidden = true }

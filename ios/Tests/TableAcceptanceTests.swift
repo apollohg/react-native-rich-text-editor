@@ -75,7 +75,7 @@ final class TableAcceptanceTests: XCTestCase {
         init(editorId: UInt64, adapter: EditorV2Adapter) {
             self.editorId = editorId
             self.adapter = adapter
-            window = UIWindow(frame: CGRect(origin: .zero, size: Acceptance.editorSize))
+            window = makeTestWindow(frame: CGRect(origin: .zero, size: Acceptance.editorSize))
             expo = NativeEditorExpoView()
             expo.frame = window.bounds
             window.addSubview(expo)
@@ -609,7 +609,7 @@ final class TableAcceptanceTests: XCTestCase {
         let editorId = makeV2Editor(configJson: Acceptance.config)
         defer { destroyV2Editor(id: editorId) }
         let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
-        let window = UIWindow(frame: CGRect(origin: .zero, size: Acceptance.editorSize))
+        let window = makeTestWindow(frame: CGRect(origin: .zero, size: Acceptance.editorSize))
         let view = RichTextEditorView(frame: window.bounds)
         window.addSubview(view)
         window.isHidden = false

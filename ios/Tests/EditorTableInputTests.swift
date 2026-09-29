@@ -181,7 +181,7 @@ final class EditorTableInputTests: XCTestCase {
         let editorId = makeV2Editor(configJson: configJSON ?? tableConfig, roomAwareness: roomAwareness)
         defer { destroyV2Editor(id: editorId) }
         let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
-        let window = UIWindow(frame: CGRect(origin: .zero, size: size))
+        let window = makeTestWindow(frame: CGRect(origin: .zero, size: size))
         let view = RichTextEditorView(frame: window.bounds)
         window.addSubview(view)
         window.makeKeyAndVisible()
@@ -1119,7 +1119,7 @@ final class EditorTableInputTests: XCTestCase {
         let editorId = makeV2Editor(configJson: tableConfig)
         defer { destroyV2Editor(id: editorId) }
         let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
-        let window = UIWindow(frame: UIScreen.main.bounds)
+        let window = makeTestWindow(frame: UIScreen.main.bounds)
         window.backgroundColor = .systemBackground
         let view = RichTextEditorView(frame: CGRect(x: 20, y: 160, width: 360, height: 240))
         window.addSubview(view)
@@ -1472,7 +1472,7 @@ final class EditorTableInputTests: XCTestCase {
         defer { destroyV2Editor(id: editorId) }
         let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
         let document = wideTwoCellDocument
-        let window = UIWindow(frame: UIScreen.main.bounds)
+        let window = makeTestWindow(frame: UIScreen.main.bounds)
         window.backgroundColor = .systemBackground
         let view = RichTextEditorView(frame: CGRect(x: 0, y: 100, width: window.bounds.width, height: 240))
         window.addSubview(view)
@@ -1555,7 +1555,7 @@ final class EditorTableInputTests: XCTestCase {
         let document = wideTwoCellDocument.replacingOccurrences(
             of: #""text":"one""#, with: #""text":"selection words for native drag""#
         )
-        let window = UIWindow(frame: UIScreen.main.bounds)
+        let window = makeTestWindow(frame: UIScreen.main.bounds)
         window.backgroundColor = .systemBackground
         let view = RichTextEditorView(frame: CGRect(x: 0, y: 100, width: window.bounds.width, height: 240))
         window.addSubview(view)
@@ -1689,7 +1689,7 @@ final class EditorTableInputTests: XCTestCase {
         defer { destroyV2Editor(id: editorId) }
         let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
         let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]}]}]}"#
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 360, height: 220))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 360, height: 220))
         let view = RichTextEditorView(frame: window.bounds)
         window.addSubview(view)
         window.makeKeyAndVisible()
@@ -1744,7 +1744,7 @@ final class EditorTableInputTests: XCTestCase {
         defer { destroyV2Editor(id: editorId) }
         let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
         let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"#
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 360, height: 220))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 360, height: 220))
         let view = RichTextEditorView(frame: window.bounds)
         window.addSubview(view)
         window.makeKeyAndVisible()
@@ -2015,7 +2015,7 @@ final class EditorTableInputTests: XCTestCase {
         let editorId = makeV2Editor(configJson: configJson)
         defer { destroyV2Editor(id: editorId) }
         let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 400, height: 500))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 400, height: 500))
         let host = NativeEditorExpoView()
         let hostFrame = CGRect(x: 24, y: 72, width: 340, height: 260)
         if let clippingAncestor {
@@ -3176,7 +3176,7 @@ final class EditorTableInputTests: XCTestCase {
         let history = adapter.cachedHistoryState
         let documentBeforeScroll = try XCTUnwrap(adapter.documentJson())
 
-        let window = UIWindow(frame: view.bounds)
+        let window = makeTestWindow(frame: view.bounds)
         window.addSubview(view)
         window.isHidden = false
         defer { window.isHidden = true }
@@ -3567,7 +3567,7 @@ final class EditorTableInputTests: XCTestCase {
         let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
         let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"cell"}]}]}]}]}]}"#
         let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 480))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 480))
         window.rootViewController = UIViewController()
         window.makeKeyAndVisible()
         window.rootViewController?.view.addSubview(view)
