@@ -415,6 +415,12 @@ final class PreparedProseLayoutCache {
         return retainedBytes
     }
 
+    var unmountedRetainedBytesForTesting: Int {
+        condition.lock()
+        defer { condition.unlock() }
+        return unmountedRetainedBytes
+    }
+
     var oversizedLeaseCountForTesting: Int {
         condition.lock()
         defer { condition.unlock() }

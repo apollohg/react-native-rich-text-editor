@@ -1208,6 +1208,8 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         displayScale: CGFloat,
         textView: EditorTextView
     ) -> [String: Entry] {
+        let layoutStarted = PreparedProseInstrumentation.now()
+        defer { PreparedProseInstrumentation.laidOut(layoutStarted, generation: "editor-table-\(presentation.documentRevision)") }
         var theme = PreparedProseTheme.resolve(
             editorTheme: textView.theme,
             baseFont: textView.baseFont,

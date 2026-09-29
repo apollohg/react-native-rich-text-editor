@@ -75,7 +75,59 @@ enum PreparedProseInstrumentation {
 
     static let nominalFramePeriodNanos: UInt64 = 16_666_667
     static let singleTickToleranceNanos: UInt64 = 1_000_000
+    static var tableWorkObserverForTesting: ((ViewerWorkSpan) -> Void)?
+    enum TableStage: String, CaseIterable {
+        case replacementAndFFI, nativeInputAndFFI, nativeFrameAndFFI, adapterAdoption
+        case viewerCompileAndLift, tablePreparationAndGeometry, drawingAndLayerRecording
+    }
+    static var tableStageObserverForTesting: ((TableStage, UInt64, UInt64) -> Void)?
+
+    static func recordTableStage(_ stage: TableStage, start: UInt64) {
+        guard start != 0, let observer = tableStageObserverForTesting else { return }
+        observer(stage, start, DispatchTime.now().uptimeNanoseconds)
+    }
+
+    static func measureTableStage<T>(_ stage: TableStage, _ body: () throws -> T) rethrows -> T {
+        let start = now()
+        defer { recordTableStage(stage, start: start) }
+        return try body()
+    }
     static let benchmarkPreferredFrameRate: Float = 60
+    struct TablePerformanceCounters: Codable {
+        var maxCellInputInstances = 0
+        var nonFiniteLayouts = 0
+        var unchangedCellRemeasurements = 0
+        var changedCellRemeasurements = 0
+        var unmountedCacheBytes = 0
+        var pinnedLayoutBytes = 0
+        var authoritativeDocumentBytes = 0
+        var retainedPresentations = 0
+
+        mutating func observe(_ drawing: PreparedProseDrawingView, additionalUnmountedBytes: Int = 0,
+                              cellInputs: [EditorTextView] = []) {
+            guard let layout = drawing.layout, let presentation = drawing.mountedTablePresentation() else { return }
+            let inputs = Set(cellInputs.compactMap { ($0 as? TableCellInputTextView).map(ObjectIdentifier.init) })
+            maxCellInputInstances = max(maxCellInputInstances, inputs.count)
+            retainedPresentations = max(retainedPresentations, presentation.cells.count)
+            var stores = Set<ObjectIdentifier>()
+            var unmounted = additionalUnmountedBytes
+            for table in presentation.tables {
+                let store = table.surface.layoutStore
+                if stores.insert(ObjectIdentifier(store)).inserted {
+                    unmounted += store.unmountedRetainedBytes
+                }
+                nonFiniteLayouts += table.surface.cells.filter {
+                    !$0.contentSize.width.isFinite || !$0.contentSize.height.isFinite
+                }.count
+            }
+            if !layout.size.width.isFinite || !layout.size.height.isFinite { nonFiniteLayouts += 1 }
+            unmountedCacheBytes = max(unmountedCacheBytes, unmounted)
+            let sidecars = drawing.preparedSurfaceRetainedBytesForTesting - layout.retainedBytes
+            pinnedLayoutBytes = max(pinnedLayoutBytes,
+                max(0, layout.currentRetainedBytesForTesting + layout.currentCellShapeCatalogRetainedBytesForTesting
+                    - (unmounted - additionalUnmountedBytes)) + sidecars)
+        }
+    }
     private static let lock = NSLock(); private static let sampleLimit = 20_000
     private static var enabled = false; private static var phase: TraversalPhase?
     private static var samples: [TraversalPhase: PhaseSamples] = [:]
@@ -336,17 +388,23 @@ enum PreparedProseInstrumentation {
         #endif
     }
 
+    private static func observeTableWork(_ start: UInt64, kind: ViewerWorkKind) {
+        guard start != 0, let observer = tableWorkObserverForTesting else { return }
+        observer(.init(startNanos: start, endNanos: DispatchTime.now().uptimeNanoseconds, kind: kind))
+    }
+
     @inline(__always) static func now() -> UInt64 {
+        if tableWorkObserverForTesting != nil || tableStageObserverForTesting != nil { return DispatchTime.now().uptimeNanoseconds }
         #if DEBUG
             lock.lock(); let active = enabled; lock.unlock(); return active ? DispatchTime.now().uptimeNanoseconds : 0
         #else
             return 0
         #endif
     }
-    @inline(__always) static func compiled(_ start: UInt64, generation: String) { record(start) { phase, elapsed, _ in mutate(phase) { samples in samples.compileCount += 1; append(elapsed, to: &samples.compileNanos) }; pendingCompileNanos[phase, default: [:]][generation] = elapsed } }
-    @inline(__always) static func laidOut(_ start: UInt64, generation: String) { record(start) { phase, elapsed, end in mutate(phase) { samples in samples.layoutCount += 1; append(elapsed, to: &samples.layoutNanos); if let compile = pendingCompileNanos[phase]?.removeValue(forKey: generation) { append(compile + elapsed, to: &samples.combinedCompileLayoutNanos) } }; recordViewerWorkLocked(startNanos: start, endNanos: end, kind: .layout, phase: phase) } }
+    @inline(__always) static func compiled(_ start: UInt64, generation: String) { recordTableStage(.viewerCompileAndLift, start: start); record(start) { phase, elapsed, _ in mutate(phase) { samples in samples.compileCount += 1; append(elapsed, to: &samples.compileNanos) }; pendingCompileNanos[phase, default: [:]][generation] = elapsed } }
+    @inline(__always) static func laidOut(_ start: UInt64, generation: String) { recordTableStage(.tablePreparationAndGeometry, start: start); observeTableWork(start, kind: .layout); record(start) { phase, elapsed, end in mutate(phase) { samples in samples.layoutCount += 1; append(elapsed, to: &samples.layoutNanos); if let compile = pendingCompileNanos[phase]?.removeValue(forKey: generation) { append(compile + elapsed, to: &samples.combinedCompileLayoutNanos) } }; recordViewerWorkLocked(startNanos: start, endNanos: end, kind: .layout, phase: phase) } }
     @inline(__always) static func cacheLookup(_ start: UInt64, hit: Bool, waited: Bool = false) { record(start) { phase, elapsed, _ in mutate(phase) { samples in append(elapsed, to: &samples.cacheLookupNanos); if hit { samples.cacheHits += 1 } else { samples.cacheMisses += 1 }; if waited { samples.cacheWaits += 1 } } } }
-    @inline(__always) static func drew(_ start: UInt64, visibleBlocks: Int) { record(start) { phase, elapsed, end in mutate(phase) { samples in append(elapsed, to: &samples.drawNanos); samples.drawCount += 1; samples.visibleBlocksDrawn += visibleBlocks }; recordViewerWorkLocked(startNanos: start, endNanos: end, kind: .draw, phase: phase) } }
+    @inline(__always) static func drew(_ start: UInt64, visibleBlocks: Int) { recordTableStage(.drawingAndLayerRecording, start: start); observeTableWork(start, kind: .draw); record(start) { phase, elapsed, end in mutate(phase) { samples in append(elapsed, to: &samples.drawNanos); samples.drawCount += 1; samples.visibleBlocksDrawn += visibleBlocks }; recordViewerWorkLocked(startNanos: start, endNanos: end, kind: .draw, phase: phase) } }
     static func imageRequested() { incrementImageCounter { $0.imageRequestCount += 1 } }
     static func imageMetadataRead() { incrementImageCounter { $0.imageMetadataCount += 1 } }
     static func imageDecoded() { incrementImageCounter { $0.imageDecodeCount += 1 } }

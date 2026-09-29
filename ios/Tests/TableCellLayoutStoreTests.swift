@@ -23,6 +23,26 @@ final class TableCellLayoutStoreTests: XCTestCase {
         XCTAssertEqual(store.unmountedRetainedBytes, 200)
     }
 
+    func testCurrentParentMemoryFollowsCellEvictionAndRebuild() {
+        let cellBytes = 100
+        let parentBytes = 64
+        let store = TableCellLayoutStore(byteBudget: cellBytes, capacity: 1)
+        let record = TableGridRecord(documentOwner: "memory", columns: 1, rows: 1, columnWidths: [100],
+            cells: [TableGridCell(sourceIndex: 0, row: 0, column: 0, contentKey: "cell")])
+        let surface = ViewerTableSurface(identity: "memory", record: record, viewportWidth: 100,
+            style: TableStyle(), direction: .leftToRight, displayScale: 1, layoutStore: store) { _, _ in
+                self.layout("cell", bytes: cellBytes)
+            }
+        let parent = PreparedProseLayout(key: layout("parent").key, size: surface.bounds.size,
+            blocks: [PreparedProseBlock(fragments: [], bounds: surface.bounds, tableSurface: surface,
+                                       tableBounds: surface.bounds)], retainedBytes: parentBytes + surface.retainedBytes)
+        let initial = parent.currentRetainedBytesForTesting
+        store.insert(layout("evict", bytes: cellBytes))
+        XCTAssertEqual(parent.currentRetainedBytesForTesting, initial - cellBytes)
+        _ = surface.cells[0].content
+        XCTAssertEqual(parent.currentRetainedBytesForTesting, initial)
+    }
+
     func testActiveInputCellStaysPreparedOffscreen() {
         let store = TableCellLayoutStore(byteBudget: 100)
         let active = layout("active")

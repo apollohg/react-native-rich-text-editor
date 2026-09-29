@@ -17,6 +17,8 @@ extension EditorV2Adapter {
     }
 
     private func fetchNativeFrame(mirrorScalarSelection: (anchor: UInt32, head: UInt32)?) -> FfiNativeRenderFrame? {
+        let stageStarted = PreparedProseInstrumentation.now()
+        defer { PreparedProseInstrumentation.recordTableStage(.nativeFrameAndFFI, start: stageStarted) }
         renderUpdateCallCountForTesting += 1
         let result = editorV2RenderNativeFrame(
             editorId: editorId, ownerId: nativeOwnerId.map(String.init),
@@ -35,6 +37,8 @@ extension EditorV2Adapter {
         _ frame: FfiNativeRenderFrame,
         strippingViewSelection: Bool
     ) -> EditorV2DerivedUpdate? {
+        let stageStarted = PreparedProseInstrumentation.now()
+        defer { PreparedProseInstrumentation.recordTableStage(.adapterAdoption, start: stageStarted) }
         guard let snapshot = Self.parseAtomicRenderSnapshot(frame.snapshotJson) else { return nil }
         let nextIndex = tableIndex.copy()
         guard case let .success(changes) = nextIndex.adopt(

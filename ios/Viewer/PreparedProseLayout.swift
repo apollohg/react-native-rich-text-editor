@@ -302,6 +302,14 @@ public final class PreparedProseLayout: NSObject {
     let accessibilityNodes: [PreparedProseAccessibilityNode]
     let imageAttachments: [ViewerImageAttachment]
     let retainedBytes: Int
+    private let tableRetainedBytesAtPreparation: Int
+    var currentRetainedBytesForTesting: Int {
+        retainedBytes - tableRetainedBytesAtPreparation
+            + blocks.reduce(0) { $0 + ($1.tableSurface?.retainedBytes ?? 0) }
+    }
+    var currentCellShapeCatalogRetainedBytesForTesting: Int {
+        Self.shapeCatalogRetainedBytes(cellShape: cellShape, blocks: blocks)
+    }
     let cellShapeCatalogRetainedBytes: Int
     let error: ProseViewerError?
     let cellShape: PreparedCellShape?
@@ -333,6 +341,7 @@ public final class PreparedProseLayout: NSObject {
         self.accessibilityNodes = accessibilityNodes
         self.imageAttachments = imageAttachments
         self.retainedBytes = retainedBytes
+        self.tableRetainedBytesAtPreparation = blocks.reduce(0) { $0 + ($1.tableSurface?.retainedBytes ?? 0) }
         self.error = error
         self.cellShape = cellShape
         self.cellShapeCatalogRetainedBytes = PreparedProseLayout.shapeCatalogRetainedBytes(

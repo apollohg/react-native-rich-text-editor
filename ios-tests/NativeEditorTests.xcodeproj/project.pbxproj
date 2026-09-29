@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		A31000000000000000000011 /* TableCellPreparationBenchmarkTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A31000000000000000000001 /* TableCellPreparationBenchmarkTests.swift */; };
+		A39000000000000000000011 /* TablePerformanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A39000000000000000000001 /* TablePerformanceTests.swift */; };
 		A19000000000000000000012 /* EditorTableIndex.swift in Sources */ = {isa = PBXBuildFile; fileRef = A19000000000000000000002 /* EditorTableIndex.swift */; };
 		A19000000000000000000011 /* EditorTableIndexTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A19000000000000000000001 /* EditorTableIndexTests.swift */; };
 		A20000000000000000000012 /* RootTablePositionMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* RootTablePositionMap.swift */; };
@@ -254,6 +255,7 @@
 
 /* Begin PBXFileReference section */
 		A31000000000000000000001 /* TableCellPreparationBenchmarkTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellPreparationBenchmarkTests.swift; sourceTree = "<group>"; };
+		A39000000000000000000001 /* TablePerformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TablePerformanceTests.swift; sourceTree = "<group>"; };
 		A19000000000000000000002 /* EditorTableIndex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTableIndex.swift; sourceTree = "<group>"; };
 		A19000000000000000000001 /* EditorTableIndexTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTableIndexTests.swift; sourceTree = "<group>"; };
 		A20000000000000000000002 /* RootTablePositionMap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootTablePositionMap.swift; sourceTree = "<group>"; };
@@ -770,6 +772,7 @@
 				A18000000000000000000002 /* EditorTableArrowTests.swift */,
 				A24B00000000000000000002 /* EditorLargeTableTests.swift */,
 				A31000000000000000000001 /* TableCellPreparationBenchmarkTests.swift */,
+				A39000000000000000000001 /* TablePerformanceTests.swift */,
 				A17100000000000000000001 /* TableCellPositionMapTests.swift */,
 				A32000000000000000000001 /* TableCellLayoutStoreTests.swift */,
 				0A70A1000000000000000002 /* AtomMountingTests.swift */,
@@ -1383,6 +1386,7 @@
 				A18000000000000000000012 /* EditorTableArrowTests.swift in Sources */,
 				A24B0000000000000000000C /* EditorLargeTableTests.swift in Sources */,
 				A31000000000000000000011 /* TableCellPreparationBenchmarkTests.swift in Sources */,
+				A39000000000000000000011 /* TablePerformanceTests.swift in Sources */,
 				A17100000000000000000011 /* TableCellPositionMapTests.swift in Sources */,
 				A32000000000000000000011 /* TableCellLayoutStoreTests.swift in Sources */,
 			);

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -1002,4 +1002,53 @@ test('the legacy coldLayout metric is rejected as unknown', () => {
         metric: 'coldLayout',
     });
     assert.throws(() => check(input), /unexpected metric\/fixture: coldLayout\/plain-3x3/);
+});
+
+test('the captured iOS table run satisfies the diagnostic export protocol', () => {
+    const input = JSON.parse(
+        readFileSync(
+            path.join(repositoryRoot, 'scripts/tests/fixtures/table-performance-ios-sample.json'),
+            'utf8'
+        )
+    );
+    const report = check(input, 'diagnostic');
+    assert.equal(report.releaseEvidence, false);
+    assert.equal(report.devices.length, 1);
+    assert.equal(report.devices[0].platform, 'ios');
+    assert.equal(report.devices[0].physicalDevice, false);
+    for (const failure of allFailures(report)) {
+        assert.match(
+            failure,
+            /(?: ms exceeds |(?:unmountedCacheBytes|retainedPresentations|unchangedCellRemeasurements|changedCellRemeasurements|nonFiniteLayouts|maxCellInputInstances)=)/
+        );
+    }
+    for (const sample of input.samples) {
+        assert.equal(Object.hasOwn(sample.counters, 'presentationWindowBound'), false);
+        for (const stage of Object.values(sample.stageSamplesMs)) {
+            assert.equal(stage.length, sample.samplesMs.length);
+            assert.ok(stage.every((value) => Number.isFinite(value) && value >= 0));
+        }
+        const requiredStages = {
+            typing: ['nativeInputAndFFI', 'nativeFrameAndFFI', 'adapterAdoption'],
+            editorColdLayout: ['replacementAndFFI', 'nativeFrameAndFFI', 'adapterAdoption'],
+            viewerColdLayout: ['viewerCompileAndLift'],
+        }[sample.metric];
+        if (requiredStages) {
+            for (const stage of [
+                ...requiredStages,
+                'tablePreparationAndGeometry',
+                'drawingAndLayerRecording',
+            ]) {
+                assert.ok(
+                    sample.stageSamplesMs[stage]?.every((value) => value > 0),
+                    `${sample.fixture}/${sample.metric} missing ${stage}`
+                );
+            }
+        }
+        if (sample.metric === 'typing') {
+            assert.equal(sample.wrapCount + sample.nonWrapCount, sample.samplesMs.length);
+            assert.ok(sample.wrapCount > 0);
+            assert.ok(sample.nonWrapCount > 0);
+        }
+    }
 });

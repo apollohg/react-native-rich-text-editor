@@ -107,7 +107,9 @@ extension EditorV2Adapter {
             ],
             includeBaseRevision: false
         ) { requestJson in
-            editorV2ApplyNativeIntent(editorId: self.editorId, requestJson: requestJson)
+            PreparedProseInstrumentation.measureTableStage(.nativeInputAndFFI) {
+                editorV2ApplyNativeIntent(editorId: self.editorId, requestJson: requestJson)
+            }
         }
         switch Self.normalizeJsonResult(result) {
         case .failure(let error):
