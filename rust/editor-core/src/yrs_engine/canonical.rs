@@ -399,8 +399,20 @@ impl CanonicalArtifact {
 
     pub(crate) fn sha256(&self) -> [u8; 32] {
         *self.0.sha256.get_or_init(|| {
-            let serialized =
-                serialize_canonical_json_with_hint(self.value(), self.0.admission_upper_bound);
+            let serialized = if let Some(value) = self.0.value.get() {
+                serialize_canonical_json_with_hint(value.as_value(), self.0.admission_upper_bound)
+            } else {
+                let mut bytes = Vec::with_capacity(bounded_canonical_json_initial_capacity(
+                    self.0.admission_upper_bound,
+                ));
+                crate::serialize::json_out::write_node_json(
+                    &mut bytes,
+                    self.0.source_document.root(),
+                    &self.0.schema_context.0.schema,
+                )
+                .expect("canonical nodes always serialize to an in-memory buffer");
+                bytes
+            };
             #[cfg(test)]
             super::observability::record_canonical_serialization();
             #[cfg(test)]
@@ -765,6 +777,40 @@ mod tests {
         assert_eq!(artifact.format_version(), CANONICAL_ARTIFACT_FORMAT_VERSION);
         assert!(context.ptr_eq(artifact.schema_context()));
         assert_eq!(take_canonical_artifact_counts_for_test(), (1, 2));
+    }
+
+    #[test]
+    fn deferred_hash_matches_canonical_bytes_without_materializing_the_json_tree() {
+        let schema = tiptap_schema();
+        let context = CanonicalSchemaContext::new(&schema);
+        let source = serde_json::json!({
+            "type": "doc",
+            "content": [
+                {"type": "paragraph", "content": [
+                    {"type": "text", "text": "escaped\n\"雪🙂", "marks": [{"type": "bold"}]},
+                    {"type": "hardBreak"}
+                ]},
+                {"type": "unknown", "attrs": {"number": 1.5, "nested": [null, true]}}
+            ]
+        });
+        let document = from_prosemirror_json(&source, &schema, UnknownTypeMode::Preserve).unwrap();
+        let expected = serde_json::to_vec(&to_prosemirror_json(&document, &schema)).unwrap();
+        let artifact = context
+            .derive_validated_json(&document, expected.len(), 0)
+            .unwrap();
+        assert!(artifact.0.value.get().is_none(), "fixture starts deferred");
+
+        assert_eq!(artifact.sha256(), canonical_sha256(&expected));
+        assert_eq!(artifact.serialized_len(), expected.len());
+        assert!(
+            artifact.0.value.get().is_none(),
+            "hashing must not retain a second whole-document tree"
+        );
+        assert_eq!(
+            artifact.sha256(),
+            canonical_sha256(&expected),
+            "cached digest remains identical"
+        );
     }
 
     #[test]
