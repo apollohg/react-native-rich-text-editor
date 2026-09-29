@@ -557,17 +557,28 @@ open class EditorTextSurface @JvmOverloads constructor(
         )
     }
 
-    fun bringPointIntoView(offset: Int): Boolean {
+    private fun textOffsetRect(offset: Int, rect: Rect) {
         val layout = layout
         val safe = offset.coerceIn(0, buffer.length)
         val line = layout.getLineForOffset(safe)
         val x = layout.getPrimaryHorizontal(safe).toInt() + totalPaddingLeft
-        val rect = Rect(
+        rect.set(
             x,
             layout.editorTextLineTop(line) + totalPaddingTop,
-            x + 2,
+            x + FOCUS_RECT_WIDTH_PX,
             layout.editorTextLineBottom(line) + totalPaddingTop
         )
+    }
+
+    override fun getFocusedRect(rect: Rect) {
+        if (selectionEnd < 0 || (width <= 0 && measuredWidth <= 0)) super.getFocusedRect(rect)
+        else textOffsetRect(selectionEnd, rect)
+    }
+
+    fun bringPointIntoView(offset: Int): Boolean {
+        val layout = layout
+        val rect = Rect()
+        textOffsetRect(offset, rect)
         var scrolled = false
         if (!interaction.hasScrollContainer() && height > 0) {
             val limit =
@@ -715,4 +726,8 @@ open class EditorTextSurface @JvmOverloads constructor(
         layout.height + totalPaddingTop + totalPaddingBottom
     }
     override fun computeHorizontalScrollRange() = width
+
+    private companion object {
+        const val FOCUS_RECT_WIDTH_PX = 2
+    }
 }
