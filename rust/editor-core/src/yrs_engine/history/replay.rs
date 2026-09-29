@@ -395,6 +395,7 @@ impl YrsHistory {
             self.restore_stack_items_beneath(doc, fragment, action, beneath);
             if changed {
                 self.reset_grouping();
+                self.drop_unrevertible_stack_tops(doc, fragment);
                 return Ok(HistoryPop {
                     changed,
                     pruned,

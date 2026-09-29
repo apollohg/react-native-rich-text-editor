@@ -220,6 +220,44 @@ fn a_remote_delete_of_everything_a_local_redo_item_restores_drops_that_item() {
 }
 
 #[test]
+fn undo_prunes_a_remotely_deleted_item_exposed_beneath_a_live_item() {
+    let (mut local, mut remote) = peers(&[grid(), prose()]);
+    type_into_cell(&mut local, C2);
+    type_into_cell(&mut local, A0);
+    exchange(&mut local, &mut remote);
+    place_caret(&mut remote.engine, C2);
+    apply(&mut remote, TableCommand::DeleteTableRows);
+    exchange(&mut remote, &mut local);
+    assert!(
+        local.engine.can_undo(),
+        "the newer surviving-cell edit remains undoable"
+    );
+
+    undo(&mut local);
+
+    assert!(
+        !local.engine.can_undo(),
+        "undo must not expose the older edit in the remotely deleted row"
+    );
+    assert!(
+        local.engine.can_redo(),
+        "pruning must retain the surviving edit's redo"
+    );
+    let undone = document_json(&local);
+    redo(&mut local);
+    undo(&mut local);
+    assert_eq!(
+        document_json(&local),
+        undone,
+        "history replay must preserve pruning and the surviving edit"
+    );
+    assert!(
+        !local.engine.can_undo(),
+        "replay must not resurrect the dead undo item"
+    );
+}
+
+#[test]
 fn a_remote_delete_elsewhere_keeps_the_local_undo_item() {
     let (mut local, mut remote) = peers(&[grid(), prose()]);
     type_into_cell(&mut local, A0);
@@ -237,6 +275,42 @@ fn a_remote_delete_elsewhere_keeps_the_local_undo_item() {
         document_json(&local),
         before_undo,
         "the surviving undo item must still revert the typing",
+    );
+}
+
+#[test]
+fn redo_prunes_a_remotely_deleted_item_exposed_beneath_a_live_item() {
+    let (mut local, mut remote) = peers(&[grid(), prose()]);
+    type_into_cell(&mut local, A0);
+    type_into_cell(&mut local, C2);
+    undo(&mut local);
+    undo(&mut local);
+    exchange(&mut local, &mut remote);
+    place_caret(&mut remote.engine, C2);
+    apply(&mut remote, TableCommand::DeleteTableRows);
+    exchange(&mut remote, &mut local);
+    assert!(
+        local.engine.can_redo(),
+        "the surviving-cell edit remains redoable"
+    );
+
+    redo(&mut local);
+
+    assert!(
+        !local.engine.can_redo(),
+        "redo must not expose the edit in the remotely deleted row"
+    );
+    let redone = document_json(&local);
+    undo(&mut local);
+    redo(&mut local);
+    assert_eq!(
+        document_json(&local),
+        redone,
+        "replay must retain the surviving redo"
+    );
+    assert!(
+        !local.engine.can_redo(),
+        "replay must not resurrect the dead redo item"
     );
 }
 
