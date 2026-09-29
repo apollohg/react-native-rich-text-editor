@@ -14,10 +14,16 @@ final class RemoteTablePeer {
         var envelope = payload
         envelope["version"] = 1
         envelope["requestId"] = String(nextRequestId)
-        envelope["baseDocumentRevision"] = String(adapter.baseDocumentRevision)
+        envelope["baseDocumentRevision"] = String(try documentRevision())
         let data = try JSONSerialization.data(withJSONObject: envelope)
         let result = call(adapter.editorId, try XCTUnwrap(String(data: data, encoding: .utf8)))
         XCTAssertNil(result.error, "the remote peer's change was refused: \(String(describing: result.error))")
+    }
+
+    func documentRevision() throws -> UInt64 {
+        let json = try XCTUnwrap(editorV2GetState(editorId: adapter.editorId).value)
+        let state = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        return try XCTUnwrap(EditorV2Adapter.uint64Field(state, "documentRevision"))
     }
 
     func applyCommand(_ command: [String: Any]) throws {

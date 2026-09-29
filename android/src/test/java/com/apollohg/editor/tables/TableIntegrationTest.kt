@@ -143,6 +143,8 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
 
         fun applyRemoteCommand(command: JSONObject) = remote.applyCommand(command)
 
+        fun remoteDocumentRevision(): ULong = remote.documentRevision()
+
         fun applyRemoteTextSelection(scalar: Int) =
             remote.applySelection(
                 adapter.selectionEnvelope(scalar, scalar, REMOTE_SELECTION_AFFINITY).getJSONObject("selection")
@@ -726,6 +728,41 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
             assertTrue(document, document.contains(HEADER_CELL_NODE))
             assertEquals("one remote retype and one composition commit", revision + 2u, fixture.adapter.baseDocumentRevision)
             assertFalse(composing.input.hasPendingCompositionForExternalRefresh())
+        }
+
+    @Test
+    fun `remote text edit and header replacement release composition and allow fresh typing`() =
+        withTable(IRREGULAR_DOCUMENT) { fixture ->
+            val tall = fixture.positions()[TALL_CELL]
+            val composing = composeStaleText(fixture, tall)
+            val scalar = requireNotNull(composing.input.tableCellPositionMap?.globalScalarForLocalScalar(0))
+            fixture.applyRemoteTextSelection(scalar)
+            fixture.applyRemoteCommand(JSONObject().put("type", INSERT_TEXT).put("text", REMOTE_PROSE_TEXT))
+            fixture.applyRemoteCommand(JSONObject().put("type", TOGGLE_TABLE_HEADER).put("target", HEADER_TARGET_CELL))
+            val remoteDocument = requireNotNull(fixture.adapter.documentJson())
+            val remoteRevision = fixture.remoteDocumentRevision()
+            assertTrue(remoteDocument, remoteDocument.contains(textNode(REMOTE_PROSE_TEXT + TALL_TEXT)))
+            assertTrue(remoteDocument, remoteDocument.contains(HEADER_CELL_NODE))
+            fixture.deliverRemoteCommit()
+            composing.connection.finishComposingText()
+            fixture.relayout()
+            assertEquals(remoteDocument, fixture.adapter.documentJson())
+            assertEquals(remoteRevision, fixture.adapter.baseDocumentRevision)
+            assertFalse(composing.input.hasPendingCompositionForExternalRefresh())
+            assertTrue("the stale IME session retired", composing.input.activeInputConnection !== composing.connection)
+            composing.connection.setComposingText(STALE_COMPOSITION_TEXT, 1)
+            assertFalse(composing.input.text.toString().contains(STALE_COMPOSITION_TEXT))
+            assertEquals("the retired connection cannot mutate", remoteDocument, fixture.adapter.documentJson())
+            fixture.tapCell(fixture.positions()[TALL_CELL])
+            val fresh = fixture.view.richTextView.activeTextInput
+            assertTrue("a fresh cell owns input", fresh !== fixture.root)
+            fresh.setSelection(0)
+            val connection = requireNotNull(fresh.onCreateInputConnection(EditorInfo()))
+            assertTrue(connection.commitText(COMPOSITION_TEXT, 1))
+            fixture.relayout()
+            val document = requireNotNull(fixture.adapter.documentJson())
+            assertTrue(document, document.contains(textNode(COMPOSITION_TEXT + REMOTE_PROSE_TEXT + TALL_TEXT)))
+            assertEquals(remoteRevision + 1u, fixture.adapter.baseDocumentRevision)
         }
 
     private class Composition(val input: EditorEditText, val connection: InputConnection)

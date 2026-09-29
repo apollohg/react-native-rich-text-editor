@@ -1000,6 +1000,54 @@ fn cell_commit_after_a_remote_deletion_of_its_empty_column_is_not_retargeted_to_
 }
 
 #[test]
+fn cell_commit_after_remote_text_edit_and_header_replacement_requires_a_fresh_binding() {
+    let mut session = table_session_with(PROSE_AND_GRID_DOCUMENT);
+    let pinned = pin_cell_commit(&mut session);
+    apply_remote_peer_edit(&mut session, |replica| {
+        remote_command_at(
+            replica,
+            pinned.scalar,
+            pinned.scalar,
+            TypedCommand::InsertText {
+                text: SECOND_PARAGRAPH_TEXT.into(),
+            },
+        );
+        remote_command_at(
+            replica,
+            pinned.scalar,
+            pinned.scalar,
+            TypedCommand::Table(TableCommand::ToggleTableHeader {
+                target: crate::tables::commands::TableHeaderTarget::Cell,
+            }),
+        );
+    });
+    assert_eq!(
+        first_grid_cell_text(&session),
+        format!("{SECOND_PARAGRAPH_TEXT}{FIRST_PARAGRAPH_TEXT}"),
+        "the standard remote update is accepted before native composition resolves"
+    );
+    assert_eq!(
+        session.engine.document_json().unwrap()["content"][1]["content"][0]["content"][0]["type"],
+        HEADER_CELL_NODE
+    );
+    assert_cell_commit_refused_without_mutation(&mut session, &pinned);
+    session.release_position_epoch_owner(CELL_OWNER_ID);
+    let fresh = pin_cell_commit(&mut session);
+    assert_ne!(
+        fresh.epoch, pinned.epoch,
+        "the new binding retires the old epoch"
+    );
+    let outcome = submit_cell_commit(&mut session, &fresh)
+        .expect("fresh input into the replacement cell remains editable");
+    assert_eq!(outcome["type"], "transaction", "{outcome}");
+    assert_eq!(
+        first_grid_cell_text(&session),
+        format!("{COMPOSED_TEXT}{SECOND_PARAGRAPH_TEXT}{FIRST_PARAGRAPH_TEXT}"),
+        "fresh typing preserves the remote text in the replacement cell"
+    );
+}
+
+#[test]
 fn cell_commit_after_a_remote_peer_splits_its_paragraph_at_the_composition_keeps_its_live_text_leaf(
 ) {
     let mut session = table_session_with(PROSE_AND_GRID_DOCUMENT);

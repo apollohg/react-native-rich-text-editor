@@ -94,9 +94,15 @@ internal class RemoteTablePeer(private val adapter: EditorV2Adapter, requestIdBa
     fun apply(payload: JSONObject, call: (String, String) -> EditorV2CallResult<String>) {
         nextRequestId += 1
         val envelope = payload.put("version", 1).put("requestId", nextRequestId.toString())
-            .put("baseDocumentRevision", adapter.baseDocumentRevision.toString()).toString()
+            .put("baseDocumentRevision", documentRevision().toString()).toString()
         val result = call(adapter.editorId, envelope)
         assertTrue("the remote peer's change was refused: $result", result is EditorV2CallResult.Ok)
+    }
+
+    fun documentRevision(): ULong {
+        val result = UniffiEditorV2Backend.getState(adapter.editorId)
+        check(result is EditorV2CallResult.Ok) { "Cannot read remote peer state: $result" }
+        return JSONObject(result.value).getString("documentRevision").toULong()
     }
 
     fun applyCommand(command: JSONObject) =

@@ -128,6 +128,8 @@ final class TableIntegrationTests: XCTestCase {
             try remote.applyCommand(command)
         }
 
+        func remoteDocumentRevision() throws -> UInt64 { try remote.documentRevision() }
+
         func applyRemoteTextSelection(at scalar: UInt32) throws {
             try remote.applySelection(EditorV2PositionBridge.textSelectionEnvelope(
                 anchor: scalar, head: scalar, affinity: Integration.remoteSelectionAffinity
@@ -636,6 +638,35 @@ final class TableIntegrationTests: XCTestCase {
             XCTAssertFalse(input.isComposing)
             XCTAssertTrue(fixture.view.activeTextInput === input, "the retyped cell keeps its input")
             XCTAssertEqual(fixture.activeCellPosition(), tall)
+        }
+    }
+
+    func testRemoteTextEditAndHeaderReplacementReleaseCompositionAndAllowFreshTyping() throws {
+        try withTable(Integration.irregularDocument) { fixture in
+            let input = try composeStaleText(in: Integration.tallCell, fixture)
+            let scalar = try XCTUnwrap(input.tableCellPositionMap?.globalScalar(forLocalUTF16: 0, in: Integration.tallText))
+            try fixture.applyRemoteTextSelection(at: scalar)
+            try fixture.applyRemoteCommand(["type": Integration.insertText, "text": Integration.remoteProseText])
+            try fixture.applyRemoteCommand(["type": Integration.toggleTableHeader, "target": Integration.headerTargetCell])
+            let remoteDocument = try XCTUnwrap(fixture.adapter.documentJson())
+            let remoteRevision = try fixture.remoteDocumentRevision()
+            XCTAssertTrue(remoteDocument.contains(textNode(Integration.remoteProseText + Integration.tallText)))
+            XCTAssertTrue(remoteDocument.contains(Integration.headerCellNode))
+            fixture.deliverRemoteCommit()
+            input.unmarkText()
+            XCTAssertEqual(fixture.adapter.documentJson(), remoteDocument)
+            XCTAssertEqual(fixture.adapter.baseDocumentRevision, remoteRevision)
+            XCTAssertFalse(input.isComposing)
+            XCTAssertNil(input.markedTextRange)
+            XCTAssertFalse(input.textStorage.string.contains(Integration.staleCompositionText))
+            XCTAssertTrue(fixture.view.bindTableCell(tableID: fixture.tableID, cellIndex: UInt32(Integration.tallCell), contentRect: .zero))
+            let fresh = fixture.view.activeTextInput
+            XCTAssertTrue(fresh.becomeFirstResponder())
+            fresh.selectedRange = Integration.cellStartCaret
+            fresh.textViewDidChangeSelection(fresh)
+            fresh.insertText(Integration.compositionText)
+            XCTAssertTrue(try XCTUnwrap(fixture.adapter.documentJson()).contains(textNode(Integration.compositionText + Integration.remoteProseText + Integration.tallText)))
+            XCTAssertEqual(fixture.adapter.baseDocumentRevision, remoteRevision + 1)
         }
     }
 
