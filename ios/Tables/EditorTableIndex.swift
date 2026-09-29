@@ -357,6 +357,22 @@ final class EditorTableIndex {
         return result
     }
 
+    func subtree(tableKeys: Set<String>) -> EditorTableIndex {
+        let result = EditorTableIndex()
+        var pending = Array(tableKeys)
+        while let key = pending.popLast() {
+            guard result.entries[key] == nil, let entry = entries[key] else { continue }
+            result.entries[key] = entry
+            result.origins[key] = origins[key]
+            pending.append(contentsOf: entry.nestedCells.keys)
+            for attribute in entry.attributeCounts.keys {
+                result.attributes[attribute] = attributes[attribute]
+                result.attributeObjects[attribute] = attributeObjects[attribute]
+            }
+        }
+        return result
+    }
+
     func tableDocStart(tableKey: String) -> UInt32? { origins[tableKey]?.doc }
 
     func record(tableKey: String) -> FfiTableRecord? { entries[tableKey]?.record }

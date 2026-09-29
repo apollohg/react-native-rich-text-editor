@@ -27,17 +27,21 @@ final class PreparedCellShape {
     /// full local-layout estimate is intentionally conservative because Core
     /// Text leaves are shared while the wrappers are not.
     var catalogRetainedBytes: Int {
-        localLayout.retainedBytes + 256 + key.contentKey.utf8.count
+        localLayout.currentRetainedBytes + 256 + key.contentKey.utf8.count
             + key.styleDigest.utf8.count + key.atomGeometryDigest.utf8.count
             + key.imageGeometryDigest.utf8.count
     }
 }
 
-/// Per-parent-build access to the parent cache's shape catalog.
+private final class PreparedCellShapeReference {
+    weak var shape: PreparedCellShape?
+    init(_ shape: PreparedCellShape) { self.shape = shape }
+}
+
 final class PreparedCellShapeBuildContext {
     private let catalog: PreparedCellShapeCatalog
-    private var resolved: [PreparedCellShapeKey: PreparedCellShape] = [:]
-    private var pins: [ObjectIdentifier: PreparedCellShape] = [:]
+    private var resolved: [PreparedCellShapeKey: PreparedCellShapeReference] = [:]
+    private var pins: [ObjectIdentifier: PreparedCellShapeReference] = [:]
     private var closed = false
 
     fileprivate init(catalog: PreparedCellShapeCatalog) {
@@ -52,13 +56,12 @@ final class PreparedCellShapeBuildContext {
         bind: (PreparedCellShape) -> PreparedProseLayout?
     ) throws -> PreparedProseLayout {
         if closed { return try build() }
-        if let shape = resolved[key] {
+        if let shape = resolved[key]?.shape {
             if let bound = bind(shape) { return bound.withCellShape(shape) }
             return try build()
         }
         if let shape = catalog.acquireForBuild(key) {
             rememberPinned(shape)
-            resolved[key] = shape
             if let bound = bind(shape) {
                 return bound.withCellShape(shape)
             }
@@ -68,7 +71,6 @@ final class PreparedCellShapeBuildContext {
         let candidate = PreparedCellShape(key: key, localLayout: fresh.sourceNeutralized(semanticKey: UUID().uuidString))
         let shape = catalog.stageForBuild(candidate)
         rememberPinned(shape)
-        resolved[key] = shape
         if shape !== candidate, let bound = bind(shape) {
             return bound.withCellShape(shape)
         }
@@ -78,30 +80,39 @@ final class PreparedCellShapeBuildContext {
     func close() {
         guard !closed else { return }
         closed = true
-        catalog.releaseBuildPins(Array(pins.values))
+        catalog.releaseBuildPins(pins.values.compactMap(\.shape))
         pins.removeAll()
         resolved.removeAll()
     }
 
     private func rememberPinned(_ shape: PreparedCellShape) {
-        let identifier = ObjectIdentifier(shape)
-        guard pins[identifier] == nil else { return }
-        pins[identifier] = shape
+        if let previous = resolved.removeValue(forKey: shape.key)?.shape { release(previous) }
+        if resolved.count >= TableCellLayoutStore.maximumResidentLayouts {
+            for (key, reference) in resolved where reference.shape == nil { resolved.removeValue(forKey: key) }
+            if resolved.count >= TableCellLayoutStore.maximumResidentLayouts, let key = resolved.keys.first {
+                if let previous = resolved.removeValue(forKey: key)?.shape { release(previous) }
+            }
+            pins = pins.filter { $0.value.shape != nil }
+        }
+        let reference = PreparedCellShapeReference(shape)
+        resolved[shape.key] = reference
+        pins[ObjectIdentifier(shape)] = reference
     }
+
+    private func release(_ shape: PreparedCellShape) {
+        if pins.removeValue(forKey: ObjectIdentifier(shape)) != nil { catalog.releaseBuildPins([shape]) }
+    }
+
 }
 
 /// Private index owned by `PreparedProseLayoutCache`; it never publishes a layout.
 final class PreparedCellShapeCatalog {
     private let lock = NSLock()
-    private final class Reference {
-        weak var shape: PreparedCellShape?
-        init(_ shape: PreparedCellShape) { self.shape = shape }
-    }
-
-    private var entries: [PreparedCellShapeKey: Reference] = [:]
-    private var buildPins: [ObjectIdentifier: Int] = [:]
+    private var entries: [PreparedCellShapeKey: PreparedCellShapeReference] = [:]
+    private var buildPins: [ObjectIdentifier: (reference: PreparedCellShapeReference, count: Int)] = [:]
     private var owners: [ObjectIdentifier: Set<PreparedCellShapeKey>] = [:]
     private var ownerCounts: [ObjectIdentifier: Int] = [:]
+    private var stagedSincePrune = 0
 
     func newBuildContext() -> PreparedCellShapeBuildContext {
         PreparedCellShapeBuildContext(catalog: self)
@@ -111,25 +122,38 @@ final class PreparedCellShapeCatalog {
         lock.lock()
         defer { lock.unlock() }
         guard let shape = entries[key]?.shape else { return nil }
-        buildPins[ObjectIdentifier(shape), default: 0] += 1
+        pinLocked(shape)
         return shape
     }
 
     func stageForBuild(_ shape: PreparedCellShape) -> PreparedCellShape {
         lock.lock()
+        stagedSincePrune += 1
+        if stagedSincePrune >= TableCellLayoutStore.maximumResidentLayouts {
+            pruneLocked()
+            stagedSincePrune = 0
+        }
         let retained = entries[shape.key]?.shape ?? shape
-        if entries[shape.key]?.shape == nil { entries[shape.key] = Reference(shape) }
-        buildPins[ObjectIdentifier(retained), default: 0] += 1
+        if entries[shape.key]?.shape == nil { entries[shape.key] = PreparedCellShapeReference(shape) }
+        pinLocked(retained)
         lock.unlock()
         return retained
+    }
+
+    private func pinLocked(_ shape: PreparedCellShape) {
+        let identifier = ObjectIdentifier(shape)
+        let previous = buildPins[identifier]
+        let count = previous?.reference.shape === shape ? (previous?.count ?? 0) : 0
+        buildPins[identifier] = (PreparedCellShapeReference(shape), count + 1)
     }
 
     func releaseBuildPins(_ shapes: [PreparedCellShape]) {
         lock.lock()
         for shape in shapes {
             let identifier = ObjectIdentifier(shape)
-            let remaining = max(0, (buildPins[identifier] ?? 1) - 1)
-            if remaining == 0 { buildPins.removeValue(forKey: identifier) } else { buildPins[identifier] = remaining }
+            guard let pin = buildPins[identifier], pin.reference.shape === shape else { continue }
+            if pin.count == 1 { buildPins.removeValue(forKey: identifier) }
+            else { buildPins[identifier] = (pin.reference, pin.count - 1) }
         }
         pruneLocked()
         lock.unlock()
@@ -143,7 +167,7 @@ final class PreparedCellShapeCatalog {
             var shapes: [PreparedCellShapeKey: PreparedCellShape] = [:]
             collectShapes(in: layout, into: &shapes)
             owners[identifier] = Set(shapes.keys)
-            for (key, shape) in shapes where entries[key]?.shape == nil { entries[key] = Reference(shape) }
+            for (key, shape) in shapes where entries[key]?.shape == nil { entries[key] = PreparedCellShapeReference(shape) }
         }
         lock.unlock()
     }
@@ -175,10 +199,11 @@ final class PreparedCellShapeCatalog {
     }
 
     private func pruneLocked() {
+        buildPins = buildPins.filter { $0.value.reference.shape != nil }
         let owned = Set(owners.values.flatMap { $0 })
         entries = entries.filter { key, reference in
             guard let shape = reference.shape else { return false }
-            return owned.contains(key) || buildPins[ObjectIdentifier(shape), default: 0] > 0
+            return owned.contains(key) || (buildPins[ObjectIdentifier(shape)]?.count ?? 0) > 0
         }
     }
 
@@ -186,12 +211,8 @@ final class PreparedCellShapeCatalog {
         in layout: PreparedProseLayout,
         into destination: inout [PreparedCellShapeKey: PreparedCellShape]
     ) {
-        if let shape = layout.cellShape { destination[shape.key] = shape }
-        for block in layout.blocks {
-            guard let table = block.tableSurface else { continue }
-            for cell in table.cells {
-                if let content = cell.cachedContent { collectShapes(in: content, into: &destination) }
-            }
+        layout.forEachRetainedLayout { retained in
+            if let shape = retained.cellShape { destination[shape.key] = shape }
         }
     }
 }
@@ -249,14 +270,16 @@ private extension ViewerTableSurface {
         let store = TableCellLayoutStore()
         return ViewerTableSurface(identity: "cell-table", hostViewportWidth: hostViewportWidth,
             style: style, direction: direction, layout: layout, cells: cells.map { cell in
-                let prepare = {
-                    let content = cell.content
-                    return content.cellShape?.localLayout ?? content.sourceNeutralized(
-                        semanticKey: "cell-shape:\(cell.sourceIndex)")
+                let content = cell.content
+                let rebuild = content.cellPreparation ?? { content }
+                let semanticKey = "cell-shape:\(cell.sourceIndex)"
+                func neutralize(_ prepared: PreparedProseLayout) -> PreparedProseLayout {
+                    prepared.cellShape?.localLayout ?? prepared.sourceNeutralized(semanticKey: semanticKey)
                 }
+                let prepare = { neutralize(rebuild()) }
                 return PreparedViewerTableCell(sourceIndex: cell.sourceIndex, row: cell.row, column: cell.column,
                     rowspan: cell.rowspan, colspan: cell.colspan, contentOrigin: cell.contentOrigin,
-                    content: prepare(), isHeader: cell.isHeader, attributesKey: nil,
+                    content: neutralize(content), isHeader: cell.isHeader, attributesKey: nil,
                     layoutStore: store, prepareContent: prepare)
             }, preparationError: preparationError, displayScale: displayScale)
     }

@@ -124,7 +124,7 @@ enum PreparedProseInstrumentation {
             unmountedCacheBytes = max(unmountedCacheBytes, unmounted)
             let sidecars = drawing.preparedSurfaceRetainedBytesForTesting - layout.retainedBytes
             pinnedLayoutBytes = max(pinnedLayoutBytes,
-                max(0, layout.currentRetainedBytesForTesting + layout.currentCellShapeCatalogRetainedBytesForTesting
+                max(0, layout.currentRetainedBytes + layout.cellShapeCatalogRetainedBytes
                     - (unmounted - additionalUnmountedBytes)) + sidecars)
         }
     }

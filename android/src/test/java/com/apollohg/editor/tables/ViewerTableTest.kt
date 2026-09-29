@@ -9,6 +9,7 @@ import com.apollohg.editor.viewer.ProseViewerRequest
 import com.apollohg.editor.viewer.PreparedProseTheme
 import com.apollohg.editor.viewer.AndroidProseLayoutEngine
 import com.apollohg.editor.viewer.PreparedProseLayout
+import com.apollohg.editor.viewer.PreparedProseLayoutCache
 import com.apollohg.editor.viewer.PreparedProseBlock
 import com.apollohg.editor.viewer.PreparedProseAccessibilityNode
 import com.apollohg.editor.viewer.PreparedProseInteraction
@@ -91,11 +92,84 @@ class ViewerTableTest {
         val parent = PreparedProseLayout(cell("parent").key, cellWidth, bounds.height(),
             listOf(PreparedProseBlock(emptyList(), bounds, tableSurface = surface, tableBounds = bounds)),
             retainedBytes = parentBytes + surface.retainedBytes)
-        val initial = parent.currentRetainedBytesForTesting
+        val initial = parent.currentRetainedBytes
         store.insert(cell("evict"))
-        assertEquals(initial - cellBytes, parent.currentRetainedBytesForTesting)
+        assertEquals("The store still owns entries without a mapped current cell", initial, parent.currentRetainedBytes)
         surface.cells.first().content
-        assertEquals(initial, parent.currentRetainedBytesForTesting)
+        assertEquals(initial, parent.currentRetainedBytes)
+    }
+
+    @Test fun currentParentMemoryCountsSharedStoresAndLayoutsOnce() {
+        val cellBytes = 100L
+        val parentBytes = 64L
+        val cellWidth = 100
+        fun cell(name: String, bytes: Long = cellBytes) = PreparedProseLayout(
+            ProseLayoutKey(name, cellWidth, "memory", 0, 0, 1, 0, "memory"),
+            cellWidth, 20, emptyList(), retainedBytes = bytes)
+        val store = TableCellLayoutStore(capacity = 1)
+        fun surface(name: String): ViewerTableSurface {
+            val record = TableGridRecord(name, 1, 1, listOf(cellWidth.toFloat()),
+                listOf(TableGridCell(0, 0, 0, contentKey = name)))
+            return ViewerTableSurface(name, record, cellWidth.toFloat(), TableStyle(), false,
+                layoutStore = store) { _, _ -> cell(name) }
+        }
+        val first = surface("shared-first")
+        val second = surface("shared-second")
+        val surfaces = listOf(first, second, first)
+        val bounds = Rect(0, 0, cellWidth, first.layout.contentHeight.toInt())
+        val parent = PreparedProseLayout(cell("shared-parent").key, cellWidth, bounds.height(),
+            surfaces.map { PreparedProseBlock(emptyList(), bounds, tableSurface = it) },
+            retainedBytes = parentBytes + surfaces.sumOf { it.retainedBytes })
+        assertEquals("Aliased surfaces and shared stores must not multiply cell ownership",
+            parentBytes + first.metadataRetainedBytes + second.metadataRetainedBytes + cellBytes,
+            parent.currentRetainedBytes)
+        store.insert(cell("larger-unmapped", cellBytes * 2))
+        assertEquals("Unmapped resident entries must still count once",
+            parentBytes + first.metadataRetainedBytes + second.metadataRetainedBytes + cellBytes * 2,
+            parent.currentRetainedBytes)
+    }
+
+    @Test
+    fun `parent cache recharges mutated stores before releasing mounts`() {
+        val heavyBytes = 4_096L
+        val lightBytes = 128L
+        val parentBytes = 64L
+        val cellWidth = 100
+        fun cell(name: String, bytes: Long) = PreparedProseLayout(
+            ProseLayoutKey(name, cellWidth, "memory", 0, 0, 1, 0, "memory"),
+            cellWidth, 20, emptyList(), retainedBytes = bytes)
+        fun parent(name: String): PreparedProseLayout {
+            val store = TableCellLayoutStore(capacity = 1)
+            val record = TableGridRecord(name, 1, 2, listOf(cellWidth.toFloat()),
+                (0..1).map { TableGridCell(it, it, 0, contentKey = "$name-$it") })
+            val surface = ViewerTableSurface(name, record, cellWidth.toFloat(), TableStyle(), false,
+                layoutStore = store) { item, _ -> cell("$name-${item.sourceIndex}", if (item.sourceIndex == 0) heavyBytes else lightBytes) }
+            val bounds = Rect(0, 0, cellWidth, surface.layout.contentHeight.toInt())
+            return PreparedProseLayout(cell(name, parentBytes).key, cellWidth, bounds.height(),
+                listOf(PreparedProseBlock(emptyList(), bounds, tableSurface = surface, tableBounds = bounds)),
+                retainedBytes = parentBytes + surface.retainedBytes)
+        }
+        val first = parent("first")
+        val second = parent("second")
+        val budget = heavyBytes + first.retainedBytes
+        val cache = PreparedProseLayoutCache(byteBudget = budget)
+        listOf("first" to first, "second" to second).forEach { (name, layout) ->
+            cache.value(layout.key) { layout }
+            cache.registerDirectMount(name, layout)
+            layout.blocks.single().tableSurface!!.cells[0].content
+        }
+        cache.releaseDirectMount("first")
+        assertEquals("Released parent must include its heavy resident cell", first.currentRetainedBytes,
+            cache.retainedBytesForTesting)
+        cache.releaseDirectMount("second")
+        assertEquals("Independent stores must obey the aggregate parent budget", 1, cache.completedCountForTesting)
+        assertTrue(cache.retainedBytesForTesting <= budget)
+        assertEquals(second.currentRetainedBytes, cache.retainedBytesForTesting)
+        cache.registerDirectMount("second", second)
+        second.blocks.single().tableSurface!!.cells[1].content
+        cache.releaseDirectMount("second")
+        assertEquals("Shrinking a store must remove its old charge", second.currentRetainedBytes,
+            cache.retainedBytesForTesting)
     }
 
     private class CellGeometryProbe {

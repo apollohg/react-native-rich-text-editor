@@ -534,12 +534,31 @@ internal fun ViewerDocument.cellDocument(cell: TableSurfaceCell, tableId: String
             else -> element
         }
     }
+    val nestedKeys = elements.filterIsInstance<FfiViewerElement.Table>().mapTo(mutableSetOf()) { it.tableId }
+    val nestedIndex = if (nestedKeys.isEmpty()) null else frameIndex?.subtree(nestedKeys)
+    val records = linkedMapOf<String, FfiViewerTable>()
+    val pending = java.util.ArrayDeque(nestedKeys)
+    while (pending.isNotEmpty()) {
+        val key = pending.removeLast()
+        if (key in records) continue
+        val record = tableRecords[key] ?: continue
+        records[key] = record
+        record.cells.flatMap { it.elements }.filterIsInstance<FfiViewerElement.Table>().forEach { pending.add(it.tableId) }
+    }
+    val attributes = records.values.flatMapTo(mutableSetOf()) { record ->
+        listOf(record.attrsKey) + record.sourceRows.map { it.attrsKey } + record.cells.map { it.attrsKey }
+    } + nestedIndex?.attributeObjects.orEmpty().keys
+    val identities = records.keys + nestedIndex?.tableKeys.orEmpty()
     return copy(
         semanticKey = "$semanticKey:$tableId:${cell.sourceIndex}:${cell.contentKey}",
         blocks = lowerElements(elements, preferredTextBlockName, tableRecords, elements.isEmpty(), frameIndex),
         isEmpty = cell.elements.isEmpty(),
         retainedBytes = 0,
-        trailingEmptyTextBlockCount = 0
+        trailingEmptyTextBlockCount = 0,
+        tableRecords = records,
+        tableAttributes = attributes.mapNotNull { key -> tableAttributes[key]?.let { key to it } }.toMap(),
+        frameIndex = nestedIndex,
+        tablePresentationIdentities = identities.mapNotNull { key -> tablePresentationIdentities[key]?.let { key to it } }.toMap()
     )
 }
 

@@ -92,6 +92,22 @@ final class CoreTextProseLayoutEngine {
             }
         }
 
+        func scoped(to document: ViewerDocument) -> HighlightingScope {
+            let scoped = HighlightingScope(configuration: configuration, generation: generation)
+            func collect(_ document: ViewerDocument) {
+                for (index, block) in document.blocks.enumerated() {
+                    let key = identifier(document: document, index: index)
+                    scoped.identifiers[key] = identifiers[key]
+                    guard let table = block.tableSurfaceSource, let tableKey = block.tableKey else { continue }
+                    for cell in table.cells {
+                        if let child = try? document.cellDocument(for: cell, in: tableKey) { collect(child) }
+                    }
+                }
+            }
+            collect(document)
+            return scoped
+        }
+
         func start(document: ViewerDocument, index: Int, block: ViewerBlock) -> Int? {
             guard EditorStyleSheet.element(block.nodeType) == "codeBlock" else { return nil }
             return identifiers[identifier(document: document, index: index)]
@@ -163,6 +179,7 @@ final class CoreTextProseLayoutEngine {
         var accessibilityNodes: [PreparedProseAccessibilityNode] = []
         var imageAttachments: [ViewerImageAttachment] = []
         var retainedBytes = document.retainedBytes
+        var tableRetainedBytes = 0
         var listMarkersByIdentity: [Int: PreparedListMarker] = [:]
         for block in document.blocks {
             guard let boundary = block.listItemBoundary,
@@ -254,6 +271,7 @@ final class CoreTextProseLayoutEngine {
                             generationIdentity: key.generationIdentity,
                             semanticGenerationIdentity: key.semanticGenerationIdentity
                         )
+                        let cellScope = scope?.scoped(to: child)
                         let build = {
                             engine.tableCellPreparationObserver?(cell.sourceIndex)
                             engine.tableCellShapeBuildObserver?(cell.sourceIndex)
@@ -264,14 +282,23 @@ final class CoreTextProseLayoutEngine {
                                 displayScale: displayScale,
                                 semanticGenerationIdentity: warningSemanticGeneration,
                                 cellMode: true,
-                                highlightingScope: scope,
+                                highlightingScope: cellScope,
                                 cellShapeContext: context
                             )
                             engine.tableCellBindingObserver?(cell.sourceIndex)
                             engine.tableCellLayoutObserverForTesting?(cell.sourceIndex, prepared)
                             return prepared
                         }
-                        guard let context, theme.codeHighlighting == nil else { return try build() }
+                        let rebuild: () -> PreparedProseLayout = {
+                            do { return try build() }
+                            catch let error as ProseViewerError { return .error(key: cellKey, width: cellWidth, error: error) }
+                            catch { return .error(key: cellKey, width: cellWidth,
+                                error: .layout(message: "Table cell preparation failed.")) }
+                        }
+                        guard let context, theme.codeHighlighting == nil else {
+                            let prepared = try build()
+                            return prepared.withCellShape(prepared.cellShape, preparation: rebuild)
+                        }
                         let shapeKey = preparedCellShapeKey(
                             contentKey: cell.contentKey,
                             document: child,
@@ -279,7 +306,7 @@ final class CoreTextProseLayoutEngine {
                             theme: cellTheme,
                             key: cellKey
                         )
-                        return try context.resolve(shapeKey, build: build) { shape in
+                        let prepared = try context.resolve(shapeKey, build: build) { shape in
                             let bound = engine.bindCellShape(
                                 shape,
                                 document: child,
@@ -293,6 +320,7 @@ final class CoreTextProseLayoutEngine {
                             if bound != nil { engine.tableCellBindingObserver?(cell.sourceIndex) }
                             return bound
                         }
+                        return prepared.withCellShape(prepared.cellShape, preparation: rebuild)
                     } catch let error as ProseViewerError {
                         return .error(key: key, width: cellWidth, error: error)
                     } catch {
@@ -371,6 +399,7 @@ final class CoreTextProseLayoutEngine {
                 }
                 cursorY = bounds.maxY + bottom + placement.itemSpacing
                 retainedBytes += tableBlock.estimatedRetainedBytes
+                tableRetainedBytes += tableBlock.tableSurface?.retainedBytes ?? 0
                 continue
             }
             let prepared = prepareBlock(
@@ -465,7 +494,8 @@ final class CoreTextProseLayoutEngine {
             retainedBytes: retainedBytes,
             decorations: decorations,
             highlightingRequest: highlightingRequest,
-            highlightingResolved: highlighting != nil
+            highlightingResolved: highlighting != nil,
+            tableRetainedBytesAtPreparation: tableRetainedBytes
         )
     }
 

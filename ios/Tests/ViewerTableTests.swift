@@ -1430,6 +1430,22 @@ final class ViewerTableTests: XCTestCase {
                 ]]
             ]
         ])
+        let compiled = viewerCompile(request: FfiViewerCompileRequest(sourceKind: .json, source: source,
+            configJson: Self.config, imagesEnabled: true, mentionPrefix: nil))
+        let document = try ViewerDocument(compiled: XCTUnwrap(compiled.value))
+        let tableBlock = try XCTUnwrap(document.blocks.first { $0.tableKey != nil })
+        let sourceTable = try XCTUnwrap(tableBlock.tableSurfaceSource)
+        let child = try document.cellDocument(for: XCTUnwrap(sourceTable.cells.first), in: XCTUnwrap(tableBlock.tableKey))
+        var wholeScope: CoreTextProseLayoutEngine.HighlightingScope? = .init(
+            configuration: NativeCodeHighlightConfiguration(provider: "table-fixture", theme: "fixture"),
+            generation: "scope-retention")
+        wholeScope!.preassign(document: document)
+        weak var releasedScope = wholeScope
+        let cellScope = wholeScope!.scoped(to: child)
+        wholeScope = nil
+        XCTAssertNil(releasedScope, "A cell scope must not retain the whole document's highlighting source")
+        XCTAssertTrue(cellScope.blocks.isEmpty, "Rebuild scopes retain only local identifiers, not source text")
+        XCTAssertEqual(cellScope.start(document: child, index: 0, block: child.blocks[0]), 1)
         let generation = "table-highlight-\(UUID().uuidString)"
         let initial = try prepareHighlighted(source, generation: generation)
         let request = try XCTUnwrap(initial.highlightingRequest)
@@ -2256,7 +2272,7 @@ final class ViewerTableTests: XCTestCase {
         XCTAssertEqual(registry.cellShapeCatalogRetainedBytesForTesting, 0)
     }
 
-    func testCellShapeCatalogKeepsSharedBuildPinUntilEveryContextCloses() throws {
+    func testCellShapeCatalogKeepsSharedBuildIndexWhileBoundCellsRemainAlive() throws {
         let catalog = PreparedCellShapeCatalog()
         let key = PreparedCellShapeKey(
             contentKey: "shared-build",
@@ -2283,9 +2299,9 @@ final class ViewerTableTests: XCTestCase {
             retainedBytes: 128
         )
         let first = catalog.newBuildContext()
-        _ = try first.resolve(key, build: { layout }, bind: { _ in nil })
+        let firstBound = try first.resolve(key, build: { layout }, bind: { _ in nil })
         let second = catalog.newBuildContext()
-        _ = try second.resolve(key, build: {
+        let secondBound = try second.resolve(key, build: {
             XCTFail("the indexed shape should be acquired by the second context")
             return layout
         }, bind: { $0.localLayout })
@@ -2294,6 +2310,7 @@ final class ViewerTableTests: XCTestCase {
         XCTAssertEqual(catalog.countForTesting, 1)
         second.close()
         XCTAssertEqual(catalog.countForTesting, 0)
+        withExtendedLifetime((firstBound, secondBound)) {}
     }
 
     func testEqualContentCellsShareOneShapeButBindDistinctShiftedAnchors() throws {

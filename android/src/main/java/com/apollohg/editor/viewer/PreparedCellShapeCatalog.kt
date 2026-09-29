@@ -1,6 +1,9 @@
 package com.apollohg.editor.viewer
 
+import java.util.WeakHashMap
+import java.util.Collections
 import java.util.IdentityHashMap
+import com.apollohg.editor.tables.TableCellLayoutStore
 import java.lang.ref.WeakReference
 
 /** A source-neutral local shape. Parent artifacts remain the only persistent owners. */
@@ -97,15 +100,11 @@ internal class PreparedCellShape internal constructor(
     }
 }
 
-/**
- * Build-scoped resolver. A hit is pinned by the authoritative parent cache
- * until the replacement parent has either been published or discarded.
- */
 internal class PreparedCellShapeBuildContext internal constructor(
     private val catalog: PreparedCellShapeCatalog
 ) {
-    private val resolved = mutableMapOf<PreparedCellShapeKey, PreparedCellShape>()
-    private val pins = IdentityHashMap<PreparedCellShape, Unit>()
+    private val resolved = linkedMapOf<PreparedCellShapeKey, WeakReference<PreparedCellShape>>()
+    private val pins = WeakHashMap<PreparedCellShape, Unit>()
     private var closed = false
 
     fun fork(): PreparedCellShapeBuildContext = catalog.newBuildContext()
@@ -116,17 +115,29 @@ internal class PreparedCellShapeBuildContext internal constructor(
         bind: (PreparedCellShape) -> PreparedProseLayout?
     ): PreparedProseLayout {
         if (closed) return build()
-        val acquired = resolved[key] ?: catalog.acquireForBuild(key)?.also { shape ->
-            resolved[key] = shape
-            pins[shape] = Unit
-        }
+        val acquired = resolved[key]?.get() ?: catalog.acquireForBuild(key)?.also(::remember)
         acquired?.let { shape -> bind(shape)?.let { return it.copy(cellShape = shape) } }
         val fresh = build()
         val shape = PreparedCellShape.fromBound(key, fresh)
-        resolved[key] = shape
-        pins[shape] = Unit
         catalog.stageForBuild(shape)
+        remember(shape)
         return fresh.copy(cellShape = shape)
+    }
+
+    private fun remember(shape: PreparedCellShape) {
+        resolved.remove(shape.key)?.get()?.let(::release)
+        while (resolved.size >= TableCellLayoutStore.MAXIMUM_RESIDENT_LAYOUTS) {
+            val iterator = resolved.entries.iterator()
+            val previous = iterator.next().value.get()
+            iterator.remove()
+            previous?.let(::release)
+        }
+        resolved[shape.key] = WeakReference(shape)
+        pins[shape] = Unit
+    }
+
+    private fun release(shape: PreparedCellShape) {
+        if (pins.remove(shape) != null) catalog.releaseBuildPins(listOf(shape))
     }
 
     internal fun close() {
@@ -142,7 +153,7 @@ internal class PreparedCellShapeBuildContext internal constructor(
 internal class PreparedCellShapeCatalog {
     private val lock = Any()
     private var entries: Map<PreparedCellShapeKey, WeakReference<PreparedCellShape>> = emptyMap()
-    private val buildPins = IdentityHashMap<PreparedCellShape, Int>()
+    private val buildPins = WeakHashMap<PreparedCellShape, Int>()
 
     fun newBuildContext(): PreparedCellShapeBuildContext = PreparedCellShapeBuildContext(this)
 
@@ -185,16 +196,13 @@ internal fun PreparedCellShapeKey.catalogMetadataBytes(): Long =
 private fun PreparedProseLayout.collectCellShapes(
     destination: MutableMap<PreparedCellShapeKey, PreparedCellShape>
 ) {
-    cellShape?.let { destination.putIfAbsent(it.key, it) }
-    blocks.forEach { block ->
-        block.tableSurface?.cells?.forEach { it.cachedContent?.collectCellShapes(destination) }
-    }
+    forEachRetainedLayout(visit = { layout -> layout.cellShape?.let { destination.putIfAbsent(it.key, it) } })
 }
 
 internal fun PreparedProseLayout.cellShapeCatalogBytes(): Long {
-    val shapes = linkedMapOf<PreparedCellShapeKey, PreparedCellShape>()
-    collectCellShapes(shapes)
-    return shapes.entries.sumOf { (key, shape) -> key.catalogMetadataBytes() + shape.retainedBytes }
+    val shapes = Collections.newSetFromMap(IdentityHashMap<PreparedCellShape, Boolean>())
+    forEachRetainedLayout(visit = { layout -> layout.cellShape?.let { shapes.add(it) } })
+    return shapes.sumOf { it.key.catalogMetadataBytes() + it.retainedBytes }
 }
 
 private fun PreparedProseLayout.sourceNeutralWrapperBytes(): Long =
@@ -223,5 +231,6 @@ private fun PreparedProseLayout.localShape(): PreparedProseLayout = copy(
     accessibilityNodes = emptyList(),
     imageAttachments = imageAttachments.map { it.copy(id = "", ordinal = -1) },
     viewerAtoms = viewerAtoms.map { it.copy(docPos = 0, attrsJson = "") },
-    cellShape = null
+    cellShape = null,
+    cellPreparation = null
 )

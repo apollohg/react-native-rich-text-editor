@@ -231,6 +231,25 @@ internal class EditorTableIndex {
         it.roots = roots
     }
 
+    fun subtree(tableKeys: Set<String>): EditorTableIndex {
+        val selected = linkedMapOf<String, Entry>()
+        val pending = java.util.ArrayDeque(tableKeys)
+        while (pending.isNotEmpty()) {
+            val key = pending.removeLast()
+            if (key in selected) continue
+            val entry = entries[key] ?: continue
+            selected[key] = entry
+            pending.addAll(entry.nestedCells.keys)
+        }
+        val keys = selected.values.flatMapTo(mutableSetOf()) { it.attributeCounts.keys }
+        return EditorTableIndex().also { result ->
+            result.entries = selected
+            result.attributes = keys.mapNotNull { key -> attributes[key]?.let { key to it } }.toMap()
+            result.attributeObjects = keys.mapNotNull { key -> attributeObjects[key]?.let { key to it } }.toMap()
+            result.origins = selected.keys.mapNotNull { key -> origins[key]?.let { key to it } }.toMap()
+        }
+    }
+
     fun record(tableKey: String): FfiTableRecord? = entries[tableKey]?.record
     fun tableDocStart(tableKey: String): UInt? = origins[tableKey]?.doc
 

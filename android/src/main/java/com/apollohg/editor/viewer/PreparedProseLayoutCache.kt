@@ -426,7 +426,7 @@ internal class PreparedProseLayoutCache(
 
     private fun uniqueBytes(layouts: Collection<PreparedProseLayout>): Long {
         val seen = identitySet(layouts)
-        return seen.sumOf { it.retainedBytes + it.cellShapeCatalogBytes() }
+        return seen.sumOf { it.currentRetainedBytes + it.cellShapeCatalogBytes() }
     }
 
     private val FabricLeaseKey.owner: FabricLeaseOwner

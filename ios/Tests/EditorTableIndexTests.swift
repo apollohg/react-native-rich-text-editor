@@ -55,6 +55,72 @@ final class EditorTableIndexTests: XCTestCase {
                       removedAttributeKeys: [], tables: [], removedTableKeys: [], cellUpdates: [], extents: frame().extents)
     }
 
+    func testIncrementalCellsReleaseHistoricalIndexesAndRebuildAfterEviction() throws {
+        final class IndexReference {
+            weak var value: EditorTableIndex?
+            init(_ value: EditorTableIndex) { self.value = value }
+        }
+        let cellCount = 128
+        let width: CGFloat = 400
+        var full = frame()
+        var table = full.tables[0]
+        table.columns = UInt32(cellCount)
+        table.columnWidths = Array(repeating: nil, count: cellCount)
+        table.cells = (0..<cellCount).map { cell(UInt32($0), stride: $0 == cellCount - 1 ? 1 : 2) }
+        table.sourceRows[0].cellCount = UInt32(cellCount)
+        table.docSize = UInt32(cellCount * 5 + 4)
+        full.tables = [table]
+        full.extents[0].docSize = table.docSize
+        full.extents[0].scalarEnd = rootScalarStart + UInt32(cellCount * 2 - 1)
+        var references: [IndexReference] = []
+        var retained: PreparedProseLayout!
+        try autoreleasepool {
+            var index = EditorTableIndex()
+            _ = try index.adopt(full, installedRevision: nil, frameRevision: revision).get()
+            let engine = CoreTextProseLayoutEngine()
+            engine.tablePreparationWorkerLimit = 1
+            for step in 0...cellCount {
+                if step > 0 {
+                    index = index.copy()
+                    var change = delta()
+                    change.baseDocumentRevision = String(revision + UInt64(step - 1))
+                    change.extents = full.extents
+                    var changed = table.cells[step - 1]
+                    changed.contentKey = "edited-\(step)"
+                    changed.elements[1] = .textRun(text: "b", marks: [])
+                    change.cellUpdates = [.init(tableKey: rootKey, cellIndex: UInt32(step - 1), cell: changed)]
+                    _ = try index.adopt(change, installedRevision: revision + UInt64(step - 1),
+                        frameRevision: revision + UInt64(step)).get()
+                    let previous = try XCTUnwrap(retained.blocks.first?.tableSurface)
+                    engine.incrementalTableSurface = { _ in (previous, IndexSet(integer: step - 1)) }
+                }
+                let record = try XCTUnwrap(index.record(tableKey: rootKey))
+                let document = ViewerDocument(semanticKey: "revision-\(step)",
+                    blocks: [ViewerBlock(nodeType: "table", depth: 0, inBlockquote: false,
+                        listContext: nil, listItemBoundary: nil, inlines: [], frameTable: record)],
+                    isEmpty: false, retainedBytes: 0, tableAttributes: index.attributeObjects, frameIndex: index)
+                let key = ProseLayoutKey(semanticKey: document.semanticKey, widthPixels: Int(width),
+                    themeDigest: "retention", nativeFontRevision: 0, fontEnvironmentRevision: 0,
+                    displayScale: 1, attachmentRevision: 0, generationIdentity: "retention",
+                    semanticGenerationIdentity: "retention")
+                retained = try engine.prepare(document: document, key: key, widthPoints: width, displayScale: 1)
+                engine.incrementalTableSurface = nil
+                references.append(IndexReference(index))
+            }
+        }
+        XCTAssertEqual(references.filter { $0.value != nil }.count, 0,
+            "Cell rebuild closures must not retain any whole historical frame index")
+        let surface = try XCTUnwrap(retained.blocks.first?.tableSurface)
+        let eviction = PreparedProseLayout(key: retained.key, size: .zero, blocks: [],
+            retainedBytes: PreparedProseLayoutCache.preparedLayoutUnmountedByteBudget)
+        surface.layoutStore.insert(eviction)
+        for cell in surface.cells {
+            XCTAssertNil(cell.cachedContent)
+            XCTAssertNil(cell.content.error, "Every evicted cell must rebuild from its own immutable input")
+            XCTAssertEqual(cell.content.accessibilityNodes.map(\.label).joined(), "b")
+        }
+    }
+
     func testFrameCellDocumentResolvesRelativeAtomPosition() throws {
         let config = TableInputTestSchema.tableConfig.replacingOccurrences(
             of: #"{"name":"text""#,

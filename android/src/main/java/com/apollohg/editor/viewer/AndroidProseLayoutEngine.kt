@@ -340,6 +340,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
         val contentWidth = max(1, widthPx - theme.insetLeftPx - theme.insetRightPx)
         var cursorY = theme.insetTopPx
         var retained = document.retainedBytes + theme.retainedBytes
+        var tableRetainedBytes = 0L
         val interactions = mutableListOf<PreparedProseInteraction>()
         val imageAttachments = mutableListOf<ViewerImageAttachment>()
         val viewerAtoms = mutableListOf<PreparedViewerAtom>()
@@ -492,7 +493,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                             warningSemanticGeneration, true, context
                         ).also { engine.tableCellLayoutObserverForTesting?.invoke(cell.sourceIndex, it) }
                     }
-                    return if (context == null || theme.codeHighlighting != null) {
+                    val prepared = if (context == null || theme.codeHighlighting != null) {
                         build()
                     } else {
                         val shapeKey = cellShapeKey(cell.contentKey, child, childWidth, childTheme, density, shapeStyleDigest)
@@ -503,6 +504,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                             )
                         }
                     }
+                    return prepared.copy(cellPreparation = build)
                 }
                 val record = TableGridRecord.from(surfaceSource, document.semanticKey).physical(density)
                 val tableStyle = theme.tableStyle.physical(density)
@@ -578,6 +580,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                     tableBounds = Rect(tableBounds)
                 )
                 retained += tableBlock.retainedBytes
+                tableRetainedBytes += surface.retainedBytes
                 return@mapIndexed tableBlock
             }
             var prepared = prepareBlock(
@@ -805,7 +808,8 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
             ),
             codeHighlighting = theme.codeHighlighting,
             codeHighlightBlocks = rootHighlightBlocks,
-            highlightedCodeKeys = rootHighlightedCodeKeys
+            highlightedCodeKeys = rootHighlightedCodeKeys,
+            tableRetainedBytesAtPreparation = tableRetainedBytes
         )
     }
 

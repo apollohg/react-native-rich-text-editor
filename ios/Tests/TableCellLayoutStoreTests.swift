@@ -36,11 +36,105 @@ final class TableCellLayoutStoreTests: XCTestCase {
         let parent = PreparedProseLayout(key: layout("parent").key, size: surface.bounds.size,
             blocks: [PreparedProseBlock(fragments: [], bounds: surface.bounds, tableSurface: surface,
                                        tableBounds: surface.bounds)], retainedBytes: parentBytes + surface.retainedBytes)
-        let initial = parent.currentRetainedBytesForTesting
+        let initial = parent.currentRetainedBytes
         store.insert(layout("evict", bytes: cellBytes))
-        XCTAssertEqual(parent.currentRetainedBytesForTesting, initial - cellBytes)
+        XCTAssertEqual(parent.currentRetainedBytes, initial,
+            "The store still owns the replacement even when no current cell maps its key")
         _ = surface.cells[0].content
-        XCTAssertEqual(parent.currentRetainedBytesForTesting, initial)
+        XCTAssertEqual(parent.currentRetainedBytes, initial)
+    }
+
+    func testCurrentParentMemoryCountsSharedStoresAndLayoutsOnce() {
+        let cellBytes = 100
+        let parentBytes = 64
+        let store = TableCellLayoutStore(capacity: 1)
+        func surface(_ name: String) -> ViewerTableSurface {
+            let record = TableGridRecord(documentOwner: name, columns: 1, rows: 1, columnWidths: [100],
+                cells: [TableGridCell(sourceIndex: 0, row: 0, column: 0, contentKey: name)])
+            return ViewerTableSurface(identity: name, record: record, viewportWidth: 100,
+                style: TableStyle(), direction: .leftToRight, displayScale: 1, layoutStore: store) { _, _ in
+                    self.layout(name, bytes: cellBytes)
+                }
+        }
+        let first = surface("shared-first")
+        let second = surface("shared-second")
+        let surfaces = [first, second, first]
+        let parent = PreparedProseLayout(key: layout("shared-parent").key, size: first.bounds.size,
+            blocks: surfaces.map { PreparedProseBlock(fragments: [], bounds: $0.bounds, tableSurface: $0) },
+            retainedBytes: parentBytes + surfaces.reduce(0) { $0 + $1.retainedBytes })
+        XCTAssertEqual(parent.currentRetainedBytes,
+            parentBytes + first.metadataRetainedBytes + second.metadataRetainedBytes + cellBytes,
+            "Aliased surfaces and a shared store must not multiply retained cell ownership")
+        store.insert(layout("larger-unmapped", bytes: cellBytes * 2))
+        XCTAssertEqual(parent.currentRetainedBytes,
+            parentBytes + first.metadataRetainedBytes + second.metadataRetainedBytes + cellBytes * 2,
+            "Every resident entry counts even when its key is absent from both surfaces")
+    }
+
+    func testParallelBuildContextsReleaseEvictedShapesBeforeClosing() {
+        let catalog = PreparedCellShapeCatalog()
+        let workerCount = CoreTextProseLayoutEngine.maxTablePreparationWorkers
+        let capacity = 8
+        let store = TableCellLayoutStore(capacity: capacity)
+        let contexts = (0..<workerCount).map { _ in catalog.newBuildContext() }
+        defer { contexts.forEach { $0.close() } }
+        let uniqueCells = TableCellLayoutStore.maximumResidentLayouts + 1
+        DispatchQueue.concurrentPerform(iterations: workerCount) { worker in
+            for index in stride(from: worker, to: uniqueCells, by: workerCount) {
+                autoreleasepool {
+                    let key = PreparedCellShapeKey(contentKey: "parallel-\(index)", widthPixels: 100,
+                        scaleBits: Double(1).bitPattern, styleDigest: "store-test",
+                        atomGeometryDigest: "", imageGeometryDigest: "")
+                    let prepared = try! contexts[worker].resolve(key,
+                        build: { self.layout("parallel-\(index)") }, bind: { _ in nil })
+                    store.insert(prepared)
+                }
+            }
+        }
+        XCTAssertEqual(store.count, capacity)
+        XCTAssertEqual(catalog.countForTesting, capacity,
+            "Only resident cells may keep shapes alive while every worker context remains open")
+        XCTAssertEqual(catalog.retainedBytesForTesting,
+            store.residentLayouts.reduce(0) { $0 + $1.cellShapeCatalogRetainedBytes })
+    }
+
+    func testParentCacheRechargesMutatedStoresBeforeReleasingMounts() throws {
+        let heavyBytes = 4_096
+        let lightBytes = 128
+        let parentBytes = 64
+        func parent(_ name: String) -> PreparedProseLayout {
+            let store = TableCellLayoutStore(capacity: 1)
+            let record = TableGridRecord(documentOwner: name, columns: 1, rows: 2, columnWidths: [100],
+                cells: (0..<2).map { TableGridCell(sourceIndex: $0, row: $0, column: 0, contentKey: "\(name)-\($0)") })
+            let surface = ViewerTableSurface(identity: name, record: record, viewportWidth: 100,
+                style: TableStyle(), direction: .leftToRight, displayScale: 1, layoutStore: store) { cell, _ in
+                    self.layout("\(name)-\(cell.sourceIndex)", bytes: cell.sourceIndex == 0 ? heavyBytes : lightBytes)
+                }
+            return PreparedProseLayout(key: layout(name).key, size: surface.bounds.size,
+                blocks: [PreparedProseBlock(fragments: [], bounds: surface.bounds,
+                    tableSurface: surface, tableBounds: surface.bounds)], retainedBytes: parentBytes + surface.retainedBytes)
+        }
+        let first = parent("first")
+        let second = parent("second")
+        let budget = heavyBytes + first.retainedBytes
+        let cache = PreparedProseLayoutCache(byteBudget: budget)
+        for (name, layout) in [("first", first), ("second", second)] {
+            _ = try cache.value(for: layout.key) { layout }
+            cache.registerDirectMount(name, layout: layout)
+            _ = layout.blocks[0].tableSurface!.cells[0].content
+        }
+        cache.releaseDirectMount("first")
+        XCTAssertEqual(cache.unmountedRetainedBytesForTesting, first.currentRetainedBytes,
+            "The released parent's charge must include its newly resident heavy cell")
+        cache.releaseDirectMount("second")
+        XCTAssertEqual(cache.countForTesting, 1, "Two individually admitted stores must still obey the aggregate parent budget")
+        XCTAssertLessThanOrEqual(cache.unmountedRetainedBytesForTesting, budget)
+        XCTAssertEqual(cache.unmountedRetainedBytesForTesting, second.currentRetainedBytes)
+        cache.registerDirectMount("second", layout: second)
+        _ = second.blocks[0].tableSurface!.cells[1].content
+        cache.releaseDirectMount("second")
+        XCTAssertEqual(cache.unmountedRetainedBytesForTesting, second.currentRetainedBytes,
+            "Shrinking a resident store must remove its old charge")
     }
 
     func testActiveInputCellStaysPreparedOffscreen() {
@@ -87,6 +181,59 @@ final class TableCellLayoutStoreTests: XCTestCase {
         XCTAssertNil(releasedShape, "The catalogue must not independently retain an evicted cell shape")
         XCTAssertEqual(catalog.countForTesting, 0)
         XCTAssertEqual(parent.blocks.count, 1, "The parent remains mounted throughout cell eviction")
+    }
+
+    func testNestedNeutralShapeDoesNotRetainSourceCellStore() throws {
+        let catalog = PreparedCellShapeCatalog()
+        let context = catalog.newBuildContext()
+        defer { context.close() }
+        weak var sourceStore: TableCellLayoutStore?
+        var shape: PreparedCellShape!
+        try autoreleasepool {
+            let store = TableCellLayoutStore()
+            sourceStore = store
+            let record = TableGridRecord(documentOwner: "nested-source", columns: 1, rows: 1, columnWidths: [100],
+                cells: [TableGridCell(sourceIndex: 0, row: 0, column: 0, contentKey: "nested-cell")])
+            let surface = ViewerTableSurface(identity: "nested-source", record: record, viewportWidth: 100,
+                style: TableStyle(), direction: .leftToRight, displayScale: 1, layoutStore: store) { _, _ in
+                    self.layout("nested-cell").withCellShape(nil, preparation: { self.layout("nested-cell") })
+                }
+            let parent = PreparedProseLayout(key: layout("nested-parent").key, size: surface.bounds.size,
+                blocks: [PreparedProseBlock(fragments: [], bounds: surface.bounds, tableSurface: surface)],
+                retainedBytes: surface.retainedBytes)
+            let key = PreparedCellShapeKey(contentKey: "nested-parent", widthPixels: 100,
+                scaleBits: Double(1).bitPattern, styleDigest: "store-test", atomGeometryDigest: "", imageGeometryDigest: "")
+            shape = try context.resolve(key, build: { parent }, bind: { _ in nil }).cellShape
+        }
+        XCTAssertNil(sourceStore, "A neutral nested shape must not keep the source cell's shared store alive")
+        let neutralTable = try XCTUnwrap(shape.localLayout.blocks.first?.tableSurface)
+        let expectedSize = neutralTable.cells[0].contentSize
+        neutralTable.layoutStore.insert(layout("evict-nested", bytes: PreparedProseLayoutCache.preparedLayoutUnmountedByteBudget))
+        XCTAssertNil(neutralTable.cells[0].cachedContent)
+        XCTAssertEqual(neutralTable.cells[0].content.size, expectedSize,
+            "Nested neutral content must still reconstruct after its own store evicts it")
+    }
+
+    func testOpenBuildContextsDoNotRetainEvictedUniqueShapes() throws {
+        let catalog = PreparedCellShapeCatalog()
+        let context = catalog.newBuildContext()
+        let worker = context.fork()
+        defer { worker.close(); context.close() }
+        let uniqueCells = TableCellLayoutStore.maximumResidentLayouts + 1
+        for index in 0..<uniqueCells {
+            weak var shape: PreparedCellShape?
+            try autoreleasepool {
+                let key = PreparedCellShapeKey(contentKey: "cold-\(index)", widthPixels: 100,
+                    scaleBits: Double(1).bitPattern, styleDigest: "store-test",
+                    atomGeometryDigest: "", imageGeometryDigest: "")
+                let prepared = try (index.isMultiple(of: 2) ? context : worker).resolve(key,
+                    build: { self.layout("cold-\(index)") }, bind: { _ in nil })
+                shape = prepared.cellShape
+                XCTAssertNotNil(shape)
+            }
+            XCTAssertNil(shape, "A completed cell without an owner must release before build contexts close: \(index)")
+        }
+        XCTAssertEqual(catalog.countForTesting, 0)
     }
 
     func testDistinctNeutralShapesHaveDistinctStoreKeys() throws {

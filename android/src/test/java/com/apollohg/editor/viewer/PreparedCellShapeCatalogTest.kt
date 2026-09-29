@@ -1,5 +1,8 @@
 package com.apollohg.editor.viewer
 
+import com.apollohg.editor.tables.TableCellLayoutStore
+import java.lang.ref.WeakReference
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertSame
@@ -16,6 +19,64 @@ import kotlin.concurrent.thread
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 internal class PreparedCellShapeCatalogTest {
+    @Test
+    fun `parallel build contexts release evicted shapes before closing`() {
+        val catalog = PreparedCellShapeCatalog()
+        val workerCount = StaticLayoutAndroidProseLayoutEngine.MAX_TABLE_PREPARATION_WORKERS
+        val capacity = 8
+        val store = TableCellLayoutStore(capacity = capacity)
+        val contexts = List(workerCount) { catalog.newBuildContext() }
+        val uniqueCells = TableCellLayoutStore.MAXIMUM_RESIDENT_LAYOUTS + 1
+        val references = java.util.concurrent.ConcurrentLinkedQueue<WeakReference<PreparedCellShape>>()
+        val failure = AtomicReference<Throwable?>()
+        val workers = contexts.mapIndexed { worker, context ->
+            thread {
+                try {
+                    for (index in worker until uniqueCells step workerCount) {
+                        val key = shape("parallel-$index").key
+                        val prepared = context.resolve(key,
+                            { bareLayout().copy(key = bareLayout().key.copy(semanticKey = key.contentKey)) }, { null })
+                        references.add(WeakReference(requireNotNull(prepared.cellShape)))
+                        store.insert(prepared)
+                    }
+                } catch (error: Throwable) { failure.set(error) }
+            }
+        }
+        try {
+            workers.forEach { it.join() }
+            failure.get()?.let { throw it }
+            repeat(8) { System.gc(); System.runFinalization() }
+            assertEquals(capacity, store.count)
+            assertEquals("Only resident cells may retain shapes before worker contexts close",
+                capacity, references.count { it.get() != null })
+        } finally { contexts.forEach { it.close() } }
+    }
+
+    @Test
+    fun `open build contexts release unique shapes before closing`() {
+        val catalog = PreparedCellShapeCatalog()
+        val context = catalog.newBuildContext()
+        val worker = context.fork()
+        val uniqueCells = TableCellLayoutStore.MAXIMUM_RESIDENT_LAYOUTS + 1
+        val gcAttempts = 8
+        fun prepare(index: Int): WeakReference<PreparedCellShape> {
+            val key = shape("cold-$index").key
+            val prepared = (if (index % 2 == 0) context else worker).resolve(key,
+                { bareLayout() }, { null })
+            return WeakReference(requireNotNull(prepared.cellShape))
+        }
+        val references = (0 until uniqueCells).map(::prepare)
+        repeat(gcAttempts) { System.gc(); System.runFinalization() }
+        try {
+            references.forEachIndexed { index, reference ->
+                assertNull("Unowned cold cell $index must release while both contexts remain open", reference.get())
+            }
+        } finally {
+            worker.close()
+            context.close()
+        }
+    }
+
     @Test
     fun `concurrent build contexts retain an acquired shape until both close`() {
         val catalog = PreparedCellShapeCatalog()

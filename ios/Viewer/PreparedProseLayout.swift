@@ -303,16 +303,41 @@ public final class PreparedProseLayout: NSObject {
     let imageAttachments: [ViewerImageAttachment]
     let retainedBytes: Int
     private let tableRetainedBytesAtPreparation: Int
-    var currentRetainedBytesForTesting: Int {
-        retainedBytes - tableRetainedBytesAtPreparation
-            + blocks.reduce(0) { $0 + ($1.tableSurface?.retainedBytes ?? 0) }
+    var currentRetainedBytes: Int {
+        var bytes = 0
+        forEachRetainedLayout(visit: { bytes += $0.retainedBytes - $0.tableRetainedBytesAtPreparation },
+                              table: { bytes += $0.metadataRetainedBytes })
+        return bytes
     }
-    var currentCellShapeCatalogRetainedBytesForTesting: Int {
-        Self.shapeCatalogRetainedBytes(cellShape: cellShape, blocks: blocks)
+    var cellShapeCatalogRetainedBytes: Int {
+        var shapes: [ObjectIdentifier: PreparedCellShape] = [:]
+        forEachRetainedLayout { layout in
+            if let shape = layout.cellShape { shapes[ObjectIdentifier(shape)] = shape }
+        }
+        return shapes.values.reduce(0) { $0 + $1.catalogRetainedBytes }
     }
-    let cellShapeCatalogRetainedBytes: Int
+
+    func forEachRetainedLayout(visit: (PreparedProseLayout) -> Void,
+                              table: (ViewerTableSurface) -> Void = { _ in }) {
+        var layouts = Set<ObjectIdentifier>()
+        var stores = Set<ObjectIdentifier>()
+        var surfaces = Set<ObjectIdentifier>()
+        func walk(_ layout: PreparedProseLayout) {
+            guard layouts.insert(ObjectIdentifier(layout)).inserted else { return }
+            visit(layout)
+            for block in layout.blocks {
+                guard let surface = block.tableSurface else { continue }
+                if surfaces.insert(ObjectIdentifier(surface)).inserted { table(surface) }
+                if stores.insert(ObjectIdentifier(surface.layoutStore)).inserted {
+                    surface.layoutStore.residentLayouts.forEach(walk)
+                }
+            }
+        }
+        walk(self)
+    }
     let error: ProseViewerError?
     let cellShape: PreparedCellShape?
+    let cellPreparation: (() -> PreparedProseLayout)?
 
     init(
         key: ProseLayoutKey,
@@ -326,7 +351,9 @@ public final class PreparedProseLayout: NSObject {
         decorations: [PreparedProseFragment] = [],
         highlightingRequest: PreparedViewerHighlightingRequest? = nil,
         highlightingResolved: Bool = false,
-        cellShape: PreparedCellShape? = nil
+        cellShape: PreparedCellShape? = nil,
+        cellPreparation: (() -> PreparedProseLayout)? = nil,
+        tableRetainedBytesAtPreparation: Int? = nil
     ) {
         self.highlightingRequest = highlightingRequest
         self.highlightingResolved = highlightingResolved
@@ -341,17 +368,14 @@ public final class PreparedProseLayout: NSObject {
         self.accessibilityNodes = accessibilityNodes
         self.imageAttachments = imageAttachments
         self.retainedBytes = retainedBytes
-        self.tableRetainedBytesAtPreparation = blocks.reduce(0) { $0 + ($1.tableSurface?.retainedBytes ?? 0) }
+        self.tableRetainedBytesAtPreparation = tableRetainedBytesAtPreparation ?? blocks.reduce(0) { $0 + ($1.tableSurface?.retainedBytes ?? 0) }
         self.error = error
         self.cellShape = cellShape
-        self.cellShapeCatalogRetainedBytes = PreparedProseLayout.shapeCatalogRetainedBytes(
-            cellShape: cellShape,
-            blocks: blocks
-        )
+        self.cellPreparation = cellPreparation
         super.init()
     }
 
-    func withCellShape(_ shape: PreparedCellShape) -> PreparedProseLayout {
+    func withCellShape(_ shape: PreparedCellShape?, preparation: (() -> PreparedProseLayout)? = nil) -> PreparedProseLayout {
         PreparedProseLayout(
             key: key,
             size: size,
@@ -364,7 +388,9 @@ public final class PreparedProseLayout: NSObject {
             decorations: decorations,
             highlightingRequest: highlightingRequest,
             highlightingResolved: highlightingResolved,
-            cellShape: shape
+            cellShape: shape,
+            cellPreparation: preparation ?? cellPreparation,
+            tableRetainedBytesAtPreparation: tableRetainedBytesAtPreparation
         )
     }
 
@@ -372,31 +398,7 @@ public final class PreparedProseLayout: NSObject {
         PreparedProseLayout(key: key, size: CGSize(width: width, height: 0), blocks: [], retainedBytes: 0, error: error)
     }
 
-    private static func shapeCatalogRetainedBytes(
-        cellShape: PreparedCellShape?,
-        blocks: [PreparedProseBlock]
-    ) -> Int {
-        var shapes: [ObjectIdentifier: PreparedCellShape] = [:]
-        func collect(_ shape: PreparedCellShape?) {
-            guard let shape else { return }
-            shapes[ObjectIdentifier(shape)] = shape
-        }
-        func visit(_ layout: PreparedProseLayout) {
-            collect(layout.cellShape)
-            for block in layout.blocks {
-                for cell in block.tableSurface?.cells ?? [] {
-                    if let content = cell.cachedContent { visit(content) }
-                }
-            }
-        }
-        collect(cellShape)
-        for block in blocks {
-            for cell in block.tableSurface?.cells ?? [] {
-                if let content = cell.cachedContent { visit(content) }
-            }
-        }
-        return shapes.values.reduce(0) { $0 + $1.catalogRetainedBytes }
-    }
+
 }
 
 private extension Int {

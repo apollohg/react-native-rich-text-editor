@@ -1,5 +1,9 @@
 package com.apollohg.editor.viewer
 
+import java.util.Collections
+import java.util.IdentityHashMap
+import com.apollohg.editor.tables.TableCellLayoutStore
+import com.apollohg.editor.tables.ViewerTableSurface
 import android.graphics.Rect
 import android.text.StaticLayout
 import com.apollohg.editor.ProseViewerError
@@ -154,11 +158,35 @@ internal data class PreparedProseLayout(
     val codeHighlightBlocks: List<com.apollohg.editor.CodeHighlightBlock> = emptyList(),
     val highlightedCodeKeys: Set<String> = emptySet(),
     /** Present only on a bound table cell; parent cache ownership reaches it recursively. */
-    internal val cellShape: PreparedCellShape? = null
+    internal val cellShape: PreparedCellShape? = null,
+    internal val cellPreparation: (() -> PreparedProseLayout)? = null,
+    private val tableRetainedBytesAtPreparation: Long = blocks.sumOf { it.tableSurface?.retainedBytes ?: 0L }
 ) {
-    private val tableRetainedBytesAtPreparation = blocks.sumOf { it.tableSurface?.retainedBytes ?: 0L }
-    internal val currentRetainedBytesForTesting: Long
-        get() = retainedBytes - tableRetainedBytesAtPreparation + blocks.sumOf { it.tableSurface?.retainedBytes ?: 0L }
+    internal val currentRetainedBytes: Long
+        get() {
+            var bytes = 0L
+            forEachRetainedLayout({ bytes += it.retainedBytes - it.tableRetainedBytesAtPreparation },
+                { bytes += it.metadataRetainedBytes })
+            return bytes
+        }
+
+    internal fun forEachRetainedLayout(visit: (PreparedProseLayout) -> Unit,
+                                      table: (ViewerTableSurface) -> Unit = {}) {
+        val layouts = Collections.newSetFromMap(IdentityHashMap<PreparedProseLayout, Boolean>())
+        val stores = Collections.newSetFromMap(IdentityHashMap<TableCellLayoutStore, Boolean>())
+        val surfaces = Collections.newSetFromMap(IdentityHashMap<ViewerTableSurface, Boolean>())
+        fun walk(layout: PreparedProseLayout) {
+            if (!layouts.add(layout)) return
+            visit(layout)
+            layout.blocks.forEach { block ->
+                block.tableSurface?.let { surface ->
+                    if (surfaces.add(surface)) table(surface)
+                    if (stores.add(surface.layoutStore)) surface.layoutStore.residentLayouts.forEach(::walk)
+                }
+            }
+        }
+        walk(this)
+    }
 
     val hasMonotonicBlockBounds = (1 until blocks.size).all {
         blocks[it - 1].topPx <= blocks[it].topPx && blocks[it - 1].bottomPx <= blocks[it].bottomPx

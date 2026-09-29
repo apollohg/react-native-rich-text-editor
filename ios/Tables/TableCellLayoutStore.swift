@@ -33,6 +33,11 @@ final class TableCellLayoutStore {
         self.capacity = max(0, capacity)
     }
 
+    var residentLayouts: [PreparedProseLayout] {
+        lock.lock(); defer { lock.unlock() }
+        return entries.values.map(\.layout)
+    }
+
     var count: Int { lock.lock(); defer { lock.unlock() }; return entries.count }
     var unmountedRetainedBytes: Int { lock.lock(); defer { lock.unlock() }; return bytes - pinnedBytes }
 

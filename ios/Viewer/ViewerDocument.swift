@@ -671,6 +671,29 @@ struct ViewerDocument {
             }
             return position
         } ?? 0
+        let nestedKeys = Set(cell.elements.compactMap { element -> String? in
+            if case let .table(key) = element { return key }
+            return nil
+        })
+        let nestedIndex = nestedKeys.isEmpty ? nil : frameIndex?.subtree(tableKeys: nestedKeys)
+        var records: [String: FfiViewerTable] = [:]
+        var pending = Array(nestedKeys)
+        while let key = pending.popLast() {
+            guard records[key] == nil, let record = tableRecords[key] else { continue }
+            records[key] = record
+            for child in record.cells {
+                for element in child.elements {
+                    if case let .table(key) = element { pending.append(key) }
+                }
+            }
+        }
+        var attributes = Set(nestedIndex?.attributeObjects.keys.map { $0 } ?? [])
+        for record in records.values {
+            attributes.insert(record.attrsKey)
+            attributes.formUnion(record.sourceRows.map(\.attrsKey))
+            attributes.formUnion(record.cells.map(\.attrsKey))
+        }
+        let identities = Set(records.keys).union(nestedIndex?.tableKeys ?? [])
         return ViewerDocument(
             semanticKey: "\(semanticKey):\(tableID):\(cell.sourceIndex):\(cell.contentKey)",
             blocks: try Self.lowerElements(
@@ -683,10 +706,14 @@ struct ViewerDocument {
             ),
             isEmpty: cell.elements.isEmpty,
             retainedBytes: 0,
-            tableAttributes: tableAttributes,
-            tableRecords: tableRecords,
-            frameIndex: frameIndex,
-            tableSourceIDs: tableSourceIDs,
+            tableAttributes: Dictionary(uniqueKeysWithValues: attributes.compactMap { key in
+                tableAttributes[key].map { (key, $0) }
+            }),
+            tableRecords: records,
+            frameIndex: nestedIndex,
+            tableSourceIDs: Dictionary(uniqueKeysWithValues: identities.compactMap { key in
+                tableSourceIDs[key].map { (key, $0) }
+            }),
             preferredTextBlockName: preferredTextBlockName
         )
     }

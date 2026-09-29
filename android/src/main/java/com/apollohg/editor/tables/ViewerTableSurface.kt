@@ -23,8 +23,9 @@ internal class PreparedViewerTableCell(
     val isHeader: Boolean,
     val attributesKey: String?,
     val layoutStore: TableCellLayoutStore = TableCellLayoutStore(),
-    private val prepareContent: () -> PreparedProseLayout = { content }
+    prepareContent: () -> PreparedProseLayout = { content }
 ) {
+    private val prepareContent = content.cellPreparation ?: prepareContent
     val contentKey = content.key
     val contentWidthPx = content.widthPx
     val contentHeightPx = content.heightPx
@@ -41,9 +42,12 @@ internal class PreparedViewerTableCell(
     }
     val isPositionFree = content.error == null && !hasNestedTables && !hasAtoms && !hasImages &&
         content.interactions.all { it.docPos == null }
-    val content: PreparedProseLayout get() = layoutStore.value(contentKey, prepareContent)
+    val content: PreparedProseLayout get() = layoutStore.value(contentKey) {
+        prepareContent().copy(cellPreparation = prepareContent)
+    }
     val cachedContent: PreparedProseLayout? get() = layoutStore.peek(contentKey)
-    val retainedBytes: Long get() = METADATA_RETAINED_BYTES + (cachedContent?.retainedBytes ?: 0L) +
+    val retainedBytes: Long get() = metadataRetainedBytes + (cachedContent?.retainedBytes ?: 0L)
+    val metadataRetainedBytes: Long = METADATA_RETAINED_BYTES +
         accessibilityText.length * 2L + codeHighlightBlocks.sumOf { CODE_DESCRIPTOR_RETAINED_BYTES + it.text.length * 2L } +
         highlightedCodeKeys.sumOf { it.length * 2L }
 
@@ -122,7 +126,8 @@ internal class ViewerTableSurface(
     val columnEdgeHandleRows: Map<Int, Int> = sourceTable?.cells.orEmpty()
         .groupBy { (it.column + it.colspan).toInt() - 1 }
         .mapValues { (_, cells) -> cells.minOf { it.row }.toInt() }
-    val retainedBytes: Long get() = 256L + cells.sumOf { it.retainedBytes } +
+    val retainedBytes: Long get() = metadataRetainedBytes + cells.sumOf { it.cachedContent?.retainedBytes ?: 0L }
+    val metadataRetainedBytes: Long = 256L + cells.sumOf { it.metadataRetainedBytes } +
         (sourceTable?.cells?.size ?: 0) * 16L + layout.columnWidths.size * 16L +
         layout.columnOffsets.size * 16L + layout.rowOffsets.size * 16L + layout.rectangles.size * 48L + layout.sourceOrder.size * 16L +
         columnEdgeHandleRows.size * 16L

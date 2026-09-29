@@ -54,7 +54,7 @@ internal object PreparedProseInstrumentation {
                 nonFiniteLayouts += dimensions.count { !it.isFinite() }
             }
             pinnedLayoutBytes = maxOf(pinnedLayoutBytes,
-                (layout.currentRetainedBytesForTesting + layout.cellShapeCatalogBytes() - cellUnmounted).coerceAtLeast(0L) +
+                (layout.currentRetainedBytes + layout.cellShapeCatalogBytes() - cellUnmounted).coerceAtLeast(0L) +
                     drawing.tablePresentationRetainedBytesForTesting)
         }
 

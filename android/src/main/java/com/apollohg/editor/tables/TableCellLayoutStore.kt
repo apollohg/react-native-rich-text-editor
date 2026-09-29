@@ -18,6 +18,7 @@ internal class TableCellLayoutStore(
     private var bytes = 0L
     private var pinnedBytes = 0L
 
+    val residentLayouts: List<PreparedProseLayout> @Synchronized get() = entries.values.map { it.layout }
     val count: Int @Synchronized get() = entries.size
     val unmountedRetainedBytes: Long @Synchronized get() = bytes - pinnedBytes
 

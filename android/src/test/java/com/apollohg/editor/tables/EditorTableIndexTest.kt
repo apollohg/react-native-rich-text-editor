@@ -4,6 +4,14 @@ import com.apollohg.editor.EditorV2Adapter
 import com.apollohg.editor.EditorV2CallResult
 import com.apollohg.editor.UniffiEditorV2Backend
 import org.json.JSONObject
+import java.lang.ref.WeakReference
+import com.apollohg.editor.viewer.ViewerDocument
+import com.apollohg.editor.viewer.ViewerBlock
+import com.apollohg.editor.viewer.PreparedProseLayout
+import com.apollohg.editor.viewer.PreparedProseTheme
+import com.apollohg.editor.viewer.ProseLayoutKey
+import com.apollohg.editor.viewer.StaticLayoutAndroidProseLayoutEngine
+import com.apollohg.editor.viewer.PREPARED_LAYOUT_UNMOUNTED_BYTE_BUDGET
 import uniffi.editor_core.editorV2RenderNativeFrame
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -61,6 +69,60 @@ internal class EditorTableIndexTest {
         val result = index.adopt(frame, installed, revision)
         assertTrue("frame rejected: $result", result is TableFrameAdoption.Adopted)
         return (result as TableFrameAdoption.Adopted).changes
+    }
+
+    @Test
+    fun `incremental cells release historical indexes and rebuild after eviction`() {
+        val cellCount = 128
+        val width = 400
+        val gcAttempts = 8
+        val original = frame()
+        val table = original.tables.single().copy(columns = cellCount.toUInt(),
+            columnWidths = List(cellCount) { null }, docSize = (cellCount * 5 + 4).toUInt(),
+            sourceRows = listOf(FfiTableSourceRow(ATTRIBUTE_KEY, cellCount.toUInt())),
+            cells = List(cellCount) { cell(it.toUInt(), if (it == cellCount - 1) 1u else 2u) })
+        val full = original.copy(tables = listOf(table), extents = listOf(original.extents.single().copy(
+            docSize = table.docSize, scalarEnd = ROOT_SCALAR_START + (cellCount * 2 - 1).toUInt())))
+        val references = mutableListOf<WeakReference<EditorTableIndex>>()
+        fun prepareRevisions(): PreparedProseLayout {
+            var index = EditorTableIndex()
+            adopt(index, full)
+            val engine = StaticLayoutAndroidProseLayoutEngine()
+            var retained: PreparedProseLayout? = null
+            for (step in 0..cellCount) {
+                if (step > 0) {
+                    index = index.copy()
+                    val changed = table.cells[step - 1].copy(contentKey = "edited-$step",
+                        elements = listOf(FfiViewerElement.BlockStart("paragraph", null, 0u, null),
+                            FfiViewerElement.TextRun("b", emptyList()), FfiViewerElement.BlockEnd))
+                    val change = delta().copy(baseDocumentRevision = (REVISION + (step - 1).toULong()).toString(),
+                        extents = full.extents, cellUpdates = listOf(FfiTableCellUpdate(ROOT_KEY, (step - 1).toUInt(), changed)))
+                    adopt(index, change, REVISION + (step - 1).toULong(), REVISION + step.toULong())
+                    val previous = requireNotNull(retained).blocks.first().tableSurface!!
+                    engine.incrementalTableSurface = { previous to setOf(step - 1) }
+                }
+                val document = ViewerDocument("revision-$step",
+                    listOf(ViewerBlock("table", 0, false, null, null, emptyList(), frameRecord = index.record(ROOT_KEY))),
+                    false, 0, tableAttributes = index.attributeObjects, frameIndex = index)
+                val key = ProseLayoutKey(document.semanticKey, width, "retention", 0, 0, 1, 0, "retention")
+                retained = engine.prepare(document, key, PreparedProseTheme.resolve(null, 1f), width, 1f, false)
+                engine.incrementalTableSurface = null
+                references += WeakReference(index)
+            }
+            return requireNotNull(retained)
+        }
+        val retained = prepareRevisions()
+        repeat(gcAttempts) { System.gc(); System.runFinalization() }
+        assertEquals("Cell rebuild closures must not retain whole historical indexes", 0,
+            references.count { it.get() != null })
+        val surface = requireNotNull(retained.blocks.first().tableSurface)
+        surface.layoutStore.insert(PreparedProseLayout(retained.key, width, 0, emptyList(),
+            retainedBytes = PREPARED_LAYOUT_UNMOUNTED_BYTE_BUDGET))
+        surface.cells.forEach { cell ->
+            assertNull(cell.cachedContent)
+            assertNull("Evicted cell ${cell.sourceIndex} must rebuild", cell.content.error)
+            assertEquals("b", cell.content.blocks.flatMap { it.fragments }.mapNotNull { it.layout?.text }.joinToString(""))
+        }
     }
 
     private fun withEngineFrame(source: String, check: (FfiTableFrame, EditorV2Adapter, ULong) -> Unit) {

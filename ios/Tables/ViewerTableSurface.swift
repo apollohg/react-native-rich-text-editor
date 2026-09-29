@@ -20,11 +20,15 @@ final class PreparedViewerTableCell {
     let layoutStore: TableCellLayoutStore
     private let prepareContent: () -> PreparedProseLayout
 
-    var content: PreparedProseLayout { layoutStore.value(for: contentKey, build: prepareContent) }
-    var cachedContent: PreparedProseLayout? { layoutStore.peek(contentKey) }
-    var retainedBytes: Int {
-        96 + (cachedContent?.retainedBytes ?? 0) + accessibilityNodes.reduce(0) { $0 + $1.estimatedRetainedBytes }
+    var content: PreparedProseLayout {
+        layoutStore.value(for: contentKey) {
+            let rebuilt = prepareContent()
+            return rebuilt.withCellShape(rebuilt.cellShape, preparation: prepareContent)
+        }
     }
+    var cachedContent: PreparedProseLayout? { layoutStore.peek(contentKey) }
+    let metadataRetainedBytes: Int
+    var retainedBytes: Int { metadataRetainedBytes + (cachedContent?.retainedBytes ?? 0) }
 
     init(sourceIndex: Int, row: Int, column: Int, rowspan: Int, colspan: Int,
          contentOrigin: CGPoint, content: PreparedProseLayout, isHeader: Bool, attributesKey: String?,
@@ -42,6 +46,7 @@ final class PreparedViewerTableCell {
         self.contentSize = content.size
         self.contentError = content.error
         self.accessibilityNodes = TableAccessibility.contentNodes(of: content)
+        self.metadataRetainedBytes = 96 + accessibilityNodes.reduce(0) { $0 + $1.estimatedRetainedBytes }
         self.hasNestedTables = content.blocks.contains { $0.tableSurface != nil }
         self.hasAtoms = content.blocks.contains { $0.atomSlot != nil || $0.tableSurface?.hasAtoms == true }
         self.hasImages = !content.imageAttachments.isEmpty || content.blocks.contains {
@@ -50,7 +55,7 @@ final class PreparedViewerTableCell {
         self.isPositionFree = content.error == nil && !hasNestedTables && !hasAtoms && !hasImages
             && content.interactions.allSatisfy { $0.docPos == nil }
         self.layoutStore = layoutStore
-        self.prepareContent = prepareContent ?? { content }
+        self.prepareContent = content.cellPreparation ?? prepareContent ?? { content }
         layoutStore.insert(content)
     }
 
@@ -64,6 +69,7 @@ final class ViewerTableSurface {
     let direction: TableLayoutDirection
     let layout: TableLayoutResult
     let cells: [PreparedViewerTableCell]
+    private let cellMetadataRetainedBytes: Int
     let sourceTable: TableSurfaceSource?
     let sourceAttributes: [String: [String: Any]]
     let syntheticRegions: [TableRenderSyntheticRegion]
@@ -75,7 +81,10 @@ final class ViewerTableSurface {
 
     var bounds: CGRect { CGRect(origin: .zero, size: layout.contentSize) }
     var retainedBytes: Int {
-        256 + cells.reduce(0) { $0 + $1.retainedBytes }
+        metadataRetainedBytes + cells.reduce(0) { $0 + ($1.cachedContent?.retainedBytes ?? 0) }
+    }
+    var metadataRetainedBytes: Int {
+        256 + cellMetadataRetainedBytes
             + (sourceTable?.cells.count ?? 0) * 16 + syntheticRegions.count * 64 + columnEdgeHandleRows.count * 16
             + (layout.columnWidths.count + layout.columnOffsets.count + layout.rowOffsets.count) * 16
             + layout.rectangles.count * 96 + layout.sourceOrder.count * 16
@@ -181,6 +190,7 @@ final class ViewerTableSurface {
         preparationError = firstPreparationError
         let preparedCells = resolvedLayout.sourceOrder.compactMap { prepared[$0] }
         cells = preparedCells
+        cellMetadataRetainedBytes = preparedCells.reduce(0) { $0 + $1.metadataRetainedBytes }
         cellIndex = ViewerTableCellIndex(cells: preparedCells, direction: direction)
     }
 
@@ -206,6 +216,7 @@ final class ViewerTableSurface {
         self.layout = layout
         self.layoutStore = cells.first?.layoutStore ?? TableCellLayoutStore()
         self.cells = cells
+        self.cellMetadataRetainedBytes = cells.reduce(0) { $0 + $1.metadataRetainedBytes }
         self.cellIndex = ViewerTableCellIndex(cells: cells, direction: direction)
         self.sourceTable = sourceTable
         self.sourceAttributes = sourceAttributes

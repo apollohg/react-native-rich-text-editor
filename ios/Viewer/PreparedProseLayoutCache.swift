@@ -42,6 +42,7 @@ final class PreparedProseLayoutCache {
 
     private struct LayoutOwnership {
         let layout: PreparedProseLayout
+        var chargedBytes = 0
         var completedReferences = 0
         var pendingReferences = 0
         var mountedReferences = 0
@@ -57,7 +58,6 @@ final class PreparedProseLayoutCache {
     private var unmountedRetainedBytes = 0
     private var fabricLeaseRetainedBytes = 0
     private var directMountedRetainedBytes = 0
-    private var oversizedLeaseCount = 0
     private var benchmarkCensusKeys: Set<ProseLayoutKey>?
     private var mountIndex: [ProseMountKey: ProseLayoutKey] = [:]
     #if DEBUG
@@ -412,19 +412,22 @@ final class PreparedProseLayoutCache {
     var retainedBytesForTesting: Int {
         condition.lock()
         defer { condition.unlock() }
+        refreshOwnershipChargesLocked()
         return retainedBytes
     }
 
     var unmountedRetainedBytesForTesting: Int {
         condition.lock()
         defer { condition.unlock() }
+        refreshOwnershipChargesLocked()
         return unmountedRetainedBytes
     }
 
     var oversizedLeaseCountForTesting: Int {
         condition.lock()
         defer { condition.unlock() }
-        return oversizedLeaseCount
+        return Array(pendingLeases.values).filter { $0.currentRetainedBytes + $0.cellShapeCatalogRetainedBytes > byteBudget }.count
+            + Array(mountedLeases.values).filter { $0.currentRetainedBytes + $0.cellShapeCatalogRetainedBytes > byteBudget }.count
     }
 
     var pendingLeaseCountForTesting: Int {
@@ -485,7 +488,6 @@ final class PreparedProseLayoutCache {
         removeLeaseKey(key, from: &pendingLeaseKeysByOwner, key: FabricLeaseOwner(surface: key.surface, leaseHandle: key.leaseHandle))
         removeLeaseKey(key, from: &pendingLeaseKeysBySurface, key: key.surface)
         removeLeaseKey(key, from: &pendingLeaseKeysByLayout, key: key.layout)
-        if layout.retainedBytes > byteBudget { oversizedLeaseCount -= 1 }
         updateOwnershipLocked(layout, pendingDelta: -1, publicationKey: key.layout)
     }
 
@@ -549,6 +551,7 @@ final class PreparedProseLayoutCache {
     }
 
     private func enforceBudgetLocked() {
+        refreshOwnershipChargesLocked()
         // Completed entries are a disposable LRU. A pending Yoga-to-Fabric
         // handoff is an exact active owner: evicting it would make Fabric's
         // later mount miss without any completed-cache fallback. Its lifecycle
@@ -575,6 +578,7 @@ final class PreparedProseLayoutCache {
     }
 
     private func publishOwnerBytesLocked() {
+        refreshOwnershipChargesLocked()
         PreparedProseInstrumentation.cacheUpdated(
             unmountedBytes: unmountedRetainedBytes,
             unmountedResidentCount: completed.count
@@ -600,7 +604,6 @@ final class PreparedProseLayoutCache {
         insertLeaseKey(key, into: &pendingLeaseKeysByOwner, key: FabricLeaseOwner(surface: key.surface, leaseHandle: key.leaseHandle))
         insertLeaseKey(key, into: &pendingLeaseKeysBySurface, key: key.surface)
         insertLeaseKey(key, into: &pendingLeaseKeysByLayout, key: key.layout)
-        if layout.retainedBytes > byteBudget { oversizedLeaseCount += 1 }
         updateOwnershipLocked(layout, pendingDelta: 1, publicationKey: key.layout)
     }
 
@@ -610,7 +613,6 @@ final class PreparedProseLayoutCache {
         insertLeaseKey(key, into: &mountedLeaseKeysByOwner, key: FabricLeaseOwner(surface: key.surface, leaseHandle: key.leaseHandle))
         insertLeaseKey(key, into: &mountedLeaseKeysBySurface, key: key.surface)
         insertLeaseKey(key, into: &mountedLeaseKeysByLayout, key: key.layout)
-        if layout.retainedBytes > byteBudget { oversizedLeaseCount += 1 }
         updateOwnershipLocked(layout, mountedDelta: 1, publicationKey: key.layout)
     }
 
@@ -619,7 +621,6 @@ final class PreparedProseLayoutCache {
         removeLeaseKey(key, from: &mountedLeaseKeysByOwner, key: FabricLeaseOwner(surface: key.surface, leaseHandle: key.leaseHandle))
         removeLeaseKey(key, from: &mountedLeaseKeysBySurface, key: key.surface)
         removeLeaseKey(key, from: &mountedLeaseKeysByLayout, key: key.layout)
-        if layout.retainedBytes > byteBudget { oversizedLeaseCount -= 1 }
         updateOwnershipLocked(layout, mountedDelta: -1, publicationKey: key.layout)
     }
 
@@ -730,6 +731,7 @@ final class PreparedProseLayoutCache {
         let identifier = ObjectIdentifier(layout)
         var ownership = ownershipByIdentifier[identifier] ?? LayoutOwnership(layout: layout)
         let previous = ownership
+        ownership.chargedBytes = layout.currentRetainedBytes + layout.cellShapeCatalogRetainedBytes
         ownership.completedReferences += completedDelta
         ownership.pendingReferences += pendingDelta
         ownership.mountedReferences += mountedDelta
@@ -768,13 +770,21 @@ final class PreparedProseLayoutCache {
         #endif
     }
 
+    private func refreshOwnershipChargesLocked() {
+        for (identifier, previous) in ownershipByIdentifier {
+            var next = previous
+            next.chargedBytes = next.layout.currentRetainedBytes + next.layout.cellShapeCatalogRetainedBytes
+            applyOwnershipContributionDelta(from: previous, to: next)
+            ownershipByIdentifier[identifier] = next
+        }
+    }
+
     private func applyOwnershipContributionDelta(from previous: LayoutOwnership, to next: LayoutOwnership) {
-        let bytes = next.layout.retainedBytes + next.layout.cellShapeCatalogRetainedBytes
-        retainedBytes += contribution(next, bytes: bytes, kind: .retained) - contribution(previous, bytes: bytes, kind: .retained)
-        budgetedRetainedBytes += contribution(next, bytes: bytes, kind: .budgeted) - contribution(previous, bytes: bytes, kind: .budgeted)
-        unmountedRetainedBytes += contribution(next, bytes: bytes, kind: .unmounted) - contribution(previous, bytes: bytes, kind: .unmounted)
-        fabricLeaseRetainedBytes += contribution(next, bytes: bytes, kind: .fabricLease) - contribution(previous, bytes: bytes, kind: .fabricLease)
-        directMountedRetainedBytes += contribution(next, bytes: bytes, kind: .directMounted) - contribution(previous, bytes: bytes, kind: .directMounted)
+        retainedBytes += contribution(next, bytes: next.chargedBytes, kind: .retained) - contribution(previous, bytes: previous.chargedBytes, kind: .retained)
+        budgetedRetainedBytes += contribution(next, bytes: next.chargedBytes, kind: .budgeted) - contribution(previous, bytes: previous.chargedBytes, kind: .budgeted)
+        unmountedRetainedBytes += contribution(next, bytes: next.chargedBytes, kind: .unmounted) - contribution(previous, bytes: previous.chargedBytes, kind: .unmounted)
+        fabricLeaseRetainedBytes += contribution(next, bytes: next.chargedBytes, kind: .fabricLease) - contribution(previous, bytes: previous.chargedBytes, kind: .fabricLease)
+        directMountedRetainedBytes += contribution(next, bytes: next.chargedBytes, kind: .directMounted) - contribution(previous, bytes: previous.chargedBytes, kind: .directMounted)
     }
 
     private enum OwnershipContribution {
