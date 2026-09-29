@@ -882,7 +882,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         val width = (input.measuredWidth - input.compoundPaddingLeft - input.compoundPaddingRight)
             .coerceAtLeast(0)
         val markers = markers(input)
-        val accessibilityKey = Triple(revision, width, input.layout?.height)
+        val accessibilityKey = Triple(revision, width, if (width > 0) input.layout.height else null)
         if (accessibilityKey != this.accessibilityKey) {
             this.accessibilityKey = accessibilityKey
             drawingView.invalidateTableAccessibility()
