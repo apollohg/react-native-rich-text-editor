@@ -462,18 +462,20 @@ fn localized_render_transition_accepts_exact_element_capacity_and_rejects_one_un
         .map(Vec::len)
         .max()
         .unwrap();
-    let exact_nodes = required_elements.div_ceil(3);
+    const TABLE_GRID_ALLOWANCE: usize = 1;
+    let exact_nodes = (required_elements - TABLE_GRID_ALLOWANCE).div_ceil(3);
     assert!(
         exact_nodes > 1,
         "fixture must make one-under resource-bound"
     );
     let exact = ResourceLimits {
         max_document_nodes: exact_nodes,
+        max_table_grid_slots: TABLE_GRID_ALLOWANCE,
         ..default_limits.clone()
     };
     let one_under = ResourceLimits {
         max_document_nodes: exact_nodes - 1,
-        ..default_limits
+        ..exact.clone()
     };
 
     assert!(cache
@@ -1004,4 +1006,131 @@ fn cached_render_accepts_a_web_authored_float_ordered_list_start() {
         vec![3, 4],
         "a float-valued start of 3.0 must number the cached render from 3"
     );
+}
+
+#[test]
+fn localized_table_edits_preserve_source_correspondence_and_fresh_render_parity() {
+    const ROWS: usize = 3;
+    const COLUMNS: usize = 3;
+    const INSERTION: &str = "changed🙂";
+    const CELL_TEXT_OFFSET: u32 = 2;
+    let schema = crate::schema::presets::prosemirror_table_schema();
+    let limits = ResourceLimits::default();
+    for irregular in [false, true] {
+        let mut source =
+            crate::test_support::large_table_fixture::plain_table_document(ROWS, COLUMNS);
+        for row in source["content"][0]["content"].as_array_mut().unwrap() {
+            for cell in row["content"].as_array_mut().unwrap() {
+                cell["content"][0]["content"][0]["text"] = serde_json::json!("same");
+            }
+        }
+        if irregular {
+            source["content"][0]["content"][0]["content"][0]["type"] =
+                serde_json::json!("table_header");
+            source["content"][0]["content"][0]["content"][0]["attrs"]["colspan"] =
+                serde_json::json!(2);
+            source["content"][0]["content"][1]["content"]
+                .as_array_mut()
+                .unwrap()
+                .pop();
+        }
+        let old = crate::serialize::from_prosemirror_json(
+            &source,
+            &schema,
+            crate::serialize::UnknownTypeMode::Error,
+        )
+        .unwrap();
+        let cache = CachedRenderBlocks::build(&old, &schema, &limits).unwrap();
+        let mut records = Vec::new();
+        cache.visit_table_records(&mut records);
+        let (table_pos, table) = records[0];
+        let starts = crate::tables::render::absolute_cell_starts(table, table_pos);
+        for index in [0, starts.len() / 2, starts.len() - 1] {
+            let step = crate::transform::Step::InsertText {
+                pos: starts[index] + CELL_TEXT_OFFSET,
+                text: INSERTION.into(),
+                marks: Vec::new(),
+            };
+            let (new, _) = crate::transform::apply_step(&old, &step, &schema).unwrap();
+            let transition = cache
+                .transition_localized_textblock(
+                    &old,
+                    &new,
+                    &schema,
+                    0,
+                    INSERTION.chars().count() as i32,
+                    &limits,
+                )
+                .unwrap();
+            let fresh = CachedRenderBlocks::build(&new, &schema, &limits).unwrap();
+            assert_eq!(
+                transition.cache.materialize(),
+                fresh.materialize(),
+                "irregular={irregular}, edited cell={index}"
+            );
+            let mut updated = Vec::new();
+            transition.cache.visit_table_records(&mut updated);
+            for (other, prior) in table.cells.iter().enumerate() {
+                assert_eq!(Arc::ptr_eq(prior, &updated[0].1.cells[other]), other != index,
+                    "irregular={irregular}, edit={index}, source cell={other}: equal text does not exchange cell identities");
+            }
+        }
+    }
+}
+
+#[test]
+fn localized_textblock_nested_table_changes_rebuild_projection() {
+    const CONTAINER: &str = "table_text_container";
+    let mut config =
+        crate::tables::tests::tabled_schema_json(crate::tables::tests::PROSEMIRROR_TABLE_NAMES);
+    config["nodes"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({
+            "name":CONTAINER,"content":"block*","group":"block","role":"textBlock"
+        }));
+    let schema = crate::schema::Schema::from_json(&config).unwrap();
+    let nested = crate::serialize::from_prosemirror_json(
+        &crate::test_support::large_table_fixture::plain_table_document(1, 1),
+        &schema,
+        crate::serialize::UnknownTypeMode::Error,
+    )
+    .unwrap()
+    .root()
+    .child(0)
+    .unwrap()
+    .clone();
+    let limits = ResourceLimits::default();
+    let empty = doc(vec![Node::element(
+        CONTAINER.into(),
+        HashMap::new(),
+        Fragment::from(Vec::new()),
+    )]);
+    let populated = doc(vec![Node::element(
+        CONTAINER.into(),
+        HashMap::new(),
+        Fragment::from(vec![nested]),
+    )]);
+    for (old, new) in [(&empty, &populated), (&populated, &empty)] {
+        let cache = CachedRenderBlocks::build(old, &schema, &limits).unwrap();
+        let delta = new.root().node_size() as i32 - old.root().node_size() as i32;
+        let transition = cache
+            .transition_localized_textblock(old, new, &schema, 0, delta, &limits)
+            .unwrap();
+        let fresh = CachedRenderBlocks::build(new, &schema, &limits).unwrap();
+        assert_eq!(
+            transition
+                .cache
+                .table_projection_index
+                .positions()
+                .collect::<Vec<_>>(),
+            fresh.table_projection_index.positions().collect::<Vec<_>>(),
+            "delta={delta}: added/removed table projection must match fresh derivation"
+        );
+        assert_eq!(
+            transition.cache.materialize(),
+            fresh.materialize(),
+            "delta={delta}: nested content matches fresh rendering"
+        );
+    }
 }

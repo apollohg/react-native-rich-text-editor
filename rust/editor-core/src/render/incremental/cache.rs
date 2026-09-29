@@ -333,33 +333,47 @@ impl CachedRenderBlocks {
             return Err(CachedRenderError::CacheInvariantViolation);
         }
 
+        let changed_position = changed_textblock_position(
+            old_target_node,
+            new_target_node,
+            old_target_block.start_pos,
+            schema,
+        );
         let table_projection_index = Arc::new(
-            changed_textblock_position(
-                old_target_node,
-                new_target_node,
-                old_target_block.start_pos,
-                schema,
-            )
-            .map(|position| {
-                self.table_projection_index
-                    .carry_after_textblock_edit(position, document_delta)
-            })
-            .unwrap_or_else(|| {
-                TableProjectionIndex::derive_or_fallback(new_document, schema, limits)
-            }),
+            changed_position
+                .map(|position| {
+                    self.table_projection_index
+                        .carry_after_textblock_edit(position, document_delta)
+                })
+                .unwrap_or_else(|| {
+                    TableProjectionIndex::derive_or_fallback(new_document, schema, limits)
+                }),
         );
         let mut context = TableRenderContext::new(
             Arc::clone(&table_projection_index),
             &self.schema_fingerprint,
         );
         context.attributes = self.table_attributes.clone();
-        for block in &self.blocks {
-            context.retain_cells(
-                &block.elements,
-                &block.node,
-                block.start_pos,
-                &self.table_projection_index,
-            );
+        let localized_table = match changed_position {
+            Some(position) => render_localized_table_block(
+                old_target_block,
+                new_target_node,
+                schema,
+                position,
+                document_delta,
+                &mut context,
+            )?,
+            None => None,
+        };
+        if localized_table.is_none() {
+            for block in &self.blocks {
+                context.retain_cells(
+                    &block.elements,
+                    &block.node,
+                    block.start_pos,
+                    &self.table_projection_index,
+                );
+            }
         }
         check_forced_localized_render_allocation_failure()?;
         let mut blocks = Vec::new();
@@ -397,12 +411,15 @@ impl CachedRenderBlocks {
             blocks.push(block.clone());
         }
 
-        let target_block = render_cached_block(
-            new_target_node,
-            schema,
-            old_target_block.start_pos,
-            &mut context,
-        )?;
+        let target_block = match localized_table {
+            Some(block) => block,
+            None => render_cached_block(
+                new_target_node,
+                schema,
+                old_target_block.start_pos,
+                &mut context,
+            )?,
+        };
         element_count = element_count
             .checked_add(crate::tables::render::element_count(&target_block.elements))
             .ok_or(CachedRenderError::ResourceLimitExceeded)?;

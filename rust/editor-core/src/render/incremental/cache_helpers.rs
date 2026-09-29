@@ -194,6 +194,106 @@ fn render_cached_block(
     })
 }
 
+fn render_localized_table_block(
+    old: &CachedRenderBlock,
+    new: &Node,
+    schema: &Schema,
+    changed_position: u32,
+    document_delta: i32,
+    context: &mut TableRenderContext,
+) -> Result<Option<CachedRenderBlock>, CachedRenderError> {
+    let eligible = (|| {
+        let [RenderElement::Table { table, doc_offset }] = old.elements.as_slice() else {
+            return None;
+        };
+        if *doc_offset != old.start_pos
+            || table.structure.failure.is_some()
+            || table.source_fallback.is_some()
+            || table.structure.read_only_descendants
+            || context
+                .index
+                .has_nested_table(old.start_pos, old.start_pos.checked_add(new.node_size())?)
+            || schema.node(new.node_type())?.table_role != Some(crate::tables::TableRole::Table)
+            || table
+                .structure
+                .doc_size
+                .checked_add_signed(document_delta)?
+                != new.node_size()
+        {
+            return None;
+        }
+        let starts = crate::tables::render::absolute_cell_starts(table, old.start_pos);
+        let index = starts
+            .partition_point(|start| *start < changed_position)
+            .checked_sub(1)?;
+        let prior = table.cells.get(index)?;
+        let start = starts[index];
+        if changed_position >= start.checked_add(prior.doc_size)? {
+            return None;
+        }
+        let row = usize::try_from(prior.source_row).ok()?;
+        let mut preceding = 0usize;
+        if table.structure.source_rows.len() != old.node.child_count() {
+            return None;
+        }
+        for (row_index, source_row) in table.structure.source_rows.iter().enumerate() {
+            let count = usize::try_from(source_row.cell_count).ok()?;
+            if old.node.child(row_index)?.child_count() != count {
+                return None;
+            }
+            if row_index < row {
+                preceding = preceding.checked_add(count)?;
+            }
+        }
+        let ordinal = index.checked_sub(preceding)?;
+        let old_cell = old.node.child(row)?.child(ordinal)?;
+        let new_cell = new.child(row)?.child(ordinal)?;
+        if old_cell.node_size() != prior.doc_size
+            || prior.doc_size.checked_add_signed(document_delta)? != new_cell.node_size()
+        {
+            return None;
+        }
+        Some((table, new_cell, index, start))
+    })();
+    let Some((table, cell, index, start)) = eligible else {
+        return Ok(None);
+    };
+    let (content_key, elements) =
+        crate::tables::render::render_cell_content(cell, schema, start, context)?;
+    let mut replacement = (*table.cells[index]).clone();
+    replacement.doc_size = cell.node_size();
+    replacement.content_key = content_key;
+    replacement.elements = elements;
+    let mut cells = Vec::new();
+    cells
+        .try_reserve_exact(table.cells.capacity())
+        .map_err(|_| CachedRenderError::AllocationFailed)?;
+    cells.extend(table.cells.iter().cloned());
+    cells[index] = Arc::new(replacement);
+    let mut structure = (*table.structure).clone();
+    structure.doc_size = new.node_size();
+    let table = crate::tables::render::TableRenderRecord {
+        structure: Arc::new(structure),
+        cells,
+        source_fallback: None,
+    };
+    let mut elements = Vec::new();
+    elements
+        .try_reserve_exact(old.elements.capacity())
+        .map_err(|_| CachedRenderError::AllocationFailed)?;
+    elements.push(RenderElement::Table {
+        doc_offset: old.start_pos,
+        table,
+    });
+    Ok(Some(CachedRenderBlock {
+        node: Arc::new(new.clone()),
+        node_size: new.node_size(),
+        start_pos: old.start_pos,
+        elements: Arc::new(elements),
+        position_element_indices: Arc::clone(&old.position_element_indices),
+    }))
+}
+
 fn render_element_doc_pos(element: &RenderElement) -> Option<u32> {
     match element {
         RenderElement::Table { doc_offset, .. } => Some(*doc_offset),
@@ -357,6 +457,22 @@ fn cached_patch_reconstructs(
             .all(|(old, new)| old.elements == new.elements)
 }
 
+fn subtree_contains_table(root: &Node, schema: &Schema) -> bool {
+    let mut pending = vec![root];
+    while let Some(node) = pending.pop() {
+        if schema
+            .node(node.node_type())
+            .is_some_and(|spec| spec.table_role == Some(crate::tables::TableRole::Table))
+        {
+            return true;
+        }
+        if let Some(content) = node.content() {
+            pending.extend(content.iter());
+        }
+    }
+    false
+}
+
 fn changed_textblock_position(
     old: &Node,
     new: &Node,
@@ -374,6 +490,9 @@ fn changed_textblock_position(
             .node(old.node_type())
             .is_some_and(|spec| matches!(spec.role, NodeRole::TextBlock))
         {
+            if subtree_contains_table(old, schema) || subtree_contains_table(new, schema) {
+                return None;
+            }
             return position.checked_add(crate::tables::commands::NODE_OPENING_TOKENS);
         }
         if old.child_count() != new.child_count() {

@@ -215,10 +215,18 @@ impl TableRenderRecord {
                 }
             }
             if let Some(elements) = &self.source_fallback {
-                bytes = bytes.saturating_add(
-                    crate::model::arc_allocation_retained_bytes(std::mem::size_of::<Vec<RenderElement>>())
+                bytes = bytes
+                    .saturating_add(
+                        crate::model::arc_allocation_retained_bytes(std::mem::size_of::<
+                            Vec<RenderElement>,
+                        >())
                         .unwrap_or(usize::MAX),
-                ).saturating_add(elements.capacity().saturating_mul(std::mem::size_of::<RenderElement>()));
+                    )
+                    .saturating_add(
+                        elements
+                            .capacity()
+                            .saturating_mul(std::mem::size_of::<RenderElement>()),
+                    );
                 for element in elements.iter() {
                     bytes = bytes.saturating_add(element_bytes(element));
                 }
@@ -547,6 +555,44 @@ fn content_key(cell: &Node, schema: &Schema, schema_key: &str) -> String {
     format!("{:x}", sink.0.finalize())
 }
 
+pub(crate) fn render_cell_content(
+    cell: &Node,
+    schema: &Schema,
+    cell_pos: u32,
+    context: &mut TableRenderContext,
+) -> Result<(String, Arc<Vec<RenderElement>>), CachedRenderError> {
+    let key = content_key(cell, schema, &context.schema_key);
+    let elements = if let Some(prior) = context.prior_content.get(&key) {
+        Arc::clone(prior)
+    } else {
+        #[cfg(test)]
+        crate::yrs_engine::observability::record_cell_content_generation();
+        let mut elements = Vec::new();
+        let mut pos = NODE_OPENING_TOKENS;
+        let previous_origin = std::mem::replace(&mut context.coordinate_origin, cell_pos);
+        let generated = (|| {
+            for index in 0..cell.child_count() {
+                generate_block(
+                    cell.child(index).unwrap(),
+                    schema,
+                    &mut elements,
+                    &mut pos,
+                    0,
+                    None,
+                    index,
+                    context,
+                    true,
+                )?;
+            }
+            Ok::<_, CachedRenderError>(())
+        })();
+        context.coordinate_origin = previous_origin;
+        generated?;
+        Arc::new(elements)
+    };
+    Ok((key, elements))
+}
+
 pub(crate) fn generate_table(
     node: &Node,
     schema: &Schema,
@@ -577,11 +623,16 @@ pub(crate) fn generate_table(
     };
     let representable = (0..node.child_count()).all(|index| {
         let row = node.child(index).expect("source row index is in bounds");
-        schema.node(row.node_type()).is_some_and(|spec| spec.table_role == Some(TableRole::Row))
+        schema
+            .node(row.node_type())
+            .is_some_and(|spec| spec.table_role == Some(TableRole::Row))
             && (0..row.child_count()).all(|index| {
                 let cell = row.child(index).expect("source cell index is in bounds");
                 schema.node(cell.node_type()).is_some_and(|spec| {
-                    matches!(spec.table_role, Some(TableRole::Cell | TableRole::HeaderCell))
+                    matches!(
+                        spec.table_role,
+                        Some(TableRole::Cell | TableRole::HeaderCell)
+                    )
                 })
             })
     });
@@ -592,7 +643,17 @@ pub(crate) fn generate_table(
         let mut elements = Vec::new();
         let previous_source_only = context.source_only;
         context.source_only = true;
-        let result = generate_block(node, schema, &mut elements, &mut 0, 0, None, 0, context, nested);
+        let result = generate_block(
+            node,
+            schema,
+            &mut elements,
+            &mut 0,
+            0,
+            None,
+            0,
+            context,
+            nested,
+        );
         context.source_only = previous_source_only;
         result?;
         return Ok(TableRenderRecord {
@@ -646,36 +707,8 @@ pub(crate) fn generate_table(
                 continue;
             }
         }
-        let key = content_key(cell, schema, &context.schema_key);
-        let elements = if let Some(prior) = context.prior_content.get(&key) {
-            Arc::clone(prior)
-        } else {
-            #[cfg(test)]
-            crate::yrs_engine::observability::record_cell_content_generation();
-            let mut elements = Vec::new();
-            let mut pos = NODE_OPENING_TOKENS;
-            let previous_origin =
-                std::mem::replace(&mut context.coordinate_origin, projected_cell.source_pos);
-            let generated = (|| {
-                for index in 0..cell.child_count() {
-                    generate_block(
-                        cell.child(index).unwrap(),
-                        schema,
-                        &mut elements,
-                        &mut pos,
-                        0,
-                        None,
-                        index,
-                        context,
-                        true,
-                    )?;
-                }
-                Ok::<_, CachedRenderError>(())
-            })();
-            context.coordinate_origin = previous_origin;
-            generated?;
-            Arc::new(elements)
-        };
+        let (key, elements) =
+            render_cell_content(cell, schema, projected_cell.source_pos, context)?;
         cells.push(Arc::new(TableRenderCell {
             source_row: u32::try_from(*source_row)
                 .map_err(|_| CachedRenderError::PositionOverflow)?,
