@@ -16,10 +16,12 @@ type Fixture = {
     name: string;
     table: Record<string, unknown>;
     pinnedWidths?: (number | null)[];
+    rawIrregular: boolean;
 };
 
 const FIXTURES: Fixture[] = [
     {
+        rawIrregular: true,
         name: 'a candidate counted once is replaced by the next row',
         table: table([
             row([cell({ colwidth: [100] })]),
@@ -28,6 +30,7 @@ const FIXTURES: Fixture[] = [
         pinnedWidths: [140],
     },
     {
+        rawIrregular: true,
         name: 'a candidate counted twice outlives a later disagreement',
         table: table([
             row([cell({ colwidth: [100] })]),
@@ -37,6 +40,7 @@ const FIXTURES: Fixture[] = [
         pinnedWidths: [100],
     },
     {
+        rawIrregular: true,
         name: 'a rowspan contributes its width once per covered row',
         table: table([
             row([cell({ rowspan: 2, colwidth: [100] }), cell({ colwidth: [140] })]),
@@ -44,6 +48,7 @@ const FIXTURES: Fixture[] = [
         ]),
     },
     {
+        rawIrregular: true,
         name: 'a merged header spans two columns',
         table: table([
             row([cell({ header: true, colspan: 2, colwidth: [120, 120] })]),
@@ -51,6 +56,7 @@ const FIXTURES: Fixture[] = [
         ]),
     },
     {
+        rawIrregular: true,
         name: 'a merged cell disagrees with the rows below it',
         table: table([
             row([cell({ colspan: 2, colwidth: [100, 160] })]),
@@ -59,6 +65,7 @@ const FIXTURES: Fixture[] = [
         ]),
     },
     {
+        rawIrregular: false,
         name: 'unset widths leave every column unresolved',
         table: table([
             row([cell(), cell()]),
@@ -66,6 +73,7 @@ const FIXTURES: Fixture[] = [
         ]),
     },
     {
+        rawIrregular: true,
         name: 'a short row leaves a hole without disturbing the widths',
         table: table([
             row([cell({ colwidth: [100] }), cell({ colwidth: [140] }), cell({ colwidth: [180] })]),
@@ -73,6 +81,7 @@ const FIXTURES: Fixture[] = [
         ]),
     },
     {
+        rawIrregular: true,
         name: 'a zero width never becomes a candidate',
         table: table([
             row([cell({ colwidth: [0] })]),
@@ -108,6 +117,11 @@ test('the engine resolves column widths exactly like prosemirror-tables 1.8.5', 
                         oracle['collisions'],
                         NO_COLLISIONS,
                         'placement is only comparable where the reference reports no collision',
+                    );
+                    assert.equal(
+                        oracle['irregular'],
+                        fixture.rawIrregular,
+                        'raw irregularity includes width disagreement before virtual repair (TBL-11)',
                     );
                     assert.deepEqual(
                         geometryOf(projected),

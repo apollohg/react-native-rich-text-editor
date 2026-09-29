@@ -856,12 +856,11 @@ function projectTable(payload: Record<string, unknown>): Record<string, unknown>
     const table = tableSchema.nodeFromJSON(requireRecord(payload['table'], 'payload.table'));
     const map = TableMap.get(table);
     const problems = map.problems ?? [];
-    const structural = problems.filter((problem) => problem.type !== COLWIDTH_MISMATCH);
     return {
         rows: map.height,
         columns: map.width,
         widths: resolvedColumnWidths(table, map),
-        irregular: structural.length > 0,
+        irregular: problems.length > 0,
         slots: map.map.map((pos) =>
             pos === SYNTHETIC_SLOT_POSITION ? null : pos + TABLE_CONTENT_OFFSET,
         ),
