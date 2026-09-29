@@ -1,5 +1,6 @@
 package com.apollohg.editor.tables
 
+import com.apollohg.editor.ProseViewerView
 import com.apollohg.editor.ProseViewerConfiguration
 import java.util.Locale
 import com.apollohg.editor.ProseViewerError
@@ -2241,8 +2242,23 @@ class ViewerTableTest {
         try {
             Locale.setDefault(Locale.US)
             assertFalse("an LTR platform lays undeclared tables out LTR", surface(undeclared).isRightToLeft)
+            val viewer = ProseViewerView(RuntimeEnvironment.getApplication(), registry)
+            assertTrue(viewer.apply(ProseViewerSource.Json(undeclared), ProseViewerConfiguration(directionConfig)))
+            fun directSurface(): ViewerTableSurface {
+                viewer.forceLayout()
+                viewer.measure(View.MeasureSpec.makeMeasureSpec(390, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+                return requireNotNull(viewer.preparedLayoutForTesting?.blocks?.single { it.tableSurface != null }?.tableSurface)
+            }
+            assertFalse("the public facade starts LTR", directSurface().isRightToLeft)
+            val initialArtifact = viewer.preparedLayoutForTesting
 
             Locale.setDefault(Locale("ar"))
+            val directMirrored = directSurface()
+            assertTrue("the public facade refreshes the owned artifact after locale changes", directMirrored.isRightToLeft)
+            assertNotSame(initialArtifact, viewer.preparedLayoutForTesting)
+            val (directFirst, directSecond) = directMirrored.cells.sortedBy { it.sourceIndex }.map { directMirrored.frameOfCell(it) }
+            assertTrue("the public facade mirrors cell geometry", directSecond.left + directSecond.width <= directFirst.left + 0.5f)
             val mirrored = surface(undeclared)
             assertTrue("an RTL platform mirrors an undeclared table even after an LTR layout was cached",
                 mirrored.isRightToLeft)

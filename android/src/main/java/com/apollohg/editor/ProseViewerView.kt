@@ -27,6 +27,7 @@ import com.apollohg.editor.viewer.ViewerFontEnvironment
 import com.apollohg.editor.viewer.ViewerImageAttachment
 import com.apollohg.editor.viewer.ViewerImagePipeline
 import com.apollohg.editor.viewer.accessibilityNodeVisibleOnScreen
+import com.apollohg.editor.tables.TableLayoutDirection
 import com.apollohg.editor.tables.TableAccessibilityNodes
 import com.apollohg.editor.tables.ViewerTablePresentedAccessibilityNode
 import org.json.JSONArray
@@ -308,10 +309,18 @@ class ProseViewerView @JvmOverloads constructor(
                     widthMeasureSpec
                 ) - paddingLeft - paddingRight
                 )
-            val artifact = layoutRegistry.measure(
+            val density = resources.displayMetrics.density
+            val artifact = preparedArtifact?.takeIf {
+                widthMode != MeasureSpec.UNSPECIFIED && availableWidth > 0 &&
+                    density.isFinite() && density > 0 &&
+                    it.key.generationIdentity == request.generationIdentity &&
+                    it.key.widthPx == availableWidth &&
+                    it.key.densityBits == density.toRawBits().toLong() &&
+                    it.key.tableDirection == TableLayoutDirection.fromDefaultLocale()
+            } ?: layoutRegistry.measure(
                 request = request,
                 widthPx = if (widthMode == MeasureSpec.UNSPECIFIED) 0 else availableWidth,
-                density = resources.displayMetrics.density,
+                density = density,
                 compiledDocument = retainedDocument,
                 fontScale = resources.configuration.fontScale,
                 measurementImageState = attachmentRevisions

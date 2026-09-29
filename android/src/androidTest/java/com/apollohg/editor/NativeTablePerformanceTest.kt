@@ -778,6 +778,20 @@ class NativeTablePerformanceTest {
         assertEquals(BASELINE_SAMPLES, changed.getJSONObject("counters").getInt("changedCellRemeasurements"))
     }
 
+    @Test fun warmLargeTableMeasurementsMeetBudget() = withActivity {
+        for (fixture in listOf(Fixture(1_000, 20, false), Fixture(100, 200, false))) {
+            warm(fixture, fixture.source())
+            val sample = samples.getJSONObject(samples.length() - 1)
+            val values = sample.getJSONArray("samplesMs")
+            val ordered = (0 until values.length()).map(values::getDouble).sorted()
+            val index = kotlin.math.ceil(ordered.size * WARM_PERCENTILE).toInt() - 1
+            assertEquals(WARM_SAMPLES, ordered.size)
+            assertEquals(0, sample.getJSONObject("counters").getInt("unchangedCellRemeasurements"))
+            assertTrue("${fixture.name} warm p99=${ordered[index]} ms exceeds $WARM_BUDGET_MS ms",
+                ordered[index] <= WARM_BUDGET_MS)
+        }
+    }
+
     @Test fun exportTablePerformance() = withActivity {
         val fixtures = listOf(false, true).flatMap { rich ->
             (listOf(SMALL_ROWS to SMALL_COLUMNS) + PlainTableFixture.TWENTY_THOUSAND_SLOT_SHAPES)
@@ -834,6 +848,8 @@ class NativeTablePerformanceTest {
         const val SCROLL_ROUNDING_TOLERANCE_PX = 1
         const val COLD_SAMPLES = 30
         const val WARM_SAMPLES = 1_000
+        const val WARM_PERCENTILE = 0.99
+        const val WARM_BUDGET_MS = 1.0
         const val BASELINE_SAMPLES = 10
         const val FRAME_TIMEOUT_SECONDS = 120L
         const val REFRESH_HZ = 60f
