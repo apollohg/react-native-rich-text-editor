@@ -17,6 +17,7 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 const checker = path.join(repositoryRoot, 'scripts/check-table-performance.mjs');
 const config = loadTablePerformanceConfig();
 const PLAIN_FIXTURES = ['plain-3x3', 'plain-1000x20', 'plain-100x200'];
+const COLD_METRICS = ['viewerColdLayout', 'editorColdLayout'];
 const RICH_FIXTURES = ['rich-merged-3x3', 'rich-merged-1000x20', 'rich-merged-100x200'];
 const UNMOUNTED_CACHE_BUDGET_BYTES = 32 * 1024 * 1024;
 const FAST_MS = 0.5;
@@ -135,7 +136,11 @@ function completeExport(device = iphone13) {
         }
     }
     return {
-        samples: samples.map((sample) => ({ ...device, counters: counters(), ...sample })),
+        samples: samples.map((sample) => ({
+            ...device,
+            counters: counters(),
+            ...sample,
+        })),
     };
 }
 
@@ -232,7 +237,7 @@ test('the configuration carries the TBL-23 sampling protocol and budgets exactly
             { fraction: 0.95, maxMs: 32 },
             { fraction: 0.99, maxMs: 50 },
         ]);
-        assert.equal(gate('coldLayout', fixture).samplesPerRun, 30);
+        for (const metric of COLD_METRICS) assert.equal(gate(metric, fixture).samplesPerRun, 30);
         assert.equal(gate('warmMeasurement', fixture).samplesPerRun, 1000);
         assert.deepEqual(gate('warmMeasurement', fixture).percentiles, [
             { fraction: 0.99, maxMs: 1 },
@@ -243,9 +248,11 @@ test('the configuration carries the TBL-23 sampling protocol and budgets exactly
             assert.deepEqual(gate(axis, fixture).percentiles, [{ fraction: 0.99, maxMs: 16.67 }]);
         }
     }
-    assert.deepEqual(gate('coldLayout', 'plain-3x3').percentiles, [{ fraction: 0.95, maxMs: 16 }]);
-    for (const fixture of ['plain-1000x20', 'plain-100x200']) {
-        assert.deepEqual(gate('coldLayout', fixture).percentiles, [{ fraction: 0.95, maxMs: 500 }]);
+    for (const metric of COLD_METRICS) {
+        assert.deepEqual(gate(metric, 'plain-3x3').percentiles, [{ fraction: 0.95, maxMs: 16 }]);
+        for (const fixture of ['plain-1000x20', 'plain-100x200']) {
+            assert.deepEqual(gate(metric, fixture).percentiles, [{ fraction: 0.95, maxMs: 500 }]);
+        }
     }
     for (const fixture of [...PLAIN_FIXTURES, ...RICH_FIXTURES]) {
         for (const metric of ['cellChangeStart', 'cellChangeEnd']) {
@@ -288,7 +295,10 @@ test('the retained presentation ceiling derives from the release viewport, overs
     assert.equal(
         maxRetainedPresentations({
             ...config,
-            releaseEnvironment: { ...config.releaseEnvironment, overscanViewports: 0 },
+            releaseEnvironment: {
+                ...config.releaseEnvironment,
+                overscanViewports: 0,
+            },
         }),
         (Math.ceil(390 / 80) + 1) * (Math.ceil(844 / minRowHeight) + 1),
         'overscan widens the window on both sides of each axis'
@@ -309,9 +319,17 @@ test('complete eligible evidence sitting exactly on every hard boundary passes r
         report.devices[0].hardGates.find(
             (entry) => entry.metric === metric && entry.fixture === fixture && entry.run === run
         ).percentilesMs;
-    assert.deepEqual(measured('typing', 'plain-100x200', 5), { p95: 32, p99: 50 });
-    assert.deepEqual(measured('coldLayout', 'plain-3x3'), { p95: 16 });
-    assert.deepEqual(measured('coldLayout', 'plain-1000x20'), { p95: 500 });
+    assert.deepEqual(measured('typing', 'plain-100x200', 5), {
+        p95: 32,
+        p99: 50,
+    });
+    for (const metric of COLD_METRICS) {
+        for (const fixture of PLAIN_FIXTURES) {
+            assert.deepEqual(measured(metric, fixture), {
+                p95: fixture === 'plain-3x3' ? 16 : 500,
+            });
+        }
+    }
     assert.deepEqual(measured('warmMeasurement', 'plain-3x3'), { p99: 1 });
     assert.deepEqual(measured('scrollVertical', 'plain-100x200'), { p99: 16.67 });
     assert.ok(
@@ -324,8 +342,10 @@ test('one sample over each hard boundary fails exactly that case', async (t) => 
     for (const [metric, fixture, run, boundaryMs, percentileName] of [
         ['typing', 'plain-1000x20', 3, 32, 'p95'],
         ['typing', 'plain-1000x20', 3, 50, 'p99'],
-        ['coldLayout', 'plain-3x3', 1, 16, 'p95'],
-        ['coldLayout', 'plain-100x200', 1, 500, 'p95'],
+        ['viewerColdLayout', 'plain-3x3', 1, 16, 'p95'],
+        ['viewerColdLayout', 'plain-100x200', 1, 500, 'p95'],
+        ['editorColdLayout', 'plain-3x3', 1, 16, 'p95'],
+        ['editorColdLayout', 'plain-100x200', 1, 500, 'p95'],
         ['warmMeasurement', 'plain-100x200', 1, 1, 'p99'],
         ['scrollHorizontal', 'plain-1000x20', 1, SCROLL_FRAME_BUDGET_MS, 'p99'],
     ]) {
@@ -398,7 +418,7 @@ test('each run is evaluated alone so one slow run cannot hide in the pooled samp
 test('each device is evaluated alone so a fast device cannot carry a slow one', () => {
     const fast = completeExport(pixel7);
     const slow = completeExport(iphone13);
-    raiseOneBoundarySample(findSample(slow, 'coldLayout', 'plain-3x3'), 16);
+    raiseOneBoundarySample(findSample(slow, 'viewerColdLayout', 'plain-3x3'), 16);
 
     const report = check({ samples: [...fast.samples, ...slow.samples] });
 
@@ -435,8 +455,8 @@ test('insufficient runs, short runs and missing cases fail instead of being skip
         ],
         [
             'a cold layout with 29 generations',
-            (input) => findSample(input, 'coldLayout', 'plain-1000x20').samplesMs.pop(),
-            /^coldLayout\/plain-1000x20 run 1: has 29 samples, protocol requires 30$/,
+            (input) => findSample(input, 'viewerColdLayout', 'plain-1000x20').samplesMs.pop(),
+            /^viewerColdLayout\/plain-1000x20 run 1: has 29 samples, protocol requires 30$/,
         ],
         [
             'a missing single-cell change fixture',
@@ -461,7 +481,10 @@ test('insufficient runs, short runs and missing cases fail instead of being skip
         [
             'a sixth typing run',
             (input) =>
-                input.samples.push({ ...findSample(input, 'typing', 'plain-3x3', 5), run: 6 }),
+                input.samples.push({
+                    ...findSample(input, 'typing', 'plain-3x3', 5),
+                    run: 6,
+                }),
             /^unexpected extra run typing\/plain-3x3 run 6$/,
         ],
     ];
@@ -628,7 +651,7 @@ test('resource, ownership and reuse counters are hard gates on every sample', as
         ],
         [
             'a nonfinite layout',
-            'coldLayout',
+            'viewerColdLayout',
             'plain-1000x20',
             { nonFiniteLayouts: 1 },
             /nonFiniteLayouts=1 exceeds 0/,
@@ -670,10 +693,10 @@ test('resource, ownership and reuse counters are hard gates on every sample', as
         ],
         [
             'a nonfinite layout on a baseline-only rich cold layout',
-            'coldLayout',
+            'viewerColdLayout',
             'rich-merged-100x200',
             { nonFiniteLayouts: 1 },
-            /^coldLayout\/rich-merged-100x200 run 1: nonFiniteLayouts=1 exceeds 0$/,
+            /^viewerColdLayout\/rich-merged-100x200 run 1: nonFiniteLayouts=1 exceeds 0$/,
         ],
     ]) {
         await t.test(name, () => {
@@ -708,7 +731,17 @@ test('baseline-only latency is reported apart from hard gates and never fails th
     assert.equal(report.passed, true, allFailures(report).join('\n'));
     const hardKeys = new Set(device.hardGates.map(({ metric, fixture }) => `${metric}/${fixture}`));
     const baselineKeys = device.baselines.map(({ metric, fixture }) => `${metric}/${fixture}`);
-    assert.equal(baselineKeys.length, 12);
+    assert.deepEqual(
+        new Set(baselineKeys),
+        new Set([
+            ...['typing', ...COLD_METRICS].flatMap((metric) =>
+                RICH_FIXTURES.map((fixture) => `${metric}/${fixture}`)
+            ),
+            ...['structuralCommand', 'remoteUpdate'].flatMap((metric) =>
+                PLAIN_FIXTURES.map((fixture) => `${metric}/${fixture}`)
+            ),
+        ])
+    );
     assert.ok(
         baselineKeys.every((key) => !hardKeys.has(key)),
         'no metric is both hard and baseline'
@@ -822,7 +855,12 @@ test('the npm release script passes eligible evidence and rejects a simulator ex
     const simulator = runWithInputFile(
         'npm',
         npmArguments,
-        completeExport({ ...iphone13, device: 'arm64', buildType: 'debug', physicalDevice: false })
+        completeExport({
+            ...iphone13,
+            device: 'arm64',
+            buildType: 'debug',
+            physicalDevice: false,
+        })
     );
     assert.notEqual(simulator.status, 0);
     assert.match(simulator.stderr, /ineligible release evidence: physicalDevice is false/);
@@ -920,7 +958,48 @@ test('typing runs must report exactly the 20 discarded warm-up edits', async (t)
 
 test('every sample must state whether it ran on physical hardware', () => {
     const input = completeExport();
-    delete findSample(input, 'coldLayout', 'plain-3x3').physicalDevice;
+    delete findSample(input, 'viewerColdLayout', 'plain-3x3').physicalDevice;
 
     assert.throws(() => check(input), /physicalDevice must be a boolean/);
+});
+
+test('editor and viewer cold metrics are each required for every fixture', async (t) => {
+    for (const metric of COLD_METRICS) {
+        for (const fixture of [...PLAIN_FIXTURES, ...RICH_FIXTURES]) {
+            await t.test(`${metric}/${fixture}`, () => {
+                const input = completeExport();
+                findSample(input, metric, fixture);
+                input.samples = input.samples.filter(
+                    (sample) => sample.metric !== metric || sample.fixture !== fixture
+                );
+                assertOnlyFailure(
+                    check(input),
+                    new RegExp(`^missing samples for ${metric}/${fixture} run 1$`)
+                );
+            });
+        }
+    }
+});
+
+test('an editor cold miss fails while viewer cold remains within its budget', () => {
+    const input = completeExport();
+    raiseOneBoundarySample(findSample(input, 'editorColdLayout', 'plain-1000x20'), 500);
+    const report = check(input);
+    assertOnlyFailure(
+        report,
+        /^editorColdLayout\/plain-1000x20 run 1: p95=500.01 ms exceeds 500 ms$/
+    );
+    const viewer = report.devices[0].hardGates.find(
+        (entry) => entry.metric === 'viewerColdLayout' && entry.fixture === 'plain-1000x20'
+    );
+    assert.deepEqual(viewer.percentilesMs, { p95: 500 });
+});
+
+test('the legacy coldLayout metric is rejected as unknown', () => {
+    const input = completeExport();
+    input.samples.push({
+        ...findSample(input, 'typing', 'plain-3x3'),
+        metric: 'coldLayout',
+    });
+    assert.throws(() => check(input), /unexpected metric\/fixture: coldLayout\/plain-3x3/);
 });

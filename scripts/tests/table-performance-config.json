@@ -37,14 +37,28 @@
             ]
         },
         {
-            "metric": "coldLayout",
+            "metric": "viewerColdLayout",
             "fixtures": ["plain-3x3"],
             "runs": 1,
             "samplesPerRun": 30,
             "percentiles": [{ "fraction": 0.95, "maxMs": 16 }]
         },
         {
-            "metric": "coldLayout",
+            "metric": "editorColdLayout",
+            "fixtures": ["plain-3x3"],
+            "runs": 1,
+            "samplesPerRun": 30,
+            "percentiles": [{ "fraction": 0.95, "maxMs": 16 }]
+        },
+        {
+            "metric": "viewerColdLayout",
+            "fixtures": ["plain-1000x20", "plain-100x200"],
+            "runs": 1,
+            "samplesPerRun": 30,
+            "percentiles": [{ "fraction": 0.95, "maxMs": 500 }]
+        },
+        {
+            "metric": "editorColdLayout",
             "fixtures": ["plain-1000x20", "plain-100x200"],
             "runs": 1,
             "samplesPerRun": 30,
@@ -108,7 +122,11 @@
             "fixtures": ["rich-merged-3x3", "rich-merged-1000x20", "rich-merged-100x200"]
         },
         {
-            "metric": "coldLayout",
+            "metric": "viewerColdLayout",
+            "fixtures": ["rich-merged-3x3", "rich-merged-1000x20", "rich-merged-100x200"]
+        },
+        {
+            "metric": "editorColdLayout",
             "fixtures": ["rich-merged-3x3", "rich-merged-1000x20", "rich-merged-100x200"]
         },
         {
