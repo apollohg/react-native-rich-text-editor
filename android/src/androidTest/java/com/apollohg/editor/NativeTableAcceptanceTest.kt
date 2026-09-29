@@ -149,7 +149,12 @@ class NativeTableAcceptanceTest {
 
         fun rowWidths(): List<Int> = grid().map { row -> row.sumOf { it.colspan } }
 
-        fun selectedCells(): Set<Int> = drawing.selectedTableCellSourceIndices[tableId()].orEmpty()
+        fun selectedCells(): Set<Int> {
+            val id = tableId()
+            return drawing.selectedTableCellSourceIndices[id].orEmpty().map { sourceIndex ->
+                requireNotNull(drawing.tableCellDocumentPosition?.invoke(id, sourceIndex))
+            }.toSet()
+        }
 
         fun presentedCell(position: Int): ViewerTablePresentedCell = drawing.presentedRealCell(tableId(), position)
 
