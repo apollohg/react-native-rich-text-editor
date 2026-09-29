@@ -1,5 +1,6 @@
 package com.apollohg.editor
 
+import com.apollohg.editor.viewer.PreparedProseInstrumentation
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -63,7 +64,11 @@ internal fun EditorV2Adapter.performNativeIntent(
             .put("positionEpoch", epoch)
             .put("intent", intent),
         includeBaseRevision = false
-    ) { requestJson -> backend.applyNativeIntent(editorId, requestJson) }
+    ) { requestJson ->
+        PreparedProseInstrumentation.measureTableStage(PreparedProseInstrumentation.TableStage.NATIVE_INPUT_AND_FFI) {
+            backend.applyNativeIntent(editorId, requestJson)
+        }
+    }
     return when (result) {
         is EditorV2CallResult.Err -> {
             if (result.error.code in STALE_POSITION_EPOCH_CODES) {

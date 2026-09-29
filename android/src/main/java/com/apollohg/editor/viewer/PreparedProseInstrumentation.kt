@@ -29,6 +29,62 @@ internal object PreparedProseInstrumentation {
         REUSE
     }
     enum class TraversalPhase { COLD, WARM, IMAGES_DISABLED, RESET }
+    class TablePerformanceCounters {
+        var maxCellInputInstances = 0
+        var nonFiniteLayouts = 0
+        var unchangedCellRemeasurements = 0
+        var changedCellRemeasurements = 0
+        var unmountedCacheBytes = 0L
+        var pinnedLayoutBytes = 0L
+        var authoritativeDocumentBytes = 0L
+        var retainedPresentations = 0
+
+        fun observe(drawing: PreparedProseDrawingView, additionalUnmountedBytes: Long = 0L, inputInstances: Int = 0) {
+            val layout = drawing.preparedLayout ?: return
+            val cells = drawing.presentedTableCells()
+            maxCellInputInstances = maxOf(maxCellInputInstances, inputInstances)
+            retainedPresentations = maxOf(retainedPresentations, cells.size)
+            val tables = layout.blocks.mapNotNull { it.tableSurface } + cells.map { it.surface }
+            val stores = tables.map { it.layoutStore }.distinct()
+            val cellUnmounted = stores.sumOf { it.unmountedRetainedBytes }
+            unmountedCacheBytes = maxOf(unmountedCacheBytes, additionalUnmountedBytes + cellUnmounted)
+            tables.distinct().forEach { table ->
+                val dimensions = table.layout.columnWidths + table.layout.columnOffsets + table.layout.rowOffsets +
+                    listOf(table.layout.contentWidth, table.layout.contentHeight)
+                nonFiniteLayouts += dimensions.count { !it.isFinite() }
+            }
+            pinnedLayoutBytes = maxOf(pinnedLayoutBytes,
+                (layout.currentRetainedBytesForTesting + layout.cellShapeCatalogBytes() - cellUnmounted).coerceAtLeast(0L) +
+                    drawing.tablePresentationRetainedBytesForTesting)
+        }
+
+        fun json(): JSONObject = JSONObject().put("maxCellInputInstances", maxCellInputInstances)
+            .put("nonFiniteLayouts", nonFiniteLayouts).put("unchangedCellRemeasurements", unchangedCellRemeasurements)
+            .put("changedCellRemeasurements", changedCellRemeasurements).put("unmountedCacheBytes", unmountedCacheBytes)
+            .put("pinnedLayoutBytes", pinnedLayoutBytes).put("authoritativeDocumentBytes", authoritativeDocumentBytes)
+            .put("retainedPresentations", retainedPresentations)
+    }
+    enum class TableStage(val jsonName: String) {
+        REPLACEMENT_AND_FFI("replacementAndFFI"), NATIVE_INPUT_AND_FFI("nativeInputAndFFI"),
+        NATIVE_FRAME_AND_FFI("nativeFrameAndFFI"), ADAPTER_ADOPTION("adapterAdoption"),
+        VIEWER_COMPILE_AND_LIFT("viewerCompileAndLift"), TABLE_PREPARATION_AND_GEOMETRY("tablePreparationAndGeometry"),
+        DRAWING_AND_LAYER_RECORDING("drawingAndLayerRecording")
+    }
+    @Volatile var tableStageObserverForTesting: ((TableStage, Long, Long) -> Unit)? = null
+    @Volatile var tableWorkObserverForTesting: ((ViewerWorkSpan) -> Unit)? = null
+
+    fun recordTableStage(stage: TableStage, start: Long) {
+        if (start != 0L) tableStageObserverForTesting?.invoke(stage, start, System.nanoTime())
+    }
+
+    inline fun <T> measureTableStage(stage: TableStage, body: () -> T): T {
+        val start = now()
+        try { return body() } finally { recordTableStage(stage, start) }
+    }
+
+    private fun observeTableWork(start: Long, kind: ViewerWorkKind) {
+        if (start != 0L) tableWorkObserverForTesting?.invoke(ViewerWorkSpan(start, System.nanoTime(), kind))
+    }
     enum class ViewerWorkKind { LAYOUT, DRAW }
     data class ViewerWorkSpan(val startNanos: Long, val endNanos: Long, val kind: ViewerWorkKind)
     data class FrameClassification(val nominalFrameCount: Int, val isDelayed: Boolean)
@@ -215,12 +271,13 @@ internal object PreparedProseInstrumentation {
         } else {
             0L
         }
-        val union = mergedRanges(start, end, spans)
-        val work = union.fold(0L) { total, range ->
+        return lateness > 0 && viewerWorkNanos(start, end, spans) >= lateness
+    }
+
+    fun viewerWorkNanos(start: Long, end: Long, spans: List<ViewerWorkSpan>): Long =
+        mergedRanges(start, end, spans).fold(0L) { total, range ->
             addExact(total, subtractExact(range.upper, range.lower))
         }
-        return lateness > 0 && work >= lateness
-    }
 
     inline fun trace(boundary: String, detail: () -> String) {
         if (!BuildConfig.PREPARED_PROSE_INSTRUMENTATION) return
@@ -438,28 +495,35 @@ internal object PreparedProseInstrumentation {
                 ).put("duplicatePublications", duplicatePublications).toString()
         }
     }
-    fun now(): Long = if (BuildConfig.PREPARED_PROSE_INSTRUMENTATION &&
-        enabled
+    fun now(): Long = if (tableStageObserverForTesting != null || tableWorkObserverForTesting != null ||
+        (BuildConfig.PREPARED_PROSE_INSTRUMENTATION && enabled)
     ) {
         System.nanoTime()
     } else {
         0L
     }
-    fun compiled(start: Long, generation: String) = record(start) { active, elapsed, _ ->
-        val sample = samples(active)
-        sample.compileCount++
-        append(sample.compileNanos, elapsed)
-        pendingCompileNanos.getOrPut(active) { linkedMapOf() }[generation] =
-            elapsed
-    }
-    fun laidOut(start: Long, generation: String) = record(start) { active, elapsed, end ->
-        val sample = samples(active)
-        sample.layoutCount++
-        append(sample.layoutNanos, elapsed)
-        pendingCompileNanos[active]?.remove(generation)?.let {
-            append(sample.combinedCompileLayoutNanos, addExact(it, elapsed))
+    fun compiled(start: Long, generation: String) {
+        recordTableStage(TableStage.VIEWER_COMPILE_AND_LIFT, start)
+        record(start) { active, elapsed, _ ->
+            val sample = samples(active)
+            sample.compileCount++
+            append(sample.compileNanos, elapsed)
+            pendingCompileNanos.getOrPut(active) { linkedMapOf() }[generation] =
+                elapsed
         }
-        recordViewerWorkLocked(start, end, ViewerWorkKind.LAYOUT, active)
+    }
+    fun laidOut(start: Long, generation: String) {
+        recordTableStage(TableStage.TABLE_PREPARATION_AND_GEOMETRY, start)
+        observeTableWork(start, ViewerWorkKind.LAYOUT)
+        record(start) { active, elapsed, end ->
+            val sample = samples(active)
+            sample.layoutCount++
+            append(sample.layoutNanos, elapsed)
+            pendingCompileNanos[active]?.remove(generation)?.let {
+                append(sample.combinedCompileLayoutNanos, addExact(it, elapsed))
+            }
+            recordViewerWorkLocked(start, end, ViewerWorkKind.LAYOUT, active)
+        }
     }
     fun cacheLookup(start: Long, hit: Boolean, waited: Boolean = false) =
         record(start) { active, elapsed, _ ->
@@ -468,15 +532,19 @@ internal object PreparedProseInstrumentation {
             if (hit) sample.cacheHits++ else sample.cacheMisses++
             if (waited) sample.cacheWaits++
         }
-    fun drew(start: Long, blocks: Int) = record(start) { active, elapsed, end ->
-        val sample = samples(active)
-        append(sample.drawNanos, elapsed)
-        sample.drawCount++
-        sample.visibleBlocksDrawn +=
-            blocks
-        recordViewerWorkLocked(start, end, ViewerWorkKind.DRAW, active)
-        surfaceDrawnSinceFrame =
-            true
+    fun drew(start: Long, blocks: Int) {
+        recordTableStage(TableStage.DRAWING_AND_LAYER_RECORDING, start)
+        observeTableWork(start, ViewerWorkKind.DRAW)
+        record(start) { active, elapsed, end ->
+            val sample = samples(active)
+            append(sample.drawNanos, elapsed)
+            sample.drawCount++
+            sample.visibleBlocksDrawn +=
+                blocks
+            recordViewerWorkLocked(start, end, ViewerWorkKind.DRAW, active)
+            surfaceDrawnSinceFrame =
+                true
+        }
     }
     fun imageRequested() = incrementImageCounter { it.imageRequestCount++ }
     fun imageMetadataRead() = incrementImageCounter { it.imageMetadataCount++ }

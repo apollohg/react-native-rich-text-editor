@@ -156,6 +156,10 @@ internal data class PreparedProseLayout(
     /** Present only on a bound table cell; parent cache ownership reaches it recursively. */
     internal val cellShape: PreparedCellShape? = null
 ) {
+    private val tableRetainedBytesAtPreparation = blocks.sumOf { it.tableSurface?.retainedBytes ?: 0L }
+    internal val currentRetainedBytesForTesting: Long
+        get() = retainedBytes - tableRetainedBytesAtPreparation + blocks.sumOf { it.tableSurface?.retainedBytes ?: 0L }
+
     val hasMonotonicBlockBounds = (1 until blocks.size).all {
         blocks[it - 1].topPx <= blocks[it].topPx && blocks[it - 1].bottomPx <= blocks[it].bottomPx
     }

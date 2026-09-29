@@ -1,5 +1,6 @@
 package com.apollohg.editor
 
+import com.apollohg.editor.viewer.PreparedProseInstrumentation
 import com.apollohg.editor.tables.resolveEditorCellSelection
 import com.apollohg.editor.tables.EditorTablePresentationSnapshot
 import com.apollohg.editor.tables.TableFrameAdoption
@@ -13,55 +14,57 @@ private fun EditorV2Adapter.adopt(
     stripViewSelection: Boolean,
     engineOwnedSelection: Boolean
 ): String? {
-    val snapshot = parseAtomicRenderSnapshot(frame.snapshotJson) ?: return null
-    val nextIndex = tableIndex.copy()
-    val adoption = nextIndex.adopt(frame.tables, installedFrameRevision, snapshot.documentRevision)
-        as? TableFrameAdoption.Adopted ?: return null
-    if (nextIndex.rootExtents.values.any { it.scalarEnd.toLong() > snapshot.scalarLength }) return null
-    fun blocks(value: JSONArray): List<List<Any?>> = (0 until value.length()).map { index ->
-        val block = value.getJSONArray(index)
-        (0 until block.length()).map { block.opt(it) }
+    return PreparedProseInstrumentation.measureTableStage(PreparedProseInstrumentation.TableStage.ADAPTER_ADOPTION) {
+        val snapshot = parseAtomicRenderSnapshot(frame.snapshotJson) ?: return null
+        val nextIndex = tableIndex.copy()
+        val adoption = nextIndex.adopt(frame.tables, installedFrameRevision, snapshot.documentRevision)
+            as? TableFrameAdoption.Adopted ?: return null
+        if (nextIndex.rootExtents.values.any { it.scalarEnd.toLong() > snapshot.scalarLength }) return null
+        fun blocks(value: JSONArray): List<List<Any?>> = (0 until value.length()).map { index ->
+            val block = value.getJSONArray(index)
+            (0 until block.length()).map { block.opt(it) }
+        }
+        var candidate = snapshot.renderObject.optJSONArray("renderBlocks")?.let(::blocks)
+        if (candidate == null) {
+            val patch = snapshot.renderObject.optJSONObject("renderPatch") ?: return null
+            val retained = cachedSemanticRenderBlocks ?: return null
+            val start = patch.optLong("startIndex", -1)
+            val delete = patch.optLong("deleteCount", -1)
+            if (patch.optString("baseDocumentVersion").toULongOrNull() != cachedSemanticRenderBlocksRevision ||
+                start < 0 || delete < 0 || start + delete > retained.size) return null
+            candidate = retained.take(start.toInt()) + blocks(patch.getJSONArray("renderBlocks")) + retained.drop((start + delete).toInt())
+        }
+        if (!validSemanticRenderElements(candidate.flatten(), nextIndex)) return null
+        val roots = candidate.flatten().mapNotNull { element ->
+            (element as? JSONObject)?.takeIf { it.opt("type") == "table" }?.optString("tableId")
+        }.toSet()
+        if (roots != nextIndex.rootExtents.keys) return null
+        val selection = snapshot.renderObject.optJSONObject("selection")
+        if (selection?.opt("type") == "cell" && resolveEditorCellSelection(selection, nextIndex) == null) return null
+        val updateObject = if (stripViewSelection) JSONObject(snapshot.viewUpdateJson).apply { remove("selection") } else snapshot.renderObject
+        val updateJson = if (stripViewSelection) updateObject.toString() else snapshot.viewUpdateJson
+        tableIndex = nextIndex
+        installedFrameRevision = snapshot.documentRevision
+        cachedTablePresentation = EditorTablePresentationSnapshot(
+            snapshot.documentRevision, snapshot.positionEpoch, nextIndex, adoption.changes)
+        if (adoption.changes.fullReset) fullFrameAdoptionCountForTesting++ else deltaFrameAdoptionCountForTesting++
+        baseDocumentRevision = snapshot.documentRevision
+        stateRevision = snapshot.stateRevision
+        cachedScalarLength = snapshot.scalarLength
+        cachedAuthoritativeScalarSelection = snapshot.scalarSelection?.copyOf()
+        lastSyncedScalarSelection = if (engineOwnedSelection) snapshot.scalarSelection?.copyOf() else null
+        cachedActiveState = snapshot.activeState
+        cachedHistoryState = snapshot.historyState
+        cachedViewUpdateJson = updateJson
+        cachedViewUpdateObject = updateObject
+        cachedAtomicRenderJson = frame.snapshotJson
+        cachedAtomicRenderSelectionObject = selection
+        cachedAtomicRenderDocumentRevision = snapshot.documentRevision
+        cachedSemanticRenderBlocks = candidate
+        cachedSemanticRenderBlocksRevision = snapshot.documentRevision
+        snapshot.positionEpoch?.let { positionEpoch = it }
+        updateJson
     }
-    var candidate = snapshot.renderObject.optJSONArray("renderBlocks")?.let(::blocks)
-    if (candidate == null) {
-        val patch = snapshot.renderObject.optJSONObject("renderPatch") ?: return null
-        val retained = cachedSemanticRenderBlocks ?: return null
-        val start = patch.optLong("startIndex", -1)
-        val delete = patch.optLong("deleteCount", -1)
-        if (patch.optString("baseDocumentVersion").toULongOrNull() != cachedSemanticRenderBlocksRevision ||
-            start < 0 || delete < 0 || start + delete > retained.size) return null
-        candidate = retained.take(start.toInt()) + blocks(patch.getJSONArray("renderBlocks")) + retained.drop((start + delete).toInt())
-    }
-    if (!validSemanticRenderElements(candidate.flatten(), nextIndex)) return null
-    val roots = candidate.flatten().mapNotNull { element ->
-        (element as? JSONObject)?.takeIf { it.opt("type") == "table" }?.optString("tableId")
-    }.toSet()
-    if (roots != nextIndex.rootExtents.keys) return null
-    val selection = snapshot.renderObject.optJSONObject("selection")
-    if (selection?.opt("type") == "cell" && resolveEditorCellSelection(selection, nextIndex) == null) return null
-    val updateObject = if (stripViewSelection) JSONObject(snapshot.viewUpdateJson).apply { remove("selection") } else snapshot.renderObject
-    val updateJson = if (stripViewSelection) updateObject.toString() else snapshot.viewUpdateJson
-    tableIndex = nextIndex
-    installedFrameRevision = snapshot.documentRevision
-    cachedTablePresentation = EditorTablePresentationSnapshot(
-        snapshot.documentRevision, snapshot.positionEpoch, nextIndex, adoption.changes)
-    if (adoption.changes.fullReset) fullFrameAdoptionCountForTesting++ else deltaFrameAdoptionCountForTesting++
-    baseDocumentRevision = snapshot.documentRevision
-    stateRevision = snapshot.stateRevision
-    cachedScalarLength = snapshot.scalarLength
-    cachedAuthoritativeScalarSelection = snapshot.scalarSelection?.copyOf()
-    lastSyncedScalarSelection = if (engineOwnedSelection) snapshot.scalarSelection?.copyOf() else null
-    cachedActiveState = snapshot.activeState
-    cachedHistoryState = snapshot.historyState
-    cachedViewUpdateJson = updateJson
-    cachedViewUpdateObject = updateObject
-    cachedAtomicRenderJson = frame.snapshotJson
-    cachedAtomicRenderSelectionObject = selection
-    cachedAtomicRenderDocumentRevision = snapshot.documentRevision
-    cachedSemanticRenderBlocks = candidate
-    cachedSemanticRenderBlocksRevision = snapshot.documentRevision
-    snapshot.positionEpoch?.let { positionEpoch = it }
-    return updateJson
 }
 
 internal fun EditorV2Adapter.initialUpdateJson(): String? {
@@ -102,9 +105,11 @@ internal fun EditorV2Adapter.refreshInternal(
     }
     fun fetch(): FfiNativeRenderFrame? {
         renderUpdateCallCountForTesting++
-        return when (val result = backend.renderNativeFrame(editorId, nativeOwnerId, mirrorSelection?.get(0), mirrorSelection?.get(1))) {
-            is EditorV2CallResult.Err -> { emit(result.error); null }
-            is EditorV2CallResult.Ok -> result.value
+        return PreparedProseInstrumentation.measureTableStage(PreparedProseInstrumentation.TableStage.NATIVE_FRAME_AND_FFI) {
+            when (val result = backend.renderNativeFrame(editorId, nativeOwnerId, mirrorSelection?.get(0), mirrorSelection?.get(1))) {
+                is EditorV2CallResult.Err -> { emit(result.error); null }
+                is EditorV2CallResult.Ok -> result.value
+            }
         }
     }
     fun install(frame: FfiNativeRenderFrame): String? {

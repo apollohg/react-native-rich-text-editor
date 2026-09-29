@@ -9,6 +9,7 @@ import com.apollohg.editor.viewer.ProseViewerRequest
 import com.apollohg.editor.viewer.PreparedProseTheme
 import com.apollohg.editor.viewer.AndroidProseLayoutEngine
 import com.apollohg.editor.viewer.PreparedProseLayout
+import com.apollohg.editor.viewer.PreparedProseBlock
 import com.apollohg.editor.viewer.PreparedProseAccessibilityNode
 import com.apollohg.editor.viewer.PreparedProseInteraction
 import com.apollohg.editor.viewer.PreparedProseLayoutRegistry
@@ -73,6 +74,30 @@ import uniffi.editor_core.TableRenderFailure
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class ViewerTableTest {
+    @Test fun currentParentMemoryFollowsCellEvictionAndRebuild() {
+        val cellBytes = 100L
+        val parentBytes = 64L
+        val cellWidth = 100
+        val cellHeight = 20
+        fun cell(name: String) = PreparedProseLayout(
+            ProseLayoutKey(name, cellWidth, "memory", 0, 0, 1, 0, "memory"),
+            cellWidth, cellHeight, emptyList(), retainedBytes = cellBytes)
+        val store = TableCellLayoutStore(byteBudget = cellBytes, capacity = 1)
+        val record = TableGridRecord("memory", 1, 1, listOf(cellWidth.toFloat()),
+            listOf(TableGridCell(0, 0, 0, contentKey = "cell")))
+        val surface = ViewerTableSurface("memory", record, cellWidth.toFloat(), TableStyle(),
+            isRightToLeft = false, layoutStore = store) { _, _ -> cell("cell") }
+        val bounds = Rect(0, 0, cellWidth, surface.layout.contentHeight.toInt())
+        val parent = PreparedProseLayout(cell("parent").key, cellWidth, bounds.height(),
+            listOf(PreparedProseBlock(emptyList(), bounds, tableSurface = surface, tableBounds = bounds)),
+            retainedBytes = parentBytes + surface.retainedBytes)
+        val initial = parent.currentRetainedBytesForTesting
+        store.insert(cell("evict"))
+        assertEquals(initial - cellBytes, parent.currentRetainedBytesForTesting)
+        surface.cells.first().content
+        assertEquals(initial, parent.currentRetainedBytesForTesting)
+    }
+
     private class CellGeometryProbe {
         private val caller = Thread.currentThread()
         val heights = mutableMapOf<String, Int>()

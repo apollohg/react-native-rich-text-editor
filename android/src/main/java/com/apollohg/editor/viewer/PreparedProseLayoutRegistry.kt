@@ -637,6 +637,7 @@ internal class PreparedProseLayoutRegistry(
 
     internal val preparedLayoutCacheCountForTesting: Int
         get() = layoutCache.completedCountForTesting
+    internal val compiledDocumentBytesForTesting: Long get() = synchronized(compilerLock) { compiledRetainedBytes }
     internal val layoutRetainedBytesForTesting: Long get() = layoutCache.retainedBytesForTesting
     internal val fabricLeaseCountForTesting: Int get() = layoutCache.leaseCountForTesting
     internal val fabricGenerationPinCountForTesting: Int get() = synchronized(compilerLock) {

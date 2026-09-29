@@ -1,5 +1,6 @@
 package com.apollohg.editor.tables
 
+import com.apollohg.editor.viewer.PreparedProseInstrumentation
 import com.apollohg.editor.TableScalarExtent
 import com.apollohg.editor.renderedTextMatches
 import android.content.Context
@@ -927,6 +928,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         val nextKey = PreparationKey(adapter, revision, width, input.renderAppearanceRevision,
             adapter.tablePresentationDocumentGeneration, resizePreview, tableDirection)
         if (key != nextKey) {
+            val tableLayoutStarted = PreparedProseInstrumentation.now()
             val index = adapter.tableIndex
             val density = input.resources.displayMetrics.density
             val base = EditorTextStyle(fontSize = input.baseFontSize / density,
@@ -998,6 +1000,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             cellShapes.synchronizeOwners(prepared.values.flatMap { entry -> entry.surface.cells.mapNotNull { it.cachedContent } })
             entries = prepared
             key = nextKey
+            PreparedProseInstrumentation.laidOut(tableLayoutStarted, "editor-table-$revision")
         }
         reserve(entries.mapValues { it.value.occupiedHeight })
         if (entries.isEmpty()) {
