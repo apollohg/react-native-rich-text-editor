@@ -7,12 +7,68 @@ let preparedAtomAttribute = NSAttributedString.Key("PREPPreparedAtom")
 let preparedStrikeAttribute = NSAttributedString.Key("PREPPreparedStrike")
 
 final class CoreTextProseLayoutEngine {
+    static let maxTablePreparationWorkers = 4
+    var tablePreparationWorkerLimit = maxTablePreparationWorkers
+    var tableCellLayoutObserverForTesting: ((Int, PreparedProseLayout) -> Void)?
     var tableCellPreparationObserver: ((Int) -> Void)?
     var tableCellShapeBuildObserver: ((Int) -> Void)?
     var tableCellBindingObserver: ((Int) -> Void)?
     var incrementalTableSurface: ((String) -> (ViewerTableSurface, IndexSet)?)?
     var tableIncrementalRelayoutObserver: (() -> Void)?
     var reusableTableCellContent: ((TableSurfaceCell, Int) -> PreparedProseLayout?)?
+
+    private struct TablePreparationWorkers {
+        var indices = Set<Int>()
+        var contexts: [PreparedCellShapeBuildContext] = []
+        var prepare: [(TableGridCell, CGFloat) -> PreparedProseLayout] = []
+    }
+
+    private func tablePreparationWorkers(
+        document: ViewerDocument, table: TableSurfaceSource, tableKey: String,
+        theme: PreparedProseTheme, cellMode: Bool, context: PreparedCellShapeBuildContext?,
+        prepare: @escaping (TableGridCell, CGFloat, CoreTextProseLayoutEngine, PreparedCellShapeBuildContext?) -> PreparedProseLayout
+    ) -> TablePreparationWorkers {
+        var result = TablePreparationWorkers()
+        let count = min(Self.maxTablePreparationWorkers, max(1, tablePreparationWorkerLimit),
+                        max(1, ProcessInfo.processInfo.activeProcessorCount - 1))
+        guard !cellMode, count > 1, theme.codeHighlighting == nil, reusableTableCellContent == nil else { return result }
+        let frequencies = Dictionary(table.cells.map { ($0.contentKey, 1) }, uniquingKeysWith: +)
+        for source in table.cells {
+            guard context == nil || frequencies[source.contentKey] == 1,
+                  let child = try? document.cellDocument(for: source, in: tableKey),
+                  child.blocks.allSatisfy({ block in
+                      !block.isBlockAtom && block.nodeType != "image" && block.tableKey == nil
+                          && block.inlines.allSatisfy { if case .atom = $0 { return false }; return true }
+                  }) else { continue }
+            result.indices.insert(source.sourceIndex)
+        }
+        guard !result.indices.isEmpty else { return result }
+        let observerLock = NSRecursiveLock()
+        for _ in 0..<count {
+            let worker = CoreTextProseLayoutEngine()
+            worker.tablePreparationWorkerLimit = 1
+            worker.tableCellPreparationObserver = { index in
+                observerLock.lock(); defer { observerLock.unlock() }
+                self.tableCellPreparationObserver?(index)
+            }
+            worker.tableCellShapeBuildObserver = { index in
+                observerLock.lock(); defer { observerLock.unlock() }
+                self.tableCellShapeBuildObserver?(index)
+            }
+            worker.tableCellBindingObserver = { index in
+                observerLock.lock(); defer { observerLock.unlock() }
+                self.tableCellBindingObserver?(index)
+            }
+            worker.tableCellLayoutObserverForTesting = { index, layout in
+                observerLock.lock(); defer { observerLock.unlock() }
+                self.tableCellLayoutObserverForTesting?(index, layout)
+            }
+            let workerContext = context?.fork()
+            if let workerContext { result.contexts.append(workerContext) }
+            result.prepare.append { prepare($0, $1, worker, workerContext) }
+        }
+        return result
+    }
 
     final class HighlightingScope {
         let configuration: NativeCodeHighlightConfiguration
@@ -168,7 +224,11 @@ final class CoreTextProseLayoutEngine {
                 let surfaceSource = table
                 let record = TableGridRecord(table: surfaceSource, documentOwner: document.semanticKey)
                 let cellsByIndex = Dictionary(uniqueKeysWithValues: surfaceSource.cells.map { ($0.sourceIndex, $0) })
-                func prepareCell(_ cell: TableGridCell, width cellWidth: CGFloat, reuseContent: Bool = true) -> PreparedProseLayout {
+                func prepareCell(_ cell: TableGridCell, width cellWidth: CGFloat, reuseContent: Bool = true,
+                                 worker: CoreTextProseLayoutEngine? = nil,
+                                 workerContext: PreparedCellShapeBuildContext? = nil) -> PreparedProseLayout {
+                    let engine = worker ?? self
+                    let context = worker == nil ? cellShapeContext : workerContext
                     if reuseContent, !cellMode, let source = cellsByIndex[cell.sourceIndex],
                        let widthPixels = ProseLayoutMetrics.widthPixels(widthPoints: cellWidth, scale: displayScale),
                        let reused = self.reusableTableCellContent?(source, widthPixels) {
@@ -195,9 +255,9 @@ final class CoreTextProseLayoutEngine {
                             semanticGenerationIdentity: key.semanticGenerationIdentity
                         )
                         let build = {
-                            self.tableCellPreparationObserver?(cell.sourceIndex)
-                            self.tableCellShapeBuildObserver?(cell.sourceIndex)
-                            let prepared = try self.prepare(
+                            engine.tableCellPreparationObserver?(cell.sourceIndex)
+                            engine.tableCellShapeBuildObserver?(cell.sourceIndex)
+                            let prepared = try engine.prepare(
                                 document: child,
                                 key: cellKey,
                                 widthPoints: cellWidth,
@@ -205,12 +265,13 @@ final class CoreTextProseLayoutEngine {
                                 semanticGenerationIdentity: warningSemanticGeneration,
                                 cellMode: true,
                                 highlightingScope: scope,
-                                cellShapeContext: cellShapeContext
+                                cellShapeContext: context
                             )
-                            self.tableCellBindingObserver?(cell.sourceIndex)
+                            engine.tableCellBindingObserver?(cell.sourceIndex)
+                            engine.tableCellLayoutObserverForTesting?(cell.sourceIndex, prepared)
                             return prepared
                         }
-                        guard let cellShapeContext, theme.codeHighlighting == nil else { return try build() }
+                        guard let context, theme.codeHighlighting == nil else { return try build() }
                         let shapeKey = preparedCellShapeKey(
                             contentKey: cell.contentKey,
                             document: child,
@@ -218,8 +279,8 @@ final class CoreTextProseLayoutEngine {
                             theme: cellTheme,
                             key: cellKey
                         )
-                        return try cellShapeContext.resolve(shapeKey, build: build) { shape in
-                            let bound = self.bindCellShape(
+                        return try context.resolve(shapeKey, build: build) { shape in
+                            let bound = engine.bindCellShape(
                                 shape,
                                 document: child,
                                 key: cellKey,
@@ -227,9 +288,9 @@ final class CoreTextProseLayoutEngine {
                                 displayScale: displayScale,
                                 theme: cellTheme,
                                 warningSemanticGeneration: warningSemanticGeneration,
-                                context: cellShapeContext
+                                context: context
                             )
-                            if bound != nil { self.tableCellBindingObserver?(cell.sourceIndex) }
+                            if bound != nil { engine.tableCellBindingObserver?(cell.sourceIndex) }
                             return bound
                         }
                     } catch let error as ProseViewerError {
@@ -256,6 +317,11 @@ final class CoreTextProseLayoutEngine {
                         prepareCell: { prepareCell($0, width: $1, reuseContent: false) })
                     tableIncrementalRelayoutObserver?()
                 } else {
+                    let workers = tablePreparationWorkers(document: document, table: surfaceSource, tableKey: tableKey,
+                        theme: theme, cellMode: cellMode, context: cellShapeContext) { cell, width, worker, context in
+                            prepareCell(cell, width: width, worker: worker, workerContext: context)
+                        }
+                    defer { workers.contexts.forEach { $0.close() } }
                     surface = ViewerTableSurface(
                         identity: tableKey,
                         scrollIdentity: document.tableSourceIDs[tableKey],
@@ -270,6 +336,8 @@ final class CoreTextProseLayoutEngine {
                         sourceTable: surfaceSource,
                         sourceAttributes: document.tableAttributes,
                         layoutStore: tableLayoutStore,
+                        prepareCellWorkers: workers.prepare,
+                        parallelCellIndices: workers.indices,
                         prepareCell: { prepareCell($0, width: $1) })
                 }
                 let bounds = CGRect(x: tableX, y: cursorY + tableBox.margin.top, width: surface.bounds.width, height: surface.bounds.height)

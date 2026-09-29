@@ -1263,9 +1263,11 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
                 }
                 engine.tableIncrementalRelayoutObserver = { self.incrementalRelayoutsForTesting += 1 }
             }
-            engine.reusableTableCellContent = { cell, widthPixels in
-                if reusable == nil { reusable = ReusableCellContents(previousEntry, themeDigest: themeDigest) }
-                return reusable?.take(cell, widthPixels: widthPixels, displayScale: displayScale)
+            if previousEntry != nil {
+                engine.reusableTableCellContent = { cell, widthPixels in
+                    if reusable == nil { reusable = ReusableCellContents(previousEntry, themeDigest: themeDigest) }
+                    return reusable?.take(cell, widthPixels: widthPixels, displayScale: displayScale)
+                }
             }
             let key = ProseLayoutKey(
                 semanticKey: document.semanticKey,

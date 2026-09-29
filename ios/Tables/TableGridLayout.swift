@@ -78,31 +78,38 @@ final class TableGridLayout {
                 themeDigest: String = "", fontEnvironmentRevision: Int = 0, textScale: CGFloat = 1,
                 measureCell: (TableGridCell, CGFloat) -> CGFloat?) -> TableLayoutResult {
         var heights: [Int: CGFloat] = [:]
-        if record.failure == nil, style.isValid, record.rows > 0,
-           record.cells.allSatisfy({ valid($0, in: record) }),
-           let geometry = columnGeometry(record: record, viewportWidth: viewportWidth, style: style) {
-            for cell in record.cells.sorted(by: { $0.sourceIndex < $1.sourceIndex }) {
-                let inner = max(0, geometry.offsets[cell.column + cell.colspan] - geometry.offsets[cell.column]
-                                - 2 * (style.cellPadding + style.borderWidth))
-                let roundedPixels = (inner * displayScale).rounded()
-                guard roundedPixels.isFinite, roundedPixels >= 0,
-                      let innerWidthPixels = Int(exactly: roundedPixels) else { break }
-                let key = TableCellMeasurementKey(documentOwner: record.documentOwner, contentKey: cell.contentKey,
-                                                  innerWidthPixels: innerWidthPixels, themeDigest: themeDigest,
-                                                  fontEnvironmentRevision: fontEnvironmentRevision, textScale: textScale,
-                                                  attachmentRevision: cell.attachmentRevision)
-                if let cached = cache.value(for: key) {
-                    heights[cell.sourceIndex] = cached
-                } else {
-                    guard let measured = measureCell(cell, CGFloat(innerWidthPixels) / displayScale),
-                          measured.isFinite, measured >= 0 else { break }
-                    cache.insert(measured, for: key)
-                    heights[cell.sourceIndex] = measured
-                }
+        for (cell, innerWidthPixels) in measurementInputs(record: record, viewportWidth: viewportWidth, style: style) {
+            let key = TableCellMeasurementKey(documentOwner: record.documentOwner, contentKey: cell.contentKey,
+                                              innerWidthPixels: innerWidthPixels, themeDigest: themeDigest,
+                                              fontEnvironmentRevision: fontEnvironmentRevision, textScale: textScale,
+                                              attachmentRevision: cell.attachmentRevision)
+            if let cached = cache.value(for: key) {
+                heights[cell.sourceIndex] = cached
+            } else {
+                guard let measured = measureCell(cell, CGFloat(innerWidthPixels) / displayScale),
+                      measured.isFinite, measured >= 0 else { break }
+                cache.insert(measured, for: key)
+                heights[cell.sourceIndex] = measured
             }
         }
         return relayout(record: record, viewportWidth: viewportWidth, style: style, direction: direction,
                         cachedContentHeights: heights)
+    }
+
+    func measurementInputs(record: TableGridRecord, viewportWidth: CGFloat, style: TableStyle) -> [(TableGridCell, Int)] {
+        guard record.failure == nil, style.isValid, record.rows > 0,
+              record.cells.allSatisfy({ valid($0, in: record) }),
+              let geometry = columnGeometry(record: record, viewportWidth: viewportWidth, style: style) else { return [] }
+        var inputs: [(TableGridCell, Int)] = []
+        for cell in record.cells.sorted(by: { $0.sourceIndex < $1.sourceIndex }) {
+            let inner = max(0, geometry.offsets[cell.column + cell.colspan] - geometry.offsets[cell.column]
+                            - 2 * (style.cellPadding + style.borderWidth))
+            let roundedPixels = (inner * displayScale).rounded()
+            guard roundedPixels.isFinite, roundedPixels >= 0,
+                  let innerWidthPixels = Int(exactly: roundedPixels) else { break }
+            inputs.append((cell, innerWidthPixels))
+        }
+        return inputs
     }
 
     func relayout(record: TableGridRecord, viewportWidth: CGFloat, style: TableStyle,

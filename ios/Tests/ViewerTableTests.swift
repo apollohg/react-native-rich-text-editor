@@ -23,6 +23,103 @@ private final class TablePanLifecycleProbe: NSObject {
 }
 
 final class ViewerTableTests: XCTestCase {
+    private final class CellGeometryProbe {
+        private let lock = NSLock()
+        private let caller = Thread.current
+        var heights: [String: CGFloat] = [:]
+        var glyphBounds: [String: [CGRect]] = [:]
+        var backgroundPreparations = 0
+
+        func record(_ index: Int, _ layout: PreparedProseLayout) {
+            let glyphs = layout.blocks.flatMap(\.fragments).flatMap { fragment -> [CGRect] in
+                guard let line = fragment.line else { return [fragment.bounds] }
+                return [fragment.bounds, CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)]
+            }
+            lock.lock()
+            defer { lock.unlock() }
+            heights[layout.key.semanticKey] = layout.size.height
+            glyphBounds[layout.key.semanticKey] = glyphs
+            if Thread.current !== caller { backgroundPreparations += 1 }
+        }
+    }
+
+    func testParallelMeasurementEqualsSequentialMeasurement() throws {
+        let rows = 1_000
+        let columns = 20
+        let plain = try jsonSource(["type": "doc", "content": [["type": "table", "content": (0..<rows).map { row in
+            ["type": "table_row", "content": (0..<columns).map { column in
+                cell(String(format: "R%04dC%04dXY", row, column))
+            }]
+        }]]])
+        let bold: [String: Any] = ["type": "paragraph", "content": [["type": "text",
+            "text": "Bold café العربية 👩🏽‍💻", "marks": [["type": "bold"]]]]]
+        let merged: [String: Any] = ["type": "table_cell", "attrs": ["rowspan": 2],
+            "content": [bold, paragraph("second paragraph wraps across multiple lines")]]
+        let rich = try jsonSource(["type": "doc", "content": [["type": "table", "content": [
+            ["type": "table_row", "content": [merged, cell("wide merged", colspan: 2)]],
+            ["type": "table_row", "content": [cell("é accents"), cell("אבג RTL")]],
+            ["type": "table_row", "content": [cell("last row"), cell("more text"), cell("final text")]]
+        ]]]])
+        for (name, source) in [("plain-1000x20", plain), ("rich-merged", rich), ("nested-image", try nestedHeaderImageSource())] {
+            let compiled = viewerCompile(request: FfiViewerCompileRequest(sourceKind: .json, source: source,
+                configJson: Self.config, imagesEnabled: true, mentionPrefix: nil))
+            let document = try ViewerDocument(compiled: try XCTUnwrap(compiled.value, name))
+            let sequential = CoreTextProseLayoutEngine()
+            sequential.tablePreparationWorkerLimit = 1
+            let expectedGeometry = CellGeometryProbe()
+            sequential.tableCellLayoutObserverForTesting = expectedGeometry.record
+            let expected = try prepare(document, engine: sequential)
+            let parallel = CoreTextProseLayoutEngine()
+            parallel.tablePreparationWorkerLimit = CoreTextProseLayoutEngine.maxTablePreparationWorkers
+            let actualGeometry = CellGeometryProbe()
+            parallel.tableCellLayoutObserverForTesting = actualGeometry.record
+            let actual = try prepare(document, engine: parallel)
+            XCTAssertNil(actual.error, name)
+            XCTAssertEqual(actual.size, expected.size, name)
+            XCTAssertEqual(actualGeometry.heights, expectedGeometry.heights, "\(name): every measured cell height")
+            XCTAssertEqual(actualGeometry.glyphBounds, expectedGeometry.glyphBounds, "\(name): every prepared glyph bound")
+            for (left, right) in zip(expected.blocks, actual.blocks) {
+                guard let lhs = left.tableSurface, let rhs = right.tableSurface else { continue }
+                XCTAssertEqual(lhs.layout.sourceOrder, rhs.layout.sourceOrder, name)
+                XCTAssertEqual(lhs.layout.rowOffsets, rhs.layout.rowOffsets, name)
+                XCTAssertEqual(lhs.layout.rectangles, rhs.layout.rectangles, name)
+                XCTAssertEqual(lhs.cells.map(\.contentSize), rhs.cells.map(\.contentSize), name)
+            }
+            if name == "plain-1000x20", ProcessInfo.processInfo.activeProcessorCount > 2 {
+                XCTAssertGreaterThan(actualGeometry.backgroundPreparations, 0, "The equivalence check must exercise worker preparation")
+            }
+        }
+    }
+
+    func testCellsWithAtomsAreMeasuredOnTheCallingThread() throws {
+        let source = try jsonSource(["type": "doc", "content": [["type": "table", "content": [[
+            "type": "table_row", "content": [
+                ["type": "table_cell", "content": [["type": "card"]]], cell("plain one"),
+                ["type": "table_cell", "content": [["type": "image", "attrs": ["src": "https://example.test/image.png", "width": 20, "height": 20]]]],
+                cell("plain two")
+            ]
+        ]]]]])
+        let compiled = viewerCompile(request: FfiViewerCompileRequest(sourceKind: .json, source: source,
+            configJson: Self.config, imagesEnabled: true, mentionPrefix: nil))
+        let document = try ViewerDocument(compiled: try XCTUnwrap(compiled.value))
+        let engine = CoreTextProseLayoutEngine()
+        engine.tablePreparationWorkerLimit = CoreTextProseLayoutEngine.maxTablePreparationWorkers
+        let caller = Thread.current
+        let lock = NSLock()
+        var callerPreparations: [Int: Bool] = [:]
+        engine.tableCellPreparationObserver = { index in
+            lock.lock(); defer { lock.unlock() }
+            callerPreparations[index] = Thread.current === caller
+        }
+        let layout = try prepare(document,
+            themeJSON: #"{"viewerAtoms":{"generation":"parallel","revision":"one","nodeTypes":["card"],"estimatedHeights":{"card":40}}}"#,
+            engine: engine)
+        XCTAssertNil(layout.error)
+        XCTAssertEqual(callerPreparations.count, 4)
+        XCTAssertEqual(callerPreparations[0], true, "Custom atom preparation stays on the caller")
+        XCTAssertEqual(callerPreparations[2], true, "Image preparation stays on the caller")
+    }
+
     func testSurfaceSourceFromViewerTableKeepsSourceOrder() throws {
         let compiled = viewerCompile(request: FfiViewerCompileRequest(
             sourceKind: .json, source: try twoLinkCellSource(), configJson: Self.linkConfig,

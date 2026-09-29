@@ -95,6 +95,8 @@ final class ViewerTableSurface {
         sourceTable: TableSurfaceSource? = nil,
         sourceAttributes: [String: [String: Any]] = [:],
         layoutStore: TableCellLayoutStore = TableCellLayoutStore(),
+        prepareCellWorkers: [(TableGridCell, CGFloat) -> PreparedProseLayout] = [],
+        parallelCellIndices: Set<Int> = [],
         prepareCell: @escaping (TableGridCell, CGFloat) -> PreparedProseLayout
     ) {
         self.layoutStore = layoutStore
@@ -138,20 +140,32 @@ final class ViewerTableSurface {
         var firstPreparationError: ProseViewerError?
         let canonicalScale = displayScale.isFinite && displayScale > 0 ? displayScale : 1
         let grid = TableGridLayout(displayScale: canonicalScale)
-        let resolvedLayout = grid.layout(
-            record: measurementRecord,
-            viewportWidth: viewportWidth,
-            style: style,
-            direction: direction,
-            themeDigest: themeDigest,
-            fontEnvironmentRevision: fontEnvironmentRevision,
-            textScale: textScale
-        ) { measuredCell, width in
-            guard let cell = sourceCells[measuredCell.sourceIndex] else { return nil }
-            let content = capture(cell, width: width, content: prepareCell(cell, width))
-            prepared[cell.sourceIndex] = content
-            if let error = content.contentError, firstPreparationError == nil { firstPreparationError = error }
-            return content.contentSize.height
+        let resolvedLayout: TableLayoutResult
+        if prepareCellWorkers.count > 1, !parallelCellIndices.isEmpty {
+            prepared = Self.prepareParallelCells(
+                inputs: grid.measurementInputs(record: record, viewportWidth: viewportWidth, style: style),
+                scale: canonicalScale, indices: parallelCellIndices, workers: prepareCellWorkers,
+                prepare: prepareCell, capture: capture)
+            firstPreparationError = record.cells.sorted { $0.sourceIndex < $1.sourceIndex }
+                .compactMap { prepared[$0.sourceIndex]?.contentError }.first
+            resolvedLayout = grid.relayout(record: record, viewportWidth: viewportWidth, style: style,
+                direction: direction, cachedContentHeights: prepared.mapValues { $0.contentSize.height })
+        } else {
+            resolvedLayout = grid.layout(
+                record: measurementRecord,
+                viewportWidth: viewportWidth,
+                style: style,
+                direction: direction,
+                themeDigest: themeDigest,
+                fontEnvironmentRevision: fontEnvironmentRevision,
+                textScale: textScale
+            ) { measuredCell, width in
+                guard let cell = sourceCells[measuredCell.sourceIndex] else { return nil }
+                let content = capture(cell, width: width, content: prepareCell(cell, width))
+                prepared[cell.sourceIndex] = content
+                if let error = content.contentError, firstPreparationError == nil { firstPreparationError = error }
+                return content.contentSize.height
+            }
         }
         for cell in record.cells where prepared[cell.sourceIndex] == nil {
             guard let frame = resolvedLayout.rectangles[cell.sourceIndex] else { continue }
@@ -201,6 +215,33 @@ final class ViewerTableSurface {
             uniquingKeysWith: min
         )
         self.preparationError = preparationError
+    }
+
+    private static func prepareParallelCells(
+        inputs: [(TableGridCell, Int)], scale: CGFloat, indices: Set<Int>,
+        workers: [(TableGridCell, CGFloat) -> PreparedProseLayout],
+        prepare: (TableGridCell, CGFloat) -> PreparedProseLayout,
+        capture: (TableGridCell, CGFloat, PreparedProseLayout) -> PreparedViewerTableCell
+    ) -> [Int: PreparedViewerTableCell] {
+        let lock = NSLock()
+        var prepared: [Int: PreparedViewerTableCell] = [:]
+        func measure(_ input: (TableGridCell, Int), using prepare: (TableGridCell, CGFloat) -> PreparedProseLayout) {
+            let (cell, pixels) = input
+            let width = CGFloat(pixels) / scale
+            let content = capture(cell, width, prepare(cell, width))
+            lock.lock()
+            prepared[cell.sourceIndex] = content
+            lock.unlock()
+        }
+        for input in inputs where !indices.contains(input.0.sourceIndex) { measure(input, using: prepare) }
+        DispatchQueue.concurrentPerform(iterations: workers.count) { worker in
+            let start = inputs.count * worker / workers.count
+            let end = inputs.count * (worker + 1) / workers.count
+            for index in start..<end where indices.contains(inputs[index].0.sourceIndex) {
+                measure(inputs[index], using: workers[worker])
+            }
+        }
+        return prepared
     }
 
     func replacingCells(_ contents: [Int: PreparedProseLayout], contentHeights: [Int: CGFloat],

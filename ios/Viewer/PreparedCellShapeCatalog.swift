@@ -44,6 +44,8 @@ final class PreparedCellShapeBuildContext {
         self.catalog = catalog
     }
 
+    func fork() -> PreparedCellShapeBuildContext { catalog.newBuildContext() }
+
     func resolve(
         _ key: PreparedCellShapeKey,
         build: () throws -> PreparedProseLayout,
