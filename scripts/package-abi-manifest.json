@@ -53,7 +53,6 @@
     { "name": "editor_v2_pin_position_epoch", "checksum": 42714 },
     { "name": "editor_v2_redo", "checksum": 48065 },
     { "name": "editor_v2_release_native_binding", "checksum": 2756 },
-    { "name": "editor_v2_render_native", "checksum": 16234 },
     { "name": "editor_v2_render_native_frame", "checksum": 615 },
     { "name": "editor_v2_render_update", "checksum": 13282 },
     { "name": "editor_v2_replace_document", "checksum": 31032 },

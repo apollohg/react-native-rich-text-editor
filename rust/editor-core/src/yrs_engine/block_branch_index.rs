@@ -192,16 +192,6 @@ impl BlockBranchIndex {
         self.atom_ids.get(path).map(String::as_str)
     }
 
-    #[cfg(test)]
-    pub(crate) fn with_table_keys_for_test(table_keys: BTreeMap<Vec<u32>, String>) -> Self {
-        Self {
-            blocks: Vec::new(),
-            by_branch: HashMap::new(),
-            table_keys,
-            atom_ids: BTreeMap::new(),
-        }
-    }
-
     pub(crate) fn block_branches(&self, block_index: usize) -> Option<&BlockBranches> {
         self.blocks.get(block_index)
     }

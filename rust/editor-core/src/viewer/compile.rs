@@ -149,6 +149,20 @@ fn is_image_node_identity(node_type: &str, attrs: &HashMap<String, serde_json::V
                 || attrs.get("html_tag").and_then(serde_json::Value::as_str) == Some("img"))
 }
 
+#[cfg(test)]
+pub(crate) fn lower_cached_tables_for_test(
+    cache: &crate::render::incremental::CachedRenderBlocks,
+) -> (Vec<FfiViewerElement>, Vec<super::types::FfiViewerTable>) {
+    let mut tables = std::collections::BTreeMap::new();
+    let elements = cache
+        .materialize()
+        .into_iter()
+        .flatten()
+        .map(|element| viewer_element(element, None, true, &mut tables, 0))
+        .collect();
+    (elements, tables.into_values().collect())
+}
+
 fn viewer_element(
     element: RenderElement,
     mention_prefix: Option<&str>,

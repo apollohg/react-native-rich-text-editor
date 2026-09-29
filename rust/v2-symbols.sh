@@ -31,7 +31,6 @@ V2_SYMBOLS=(
     editor_v2_snapshot_export
     editor_v2_snapshot_restore
     editor_v2_render_update
-    editor_v2_render_native
     editor_v2_render_native_frame
     editor_v2_seed_native_render_cursor
     editor_v2_resolve_scalar_selection

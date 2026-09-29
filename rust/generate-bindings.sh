@@ -12,6 +12,7 @@ CDYLIB_PATH="$TARGET_DIR/release/libeditor_core.dylib"
 source "$SCRIPT_DIR/v2-symbols.sh"
 
 OBSOLETE_V2_SYMBOLS=(
+    editor_v2_render_native
     editor_v2_collaboration_begin_connect
     editor_v2_collaboration_take_outbound
     editor_v2_collaboration_tick
@@ -68,7 +69,7 @@ for symbol in "${V2_SYMBOLS[@]}"; do
     }
 done
 for symbol in "${OBSOLETE_V2_SYMBOLS[@]}"; do
-    if grep -q "uniffi_editor_core_fn_func_${symbol}" <<< "$DYLIB_SYMBOLS"; then
+    if grep -Eq "uniffi_editor_core_fn_func_${symbol}([^[:alnum:]_]|$)" <<< "$DYLIB_SYMBOLS"; then
         echo "error: dylib still exposes obsolete uniffi_editor_core_fn_func_${symbol}" >&2
         exit 1
     fi
@@ -165,7 +166,7 @@ for symbol in "${OBSOLETE_V2_SYMBOLS[@]}"; do
         "$OUT_DIR/swift/editor_coreFFI.h" \
         "$OUT_DIR/swift/editor_core.swift" \
         "$OUT_DIR/kotlin/uniffi/editor_core/editor_core.kt"; do
-        if grep -q "uniffi_editor_core_\(fn\|checksum\)_func_${symbol}" "$artifact"; then
+        if grep -Eq "uniffi_editor_core_(fn|checksum)_func_${symbol}([^[:alnum:]_]|$)" "$artifact"; then
             echo "error: generated binding $artifact still exposes obsolete ${symbol}" >&2
             exit 1
         fi

@@ -5,7 +5,6 @@ import com.apollohg.editor.EditorV2CallResult
 import com.apollohg.editor.UniffiEditorV2Backend
 import org.json.JSONObject
 import uniffi.editor_core.editorV2RenderNativeFrame
-import uniffi.editor_core.editorV2RenderUpdate
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -64,7 +63,7 @@ internal class EditorTableIndexTest {
         return (result as TableFrameAdoption.Adopted).changes
     }
 
-    private fun withEngineFrame(source: String, check: (FfiTableFrame, JSONObject, ULong) -> Unit) {
+    private fun withEngineFrame(source: String, check: (FfiTableFrame, EditorV2Adapter, ULong) -> Unit) {
         val created = UniffiEditorV2Backend.create(PlainTableFixture.CONFIG, null) as EditorV2CallResult.Ok
         val adapter = requireNotNull(EditorV2Adapter.attach(UniffiEditorV2Backend,
             JSONObject(created.value).getString("editorId"), false))
@@ -72,9 +71,7 @@ internal class EditorTableIndexTest {
             requireNotNull(adapter.setContentJson(source))
             val native = editorV2RenderNativeFrame(adapter.editorId.toString(), null, null, null)
             assertNull(native.error)
-            val legacy = editorV2RenderUpdate(adapter.editorId.toString(), null, null)
-            assertNull(legacy.error)
-            check(requireNotNull(native.frame).tables, JSONObject(requireNotNull(legacy.value)), adapter.baseDocumentRevision)
+            check(requireNotNull(native.frame).tables, adapter, adapter.baseDocumentRevision)
         } finally {
             adapter.destroy()
         }
@@ -100,27 +97,26 @@ internal class EditorTableIndexTest {
         }
     }
 
-    @Test fun engineFramePositionsMatchIndependentLegacyMappings() = withEngineFrame(PlainTableFixture.document(2, 2)) { frame, legacy, revision ->
+    @Test fun engineFramePositionsMatchEngineScalarConversions() = withEngineFrame(PlainTableFixture.document(2, 2)) { frame, adapter, revision ->
         val index = EditorTableIndex()
         adopt(index, frame, revision = revision)
         val table = frame.tables.single()
-        val mappings = legacy.getJSONObject("tableInputMappings").getJSONObject("tables")
-        val oldCells = mappings.getJSONObject(mappings.keys().next()).getJSONArray("cells")
-        assertEquals(table.cells.size, oldCells.length())
-        table.cells.indices.forEach { cellIndex ->
-            val old = oldCells.getJSONObject(cellIndex)
-            assertEquals(old.getLong("sourcePos").toUInt(), index.docStart(table.tableKey, cellIndex))
-            val blocks = old.getJSONArray("blocks")
-            assertEquals(blocks.getJSONObject(0).getLong("scalarStart").toUInt(), index.scalarStart(table.tableKey, cellIndex))
+        val expectedCellStarts = listOf(2, 18, 36, 52)
+        val cellContentOffset = 2
+        val textLength = PlainTableFixture.CELL_TEXT.codePointCount(0, PlainTableFixture.CELL_TEXT.length)
+        assertEquals(expectedCellStarts.size, table.cells.size)
+        expectedCellStarts.forEachIndexed { cellIndex, docStart ->
+            assertEquals(docStart.toUInt(), index.docStart(table.tableKey, cellIndex))
+            val contentStart = docStart + cellContentOffset
+            val scalarStart = requireNotNull(adapter.scalarPositionForDoc(contentStart))
+            val scalarEnd = requireNotNull(adapter.scalarPositionForDoc(contentStart + textLength))
+            assertEquals(scalarStart.toUInt(), index.scalarStart(table.tableKey, cellIndex))
             val segments = requireNotNull(index.inputSegments(table.tableKey, cellIndex))
-            assertEquals(blocks.length(), segments.size)
-            segments.forEachIndexed { blockIndex, segment ->
-                val block = blocks.getJSONObject(blockIndex)
-                assertEquals(block.getInt("scalarStart"), segment.globalScalarStart)
-                assertEquals(block.getInt("scalarEnd") - block.getInt("scalarStart") + 1,
-                    segment.localScalarEndExclusive - segment.localScalarStart)
-                assertEquals(cellIndex, index.cellIndexContainingScalar(table.tableKey, block.getLong("scalarEnd").toUInt()))
-            }
+            assertEquals(1, segments.size)
+            val segment = segments.single()
+            assertEquals(scalarStart, segment.globalScalarStart)
+            assertEquals(scalarEnd - scalarStart + 1, segment.localScalarEndExclusive - segment.localScalarStart)
+            assertEquals(cellIndex, index.cellIndexContainingScalar(table.tableKey, scalarEnd.toUInt()))
         }
     }
 

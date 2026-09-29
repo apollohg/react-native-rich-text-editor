@@ -1,11 +1,10 @@
 use super::*;
 use crate::test_support::large_table_fixture::{
-    ffi_editor_with_document, multi_paragraph_cell_document, plain_table_document,
+    multi_paragraph_cell_document, plain_table_document,
 };
 
 const FIXTURE_ROWS: usize = 2;
 const FIXTURE_COLUMNS: usize = 2;
-const OWNER_ID: &str = "71";
 const MULTI_PARAGRAPH_CELL_INDEX: usize = 4;
 const OPEN_TOKEN_SIZE: u32 = 1;
 
@@ -80,39 +79,6 @@ fn cell_elements_are_positioned_relative_to_their_cell() {
         OPEN_TOKEN_SIZE + OPEN_TOKEN_SIZE + text.node_size(),
         "atom position is relative to the cell opening token"
     );
-}
-
-#[test]
-fn the_legacy_snapshot_is_unchanged_by_position_free_records() {
-    for (name, document) in fixtures() {
-        let _clients = crate::test_support::deterministic_clients::DeterministicClients::new();
-        let editor_id = ffi_editor_with_document(&document);
-        let rendered = crate::ffi_v2::render::editor_v2_render_native(
-            editor_id.clone(),
-            OWNER_ID.into(),
-            None,
-            None,
-        );
-        let destroyed = crate::ffi_v2::editor::editor_v2_destroy(editor_id);
-        assert!(destroyed.error.is_none());
-        let snapshot = rendered
-            .value
-            .unwrap_or_else(|| panic!("{name}: {:?}", rendered.error));
-        let expected = match name {
-            "regular" => include_str!("../../test_support/fixtures/table-render-regular.json"),
-            "merged" => include_str!("../../test_support/fixtures/table-render-merged.json"),
-            "empty-row" => include_str!("../../test_support/fixtures/table-render-empty-row.json"),
-            "multi-paragraph" => {
-                include_str!("../../test_support/fixtures/table-render-multi-paragraph.json")
-            }
-            _ => unreachable!("fixture has a captured baseline"),
-        };
-        assert_eq!(
-            snapshot.as_bytes(),
-            expected.as_bytes(),
-            "legacy snapshot {name}"
-        );
-    }
 }
 
 #[test]
@@ -244,17 +210,10 @@ fn rich_cell_elements_survive_sibling_and_root_position_changes() {
             );
         }
         let fresh = CachedRenderBlocks::build(&next, &schema, &limits).unwrap();
+        assert_eq!(transition.cache.table_attributes, fresh.table_attributes);
         assert_eq!(
-            crate::ffi_v2::render::serialize_render_cache_for_test(
-                &transition.cache,
-                &next,
-                &test_table_ids(&transition.cache)
-            ),
-            crate::ffi_v2::render::serialize_render_cache_for_test(
-                &fresh,
-                &next,
-                &test_table_ids(&fresh)
-            ),
+            crate::viewer::lower_cached_tables_for_test(&transition.cache),
+            crate::viewer::lower_cached_tables_for_test(&fresh),
             "absolute nested tables and atoms agree after changed cell={changes_cell}",
         );
     }

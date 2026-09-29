@@ -3,7 +3,7 @@
     reason = "SessionError is the established unboxed session error envelope"
 )]
 
-use std::collections::HashMap;
+#[cfg(test)]
 use std::sync::{LazyLock, Mutex};
 
 use serde::Serialize;
@@ -19,14 +19,9 @@ use crate::yrs_engine::ResolvedSelection;
 use crate::yrs_engine::YrsEngineError;
 
 use super::editor::{json_result, with_editor};
-use super::types::{decimal_u64, parse_canonical_u64, FfiJsonResult};
-
-/// Schemas resolved at `editor_v2_create` time, keyed by session id. The
-/// engine owns its schema privately; this registry is the render accessor's
-/// schema source for sessions created through the v2 boundary (the only v2
-/// creation path). Entries are removed on `editor_v2_destroy`.
-static SESSION_SCHEMAS: LazyLock<Mutex<HashMap<u64, Schema>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+#[cfg(test)]
+use super::types::parse_canonical_u64;
+use super::types::{decimal_u64, FfiJsonResult};
 
 #[cfg(test)]
 struct RenderSnapshotTestHook {
@@ -110,12 +105,6 @@ fn pause_render_snapshot_for_test(_: &str) {}
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AtomicRenderSnapshot {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    table_attributes: Option<std::collections::BTreeMap<String, String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    table_records: Option<std::collections::BTreeMap<String, Value>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    table_input_mappings: Option<Value>,
     render_blocks: Value,
     render_patch: Value,
     selection: Value,
@@ -142,20 +131,6 @@ pub(crate) fn resolve_create_schema(schema: &Option<Value>) -> Result<Schema, Se
         Some(value) => Schema::from_json_with_limits(value, &ResourceLimits::default())
             .map_err(SessionError::from),
     }
-}
-
-pub(crate) fn register_session_schema(id: u64, schema: Schema) {
-    SESSION_SCHEMAS
-        .lock()
-        .expect("session schema registry poisoned")
-        .insert(id, schema);
-}
-
-pub(crate) fn unregister_session_schema(id: u64) {
-    SESSION_SCHEMAS
-        .lock()
-        .expect("session schema registry poisoned")
-        .remove(&id);
 }
 
 fn engine_not_ready() -> SessionError {
@@ -234,19 +209,6 @@ fn resolved_selection_json(selection: &ResolvedSelection) -> Value {
     }
 }
 
-fn registered_schema(editor_id: &str) -> Result<Schema, SessionError> {
-    let id = parse_canonical_u64(editor_id)
-        .ok_or_else(|| config_invalid(format!("malformed editor handle: {editor_id:?}")))?;
-    SESSION_SCHEMAS
-        .lock()
-        .expect("session schema registry poisoned")
-        .get(&id)
-        .cloned()
-        .ok_or_else(|| {
-            config_invalid("render accessor has no schema registration for this session")
-        })
-}
-
 #[uniffi::export]
 pub fn editor_v2_render_update(
     editor_id: String,
@@ -263,65 +225,6 @@ pub fn editor_v2_render_update(
     }))
 }
 
-#[uniffi::export]
-pub fn editor_v2_render_native(
-    editor_id: String,
-    owner_id: String,
-    mirror_scalar_anchor: Option<u32>,
-    mirror_scalar_head: Option<u32>,
-) -> FfiJsonResult {
-    let owner_id = match parse_canonical_u64(&owner_id) {
-        Some(owner_id) => owner_id,
-        None => {
-            return FfiJsonResult::err(super::types::FfiError::from(config_invalid(
-                "native render ownerId must be a canonical decimal u64 string",
-            )))
-        }
-    };
-    json_result(with_editor(&editor_id, |session| {
-        render_snapshot_json(
-            session,
-            &editor_id,
-            mirror_scalar_anchor,
-            mirror_scalar_head,
-            Some(owner_id),
-        )
-    }))
-}
-
-fn render_snapshot_json(
-    session: &mut EditorSession,
-    editor_id: &str,
-    mirror_scalar_anchor: Option<u32>,
-    mirror_scalar_head: Option<u32>,
-    owner_id: Option<u64>,
-) -> Result<String, SessionError> {
-    snapshot_json(
-        session,
-        editor_id,
-        mirror_scalar_anchor,
-        mirror_scalar_head,
-        owner_id,
-        false,
-    )
-}
-
-pub(crate) fn root_snapshot_json(
-    session: &mut EditorSession,
-    editor_id: &str,
-    owner_id: Option<u64>,
-    mirror: Option<(u32, u32)>,
-) -> Result<String, SessionError> {
-    snapshot_json(
-        session,
-        editor_id,
-        mirror.map(|pair| pair.0),
-        mirror.map(|pair| pair.1),
-        owner_id,
-        true,
-    )
-}
-
 fn render_mirror(
     anchor: Option<u32>,
     head: Option<u32>,
@@ -335,54 +238,18 @@ fn render_mirror(
     }
 }
 
-fn snapshot_json(
+pub(crate) fn root_snapshot_json(
     session: &mut EditorSession,
     editor_id: &str,
-    mirror_scalar_anchor: Option<u32>,
-    mirror_scalar_head: Option<u32>,
     owner_id: Option<u64>,
-    root_only: bool,
+    mirror: Option<(u32, u32)>,
 ) -> Result<String, SessionError> {
     let previous_native_render =
         owner_id.and_then(|owner_id| session.native_render_cursor(owner_id));
-    let mirror = render_mirror(mirror_scalar_anchor, mirror_scalar_head)?;
     let engine = &session.engine;
     let document = engine.document().ok_or_else(engine_not_ready)?;
     let position_map = engine.position_map().ok_or_else(engine_not_ready)?;
-    let schema = if root_only {
-        engine.schema().clone()
-    } else {
-        registered_schema(&editor_id)?
-    };
-    let current_render_blocks = engine.cached_render_blocks().ok_or_else(engine_not_ready)?;
-    let source_ids = RenderSourceIds {
-        index: engine.block_branch_index().ok_or_else(|| {
-            SessionError::from(YrsEngineError::new(
-                "ENGINE_INVARIANT_FAILED",
-                "render source identities are unavailable",
-            ))
-        })?,
-        document,
-    };
-    if !root_only {
-        let mut cached_tables = Vec::new();
-        current_render_blocks.visit_table_records(&mut cached_tables);
-        let mut unique_table_ids = std::collections::HashSet::new();
-        for (table_pos, _) in cached_tables {
-            let Some(source_id) = source_ids.table_key(table_pos) else {
-                return Err(SessionError::from(YrsEngineError::new(
-                    "ENGINE_INVARIANT_FAILED",
-                    "render table is missing its live Yrs source identity",
-                )));
-            };
-            if !unique_table_ids.insert(source_id) {
-                return Err(SessionError::from(YrsEngineError::new(
-                    "ENGINE_INVARIANT_FAILED",
-                    "render tables have duplicate live Yrs source identities",
-                )));
-            }
-        }
-    }
+    let schema = engine.schema();
     pause_render_snapshot_for_test(&editor_id);
 
     let (selection, selection_value, stored_marks) = match mirror {
@@ -405,13 +272,13 @@ fn snapshot_json(
     } else {
         let commands = crate::editor_state::command_applicability(
             document,
-            &schema,
+            schema,
             &selection,
             engine.resource_limits(),
         );
         crate::editor_state::active_state(
             document,
-            &schema,
+            schema,
             &selection,
             stored_marks,
             commands,
@@ -419,25 +286,10 @@ fn snapshot_json(
         )
     };
     let scalar_length = position_map.doc_to_scalar(u32::MAX, document);
-    let document_is_empty = crate::editor_state::document_is_empty(document, &schema);
+    let document_is_empty = crate::editor_state::document_is_empty(document, schema);
 
     let document_version = engine.revision();
-    let table_input_mappings = if root_only {
-        None
-    } else {
-        super::table_input_mapping::derive(document, position_map, &current_render_blocks).map_err(
-            |message| SessionError::from(YrsEngineError::new("ENGINE_INVARIANT_FAILED", message)),
-        )?
-    };
-    let mut table_records = std::collections::BTreeMap::new();
-    if !root_only {
-        let _ = serialize_render_blocks(
-            &current_render_blocks.materialize(),
-            &source_ids,
-            &mut table_records,
-        );
-    }
-    let (render_blocks, render_patch) = if root_only {
+    let (render_blocks, render_patch) = {
         let current = if let Some(previous) = previous_native_render.as_ref().filter(|previous| {
             previous.document_revision == document_version
                 && previous.schema_fingerprint == engine.schema_fingerprint()
@@ -466,76 +318,8 @@ fn snapshot_json(
             }
             None => (Value::Array(current), Value::Null),
         }
-    } else {
-        match previous_native_render {
-            Some(previous) if previous.document_revision == document_version => (
-                Value::Null,
-                serialize_render_patch(
-                    &crate::render::incremental::RenderBlocksPatch {
-                        start_index: 0,
-                        delete_count: 0,
-                        blocks: Vec::new(),
-                    },
-                    &source_ids,
-                    previous.document_revision,
-                    &mut table_records,
-                ),
-            ),
-            Some(previous) if previous.document_revision < document_version => {
-                match previous
-                    .render_blocks
-                    .classify_cached_transition_to(&current_render_blocks)
-                {
-                    crate::render::incremental::CachedRenderTransitionUpdate::Patch(patch) => (
-                        Value::Null,
-                        serialize_render_patch(
-                            &patch,
-                            &source_ids,
-                            previous.document_revision,
-                            &mut table_records,
-                        ),
-                    ),
-                    crate::render::incremental::CachedRenderTransitionUpdate::None => (
-                        Value::Null,
-                        serialize_render_patch(
-                            &crate::render::incremental::RenderBlocksPatch {
-                                start_index: 0,
-                                delete_count: 0,
-                                blocks: Vec::new(),
-                            },
-                            &source_ids,
-                            previous.document_revision,
-                            &mut table_records,
-                        ),
-                    ),
-                    crate::render::incremental::CachedRenderTransitionUpdate::Full(blocks) => (
-                        serialize_render_blocks(&blocks, &source_ids, &mut table_records),
-                        Value::Null,
-                    ),
-                }
-            }
-            _ => (
-                serialize_render_blocks(
-                    &current_render_blocks.materialize(),
-                    &source_ids,
-                    &mut table_records,
-                ),
-                Value::Null,
-            ),
-        }
     };
     let mut snapshot = AtomicRenderSnapshot {
-        table_attributes: (!root_only && !current_render_blocks.table_attributes.is_empty()).then(
-            || {
-                current_render_blocks
-                    .table_attributes
-                    .iter()
-                    .map(|(key, json)| (key.clone(), json.to_string()))
-                    .collect()
-            },
-        ),
-        table_records: (!table_records.is_empty()).then_some(table_records),
-        table_input_mappings,
         render_blocks,
         render_patch,
         selection: selection_value,
@@ -564,11 +348,6 @@ fn snapshot_json(
         );
     }
     let json = serde_json::to_string(&snapshot).expect("atomic render snapshot serializes");
-    if !root_only {
-        if let Some(owner) = owner_id {
-            session.retain_native_render_cursor(owner, document_version, current_render_blocks);
-        }
-    }
     Ok(json)
 }
 
@@ -608,35 +387,6 @@ pub fn editor_v2_scalar_to_doc(editor_id: String, scalar: u32) -> FfiJsonResult 
         let position_map = engine.position_map().ok_or_else(engine_not_ready)?;
         Ok(serde_json::json!({ "doc": position_map.scalar_to_doc(scalar, document) }).to_string())
     }))
-}
-
-#[cfg(test)]
-pub(crate) fn serialize_render_cache_for_test(
-    cache: &crate::render::incremental::CachedRenderBlocks,
-    document: &crate::model::Document,
-    table_ids: &HashMap<u32, String>,
-) -> String {
-    let attributes: std::collections::BTreeMap<_, _> = cache
-        .table_attributes
-        .iter()
-        .map(|(key, json)| (key, json.as_ref()))
-        .collect();
-    let mut records = std::collections::BTreeMap::new();
-    let table_keys = table_ids
-        .iter()
-        .map(|(position, id)| {
-            (
-                crate::tables::commands::node_path_starting_at(document, *position).unwrap(),
-                id.clone(),
-            )
-        })
-        .collect();
-    let index = crate::yrs_engine::BlockBranchIndex::with_table_keys_for_test(table_keys);
-    let source_ids = RenderSourceIds {
-        index: &index,
-        document,
-    };
-    serde_json::json!({"renderBlocks": serialize_render_blocks(&cache.materialize(), &source_ids, &mut records), "tableAttributes": attributes, "tableRecords": records}).to_string()
 }
 
 pub(crate) fn table_keys(
@@ -680,24 +430,7 @@ pub(crate) fn root_projection(
         .map(|block| {
             block
                 .iter()
-                .map(|element| match element {
-                    crate::render::RenderElement::Table { doc_offset, .. } => source_ids
-                        .table_key(*doc_offset)
-                        .map(|key| serde_json::json!({"type":"table", "tableId":key}))
-                        .ok_or_else(|| {
-                            SessionError::from(YrsEngineError::new(
-                                "ENGINE_INVARIANT_FAILED",
-                                "table source identity is missing",
-                            ))
-                        }),
-                    _ => Ok(serialize_render_elements(
-                        std::slice::from_ref(element),
-                        &source_ids,
-                        &mut std::collections::BTreeMap::new(),
-                        0,
-                    )[0]
-                    .clone()),
-                })
+                .map(|element| serialize_render_element(element, &source_ids))
                 .collect::<Result<Vec<_>, _>>()
                 .map(Value::Array)
         })
@@ -727,217 +460,184 @@ impl RenderSourceIds<'_> {
     }
 }
 
-fn serialize_render_elements(
-    elements: &[crate::render::RenderElement],
+fn serialize_render_element(
+    element: &crate::render::RenderElement,
     source_ids: &RenderSourceIds<'_>,
-    table_records: &mut std::collections::BTreeMap<String, Value>,
-    origin: u32,
-) -> serde_json::Value {
-    let items: Vec<serde_json::Value> = elements
-        .iter()
-        .map(|el| match el {
-            crate::render::RenderElement::Table { table, doc_offset } => stacker::maybe_grow(64 * 1024, 1024 * 1024, || {
-                let table_pos = origin + doc_offset;
-                let starts = crate::tables::render::absolute_cell_starts(table, table_pos);
-                let table_id = format!("t{table_pos}");
-                let record = serde_json::json!({
-                        "tablePos": table_pos,
-                        "sourceId": source_ids.table_key(table_pos).expect("table identity preflight required"),
-                        "sourceEnd": table_pos + table.structure.doc_size,
-                        "rows": table.structure.rows,
-                        "columns": table.structure.columns,
-                        "columnWidths": table.structure.column_widths,
-                        "direction": table.structure.direction,
-                        "irregular": table.structure.irregular,
-                        "readOnlyDescendants": table.structure.read_only_descendants,
-                        "attrsKey": table.structure.attrs_key,
-                        "sourceRows": crate::tables::render::absolute_source_rows(table, table_pos),
-                        "syntheticRegions": table.structure.synthetic_regions,
-                        "failure": table.structure.failure,
-                        "compatibilityDiagnostic": table.structure.compatibility_diagnostic,
-                        "cells": table.cells.iter().zip(starts).map(|(cell, source_pos)| serde_json::json!({
-                            "sourcePos": source_pos,
-                            "sourceEnd": source_pos + cell.doc_size,
-                            "row": cell.row,
-                            "column": cell.column,
-                            "rowspan": cell.rowspan,
-                            "colspan": cell.colspan,
-                            "header": cell.header,
-                            "attrsKey": cell.attrs_key,
-                            "contentKey": cell.content_key,
-                            "elements": serialize_render_elements(&cell.elements, source_ids, table_records, source_pos),
-                        })).collect::<Vec<_>>()
-                })
-                ;
-                table_records.insert(table_id.clone(), record);
-                serde_json::json!({"type": "table", "tableId": table_id})
-            }),
-            crate::render::RenderElement::TextRun { text, marks } => {
-                serde_json::json!({
-                    "type": "textRun",
-                    "text": text,
-                    "marks": marks.iter().map(serialize_render_mark).collect::<Vec<_>>(),
-                })
+) -> Result<Value, SessionError> {
+    Ok(match element {
+        crate::render::RenderElement::Table { doc_offset, .. } => source_ids
+            .table_key(*doc_offset)
+            .map(|key| serde_json::json!({"type":"table", "tableId":key}))
+            .ok_or_else(|| {
+                SessionError::from(YrsEngineError::new(
+                    "ENGINE_INVARIANT_FAILED",
+                    "table source identity is missing",
+                ))
+            })?,
+        crate::render::RenderElement::TextRun { text, marks } => {
+            serde_json::json!({
+                "type": "textRun",
+                "text": text,
+                "marks": marks.iter().map(serialize_render_mark).collect::<Vec<_>>(),
+            })
+        }
+        crate::render::RenderElement::VoidInline {
+            node_type,
+            doc_pos,
+            attrs,
+        } => {
+            let mut obj = serde_json::json!({
+                "type": "voidInline",
+                "nodeType": node_type,
+                "docPos": *doc_pos,
+            });
+            if !attrs.is_empty() {
+                obj["attrs"] = serde_json::Value::Object(
+                    attrs
+                        .iter()
+                        .map(|(key, value)| {
+                            (
+                                key.clone(),
+                                crate::boundary::clone_json_value_stack_safe(value),
+                            )
+                        })
+                        .collect(),
+                );
             }
-            crate::render::RenderElement::VoidInline {
-                node_type,
-                doc_pos,
-                attrs,
-            } => {
-                let mut obj = serde_json::json!({
-                    "type": "voidInline",
-                    "nodeType": node_type,
-                    "docPos": origin + doc_pos,
+            obj
+        }
+        crate::render::RenderElement::VoidBlock {
+            node_type,
+            doc_pos,
+            attrs,
+        } => {
+            let mut obj = serde_json::json!({
+                "type": "voidBlock",
+                "nodeType": node_type,
+                "docPos": *doc_pos,
+            });
+            if !attrs.is_empty() {
+                obj["attrs"] = serde_json::Value::Object(
+                    attrs
+                        .iter()
+                        .map(|(key, value)| {
+                            (
+                                key.clone(),
+                                crate::boundary::clone_json_value_stack_safe(value),
+                            )
+                        })
+                        .collect(),
+                );
+            }
+            if let Some(atom_id) = source_ids.atom_id(*doc_pos) {
+                obj["atomId"] = Value::String(atom_id.to_owned());
+            }
+            obj
+        }
+        crate::render::RenderElement::OpaqueInlineAtom {
+            node_type,
+            label,
+            doc_pos,
+            attrs,
+            mention_theme,
+        } => {
+            let mut obj = serde_json::json!({
+                "type": "opaqueInlineAtom",
+                "nodeType": node_type,
+                "label": label,
+                "docPos": *doc_pos,
+            });
+            if !attrs.is_empty() {
+                obj["attrs"] = serde_json::Value::Object(
+                    attrs
+                        .iter()
+                        .map(|(key, value)| {
+                            (
+                                key.clone(),
+                                crate::boundary::clone_json_value_stack_safe(value),
+                            )
+                        })
+                        .collect(),
+                );
+            }
+            if let Some(mention_theme) = mention_theme {
+                obj["mentionTheme"] = serde_json::Value::Object(
+                    mention_theme
+                        .iter()
+                        .map(|(key, value)| {
+                            (
+                                key.clone(),
+                                crate::boundary::clone_json_value_stack_safe(value),
+                            )
+                        })
+                        .collect(),
+                );
+            }
+            obj
+        }
+        crate::render::RenderElement::OpaqueBlockAtom {
+            node_type,
+            label,
+            doc_pos,
+            attrs,
+        } => {
+            let mut obj = serde_json::json!({
+                "type": "opaqueBlockAtom",
+                "nodeType": node_type,
+                "label": label,
+                "docPos": *doc_pos,
+            });
+            if !attrs.is_empty() {
+                obj["attrs"] = serde_json::Value::Object(
+                    attrs
+                        .iter()
+                        .map(|(key, value)| {
+                            (
+                                key.clone(),
+                                crate::boundary::clone_json_value_stack_safe(value),
+                            )
+                        })
+                        .collect(),
+                );
+            }
+            obj
+        }
+        crate::render::RenderElement::BlockStart {
+            node_type,
+            language,
+            depth,
+            list_context,
+        } => {
+            let mut obj = serde_json::json!({
+                "type": "blockStart",
+                "nodeType": node_type,
+                "depth": depth,
+            });
+            if let Some(language) = language {
+                obj["language"] = serde_json::Value::String(language.clone());
+            }
+            if let Some(ctx) = list_context {
+                obj["listContext"] = serde_json::json!({
+                    "ordered": ctx.ordered,
+                    "index": ctx.index,
+                    "total": ctx.total,
+                    "start": ctx.start,
+                    "isFirst": ctx.is_first,
+                    "isLast": ctx.is_last,
                 });
-                if !attrs.is_empty() {
-                    obj["attrs"] = serde_json::Value::Object(
-                        attrs
-                            .iter()
-                            .map(|(key, value)| {
-                                (
-                                    key.clone(),
-                                    crate::boundary::clone_json_value_stack_safe(value),
-                                )
-                            })
-                            .collect(),
-                    );
+                if let Some(kind) = &ctx.kind {
+                    obj["listContext"]["kind"] = serde_json::Value::String(kind.clone());
                 }
-                obj
+                if let Some(checked) = ctx.checked {
+                    obj["listContext"]["checked"] = serde_json::Value::Bool(checked);
+                }
             }
-            crate::render::RenderElement::VoidBlock {
-                node_type,
-                doc_pos,
-                attrs,
-            } => {
-                let mut obj = serde_json::json!({
-                    "type": "voidBlock",
-                    "nodeType": node_type,
-                    "docPos": origin + doc_pos,
-                });
-                if !attrs.is_empty() {
-                    obj["attrs"] = serde_json::Value::Object(
-                        attrs
-                            .iter()
-                            .map(|(key, value)| {
-                                (
-                                    key.clone(),
-                                    crate::boundary::clone_json_value_stack_safe(value),
-                                )
-                            })
-                            .collect(),
-                    );
-                }
-                if let Some(atom_id) = source_ids.atom_id(origin + doc_pos) {
-                    obj["atomId"] = Value::String(atom_id.to_owned());
-                }
-                obj
-            }
-            crate::render::RenderElement::OpaqueInlineAtom {
-                node_type,
-                label,
-                doc_pos,
-                attrs,
-                mention_theme,
-            } => {
-                let mut obj = serde_json::json!({
-                    "type": "opaqueInlineAtom",
-                    "nodeType": node_type,
-                    "label": label,
-                    "docPos": origin + doc_pos,
-                });
-                if !attrs.is_empty() {
-                    obj["attrs"] = serde_json::Value::Object(
-                        attrs
-                            .iter()
-                            .map(|(key, value)| {
-                                (
-                                    key.clone(),
-                                    crate::boundary::clone_json_value_stack_safe(value),
-                                )
-                            })
-                            .collect(),
-                    );
-                }
-                if let Some(mention_theme) = mention_theme {
-                    obj["mentionTheme"] = serde_json::Value::Object(
-                        mention_theme
-                            .iter()
-                            .map(|(key, value)| {
-                                (
-                                    key.clone(),
-                                    crate::boundary::clone_json_value_stack_safe(value),
-                                )
-                            })
-                            .collect(),
-                    );
-                }
-                obj
-            }
-            crate::render::RenderElement::OpaqueBlockAtom {
-                node_type,
-                label,
-                doc_pos,
-                attrs,
-            } => {
-                let mut obj = serde_json::json!({
-                    "type": "opaqueBlockAtom",
-                    "nodeType": node_type,
-                    "label": label,
-                    "docPos": origin + doc_pos,
-                });
-                if !attrs.is_empty() {
-                    obj["attrs"] = serde_json::Value::Object(
-                        attrs
-                            .iter()
-                            .map(|(key, value)| {
-                                (
-                                    key.clone(),
-                                    crate::boundary::clone_json_value_stack_safe(value),
-                                )
-                            })
-                            .collect(),
-                    );
-                }
-                obj
-            }
-            crate::render::RenderElement::BlockStart {
-                node_type,
-                language,
-                depth,
-                list_context,
-            } => {
-                let mut obj = serde_json::json!({
-                    "type": "blockStart",
-                    "nodeType": node_type,
-                    "depth": depth,
-                });
-                if let Some(language) = language {
-                    obj["language"] = serde_json::Value::String(language.clone());
-                }
-                if let Some(ctx) = list_context {
-                    obj["listContext"] = serde_json::json!({
-                        "ordered": ctx.ordered,
-                        "index": ctx.index,
-                        "total": ctx.total,
-                        "start": ctx.start,
-                        "isFirst": ctx.is_first,
-                        "isLast": ctx.is_last,
-                    });
-                    if let Some(kind) = &ctx.kind {
-                        obj["listContext"]["kind"] = serde_json::Value::String(kind.clone());
-                    }
-                    if let Some(checked) = ctx.checked {
-                        obj["listContext"]["checked"] = serde_json::Value::Bool(checked);
-                    }
-                }
-                obj
-            }
-            crate::render::RenderElement::BlockEnd => {
-                serde_json::json!({"type": "blockEnd"})
-            }
-        })
-        .collect();
-    serde_json::Value::Array(items)
+            obj
+        }
+        crate::render::RenderElement::BlockEnd => {
+            serde_json::json!({"type": "blockEnd"})
+        }
+    })
 }
 
 fn serialize_render_mark(mark: &crate::render::RenderMark) -> serde_json::Value {
@@ -954,33 +654,6 @@ fn serialize_render_mark(mark: &crate::render::RenderMark) -> serde_json::Value 
         }
         serde_json::Value::Object(obj)
     }
-}
-
-fn serialize_render_blocks(
-    blocks: &[Vec<crate::render::RenderElement>],
-    source_ids: &RenderSourceIds<'_>,
-    table_records: &mut std::collections::BTreeMap<String, Value>,
-) -> serde_json::Value {
-    serde_json::Value::Array(
-        blocks
-            .iter()
-            .map(|block| serialize_render_elements(block, source_ids, table_records, 0))
-            .collect(),
-    )
-}
-
-fn serialize_render_patch(
-    patch: &crate::render::incremental::RenderBlocksPatch,
-    source_ids: &RenderSourceIds<'_>,
-    base_document_version: u64,
-    table_records: &mut std::collections::BTreeMap<String, Value>,
-) -> Value {
-    serde_json::json!({
-        "baseDocumentVersion": decimal_u64(base_document_version),
-        "startIndex": patch.start_index,
-        "deleteCount": patch.delete_count,
-        "renderBlocks": serialize_render_blocks(&patch.blocks, source_ids, table_records),
-    })
 }
 
 fn selection_to_json(

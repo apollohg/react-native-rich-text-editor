@@ -383,6 +383,117 @@ impl TableFrameMirror {
             .collect())
     }
 
+    pub(crate) fn assert_matches_position_map(
+        &self,
+        engine: &crate::yrs_engine::YrsDocumentEngine,
+        label: &str,
+    ) {
+        let map = engine.position_map().expect("position map");
+        let document = engine.document().expect("document");
+        let keys = crate::ffi_v2::render::table_keys(engine).expect("table identities");
+        for (position, key) in keys {
+            let table = &self.tables[&key];
+            assert_eq!(
+                self.table_start(&key).unwrap().0,
+                position,
+                "{label}: table origin {key}"
+            );
+            let openings = self.cell_openings(&key).unwrap();
+            let actual = self.absolute_input_blocks(&key).unwrap();
+            for (index, cell) in table.cells.iter().enumerate() {
+                let start = openings[index];
+                let end = start + cell.doc_size;
+                let all: Vec<_> = (0..map.block_count())
+                    .filter(|block| {
+                        let position = map.effective_doc_start(*block);
+                        position >= start && position < end
+                    })
+                    .collect();
+                let cell_end = all.last().map(|block| {
+                    let mapping = map.block(*block).unwrap();
+                    map.effective_scalar_start(*block)
+                        + mapping.scalar_prefix_len
+                        + mapping.scalar_len
+                });
+                let direct: Vec<_> = all
+                    .into_iter()
+                    .filter(|block| {
+                        let position = map.effective_doc_start(*block);
+                        !cell.nested_tables.iter().any(|nested| {
+                            let nested_start = start + nested.doc_offset;
+                            position >= nested_start && position < nested_start + nested.doc_size
+                        })
+                    })
+                    .collect();
+                assert_eq!(
+                    actual[index].len(),
+                    direct.len(),
+                    "{label}: {key} cell {index} direct blocks"
+                );
+                for (block, expected_index) in actual[index].iter().zip(direct) {
+                    let expected = map.block(expected_index).unwrap();
+                    let scalar_start = map.effective_scalar_start(expected_index);
+                    let content_start = scalar_start + expected.scalar_prefix_len;
+                    let scalar_end = content_start + expected.scalar_len;
+                    assert_eq!(
+                        (
+                            block.doc_start,
+                            block.doc_end,
+                            block.scalar_start,
+                            block.content_scalar_start,
+                            block.scalar_end,
+                            block.break_scalar_end,
+                            block.void
+                        ),
+                        (
+                            map.effective_doc_start(expected_index),
+                            map.effective_doc_end(expected_index),
+                            scalar_start,
+                            content_start,
+                            scalar_end,
+                            (scalar_end + expected.rendered_break_after).min(cell_end.unwrap()),
+                            expected.is_void_block
+                        ),
+                        "{label}: {key} cell {index} position block {expected_index}"
+                    );
+                    let node = document.node_at(&expected.node_path).expect("mapped node");
+                    match &cell.elements[block.element_index as usize] {
+                        FfiViewerElement::BlockStart { node_type, .. } => {
+                            assert!(!block.void, "{label}: text block");
+                            assert_eq!(node_type, node.node_type(), "{label}: block element");
+                        }
+                        FfiViewerElement::BlockAtom { node_type, .. } => {
+                            assert!(block.void, "{label}: void block");
+                            assert_eq!(node_type, node.node_type(), "{label}: void element");
+                        }
+                        other => panic!("{label}: invalid input element {other:?}"),
+                    }
+                }
+            }
+            if let Some(extent) = self.extents.get(&key) {
+                let blocks: Vec<_> = (0..map.block_count())
+                    .filter(|index| {
+                        let start = map.effective_doc_start(*index);
+                        start >= position && start < position + table.doc_size
+                    })
+                    .collect();
+                if let (Some(first), Some(last)) = (blocks.first(), blocks.last()) {
+                    let final_block = map.block(*last).unwrap();
+                    assert_eq!(
+                        (extent.scalar_start, extent.scalar_end),
+                        (
+                            map.effective_scalar_start(*first),
+                            map.effective_scalar_start(*last)
+                                + final_block.scalar_prefix_len
+                                + final_block.scalar_len
+                        ),
+                        "{label}: {key} root extent"
+                    );
+                }
+            }
+        }
+    }
+
     pub(crate) fn absolute_input_blocks(
         &self,
         key: &str,

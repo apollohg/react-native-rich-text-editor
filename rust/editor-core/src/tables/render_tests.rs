@@ -15,16 +15,6 @@ fn cell(text: &str) -> serde_json::Value {
     json!({ "type": "table_cell", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": text }] }] })
 }
 
-fn test_table_ids(cache: &CachedRenderBlocks) -> std::collections::HashMap<u32, String> {
-    let mut tables = Vec::new();
-    cache.visit_table_records(&mut tables);
-    tables
-        .iter()
-        .enumerate()
-        .map(|(index, (position, _))| (*position, format!("y0-{index}")))
-        .collect()
-}
-
 #[test]
 fn attribute_pool_collision_keeps_canonical_key_and_exact_json() {
     let schema = tabled_schema(PROSEMIRROR_TABLE_NAMES);
@@ -84,7 +74,7 @@ fn attribute_pool_collision_keeps_canonical_key_and_exact_json() {
 }
 
 #[test]
-fn raised_depth_table_transport_has_bounded_json_container_depth() {
+fn raised_depth_table_transport_keeps_flat_table_records() {
     crate::boundary::with_document_stack(|| {
         let schema = tabled_schema(PROSEMIRROR_TABLE_NAMES);
         let limits = ResourceLimits {
@@ -104,44 +94,32 @@ fn raised_depth_table_transport_has_bounded_json_container_depth() {
         )
         .unwrap();
         let cache = CachedRenderBlocks::build(&document, &schema, &limits).unwrap();
-        let wire = crate::ffi_v2::render::serialize_render_cache_for_test(
-            &cache,
-            &document,
-            &test_table_ids(&cache),
-        );
-        let mut depth = 0usize;
-        let mut maximum = 0usize;
-        let mut quoted = false;
-        let mut escaped = false;
-        for byte in wire.bytes() {
-            if escaped {
-                escaped = false;
-                continue;
-            }
-            if quoted && byte == b'\\' {
-                escaped = true;
-                continue;
-            }
-            if byte == b'"' {
-                quoted = !quoted;
-                continue;
-            }
-            if !quoted {
-                match byte {
-                    b'{' | b'[' => {
-                        depth += 1;
-                        maximum = maximum.max(depth);
-                    }
-                    b'}' | b']' => depth -= 1,
-                    _ => {}
-                }
+        let (elements, records) = crate::viewer::lower_cached_tables_for_test(&cache);
+        assert_eq!(records.len(), 110, "every admitted table is transported");
+        assert_eq!(elements.len(), 1);
+        assert!(matches!(
+            &elements[0],
+            crate::viewer::FfiViewerElement::Table { .. }
+        ));
+        for (index, table) in records.iter().enumerate() {
+            assert_eq!(table.cells.len(), 1, "table {index}");
+            if index + 1 < records.len() {
+                assert!(
+                    matches!(
+                        table.cells[0].elements.as_slice(),
+                        [crate::viewer::FfiViewerElement::Table { .. }]
+                    ),
+                    "nested tables remain shallow references at depth {index}"
+                );
+            } else {
+                assert!(table.cells[0]
+                    .elements
+                    .iter()
+                    .any(|element| matches!(element,
+                    crate::viewer::FfiViewerElement::TextRun { text, .. } if text == "deep")));
             }
         }
         crate::boundary::drop_json_value_stack_safe(input);
-        assert!(
-            maximum < 64,
-            "admitted 110-table/333-node-depth fixture has wire JSON depth {maximum}"
-        );
     });
 }
 
@@ -184,11 +162,17 @@ fn shared_synthetic_attributes_are_retained_and_serialized_once() {
     let distinct_attrs = 2;
     crate::yrs_engine::observability::reset_full_pass_counts_for_test();
     let cache = CachedRenderBlocks::build(&document, &schema, &ResourceLimits::default()).unwrap();
-    let json = crate::ffi_v2::render::serialize_render_cache_for_test(
-        &cache,
-        &document,
-        &test_table_ids(&cache),
-    );
+    let attributes: std::collections::BTreeMap<_, _> = cache
+        .table_attributes
+        .iter()
+        .map(|(key, json)| (key, json.as_ref()))
+        .collect();
+    let json = serde_json::to_string(&attributes).unwrap();
+    let (_, records) = crate::viewer::lower_cached_tables_for_test(&cache);
+    assert!(records
+        .iter()
+        .flat_map(|table| &table.synthetic_regions)
+        .all(|region| attributes.contains_key(&region.attrs_key)));
     assert_eq!(
         json.matches(&payload).count(),
         1,
@@ -522,25 +506,22 @@ fn grid_limit_failure_keeps_the_real_table_extent_without_inventing_cells() {
     assert!(table.cells.is_empty());
     assert!(table.structure.source_rows.is_empty());
     assert!(table.structure.synthetic_regions.is_empty());
-    let wire: serde_json::Value =
-        serde_json::from_str(&crate::ffi_v2::render::serialize_render_cache_for_test(
-            &cache,
-            &document,
-            &test_table_ids(&cache),
-        ))
-        .unwrap();
-    let id = wire["renderBlocks"][0][0]["tableId"].as_str().unwrap();
-    assert_eq!(wire["tableRecords"][id]["tablePos"], json!(0));
+    let (elements, records) = crate::viewer::lower_cached_tables_for_test(&cache);
     assert_eq!(
-        wire["tableRecords"][id]["sourceEnd"],
-        json!(table.structure.doc_size)
+        elements,
+        vec![crate::viewer::FfiViewerElement::Table {
+            table_id: "t0".into()
+        }]
     );
-    assert_eq!(wire["tableRecords"][id]["failure"], json!("gridLimit"));
+    let record = &records[0];
+    assert_eq!(record.table_pos, 0);
+    assert_eq!(record.source_end, table.structure.doc_size);
     assert_eq!(
-        wire["tableRecords"][id]["compatibilityDiagnostic"],
-        serde_json::Value::Null
+        record.failure,
+        Some(crate::tables::render::TableRenderFailure::GridLimit)
     );
-    assert_eq!(wire["tableRecords"][id]["cells"], json!([]));
+    assert_eq!(record.compatibility_diagnostic, None);
+    assert!(record.cells.is_empty());
 }
 
 #[test]

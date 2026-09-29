@@ -80,7 +80,7 @@ final class EditorTableIndexTests: XCTestCase {
         XCTAssertEqual(actual, adapter.tableIndex.absoluteDocPos(tableKey: key, cellIndex: 0, relative: relative))
     }
 
-    func testEngineFramePositionsMatchLegacyMappings() throws {
+    func testEngineFramePositionsMatchEngineScalarConversions() throws {
         let editorId = makeV2Editor(configJson: TableInputTestSchema.tableConfig)
         defer { destroyV2Editor(id: editorId) }
         let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
@@ -90,29 +90,25 @@ final class EditorTableIndexTests: XCTestCase {
         XCTAssertNil(result.error)
         let native = try XCTUnwrap(result.frame)
         let table = try XCTUnwrap(native.tables.tables.first)
-        let legacyJSON = try XCTUnwrap(editorV2RenderUpdate(editorId: adapter.editorId, mirrorScalarAnchor: nil, mirrorScalarHead: nil).value)
-        let legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(legacyJSON.utf8)) as? [String: Any])
-        let mappings = try XCTUnwrap(legacy["tableInputMappings"] as? [String: Any])
-        let tables = try XCTUnwrap(mappings["tables"] as? [String: [String: Any]])
-        let oldCells = try XCTUnwrap(tables.values.first?["cells"] as? [[String: Any]])
         let index = EditorTableIndex()
         _ = try index.adopt(native.tables, installedRevision: nil, frameRevision: adapter.baseDocumentRevision).get()
-        XCTAssertEqual(table.cells.count, oldCells.count)
-        for (cellIndex, oldCell) in oldCells.enumerated() {
-            XCTAssertEqual(index.docStart(tableKey: table.tableKey, cellIndex: cellIndex), EditorV2Adapter.uint32Field(oldCell, "sourcePos"))
-            let scalar = try XCTUnwrap(index.scalarStart(tableKey: table.tableKey, cellIndex: cellIndex))
-            let blocks = try XCTUnwrap(oldCell["blocks"] as? [[String: Any]])
-            XCTAssertEqual(scalar, blocks.first.flatMap { EditorV2Adapter.uint32Field($0, "scalarStart") })
+        let expectedCellStarts: [UInt32] = [2, 9]
+        let cellTexts = ["one", "two"]
+        let cellContentOffset: UInt32 = 2
+        XCTAssertEqual(table.cells.count, expectedCellStarts.count)
+        for (cellIndex, docStart) in expectedCellStarts.enumerated() {
+            XCTAssertEqual(index.docStart(tableKey: table.tableKey, cellIndex: cellIndex), docStart)
+            let contentStart = docStart + cellContentOffset
+            let scalarStart = EditorV2Shadow.docToScalar(id: editorId, docPos: contentStart)
+            let scalarEnd = EditorV2Shadow.docToScalar(id: editorId, docPos: contentStart + UInt32(cellTexts[cellIndex].unicodeScalars.count))
+            XCTAssertEqual(index.scalarStart(tableKey: table.tableKey, cellIndex: cellIndex), scalarStart)
             let segments = try XCTUnwrap(index.inputSegments(tableKey: table.tableKey, cellIndex: cellIndex))
-            XCTAssertEqual(segments.count, blocks.count)
-            for (segment, block) in zip(segments, blocks) {
-                let scalarStart = try XCTUnwrap(EditorV2Adapter.uint32Field(block, "scalarStart"))
-                let scalarEnd = try XCTUnwrap(EditorV2Adapter.uint32Field(block, "scalarEnd"))
-                XCTAssertEqual(index.cellIndex(tableKey: table.tableKey, containingScalar: scalarEnd), cellIndex,
-                               "the terminal caret of each real input block belongs to its cell")
-                XCTAssertEqual(segment.globalScalarStart, scalarStart)
-                XCTAssertEqual(segment.localScalarRange.count, Int(scalarEnd - scalarStart + 1))
-            }
+            XCTAssertEqual(segments.count, 1)
+            let segment = try XCTUnwrap(segments.first)
+            XCTAssertEqual(segment.globalScalarStart, scalarStart)
+            XCTAssertEqual(segment.localScalarRange.count, Int(scalarEnd - scalarStart + 1))
+            XCTAssertEqual(index.cellIndex(tableKey: table.tableKey, containingScalar: scalarEnd), cellIndex,
+                           "the terminal caret of each real input block belongs to its cell")
         }
     }
 

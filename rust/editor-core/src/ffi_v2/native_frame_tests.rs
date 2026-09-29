@@ -244,6 +244,22 @@ fn native_frame_nested_hosts_and_schema_reset() {
     );
 }
 
+#[test]
+fn the_frame_mirror_matches_position_map_input_blocks() {
+    for source in [
+        two_table_document(),
+        crate::test_support::large_table_fixture::multi_paragraph_cell_document(),
+        crate::test_support::large_table_fixture::plain_table_document(3, 3),
+    ] {
+        let mut session = session_with_document(&source);
+        let mut mirror = crate::test_support::table_frame_mirror::TableFrameMirror::default();
+        mirror
+            .apply(&frame(&mut session, None))
+            .expect("full frame");
+        mirror.assert_matches_position_map(&session.engine, "initial frame");
+    }
+}
+
 fn assert_mirror(
     session: &mut crate::session::EditorSession,
     mirror: &mut crate::test_support::table_frame_mirror::TableFrameMirror,
@@ -286,42 +302,11 @@ fn assert_mirror(
         expected.cells.clear();
         assert_eq!(actual, expected, "{label} {key}: table structure");
     }
-    let cache = session.engine.cached_render_blocks().unwrap();
-    if let Some(legacy) = super::table_input_mapping::derive(
-        session.engine.document().unwrap(),
-        session.engine.position_map().unwrap(),
-        &cache,
-    )
-    .unwrap()
-    {
-        let keys = super::render::table_keys(&session.engine).unwrap();
-        for (position, key) in keys {
-            let cells = mirror.absolute_input_blocks(&key).unwrap();
-            for (index, blocks) in cells.iter().enumerate() {
-                let old = &legacy["tables"][format!("t{position}")]["cells"][index]["blocks"];
-                let actual: Vec<_> = blocks.iter().map(|block|serde_json::json!({"elementIndex":block.element_index,"docStart":block.doc_start,"docEnd":block.doc_end,"scalarStart":block.scalar_start,"contentScalarStart":block.content_scalar_start,"scalarEnd":block.scalar_end,"breakScalarEnd":block.break_scalar_end,"void":block.void})).collect();
-                assert_eq!(
-                    old,
-                    &serde_json::json!(actual),
-                    "{label}: {key} cell {index} absolute mappings"
-                );
-            }
-            if let Some(extent) = mirror.extents.get(&key) {
-                let old = &legacy["tables"][format!("t{position}")]["extent"];
-                if !old.is_null() {
-                    assert_eq!(
-                        old,
-                        &serde_json::json!({"scalarStart":extent.scalar_start,"scalarEnd":extent.scalar_end}),
-                        "{label}: root extent"
-                    );
-                }
-            }
-        }
-    }
+    mirror.assert_matches_position_map(&session.engine, label);
 }
 
 #[test]
-fn frames_replayed_by_the_mirror_equal_full_frames_and_legacy_mappings() {
+fn frames_replayed_by_the_mirror_equal_full_frames_and_position_maps() {
     use crate::tables::commands::TableCommand;
     const FRAME_SEEDED_STEPS: usize = 500;
     const CYCLE: usize = 8;
@@ -462,7 +447,7 @@ fn native_frame_failed_table_preserves_its_real_extent() {
         assert!(table.failure.is_some());
         assert!(table.cells.is_empty());
         assert_eq!(table.doc_size, records[0].1.structure.doc_size);
-        let extent = super::table_input_mapping::scalar_range(
+        let extent = super::native_frame_mapping::scalar_range(
             session.engine.position_map().unwrap(),
             0,
             table.doc_size,

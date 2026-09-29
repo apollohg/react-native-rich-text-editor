@@ -243,4 +243,3 @@ const CREATE_LIMIT_CASES: [(&str, &str, u64); 21] = [
 include!("tests/create_admission.rs");
 
 include!("tests/wire_contract.rs");
-include!("tests/table_input_mapping.rs");

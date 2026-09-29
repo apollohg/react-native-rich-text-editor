@@ -115,17 +115,17 @@ fn cell_record(
         .document()
         .ok_or_else(|| invariant("document missing"))?;
     let (origin, input_blocks, nested_tables) =
-        super::table_input_mapping::relative_cell_mapping(document, map, cell, start, keys)
+        super::native_frame_mapping::relative_cell_mapping(document, map, cell, start, keys)
             .map_err(invariant)?;
     let scalar_end = if let Some(next) = context.starts.get(index + 1) {
-        super::table_input_mapping::scalar_range(
+        super::native_frame_mapping::scalar_range(
             map,
             *next,
             *next + context.record.cells[index + 1].doc_size,
         )
         .0
     } else {
-        super::table_input_mapping::scalar_range(
+        super::native_frame_mapping::scalar_range(
             map,
             context.position,
             context.position + context.record.structure.doc_size,
@@ -306,7 +306,7 @@ pub(crate) fn build_native_frame(
             .ok_or_else(|| invariant("position map missing"))?;
         for context in &current_tables {
             if context.host.is_none() {
-                let (scalar_start, scalar_end) = super::table_input_mapping::scalar_range(
+                let (scalar_start, scalar_end) = super::native_frame_mapping::scalar_range(
                     map,
                     context.position,
                     context.position + context.record.structure.doc_size,

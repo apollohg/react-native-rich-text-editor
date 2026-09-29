@@ -808,8 +808,6 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
-
-
 // For large crates we prevent `MethodTooLargeException` (see #2340)
 // N.B. the name of the extension is very misleading, since it is
 // rather `InterfaceTooLargeException`, caused by too many methods
@@ -880,8 +878,6 @@ fun uniffi_editor_core_checksum_func_editor_v2_pin_position_epoch(
 fun uniffi_editor_core_checksum_func_editor_v2_redo(
 ): Short
 fun uniffi_editor_core_checksum_func_editor_v2_release_native_binding(
-): Short
-fun uniffi_editor_core_checksum_func_editor_v2_render_native(
 ): Short
 fun uniffi_editor_core_checksum_func_editor_v2_render_native_frame(
 ): Short
@@ -1045,8 +1041,6 @@ fun uniffi_editor_core_fn_func_editor_v2_pin_position_epoch(`editorId`: RustBuff
 fun uniffi_editor_core_fn_func_editor_v2_redo(`editorId`: RustBuffer.ByValue,`requestJson`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
 fun uniffi_editor_core_fn_func_editor_v2_release_native_binding(`editorId`: RustBuffer.ByValue,`ownerId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
-): RustBuffer.ByValue
-fun uniffi_editor_core_fn_func_editor_v2_render_native(`editorId`: RustBuffer.ByValue,`ownerId`: RustBuffer.ByValue,`mirrorScalarAnchor`: RustBuffer.ByValue,`mirrorScalarHead`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
 fun uniffi_editor_core_fn_func_editor_v2_render_native_frame(`editorId`: RustBuffer.ByValue,`ownerId`: RustBuffer.ByValue,`mirrorScalarAnchor`: RustBuffer.ByValue,`mirrorScalarHead`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
@@ -1278,9 +1272,6 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_editor_core_checksum_func_editor_v2_release_native_binding() != 2756.toShort()) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if (lib.uniffi_editor_core_checksum_func_editor_v2_render_native() != 16234.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_editor_core_checksum_func_editor_v2_render_native_frame() != 615.toShort()) {
@@ -4633,15 +4624,6 @@ public object FfiConverterMapStringString: FfiConverterRustBuffer<Map<kotlin.Str
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_editor_core_fn_func_editor_v2_release_native_binding(
         FfiConverterString.lower(`editorId`),FfiConverterString.lower(`ownerId`),_status)
-}
-    )
-    }
-
- fun `editorV2RenderNative`(`editorId`: kotlin.String, `ownerId`: kotlin.String, `mirrorScalarAnchor`: kotlin.UInt?, `mirrorScalarHead`: kotlin.UInt?): FfiJsonResult {
-            return FfiConverterTypeFfiJsonResult.lift(
-    uniffiRustCall() { _status ->
-    UniffiLib.INSTANCE.uniffi_editor_core_fn_func_editor_v2_render_native(
-        FfiConverterString.lower(`editorId`),FfiConverterString.lower(`ownerId`),FfiConverterOptionalUInt.lower(`mirrorScalarAnchor`),FfiConverterOptionalUInt.lower(`mirrorScalarHead`),_status)
 }
     )
     }

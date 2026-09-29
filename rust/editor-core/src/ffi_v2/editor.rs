@@ -397,7 +397,7 @@ fn create_impl(config_json: &str, snapshot_state: Option<Vec<u8>>) -> Result<Str
             resolve_configured_create_schema(&config).map_err(ffi_error)?
         }
     };
-    let id = DocumentApiFacade::create_with_schema(config, schema.clone()).map_err(ffi_error)?;
+    let id = DocumentApiFacade::create_with_schema(config, schema).map_err(ffi_error)?;
     if room_bound {
         // Room sessions own the collaboration runtime (bounded outbox,
         // awareness bookkeeping) from creation; attachment is idempotent
@@ -410,7 +410,6 @@ fn create_impl(config_json: &str, snapshot_state: Option<Vec<u8>>) -> Result<Str
         .and_then(|value| value)
         .map_err(ffi_error)?;
     }
-    super::render::register_session_schema(id, schema);
     Ok(serde_json::json!({ "editorId": id.to_string() }).to_string())
 }
 
@@ -424,7 +423,6 @@ pub fn editor_v2_destroy(editor_id: String) -> FfiUnitResult {
             return Err(unknown_editor_error());
         }
         registry::destroy_session(id);
-        super::render::unregister_session_schema(id);
         Ok(())
     })())
 }

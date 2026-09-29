@@ -4629,16 +4629,6 @@ public func editorV2ReleaseNativeBinding(editorId: String, ownerId: String) -> F
     )
 })
 }
-public func editorV2RenderNative(editorId: String, ownerId: String, mirrorScalarAnchor: UInt32?, mirrorScalarHead: UInt32?) -> FfiJsonResult  {
-    return try!  FfiConverterTypeFfiJsonResult_lift(try! rustCall() {
-    uniffi_editor_core_fn_func_editor_v2_render_native(
-        FfiConverterString.lower(editorId),
-        FfiConverterString.lower(ownerId),
-        FfiConverterOptionUInt32.lower(mirrorScalarAnchor),
-        FfiConverterOptionUInt32.lower(mirrorScalarHead),$0
-    )
-})
-}
 public func editorV2RenderNativeFrame(editorId: String, ownerId: String?, mirrorScalarAnchor: UInt32?, mirrorScalarHead: UInt32?) -> FfiNativeRenderFrameResult  {
     return try!  FfiConverterTypeFfiNativeRenderFrameResult_lift(try! rustCall() {
     uniffi_editor_core_fn_func_editor_v2_render_native_frame(
@@ -4829,9 +4819,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_editor_core_checksum_func_editor_v2_release_native_binding() != 2756) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_editor_core_checksum_func_editor_v2_render_native() != 16234) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_editor_core_checksum_func_editor_v2_render_native_frame() != 615) {
