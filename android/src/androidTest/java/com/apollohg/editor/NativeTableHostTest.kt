@@ -24,6 +24,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertNotNull
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -44,8 +45,19 @@ class NativeTableHostTest {
             .putExtra(NativeTableHostActivity.EXTRA_PLAIN_COLUMNS, PlainTableFixture.LARGE_COLUMNS)
         ActivityScenario.launch<NativeTableHostActivity>(intent).use { scenario ->
             awaitTableLayout(scenario, "native-table-large-timeout.png", timeoutMs = LARGE_TABLE_LAYOUT_TIMEOUT_MS)
+            scenario.onActivity { activity ->
+                val table = requireNotNull(tableHosts(activity.richTextView).single().preparedLayout)
+                    .blocks.mapNotNull { it.tableSurface }.single()
+                assertTrue("Cold prepared layouts remain bounded", table.cells.count { it.cachedContent != null } <=
+                    com.apollohg.editor.tables.TableCellLayoutStore.MAXIMUM_RESIDENT_LAYOUTS)
+                assertTrue("Unmounted bytes respect the production budget", table.layoutStore.unmountedRetainedBytes <=
+                    com.apollohg.editor.viewer.PREPARED_LAYOUT_UNMOUNTED_BYTE_BUDGET)
+                assertTrue("All cell accessibility text survives", table.cells.all { it.accessibilityText.isNotBlank() })
+            }
             listOf(0f, LARGE_TABLE_SCROLL_MIDDLE, 1f).forEach { fraction ->
+                val preparations = mutableListOf<Int>()
                 scenario.onActivity { activity ->
+                    activity.richTextView.editorTableSurface.onTableCellPreparedForTesting = preparations::add
                     val scroll = activity.richTextView.editorScrollView
                     val bottom = (scroll.getChildAt(0).height - scroll.height).coerceAtLeast(0)
                     scroll.scrollTo(0, (bottom * fraction).toInt())
@@ -54,10 +66,16 @@ class NativeTableHostTest {
                 scenario.onActivity { activity ->
                     val drawing = tableHosts(activity.richTextView).single()
                     val surface = requireNotNull(drawing.preparedLayout).blocks.mapNotNull { it.tableSurface }.single()
-                    assertEquals("every cell is prepared", PlainTableFixture.LARGE_ROWS * PlainTableFixture.LARGE_COLUMNS, surface.cells.size)
+                    assertEquals("every cell keeps measured metadata", PlainTableFixture.LARGE_ROWS * PlainTableFixture.LARGE_COLUMNS, surface.cells.size)
                     val visible = android.graphics.Rect()
                     assertTrue("the table is on screen at $fraction", drawing.getLocalVisibleRect(visible))
                     val presented = drawing.presentedTableCells()
+                    if (fraction == LARGE_TABLE_SCROLL_MIDDLE)
+                        assertTrue("Scrolling to an uncached region prepares entering cells", preparations.isNotEmpty())
+                    preparations.clear()
+                    drawing.presentedTableCells()
+                    assertTrue("Repeated presentation reuses cells", preparations.isEmpty())
+                    activity.richTextView.editorTableSurface.onTableCellPreparedForTesting = null
                     println("large table at $fraction: ${presented.size} presented, visible $visible")
                     val bound = PlainTableFixture.maximumPresentedCells(
                         surface.style, visible.width().toFloat(), visible.height().toFloat()
@@ -120,6 +138,16 @@ class NativeTableHostTest {
                 }
                 assertTrue("the bound node actually recorded typing",
                     drawing.nodeRecordsForTesting.getValue("boundCell") > retainedNodeRecords.getValue("boundCell"))
+                val activeInput = activity.richTextView.activeTextInput
+                activity.richTextView.editorScrollView.scrollTo(0, 0)
+                drawing.presentedTableCells()
+                val surface = requireNotNull(drawing.preparedLayout).blocks.mapNotNull { it.tableSurface }.single()
+                val active = requireNotNull(surface.cell(cellIndex))
+                val visible = Rect()
+                assertTrue(drawing.getLocalVisibleRect(visible))
+                assertTrue("The bound cell is outside the presentation window", surface.frameOfCell(active).top > visible.bottom)
+                assertNotNull("The active input cell stays prepared offscreen", active.cachedContent)
+                assertTrue("Scrolling preserves the input binding", activeInput === activity.richTextView.activeTextInput)
             }
             instrumentation.saveDeviceScreenshot("native-table-large-scrolled.png")
         }
@@ -157,7 +185,7 @@ class NativeTableHostTest {
                     assertTrue("row $row is revealed on screen: $bounds", Rect.intersects(bounds, screen))
                     assertTrue("row $row keeps focus after its reveal", info.isAccessibilityFocused)
                     assertEquals(row, item.rowIndex)
-                    assertEquals("row $row announces its column header", PlainTableFixture.CELL_TEXT, item.columnTitle)
+                    assertEquals("row $row announces its column header", PlainTableFixture.coordinateText(0, column), item.columnTitle)
                 }
             }
         }

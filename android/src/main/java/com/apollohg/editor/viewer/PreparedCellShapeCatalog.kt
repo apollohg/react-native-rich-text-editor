@@ -1,6 +1,7 @@
 package com.apollohg.editor.viewer
 
 import java.util.IdentityHashMap
+import java.lang.ref.WeakReference
 
 /** A source-neutral local shape. Parent artifacts remain the only persistent owners. */
 internal data class PreparedCellShapeKey(
@@ -112,6 +113,7 @@ internal class PreparedCellShapeBuildContext internal constructor(
         build: () -> PreparedProseLayout,
         bind: (PreparedCellShape) -> PreparedProseLayout?
     ): PreparedProseLayout {
+        if (closed) return build()
         val acquired = resolved[key] ?: catalog.acquireForBuild(key)?.also { shape ->
             resolved[key] = shape
             pins[shape] = Unit
@@ -137,13 +139,13 @@ internal class PreparedCellShapeBuildContext internal constructor(
 /** Index only shapes reachable from parent artifacts retained by the parent cache. */
 internal class PreparedCellShapeCatalog {
     private val lock = Any()
-    private var entries: Map<PreparedCellShapeKey, PreparedCellShape> = emptyMap()
+    private var entries: Map<PreparedCellShapeKey, WeakReference<PreparedCellShape>> = emptyMap()
     private val buildPins = IdentityHashMap<PreparedCellShape, Int>()
 
     fun newBuildContext(): PreparedCellShapeBuildContext = PreparedCellShapeBuildContext(this)
 
     fun acquireForBuild(key: PreparedCellShapeKey): PreparedCellShape? = synchronized(lock) {
-        entries[key]?.also { shape -> buildPins[shape] = (buildPins[shape] ?: 0) + 1 }
+        entries[key]?.get()?.also { shape -> buildPins[shape] = (buildPins[shape] ?: 0) + 1 }
     }
 
     fun stageForBuild(shape: PreparedCellShape) = synchronized(lock) {
@@ -154,7 +156,7 @@ internal class PreparedCellShapeCatalog {
         val next = linkedMapOf<PreparedCellShapeKey, PreparedCellShape>()
         liveLayouts.forEach { layout -> layout.collectCellShapes(next) }
         buildPins.keys.forEach { shape -> next.putIfAbsent(shape.key, shape) }
-        entries = next
+        entries = next.mapValues { WeakReference(it.value) }
     }
 
     fun releaseBuildPins(shapes: Collection<PreparedCellShape>) = synchronized(lock) {
@@ -165,9 +167,13 @@ internal class PreparedCellShapeCatalog {
     }
 
     internal val retainedBytes: Long get() = synchronized(lock) {
+        entries = entries.filterValues { it.get() != null }
         entries.keys.sumOf { it.catalogMetadataBytes() }
     }
-    internal val countForTesting: Int get() = synchronized(lock) { entries.size }
+    internal val countForTesting: Int get() = synchronized(lock) {
+        entries = entries.filterValues { it.get() != null }
+        entries.size
+    }
 }
 
 internal fun PreparedCellShapeKey.catalogMetadataBytes(): Long =
@@ -179,7 +185,7 @@ private fun PreparedProseLayout.collectCellShapes(
 ) {
     cellShape?.let { destination.putIfAbsent(it.key, it) }
     blocks.forEach { block ->
-        block.tableSurface?.cells?.forEach { it.content.collectCellShapes(destination) }
+        block.tableSurface?.cells?.forEach { it.cachedContent?.collectCellShapes(destination) }
     }
 }
 

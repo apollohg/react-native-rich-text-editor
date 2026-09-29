@@ -161,7 +161,7 @@ internal data class TableAccessibilityLocation(
 )
 
 internal object TableAccessibility {
-    private const val LABEL_SEPARATOR = " "
+    const val LABEL_SEPARATOR = " "
     private const val DESCRIPTION_SEPARATOR = ", "
 
     fun items(
@@ -193,7 +193,7 @@ internal object TableAccessibility {
             TableAccessibilityCell(
                 surface, cell, sourceCell.row.toInt(), sourceCell.column.toInt(),
                 sourceCell.rowspan.toInt(), sourceCell.colspan.toInt(), sourceCell.header,
-                text(cell.content).joinToString(LABEL_SEPARATOR)
+                cell.accessibilityText
             )
         }
         return TableAccessibilityTable(
@@ -204,14 +204,14 @@ internal object TableAccessibility {
         )
     }
 
-    private fun text(layout: PreparedProseLayout): List<String> = layout.blocks.flatMap { block ->
+    fun text(layout: PreparedProseLayout): List<String> = layout.blocks.flatMap { block ->
         block.fragments.mapNotNull { fragment ->
             when (fragment.kind) {
                 PreparedProseFragmentKind.TEXT -> fragment.layout?.text?.toString()
                 PreparedProseFragmentKind.ATOM -> fragment.labelLayout?.text?.toString() ?: fragment.label
                 else -> null
             }?.replace(LayoutConstants.OBJECT_REPLACEMENT_CHARACTER, "")?.trim()?.takeIf { it.isNotEmpty() }
-        } + block.tableSurface?.cells.orEmpty().flatMap { text(it.content) }
+        } + block.tableSurface?.cells.orEmpty().map { it.accessibilityText }.filter { it.isNotEmpty() }
     }
 
     fun spanDescription(view: View, cell: TableAccessibilityCell): String? = listOfNotNull(

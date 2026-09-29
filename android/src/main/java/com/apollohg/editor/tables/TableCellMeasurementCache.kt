@@ -10,7 +10,7 @@ data class TableCellMeasurementKey(
     val attachmentRevision: Long
 )
 
-class TableCellMeasurementCache(private val capacity: Int = 32768, private val byteLimit: Long = 32L * 1024L * 1024L) {
+class TableCellMeasurementCache(private val capacity: Int = 32768, private val byteLimit: Long = com.apollohg.editor.viewer.PREPARED_LAYOUT_UNMOUNTED_BYTE_BUDGET) {
     private data class Entry(val value: Float, val bytes: Long)
     private val entries = LinkedHashMap<TableCellMeasurementKey, Entry>(16, 0.75f, true)
     var retainedBytes: Long = 0

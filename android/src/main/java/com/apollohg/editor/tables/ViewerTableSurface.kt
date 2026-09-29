@@ -3,6 +3,8 @@ package com.apollohg.editor.tables
 import android.graphics.Rect
 import android.graphics.RectF
 import com.apollohg.editor.ProseViewerError
+import com.apollohg.editor.viewer.ProseLayoutKey
+import com.apollohg.editor.viewer.promotedCodeHighlightBlocks
 import com.apollohg.editor.viewer.PreparedProseLayout
 import com.apollohg.editor.viewer.PreparedProseBlock
 import com.apollohg.editor.viewer.PreparedProseInteraction
@@ -10,18 +12,47 @@ import com.apollohg.editor.viewer.PreparedProseAccessibilityNode
 import com.apollohg.editor.viewer.PreparedViewerAtom
 import com.apollohg.editor.viewer.ViewerImageAttachment
 
-internal data class PreparedViewerTableCell(
+internal class PreparedViewerTableCell(
     val sourceIndex: Int,
     val row: Int,
     val column: Int,
     val rowspan: Int,
     val colspan: Int,
     val contentOrigin: Pair<Int, Int>,
-    val content: PreparedProseLayout,
+    content: PreparedProseLayout,
     val isHeader: Boolean,
-    val attributesKey: String?
+    val attributesKey: String?,
+    val layoutStore: TableCellLayoutStore = TableCellLayoutStore(),
+    private val prepareContent: () -> PreparedProseLayout = { content }
 ) {
-    val retainedBytes: Long get() = 96L + content.retainedBytes
+    val contentKey = content.key
+    val contentWidthPx = content.widthPx
+    val contentHeightPx = content.heightPx
+    val contentError = content.error
+    val codeHighlightBlocks = promotedCodeHighlightBlocks(content.blocks, content.codeHighlightBlocks)
+    val highlightedCodeKeys: Set<String> = content.highlightedCodeKeys + content.blocks.flatMap { block ->
+        block.tableSurface?.cells.orEmpty().flatMap { it.highlightedCodeKeys }
+    }
+    val accessibilityText = TableAccessibility.text(content).joinToString(TableAccessibility.LABEL_SEPARATOR)
+    val hasNestedTables = content.blocks.any { it.tableSurface != null }
+    val hasAtoms: Boolean = content.viewerAtoms.isNotEmpty() || content.blocks.any { it.tableSurface?.hasAtoms == true }
+    val hasImages: Boolean = content.imageAttachments.isNotEmpty() || content.blocks.any {
+        it.imageAttachment != null || it.tableSurface?.cells?.any { cell -> cell.hasImages } == true
+    }
+    val isPositionFree = content.error == null && !hasNestedTables && !hasAtoms && !hasImages &&
+        content.interactions.all { it.docPos == null }
+    val content: PreparedProseLayout get() = layoutStore.value(contentKey, prepareContent)
+    val cachedContent: PreparedProseLayout? get() = layoutStore.peek(contentKey)
+    val retainedBytes: Long get() = METADATA_RETAINED_BYTES + (cachedContent?.retainedBytes ?: 0L) +
+        accessibilityText.length * 2L + codeHighlightBlocks.sumOf { CODE_DESCRIPTOR_RETAINED_BYTES + it.text.length * 2L } +
+        highlightedCodeKeys.sumOf { it.length * 2L }
+
+    init { layoutStore.insert(content) }
+
+    private companion object {
+        const val METADATA_RETAINED_BYTES = 384L
+        const val CODE_DESCRIPTOR_RETAINED_BYTES = 64L
+    }
 }
 
 internal class ViewerTableSurface(
@@ -37,6 +68,8 @@ internal class ViewerTableSurface(
     val editorTableId: String? = null,
     val displayScale: Float = 1f
 ) {
+    val layoutStore = cells.firstOrNull()?.layoutStore ?: TableCellLayoutStore()
+
     private data class Preparation(
         val layout: TableLayoutResult,
         val cells: List<PreparedViewerTableCell>,
@@ -57,25 +90,30 @@ internal class ViewerTableSurface(
         sourceTable: TableSurfaceSource? = null,
         sourceAttributes: Map<String, org.json.JSONObject> = emptyMap(),
         editorTableId: String? = null,
+        layoutStore: TableCellLayoutStore = TableCellLayoutStore(),
         prepareCell: (TableGridCell, Float) -> PreparedProseLayout
     ) : this(identity, hostViewportWidth, style, isRightToLeft,
         prepare(record, hostViewportWidth, style, isRightToLeft, displayScale, themeDigest,
-            fontEnvironmentRevision, textScale, sourceTable, prepareCell),
+            fontEnvironmentRevision, textScale, sourceTable, layoutStore, prepareCell),
         sourceTable, sourceAttributes, editorTableId, displayScale)
 
     fun replacingCells(contents: Map<Int, PreparedProseLayout>, contentHeights: Map<Int, Float>,
                        record: TableGridRecord, sourceTable: TableSurfaceSource,
-                       sourceAttributes: Map<String, org.json.JSONObject>): ViewerTableSurface {
+                       sourceAttributes: Map<String, org.json.JSONObject>,
+                       prepareCell: (TableGridCell, Float) -> PreparedProseLayout): ViewerTableSurface {
         val updated = cells.map { cell ->
             val source = sourceTable.cells[cell.sourceIndex]
-            cell.copy(content = contents[cell.sourceIndex] ?: cell.content,
-                isHeader = source.header, attributesKey = source.attrsKey)
+            val content = contents[cell.sourceIndex] ?: return@map cell
+            val width = content.widthPx.toFloat()
+            val gridCell = record.cells.first { it.sourceIndex == cell.sourceIndex }
+            PreparedViewerTableCell(cell.sourceIndex, cell.row, cell.column, cell.rowspan, cell.colspan,
+                cell.contentOrigin, content, source.header, source.attrsKey, layoutStore) { prepareCell(gridCell, width) }
         }
         val heights = updated.associate { it.sourceIndex to
-            (contentHeights[it.sourceIndex] ?: it.content.heightPx.toFloat()) }
+            (contentHeights[it.sourceIndex] ?: it.contentHeightPx.toFloat()) }
         val next = TableGridLayout(displayScale).relayout(record, hostViewportWidth, style, isRightToLeft, heights)
         return ViewerTableSurface(identity, hostViewportWidth, style, isRightToLeft, next, updated,
-            updated.firstNotNullOfOrNull { it.content.error }, sourceTable, sourceAttributes, editorTableId, displayScale)
+            updated.firstNotNullOfOrNull { it.contentError }, sourceTable, sourceAttributes, editorTableId, displayScale)
     }
 
     val bounds: RectF get() = RectF(0f, 0f, layout.contentWidth, layout.contentHeight)
@@ -92,6 +130,7 @@ internal class ViewerTableSurface(
             record: TableGridRecord, hostViewportWidth: Float, style: TableStyle,
             isRightToLeft: Boolean, displayScale: Float, themeDigest: String,
             fontEnvironmentRevision: Long, textScale: Float, sourceTable: TableSurfaceSource?,
+            layoutStore: TableCellLayoutStore,
             prepareCell: (TableGridCell, Float) -> PreparedProseLayout
         ): Preparation {
             val scale = displayScale.takeIf { it.isFinite() && it > 0f } ?: 1f
@@ -99,12 +138,18 @@ internal class ViewerTableSurface(
             val measurementRecord = record.copy(cells = record.cells.map { cell ->
                 cell.copy(contentKey = "${cell.contentKey}:${cell.sourceIndex}")
             })
-            val prepared = mutableMapOf<Int, PreparedProseLayout>()
+            val prepared = mutableMapOf<Int, PreparedViewerTableCell>()
+            val inset = (style.cellPadding + style.borderWidth).toInt()
+            fun capture(cell: TableGridCell, width: Float, content: PreparedProseLayout): PreparedViewerTableCell {
+                val source = sourceTable?.cells?.getOrNull(cell.sourceIndex)
+                return PreparedViewerTableCell(cell.sourceIndex, cell.row, cell.column, cell.rowspan, cell.colspan,
+                    inset to inset, content, source?.header ?: false, source?.attrsKey, layoutStore) { prepareCell(cell, width) }
+            }
             var error: ProseViewerError? = null
             val layout = TableGridLayout(scale).layout(measurementRecord, hostViewportWidth, style, isRightToLeft, themeDigest, fontEnvironmentRevision, textScale) { measuredCell, width ->
                 val cell = sourceCells[measuredCell.sourceIndex] ?: return@layout null
                 prepareCell(cell, width).also { artifact ->
-                    prepared[cell.sourceIndex] = artifact
+                    prepared[cell.sourceIndex] = capture(cell, width, artifact)
                     if (error == null) error = artifact.error
                 }.heightPx.toFloat()
             }
@@ -115,19 +160,13 @@ internal class ViewerTableSurface(
                     val pixels = kotlin.math.round(width * scale)
                     if (pixels.isFinite() && pixels in 0f..Int.MAX_VALUE.toFloat()) {
                         prepareCell(cell, pixels.toInt() / scale).also { artifact ->
-                            prepared[cell.sourceIndex] = artifact
+                            prepared[cell.sourceIndex] = capture(cell, pixels.toInt() / scale, artifact)
                             if (error == null) error = artifact.error
                         }
                     }
                 }
             }
-            val inset = (style.cellPadding + style.borderWidth).toInt()
-            val cells = layout.sourceOrder.mapNotNull { position ->
-                val gridCell = sourceCells[position] ?: return@mapNotNull null
-                val content = prepared[position] ?: return@mapNotNull null
-                val source = sourceTable?.cells?.getOrNull(position)
-                PreparedViewerTableCell(position, gridCell.row, gridCell.column, gridCell.rowspan, gridCell.colspan, inset to inset, content, source?.header ?: false, source?.attrsKey)
-            }
+            val cells = layout.sourceOrder.mapNotNull { prepared[it] }
             return Preparation(layout, cells, error)
         }
     }
@@ -181,7 +220,7 @@ internal class ViewerTableSurface(
             layout.imageAttachments.forEach(::emit)
         }
         appendSurface = { surface, originX, originY ->
-            surface.cells.forEach { cell ->
+            surface.cells.filter { it.hasImages }.forEach { cell ->
                 val frame = surface.frameOfCell(cell)
                 append(cell.content, originX + frame.left.toInt() + cell.contentOrigin.first,
                     originY + frame.top.toInt() + cell.contentOrigin.second)
@@ -206,10 +245,9 @@ private class ViewerTableCellIndex(cells: List<PreparedViewerTableCell>, rtl: Bo
         .groupBy { cells[it].row }.toSortedMap().map { (row, indexes) ->
             Band(row, indexes.sortedBy { if (rtl) -cells[it].column else cells[it].column })
         }
-    val nestedTableCells = cells.indices.filter { index -> cells[index].content.blocks.any { it.tableSurface != null } }
+    val nestedTableCells = cells.indices.filter { index -> cells[index].hasNestedTables }
     val atomCells = cells.indices.filter { index ->
-        val content = cells[index].content
-        content.viewerAtoms.isNotEmpty() || content.blocks.any { it.tableSurface?.hasAtoms == true }
+        cells[index].hasAtoms
     }
     val bySourceIndex = cells.indices.reversed().associateBy { cells[it].sourceIndex }
 
@@ -254,6 +292,21 @@ internal class ViewerTablePresentationOwner {
 
     private data class OffsetState(val logical: Float, val columnWidths: List<Float>)
     private val logicalOffsets = mutableMapOf<String, OffsetState>()
+    private var pinnedStores = emptyMap<TableCellLayoutStore, Set<ProseLayoutKey>>()
+
+    fun retainCells(cells: List<ViewerTablePresentedCell>) {
+        val next = cells.groupBy { it.cell.layoutStore }.mapValues { (_, cells) -> cells.map { it.cell.contentKey }.toSet() }
+        pinnedStores.forEach { (store, keys) -> (keys - next[store].orEmpty()).forEach(store::unpin) }
+        next.forEach { (store, keys) -> (keys - pinnedStores[store].orEmpty()).forEach(store::pin) }
+        cells.filter { it.cell.cachedContent == null }.forEach { it.cell.layoutStore.insert(it.content, it.cell.contentKey) }
+        pinnedStores = next
+    }
+
+    fun clearPreparedCells() {
+        pinnedStores.forEach { (store, keys) -> keys.forEach(store::unpin) }
+        pinnedStores = emptyMap()
+    }
+
 
     val retainedBytes: Long
         get() = FIXED_RETAINED_BYTES + logicalOffsets.entries.sumOf { entry ->
@@ -429,7 +482,7 @@ internal object ViewerTablePresentation {
         )
         val childX = cellBounds.left + cell.contentOrigin.first
         val childY = cellBounds.top + cell.contentOrigin.second
-        val contentBounds = RectF(childX, childY, childX + cell.content.widthPx, childY + cell.content.heightPx)
+        val contentBounds = RectF(childX, childY, childX + cell.contentWidthPx, childY + cell.contentHeightPx)
         return ViewerTablePresentedCell(surface, cell, cell.sourceIndex, cell.content, cellBounds, contentBounds, clip)
     }
 
@@ -491,7 +544,7 @@ internal object ViewerTablePresentation {
             ViewerTablePresentationViewport.Unknown -> null
             is ViewerTablePresentationViewport.Known -> viewport.window ?: Rect()
         }
-        return project(root, owner, window, 0f, 0f, UNBOUNDED)
+        return project(root, owner, window, 0f, 0f, UNBOUNDED).also { owner.retainCells(it.cells) }
     }
 
     private fun project(

@@ -37,7 +37,7 @@ class NativeTableHostActivity : Activity() {
         val plainRows = intent.getIntExtra(EXTRA_PLAIN_ROWS, 0)
         requireNotNull(adapter.setContentJson(
             when {
-                plainRows > 0 -> PlainTableFixture.document(plainRows, intent.getIntExtra(EXTRA_PLAIN_COLUMNS, 0))
+                plainRows > 0 -> PlainTableFixture.document(plainRows, intent.getIntExtra(EXTRA_PLAIN_COLUMNS, 0), PlainTableFixture::coordinateText)
                 intent.getBooleanExtra(EXTRA_OVERFLOW, false) ->
                     overflowingDocument(intent.getBooleanExtra(EXTRA_RTL, false))
                 else -> DOCUMENT

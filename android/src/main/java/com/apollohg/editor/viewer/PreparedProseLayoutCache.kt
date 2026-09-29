@@ -8,10 +8,11 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 
 internal const val PIXEL_GRID_ROUNDING_SLACK_PX = 1
+internal const val PREPARED_LAYOUT_UNMOUNTED_BYTE_BUDGET = 32L * 1024L * 1024L
 
 /** Byte-bounded unmounted LRU plus exact Fabric and direct immutable owners. */
 internal class PreparedProseLayoutCache(
-    private val byteBudget: Long = 32L * 1024L * 1024L,
+    private val byteBudget: Long = PREPARED_LAYOUT_UNMOUNTED_BYTE_BUDGET,
     private val pendingLeaseBudget: Int = 256
 ) {
     private val lock = Any()

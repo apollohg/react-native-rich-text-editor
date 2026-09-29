@@ -268,6 +268,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
         cellMode: Boolean,
         cellShapeContext: PreparedCellShapeBuildContext? = null
     ): PreparedProseLayout {
+        val tableLayoutStore = com.apollohg.editor.tables.TableCellLayoutStore()
         val warningSemanticGeneration = semanticGenerationIdentity
         if (widthPx <= 0 || !density.isFinite() ||
             density <= 0f
@@ -473,11 +474,12 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                     }
                     tableIncrementalRelayoutObserver?.invoke()
                     previous.replacingCells(contents, contents.mapValues { it.value.heightPx.toFloat() },
-                        record, surfaceSource, document.tableAttributes)
+                        record, surfaceSource, document.tableAttributes) { cell, width -> prepareCell(cell, width, false) }
                 } else {
                     ViewerTableSurface(document.tablePresentationIdentity(tableKey), record, tableWidth.toFloat(),
                         tableStyle, rtl, displayScale = 1f, sourceTable = surfaceSource,
-                        editorTableId = tableKey, sourceAttributes = document.tableAttributes) { cell, width ->
+                        editorTableId = tableKey, sourceAttributes = document.tableAttributes,
+                        layoutStore = tableLayoutStore) { cell, width ->
                         prepareCell(cell, width, true)
                     }
                 }
@@ -698,27 +700,11 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
         val rootHighlightBlocks = if (cellMode || theme.codeHighlighting == null) {
             highlightBlocks
         } else {
-            val promoted = mutableListOf<com.apollohg.editor.CodeHighlightBlock>()
-            fun append(blocks: List<PreparedProseBlock>, descriptors: List<com.apollohg.editor.CodeHighlightBlock>) {
-                val byStart = descriptors.associateBy { it.start }
-                blocks.forEachIndexed { index, block ->
-                    byStart[index]?.let { promoted += it.copy(start = promoted.size) }
-                    block.tableSurface?.cells?.forEach { cell ->
-                        append(cell.content.blocks, cell.content.codeHighlightBlocks)
-                    }
-                }
-                descriptors.filter { it.start !in blocks.indices }.forEach { promoted += it.copy(start = promoted.size) }
-            }
-            append(blocks, highlightBlocks)
-            promoted
+            promotedCodeHighlightBlocks(blocks, highlightBlocks)
         }
         val rootHighlightedCodeKeys = if (cellMode) highlightedCodeKeys.toSet() else buildSet {
             addAll(highlightedCodeKeys)
-            fun append(layout: PreparedProseLayout) {
-                addAll(layout.highlightedCodeKeys)
-                layout.blocks.forEach { block -> block.tableSurface?.cells?.forEach { append(it.content) } }
-            }
-            blocks.forEach { block -> block.tableSurface?.cells?.forEach { append(it.content) } }
+            blocks.forEach { block -> block.tableSurface?.cells?.forEach { addAll(it.highlightedCodeKeys) } }
         }
         retained += rootHighlightBlocks.sumOf { 64L + it.text.length * 2L }
         val rootAttachments = if (cellMode) {

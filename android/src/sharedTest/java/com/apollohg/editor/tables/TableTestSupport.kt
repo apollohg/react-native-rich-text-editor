@@ -45,15 +45,21 @@ internal object PlainTableFixture {
         return columns * rows
     }
 
-    fun document(rows: Int, columns: Int, cellText: String = CELL_TEXT): String {
+    fun coordinateText(row: Int, column: Int): String =
+        String.format(java.util.Locale.ROOT, "R%04dC%04dXY", row, column)
+
+    fun document(rows: Int, columns: Int, cellText: String = CELL_TEXT): String =
+        document(rows, columns) { _, _ -> cellText }
+
+    fun document(rows: Int, columns: Int, cellText: (Int, Int) -> String): String {
         fun node(type: String, content: JSONArray) = JSONObject().put("type", type).put("content", content)
-        fun cell(type: String) = node(type, JSONArray().put(node("paragraph", JSONArray().put(
-            JSONObject().put("type", "text").put("text", cellText)
+        fun cell(type: String, row: Int, column: Int) = node(type, JSONArray().put(node("paragraph", JSONArray().put(
+            JSONObject().put("type", "text").put("text", cellText(row, column))
         ))))
         val tableRows = JSONArray()
         repeat(rows) { row ->
             val cells = JSONArray()
-            repeat(columns) { cells.put(cell(if (row == HEADER_ROW) "table_header" else "table_cell")) }
+            repeat(columns) { column -> cells.put(cell(if (row == HEADER_ROW) "table_header" else "table_cell", row, column)) }
             tableRows.put(node("table_row", cells))
         }
         return node("doc", JSONArray().put(node("table", tableRows))).toString()

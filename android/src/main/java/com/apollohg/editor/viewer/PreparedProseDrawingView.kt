@@ -333,6 +333,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         }
         clearVirtualAccessibilityFocus()
         if (preparedLayout !== layout) {
+            tablePresentationOwner.clearPreparedCells()
             tableInteraction.cancel()
             val priorLayout = preparedLayout
             if (layout == null && preserveTablePresentationForReplacement && priorLayout != null) {
@@ -1144,6 +1145,8 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     }
 
     override fun onDetachedFromWindow() {
+        tablePresentationOwner.clearPreparedCells()
+        replacementTablePresentationOwner?.clearPreparedCells()
         clearTableNodes()
         tableInteraction.cancel()
         pendingTap = null

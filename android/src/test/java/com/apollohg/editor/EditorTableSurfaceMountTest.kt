@@ -450,6 +450,57 @@ internal class EditorTableSurfaceMountTest {
                 0f, canvas.tablePhysicalOffsetForTesting(nextSurface.identity), 0.01f)
         }
 
+    private fun uniqueLargeTable() = PlainTableFixture.document(
+        PlainTableFixture.LARGE_ROWS, PlainTableFixture.LARGE_COLUMNS
+    ) { row, column -> PlainTableFixture.coordinateText(row, column) }
+
+    @Test
+    fun testColdLayoutRetainsOnlyWindowLayouts() = withAttachedMountedView(uniqueLargeTable()) { view, _ ->
+        val canvas = requireNotNull(drawing(view))
+        val table = requireNotNull(canvas.preparedLayout?.blocks?.single()?.tableSurface)
+        assertEquals(PlainTableFixture.LARGE_ROWS * PlainTableFixture.LARGE_COLUMNS, table.cells.size)
+        assertTrue(table.cells.count { it.cachedContent != null } <=
+            com.apollohg.editor.tables.TableCellLayoutStore.MAXIMUM_RESIDENT_LAYOUTS)
+        assertTrue(table.layoutStore.unmountedRetainedBytes <=
+            com.apollohg.editor.viewer.PREPARED_LAYOUT_UNMOUNTED_BYTE_BUDGET)
+        assertTrue("All exact heights remain available", table.cells.all { it.contentHeightPx > 0 })
+    }
+
+    @Test
+    fun testAccessibilityMetadataCoversTheWholeTable() = withAttachedMountedView(uniqueLargeTable()) { view, _ ->
+        val table = requireNotNull(drawing(view)?.preparedLayout?.blocks?.single()?.tableSurface)
+        val before = table.layoutStore.count
+        assertTrue("Every offscreen cell keeps its text", table.cells.all { it.accessibilityText.isNotBlank() })
+        assertEquals("R0999C0019XY", table.cells.last().accessibilityText)
+        assertEquals("Metadata access must not prepare cells", before, table.layoutStore.count)
+    }
+
+    @Test
+    fun testEditingOneCellDoesNotPrepareOffscreenCells() = withAttachedMountedView(uniqueLargeTable()) { view, _ ->
+        tapFirstCell(view)
+        val input = view.activeTextInput
+        input.setSelection(input.text.length)
+        val prepared = mutableListOf<Int>()
+        view.editorTableSurface.onTableCellPreparedForTesting = prepared::add
+        assertTrue(requireNotNull(input.onCreateInputConnection(EditorInfo())).commitText("x", 1))
+        assertEquals("A large-table edit must not resolve offscreen metadata", 1, prepared.size)
+        assertEquals(listOf(0), prepared)
+    }
+
+    @Test
+    fun testScrollingPreparesOnlyEnteringCells() = withAttachedMountedView(uniqueLargeTable()) { view, _ ->
+        val prepared = mutableListOf<Int>()
+        view.editorTableSurface.onTableCellPreparedForTesting = prepared::add
+        val scroll = view.editorScrollView
+        scroll.scrollTo(0, scroll.getChildAt(0).height / 2)
+        val canvas = requireNotNull(drawing(view))
+        assertTrue(canvas.presentedTableCells().isNotEmpty())
+        assertTrue("Entering an uncached region must prepare cells", prepared.isNotEmpty())
+        prepared.clear()
+        canvas.presentedTableCells()
+        assertTrue("Repeated presentation must reuse cells", prepared.isEmpty())
+    }
+
     @Test
     fun `typing in one cell prepares only that cell`() = withMountedView(gridDocument) { view, adapter, _ ->
         measure(view, 600)

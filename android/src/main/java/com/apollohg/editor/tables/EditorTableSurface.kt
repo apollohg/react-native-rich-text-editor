@@ -149,22 +149,16 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             val source = reusable?.surface?.sourceTable
             reusable?.surface?.cells?.forEach { cell ->
                 val sourceCell = source?.cells?.getOrNull(cell.sourceIndex)
-                if (sourceCell != null && isPositionFree(cell.content)) {
+                val content = cell.cachedContent
+                if (sourceCell != null && cell.isPositionFree && content != null) {
                     contents.getOrPut(Key(sourceCell.contentKey, sourceCell.header, sourceCell.attrsKey,
-                        cell.content.key.widthPx)) { ArrayDeque() }.addLast(cell.content)
+                        content.key.widthPx)) { ArrayDeque() }.addLast(content)
                 }
             }
         }
 
         fun take(cell: TableSurfaceCell, widthPx: Int): PreparedProseLayout? =
             contents[Key(cell.contentKey, cell.header, cell.attrsKey, widthPx)]?.removeFirstOrNull()
-
-        companion object {
-            fun isPositionFree(layout: PreparedProseLayout): Boolean =
-                layout.error == null && layout.viewerAtoms.isEmpty() &&
-                    layout.blocks.all { it.imageAttachment == null && it.tableSurface == null } &&
-                    layout.interactions.all { it.docPos == null }
-        }
     }
     private data class TableResizePreview(val edge: TableResizeEdge, val width: Int)
     private data class PreparationKey(val adapter: EditorV2Adapter, val revision: ULong,
@@ -215,6 +209,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
     private val cellShapes = PreparedCellShapeCatalog()
     private data class ActiveCell(val tableId: String, val cellIndex: Int)
     private var activeCell: ActiveCell? = null
+    private var pinnedInputCell: PreparedViewerTableCell? = null
     private var applyingCellUpdate = false
     private var accessibilityKey: Triple<ULong?, Int, Int?>? = null
     private var activeAppearanceRevision: Long? = null
@@ -943,7 +938,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
                 .copy(insetTopPx = 0, insetRightPx = 0, insetBottomPx = 0, insetLeftPx = 0,
                     tableDirection = tableDirection)
             val engine = StaticLayoutAndroidProseLayoutEngine().apply {
-                tableCellPreparationObserver = onTableCellPreparedForTesting
+                tableCellPreparationObserver = { onTableCellPreparedForTesting?.invoke(it) }
                 tableIncrementalRelayoutObserver = { incrementalRelayoutsForTesting += 1 }
             }
             val appearance = "${input.renderAppearanceRevision}:$tableDirection:$density"
@@ -979,7 +974,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
                         val previous = entries[tableKey]?.takeIf { it.appearance == appearance }
                         if (preview == null && key?.resizePreview == null && previous != null &&
                             changes != null && !changes.fullReset && tableKey !in changes.replacedTables &&
-                            previous.surface.cells.all { ReusableCellContents.isPositionFree(it.content) }) {
+                            previous.surface.cells.all { it.isPositionFree }) {
                             previous.surface to changes.changedCells[tableKey].orEmpty()
                         } else null
                     }
@@ -994,8 +989,11 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
                 }.toMap()
             } finally {
                 shapes.close()
+                engine.reusableTableCellContent = null
+                engine.incrementalTableSurface = null
+                engine.tableIncrementalRelayoutObserver = null
             }
-            cellShapes.synchronizeOwners(prepared.values.flatMap { entry -> entry.surface.cells.map { it.content } })
+            cellShapes.synchronizeOwners(prepared.values.flatMap { entry -> entry.surface.cells.mapNotNull { it.cachedContent } })
             entries = prepared
             key = nextKey
         }
@@ -1536,6 +1534,12 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         } ?: return false
         val cell = presented.cell
         val input = coordinator?.cellInput ?: return false
+        if (pinnedInputCell !== cell) {
+            pinnedInputCell?.let { it.layoutStore.unpin(it.contentKey) }
+            cell.layoutStore.pin(cell.contentKey)
+            cell.layoutStore.insert(presented.content, cell.contentKey)
+            pinnedInputCell = cell
+        }
         val inset = cell.contentOrigin
         val frame = presented.surface.frameOfCell(cell)
         val width = (frame.width - 2f * inset.first).toInt().coerceAtLeast(1)
@@ -1560,6 +1564,8 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
     }
 
     fun invalidateCell() {
+        pinnedInputCell?.let { it.layoutStore.unpin(it.contentKey) }
+        pinnedInputCell = null
         activeCell = null
         activeAppearanceRevision = null
         coordinator?.invalidateBinding()

@@ -196,3 +196,17 @@ internal data class PreparedProseLayout(
             PreparedProseLayout(key, widthPx, 0, emptyList(), retainedBytes = 0, error = error)
     }
 }
+
+internal fun promotedCodeHighlightBlocks(
+    blocks: List<PreparedProseBlock>,
+    descriptors: List<com.apollohg.editor.CodeHighlightBlock>
+): List<com.apollohg.editor.CodeHighlightBlock> = buildList {
+    val byStart = descriptors.associateBy { it.start }
+    blocks.forEachIndexed { index, block ->
+        byStart[index]?.let { add(it.copy(start = size)) }
+        block.tableSurface?.cells?.forEach { cell ->
+            cell.codeHighlightBlocks.forEach { add(it.copy(start = size)) }
+        }
+    }
+    descriptors.filter { it.start !in blocks.indices }.forEach { add(it.copy(start = size)) }
+}

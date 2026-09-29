@@ -21,7 +21,7 @@ internal data class PreparedMountTicket(
 internal class PreparedProseLayoutRegistry(
     private val compiler: DocumentCompiler = ::compileWithRust,
     private val layoutEngine: AndroidProseLayoutEngine = StaticLayoutAndroidProseLayoutEngine(),
-    byteBudget: Long = 32L * 1024L * 1024L,
+    byteBudget: Long = com.apollohg.editor.viewer.PREPARED_LAYOUT_UNMOUNTED_BYTE_BUDGET,
     private val compiledByteBudget: Long = 8L * 1024L * 1024L,
     private val compilationFailureBudget: Int = 128,
     private val themeEntryBudget: Int = 128
