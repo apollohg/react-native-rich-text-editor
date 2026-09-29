@@ -335,6 +335,15 @@ class RichTextEditorView @JvmOverloads constructor(
     private var currentEditorId: Long = 0
     private var deferEditorUnbindOnDetach = false
     internal var onBeforeDetachedFromWindow: (() -> Unit)? = null
+    private var scrollObserversPosted = false
+    private val scrollObservers = Runnable {
+        scrollObserversPosted = false
+        if (isAttachedToWindow) {
+            editorEditText.surfaceViewportChanged()
+            refreshOverlays()
+            emitAtomLayoutIfAvailable(force = true)
+        }
+    }
 
     /** Binds or unbinds the Rust editor instance. */
     var editorId: Long
@@ -403,9 +412,10 @@ class RichTextEditorView @JvmOverloads constructor(
         editorEditText.onRootUpdateApplied = editorTableSurface::followRootSelectionIntoCell
         editorEditText.tableCellDropHandler = editorTableSurface::onRootDragEvent
         editorScrollView.setOnScrollChangeListener { _, _, _, _, _ ->
-            editorEditText.surfaceViewportChanged()
-            refreshOverlays()
-            emitAtomLayoutIfAvailable(force = true)
+            // Visibility queries must not overwrite Android's in-flight caret request rectangle.
+            if (isAttachedToWindow && !scrollObserversPosted) {
+                scrollObserversPosted = post(scrollObservers)
+            }
         }
         editorEditText.onSelectionOrContentMayChange = { refreshOverlays() }
         editorEditText.onContentSizeMayChange = {
@@ -988,6 +998,8 @@ class RichTextEditorView @JvmOverloads constructor(
         if (editorId != 0L && !deferEditorUnbindOnDetach) {
             editorEditText.unbindEditor()
         }
+        removeCallbacks(scrollObservers)
+        scrollObserversPosted = false
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {

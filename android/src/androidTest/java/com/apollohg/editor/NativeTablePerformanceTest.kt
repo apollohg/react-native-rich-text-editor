@@ -1,6 +1,7 @@
 package com.apollohg.editor
 
 import android.app.Activity
+import android.graphics.Rect
 import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
@@ -10,6 +11,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
 import android.view.Window
+import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.widget.FrameLayout
 import androidx.test.core.app.ActivityScenario
@@ -120,6 +122,7 @@ class NativeTablePerformanceTest {
             try {
                 active.onActivity { host ->
                     activity = host
+                    host.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                     val density = host.resources.displayMetrics.density
                     widthPx = (VIEWPORT_WIDTH * density).roundToInt()
                     heightPx = (VIEWPORT_HEIGHT * density).roundToInt()
@@ -153,6 +156,7 @@ class NativeTablePerformanceTest {
             } finally {
                 onMain {
                     pending.set(null)
+                    activity.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                     onFrameMetrics = null
                     if (::frameListener.isInitialized) activity.window.removeOnFrameMetricsAvailableListener(frameListener)
                     activity.setContentView(FrameLayout(activity))
@@ -357,15 +361,18 @@ class NativeTablePerformanceTest {
     }
 
     private fun edit(host: EditorHost, input: EditorEditText,
-                     counters: PreparedProseInstrumentation.TablePerformanceCounters): Pair<Measurement, Boolean> {
+                     counters: PreparedProseInstrumentation.TablePerformanceCounters,
+                     text: String = TYPING_TEXT): Pair<Measurement, Boolean> {
         val cellIndex = onMain { requireNotNull(input.tableCellPositionMap).binding.cellIndex }
         val before = onMain { Triple(requireNotNull(host.table.cell(cellIndex)).contentHeightPx,
-            input.text.length, host.adapter.baseDocumentRevision) }
+            if (text == LINE_BREAK_TEXT) input.text.count { it == LINE_BREAK_TEXT.single() } else input.text.length,
+            host.adapter.baseDocumentRevision) }
         val connection = onMain { requireNotNull(input.onCreateInputConnection(EditorInfo())) }
         val result = measureChange(host, counters) {
-            assertTrue(connection.commitText(TYPING_TEXT, 1))
+            assertTrue(connection.commitText(text, 1))
             layout(host.view)
-            assertEquals(before.second + TYPING_TEXT.length, input.text.length)
+            val after = if (text == LINE_BREAK_TEXT) input.text.count { it == LINE_BREAK_TEXT.single() } else input.text.length
+            assertEquals(before.second + text.length, after)
             assertTrue("Native input did not advance document revision", host.adapter.baseDocumentRevision > before.third)
         }
         val wrapped = onMain { requireNotNull(host.table.cell(cellIndex)).contentHeightPx != before.first }
@@ -669,6 +676,80 @@ class NativeTablePerformanceTest {
         } finally { onMain { host.close() } }
     }
 
+    @Test fun caretRevealPreservesRectangleThroughTableScroll() = withActivity {
+        val fixture = Fixture(SMALL_ROWS, WRAP_SCROLL_COLUMNS, false)
+        val host = onMain { EditorHost() }
+        var propagated: Rect? = null
+        try {
+            onMain {
+                (host.view.parent as ViewGroup).removeView(host.view)
+                val container = object : FrameLayout(activity) {
+                    override fun requestChildRectangleOnScreen(child: View, rectangle: Rect, immediate: Boolean): Boolean {
+                        propagated = Rect(rectangle)
+                        return super.requestChildRectangleOnScreen(child, rectangle, immediate)
+                    }
+                }
+                activity.setContentView(container)
+                container.addView(host.view, FrameLayout.LayoutParams(widthPx, heightPx))
+                host.load(fixture.source())
+            }
+            val input = onMain { host.bind(0) }
+            measure(host.drawing) {
+                val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+                assertTrue(connection.commitText(TYPING_TEXT.repeat(TYPING_SAMPLES), 1))
+                layout(host.view)
+            }
+            onMain {
+                host.view.editorScrollView.scrollTo(0, 0)
+                val caret = Rect().also(input::getFocusedRect)
+                propagated = null
+                input.requestRectangleOnScreen(Rect(caret), true)
+                assertTrue("Caret reveal must synchronously scroll the table", host.view.editorScrollView.scrollY > 0)
+                val expected = Rect(caret)
+                host.view.offsetDescendantRectToMyCoords(input, expected)
+                assertEquals("Caret bounds changed while propagating through table scroll: local=$caret scroll=${host.view.editorScrollView.scrollY}",
+                    expected, propagated)
+            }
+        } finally { onMain { host.close() } }
+    }
+
+    @Test fun typingWrappedCellDoesNotScrollBackToTop() = withActivity {
+        val fixture = Fixture(SMALL_ROWS, WRAP_SCROLL_COLUMNS, false)
+        val host = onMain { EditorHost().also { it.load(fixture.source()) } }
+        try {
+            val input = onMain { host.bind(0) }
+            repeat(VIEWPORT_STABILITY_WARMUP_SAMPLES) { edit(host, input, PreparedProseInstrumentation.TablePerformanceCounters()) }
+            val offsets = mutableListOf<Int>()
+            val frames = mutableListOf<String>()
+            var editIndex = 0
+            val observer = ViewTreeObserver.OnPreDrawListener {
+                val location = IntArray(2)
+                host.view.getLocationOnScreen(location)
+                val scroll = host.view.editorScrollView.scrollY
+                offsets.add(scroll - location[1])
+                frames.add("edit=$editIndex scroll=$scroll hostY=${location[1]} inputY=${input.y} inputScroll=${input.scrollY}")
+                true
+            }
+            onMain { host.view.viewTreeObserver.addOnPreDrawListener(observer) }
+            var wraps = 0
+            try {
+                repeat(TYPING_SAMPLES) {
+                    editIndex = it
+                    if (edit(host, input, PreparedProseInstrumentation.TablePerformanceCounters()).second) wraps++
+                }
+                repeat(BASELINE_SAMPLES) {
+                    editIndex = TYPING_SAMPLES + it
+                    edit(host, input, PreparedProseInstrumentation.TablePerformanceCounters(), LINE_BREAK_TEXT)
+                }
+            } finally { onMain { host.view.viewTreeObserver.removeOnPreDrawListener(observer) } }
+            assertTrue("Typing must wrap and scroll beyond the initial viewport: wraps=$wraps offsets=${offsets.distinct()}",
+                wraps > 0 && offsets.last() > offsets.first())
+            val reversal = offsets.zipWithNext().indexOfFirst { (before, after) -> after < before - SCROLL_ROUNDING_TOLERANCE_PX }
+            assertEquals("Appending text scrolled backward: ${if (reversal < 0) frames.distinct() else frames.subList(max(0, reversal - VIEWPORT_STABLE_FRAMES), minOf(frames.size, reversal + VIEWPORT_STABLE_FRAMES))}",
+                -1, reversal)
+        } finally { onMain { host.close() } }
+    }
+
     @Test fun exporterPrimitivesAndNativeStages() = withActivity {
         val fixture = Fixture(SMALL_ROWS, SMALL_COLUMNS, false)
         val source = fixture.source()
@@ -744,6 +825,8 @@ class NativeTablePerformanceTest {
         const val VIEWPORT_STABILITY_SAMPLES = 80
         const val VIEWPORT_STABILITY_WARMUP_SAMPLES = 100
         const val VIEWPORT_STABLE_FRAMES = 8
+        const val WRAP_SCROLL_COLUMNS = 20
+        const val SCROLL_ROUNDING_TOLERANCE_PX = 1
         const val COLD_SAMPLES = 30
         const val WARM_SAMPLES = 1_000
         const val BASELINE_SAMPLES = 10
@@ -755,6 +838,7 @@ class NativeTablePerformanceTest {
         const val NANOS_PER_MILLISECOND = 1_000_000.0
         const val TRAVERSAL_NANOS = 30_000_000_000L
         const val TYPING_TEXT = "x"
+        const val LINE_BREAK_TEXT = "\n"
         const val RICH_TEXT = "café العربية 👩🏽‍💻"
         const val OUTPUT_FILE = "table-performance-android.json"
         const val SMOKE_OUTPUT_FILE = "table-performance-android-storage-smoke.json"
