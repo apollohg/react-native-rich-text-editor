@@ -227,6 +227,7 @@ function peersToRemoteSelections(
                         : undefined,
                 isFocused: peer.state?.focused !== false,
                 ...(peer.cellRectangle == null ? {} : { cellRectangle: peer.cellRectangle }),
+                ...(peer.resolvedAt == null ? {} : { resolvedAt: peer.resolvedAt }),
             },
         ];
     });

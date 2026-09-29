@@ -58,6 +58,7 @@ final class TableIntegrationTests: XCTestCase {
         let anchor: UInt32
         let head: UInt32
         let cellRectangle: (anchor: UInt32, head: UInt32)?
+        var resolvedAt: [String: String]? = nil
     }
 
     private final class Fixture {
@@ -113,6 +114,7 @@ final class TableIntegrationTests: XCTestCase {
                     "clientId": peer.clientId, "anchor": Int(peer.anchor), "head": Int(peer.head),
                     "color": peer.color, "name": Integration.peerName, "isFocused": true
                 ]
+                if let resolvedAt = peer.resolvedAt { item["resolvedAt"] = resolvedAt }
                 if let rectangle = peer.cellRectangle {
                     item["cellRectangle"] = ["anchorCell": Int(rectangle.anchor), "headCell": Int(rectangle.head)]
                 }
@@ -197,6 +199,45 @@ final class TableIntegrationTests: XCTestCase {
         }
     }
 
+    func testRemoteRectangleWaitsForItsResolvedFrameInEitherDeliveryOrder() throws {
+        let emptyCell = #"{"type":"table_cell","content":[{"type":"paragraph"}]}"#
+        let row = #"{"type":"table_row","content":[\#(emptyCell)]}"#
+        let document = #"{"type":"doc","content":[{"type":"table","content":[\#(row),\#(row)]}]}"#
+        for nativeFirst in [false, true] {
+            try withTable(document) { fixture in
+                let positions = try fixture.positions()
+                let first = positions[0]
+                let shifted = positions[1]
+                let revision = fixture.adapter.baseDocumentRevision
+                func peer(_ opening: UInt32, _ revision: UInt64) -> Peer {
+                    Peer(clientId: Integration.firstPeer, color: Integration.firstPeerColor,
+                         anchor: opening, head: opening, cellRectangle: (opening, opening),
+                         resolvedAt: ["editorId": fixture.adapter.editorId, "documentRevision": String(revision)])
+                }
+                try fixture.setPeers([peer(first, revision)])
+                XCTAssertEqual(fixture.drawing.remoteTableCellSelections.first?.sourceIndices, [0])
+                try fixture.applyRemoteCellSelection(anchor: first, head: first)
+                try fixture.applyRemoteCommand(["type": "addTableRow", "side": "before"])
+                if nativeFirst {
+                    fixture.deliverRemoteCommit()
+                } else {
+                    try fixture.setPeers([peer(shifted, revision + 1)])
+                }
+                XCTAssertTrue(fixture.drawing.remoteTableCellSelections.isEmpty,
+                              "nativeFirst=\(nativeFirst): mismatched frames must not highlight a different cell")
+                XCTAssertTrue(fixture.view.remoteSelectionOverlaySubviewsForTesting().isEmpty,
+                              "a mismatched rectangle must not fall back to its stale cursor")
+                if nativeFirst {
+                    try fixture.setPeers([peer(shifted, revision + 1)])
+                } else {
+                    fixture.deliverRemoteCommit()
+                }
+                XCTAssertEqual(fixture.drawing.remoteTableCellSelections.first?.sourceIndices, [1],
+                               "the original cell is highlighted once both deliveries match")
+            }
+        }
+    }
+
     func testRemoteMergeReresolvesTheRectangleToTheMergedCell() throws {
         try withTable(Integration.gridDocument) { fixture in
             let before = try fixture.positions()
@@ -218,6 +259,11 @@ final class TableIntegrationTests: XCTestCase {
             XCTAssertEqual(EditorV2Adapter.uint32Field(mergedRecord, "colspan"), UInt32(Integration.mergedColumnCount),
                            "the remote merge must land")
             let merged = try fixture.presentedCell(first)
+            XCTAssertTrue(fixture.drawing.remoteTableCellSelections.isEmpty, "revisionless coordinates expire when the frame changes")
+            try fixture.setPeers([Peer(clientId: Integration.firstPeer, color: Integration.firstPeerColor,
+                                       anchor: first, head: first, cellRectangle: (first, first),
+                                       resolvedAt: ["editorId": fixture.adapter.editorId,
+                                                    "documentRevision": String(fixture.adapter.baseDocumentRevision)])])
             let remote = try XCTUnwrap(fixture.drawing.remoteTableCellSelections.first)
             XCTAssertEqual(remote.sourceIndices, [Integration.gridFirst])
             let rects = try fixture.remoteRects(remote)
@@ -320,16 +366,16 @@ final class TableIntegrationTests: XCTestCase {
             let otherEditorId = makeV2Editor(configJson: TableInputTestSchema.tableConfig)
             defer { destroyV2Editor(id: otherEditorId) }
             let other = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: otherEditorId))
-            _ = try XCTUnwrap(other.setContentJson(Integration.shiftedGridDocument))
+            _ = try XCTUnwrap(other.setContentJson(Integration.gridDocument))
             fixture.expo.setEditorId(otherEditorId)
             XCTAssertTrue(fixture.view.textView.applyUpdateJSON(try XCTUnwrap(other.refreshFromRustState(mirrorSelection: nil))))
             fixture.expo.layoutIfNeeded()
             let otherOpenings = try XCTUnwrap(other.tableRecordsForTesting.values.first?["cells"] as? [[String: Any]])
                 .compactMap { EditorV2Adapter.uint32Field($0, "sourcePos") }
-            XCTAssertFalse(otherOpenings.contains(first), "the fixture must move the openings")
+            XCTAssertTrue(otherOpenings.contains(first), "the new editor deliberately reuses the same opening")
             XCTAssertTrue(fixture.drawing.remoteTableCellSelections.isEmpty,
-                          "the old opening addresses no cell of the new owner")
-            XCTAssertFalse(fixture.view.remoteSelectionOverlaySubviewsForTesting().isEmpty)
+                          "an equal opening in another editor must not inherit presence")
+            XCTAssertTrue(fixture.view.remoteSelectionOverlaySubviewsForTesting().isEmpty)
             fixture.expo.setEditorId(fixture.editorId)
         }
     }

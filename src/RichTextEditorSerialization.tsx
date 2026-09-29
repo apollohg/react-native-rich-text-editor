@@ -9,7 +9,7 @@ import {
     type ReadonlyActiveState,
     type Selection,
 } from './NativeEditorBridge';
-import { nativeEditorV2U32 } from './NativeEditorResultNormalization';
+import { nativeEditorV2U32, normalizeNativeEditorResolvedSelectionFrame } from './NativeEditorResultNormalization';
 import { atomSelected, type AtomInstance } from './atomInstances';
 import { type EditorToolbarFrame, type EditorToolbarGroupChildItem, type EditorToolbarItem } from './EditorToolbar';
 import { IMAGE_NODE_NAME } from './schemas';
@@ -317,7 +317,11 @@ export function serializeRemoteSelections(
         return undefined;
     }
 
-    const normalized = remoteSelections.map(({ cellRectangle, ...selection }) => {
+    const normalized = remoteSelections.map(({ cellRectangle, resolvedAt, ...selection }) => {
+        const frame = resolvedAt === undefined ? undefined : normalizeNativeEditorResolvedSelectionFrame(resolvedAt);
+        if (frame === null) {
+            throw new Error('NativeRichTextEditor: remote resolvedAt must contain canonical decimal editorId and documentRevision');
+        }
         const clientId = normalizeNativeEditorV2DecimalId(selection.clientId);
 
         if (clientId == null) {
@@ -326,6 +330,7 @@ export function serializeRemoteSelections(
 
         return {
             ...selection,
+            ...(frame === undefined ? {} : { resolvedAt: frame }),
             clientId,
             anchor: requireNativeEditorV2U32(selection.anchor, 'remote selection anchor'),
             head: requireNativeEditorV2U32(selection.head, 'remote selection head'),

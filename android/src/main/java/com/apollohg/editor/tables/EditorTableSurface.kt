@@ -219,6 +219,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         it.selectionStart != it.selectionEnd
     } == true
     private var entries: Map<String, Entry> = emptyMap()
+    val presentedDocumentRevision: ULong? get() = key?.revision
     private var key: PreparationKey? = null
     private var positionedBlocks: List<PreparedProseBlock> = emptyList()
     private val hostGestureAxis = TableGestureAxisLock(host.context)

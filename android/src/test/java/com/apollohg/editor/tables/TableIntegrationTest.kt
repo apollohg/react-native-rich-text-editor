@@ -74,7 +74,8 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
         val color: String,
         val anchor: Int,
         val head: Int,
-        val cellRectangle: Pair<Int, Int>?
+        val cellRectangle: Pair<Int, Int>?,
+        val resolvedAt: JSONObject? = null
     )
 
     private class Fixture(
@@ -105,7 +106,7 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
 
         fun activeCellPosition(): Long? = view.richTextView.activeTableCellPosition
 
-        fun relayout() {
+        fun relayout(viewport: Size = this.viewport) {
             view.measure(
                 View.MeasureSpec.makeMeasureSpec(viewport.width, View.MeasureSpec.EXACTLY),
                 View.MeasureSpec.makeMeasureSpec(viewport.height, View.MeasureSpec.EXACTLY)
@@ -125,6 +126,7 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
                 val item = JSONObject().put("clientId", peer.clientId).put("anchor", peer.anchor)
                     .put("head", peer.head).put("color", peer.color).put("name", PEER_NAME)
                     .put("isFocused", true)
+                peer.resolvedAt?.let { item.put("resolvedAt", it) }
                 peer.cellRectangle?.let { (anchor, head) ->
                     item.put("cellRectangle", JSONObject().put("anchorCell", anchor).put("headCell", head))
                 }
@@ -233,6 +235,54 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
         }
 
     @Test
+    fun `remote rectangle received before measurement appears after first layout`() =
+        withTable(GRID_DOCUMENT, viewport = Size(0, VIEW_HEIGHT)) { fixture ->
+            val first = fixture.positions()[GRID_FIRST]
+            val frame = JSONObject().put("editorId", fixture.adapter.editorId.toString())
+                .put("documentRevision", fixture.adapter.baseDocumentRevision.toString())
+            fixture.setPeers(listOf(Peer(FIRST_PEER, FIRST_PEER_COLOR, first, first,
+                first to first, frame)))
+            assertTrue("unmeasured table must not display a rectangle",
+                fixture.drawing.remoteTableCellSelections.isEmpty())
+            assertTrue("pending rectangle must not fall back to a cursor", fallbackClients(fixture).isEmpty())
+
+            fixture.view.layoutParams = fixture.view.layoutParams.apply { width = VIEW_WIDTH }
+            fixture.relayout(Size(VIEW_WIDTH, VIEW_HEIGHT))
+
+            assertEquals("first measured layout must retry pending presence without new props",
+                setOf(GRID_FIRST), fixture.drawing.remoteTableCellSelections.single().sourceIndices)
+            assertTrue("the presented rectangle replaces the cursor", fallbackClients(fixture).isEmpty())
+        }
+
+    @Test
+    fun `remote rectangles wait for their resolved frame in either delivery order`() {
+        val cell = """{"type":"table_cell","content":[{"type":"paragraph"}]}"""
+        val row = """{"type":"table_row","content":[$cell]}"""
+        val document = """{"type":"doc","content":[{"type":"table","content":[$row,$row]}]}"""
+        for (nativeFirst in listOf(false, true)) withTable(document) { fixture ->
+            val positions = fixture.positions()
+            val first = positions[0]
+            val shifted = positions[1]
+            val revision = fixture.adapter.baseDocumentRevision
+            fun peer(opening: Int, revision: ULong) = Peer(FIRST_PEER, FIRST_PEER_COLOR,
+                opening, opening, opening to opening,
+                JSONObject().put("editorId", fixture.adapter.editorId).put("documentRevision", revision.toString()))
+            fixture.setPeers(listOf(peer(first, revision)))
+            assertEquals(setOf(0), fixture.drawing.remoteTableCellSelections.single().sourceIndices)
+            fixture.applyRemoteCellSelection(first, first)
+            fixture.applyRemoteCommand(JSONObject().put("type", "addTableRow").put("side", "before"))
+            if (nativeFirst) fixture.deliverRemoteCommit()
+            else fixture.setPeers(listOf(peer(shifted, revision + 1u)))
+            assertTrue("nativeFirst=$nativeFirst: a mismatched frame must not highlight another cell",
+                fixture.drawing.remoteTableCellSelections.isEmpty())
+            assertTrue("mismatched frames must not fall back to stale cursors", fallbackClients(fixture).isEmpty())
+            if (nativeFirst) fixture.setPeers(listOf(peer(shifted, revision + 1u)))
+            else fixture.deliverRemoteCommit()
+            assertEquals(setOf(1), fixture.drawing.remoteTableCellSelections.single().sourceIndices)
+        }
+    }
+
+    @Test
     fun `remote merge re-resolves the rectangle to the merged cell`() =
         withTable(GRID_DOCUMENT) { fixture ->
             val before = fixture.positions()
@@ -250,6 +300,10 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
             val cells = requireNotNull(fixture.adapter.tableRecordsForTesting[fixture.tableId]).getJSONArray("cells")
             val mergedRecord = (0 until cells.length()).map(cells::getJSONObject).single { it.getInt("sourcePos") == first }
             assertEquals("the remote merge must land", MERGED_COLSPAN, mergedRecord.getInt("colspan"))
+            assertTrue("revisionless coordinates expire with the frame", fixture.drawing.remoteTableCellSelections.isEmpty())
+            fixture.setPeers(listOf(Peer(FIRST_PEER, FIRST_PEER_COLOR, first, first, first to first,
+                JSONObject().put("editorId", fixture.adapter.editorId)
+                    .put("documentRevision", fixture.adapter.baseDocumentRevision.toString()))))
             val remote = fixture.drawing.remoteTableCellSelections.single()
             assertEquals(setOf(GRID_FIRST), remote.sourceIndices)
             val rect = fixture.remoteRects(remote).single()
@@ -414,16 +468,16 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
             ))
             val otherToken = EditorV2Registry.register(other)
             try {
-                val update = requireNotNull(other.setContentJson(SHIFTED_GRID_DOCUMENT))
+                val update = requireNotNull(other.setContentJson(GRID_DOCUMENT))
                 fixture.view.setEditorId(otherToken)
                 assertTrue(fixture.root.applyUpdateJSON(update))
                 fixture.relayout()
                 val otherCells = other.tableRecordsForTesting.values.single().getJSONArray("cells")
                 val otherOpenings = (0 until otherCells.length()).map { otherCells.getJSONObject(it).getInt("sourcePos") }
-                assertFalse("the fixture must move the openings", first in otherOpenings)
-                assertTrue("the old opening addresses no cell of the new owner",
+                assertTrue("the new editor deliberately reuses the same opening", first in otherOpenings)
+                assertTrue("an equal opening in another editor must not inherit presence",
                     fixture.drawing.remoteTableCellSelections.isEmpty())
-                assertEquals(listOf(FIRST_PEER), fallbackClients(fixture))
+                assertTrue(fallbackClients(fixture).isEmpty())
             } finally {
                 fixture.view.setEditorId(fixture.token)
                 EditorV2Registry.remove(other.editorId)

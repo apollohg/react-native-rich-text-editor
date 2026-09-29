@@ -17,6 +17,7 @@ import {
     type NativeEditorLocalAwarenessIntent,
 } from '../NativeEditorBridge';
 import { serializeRemoteSelections } from '../RichTextEditorSerialization';
+import { normalizeNativeEditorV2PeersValue } from '../NativeEditorResultNormalization';
 import type { RemoteSelectionDecoration } from '../RichTextEditorTypes';
 
 const ANCHOR_CELL = 2;
@@ -119,6 +120,7 @@ describe('table cell awareness', () => {
 
     it('hands a resolved remote rectangle to native beside the cursor fallback', () => {
         const handle = createRoomHandle({ withSnapshot: true });
+        const resolvedAt = { editorId: handle.editorId, documentRevision: '7' };
         const { result } = renderHook(() =>
             useYjsCollaboration({
                 documentId: 'doc-1',
@@ -135,6 +137,7 @@ describe('table cell awareness', () => {
                 remotePeer({
                     cursor: { anchor: ANCHOR_CELL, head: HEAD_CELL },
                     cellRectangle: { anchorCell: ANCHOR_CELL, headCell: HEAD_CELL },
+                    resolvedAt,
                 }),
                 remotePeer({
                     clientId: '43',
@@ -153,6 +156,7 @@ describe('table cell awareness', () => {
             head: HEAD_CELL,
             cellRectangle: { anchorCell: ANCHOR_CELL, headCell: HEAD_CELL },
         });
+        expect(rectanglePeer?.resolvedAt).toEqual(resolvedAt);
         expect(cursorPeer).toMatchObject({ clientId: '43', anchor: 4, head: 4 });
         expect(cursorPeer).not.toHaveProperty('cellRectangle');
 
@@ -164,6 +168,7 @@ describe('table cell awareness', () => {
             anchorCell: ANCHOR_CELL,
             headCell: HEAD_CELL,
         });
+        expect(serialized[0].resolvedAt).toEqual(resolvedAt);
         expect(serialized[1]).not.toHaveProperty('cellRectangle');
     });
 
@@ -197,4 +202,19 @@ describe('table cell awareness', () => {
                 },
             ])).toThrow('invalid u32 remote selection anchor cell');
     });
+    it.each([
+        null,
+        {},
+        { editorId: '01', documentRevision: '2' },
+        { editorId: '1', documentRevision: 2 },
+        { editorId: '1', documentRevision: '18446744073709551616' },
+    ])('refuses malformed frame identity instead of treating it as revisionless: %j', resolvedAt => {
+        const peer = { ...remotePeer(), resolvedAt };
+        expect(normalizeNativeEditorV2PeersValue({ peers: [peer] })).toBeNull();
+        expect(() => serializeRemoteSelections([{
+            clientId: '42', anchor: ANCHOR_CELL, head: HEAD_CELL, color: ALICE.color,
+            cellRectangle: { anchorCell: ANCHOR_CELL, headCell: HEAD_CELL }, resolvedAt,
+        } as unknown as RemoteSelectionDecoration])).toThrow('remote resolvedAt');
+    });
+
 });

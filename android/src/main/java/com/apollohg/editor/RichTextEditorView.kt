@@ -985,6 +985,7 @@ class RichTextEditorView @JvmOverloads constructor(
         clearDeferredEditorUnbind()
         rebindEditorIfNeeded()
         editorTableSurface.refresh()
+        refreshRemoteSelections()
         atomHostViews.forEach { (key, child) -> scheduleAtomMeasurement(child, key) }
     }
 
@@ -1051,6 +1052,7 @@ class RichTextEditorView @JvmOverloads constructor(
         }
         layoutAtomHostViews()
         editorTableSurface.refresh()
+        refreshRemoteSelections()
     }
 
     private fun updateScrollContainerAppearance() {

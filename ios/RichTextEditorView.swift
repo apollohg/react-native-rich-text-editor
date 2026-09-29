@@ -264,7 +264,8 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
             }
             remoteSelectionOverlayView.update(
                 selections: remoteSelections,
-                editorId: editorId
+                editorId: editorId,
+                captureFrame: false
             )
             imageTapOverlayView.isHidden = editorId == 0 || !allowImageResizing
             imageResizeOverlayView.refresh()

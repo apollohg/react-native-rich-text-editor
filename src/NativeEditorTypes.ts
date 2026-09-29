@@ -408,3 +408,8 @@ export interface NativeEditorReplaceDocumentRequest {
     setHtml?: string;
     history: NativeEditorHistoryMode;
 }
+
+export interface NativeEditorResolvedSelectionFrame {
+    editorId: string;
+    documentRevision: string;
+}

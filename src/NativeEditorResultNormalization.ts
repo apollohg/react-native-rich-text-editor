@@ -12,7 +12,7 @@ import {
     ERR_V2_NATIVE_RESPONSE,
     ERR_V2_DESTROYED,
 } from './NativeEditorNativeModule';
-import { type RenderElement, type RenderMark } from './NativeEditorTypes';
+import { type RenderElement, type RenderMark, type NativeEditorResolvedSelectionFrame } from './NativeEditorTypes';
 import { type NativeEditorPeerInfo } from './NativeEditorCollaborationTransport';
 
 export function isPlainRecord(
@@ -91,6 +91,17 @@ export function normalizeNativeEditorV2Bytes(
 /** FfiUnitResult successes are exactly `true`; anything else is invalid. */
 export function normalizeNativeEditorV2Unit(value: unknown): true | null {
     return value === true ? true : null;
+}
+
+export function normalizeNativeEditorResolvedSelectionFrame(
+    value: unknown,
+): NativeEditorResolvedSelectionFrame | null {
+    if (!isPlainRecord(value)) return null;
+    const editorId = normalizeNativeEditorV2DecimalId(value.editorId);
+    const documentRevision = normalizeNativeEditorV2DecimalId(value.documentRevision);
+    return editorId == null || documentRevision == null
+        ? null
+        : { editorId, documentRevision };
 }
 
 /**
@@ -523,7 +534,12 @@ export function normalizeNativeEditorV2PeersValue(
             cellRectangle = { anchorCell, headCell };
         }
 
+        const resolvedAt = rawPeer.resolvedAt === undefined
+            ? undefined : normalizeNativeEditorResolvedSelectionFrame(rawPeer.resolvedAt);
+        if (resolvedAt === null) return null;
+
         peers.push({
+            ...(resolvedAt === undefined ? {} : { resolvedAt }),
             clientId,
             clock,
             isLocal,

@@ -271,11 +271,16 @@ pub fn editor_v2_collaboration_set_awareness_selection(
 #[uniffi::export]
 pub fn editor_v2_collaboration_peers(editor_id: String) -> FfiJsonResult {
     json_result(with_editor(&editor_id, |session| {
+        let resolved_at = serde_json::json!({
+            "editorId": editor_id,
+            "documentRevision": decimal_u64(session.engine.revision()),
+        });
         let peers = session
             .awareness_peers()?
             .into_iter()
             .map(|peer| {
                 serde_json::json!({
+                    "resolvedAt": resolved_at,
                     "clientId": decimal_u64(peer.client_id),
                     "clock": peer.clock,
                     "isLocal": peer.is_local,

@@ -16,6 +16,22 @@ import com.apollohg.editor.viewer.RemoteTableCellSelection
 import org.json.JSONArray
 import org.json.JSONObject
 
+data class RemoteSelectionFrame(val editorId: String, val documentRevision: String) {
+    companion object {
+        fun fromJson(value: JSONObject?): RemoteSelectionFrame? {
+            value ?: return null
+            val editorId = canonicalV2U64(value.opt("editorId") as? String) ?: return null
+            val revision = canonicalV2U64(value.opt("documentRevision") as? String) ?: return null
+            return RemoteSelectionFrame(editorId, revision)
+        }
+
+        internal fun installed(adapter: EditorV2Adapter?): RemoteSelectionFrame? {
+            val revision = adapter?.installedFrameRevision ?: return null
+            return RemoteSelectionFrame(adapter.editorId, revision.toString())
+        }
+    }
+}
+
 data class RemoteCellRectangle(val anchorCell: Long, val headCell: Long) {
     companion object {
         fun fromJson(json: JSONObject?): RemoteCellRectangle? {
@@ -34,7 +50,8 @@ data class RemoteSelectionDecoration(
     val color: Int,
     val name: String?,
     val isFocused: Boolean,
-    val cellRectangle: RemoteCellRectangle? = null
+    val cellRectangle: RemoteCellRectangle? = null,
+    val resolvedAt: RemoteSelectionFrame? = null
 ) {
     companion object {
         fun fromJson(context: Context, json: String?): List<RemoteSelectionDecoration> {
@@ -53,6 +70,8 @@ data class RemoteSelectionDecoration(
                     val anchor = exactV2ScalarInt(item.opt("anchor") as? Number) ?: continue
                     val head = exactV2ScalarInt(item.opt("head") as? Number) ?: continue
                     val color = parseColor(item.optString("color", ""), fallbackColor)
+                    val resolvedAt = RemoteSelectionFrame.fromJson(item.optJSONObject("resolvedAt"))
+                    if (item.has("resolvedAt") && resolvedAt == null) continue
                     add(
                         RemoteSelectionDecoration(
                             clientId = clientId,
@@ -61,7 +80,8 @@ data class RemoteSelectionDecoration(
                             color = color,
                             name = item.optString("name").takeIf { it.isNotBlank() },
                             isFocused = item.optBoolean("isFocused", false),
-                            cellRectangle = RemoteCellRectangle.fromJson(item.optJSONObject("cellRectangle"))
+                            cellRectangle = RemoteCellRectangle.fromJson(item.optJSONObject("cellRectangle")),
+                            resolvedAt = resolvedAt
                         )
                     )
                 }
@@ -137,6 +157,7 @@ class RemoteSelectionOverlayView @JvmOverloads constructor(
 
     private var editorView: RichTextEditorView? = null
     private var remoteSelections: List<RemoteSelectionDecoration> = emptyList()
+    private var legacyFrame: RemoteSelectionFrame? = null
     private var cachedSnapshot: GeometrySnapshot? = null
     private var cachedGeometry: List<CachedSelectionGeometry> = emptyList()
     private var cellSelectionClientIds: Set<String> = emptySet()
@@ -163,15 +184,35 @@ class RemoteSelectionOverlayView @JvmOverloads constructor(
     }
 
     fun setRemoteSelections(selections: List<RemoteSelectionDecoration>) {
-        if (remoteSelections == selections) {
-            return
-        }
+        val frame = installedFrame()
+        if (remoteSelections == selections && legacyFrame == frame) return
+        legacyFrame = frame
         remoteSelections = selections
         invalidateGeometry()
         refreshGeometry()
     }
 
+    private fun installedFrame(): RemoteSelectionFrame? = editorView?.let { view ->
+        RemoteSelectionFrame.installed(EditorV2Registry.adapterForViewToken(resolvedEditorId(view)))
+    }
+
+    private fun currentSelections(): List<RemoteSelectionDecoration> {
+        val frame = installedFrame()
+        val presentedRevision = editorView?.editorTableSurface?.presentedDocumentRevision?.toString()
+        val hasTables = editorView?.let { view ->
+            EditorV2Registry.adapterForViewToken(resolvedEditorId(view))?.tableIndex?.tableKeys?.isNotEmpty()
+        } == true
+        return remoteSelections.filter { selection ->
+            if (selection.resolvedAt == null && selection.cellRectangle == null) true
+            else (selection.resolvedAt ?: legacyFrame)?.let {
+                it == frame && editorView?.editorEditText?.lastAppliedDocumentVersion == it.documentRevision &&
+                    (selection.cellRectangle == null || !hasTables || it.documentRevision == presentedRevision)
+            } ?: false
+        }
+    }
+
     fun refreshGeometry() {
+        if (legacyFrame == null) legacyFrame = installedFrame()
         presentRemoteCellSelections()
         ensureGeometry()
         invalidate()
@@ -181,7 +222,7 @@ class RemoteSelectionOverlayView @JvmOverloads constructor(
         val editorView = editorView ?: return
         val editorId = resolvedEditorId(editorView)
         val index = EditorV2Registry.adapterForViewToken(editorId)?.tableIndex ?: EditorTableIndex()
-        val drawable = if (editorId == 0L) emptyList() else remoteSelections.mapNotNull { selection ->
+        val drawable = if (editorId == 0L) emptyList() else currentSelections().mapNotNull { selection ->
             val rectangle = selection.cellRectangle ?: return@mapNotNull null
             val cells = resolveEditorCellSelection(rectangle.anchorCell, rectangle.headCell, index)
                 as? EditorCellSelection.Drawable ?: return@mapNotNull null
@@ -245,7 +286,7 @@ class RemoteSelectionOverlayView @JvmOverloads constructor(
 
         val text = context.snapshot.text
         val editorId = context.snapshot.editorId
-        val textSelections = remoteSelections.filter { it.clientId !in context.snapshot.cellSelectionClientIds }
+        val textSelections = context.snapshot.selections.filter { it.clientId !in context.snapshot.cellSelectionClientIds }
         val geometry = textSelections.map { selection ->
             val startDoc = minOf(selection.anchor, selection.head)
             val endDoc = maxOf(selection.anchor, selection.head)
@@ -291,7 +332,8 @@ class RemoteSelectionOverlayView @JvmOverloads constructor(
     private fun buildGeometryContext(): GeometryContext? {
         val editorView = editorView ?: return null
         val editorId = resolvedEditorId(editorView)
-        if (editorId == 0L || remoteSelections.isEmpty()) return null
+        val selections = currentSelections()
+        if (editorId == 0L || selections.isEmpty()) return null
 
         val editText = editorView.editorEditText
         val layout = editText.layout ?: return null
@@ -313,7 +355,7 @@ class RemoteSelectionOverlayView @JvmOverloads constructor(
                 baseY = baseY,
                 width = width,
                 height = height,
-                selections = remoteSelections,
+                selections = selections,
                 cellSelectionClientIds = cellSelectionClientIds
             ),
             layout = layout,

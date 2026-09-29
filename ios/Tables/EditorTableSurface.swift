@@ -134,6 +134,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     private(set) var incrementalRelayoutsForTesting = 0
     private var latestPresentation: EditorV2Adapter.EditorTablePresentationSnapshot?
     private var pinnedInputCell: PreparedViewerTableCell?
+    var presentedDocumentRevision: UInt64? { presentationRevision }
     private var presentationRevision: UInt64?
     private var preparedWidth: CGFloat = 0
     private var appearanceRevision: UInt64 = 0

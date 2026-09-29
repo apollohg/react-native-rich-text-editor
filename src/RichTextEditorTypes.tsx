@@ -1,3 +1,4 @@
+import { type NativeEditorResolvedSelectionFrame } from './NativeEditorTypes';
 import {
     type DocumentJSON,
     type HistoryState,
@@ -90,6 +91,8 @@ export interface RemoteSelectionDecoration {
      *  true; the highlighted range is drawn either way. Absent counts as false. */
     isFocused?: boolean;
     cellRectangle?: { anchorCell: number; headCell: number };
+    /** Receiver frame for asynchronous coordinates; unstamped rectangles expire with the current frame. */
+    resolvedAt?: NativeEditorResolvedSelectionFrame;
 }
 
 export interface LinkRequestContext {
