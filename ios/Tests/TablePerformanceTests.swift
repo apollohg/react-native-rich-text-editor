@@ -11,6 +11,8 @@ final class TablePerformanceTests: XCTestCase {
         static let warmupSamples = 20
         static let coldSamples = 30
         static let warmSamples = 1_000
+        static let warmPercentile = 0.99
+        static let warmBudgetMs = 1.0
         static let baselineSamples = 10
         static let traversalSeconds = 30.0
         static let millisecondsPerSecond = 1_000.0
@@ -225,6 +227,24 @@ final class TablePerformanceTests: XCTestCase {
         var counters = PreparedProseInstrumentation.TablePerformanceCounters()
         counters.observe(first.drawing, cellInputs: first.view.textInputs)
         XCTAssertEqual(counters.maxCellInputInstances, 1, "Another editor must not inflate this editor's input count")
+    }
+
+    func testWarmLargeTableMeasurementsMeetBudget() throws {
+        clock = FrameClock()
+        defer { clock.close(); clock = nil }
+        for (rows, columns) in [(1_000, 20), (100, 200)] {
+            try autoreleasepool {
+                let fixture = Fixture(rows: rows, columns: columns, rich: false)
+                try warm(fixture, source: fixture.source())
+                let sample = try XCTUnwrap(samples.last)
+                let ordered = sample.samplesMs.sorted()
+                let index = Int(ceil(Double(ordered.count) * Benchmark.warmPercentile)) - 1
+                XCTAssertEqual(ordered.count, Benchmark.warmSamples)
+                XCTAssertEqual(sample.counters.unchangedCellRemeasurements, 0)
+                XCTAssertLessThanOrEqual(ordered[index], Benchmark.warmBudgetMs,
+                    "\(fixture.name) unchanged warm measurement p99")
+            }
+        }
     }
 
     func testEveryFixtureIsAdmitted() throws {

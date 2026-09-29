@@ -54,6 +54,11 @@ struct ProseViewerRequest: Hashable {
     let fontEnvironmentRevision: UInt64
     let attachmentRevision: UInt64
     let appearance: ProseViewerAppearance
+    let compiledCacheKey: String
+    let themeDigest: String
+    let semanticGenerationIdentity: String
+    let generationIdentity: String
+    let mentionPrefix: String?
 
     init(
         source: ProseViewerSource,
@@ -71,28 +76,20 @@ struct ProseViewerRequest: Hashable {
         self.fontEnvironmentRevision = fontEnvironmentRevision
         self.attachmentRevision = attachmentRevision
         self.appearance = appearance
-    }
-
-    var compiledCacheKey: String {
-        let mentionPrefix = Self.mentionPrefix(in: configuration.configJSON) ?? ""
+        let mentionPrefix = Self.mentionPrefix(in: configuration.configJSON)
+        self.mentionPrefix = mentionPrefix
         let input = [
             source.value,
             configuration.configJSON,
             configuration.imagePolicyJSON ?? "",
             configuration.imagesEnabled ? "1" : "0",
-            mentionPrefix,
+            mentionPrefix ?? "",
             source.kind == .json ? "json" : "html"
         ].joined(separator: "\u{1F}")
-        return SHA256Digest.hex(input)
-    }
-
-    var themeDigest: String { SHA256Digest.hex(configuration.themeJSON ?? "") }
-
-    /// Canonical publication identity. State-only layout/font revisions are
-    /// intentionally excluded so cancellation/reinstall cannot reopen image
-    /// metadata or resource-error publication for the same semantic source.
-    var semanticGenerationIdentity: String {
-        SHA256Digest.hex([
+        self.compiledCacheKey = SHA256Digest.hex(input)
+        self.themeDigest = SHA256Digest.hex(configuration.themeJSON ?? "")
+        // Semantic identity excludes revisions that only replace layout.
+        let semanticGenerationIdentity = SHA256Digest.hex([
             source.kind == .json ? "json" : "html",
             source.value,
             configuration.configJSON,
@@ -102,22 +99,16 @@ struct ProseViewerRequest: Hashable {
             configuration.collapsesWhenEmpty ? "1" : "0",
             mentionPrefix ?? ""
         ].joined(separator: "\u{1F}"))
-    }
-
-    /// Includes the semantic generation plus the permitted state-only layout
-    /// revisions. This remains the immutable layout/cache identity.
-    var generationIdentity: String {
-        SHA256Digest.hex([
+        self.semanticGenerationIdentity = semanticGenerationIdentity
+        self.generationIdentity = SHA256Digest.hex([
             semanticGenerationIdentity,
             String(attachmentRevision),
             String(nativeFontRevision),
-            String(Double(nativeFontScale).bitPattern),
+            String(Double(self.nativeFontScale).bitPattern),
             String(fontEnvironmentRevision),
             appearance.identity
         ].joined(separator: "\u{1F}"))
     }
-
-    var mentionPrefix: String? { Self.mentionPrefix(in: configuration.configJSON) }
 
     private static func mentionPrefix(in json: String) -> String? {
         guard let data = json.data(using: .utf8),

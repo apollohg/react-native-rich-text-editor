@@ -358,6 +358,11 @@ public final class ProseViewerView: UIView {
             reportErrorIfNeeded(pendingError)
             return errorLayout
         }
+        if let widthPixels = ProseLayoutMetrics.widthPixels(widthPoints: width, scale: scale),
+           ownedLayoutMatches(request: request, widthPixels: widthPixels, scale: scale),
+           let ownedLayout {
+            return ownedLayout
+        }
         let layout = layoutRegistry.measure(
             request: request,
             widthPoints: width,
