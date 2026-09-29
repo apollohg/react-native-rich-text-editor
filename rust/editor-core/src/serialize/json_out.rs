@@ -164,56 +164,60 @@ pub(crate) fn write_node_json<'a>(
     schema: &'a Schema,
 ) -> std::io::Result<()> {
     use crate::boundary::{JsonWriteFrame as Frame, StackSafeJsonValue};
-    crate::boundary::write_json_frames(sink, vec![Frame::Expand(node)], |node, frames| {
-        if node.node_type() == "__opaque_json" {
-            frames.push(match node.attrs().get("original_json") {
-                Some(value) => Frame::Value(value),
-                None => Frame::Raw(b"null"),
-            });
-            return;
-        }
-        frames.push(Frame::Raw(b"}"));
-        frames.push(Frame::String(projected_node_type(node, schema)));
-        frames.push(Frame::Raw(b"\"type\":"));
-        if node.is_text() {
-            frames.push(Frame::Raw(b","));
-            frames.push(Frame::String(node.text_str().unwrap_or("")));
-            frames.push(Frame::Raw(b"\"text\":"));
-            if !node.marks().is_empty() {
-                frames.push(Frame::Raw(b","));
-                frames.push(Frame::OwnedValue(StackSafeJsonValue::new(Value::Array(
-                    projected_marks(node),
-                ))));
-                frames.push(Frame::Raw(b"\"marks\":"));
+    crate::boundary::write_json_frames(
+        sink,
+        smallvec::smallvec![Frame::Expand(node)],
+        |node, frames| {
+            if node.node_type() == "__opaque_json" {
+                frames.push(match node.attrs().get("original_json") {
+                    Some(value) => Frame::Value(value),
+                    None => Frame::Raw(b"null"),
+                });
+                return;
             }
-        }
-        let children = node
-            .content()
-            .map(|content| content.children())
-            .unwrap_or(&[]);
-        if !children.is_empty() {
-            frames.push(Frame::Raw(b","));
-            frames.push(Frame::Raw(b"]"));
-            for (index, child) in children.iter().enumerate().rev() {
-                if index + 1 < children.len() {
+            frames.push(Frame::Raw(b"}"));
+            frames.push(Frame::String(projected_node_type(node, schema)));
+            frames.push(Frame::Raw(b"\"type\":"));
+            if node.is_text() {
+                frames.push(Frame::Raw(b","));
+                frames.push(Frame::String(node.text_str().unwrap_or("")));
+                frames.push(Frame::Raw(b"\"text\":"));
+                if !node.marks().is_empty() {
                     frames.push(Frame::Raw(b","));
+                    frames.push(Frame::OwnedValue(StackSafeJsonValue::new(Value::Array(
+                        projected_marks(node),
+                    ))));
+                    frames.push(Frame::Raw(b"\"marks\":"));
                 }
-                frames.push(Frame::Expand(child));
             }
-            frames.push(Frame::Raw(b"\"content\":["));
-        }
-        if !node.is_text() {
-            let attrs = build_attrs_json(node, schema);
-            if !attrs.is_empty() {
+            let children = node
+                .content()
+                .map(|content| content.children())
+                .unwrap_or(&[]);
+            if !children.is_empty() {
                 frames.push(Frame::Raw(b","));
-                frames.push(Frame::OwnedValue(StackSafeJsonValue::new(Value::Object(
-                    attrs,
-                ))));
-                frames.push(Frame::Raw(b"\"attrs\":"));
+                frames.push(Frame::Raw(b"]"));
+                for (index, child) in children.iter().enumerate().rev() {
+                    if index + 1 < children.len() {
+                        frames.push(Frame::Raw(b","));
+                    }
+                    frames.push(Frame::Expand(child));
+                }
+                frames.push(Frame::Raw(b"\"content\":["));
             }
-        }
-        frames.push(Frame::Raw(b"{"));
-    })
+            if !node.is_text() {
+                let attrs = build_attrs_json(node, schema);
+                if !attrs.is_empty() {
+                    frames.push(Frame::Raw(b","));
+                    frames.push(Frame::OwnedValue(StackSafeJsonValue::new(Value::Object(
+                        attrs,
+                    ))));
+                    frames.push(Frame::Raw(b"\"attrs\":"));
+                }
+            }
+            frames.push(Frame::Raw(b"{"));
+        },
+    )
 }
 
 pub(crate) fn filtered_attrs(node: &Node, cell: bool) -> Vec<(&String, &Value)> {
@@ -231,7 +235,7 @@ pub(crate) fn write_attrs_json(output: &mut String, node: &Node, cell: bool) {
     crate::yrs_engine::observability::record_attribute_serialization();
     use crate::boundary::JsonWriteFrame as Frame;
     let attrs = filtered_attrs(node, cell);
-    let mut frames = vec![Frame::Raw(b"}")];
+    let mut frames = smallvec::smallvec![Frame::Raw(b"}")];
     for (index, (key, value)) in attrs.iter().enumerate().rev() {
         if index + 1 < attrs.len() {
             frames.push(Frame::Raw(b","));

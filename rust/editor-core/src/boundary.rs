@@ -457,10 +457,13 @@ pub(crate) enum JsonWriteFrame<'a, T = ()> {
     Expand(T),
 }
 
+const INLINE_JSON_WRITE_FRAMES: usize = 32;
+type JsonWriteFrames<'a, T> = smallvec::SmallVec<[JsonWriteFrame<'a, T>; INLINE_JSON_WRITE_FRAMES]>;
+
 pub(crate) fn write_json_frames<'a, T>(
     output: &mut impl std::io::Write,
-    mut frames: Vec<JsonWriteFrame<'a, T>>,
-    mut expand: impl FnMut(T, &mut Vec<JsonWriteFrame<'a, T>>),
+    mut frames: JsonWriteFrames<'a, T>,
+    mut expand: impl FnMut(T, &mut JsonWriteFrames<'a, T>),
 ) -> std::io::Result<()> {
     use JsonWriteFrame as Frame;
     while let Some(frame) = frames.pop() {
@@ -539,7 +542,11 @@ pub(crate) fn write_json_value_stack_safe(
     output: &mut impl std::io::Write,
     value: &serde_json::Value,
 ) -> std::io::Result<()> {
-    write_json_frames(output, vec![JsonWriteFrame::Value(value)], |(): (), _| {})
+    write_json_frames(
+        output,
+        smallvec::smallvec![JsonWriteFrame::Value(value)],
+        |(): (), _| {},
+    )
 }
 
 pub(crate) fn serialize_json_value_stack_safe(
