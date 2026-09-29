@@ -1,3 +1,5 @@
+const LEGACY_TABLE_MAPPING_OWNER_ID: &str = "23";
+
 fn table_mapping_snapshot(
     document: serde_json::Value,
     schema: serde_json::Value,
@@ -6,7 +8,12 @@ fn table_mapping_snapshot(
         "schema": schema,
         "initialization": { "type": "localJson", "json": document },
     }));
-    let result = super::render::editor_v2_render_update(editor_id.clone(), None, None);
+    let result = super::render::editor_v2_render_native(
+        editor_id.clone(),
+        LEGACY_TABLE_MAPPING_OWNER_ID.into(),
+        None,
+        None,
+    );
     assert_eq!(
         super::editor::editor_v2_destroy(editor_id).value,
         Some(true)

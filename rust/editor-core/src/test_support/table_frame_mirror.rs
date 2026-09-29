@@ -1,4 +1,5 @@
 use crate::ffi_v2::types::*;
+use crate::tables::commands::{NODE_CLOSING_TOKENS, NODE_OPENING_TOKENS};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -315,7 +316,7 @@ impl TableFrameMirror {
         Ok(())
     }
 
-    fn table_start(&self, key: &str) -> Result<(u32, u32), MirrorRejection> {
+    pub(crate) fn table_start(&self, key: &str) -> Result<(u32, u32), MirrorRejection> {
         let mut key = key;
         let mut doc = 0u32;
         let mut scalar = 0u32;
@@ -343,8 +344,9 @@ impl TableFrameMirror {
                 .iter()
                 .find(|nested| nested.table_key == key)
                 .ok_or_else(|| MirrorRejection::HostMissing(key.into()))?;
-            doc += 2
-                + 2 * cell.source_row
+            doc += NODE_OPENING_TOKENS
+                + NODE_OPENING_TOKENS
+                + (NODE_OPENING_TOKENS + NODE_CLOSING_TOKENS) * cell.source_row
                 + parent.cells[..index]
                     .iter()
                     .map(|cell| cell.doc_size)
@@ -359,6 +361,28 @@ impl TableFrameMirror {
         }
     }
 
+    pub(crate) fn cell_openings(&self, key: &str) -> Result<Vec<u32>, MirrorRejection> {
+        let table = self
+            .tables
+            .get(key)
+            .ok_or_else(|| MirrorRejection::UnknownTable(key.into()))?;
+        let (table_doc, _) = self.table_start(key)?;
+        let mut preceding = 0;
+        Ok(table
+            .cells
+            .iter()
+            .map(|cell| {
+                let doc = table_doc
+                    + NODE_OPENING_TOKENS
+                    + NODE_OPENING_TOKENS
+                    + (NODE_OPENING_TOKENS + NODE_CLOSING_TOKENS) * cell.source_row
+                    + preceding;
+                preceding += cell.doc_size;
+                doc
+            })
+            .collect())
+    }
+
     pub(crate) fn absolute_input_blocks(
         &self,
         key: &str,
@@ -367,11 +391,9 @@ impl TableFrameMirror {
             .tables
             .get(key)
             .ok_or_else(|| MirrorRejection::UnknownTable(key.into()))?;
-        let (table_doc, mut scalar) = self.table_start(key)?;
-        let mut preceding = 0;
+        let (_, mut scalar) = self.table_start(key)?;
         let mut output = Vec::new();
-        for cell in &table.cells {
-            let doc = table_doc + 2 + 2 * cell.source_row + preceding;
+        for (cell, doc) in table.cells.iter().zip(self.cell_openings(key)?) {
             output.push(
                 cell.input_blocks
                     .iter()
@@ -387,7 +409,6 @@ impl TableFrameMirror {
                     })
                     .collect(),
             );
-            preceding += cell.doc_size;
             scalar += cell.scalar_stride;
         }
         Ok(output)

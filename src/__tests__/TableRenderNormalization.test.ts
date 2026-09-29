@@ -2,288 +2,56 @@ jest.mock('expo-modules-core', () => ({
     requireNativeModule: jest.fn(() => ({})),
 }));
 
-import { normalizeRenderBlocks as normalizeWithPool } from '../NativeEditorRenderNormalization';
+import {
+    normalizeRenderBlocks,
+    normalizeRenderPatch,
+} from '../NativeEditorRenderNormalization';
 
-const attrsKey =
-    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
-const normalizeRenderBlocks = (
-    value: unknown,
-    pool: unknown = { [attrsKey]: '{}' },
-    records: unknown = {},
-) => normalizeWithPool(value, pool, records);
+const reference = { type: 'table', tableId: 'y17-42' };
 
-const table = () => ({
-    tablePos: 0,
-    sourceId: 'y18446744073709551615-4294967295',
-    sourceEnd: 10,
-    rows: 1,
-    columns: 2,
-    columnWidths: [null, 120],
-    direction: null,
-    irregular: false,
-    readOnlyDescendants: false,
-    attrsKey,
-    sourceRows: [{ sourcePos: 1, sourceEnd: 9, attrsKey }],
-    syntheticRegions: [],
-    failure: null,
-    compatibilityDiagnostic: null,
-    cells: [
-        {
-            sourcePos: 2,
-            sourceEnd: 8,
-            row: 0,
-            column: 0,
-            rowspan: 1,
-            colspan: 2,
-            header: true,
-            attrsKey,
-            contentKey: 'stable',
-            elements: [
-                { type: 'blockStart', nodeType: 'paragraph', depth: 0 },
-                { type: 'textRun', text: 'Hi', marks: [] },
-                { type: 'blockEnd' },
-            ],
-        },
-    ],
-});
-
-const blocks = (_record: unknown) => [[{ type: 'table', tableId: 't0' }]];
-const withRecord = (record: unknown) =>
-    normalizeRenderBlocks(blocks(record), { [attrsKey]: '{}' }, { t0: record });
-const flatBlocks = () => [[{ type: 'table', tableId: 't0' }]];
-const flatRecords = () => ({ t0: table() });
-
-test('accepts flat table records and shallow table references', () => {
-    expect(
-        (normalizeRenderBlocks as Function)(
-            flatBlocks(),
-            { [attrsKey]: '{}' },
-            flatRecords(),
-        ),
-    ).toEqual(flatBlocks());
+test('accepts shallow table references in full snapshots and patches', () => {
+    const blocks = [[reference]];
+    expect(normalizeRenderBlocks(blocks)).toEqual(blocks);
+    const patch = {
+        baseDocumentVersion: '1',
+        startIndex: 0,
+        deleteCount: 1,
+        renderBlocks: blocks,
+    };
+    expect(normalizeRenderPatch(patch)).toEqual(patch);
 });
 
 test.each([
-    undefined,
-    '',
-    't0',
-    'y01-2',
-    'y1-02',
-    'y18446744073709551616-2',
-    'y1-4294967296',
-    'y1-2-extra',
-    'y1-2\n',
-    'y1-2\r',
-    'y١-2',
-])('rejects missing or malformed table source identity %s', (sourceId) => {
-    expect(withRecord({ ...table(), sourceId })).toBeNull();
+    { type: 'table' },
+    { type: 'table', tableId: 1 },
+    { ...reference, cells: [] },
+    { ...reference, rows: [] },
+    { ...reference, table: {} },
+])('rejects table payloads and malformed references: %j', (element) => {
+    expect(normalizeRenderBlocks([[element]])).toBeNull();
 });
 
-test('rejects duplicate table source identities across distinct positions', () => {
-    const first = table();
-    const second = {
-        ...table(),
-        tablePos: 10,
-        sourceEnd: 20,
-        sourceId: 'y2-3',
-        sourceRows: [{ sourcePos: 11, sourceEnd: 19, attrsKey }],
-        cells: [{ ...table().cells[0], sourcePos: 12, sourceEnd: 18 }],
-    };
-    const twoTables = [
-        [
-            { type: 'table', tableId: 't0' },
-            { type: 'table', tableId: 't10' },
-        ],
-    ];
+test('rejects duplicate root table identities across blocks', () => {
+    expect(normalizeRenderBlocks([[reference], [reference]])).toBeNull();
     expect(
-        normalizeRenderBlocks(twoTables, { [attrsKey]: '{}' }, {
-            t0: first,
-            t10: second,
-        }),
-    ).toEqual(twoTables);
-    expect(
-        normalizeRenderBlocks(twoTables, { [attrsKey]: '{}' }, {
-            t0: first,
-            t10: { ...second, sourceId: first.sourceId },
-        }),
-    ).toBeNull();
+        normalizeRenderBlocks([
+            [reference],
+            [{ type: 'table', tableId: 'y17-43' }],
+        ]),
+    ).not.toBeNull();
 });
 
-test('rejects dangling, aliased, and unreachable flat table records', () => {
+test('rejects table identity fields on prose elements', () => {
     expect(
-        (normalizeRenderBlocks as Function)(
-            [[{ type: 'table', tableId: 't1' }]],
-            { [attrsKey]: '{}' },
-            flatRecords(),
-        ),
-    ).toBeNull();
-    expect(
-        (normalizeRenderBlocks as Function)(
+        normalizeRenderBlocks([
             [
-                [
-                    { type: 'table', tableId: 't0' },
-                    { type: 'table', tableId: 't0' },
-                ],
-            ],
-            { [attrsKey]: '{}' },
-            flatRecords(),
-        ),
-    ).toBeNull();
-    expect(
-        (normalizeRenderBlocks as Function)(
-            flatBlocks(),
-            { [attrsKey]: '{}' },
-            { ...flatRecords(), t1: table() },
-        ),
-    ).toBeNull();
-});
-
-test('resolves one snapshot pool without expanding attributes into cells', () => {
-    const record = table() as unknown as Record<string, any>;
-    delete record.attrsJson;
-    const shared =
-        'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
-    record.attrsKey = shared;
-    for (const entry of [...record.sourceRows, ...record.cells]) {
-        delete entry.attrsJson;
-        entry.attrsKey = shared;
-    }
-    const pool = { [shared]: '{"opaque":{"enabled":true}}' };
-    expect(
-        (normalizeRenderBlocks as Function)(blocks(record), pool, {
-            t0: record,
-        }),
-    ).toEqual(blocks(record));
-    expect(
-        (normalizeRenderBlocks as Function)(blocks(record), {}, { t0: record }),
-    ).toBeNull();
-});
-
-test('retains a bounded semantic table as one outer element', () => {
-    const value = blocks(table());
-    expect(withRecord(table())).toEqual(value);
-});
-
-test.each([NaN, Infinity, -Infinity, -1, 0])(
-    'rejects invalid width %s',
-    (width) => {
-        expect(
-            withRecord({ ...table(), columnWidths: [null, width] }),
-        ).toBeNull();
-    },
-);
-
-test('rejects unknown status, impossible rectangles and invented synthetic anchors', () => {
-    expect(withRecord({ ...table(), failure: 'unknown' })).toBeNull();
-    expect(
-        withRecord({ ...table(), compatibilityDiagnostic: 'fallback' }),
-    ).toBeNull();
-    const outOfRange = table();
-    outOfRange.cells[0].column = 1;
-    expect(withRecord(outOfRange)).toBeNull();
-    expect(
-        withRecord({
-            ...table(),
-            syntheticRegions: [
                 {
-                    row: 0,
-                    column: 0,
-                    rowspan: 1,
-                    colspan: 1,
-                    header: false,
-                    attrsJson: '{}',
-                    sourcePos: 4,
+                    type: 'textRun',
+                    text: 'text',
+                    marks: [],
+                    tableId: reference.tableId,
                 },
             ],
-        }),
-    ).toBeNull();
-});
-
-test('rejects cyclic recursive records without overflowing the stack', () => {
-    const value = table();
-    (value.cells[0].elements as unknown[]).push({
-        type: 'table',
-        tableId: 't0',
-    });
-    expect(
-        normalizeRenderBlocks(
-            blocks(value),
-            { [attrsKey]: '{}' },
-            { t0: value },
-        ),
-    ).toBeNull();
-});
-
-test('requires a table payload only for the table discriminator', () => {
-    expect(normalizeRenderBlocks([[{ type: 'table' }]])).toBeNull();
-    expect(
-        normalizeRenderBlocks(
-            [[{ type: 'blockEnd', tableId: 't0' }]],
-            { [attrsKey]: '{}' },
-            { t0: table() },
-        ),
-    ).toBeNull();
-});
-
-test('rejects overflowing JSON attribute numbers and overlapping raw cell ranges', () => {
-    expect(
-        normalizeRenderBlocks(
-            blocks(table()),
-            { [attrsKey]: '{"size":1e309}' },
-            { t0: table() },
-        ),
-    ).toBeNull();
-    const value = table();
-    value.cells[0].colspan = 1;
-    value.cells.push({
-        ...value.cells[0],
-        column: 1,
-        sourcePos: 3,
-        sourceEnd: 7,
-    });
-    expect(withRecord(value)).toBeNull();
-});
-
-test('rejects noncanonical ids and unused attribute pool entries', () => {
-    expect(
-        normalizeRenderBlocks(
-            [[{ type: 'table', tableId: 'table0' }]],
-            { [attrsKey]: '{}' },
-            { table0: table() },
-        ),
-    ).toBeNull();
-    expect(
-        normalizeRenderBlocks(
-            flatBlocks(),
-            {
-                [attrsKey]: '{}',
-                bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:
-                    '{"unused":true}',
-            },
-            flatRecords(),
-        ),
-    ).toBeNull();
-});
-
-test('counts UTF-8 attributes without accepting lone surrogates', () => {
-    const key =
-        'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
-    const record = table() as any;
-    record.attrsKey = key;
-    for (const entry of [...record.sourceRows, ...record.cells])
-        entry.attrsKey = key;
-    expect(
-        normalizeRenderBlocks(
-            blocks(record),
-            { [key]: '{"label":"é"}' },
-            { t0: record },
-        ),
-    ).toEqual(blocks(record));
-    expect(
-        normalizeRenderBlocks(
-            blocks(record),
-            { [key]: '{"label":"\ud800"}' },
-            { t0: record },
-        ),
+        ]),
     ).toBeNull();
 });

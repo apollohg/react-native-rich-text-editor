@@ -26,28 +26,6 @@ import {
     normalizeNativeEditorV2Bytes,
 } from './NativeEditorResultNormalization';
 import { validEditorMentionTheme } from './EditorMentionThemeValidation';
-import { normalizeTableInputMappings } from './TableInputMappingValidation';
-
-const TABLE_SOURCE_ID_PATTERN = /^y(0|[1-9][0-9]*)-(0|[1-9][0-9]*)$/;
-const TABLE_SOURCE_CLOCK_MAX = '4294967295';
-
-function validTableSourceId(value: unknown): value is string {
-    if (typeof value !== 'string') return false;
-    const match = TABLE_SOURCE_ID_PATTERN.exec(value);
-    if (
-        !match ||
-        match[0] !== value ||
-        normalizeNativeEditorV2DecimalId(match[1]) === null
-    )
-        return false;
-    const clock = match[2];
-    return (
-        clock.length < TABLE_SOURCE_CLOCK_MAX.length ||
-        (clock.length === TABLE_SOURCE_CLOCK_MAX.length &&
-            clock <= TABLE_SOURCE_CLOCK_MAX)
-    );
-}
-
 export function validListContext(value: unknown): value is ListContext {
     if (!isPlainRecord(value)) {
         return false;
@@ -173,373 +151,44 @@ function validLeafRenderElement(value: unknown): value is RenderElement {
 
 export function normalizeRenderBlocks(
     value: unknown,
-    tableAttributes: unknown = {},
-    tableRecords: unknown = {},
-    allowUnpooledTableReferences = false,
 ): RenderElement[][] | null {
-    if (!Array.isArray(value)) {
-        return null;
-    }
-
-    if (!value.every(Array.isArray)) return null;
-    return validRenderElements(
-        value.flat(),
-        tableAttributes,
-        tableRecords,
-        true,
-        allowUnpooledTableReferences,
-    )
+    if (!Array.isArray(value) || !value.every(Array.isArray)) return null;
+    return validRenderElements(value.flat())
         ? (value as RenderElement[][])
         : null;
 }
-
-const tableFailures = new Set([
-    'gridLimit',
-    'workLimit',
-    'allocation',
-    'invalidStructure',
-    'invalidAttributes',
-]);
-const tableDiagnostics = new Set([
-    'virtual-grid-limit',
-    'empty-reference-surface',
-    'unsupported-row-role',
-    'unsupported-cell-role',
-    'ambiguous-source-map',
-    'unsupported-gap-default',
-    'overlapping-reference-cells',
-    'unmapped-reference-cell',
-    'nonrectangular-reference-cell',
-    'zero-span-after-reference-pass',
-]);
 
 export function validRenderElement(value: unknown): value is RenderElement {
     return validRenderElements([value]);
 }
 
-function utf8Bytes(value: string): number | null {
-    let bytes = 0;
-    for (let index = 0; index < value.length; index++) {
-        const code = value.charCodeAt(index);
-        if (code >= 0xd800 && code <= 0xdbff) {
-            const low = value.charCodeAt(index + 1);
-            if (low < 0xdc00 || low > 0xdfff) return null;
-            bytes += 4;
-            index++;
-        } else if (code >= 0xdc00 && code <= 0xdfff) {
-            return null;
-        } else if (code <= 0x7f) {
-            bytes++;
-        } else if (code <= 0x7ff) {
-            bytes += 2;
-        } else {
-            bytes += 3;
-        }
-    }
-    return bytes;
-}
+const MAX_RENDER_ELEMENT_COUNT = 7_000_000;
+const RENDER_DOCUMENT_POSITION_LIMIT = 0xffff_ffff;
 
-export function normalizeTableAttributes(
-    value: unknown,
-): Record<string, string> | null {
-    if (!isPlainRecord(value)) return null;
-    let bytes = 0;
-    let entryCount = 0;
-    const payloads = new Set<string>();
-    for (const [key, json] of Object.entries(value)) {
-        if (
-            !/^[0-9a-f]{64}$/.test(key) ||
-            typeof json !== 'string' ||
-            payloads.has(json)
-        )
-            return null;
-        payloads.add(json);
-        const keyBytes = utf8Bytes(key);
-        const jsonBytes = utf8Bytes(json);
-        if (keyBytes === null || jsonBytes === null || ++entryCount > 7_000_000)
-            return null;
-        bytes += jsonBytes;
-        if (bytes > 192 * 1024 * 1024) return null;
-        const parsed = parseNativeEditorV2JsonValue(json);
-        if (!isPlainRecord(parsed)) return null;
-        const pending = [{ value: parsed as unknown, depth: 0 }];
-        let work = 0;
-        while (pending.length) {
-            const entry = pending.pop()!;
-            if (++work > json.length || entry.depth > 1024) return null;
+function validRenderElements(roots: unknown[]): boolean {
+    if (roots.length > MAX_RENDER_ELEMENT_COUNT) return false;
+    const tableIds = new Set<string>();
+    return roots.every((value) => {
+        if (!isPlainRecord(value)) return false;
+        if (value.type === 'table') {
             if (
-                typeof entry.value === 'number' &&
-                !Number.isFinite(entry.value)
-            )
-                return null;
-            if (entry.value !== null && typeof entry.value === 'object') {
-                for (const child of Object.values(entry.value))
-                    pending.push({ value: child, depth: entry.depth + 1 });
-            }
-        }
-    }
-    return value as Record<string, string>;
-}
-
-function validRenderElements(
-    roots: unknown[],
-    tableAttributes: unknown = {},
-    tableRecords: unknown = {},
-    requireAllRecords = true,
-    allowUnpooledTableReferences = false,
-): boolean {
-    const pool = normalizeTableAttributes(tableAttributes);
-    if (pool === null) return false;
-    if (!isPlainRecord(tableRecords)) return false;
-    const records = tableRecords as Record<string, unknown>;
-    if (
-        !Object.entries(records).every(
-            ([id, record]) => id.length > 0 && isPlainRecord(record),
-        )
-    )
-        return false;
-    const pending = roots.map((value) => ({
-        value,
-        depth: 0,
-        start: 0,
-        end: 0xffff_ffff,
-    }));
-    let nodes = 0;
-    let gridSlots = 0;
-    const referencedTableIds = new Set<string>();
-    const referencedTableSourceIds = new Set<string>();
-    const referencedAttributeKeys = new Set<string>();
-    const attrs = (value: unknown): boolean => {
-        if (
-            typeof value !== 'string' ||
-            !Object.prototype.hasOwnProperty.call(pool, value)
-        )
-            return false;
-        referencedAttributeKeys.add(value);
-        return true;
-    };
-    const u32 = (value: unknown): value is number =>
-        nativeEditorV2U32(value) != null;
-    while (pending.length) {
-        if (++nodes + pending.length > 7_000_000) return false;
-        const { value, depth, start, end } = pending.pop()!;
-        if (!isPlainRecord(value) || depth > 1024) return false;
-        if (value.type !== 'table') {
-            if (!validLeafRenderElement(value)) return false;
-            if (
-                value.docPos !== undefined &&
-                (!u32(value.docPos) ||
-                    value.docPos < start ||
-                    value.docPos >= end)
+                !hasExactOwnKeys(value, ['type', 'tableId']) ||
+                typeof value.tableId !== 'string' ||
+                tableIds.has(value.tableId)
             )
                 return false;
-            continue;
+            tableIds.add(value.tableId);
+            return true;
         }
-        if (
-            !hasExactOwnKeys(value, ['type', 'tableId']) ||
-            typeof value.tableId !== 'string' ||
-            (!allowUnpooledTableReferences &&
-                !/^t(?:0|[1-9][0-9]*)$/.test(value.tableId))
-        )
-            return false;
-        if (referencedTableIds.has(value.tableId)) return false;
-        if (allowUnpooledTableReferences) {
-            referencedTableIds.add(value.tableId);
-            continue;
-        }
-        const t = records[value.tableId];
-        if (!isPlainRecord(t)) return false;
-        referencedTableIds.add(value.tableId);
-        if (
-            !hasExactOwnKeys(t, [
-                'tablePos',
-                'sourceId',
-                'sourceEnd',
-                'rows',
-                'columns',
-                'columnWidths',
-                'direction',
-                'irregular',
-                'readOnlyDescendants',
-                'attrsKey',
-                'sourceRows',
-                'cells',
-                'syntheticRegions',
-                'failure',
-                'compatibilityDiagnostic',
-            ]) ||
-            !u32(t.tablePos) ||
-            value.tableId !== `t${t.tablePos}` ||
-            !validTableSourceId(t.sourceId) ||
-            referencedTableSourceIds.has(t.sourceId) ||
-            !u32(t.sourceEnd) ||
-            t.tablePos < start ||
-            t.sourceEnd > end ||
-            t.sourceEnd <= t.tablePos ||
-            !u32(t.rows) ||
-            !u32(t.columns) ||
-            !Array.isArray(t.columnWidths) ||
-            t.columnWidths.length !== t.columns ||
-            !t.columnWidths.every(
-                (width) => width === null || (u32(width) && width > 0),
-            ) ||
-            ![null, 'ltr', 'rtl'].includes(t.direction as string | null) ||
-            typeof t.irregular !== 'boolean' ||
-            t.readOnlyDescendants !== depth > 0 ||
-            !attrs(t.attrsKey) ||
-            !Array.isArray(t.sourceRows) ||
-            !Array.isArray(t.cells) ||
-            !Array.isArray(t.syntheticRegions) ||
-            (t.failure !== null && !tableFailures.has(t.failure as string)) ||
-            (t.compatibilityDiagnostic !== null &&
-                !tableDiagnostics.has(t.compatibilityDiagnostic as string))
-        )
-            return false;
-        referencedTableSourceIds.add(t.sourceId);
-        gridSlots += t.rows * t.columns;
-        if (
-            t.rows > 4_000_000 ||
-            t.columns > 4_000_000 ||
-            gridSlots > 4_000_000
-        )
-            return false;
-        if (t.failure !== null) {
-            if (
-                t.rows !== 0 ||
-                t.columns !== 0 ||
-                t.cells.length ||
-                t.sourceRows.length ||
-                t.syntheticRegions.length ||
-                t.compatibilityDiagnostic !== null
-            )
-                return false;
-            continue;
-        }
-        nodes +=
-            t.cells.length + t.sourceRows.length + t.syntheticRegions.length;
-        if (nodes > 7_000_000) return false;
-        let priorRowEnd = t.tablePos + 1;
-        for (const row of t.sourceRows) {
-            if (
-                !isPlainRecord(row) ||
-                !hasExactOwnKeys(row, ['sourcePos', 'sourceEnd', 'attrsKey']) ||
-                !u32(row.sourcePos) ||
-                !u32(row.sourceEnd) ||
-                row.sourcePos < priorRowEnd ||
-                row.sourceEnd <= row.sourcePos ||
-                row.sourceEnd >= t.sourceEnd ||
-                !attrs(row.attrsKey)
-            )
-                return false;
-            priorRowEnd = row.sourceEnd;
-        }
-        const occupied = new Set<number>();
-        const sources = new Set<number>();
-        let previousCellEnd = t.tablePos + 1;
-        let sourceRowIndex = 0;
-        for (const [synthetic, regions] of [
-            [false, t.cells],
-            [true, t.syntheticRegions],
-        ] as const) {
-            for (const region of regions) {
-                if (
-                    !isPlainRecord(region) ||
-                    !hasExactOwnKeys(
-                        region,
-                        synthetic
-                            ? [
-                                  'row',
-                                  'column',
-                                  'rowspan',
-                                  'colspan',
-                                  'header',
-                                  'attrsKey',
-                              ]
-                            : [
-                                  'sourcePos',
-                                  'sourceEnd',
-                                  'row',
-                                  'column',
-                                  'rowspan',
-                                  'colspan',
-                                  'header',
-                                  'attrsKey',
-                                  'contentKey',
-                                  'elements',
-                              ],
-                    ) ||
-                    !u32(region.row) ||
-                    !u32(region.column) ||
-                    !u32(region.rowspan) ||
-                    !u32(region.colspan) ||
-                    region.rowspan === 0 ||
-                    region.colspan === 0 ||
-                    region.row + region.rowspan > t.rows ||
-                    region.column + region.colspan > t.columns ||
-                    typeof region.header !== 'boolean' ||
-                    !attrs(region.attrsKey)
-                )
-                    return false;
-                for (let r = region.row; r < region.row + region.rowspan; r++) {
-                    for (
-                        let c = region.column;
-                        c < region.column + region.colspan;
-                        c++
-                    ) {
-                        const slot = r * t.columns + c;
-                        if (occupied.has(slot)) return false;
-                        occupied.add(slot);
-                    }
-                }
-                if (synthetic) continue;
-                if (
-                    !u32(region.sourcePos) ||
-                    !u32(region.sourceEnd) ||
-                    region.sourceEnd <= region.sourcePos ||
-                    region.sourcePos < previousCellEnd ||
-                    sources.has(region.sourcePos) ||
-                    typeof region.contentKey !== 'string' ||
-                    !region.contentKey.length ||
-                    !Array.isArray(region.elements)
-                )
-                    return false;
-                while (
-                    sourceRowIndex < t.sourceRows.length &&
-                    t.sourceRows[sourceRowIndex].sourceEnd <= region.sourcePos
-                )
-                    sourceRowIndex++;
-                const sourceRow = t.sourceRows[sourceRowIndex];
-                if (
-                    !sourceRow ||
-                    sourceRow.sourcePos >= region.sourcePos ||
-                    sourceRow.sourceEnd <= region.sourceEnd
-                )
-                    return false;
-                previousCellEnd = region.sourceEnd;
-                sources.add(region.sourcePos);
-                for (const element of region.elements)
-                    pending.push({
-                        value: element,
-                        depth: depth + 1,
-                        start: region.sourcePos + 1,
-                        end: region.sourceEnd - 1,
-                    });
-            }
-        }
-    }
-    return (
-        !requireAllRecords ||
-        ((allowUnpooledTableReferences ||
-            referencedTableIds.size === Object.keys(records).length) &&
-            referencedAttributeKeys.size === Object.keys(pool).length)
-    );
+        if (!validLeafRenderElement(value)) return false;
+        if (value.docPos === undefined) return true;
+        const position = nativeEditorV2U32(value.docPos);
+        return position !== null && position < RENDER_DOCUMENT_POSITION_LIMIT;
+    });
 }
 
 export function normalizeRenderPatch(
     value: unknown,
-    tableAttributes: unknown = {},
-    tableRecords: unknown = {},
-    allowUnpooledTableReferences = false,
 ): RenderBlocksPatch | null | undefined {
     if (value === null) {
         return null;
@@ -560,13 +209,7 @@ export function normalizeRenderPatch(
     if (
         !Array.isArray(value.renderBlocks) ||
         !value.renderBlocks.every(Array.isArray) ||
-        !validRenderElements(
-            value.renderBlocks.flat(),
-            tableAttributes,
-            tableRecords,
-            false,
-            allowUnpooledTableReferences,
-        )
+        !validRenderElements(value.renderBlocks.flat())
     )
         return undefined;
     const renderBlocks = value.renderBlocks as RenderElement[][];
@@ -750,52 +393,16 @@ export function normalizeNativeEditorV2RenderUpdateValue(
             'stateRevision',
             'scalarLength',
             'documentIsEmpty',
-            ...(Object.prototype.hasOwnProperty.call(parsed, 'tableAttributes')
-                ? ['tableAttributes']
-                : []),
-            ...(Object.prototype.hasOwnProperty.call(parsed, 'tableRecords')
-                ? ['tableRecords']
-                : []),
-            ...(Object.prototype.hasOwnProperty.call(
-                parsed,
-                'tableInputMappings',
-            )
-                ? ['tableInputMappings']
-                : []),
         ])
     ) {
         return null;
     }
 
-    const tableAttributes = normalizeTableAttributes(
-        parsed.tableAttributes ?? {},
-    );
-    if (tableAttributes === null) return null;
-    const tableRecords = parsed.tableRecords ?? {};
-    const allowUnpooledTableReferences =
-        parsed.tableRecords === undefined &&
-        parsed.tableAttributes === undefined &&
-        parsed.tableInputMappings === undefined;
-    const normalizedTableRecords = tableRecords as Record<
-        string,
-        import('./TableTypes').TableRenderRecord
-    >;
     const renderBlocks =
         parsed.renderBlocks === null
             ? null
-            : normalizeRenderBlocks(
-                  parsed.renderBlocks,
-                  tableAttributes,
-                  tableRecords,
-                  allowUnpooledTableReferences,
-              );
-
-    const renderPatch = normalizeRenderPatch(
-        parsed.renderPatch,
-        tableAttributes,
-        tableRecords,
-        allowUnpooledTableReferences,
-    );
+            : normalizeRenderBlocks(parsed.renderBlocks);
+    const renderPatch = normalizeRenderPatch(parsed.renderPatch);
     const selection = normalizeRenderSelection(parsed.selection);
     const activeState = normalizeRenderActiveState(parsed.activeState);
     const historyState = normalizeRenderHistoryState(parsed.historyState);
@@ -819,35 +426,6 @@ export function normalizeNativeEditorV2RenderUpdateValue(
 
     let renderPayload: NativeEditorAtomicRenderPayload;
 
-    const hasInputMappings = Object.prototype.hasOwnProperty.call(
-        parsed,
-        'tableInputMappings',
-    );
-    if (!isPlainRecord(tableRecords)) return null;
-    if (Object.keys(tableRecords).length > 0 || hasInputMappings) {
-        const roots = Object.entries(tableRecords).flatMap(
-            ([tableId, record]) =>
-                isPlainRecord(record) && record.readOnlyDescendants === false
-                    ? [{ type: 'table', tableId }]
-                    : [],
-        );
-        if (
-            roots.length === 0 ||
-            !validRenderElements(roots, tableAttributes, tableRecords)
-        )
-            return null;
-    }
-
-    let tableInputMappings;
-    if (hasInputMappings) {
-        tableInputMappings = normalizeTableInputMappings(
-            parsed.tableInputMappings,
-            normalizedTableRecords,
-            scalarLength,
-        );
-        if (tableInputMappings === null) return null;
-    }
-
     if (renderBlocks == null) {
         if (parsed.renderBlocks !== null || renderPatch == null) {
             return null;
@@ -864,11 +442,6 @@ export function normalizeNativeEditorV2RenderUpdateValue(
 
     return deepFreezeV2Value({
         ...renderPayload,
-        ...(parsed.tableAttributes === undefined ? {} : { tableAttributes }),
-        ...(parsed.tableRecords === undefined
-            ? {}
-            : { tableRecords: normalizedTableRecords }),
-        ...(tableInputMappings === undefined ? {} : { tableInputMappings }),
         selection,
         activeState,
         historyState,

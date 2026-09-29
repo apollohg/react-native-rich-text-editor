@@ -50,14 +50,50 @@ fn render_of(id: &str) -> Value {
     ))
 }
 
-fn table_records_by_position(render: &Value) -> Vec<Value> {
-    let mut records: Vec<Value> = render["tableRecords"]
-        .as_object()
-        .expect("the render publishes table records")
-        .values()
-        .cloned()
+#[derive(Clone, Debug)]
+struct TablePositionRecord {
+    table_pos: u64,
+    source_end: u64,
+    read_only_descendants: bool,
+    cell_openings: Vec<u64>,
+}
+
+fn native_table_mirror(id: &str) -> crate::test_support::table_frame_mirror::TableFrameMirror {
+    let result =
+        crate::ffi_v2::native_frame::editor_v2_render_native_frame(id.into(), None, None, None);
+    assert!(
+        result.error.is_none(),
+        "native frame failed: {:?}",
+        result.error
+    );
+    let mut mirror = crate::test_support::table_frame_mirror::TableFrameMirror::default();
+    mirror
+        .apply(&result.frame.expect("native frame"))
+        .expect("valid native frame");
+    mirror
+}
+
+fn table_records_by_position(id: &str) -> Vec<TablePositionRecord> {
+    let mirror = native_table_mirror(id);
+    let mut records: Vec<_> = mirror
+        .tables
+        .iter()
+        .map(|(key, record)| {
+            let (start, _) = mirror.table_start(key).expect("table origin");
+            TablePositionRecord {
+                table_pos: u64::from(start),
+                source_end: u64::from(start) + u64::from(record.doc_size),
+                read_only_descendants: record.read_only_descendants,
+                cell_openings: mirror
+                    .cell_openings(key)
+                    .expect("cell openings")
+                    .into_iter()
+                    .map(u64::from)
+                    .collect(),
+            }
+        })
         .collect();
-    records.sort_by_key(|record| record["tablePos"].as_u64().expect("tablePos"));
+    records.sort_by_key(|record| record.table_pos);
     records
 }
 
@@ -103,12 +139,12 @@ fn explicit_table_deletion_removes_regular_empty_and_cellless_frames_and_keeps_t
         place_prose_caret(&id);
         let before_document = document_json_of(&id);
         let before_render = render_of(&id);
-        let records = table_records_by_position(&before_render);
+        let records = table_records_by_position(&id);
         assert_eq!(records.len(), 1, "{label}: {records:?}");
         let record = &records[0];
         assert_eq!(
-            record["readOnlyDescendants"], false,
-            "{label}: an outer frame is published as mutable: {record}"
+            record.read_only_descendants, false,
+            "{label}: an outer frame is published as mutable: {record:?}"
         );
         assert_eq!(
             before_render["activeState"]["commands"]["deleteTable"], false,
@@ -116,7 +152,7 @@ fn explicit_table_deletion_removes_regular_empty_and_cellless_frames_and_keeps_t
         );
         assert_eq!(state_of(&id)["canUndo"], false, "{label}");
 
-        let outcome = delete_table_at(&id, record["tablePos"].as_u64().unwrap());
+        let outcome = delete_table_at(&id, record.table_pos);
 
         assert_eq!(outcome["type"], TRANSACTION_OUTCOME, "{label}: {outcome}");
         assert_eq!(outcome["changed"], true, "{label}: {outcome}");
@@ -177,24 +213,24 @@ fn scalar_of(id: &str, doc_pos: u64) -> u32 {
         .expect("doc_to_scalar returns a u32 scalar")
 }
 
-fn cell_interior(record: &Value, cell: usize) -> u64 {
-    record["cells"][cell]["sourcePos"].as_u64().unwrap() + CELL_TEXT_DEPTH
+fn cell_interior(record: &TablePositionRecord, cell: usize) -> u64 {
+    record.cell_openings[cell] + CELL_TEXT_DEPTH
 }
 
-fn select_cell_rectangle(id: &str, record: &Value) {
-    let cell = record["cells"][SECOND_CELL]["sourcePos"].clone();
+fn select_cell_rectangle(id: &str, record: &TablePositionRecord) {
+    let cell = record.cell_openings[SECOND_CELL];
     ok_json(&v2::editor_v2_set_selection(
         id.to_string(),
         exact_cell_request(
             revision_of(id),
-            document_cell_point(cell.as_u64().unwrap()),
-            document_cell_point(cell.as_u64().unwrap()),
+            document_cell_point(cell),
+            document_cell_point(cell),
         )
         .to_string(),
     ));
 }
 
-fn select_prose_into_cell(id: &str, record: &Value) {
+fn select_prose_into_cell(id: &str, record: &TablePositionRecord) {
     let head = scalar_of(id, cell_interior(record, SECOND_CELL));
     ok_json(&v2::editor_v2_set_selection(
         id.to_string(),
@@ -207,7 +243,7 @@ fn select_prose_into_cell(id: &str, record: &Value) {
     ));
 }
 
-fn select_cell_into_prose(id: &str, record: &Value) {
+fn select_cell_into_prose(id: &str, record: &TablePositionRecord) {
     let anchor = scalar_of(id, cell_interior(record, FIRST_CELL));
     ok_json(&v2::editor_v2_set_selection(
         id.to_string(),
@@ -224,7 +260,7 @@ fn select_cell_into_prose(id: &str, record: &Value) {
 fn explicit_table_deletion_lands_like_the_anchored_delete_when_any_endpoint_is_inside() {
     let blocks = vec![table_deletion_prose("before"), regular_deletion_table()];
     let anchored = table_deletion_editor(blocks.clone());
-    let record = table_records_by_position(&render_of(&anchored))[0].clone();
+    let record = table_records_by_position(&anchored)[0].clone();
     select_cell_rectangle(&anchored, &record);
     assert_eq!(
         render_of(&anchored)["activeState"]["commands"]["deleteTable"],
@@ -247,7 +283,7 @@ fn explicit_table_deletion_lands_like_the_anchored_delete_when_any_endpoint_is_i
     assert_eq!(expected_selection["type"], "text", "{expected_selection}");
     destroy_handle(&anchored);
 
-    let selections: [(&str, fn(&str, &Value)); 3] = [
+    let selections: [(&str, fn(&str, &TablePositionRecord)); 3] = [
         ("cell rectangle", select_cell_rectangle),
         ("text from prose into a cell", select_prose_into_cell),
         ("text from a cell into prose", select_cell_into_prose),
@@ -261,7 +297,7 @@ fn explicit_table_deletion_lands_like_the_anchored_delete_when_any_endpoint_is_i
             "{label}: the fixture must start elsewhere"
         );
 
-        let outcome = delete_table_at(&id, record["tablePos"].as_u64().unwrap());
+        let outcome = delete_table_at(&id, record.table_pos);
 
         assert_eq!(outcome["type"], TRANSACTION_OUTCOME, "{label}: {outcome}");
         assert_eq!(document_json_of(&id), expected_document, "{label}");
@@ -282,19 +318,19 @@ fn explicit_table_deletion_declines_nested_tables_and_positions_without_an_outer
         nested_deletion_table(),
     ]);
     place_prose_caret(&id);
-    let records = table_records_by_position(&render_of(&id));
+    let records = table_records_by_position(&id);
     assert_eq!(records.len(), 2, "{records:?}");
     let outer = &records[0];
     let nested = &records[1];
-    assert_eq!(outer["readOnlyDescendants"], false, "{outer}");
-    assert_eq!(nested["readOnlyDescendants"], true, "{nested}");
-    let outer_pos = outer["tablePos"].as_u64().unwrap();
-    let document_end = outer["sourceEnd"].as_u64().unwrap();
+    assert_eq!(outer.read_only_descendants, false, "{outer:?}");
+    assert_eq!(nested.read_only_descendants, true, "{nested:?}");
+    let outer_pos = outer.table_pos;
+    let document_end = outer.source_end;
     let before_document = document_json_of(&id);
     let before_revision = revision_of(&id);
 
     for (label, table_pos) in [
-        ("nested table", nested["tablePos"].as_u64().unwrap()),
+        ("nested table", nested.table_pos),
         ("prose paragraph", PROSE_DOCUMENT_POSITION),
         (
             "inside the outer table",
@@ -325,19 +361,19 @@ fn published_outer_table_records_are_exactly_the_explicitly_deletable_tables() {
         nested_deletion_table(),
     ];
     let probe = table_deletion_editor(blocks.clone());
-    let records = table_records_by_position(&render_of(&probe));
+    let records = table_records_by_position(&probe);
     destroy_handle(&probe);
     assert_eq!(records.len(), 5, "{records:?}");
 
     for record in records {
         let id = table_deletion_editor(blocks.clone());
         place_prose_caret(&id);
-        let outcome = delete_table_at(&id, record["tablePos"].as_u64().unwrap());
+        let outcome = delete_table_at(&id, record.table_pos);
         let deletable = outcome["type"] == TRANSACTION_OUTCOME;
         assert_eq!(
-            record["readOnlyDescendants"] == false,
+            record.read_only_descendants == false,
             deletable,
-            "the published record must predict explicit deletion: {record} -> {outcome}"
+            "the published record must predict explicit deletion: {record:?} -> {outcome}"
         );
         destroy_handle(&id);
     }

@@ -111,17 +111,7 @@ export interface RenderMarkWithAttrs {
 /** A mark on a rendered text run: its name alone, or its name plus attributes. */
 export type RenderMark = string | RenderMarkWithAttrs;
 
-/** One piece of the flattened render stream the engine produces for a document. */
-export interface RenderElement {
-    type:
-        | 'table'
-        | 'textRun'
-        | 'blockStart'
-        | 'blockEnd'
-        | 'voidInline'
-        | 'voidBlock'
-        | 'opaqueInlineAtom'
-        | 'opaqueBlockAtom';
+interface RenderElementFields {
     text?: string;
     marks?: RenderMark[];
     nodeType?: string;
@@ -133,8 +123,24 @@ export interface RenderElement {
     mentionTheme?: SerializedEditorMentionTheme;
     listContext?: ListContext;
     language?: string;
-    tableId?: string;
 }
+
+/** One piece of the flattened render stream the engine produces for a document. */
+export type RenderElement = RenderElementFields &
+    (
+        | { type: 'table'; tableId: string }
+        | {
+              type:
+                  | 'textRun'
+                  | 'blockStart'
+                  | 'blockEnd'
+                  | 'voidInline'
+                  | 'voidBlock'
+                  | 'opaqueInlineAtom'
+                  | 'opaqueBlockAtom';
+              tableId?: never;
+          }
+    );
 
 /**
  * A splice against the previously rendered block list: replace `deleteCount`
@@ -186,9 +192,6 @@ export type NativeEditorAtomicRenderPayload =
 
 export type NativeEditorAtomicRenderSnapshotShape =
     NativeEditorAtomicRenderPayload & {
-        tableAttributes?: Record<string, string>;
-        tableRecords?: Record<string, import('./TableTypes').TableRenderRecord>;
-        tableInputMappings?: import('./TableTypes').TableInputMappings;
         selection: Selection;
         activeState: ActiveState;
         historyState: HistoryState;

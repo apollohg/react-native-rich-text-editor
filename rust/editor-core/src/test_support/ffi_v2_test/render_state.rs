@@ -34,12 +34,8 @@ fn exact_cell_fixture_with_policy(read_only: bool) -> (String, [u64; 4], Value) 
         config["policy"] = json!({ "readOnly": true });
     }
     let id = create_handle(config);
-    let render = ok_json(&v2_render::editor_v2_render_update(id.clone(), None, None));
-    let records = render["tableRecords"].as_object().unwrap();
-    let inner_table = records
-        .values()
-        .max_by_key(|record| record["tablePos"].as_u64().unwrap())
-        .unwrap();
+    let records = table_records_by_position(&id);
+    let inner_table = records.last().expect("nested table");
     let outer_openings = outer_cell_openings(&id);
     (
         id,
@@ -47,7 +43,7 @@ fn exact_cell_fixture_with_policy(read_only: bool) -> (String, [u64; 4], Value) 
             outer_openings[0],
             outer_openings[1],
             outer_openings[2],
-            inner_table["cells"][0]["sourcePos"].as_u64().unwrap(),
+            inner_table.cell_openings[0],
         ],
         source,
     )
@@ -70,23 +66,11 @@ fn document_cell_point(opening: u64) -> Value {
 }
 
 fn outer_cell_openings(id: &str) -> Vec<u64> {
-    let render = ok_json(&v2_render::editor_v2_render_update(
-        id.to_string(),
-        None,
-        None,
-    ));
-    let table = render["tableRecords"]
-        .as_object()
-        .unwrap()
-        .values()
-        .min_by_key(|record| record["tablePos"].as_u64().unwrap())
-        .unwrap();
-    table["cells"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|cell| cell["sourcePos"].as_u64().unwrap())
-        .collect()
+    table_records_by_position(id)
+        .first()
+        .expect("outer table")
+        .cell_openings
+        .clone()
 }
 
 #[test]
@@ -123,15 +107,10 @@ fn exact_cell_endpoints_reject_non_openings_and_cross_table_pairs_atomically() {
     let revision = revision_of(&id);
     let before = state_of(&id);
     let before_document = document_json_of(&id);
-    let render = ok_json(&v2_render::editor_v2_render_update(id.clone(), None, None));
-    let table_end = render["tableRecords"]
-        .as_object()
-        .unwrap()
-        .values()
-        .min_by_key(|record| record["tablePos"].as_u64().unwrap())
-        .unwrap()["sourceEnd"]
-        .as_u64()
-        .unwrap();
+    let table_end = table_records_by_position(&id)
+        .first()
+        .expect("outer table")
+        .source_end;
     for (label, head) in [
         ("inside first cell", first + 1),
         ("outer cell child boundary", outer + 1),
@@ -282,14 +261,9 @@ fn exact_cell_endpoint_rejects_stale_revision_even_when_opening_is_reused() {
     ));
     assert!(revision_of(&id) > stale_revision);
     let after_replace_render = ok_json(&v2_render::editor_v2_render_update(id.clone(), None, None));
-    let replacement_outer = after_replace_render["tableRecords"]
-        .as_object()
-        .unwrap()
-        .values()
-        .min_by_key(|record| record["tablePos"].as_u64().unwrap())
-        .unwrap();
-    assert_eq!(replacement_outer["cells"][0]["sourcePos"], first);
-    assert_eq!(replacement_outer["cells"][1]["sourcePos"], outer);
+    let replacement_openings = outer_cell_openings(&id);
+    assert_eq!(replacement_openings[0], first);
+    assert_eq!(replacement_openings[1], outer);
     let after_replace = document_json_of(&id);
     let error = err_json(&v2::editor_v2_set_selection(
         id.clone(),
@@ -388,7 +362,8 @@ const ORDERED_LIST_START_NULL: &str = r#"{"type":"doc","content":[{"type":"order
 
 #[test]
 fn semantic_table_render_read_is_session_pure_and_matches_viewer_flat_records() {
-    let schema_json = crate::tables::tests::tabled_schema_json(crate::tables::tests::PROSEMIRROR_TABLE_NAMES);
+    let schema_json =
+        crate::tables::tests::tabled_schema_json(crate::tables::tests::PROSEMIRROR_TABLE_NAMES);
     let schema = crate::schema::Schema::from_json(&schema_json).unwrap();
     let source = json!({ "type": "doc", "content": [{
         "type": "table", "content": [{ "type": "table_row", "content": [
@@ -403,44 +378,69 @@ fn semantic_table_render_read_is_session_pure_and_matches_viewer_flat_records() 
         resource_limits: ResourceLimits::default(),
         editing_limits: EditingLimits::default(),
         max_length: None,
-        scope: Some(DocumentScope { document_id: DOCUMENT_ID.into(), lineage_id: LINEAGE_ID.into() }),
-    }).unwrap();
+        scope: Some(DocumentScope {
+            document_id: DOCUMENT_ID.into(),
+            lineage_id: LINEAGE_ID.into(),
+        }),
+    })
+    .unwrap();
     let mut source_engine = source_engine;
-    source_engine.import_json(&source.to_string(), TransactionOrigin::DocumentImport).unwrap();
+    source_engine
+        .import_json(&source.to_string(), TransactionOrigin::DocumentImport)
+        .unwrap();
     let snapshot = source_engine.export_snapshot().unwrap();
     let mut config = room_config(Some(&snapshot));
     config["schema"] = schema_json.clone();
     let id = create_handle_with_state(config, Some(snapshot.encoded_state));
     let state_before = state_of(&id);
-    let outbox_before = crate::native_bridge_test_support::outbox_pending(id.parse().unwrap()).unwrap();
+    let outbox_before =
+        crate::native_bridge_test_support::outbox_pending(id.parse().unwrap()).unwrap();
     assert_eq!(outbox_before, Some((0, 0)));
 
     let editor = ok_json(&v2_render::editor_v2_render_update(id.clone(), None, None));
     let repeated = ok_json(&v2_render::editor_v2_render_update(id.clone(), None, None));
     assert_eq!(editor, repeated);
-    assert_eq!(state_of(&id), state_before, "render reads must not mutate document or history state");
-    assert_eq!(crate::native_bridge_test_support::outbox_pending(id.parse().unwrap()).unwrap(), outbox_before,
-        "render reads must not enqueue outgoing document updates");
+    assert_eq!(
+        state_of(&id),
+        state_before,
+        "render reads must not mutate document or history state"
+    );
+    assert_eq!(
+        crate::native_bridge_test_support::outbox_pending(id.parse().unwrap()).unwrap(),
+        outbox_before,
+        "render reads must not enqueue outgoing document updates"
+    );
 
     let viewer = crate::viewer::viewer_compile(crate::viewer::FfiViewerCompileRequest {
         source_kind: crate::viewer::FfiViewerSourceKind::Json,
         source: source.to_string(),
-        config_json: json!({ "schema": schema_json, "initialization": { "type": "localEmpty" } }).to_string(),
+        config_json: json!({ "schema": schema_json, "initialization": { "type": "localEmpty" } })
+            .to_string(),
         images_enabled: true,
         mention_prefix: None,
-    }).value.unwrap();
-    let editor_records = editor["tableRecords"].as_object().unwrap();
+    })
+    .value
+    .unwrap();
+    let mirror = native_table_mirror(&id);
     let viewer_records = viewer.table_records();
-    assert_eq!(editor_records.len(), viewer_records.len());
-    assert_eq!(editor["tableAttributes"].as_object().unwrap().len(), viewer.table_attributes().len());
+    assert_eq!(mirror.tables.len(), viewer_records.len());
+    assert_eq!(mirror.attributes.len(), viewer.table_attributes().len());
     let root_id = editor["renderBlocks"][0][0]["tableId"].as_str().unwrap();
-    assert_eq!(root_id, viewer.elements().iter().find_map(|element| match element {
-        crate::viewer::FfiViewerElement::Table { table_id } => Some(table_id.as_str()), _ => None,
-    }).unwrap());
+    let native = &mirror.tables[root_id];
+    let (position, _) = mirror.table_start(root_id).unwrap();
     let record = &viewer_records[0];
-    assert_eq!(editor_records[root_id]["tablePos"], json!(record.table_pos));
-    assert_eq!(editor_records[root_id]["sourceEnd"], json!(record.source_end));
-    assert_eq!(editor_records[root_id]["cells"].as_array().unwrap().len(), record.cells.len());
+    assert_eq!(position, record.table_pos);
+    assert_eq!(position + native.doc_size, record.source_end);
+    assert_eq!(native.cells.len(), record.cells.len());
+    assert_eq!(
+        state_of(&id),
+        state_before,
+        "native frame reads preserve session state"
+    );
+    assert_eq!(
+        crate::native_bridge_test_support::outbox_pending(id.parse().unwrap()).unwrap(),
+        outbox_before
+    );
     destroy_handle(&id);
 }
 
@@ -1116,15 +1116,21 @@ fn code_block_return_adds_line_then_exits_on_extra_return() {
         r#"{"type":"doc","content":[{"type":"codeBlock","attrs":{"language":"rust"},"content":[{"type":"text","text":"code"}]}]}"#,
     ));
     ok_json(&v2::editor_v2_set_selection(
-        id.clone(), selection_envelope_with_affinity(1, revision_of(&id), 4, 4, "before"),
+        id.clone(),
+        selection_envelope_with_affinity(1, revision_of(&id), 4, 4, "before"),
     ));
     ok_json(&v2::editor_v2_apply_command(
-        id.clone(), command_envelope(2, revision_of(&id), json!({"type":"splitBlock"})),
+        id.clone(),
+        command_envelope(2, revision_of(&id), json!({"type":"splitBlock"})),
     ));
-    assert_eq!(document_json_of(&id)["content"][0]["content"][0]["text"], "code\n");
+    assert_eq!(
+        document_json_of(&id)["content"][0]["content"][0]["text"],
+        "code\n"
+    );
     assert_eq!(caret_scalar(&id), 5);
     ok_json(&v2::editor_v2_apply_command(
-        id.clone(), command_envelope(3, revision_of(&id), json!({"type":"splitBlock"})),
+        id.clone(),
+        command_envelope(3, revision_of(&id), json!({"type":"splitBlock"})),
     ));
     let document = document_json_of(&id);
     assert_eq!(document["content"].as_array().unwrap().len(), 2);

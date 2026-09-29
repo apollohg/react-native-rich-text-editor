@@ -18,6 +18,49 @@ fn shared_contract() -> serde_json::Value {
 }
 
 #[test]
+fn render_update_emits_table_references_without_pools() {
+    let editor_id = create_editor(json!({
+        "schema": crate::tables::tests::tabled_schema_json(crate::tables::tests::PROSEMIRROR_TABLE_NAMES),
+        "initialization": { "type": "localJson", "json": {
+            "type": "doc", "content": [{ "type": "table", "content": [{
+                "type": "table_row", "content": [{ "type": "table_cell", "content": [{
+                    "type": "paragraph", "content": [{ "type": "text", "text": "private-cell-content" }]
+                }] }]
+            }] }]
+        } }
+    }));
+    let result = super::render::editor_v2_render_update(editor_id.clone(), None, None);
+    assert_eq!(
+        super::editor::editor_v2_destroy(editor_id).value,
+        Some(true)
+    );
+    let raw = result.value.expect("table snapshot");
+    let snapshot: serde_json::Value = serde_json::from_str(&raw).expect("snapshot JSON");
+    for key in ["tableAttributes", "tableRecords", "tableInputMappings"] {
+        assert!(
+            snapshot.get(key).is_none(),
+            "JavaScript snapshot contains {key}"
+        );
+    }
+    let reference = snapshot["renderBlocks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|block| block.as_array().unwrap())
+        .find(|element| element["type"] == "table")
+        .expect("root table reference");
+    assert_eq!(reference.as_object().unwrap().len(), 2);
+    assert!(!reference["tableId"]
+        .as_str()
+        .expect("stable table identifier")
+        .is_empty());
+    assert!(
+        !raw.contains("private-cell-content"),
+        "cell content stays native"
+    );
+}
+
+#[test]
 fn decimal_u64_serializer_keeps_the_full_u64_domain_as_canonical_strings() {
     for value in [0, (1_u64 << 53) + 1, u64::MAX] {
         assert_eq!(

@@ -254,12 +254,11 @@ pub fn editor_v2_render_update(
     mirror_scalar_head: Option<u32>,
 ) -> FfiJsonResult {
     json_result(with_editor(&editor_id, |session| {
-        render_snapshot_json(
+        root_snapshot_json(
             session,
             &editor_id,
-            mirror_scalar_anchor,
-            mirror_scalar_head,
             None,
+            render_mirror(mirror_scalar_anchor, mirror_scalar_head)?,
         )
     }))
 }
@@ -323,6 +322,19 @@ pub(crate) fn root_snapshot_json(
     )
 }
 
+fn render_mirror(
+    anchor: Option<u32>,
+    head: Option<u32>,
+) -> Result<Option<(u32, u32)>, SessionError> {
+    match (anchor, head) {
+        (None, None) => Ok(None),
+        (Some(anchor), Some(head)) => Ok(Some((anchor, head))),
+        _ => Err(config_invalid(
+            "render mirror requires both scalar anchor and head",
+        )),
+    }
+}
+
 fn snapshot_json(
     session: &mut EditorSession,
     editor_id: &str,
@@ -333,15 +345,7 @@ fn snapshot_json(
 ) -> Result<String, SessionError> {
     let previous_native_render =
         owner_id.and_then(|owner_id| session.native_render_cursor(owner_id));
-    let mirror = match (mirror_scalar_anchor, mirror_scalar_head) {
-        (None, None) => None,
-        (Some(anchor), Some(head)) => Some((anchor, head)),
-        _ => {
-            return Err(config_invalid(
-                "render mirror requires both scalar anchor and head",
-            ))
-        }
-    };
+    let mirror = render_mirror(mirror_scalar_anchor, mirror_scalar_head)?;
     let engine = &session.engine;
     let document = engine.document().ok_or_else(engine_not_ready)?;
     let position_map = engine.position_map().ok_or_else(engine_not_ready)?;

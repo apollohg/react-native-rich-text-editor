@@ -54,18 +54,40 @@ describe('NativeEditorBridge v2', () => {
             expect(handle.bridge.renderUpdate()).toEqual(patch);
         });
 
-        it('retains pool validation when a snapshot supplies table records', () => {
+        it('a JS render snapshot carries no table payload', () => {
             const handle = createHandle();
-            mockNativeModule.editorV2RenderUpdate.mockReturnValueOnce(
-                okRecord(
-                    JSON.stringify({
-                        ...MOCK_ATOMIC_RENDER_SNAPSHOT,
-                        tableRecords: {},
-                        renderBlocks: [[{ type: 'table', tableId: 'y17-42' }]],
-                    }),
-                ),
-            );
-            expect(() => handle.bridge.renderUpdate()).toThrow();
+            const snapshot = handle.bridge.renderUpdate();
+            for (const key of [
+                'tableAttributes',
+                'tableRecords',
+                'tableInputMappings',
+            ]) {
+                expect(snapshot).not.toHaveProperty(key);
+                mockNativeModule.editorV2RenderUpdate.mockReturnValueOnce(
+                    okRecord(
+                        JSON.stringify({
+                            ...MOCK_ATOMIC_RENDER_SNAPSHOT,
+                            [key]: {},
+                        }),
+                    ),
+                );
+                expect(() => handle.bridge.renderUpdate()).toThrow();
+            }
+        });
+
+        it('requires a table identity in typed render elements', () => {
+            const diagnostics = compileTypeScriptContractFixture(`
+                import type { RenderElement } from '../NativeEditorTypes';
+                const table: RenderElement = { type: 'table' };
+            `);
+            expect(diagnostics).toContain('tableId');
+            expect(
+                compileTypeScriptContractFixture(`
+                import type { RenderElement } from '../NativeEditorTypes';
+                const table: RenderElement = { type: 'table', tableId: 'y17-42' };
+                const prose: RenderElement = { type: 'textRun', text: 'text', marks: [] };
+            `),
+            ).toBe('');
         });
 
         it('passes an exact optional mirror while retaining the atomic result shape', () => {
