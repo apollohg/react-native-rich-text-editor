@@ -193,7 +193,6 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
     )
     internal var onOutsideTapTraceForTesting: ((String) -> Unit)? = null
     internal var onRefreshToolbarStateFromEditorSelectionForTesting: (() -> String?)? = null
-    internal var onBeforePrepareForEditorCommandForTesting: (() -> Unit)? = null
     internal var isAttachedToNativeWindow = false
     internal var didApplyAutoFocus = false
     internal var heightBehavior = EditorHeightBehavior.FIXED
@@ -599,7 +598,6 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
     internal fun applyRemoteCommitRefresh(expectedEditorId: Long) =
         applyRemoteCommitRefreshImpl(expectedEditorId)
 
-    fun prepareForEditorCommandJSON(): String = prepareForEditorCommandJSONImpl()
 
     override fun onSelectionChanged(anchor: Int, head: Int) {
         val stateJson = refreshToolbarStateFromEditorSelection()

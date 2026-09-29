@@ -53,15 +53,6 @@ final class RenderBridgeTests: XCTestCase {
         )
     }
 
-    func commandPreparation(result: String) -> String? {
-        guard let data = result.data(using: .utf8),
-            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else {
-            return nil
-        }
-        return object["blockedReason"] as? String
-    }
-
     let baseFont = UIFont.systemFont(ofSize: 16)
     let textColor = UIColor.black
 

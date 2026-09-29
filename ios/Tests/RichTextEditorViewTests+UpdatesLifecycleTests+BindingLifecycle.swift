@@ -134,7 +134,7 @@ extension RichTextEditorViewTests {
         XCTAssertEqual(view.richTextView.textView.textStorage.string, "Second")
     }
 
-    func testPrepareForCommandAfterEditorRebindDoesNotDrainPreviousEditorMutation() {
+    func testCommandPreparationAfterEditorRebindDoesNotDrainPreviousEditorMutation() {
         let firstEditorId = makeV2Editor()
         let secondEditorId = makeV2Editor()
         defer {
@@ -163,10 +163,8 @@ extension RichTextEditorViewTests {
         )
         view.setEditorId(secondEditorId)
 
-        let preparationJSON = NativeEditorViewRegistry.shared.prepareForCommandJSON(
-            editorId: firstEditorId
-        )
-        XCTAssertTrue(preparationJSON.contains("\"ready\":true"))
+        let preparation = view.richTextView.textView.prepareForExternalEditorCommand()
+        XCTAssertTrue(preparation.ready)
         flushMainQueue()
 
         XCTAssertEqual(EditorV2Shadow.getHtml(id: firstEditorId), "<p>teh </p>")
@@ -194,12 +192,8 @@ extension RichTextEditorViewTests {
 
         NativeEditorViewRegistry.shared.invalidateDestroyedEditor(editorId: editorId)
         destroyV2Editor(id: editorId)
-        let preparation = parseJSONObject(
-            NativeEditorViewRegistry.shared.prepareForCommandJSON(editorId: editorId)
-        )
 
-        XCTAssertEqual(preparation["ready"] as? Bool, false)
-        XCTAssertEqual(preparation["blockedReason"] as? String, "destroyed")
+        XCTAssertTrue(NativeEditorViewRegistry.shared.isDestroyed(editorId: editorId))
         XCTAssertEqual(view.richTextView.editorId, 0)
         XCTAssertEqual(view.richTextView.textView.editorId, 0)
         XCTAssertNil(retainedPendingEditorUpdateSourceId(in: view))
@@ -298,9 +292,7 @@ extension RichTextEditorViewTests {
 
         registry.destroy(editorId: editorId) {
             XCTAssertFalse(registry.register(editorId: editorId, view: second))
-            XCTAssertTrue(
-                registry.prepareForCommandJSON(editorId: editorId).contains("\"blockedReason\":\"destroying\"")
-            )
+            XCTAssertTrue(registry.isDestroyed(editorId: editorId))
             registry.destroy(editorId: editorId) { nestedDestroyRan = true }
             destroyV2Editor(id: editorId)
             XCTAssertEqual(first.richTextView.editorId, editorId)
@@ -336,14 +328,10 @@ extension RichTextEditorViewTests {
 
         let view = NativeEditorExpoView()
         view.setEditorId(editorId)
-        let preparation = parseJSONObject(
-            NativeEditorViewRegistry.shared.prepareForCommandJSON(editorId: editorId)
-        )
 
         XCTAssertEqual(view.richTextView.editorId, 0)
         XCTAssertEqual(view.richTextView.textView.editorId, 0)
-        XCTAssertEqual(preparation["ready"] as? Bool, false)
-        XCTAssertEqual(preparation["blockedReason"] as? String, "destroyed")
+        XCTAssertTrue(NativeEditorViewRegistry.shared.isDestroyed(editorId: editorId))
     }
 
     func testPrepareForCommandReportsCompositionBlockedReasonWhenMarkedTextPreflightDefers() {
@@ -364,13 +352,11 @@ extension RichTextEditorViewTests {
         XCTAssertTrue(view.richTextView.textView.becomeFirstResponder())
         view.richTextView.textView.setMarkedText("", selectedRange: NSRange(location: 0, length: 0))
 
-        let preparation = parseJSONObject(
-            NativeEditorViewRegistry.shared.prepareForCommandJSON(editorId: editorId)
-        )
+        let preparation = view.richTextView.textView.prepareForExternalEditorCommand()
 
-        XCTAssertEqual(preparation["ready"] as? Bool, false)
-        XCTAssertEqual(preparation["blockedReason"] as? String, "composition")
-        XCTAssertNil(preparation["updateJSON"])
+        XCTAssertEqual(preparation.ready, false)
+        XCTAssertEqual(preparation.blockedReason, "composition")
+        XCTAssertNil(preparation.updateJSON)
     }
 
     func testPrepareForCommandIncludesUpdateJSONAfterNativeAutocorrectDrain() {
@@ -394,13 +380,11 @@ extension RichTextEditorViewTests {
             with: "the"
         )
 
-        let preparation = parseJSONObject(
-            NativeEditorViewRegistry.shared.prepareForCommandJSON(editorId: editorId)
-        )
-        let updateJSON = preparation["updateJSON"] as? String
+        let preparation = view.richTextView.textView.prepareForExternalEditorCommand()
+        let updateJSON = preparation.updateJSON
 
-        XCTAssertEqual(preparation["ready"] as? Bool, true)
-        XCTAssertNil(preparation["blockedReason"])
+        XCTAssertEqual(preparation.ready, true)
+        XCTAssertNil(preparation.blockedReason)
         XCTAssertNotNil(updateJSON)
         XCTAssertTrue(updateJSON?.contains("the ") == true, "preflight update should include the drained correction")
         XCTAssertFalse(updateJSON?.contains("teh ") == true, "preflight update should not contain stale text")

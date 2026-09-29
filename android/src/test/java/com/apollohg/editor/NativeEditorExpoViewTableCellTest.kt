@@ -1153,12 +1153,6 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
     }
 
     @Test
-    fun `native command preflight is blocked while a cell is active`() = withActiveCell { view, _, _ ->
-        val result = JSONObject(view.prepareForEditorCommandJSON())
-        assertFalse(result.getBoolean("ready"))
-    }
-
-    @Test
     fun `input props reach the mounted cell`() = withActiveCell { view, input, _ ->
         view.setKeyboardType("email-address")
         view.setAutoCapitalize("none")

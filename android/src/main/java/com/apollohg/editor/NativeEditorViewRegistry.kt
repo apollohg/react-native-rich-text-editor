@@ -5,9 +5,6 @@ import android.os.Looper
 import java.lang.ref.WeakReference
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.atomic.AtomicReference
-import org.json.JSONObject
 
 private const val DESTROY_INVALIDATION_AWAIT_TIMEOUT_MS = 250L
 
@@ -29,12 +26,6 @@ private class WeakNativeEditorExpoView private constructor(
 }
 
 internal object NativeEditorViewRegistry {
-    private data class CommandPreparationSnapshot(
-        val view: NativeEditorExpoView?,
-        val isDetached: Boolean,
-        val isDestroyed: Boolean
-    )
-
     private val liveEditorIds = mutableSetOf<Long>()
     private val viewsByEditorId = mutableMapOf<Long, MutableList<WeakNativeEditorExpoView>>()
     private val inputViewsByEditorId =
@@ -100,11 +91,6 @@ internal object NativeEditorViewRegistry {
 
     @Synchronized
     internal fun retainedDestroyedIdCountForTests(): Int = destroyingEditorIds.size
-
-    @Synchronized
-    internal fun forceDetachedOwnerClearedForTesting(editorId: Long) {
-        detachedEditorOwnersByEditorId[editorId] = WeakNativeEditorExpoView.cleared()
-    }
 
     @Synchronized
     internal fun forceRegisteredViewsClearedForTesting(editorId: Long) {
@@ -242,131 +228,7 @@ internal object NativeEditorViewRegistry {
         }
     }
 
-    fun prepareForCommandJSON(editorId: Long): String {
-        val prepare = {
-            val snapshot = synchronized(this) {
-                val isDestroyed = destroyingEditorIds.contains(editorId)
-                if (isDestroyed) {
-                    return@synchronized CommandPreparationSnapshot(
-                        view = null,
-                        isDetached = false,
-                        isDestroyed = true
-                    )
-                }
-                val registeredViews = viewsByEditorId[editorId]
-                registeredViews?.removeAll { it.view.get() == null }
-                val candidate = registeredViews?.firstNotNullOfOrNull { it.view.get() }
-                if (registeredViews?.isEmpty() == true) {
-                    viewsByEditorId.remove(editorId)
-                }
-                val detachedOwner = detachedEditorOwnersByEditorId[editorId]?.view?.get()
-                val isDetached = if (detachedOwner == null) {
-                    detachedEditorOwnersByEditorId.remove(editorId)
-                    false
-                } else {
-                    true
-                }
-                val missingFromRust =
-                    !liveEditorIds.contains(editorId) &&
-                        candidate == null &&
-                        !isDetached &&
-                        !rustEditorExists(editorId)
-                CommandPreparationSnapshot(
-                    view = candidate,
-                    isDetached = isDetached,
-                    isDestroyed = missingFromRust
-                )
-            }
-            snapshot.view?.prepareForEditorCommandJSON()
-                ?: commandPreparationJSON(
-                    ready = !snapshot.isDetached && !snapshot.isDestroyed,
-                    blockedReason = if (snapshot.isDestroyed) {
-                        "destroyed"
-                    } else if (snapshot.isDetached) {
-                        "detached"
-                    } else {
-                        null
-                    }
-                )
-        }
-
-        if (Looper.myLooper() == Looper.getMainLooper()) {
-            return prepare()
-        }
-
-        val result =
-            AtomicReference(commandPreparationJSON(ready = false, blockedReason = "unknown"))
-        val state = AtomicInteger(PREFLIGHT_STATE_QUEUED)
-        val latch = CountDownLatch(1)
-        if (!mainHandler.post {
-                try {
-                    if (state.compareAndSet(PREFLIGHT_STATE_QUEUED, PREFLIGHT_STATE_RUNNING)) {
-                        result.set(prepare())
-                        state.set(PREFLIGHT_STATE_DONE)
-                    }
-                } finally {
-                    latch.countDown()
-                }
-            }
-        ) {
-            return commandPreparationJSON(ready = false, blockedReason = "unknown")
-        }
-        try {
-            if (!latch.await(DESTROY_INVALIDATION_AWAIT_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
-                if (state.compareAndSet(PREFLIGHT_STATE_QUEUED, PREFLIGHT_STATE_CANCELLED)) {
-                    return commandPreparationJSON(ready = false, blockedReason = "unknown")
-                }
-                if (state.get() == PREFLIGHT_STATE_RUNNING) {
-                    latch.await()
-                    return result.get()
-                }
-                return commandPreparationJSON(ready = false, blockedReason = "unknown")
-            }
-        } catch (_: InterruptedException) {
-            var interrupted = true
-            if (state.compareAndSet(PREFLIGHT_STATE_QUEUED, PREFLIGHT_STATE_CANCELLED)) {
-                Thread.currentThread().interrupt()
-                return commandPreparationJSON(ready = false, blockedReason = "unknown")
-            }
-            while (state.get() == PREFLIGHT_STATE_RUNNING) {
-                try {
-                    latch.await()
-                    break
-                } catch (_: InterruptedException) {
-                    interrupted = true
-                }
-            }
-            if (interrupted) {
-                Thread.currentThread().interrupt()
-            }
-            return if (state.get() == PREFLIGHT_STATE_DONE) {
-                result.get()
-            } else {
-                commandPreparationJSON(ready = false, blockedReason = "unknown")
-            }
-        }
-        return result.get()
-    }
-
     private fun rustEditorExists(viewToken: Long): Boolean =
         EditorV2Registry.adapterForViewToken(viewToken) != null
 
-    fun commandPreparationJSON(
-        ready: Boolean,
-        updateJSON: String? = null,
-        blockedReason: String? = null
-    ): String = JSONObject().apply {
-        put("ready", ready)
-        if (updateJSON != null) {
-            put("updateJSON", updateJSON)
-        }
-        if (!ready && blockedReason != null) {
-            put("blockedReason", blockedReason)
-        }
-    }.toString()
-
-    private const val PREFLIGHT_STATE_QUEUED = 0
-    private const val PREFLIGHT_STATE_RUNNING = 1
-    private const val PREFLIGHT_STATE_CANCELLED = 2
-    private const val PREFLIGHT_STATE_DONE = 3
 }

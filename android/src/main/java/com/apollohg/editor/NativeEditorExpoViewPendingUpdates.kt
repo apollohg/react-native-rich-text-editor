@@ -119,12 +119,6 @@ internal fun NativeEditorExpoView.hasPendingEditorUpdateForCurrentEditor(): Bool
 internal fun NativeEditorExpoView.hasPendingEditorResetUpdateForCurrentEditor(): Boolean =
     hasPendingEditorResetUpdateForEditor(richTextView.editorId)
 
-internal fun NativeEditorExpoView.pendingEditorUpdateCommandPreparationJSON(): String =
-    NativeEditorViewRegistry.commandPreparationJSON(
-        ready = false,
-        blockedReason = "pendingUpdate"
-    )
-
 internal fun NativeEditorExpoView.shouldBlockEditorCommandForPendingUpdate(): Boolean =
     hasPendingEditorResetUpdateForCurrentEditor() || hasPendingEditorUpdateForCurrentEditor()
 

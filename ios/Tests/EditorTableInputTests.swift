@@ -2526,17 +2526,6 @@ final class EditorTableInputTests: XCTestCase {
         }
     }
 
-    func testNativeCommandPreflightIsBlockedWhileACellIsActive() throws {
-        try withExpoTableGeometry(document: fourCellDocument) { fixture in
-            _ = try fixture.activateCell(1)
-            let preparation = try XCTUnwrap(JSONSerialization.jsonObject(
-                with: Data(fixture.host.prepareForEditorCommandJSON().utf8)
-            ) as? [String: Any])
-            XCTAssertEqual(preparation["ready"] as? Bool, false, "\(preparation)")
-            XCTAssertEqual(preparation["blockedReason"] as? String, "composition", "\(preparation)")
-        }
-    }
-
     func testKeyboardToolbarMarkPressTogglesTheMarkInTheBoundCell() throws {
         try withExpoTableGeometry(configJson: TableInputTestSchema.strongMarkTableConfig,
                                   document: fourCellDocument) { fixture in
