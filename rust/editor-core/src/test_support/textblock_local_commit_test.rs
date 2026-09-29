@@ -796,7 +796,7 @@ fn assert_render_matches_fresh(session: &EditorSession, name: &str) {
 }
 
 #[test]
-fn a_large_table_keystroke_performs_no_document_wide_pass() {
+fn a_large_table_keystroke_limits_document_wide_work_to_the_fallback_hash() {
     assert_large_table_edit_is_validated_locally(INSERT_INTENTS[0]);
 }
 
@@ -887,8 +887,8 @@ fn assert_large_table_edit_is_validated_locally(intent: &str) {
             passes.canonical_serializations,
             passes.canonical_hashes
         ),
-        (1, 1, 1),
-        "an over-budget history snapshot retains one eager digest",
+        (0, 1, 1),
+        "an over-budget history snapshot streams one eager digest without projecting a JSON tree",
     );
     assert!(passes.position_map_clones <= 1, "{passes:#?}");
     assert!(passes.position_map_compactions <= 1, "{passes:#?}");
@@ -900,7 +900,6 @@ fn assert_large_table_edit_is_validated_locally(intent: &str) {
             } else {
                 DELETE_MARK_VALIDATION_NODES
             },
-            canonical_projections: 1,
             canonical_serializations: 1,
             canonical_hashes: 1,
             canonical_identity_predicate_nodes_visited: passes
