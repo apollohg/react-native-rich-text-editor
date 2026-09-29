@@ -72,47 +72,14 @@ fn node_to_json_shallow(node: &Node, schema: &Schema) -> Value {
             .unwrap_or(Value::Null);
     }
     let mut obj = Map::new();
-    let spec = schema.node(node.node_type());
-    let projected_type = spec
-        .and_then(|spec| spec.json_projection.as_ref())
-        .map_or(node.node_type(), |projection| projection.node_type.as_str());
-    obj.insert("type".to_string(), json!(projected_type));
+    obj.insert("type".to_string(), json!(projected_node_type(node, schema)));
 
     if node.is_text() {
         obj.insert("text".to_string(), json!(node.text_str().unwrap_or("")));
 
         if !node.marks().is_empty() {
-            let marks_json: Vec<Value> = node
-                .marks()
-                .iter()
-                .map(|m| {
-                    let mut mark_obj = Map::new();
-                    mark_obj.insert("type".to_string(), json!(m.mark_type()));
-                    if !m.attrs().is_empty() {
-                        mark_obj.insert(
-                            "attrs".to_string(),
-                            Value::Object(
-                                m.attrs()
-                                    .iter()
-                                    .map(|(key, value)| {
-                                        (
-                                            key.clone(),
-                                            crate::boundary::clone_json_value_stack_safe(value),
-                                        )
-                                    })
-                                    .collect(),
-                            ),
-                        );
-                    }
-                    Value::Object(mark_obj)
-                })
-                .collect();
+            let marks_json = projected_marks(node);
             obj.insert("marks".to_string(), Value::Array(marks_json));
-        }
-    } else if node.is_element() {
-        let attrs_json = build_attrs_json(node, schema);
-        if !attrs_json.is_empty() {
-            obj.insert("attrs".to_string(), Value::Object(attrs_json));
         }
     } else {
         let attrs_json = build_attrs_json(node, schema);
@@ -122,6 +89,40 @@ fn node_to_json_shallow(node: &Node, schema: &Schema) -> Value {
     }
 
     Value::Object(obj)
+}
+
+fn projected_node_type<'a>(node: &'a Node, schema: &'a Schema) -> &'a str {
+    schema
+        .node(node.node_type())
+        .and_then(|spec| spec.json_projection.as_ref())
+        .map_or(node.node_type(), |projection| projection.node_type.as_str())
+}
+
+fn projected_marks(node: &Node) -> Vec<Value> {
+    node.marks()
+        .iter()
+        .map(|m| {
+            let mut mark_obj = Map::new();
+            mark_obj.insert("type".to_string(), json!(m.mark_type()));
+            if !m.attrs().is_empty() {
+                mark_obj.insert(
+                    "attrs".to_string(),
+                    Value::Object(
+                        m.attrs()
+                            .iter()
+                            .map(|(key, value)| {
+                                (
+                                    key.clone(),
+                                    crate::boundary::clone_json_value_stack_safe(value),
+                                )
+                            })
+                            .collect(),
+                    ),
+                );
+            }
+            Value::Object(mark_obj)
+        })
+        .collect()
 }
 
 /// Build the attrs JSON object for a node, omitting attributes whose values
@@ -157,48 +158,59 @@ fn build_attrs_json(node: &Node, schema: &Schema) -> Map<String, Value> {
     attrs_map
 }
 
-pub(crate) fn write_node_json(
+pub(crate) fn write_node_json<'a>(
     sink: &mut impl std::io::Write,
-    node: &Node,
-    schema: &Schema,
+    node: &'a Node,
+    schema: &'a Schema,
 ) -> std::io::Result<()> {
     use crate::boundary::{JsonWriteFrame as Frame, StackSafeJsonValue};
     crate::boundary::write_json_frames(sink, vec![Frame::Expand(node)], |node, frames| {
-        let value = node_to_json_shallow(node, schema);
         if node.node_type() == "__opaque_json" {
-            frames.push(Frame::OwnedValue(StackSafeJsonValue::new(value)));
+            frames.push(match node.attrs().get("original_json") {
+                Some(value) => Frame::Value(value),
+                None => Frame::Raw(b"null"),
+            });
             return;
         }
-        let Value::Object(mut fields) = value else {
-            unreachable!()
-        };
+        frames.push(Frame::Raw(b"}"));
+        frames.push(Frame::String(projected_node_type(node, schema)));
+        frames.push(Frame::Raw(b"\"type\":"));
+        if node.is_text() {
+            frames.push(Frame::Raw(b","));
+            frames.push(Frame::String(node.text_str().unwrap_or("")));
+            frames.push(Frame::Raw(b"\"text\":"));
+            if !node.marks().is_empty() {
+                frames.push(Frame::Raw(b","));
+                frames.push(Frame::OwnedValue(StackSafeJsonValue::new(Value::Array(
+                    projected_marks(node),
+                ))));
+                frames.push(Frame::Raw(b"\"marks\":"));
+            }
+        }
         let children = node
             .content()
             .map(|content| content.children())
             .unwrap_or(&[]);
         if !children.is_empty() {
-            fields.insert("content".into(), Value::Null);
-        }
-        frames.push(Frame::Raw(b"}"));
-        let count = fields.len();
-        for (index, (key, value)) in fields.into_iter().enumerate().rev() {
-            if index + 1 < count {
-                frames.push(Frame::Raw(b","));
-            }
-            if key == "content" {
-                frames.push(Frame::Raw(b"]"));
-                for (index, child) in children.iter().enumerate().rev() {
-                    if index + 1 < children.len() {
-                        frames.push(Frame::Raw(b","));
-                    }
-                    frames.push(Frame::Expand(child));
+            frames.push(Frame::Raw(b","));
+            frames.push(Frame::Raw(b"]"));
+            for (index, child) in children.iter().enumerate().rev() {
+                if index + 1 < children.len() {
+                    frames.push(Frame::Raw(b","));
                 }
-                frames.push(Frame::Raw(b"["));
-            } else {
-                frames.push(Frame::OwnedValue(StackSafeJsonValue::new(value)));
+                frames.push(Frame::Expand(child));
             }
-            frames.push(Frame::Raw(b":"));
-            frames.push(Frame::OwnedString(key));
+            frames.push(Frame::Raw(b"\"content\":["));
+        }
+        if !node.is_text() {
+            let attrs = build_attrs_json(node, schema);
+            if !attrs.is_empty() {
+                frames.push(Frame::Raw(b","));
+                frames.push(Frame::OwnedValue(StackSafeJsonValue::new(Value::Object(
+                    attrs,
+                ))));
+                frames.push(Frame::Raw(b"\"attrs\":"));
+            }
         }
         frames.push(Frame::Raw(b"{"));
     })
@@ -233,4 +245,86 @@ pub(crate) fn write_attrs_json(output: &mut String, node: &Node, cell: bool) {
     crate::boundary::write_json_frames(&mut bytes, frames, |(): (), _| {})
         .expect("JSON attributes serialize to memory");
     output.push_str(std::str::from_utf8(&bytes).expect("JSON is UTF-8"));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{Fragment, Mark};
+    use std::collections::HashMap;
+
+    #[test]
+    fn streamed_nodes_match_projection_defaults_marks_and_opaque_values() {
+        let marked = Node::text(
+            "quote=\" newline=\n 雪🙂".into(),
+            vec![
+                Mark::new(
+                    "link".into(),
+                    HashMap::from([("href".into(), json!("/a?b=\"c"))]),
+                ),
+                Mark::new("bold".into(), HashMap::new()),
+            ],
+        );
+        let nodes = [
+            Node::element(
+                "h2".into(),
+                HashMap::from([("level".into(), json!(99))]),
+                Fragment::from(vec![marked.clone()]),
+            ),
+            Node::element(
+                "paragraph".into(),
+                HashMap::new(),
+                Fragment::from(Vec::new()),
+            ),
+            Node::element(
+                "orderedList".into(),
+                HashMap::from([("start".into(), json!(1))]),
+                Fragment::from(Vec::new()),
+            ),
+            Node::void(
+                "image".into(),
+                HashMap::from([
+                    ("src".into(), json!("/雪.png")),
+                    ("width".into(), json!(1.5)),
+                    (
+                        "metadata".into(),
+                        json!({"large":u64::MAX,"nested":[true,null]}),
+                    ),
+                ]),
+            ),
+            Node::element(
+                "__opaque_json".into(),
+                HashMap::from([(
+                    "original_json".into(),
+                    json!([{"type":"text","content":[],"text":"opaque"},null]),
+                )]),
+                Fragment::from(vec![marked.clone()]),
+            ),
+            Node::element(
+                "__opaque_json".into(),
+                HashMap::new(),
+                Fragment::from(vec![marked.clone()]),
+            ),
+            marked,
+        ];
+        for schema in [
+            crate::schema::presets::tiptap_schema(),
+            crate::schema::presets::prosemirror_schema(),
+        ] {
+            for node in &nodes {
+                let expected = crate::boundary::serialize_json_value_stack_safe(
+                    &node_to_json(node, &schema),
+                    0,
+                );
+                let mut actual = Vec::new();
+                write_node_json(&mut actual, node, &schema).unwrap();
+                assert_eq!(
+                    actual,
+                    expected,
+                    "exact canonical bytes for {}",
+                    node.node_type()
+                );
+            }
+        }
+    }
 }
