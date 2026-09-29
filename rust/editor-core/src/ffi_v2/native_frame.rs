@@ -22,6 +22,7 @@ fn same_layout(a: &TableRenderStructure, b: &TableRenderStructure) -> bool {
         && a.source_rows == b.source_rows
         && a.synthetic_regions == b.synthetic_regions
         && a.failure == b.failure
+        && (a.failure.is_none() || a.doc_size == b.doc_size)
         && a.compatibility_diagnostic == b.compatibility_diagnostic
 }
 

@@ -26,7 +26,7 @@ mod drop_tests;
 #[cfg(test)]
 pub(crate) mod history_tests;
 #[cfg(test)]
-mod interchange_tests;
+pub(crate) mod interchange_tests;
 #[cfg(test)]
 mod navigation_tests;
 #[cfg(test)]

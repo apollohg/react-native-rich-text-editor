@@ -27,14 +27,20 @@ fn attribute_pool_collision_keeps_canonical_key_and_exact_json() {
         ),
     );
     let table = document.root().child(0).unwrap();
-    let mut original = crate::tables::render::TableRenderContext::new(Arc::clone(&index), &schema);
+    let mut original = crate::tables::render::TableRenderContext::new(
+        Arc::clone(&index),
+        &crate::schema::schema_fingerprint(&schema),
+    );
     let expected =
         crate::tables::render::generate_table(table, &schema, 0, &mut original, false).unwrap();
     let json = original.attributes[&expected.structure.attrs_key].clone();
     let digest = format!("{:x}", Sha256::digest(json.as_bytes()));
     assert_eq!(expected.structure.attrs_key, digest);
 
-    let mut context = crate::tables::render::TableRenderContext::new(index, &schema);
+    let mut context = crate::tables::render::TableRenderContext::new(
+        index,
+        &crate::schema::schema_fingerprint(&schema),
+    );
     context
         .attributes
         .insert(digest, Arc::from("{\"different\":true}"));
@@ -489,6 +495,7 @@ fn grid_limit_failure_keeps_the_real_table_extent_without_inventing_cells() {
         ..ResourceLimits::default()
     };
     let cache = CachedRenderBlocks::build(&document, &schema, &limits).unwrap();
+    assert_eq!(cache.rendered_text(&schema), "source survives");
     let blocks = cache.materialize();
     let RenderElement::Table { table, doc_offset } = &blocks[0][0] else {
         panic!("failed table");
@@ -553,6 +560,34 @@ fn structural_failure_keeps_the_real_table_extent_without_inventing_cells() {
     assert!(table.cells.is_empty());
     assert!(table.structure.source_rows.is_empty());
     assert!(table.structure.synthetic_regions.is_empty());
+}
+
+#[test]
+fn unrepresentable_table_sources_keep_text_order_without_exporting_cells() {
+    let schema = crate::tables::interchange_tests::schema_admitting_a_stray_table_child();
+    let paragraph = |text: &str| json!({ "type": "paragraph", "content": [{ "type": "text", "text": text }] });
+    let row = |cells: Vec<serde_json::Value>| json!({ "type": "table_row", "content": cells });
+    let nested = json!({ "type": "table_cell", "content": [{ "type": "table", "content": [row(vec![cell("nested🙂")])] }] });
+    for (children, expected) in [
+        (vec![paragraph("before"), row(vec![cell("a")])], "before\na"),
+        (vec![row(vec![cell("a")]), paragraph("between"), row(vec![cell("b")])], "a\nbetween\nb"),
+        (vec![row(vec![cell("a"), paragraph("inside🙂"), cell("b")])], "a\ninside🙂\nb"),
+        (vec![paragraph("before"), row(vec![nested])], "before\nnested🙂"),
+    ] {
+        let source = json!({ "type": "doc", "content": [{ "type": "table", "content": children }] });
+        let document = crate::serialize::from_prosemirror_json(&source, &schema,
+            crate::serialize::UnknownTypeMode::Error).unwrap();
+        let canonical = crate::serialize::to_prosemirror_json(&document, &schema);
+        let cache = CachedRenderBlocks::build(&document, &schema, &ResourceLimits::default()).unwrap();
+        assert_eq!(cache.rendered_text(&schema), expected, "source order: {source}");
+        assert_eq!(crate::render::rendered_text(&document, &schema), expected);
+        assert_eq!(crate::serialize::to_prosemirror_json(&document, &schema), canonical);
+        let (_, records) = crate::viewer::lower_cached_tables_for_test(&cache);
+        assert_eq!(records.len(), 1, "source-only descendants must not export orphan nested tables");
+        assert_eq!(records[0].failure, Some(crate::tables::render::TableRenderFailure::InvalidStructure));
+        assert!(records[0].cells.is_empty(), "an unreadable grid must not invent native cells");
+        assert_eq!(records[0].source_end, document.root().child(0).unwrap().node_size());
+    }
 }
 
 #[test]

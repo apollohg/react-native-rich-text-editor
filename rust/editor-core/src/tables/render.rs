@@ -131,6 +131,17 @@ pub struct TableRenderStructure {
 pub struct TableRenderRecord {
     pub structure: Arc<TableRenderStructure>,
     pub cells: Vec<Arc<TableRenderCell>>,
+    pub(crate) source_fallback: Option<Arc<Vec<RenderElement>>>,
+}
+
+impl Drop for TableRenderRecord {
+    fn drop(&mut self) {
+        if let Some(elements) = self.source_fallback.as_mut().and_then(Arc::get_mut) {
+            for element in elements.iter_mut() {
+                element.drain_json_payloads();
+            }
+        }
+    }
 }
 
 impl Drop for TableRenderCell {
@@ -203,6 +214,15 @@ impl TableRenderRecord {
                     bytes = bytes.saturating_add(element_bytes(element));
                 }
             }
+            if let Some(elements) = &self.source_fallback {
+                bytes = bytes.saturating_add(
+                    crate::model::arc_allocation_retained_bytes(std::mem::size_of::<Vec<RenderElement>>())
+                        .unwrap_or(usize::MAX),
+                ).saturating_add(elements.capacity().saturating_mul(std::mem::size_of::<RenderElement>()));
+                for element in elements.iter() {
+                    bytes = bytes.saturating_add(element_bytes(element));
+                }
+            }
             bytes
         })
     }
@@ -214,8 +234,12 @@ pub(crate) fn all_elements(elements: &[RenderElement]) -> impl Iterator<Item = &
         let elements = pending.last_mut()?;
         if let Some(element) = elements.next() {
             if let RenderElement::Table { table, .. } = element {
-                for cell in table.cells.iter().rev() {
-                    pending.push(cell.elements.iter());
+                if let Some(elements) = &table.source_fallback {
+                    pending.push(elements.iter());
+                } else {
+                    for cell in table.cells.iter().rev() {
+                        pending.push(cell.elements.iter());
+                    }
                 }
             }
             return Some(element);
@@ -252,6 +276,7 @@ pub(crate) struct TableRenderContext {
     pub prior_cells: HashMap<usize, (Node, Arc<TableRenderCell>)>,
     prior_content: HashMap<String, Arc<Vec<RenderElement>>>,
     pub coordinate_origin: u32,
+    pub source_only: bool,
     pub schema_key: String,
     pub attributes: BTreeMap<String, Arc<str>>,
     attribute_nodes: HashMap<(usize, bool), (Node, String)>,
@@ -296,13 +321,14 @@ impl TableRenderContext {
         self.attributes.retain(|key, _| keys.contains(key));
     }
 
-    pub(crate) fn new(index: Arc<TableProjectionIndex>, schema: &Schema) -> Self {
+    pub(crate) fn new(index: Arc<TableProjectionIndex>, schema_key: &str) -> Self {
         Self {
             index,
             prior_cells: HashMap::new(),
             prior_content: HashMap::new(),
             coordinate_origin: 0,
-            schema_key: crate::schema::schema_fingerprint(schema),
+            source_only: false,
+            schema_key: schema_key.to_owned(),
             attributes: BTreeMap::new(),
             attribute_nodes: HashMap::new(),
             attribute_keys: HashMap::new(),
@@ -549,13 +575,30 @@ pub(crate) fn generate_table(
         failure: projection.exact_failure().map(TableRenderFailure::from),
         compatibility_diagnostic: None,
     };
-    let Some(projected) = projection.table_at(table_pos) else {
+    let representable = (0..node.child_count()).all(|index| {
+        let row = node.child(index).expect("source row index is in bounds");
+        schema.node(row.node_type()).is_some_and(|spec| spec.table_role == Some(TableRole::Row))
+            && (0..row.child_count()).all(|index| {
+                let cell = row.child(index).expect("source cell index is in bounds");
+                schema.node(cell.node_type()).is_some_and(|spec| {
+                    matches!(spec.table_role, Some(TableRole::Cell | TableRole::HeaderCell))
+                })
+            })
+    });
+    let Some(projected) = projection.table_at(table_pos).filter(|_| representable) else {
         structure
             .failure
             .get_or_insert(TableRenderFailure::InvalidStructure);
+        let mut elements = Vec::new();
+        let previous_source_only = context.source_only;
+        context.source_only = true;
+        let result = generate_block(node, schema, &mut elements, &mut 0, 0, None, 0, context, nested);
+        context.source_only = previous_source_only;
+        result?;
         return Ok(TableRenderRecord {
             structure: Arc::new(structure),
             cells: Vec::new(),
+            source_fallback: Some(Arc::new(elements)),
         });
     };
     structure.rows = projected.rows;
@@ -666,6 +709,7 @@ pub(crate) fn generate_table(
     Ok(TableRenderRecord {
         structure: Arc::new(structure),
         cells,
+        source_fallback: None,
     })
 }
 

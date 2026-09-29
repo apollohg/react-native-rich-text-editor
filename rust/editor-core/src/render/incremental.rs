@@ -403,7 +403,7 @@ pub(crate) fn try_incremental(
             schema,
             &ResourceLimits::default(),
         )),
-        schema,
+        &schema_fingerprint(schema),
     );
     for i in 0..root.child_count() {
         let child = root.child(i).expect("child index in bounds");
@@ -628,7 +628,7 @@ fn generate_block_inner(
     in_cell: bool,
 ) -> Result<(), CachedRenderError> {
     let spec = schema.node(node.node_type());
-    if spec.is_some_and(|spec| spec.table_role == Some(crate::tables::TableRole::Table)) {
+    if !context.source_only && spec.is_some_and(|spec| spec.table_role == Some(crate::tables::TableRole::Table)) {
         let doc_offset = *pos;
         let absolute_pos = context
             .coordinate_origin

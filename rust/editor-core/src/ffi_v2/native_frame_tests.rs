@@ -471,6 +471,81 @@ fn native_frame_failed_table_preserves_its_real_extent() {
 }
 
 #[test]
+fn native_frame_failed_source_edits_refresh_root_and_nested_table_bounds() {
+    use crate::session::{
+        CollaborationLimits, DocumentState, EditorSession, EditorSessionConfig, SessionPolicy,
+    };
+    use crate::yrs_engine::{
+        EditingLimits, InitializationMode, ReplacementHistory, YrsDocumentEngine, YrsEngineConfig,
+    };
+    use serde_json::json;
+
+    for nested in [false, true] {
+        let failed = json!({"type":"table","content":[
+            {"type":"paragraph","content":[{"type":"text","text":"source"}]}
+        ]});
+        let source = if nested {
+            json!({"type":"doc","content":[{"type":"table","content":[
+                {"type":"table_row","content":[{"type":"table_cell","content":[failed]}]}
+            ]}]})
+        } else {
+            json!({"type":"doc","content":[failed]})
+        };
+        let engine = YrsDocumentEngine::new(YrsEngineConfig {
+            schema: crate::tables::interchange_tests::schema_admitting_a_stray_table_child(),
+            fragment_name: "prosemirror".into(),
+            initialization_mode: InitializationMode::LocalEmpty,
+            resource_limits: crate::boundary::ResourceLimits::default(),
+            editing_limits: EditingLimits::default(),
+            max_length: None,
+            scope: None,
+        })
+        .unwrap();
+        let mut session = EditorSession::new(
+            engine,
+            SessionPolicy::from_config(&EditorSessionConfig::local_for_test()),
+            DocumentState::LocalReady,
+            CollaborationLimits::default(),
+        )
+        .unwrap();
+        session
+            .replace_document_json(
+                REQUEST,
+                &source.to_string(),
+                ReplacementHistory::ResetAndClear,
+            )
+            .unwrap();
+        let full = frame(&mut session, Some(OWNER));
+        let failed_key = full
+            .tables
+            .tables
+            .iter()
+            .find(|table| table.failure.is_some())
+            .unwrap()
+            .table_key
+            .clone();
+        let mut mirror = crate::test_support::table_frame_mirror::TableFrameMirror::default();
+        mirror.apply(&full).unwrap();
+        native_edit(&mut session, REQUEST + 1, 0, "🦀 edited ");
+        let delta = frame(&mut session, Some(OWNER));
+        assert!(
+            delta
+                .tables
+                .tables
+                .iter()
+                .any(|table| table.table_key == failed_key),
+            "nested={nested}: changed failed source must replace the empty-cell record"
+        );
+        mirror.apply(&delta).unwrap();
+        assert_mirror(
+            &mut session,
+            &mut mirror,
+            &format!("nested={nested} failed source edit"),
+        );
+    }
+}
+
+#[test]
 fn native_frame_mirror_rejects_invalid_deltas_atomically() {
     use crate::test_support::table_frame_mirror::TableFrameMirror;
     let mut session = session_with_document(&two_table_document());

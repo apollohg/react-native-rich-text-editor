@@ -537,7 +537,7 @@ fn a_clipboard_refusal_reports_the_kind_of_refusal_it_is() {
     );
 }
 
-fn schema_admitting_a_stray_table_child() -> Schema {
+pub(crate) fn schema_admitting_a_stray_table_child() -> Schema {
     let cell_attrs = json!({
         "colspan": { "type": "number", "default": SINGLE_SPAN, "min": SINGLE_SPAN },
         "rowspan": { "type": "number", "default": SINGLE_SPAN, "min": SINGLE_SPAN },
@@ -555,7 +555,7 @@ fn schema_admitting_a_stray_table_child() -> Schema {
             "tableRole": "table",
             "htmlTag": "table"
         },
-        { "name": ROW_NODE, "content": format!("({CELL_NODE} | {HEADER_CELL_NODE})*"), "role": "block", "tableRole": "row", "htmlTag": "tr" },
+        { "name": ROW_NODE, "content": format!("({CELL_NODE} | {HEADER_CELL_NODE} | {PARAGRAPH_NODE})*"), "role": "block", "tableRole": "row", "htmlTag": "tr" },
         { "name": CELL_NODE, "content": "block+", "role": "block", "tableRole": "cell", "htmlTag": "td", "attrs": cell_attrs },
         { "name": HEADER_CELL_NODE, "content": "block+", "role": "block", "tableRole": "header_cell", "htmlTag": "th", "attrs": cell_attrs },
     ], "marks": [] }))
@@ -590,6 +590,8 @@ fn a_stray_table_child_reports_an_unreadable_grid_to_the_host() {
         .expect("a table holding a stray paragraph is admitted by this schema");
 
     let document = engine.document().expect("the engine is ready");
+    assert_eq!(crate::render::rendered_text(document, &schema), "a\nb\nstray");
+    assert_eq!(engine.position_map().unwrap().total_scalars(), 9);
     let index = TableProjectionIndex::derive_or_fallback(document, &schema, &limits());
     let openings: Vec<u32> = index
         .table_at(0)

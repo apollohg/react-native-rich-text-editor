@@ -86,7 +86,8 @@ impl CachedRenderBlocks {
         let table_projection_index = Arc::new(TableProjectionIndex::derive_or_fallback(
             document, schema, limits,
         ));
-        let mut context = TableRenderContext::new(Arc::clone(&table_projection_index), schema);
+        let mut context =
+            TableRenderContext::new(Arc::clone(&table_projection_index), &schema_fingerprint);
         let root = document.root();
         let mut blocks = Vec::new();
         blocks
@@ -347,7 +348,10 @@ impl CachedRenderBlocks {
                 TableProjectionIndex::derive_or_fallback(new_document, schema, limits)
             }),
         );
-        let mut context = TableRenderContext::new(Arc::clone(&table_projection_index), schema);
+        let mut context = TableRenderContext::new(
+            Arc::clone(&table_projection_index),
+            &self.schema_fingerprint,
+        );
         context.attributes = self.table_attributes.clone();
         for block in &self.blocks {
             context.retain_cells(
@@ -480,7 +484,10 @@ impl CachedRenderBlocks {
             schema,
             limits,
         ));
-        let mut context = TableRenderContext::new(Arc::clone(&table_projection_index), schema);
+        let mut context = TableRenderContext::new(
+            Arc::clone(&table_projection_index),
+            &self.schema_fingerprint,
+        );
         context.attributes = self.table_attributes.clone();
         for block in &self.blocks {
             context.retain_cells(
