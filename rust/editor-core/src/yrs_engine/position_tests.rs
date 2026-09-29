@@ -15,7 +15,7 @@ use crate::position_epoch::BoundaryAnchors;
 use crate::schema::content_rule::ContentRule;
 use crate::schema::presets::prosemirror_table_schema;
 use crate::schema::{AttrSpec, NodeRole, NodeSpec, Schema};
-use crate::tables::commands::NODE_OPENING_TOKENS;
+use crate::tables::commands::{TableCommand, NODE_OPENING_TOKENS};
 use crate::tables::commands_tests::engine_with;
 use crate::yrs_engine::{
     Affinity, EditorOffsetKind, HistoryPolicy, RevisionedPosition, SelectionInput, SelectionIntent,
@@ -640,6 +640,38 @@ fn batched_boundary_anchors_match_per_position_descent_at_every_document_positio
         assert_batch_matches_descent(label, &engine, &doc_positions, false);
         doc_positions.reverse();
         assert_batch_matches_descent(label, &engine, &doc_positions, false);
+    }
+}
+
+#[test]
+fn batched_boundary_anchors_match_descent_after_sibling_deletions() {
+    const SIDE: usize = 5;
+    let rows = (0..SIDE)
+        .map(|r| {
+            row((0..SIDE)
+                .map(|c| cell(vec![paragraph(vec![text(&format!("cell_{r}_{c}"))])]))
+                .collect())
+        })
+        .collect();
+    let mut engine = engine_with(corpus_schema(), vec![table(rows)]);
+    let mut request_id = FIRST_EDIT_REQUEST;
+    for (word, command) in [
+        ("cell_1_0", TableCommand::DeleteTableColumns),
+        ("cell_1_2", TableCommand::DeleteTableColumns),
+        ("cell_1_4", TableCommand::DeleteTableColumns),
+        ("cell_0_1", TableCommand::DeleteTableRows),
+        ("cell_2_1", TableCommand::DeleteTableRows),
+        ("cell_4_1", TableCommand::DeleteTableRows),
+    ] {
+        let caret = caret_inside_word(&engine, word);
+        place_caret(&mut engine, request_id, caret);
+        request_id += 1;
+        apply(&mut engine, request_id, TypedCommand::Table(command));
+        request_id += 1;
+        let positions = every_doc_position(&engine);
+        assert_batch_matches_descent(word, &engine, &positions, false);
+        let scalar_positions = scalar_doc_positions(&engine);
+        assert_batch_matches_descent(word, &engine, &scalar_positions, true);
     }
 }
 

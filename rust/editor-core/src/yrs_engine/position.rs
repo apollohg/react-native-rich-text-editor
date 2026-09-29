@@ -561,11 +561,19 @@ impl<T: ReadTxn> BoundaryAnchorWalk<'_, T> {
         Some(())
     }
 
-    fn enter(&mut self, branch: BranchPtr, index: u32, table_cell: bool) -> Option<()> {
+    fn enter(
+        &mut self,
+        branch: BranchPtr,
+        index: u32,
+        table_cell: bool,
+        before: Option<StickyIndex>,
+        after: Option<StickyIndex>,
+    ) -> Option<()> {
         let entered = Arc::new(AncestorNode {
             anchors: AncestorAnchors {
-                before: sticky_at(self.txn, branch, index, Assoc::Before)?,
-                after: sticky_at(self.txn, branch, index.checked_add(1)?, Assoc::After)?,
+                before: before.or_else(|| sticky_at(self.txn, branch, index, Assoc::Before))?,
+                after: after
+                    .or_else(|| sticky_at(self.txn, branch, index.checked_add(1)?, Assoc::After))?,
                 table_cell,
             },
             parent: self.open.last().cloned(),
@@ -588,7 +596,26 @@ impl<T: ReadTxn> BoundaryAnchorWalk<'_, T> {
         let mut index = 0u32;
         let mut position = start;
         let mut children = children.peekable();
+        let mut previous_id = None;
         while let Some(child) = children.next() {
+            let current_id = integrated_xml_child_id(&child);
+            let before = if index == 0 {
+                Some(StickyIndex::new(
+                    IndexScope::from_branch(branch),
+                    Assoc::Before,
+                ))
+            } else {
+                previous_id.map(|id| StickyIndex::from_id(id, Assoc::Before))
+            };
+            let after = match children.peek() {
+                Some(next) => {
+                    integrated_xml_child_id(next).map(|id| StickyIndex::from_id(id, Assoc::After))
+                }
+                None if index.checked_add(1) == Some(branch.content_len()) => {
+                    current_id.map(|id| StickyIndex::from_id(id, Assoc::Before))
+                }
+                None => None,
+            };
             #[cfg(test)]
             BOUNDARY_WALK_NODE_VISITS.set(BOUNDARY_WALK_NODE_VISITS.get().saturating_add(1));
             position = match &child {
@@ -612,6 +639,8 @@ impl<T: ReadTxn> BoundaryAnchorWalk<'_, T> {
                             branch,
                             index,
                             is_table_cell_element(element, self.txn, self.schema),
+                            before,
+                            after,
                         )?;
                         let content_end = self.walk_sequence(
                             element.children(self.txn),
@@ -627,7 +656,7 @@ impl<T: ReadTxn> BoundaryAnchorWalk<'_, T> {
                     self.resolve_at_child(branch, index, position, sequence_end)?;
                     let fragment_end =
                         position.checked_add(xml_out_pm_size(self.txn, &child, self.schema)?)?;
-                    self.enter(branch, index, false)?;
+                    self.enter(branch, index, false, before, after)?;
                     self.walk_sequence(
                         nested.children(self.txn),
                         BranchPtr::from(<XmlFragmentRef as AsRef<Branch>>::as_ref(nested)),
@@ -638,6 +667,7 @@ impl<T: ReadTxn> BoundaryAnchorWalk<'_, T> {
                     fragment_end
                 }
             };
+            previous_id = current_id;
             index = index.checked_add(1)?;
         }
         self.resolve_at_child(branch, index, position, sequence_end)?;
@@ -685,6 +715,13 @@ impl<T: ReadTxn> BoundaryAnchorWalk<'_, T> {
             }
         }
         Some(text_end)
+    }
+}
+
+fn integrated_xml_child_id(child: &XmlOut) -> Option<yrs::ID> {
+    match child.id() {
+        BranchID::Nested(id) => Some(id),
+        BranchID::Root(_) => None,
     }
 }
 
