@@ -2632,6 +2632,27 @@ final class EditorTableInputTests: XCTestCase {
         }
     }
 
+    func testJavaScriptUndoUnderABlurredCellRectangleDoesNotTakeFocus() throws {
+        try withExpoTableGeometry(document: fourCellDocument) { fixture in
+            let view = fixture.host.richTextView
+            let original = try fixture.adapter.tableCellTexts()
+            try fixture.activateCell(1).insertText("X")
+            try fixture.selectCells(anchor: 0, head: 1)
+            XCTAssertTrue(view.textView.resignFirstResponder())
+            XCTAssertTrue(view.textInputs.allSatisfy { !$0.isFirstResponder })
+            let undone = fixture.adapter.callWithEnvelope([:], includeBaseRevision: false) {
+                editorV2Undo(editorId: fixture.adapter.editorId, requestJson: $0)
+            }
+            XCTAssertNil(undone.error)
+            let rendered = editorV2RenderUpdate(editorId: fixture.adapter.editorId,
+                                                mirrorScalarAnchor: nil, mirrorScalarHead: nil)
+            XCTAssertTrue(fixture.host.applyEditorUpdate(try XCTUnwrap(rendered.value)))
+            XCTAssertEqual(try fixture.adapter.tableCellTexts(), original)
+            XCTAssertTrue(view.textInputs.allSatisfy { !$0.isFirstResponder }, "JavaScript undo preserves the blur")
+            XCTAssertTrue(view.activeTextInput === view.textView, "a blurred rectangle does not open a cell input")
+        }
+    }
+
     func testKeyboardToolbarUndoUnderACellRectangleKeepsARestoredProseCaretOnTheRoot() throws {
         try withExpoTableGeometry(document: proseBeforeTableDocument) { fixture in
             fixture.host.setToolbarButtonsJson(TableToolbarTestItems.historyJson)
@@ -3321,6 +3342,60 @@ final class EditorTableInputTests: XCTestCase {
         XCTAssertTrue(owner.textView.ownsNativeBinding(adapter))
         XCTAssertFalse(stale.textView.ownsNativeBinding(adapter))
         XCTAssertFalse(stale.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: .zero))
+    }
+
+    func testStaleRootCannotIssueToolbarCommandsThroughAnotherHostOwner() throws {
+        let editorId = makeV2Editor(configJson: TableInputTestSchema.strongMarkTableConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let document = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"cell"}]}]}]}]}]}"#
+        let owner = RichTextEditorView(frame: .zero)
+        let stale = RichTextEditorView(frame: .zero)
+        owner.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        XCTAssertTrue(owner.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
+        owner.textView.selectedRange = NSRange(location: 1, length: 0)
+        owner.textView.insertText("X")
+        let edited = try XCTUnwrap(adapter.documentJson())
+        XCTAssertNotEqual(edited, document)
+        stale.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        stale.textView.selectedRange = NSRange(location: 1, length: 2)
+        XCTAssertTrue(owner.textView.ownsNativeBinding(adapter))
+        XCTAssertFalse(stale.textView.ownsNativeBinding(adapter))
+
+        func assertRefused(_ action: () -> Void, _ label: String) throws {
+            let before = try XCTUnwrap(adapter.documentJson())
+            let revision = adapter.baseDocumentRevision
+            let selection = try authoritativeSelection(adapter) as NSDictionary
+            let history = try XCTUnwrap(adapter.cachedHistoryState)
+            action()
+            XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before, label)
+            XCTAssertEqual(adapter.baseDocumentRevision, revision, label)
+            XCTAssertEqual(try authoritativeSelection(adapter) as NSDictionary, selection, label)
+            XCTAssertEqual(adapter.cachedHistoryState?.canUndo, history.canUndo, label)
+            XCTAssertEqual(adapter.cachedHistoryState?.canRedo, history.canRedo, label)
+        }
+
+        try assertRefused({ stale.textView.performToolbarUndo() }, "stale undo")
+        owner.textView.performToolbarUndo()
+        XCTAssertNotEqual(try XCTUnwrap(adapter.documentJson()), edited, "owner undo applies")
+        try assertRefused({ stale.textView.performToolbarRedo() }, "stale redo")
+        owner.textView.performToolbarRedo()
+        XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), edited, "owner redo applies")
+        try assertRefused({ stale.textView.performToolbarToggleMark(TableToolbarTestItems.strongMark) }, "stale mark")
+        owner.textView.selectedRange = NSRange(location: 1, length: 2)
+        owner.textView.performToolbarToggleMark(TableToolbarTestItems.strongMark)
+        XCTAssertNotEqual(try XCTUnwrap(adapter.documentJson()), edited, "owner mark applies")
+
+        owner.bindEditor(id: 0, initialUpdateJSON: nil)
+        stale.bindEditor(id: 0, initialUpdateJSON: nil)
+        stale.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        owner.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        XCTAssertTrue(stale.textView.ownsNativeBinding(adapter), "the replacement host owns native input")
+        XCTAssertFalse(owner.textView.ownsNativeBinding(adapter), "the previous owner is now an observer")
+        try assertRefused({ owner.textView.performToolbarUndo() }, "former owner undo")
+        let beforeTransferredUndo = try XCTUnwrap(adapter.documentJson())
+        stale.textView.performToolbarUndo()
+        XCTAssertNotEqual(try XCTUnwrap(adapter.documentJson()), beforeTransferredUndo, "new owner undo applies")
     }
 
     func testReturnedSelectionOutsideCellInvalidatesInput() throws {

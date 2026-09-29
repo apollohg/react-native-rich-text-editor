@@ -452,6 +452,10 @@ extension EditorTextView {
         guard !authoritativeCellSelectionActive else { return false }
         guard let map = tableCellPositionMap else {
             guard !rootTableSelectionInputBlocked else { return false }
+            if editorId != 0 {
+                guard let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
+                      hasAuthorizedRootNativeOwner(adapter) else { return false }
+            }
             guard let selection = selectedTextRange else { return true }
             let scalarRange = PositionBridge.textRangeToScalarRange(selection, in: self)
             return PositionBridge.isRootTextInputRangeSafe(
@@ -469,8 +473,13 @@ extension EditorTextView {
         return tableCellInputAuthority?() ?? ownsNativeBinding(adapter)
     }
 
+    func hasAuthorizedRootNativeOwner(_ adapter: EditorV2Adapter) -> Bool {
+        rootTableNativeOwnerAuthority?(adapter) ?? ownsNativeBinding(adapter)
+    }
+
     func isAuthorizedForHistoryCommand() -> Bool {
-        tableCellInputAuthority?() ?? true
+        guard let adapter = EditorV2Registry.adapter(forLegacyId: editorId) else { return false }
+        return tableCellInputAuthority?() ?? hasAuthorizedRootNativeOwner(adapter)
     }
 
     func inputScalar(atLocalScalar localScalar: UInt32) -> UInt32? {

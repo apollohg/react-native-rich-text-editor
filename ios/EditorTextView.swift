@@ -1003,7 +1003,7 @@ class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegat
         guard isEditable,
               authoritativeCellSelectionActive,
               let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
-              rootTableNativeOwnerAuthority?(adapter) ?? ownsNativeBinding(adapter)
+              hasAuthorizedRootNativeOwner(adapter)
         else { return false }
         return adapter.selectedTableCellsMutationAdmission() != nil
     }
