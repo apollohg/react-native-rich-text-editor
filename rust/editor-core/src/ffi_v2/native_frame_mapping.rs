@@ -16,10 +16,9 @@ fn cell_input_blocks(
     cell: &TableRenderCell,
     cell_start: u32,
     block_indices: &[usize],
+    cell_scalar_end: Option<u32>,
 ) -> Result<Vec<super::types::FfiCellInputBlock>, &'static str> {
     let mut next_element = 0;
-    let cell_scalar_end = table_extent(position_map, cell_start, cell_start + cell.doc_size)
-        .map(|extent| extent.scalar_end);
     block_indices
         .iter()
         .map(|block_index| {
@@ -102,6 +101,10 @@ fn table_extent(
 ) -> Option<ScalarExtent> {
     let first = lower_bound_doc_start(position_map, table_pos);
     let end = lower_bound_doc_start(position_map, table_end);
+    extent_for_blocks(position_map, first, end)
+}
+
+fn extent_for_blocks(position_map: &PositionMap, first: usize, end: usize) -> Option<ScalarExtent> {
     (first < end).then(|| {
         let last_index = end - 1;
         let last_block = position_map
@@ -131,15 +134,19 @@ fn lower_bound_doc_start(position_map: &PositionMap, target: u32) -> usize {
     low
 }
 
+fn scalar_start_at_block_boundary(position_map: &PositionMap, block: usize) -> u32 {
+    if block < position_map.block_count() {
+        position_map.effective_scalar_start(block)
+    } else {
+        position_map.total_scalars()
+    }
+}
+
 pub(crate) fn scalar_range(position_map: &PositionMap, start: u32, end: u32) -> (u32, u32) {
     table_extent(position_map, start, end).map_or_else(
         || {
             let block = lower_bound_doc_start(position_map, start);
-            let scalar = if block < position_map.block_count() {
-                position_map.effective_scalar_start(block)
-            } else {
-                position_map.total_scalars()
-            };
+            let scalar = scalar_start_at_block_boundary(position_map, block);
             (scalar, scalar)
         },
         |extent| (extent.scalar_start, extent.scalar_end),
@@ -163,7 +170,13 @@ pub(crate) fn relative_cell_mapping(
     let cell_end = cell_start
         .checked_add(cell.doc_size)
         .ok_or("cell end overflow")?;
-    let (origin, _) = scalar_range(position_map, cell_start, cell_end);
+    let first = lower_bound_doc_start(position_map, cell_start);
+    let end = lower_bound_doc_start(position_map, cell_end);
+    let extent = extent_for_blocks(position_map, first, end);
+    let origin = extent.as_ref().map_or_else(
+        || scalar_start_at_block_boundary(position_map, first),
+        |extent| extent.scalar_start,
+    );
     let mut nested = Vec::new();
     let mut exclusions = Vec::new();
     for (index, element) in cell.elements.iter().enumerate() {
@@ -185,8 +198,6 @@ pub(crate) fn relative_cell_mapping(
             exclusions.push(start..end);
         }
     }
-    let first = lower_bound_doc_start(position_map, cell_start);
-    let end = lower_bound_doc_start(position_map, cell_end);
     let indices: Vec<_> = (first..end)
         .filter(|index| {
             !exclusions
@@ -194,18 +205,25 @@ pub(crate) fn relative_cell_mapping(
                 .any(|range| range.contains(&position_map.effective_doc_start(*index)))
         })
         .collect();
-    let blocks = cell_input_blocks(document, position_map, cell, cell_start, &indices)?
-        .into_iter()
-        .map(|block| super::types::FfiCellInputBlock {
-            element_index: block.element_index,
-            doc_start: block.doc_start - cell_start,
-            doc_end: block.doc_end - cell_start,
-            scalar_start: block.scalar_start - origin,
-            content_scalar_start: block.content_scalar_start - origin,
-            scalar_end: block.scalar_end - origin,
-            break_scalar_end: block.break_scalar_end - origin,
-            void: block.void,
-        })
-        .collect();
+    let blocks = cell_input_blocks(
+        document,
+        position_map,
+        cell,
+        cell_start,
+        &indices,
+        extent.map(|extent| extent.scalar_end),
+    )?
+    .into_iter()
+    .map(|block| super::types::FfiCellInputBlock {
+        element_index: block.element_index,
+        doc_start: block.doc_start - cell_start,
+        doc_end: block.doc_end - cell_start,
+        scalar_start: block.scalar_start - origin,
+        content_scalar_start: block.content_scalar_start - origin,
+        scalar_end: block.scalar_end - origin,
+        break_scalar_end: block.break_scalar_end - origin,
+        void: block.void,
+    })
+    .collect();
     Ok((origin, blocks, nested))
 }
