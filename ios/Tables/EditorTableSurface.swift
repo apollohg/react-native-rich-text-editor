@@ -1435,7 +1435,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
             return
         }
         presented.cell.layoutStore.pin(presented.cell.contentKey)
-        presented.cell.layoutStore.insert(presented.content)
+        presented.cell.layoutStore.insert(presented.content, for: presented.cell.contentKey)
         pinnedInputCell = presented.cell
         drawingView.excludedTableCellContentLayout = presented.content
         if let heights = nestedTableHeights(

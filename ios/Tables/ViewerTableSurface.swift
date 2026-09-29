@@ -397,7 +397,7 @@ final class ViewerTablePresentationOwner {
         for (identifier, entry) in next {
             for key in entry.keys.subtracting(pinnedStores[identifier]?.keys ?? []) { entry.store.pin(key) }
         }
-        for cell in cells where cell.cell.cachedContent == nil { cell.cell.layoutStore.insert(cell.content) }
+        for cell in cells where cell.cell.cachedContent == nil { cell.cell.layoutStore.insert(cell.content, for: cell.cell.contentKey) }
         pinnedStores = next
     }
 

@@ -117,6 +117,18 @@ final class TableCellLayoutStoreTests: XCTestCase {
         XCTAssertLessThanOrEqual(store.unmountedRetainedBytes, 100)
     }
 
+    func testRebuiltReusedCellKeepsItsStoreKey() {
+        let store = TableCellLayoutStore()
+        let retainedKey = layout("before-rebind").key
+        let rebuilt = layout("after-rebind")
+        XCTAssertTrue(store.value(for: retainedKey) { rebuilt } === rebuilt)
+        XCTAssertTrue(store.peek(retainedKey) === rebuilt, "A reused cell keeps its lookup identity after eviction")
+        XCTAssertTrue(store.value(for: retainedKey) {
+            XCTFail("The rebuilt cell was lost under a different artifact key")
+            return rebuilt
+        } === rebuilt)
+    }
+
     func testOversizedUnmountedLayoutIsReturnedWithoutRetention() {
         let store = TableCellLayoutStore(byteBudget: 100)
         let oversized = layout("oversized", bytes: 101)
