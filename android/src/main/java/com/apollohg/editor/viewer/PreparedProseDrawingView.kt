@@ -661,7 +661,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         PreparedProseAccessibilityNode.Role.MENTION -> mentionInteractionsEnabled
     }
 
-    private fun rootAccessibilityNodes(): List<ViewerTablePresentedAccessibilityNode> {
+    internal fun rootAccessibilityNodes(): List<ViewerTablePresentedAccessibilityNode> {
         val artifact = preparedLayout ?: return emptyList()
         return presentationSnapshot()?.accessibilityNodes.orEmpty().filter { it.layout === artifact && accessibleRole(it) }
     }
@@ -1331,7 +1331,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         return TableAccessibility.items(artifact, rootAccessibilityNodes())
     }
 
-    private fun rootNodeId(node: ViewerTablePresentedAccessibilityNode): Int {
+    private fun rootNodeId(node: ViewerTablePresentedAccessibilityNode): Int? {
         val identity = node.sourceIdentity
         return accessibilityNodeRegistry.idOf(identity, null) {
             rootAccessibilityNodes().firstOrNull { it.sourceIdentity == identity }
@@ -1342,30 +1342,9 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         node: ViewerTablePresentedAccessibilityNode,
         parentId: Int,
         resolve: () -> ViewerTablePresentedAccessibilityNode?
-    ): Int = accessibilityNodeRegistry.idOf(node.sourceIdentity, parentId, resolve)
+    ): Int? = accessibilityNodeRegistry.idOf(node.sourceIdentity, parentId, resolve)
 
-    private class AccessibilityNodeRegistry {
-        private class Entry(val parentId: Int?, val resolve: () -> ViewerTablePresentedAccessibilityNode?)
-
-        private val ids = mutableMapOf<String, Int>()
-        private val entries = mutableMapOf<Int, Entry>()
-
-        fun idOf(identity: String, parentId: Int?, resolve: () -> ViewerTablePresentedAccessibilityNode?): Int =
-            ids.getOrPut(identity) { (ids.size + 1).also { entries[it] = Entry(parentId, resolve) } }
-
-        fun node(id: Int): ViewerTablePresentedAccessibilityNode? = entries[id]?.resolve?.invoke()
-
-        fun idOf(identity: String): Int? = ids[identity]
-
-        fun parentId(id: Int): Int? = entries[id]?.parentId
-
-        fun clear() {
-            ids.clear()
-            entries.clear()
-        }
-    }
-
-    private val accessibilityNodeRegistry = AccessibilityNodeRegistry()
+    private val accessibilityNodeRegistry = PreparedProseAccessibilityNodeRegistry()
 
     private fun registeredAccessibilityNode(id: Int): ViewerTablePresentedAccessibilityNode? =
         accessibilityNodeRegistry.node(id) ?: run {

@@ -1300,6 +1300,82 @@ class ViewerTableTest {
 
     @Test
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `public viewer exposes and activates cell links through its own accessibility provider`() {
+        val config = JSONObject(CONFIG).apply {
+            getJSONObject("schema").getJSONArray("nodes").put(JSONObject("""{"name":"mention","content":"","group":"inline","role":"inline","isVoid":true,"attrs":{"id":{},"label":{"default":""}}}"""))
+        }.toString().replace("\"marks\":[{\"name\":\"bold\"}]", "\"marks\":[{\"name\":\"link\",\"attrs\":{\"href\":{}}}]")
+        val href = "https://cell.example/link"
+        val link = """{"type":"paragraph","content":[{"type":"text","text":"cell link","marks":[{"type":"link","attrs":{"href":"$href"}}]},{"type":"mention","attrs":{"id":"cell-person","label":"Person"}}]}"""
+        for (nested in listOf(false, true)) {
+            val content = if (nested) """{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[$link]}]}]}""" else link
+            val source = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[300]},"content":[$content]},{"type":"table_cell","attrs":{"colwidth":[300]},"content":[{"type":"paragraph","content":[{"type":"text","text":"sibling"}]}]}]}]}]}"""
+            val viewer = ProseViewerView(RuntimeEnvironment.getApplication(), PreparedProseLayoutRegistry(compiler = ::compileWithRust))
+            shadowOf(viewer.context.getSystemService(AccessibilityManager::class.java)).setEnabled(true)
+            var subtreeEvents = 0
+            val parent = object : FrameLayout(viewer.context) {
+                override fun requestSendAccessibilityEvent(child: View, event: android.view.accessibility.AccessibilityEvent): Boolean {
+                    if (event.eventType == android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) subtreeEvents++
+                    return true
+                }
+            }
+            parent.addView(viewer)
+            val activated = mutableListOf<Pair<String, String>>()
+            val mentions = mutableListOf<com.apollohg.editor.ProseViewerMention>()
+            viewer.interactionListener = object : com.apollohg.editor.ProseViewerInteractionListenerAdapter() {
+                override fun onLinkTap(view: ProseViewerView, href: String, text: String) {
+                    activated += href to text
+                }
+                override fun onMentionTap(view: ProseViewerView, mention: com.apollohg.editor.ProseViewerMention) {
+                    mentions += mention
+                }
+            }
+            viewer.accessibilityVisibilityForTesting = { true }
+            assertTrue(viewer.apply(ProseViewerSource.Json(source), ProseViewerConfiguration(config)))
+            viewer.measure(View.MeasureSpec.makeMeasureSpec(320, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+            viewer.layout(0, 0, viewer.measuredWidth, viewer.measuredHeight)
+            val provider = viewer.accessibilityNodeProvider
+            val cell = requireNotNull(provider.createAccessibilityNodeInfo(TableAccessibilityNodes.FIRST_TABLE_NODE_ID + 1))
+            assertEquals("nested=$nested: cell exposes its link and mention children", 2, cell.childCount)
+            val annotationId = 1
+            val annotation = requireNotNull(provider.createAccessibilityNodeInfo(annotationId))
+            assertEquals("cell link", annotation.text.toString())
+            val bounds = Rect().also(annotation::getBoundsInParent)
+            assertFalse("nested=$nested: annotation has visible geometry", bounds.isEmpty)
+            assertTrue(provider.performAction(annotationId, AccessibilityNodeInfo.ACTION_CLICK, null))
+            assertEquals(listOf(href to "cell link"), activated)
+            assertTrue(provider.performAction(annotationId, AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null))
+            val drawing = viewer.getChildAt(0) as PreparedProseDrawingView
+            val surface = requireNotNull(viewer.preparedLayoutForTesting?.blocks?.first { it.tableSurface != null }?.tableSurface)
+            val beforeScroll = subtreeEvents
+            drawing.setTableLogicalOffset(surface.identity, surface.layout.columnWidths.first())
+            assertTrue("horizontal scrolling notifies the public accessibility host", subtreeEvents > beforeScroll)
+            val clipped = requireNotNull(provider.createAccessibilityNodeInfo(annotationId))
+            assertFalse("clipped annotations lose focus", clipped.isAccessibilityFocused)
+            assertFalse("clipped annotations are hidden", clipped.isVisibleToUser)
+            assertFalse(provider.performAction(annotationId, AccessibilityNodeInfo.ACTION_CLICK, null))
+            drawing.setTableLogicalOffset(surface.identity, 0f)
+            val mentionId = annotationId + 1
+            assertTrue(provider.performAction(mentionId, AccessibilityNodeInfo.ACTION_CLICK, null))
+            assertEquals("Person", mentions.single().label)
+            assertEquals("cell-person", mentions.single().attrs["id"])
+            assertTrue(mentions.single().docPos > 0)
+            assertTrue(viewer.apply(ProseViewerSource.Json(source.replace(href, "$href/replacement")), ProseViewerConfiguration(config)))
+            viewer.measure(View.MeasureSpec.makeMeasureSpec(320, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+            viewer.layout(0, 0, viewer.measuredWidth, viewer.measuredHeight)
+            requireNotNull(provider.createAccessibilityNodeInfo(TableAccessibilityNodes.FIRST_TABLE_NODE_ID + 1))
+            assertFalse("old link IDs must not activate replacement content",
+                provider.performAction(annotationId, AccessibilityNodeInfo.ACTION_CLICK, null))
+            assertFalse("old mention IDs must not activate replacement content",
+                provider.performAction(mentionId, AccessibilityNodeInfo.ACTION_CLICK, null))
+            assertEquals(1, activated.size)
+            assertEquals(1, mentions.size)
+        }
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
     fun `compiler backed first cell link clips touch and provider bounds with nonzero origin`() {
         val config = CONFIG.replace("\"marks\":[{\"name\":\"bold\"}]", "\"marks\":[{\"name\":\"bold\"},{\"name\":\"link\",\"attrs\":{\"href\":{}}}]")
         val layout = prepare(

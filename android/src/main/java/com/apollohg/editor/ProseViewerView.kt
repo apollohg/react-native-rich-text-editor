@@ -3,6 +3,7 @@ package com.apollohg.editor
 import android.content.Context
 import android.content.res.Configuration
 import android.graphics.Rect
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.os.Bundle
 import android.util.AttributeSet
@@ -15,6 +16,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityNodeProvider
 import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
 import com.apollohg.editor.viewer.PreparedProseAccessibilityNode
+import com.apollohg.editor.viewer.PreparedProseAccessibilityNodeRegistry
 import com.apollohg.editor.viewer.PreparedProseDrawingView
 import com.apollohg.editor.viewer.PreparedProseInstrumentation
 import com.apollohg.editor.viewer.PreparedProseInteraction
@@ -144,6 +146,7 @@ class ProseViewerView @JvmOverloads constructor(
     private val viewerImagePipeline = ViewerImagePipeline()
 
     private var accessibilityFocusedNode: FocusedVirtualNode? = null
+    private val accessibilityNodeRegistry = PreparedProseAccessibilityNodeRegistry()
     private val tableAccessibility = TableAccessibilityNodes(
         this, preparedDrawingView, preparedDrawingView::tableAccessibilityItems,
         { preparedDrawingView.tableAccessibilityGeneration },
@@ -209,6 +212,10 @@ class ProseViewerView @JvmOverloads constructor(
             requestLayout()
         }
         preparedDrawingView.onInteractionActivated = { activatePreparedInteraction(it) }
+        preparedDrawingView.onTableGeometryChanged = {
+            reconcileVirtualAccessibilityFocus()
+            notifyAccessibilitySubtreeChanged()
+        }
         viewerImagePipeline.onPixels = { attachment, lease ->
             val current = preparedRequest
             if (current != null &&
@@ -265,6 +272,7 @@ class ProseViewerView @JvmOverloads constructor(
         preparedRequest = next
         retainedDocument = null
         preparedArtifact = null
+        accessibilityNodeRegistry.clear()
         releaseDirectMountedArtifact()
         viewerImagePipeline.cancel()
         preparedDrawingView.clearImageLeases()
@@ -331,6 +339,7 @@ class ProseViewerView @JvmOverloads constructor(
                     preparedAccessibilityGeneration != artifact.key.generationIdentity
             if (accessibilityChanged) {
                 clearVirtualAccessibilityFocus()
+                accessibilityNodeRegistry.clear()
             }
             preparedArtifact = artifact
             registerDirectMountedArtifactIfAttached(artifact)
@@ -456,6 +465,7 @@ class ProseViewerView @JvmOverloads constructor(
         preparedRequest = null
         retainedDocument = null
         preparedArtifact = null
+        accessibilityNodeRegistry.clear()
         releaseDirectMountedArtifact()
         viewerImagePipeline.cancel()
         attachmentRevisions.reset()
@@ -632,10 +642,23 @@ class ProseViewerView @JvmOverloads constructor(
     }
 
     private fun annotationId(presented: ViewerTablePresentedAccessibilityNode): Int? {
-        if (presented.layout !== preparedArtifact) return null
-        return preparedAccessibleNodes().indexOf(presented.node).takeIf { it >= 0 }
-            ?.plus(FIRST_VIRTUAL_ANNOTATION_ID)
+        val identity = presented.sourceIdentity
+        return accessibilityNodeRegistry.idOf(identity, null) {
+            preparedDrawingView.rootAccessibilityNodes().firstOrNull { it.sourceIdentity == identity }
+        }
     }
+
+    private fun cellAnnotationId(
+        presented: ViewerTablePresentedAccessibilityNode,
+        parentId: Int,
+        resolve: () -> ViewerTablePresentedAccessibilityNode?
+    ): Int? = accessibilityNodeRegistry.idOf(presented.sourceIdentity, parentId, resolve)
+
+    private fun registeredAccessibilityNode(id: Int): ViewerTablePresentedAccessibilityNode? =
+        accessibilityNodeRegistry.node(id) ?: run {
+            tableAccessibility.hostChildren(::annotationId)
+            accessibilityNodeRegistry.node(id)
+        }
 
     override fun getAccessibilityNodeProvider(): AccessibilityNodeProvider = annotationNodeProvider
 
@@ -650,7 +673,7 @@ class ProseViewerView @JvmOverloads constructor(
                 }
             }
             if (tableAccessibility.isTableNode(virtualViewId)) {
-                return tableAccessibility.create(virtualViewId) { node, _, _ -> annotationId(node) }
+                return tableAccessibility.create(virtualViewId, ::cellAnnotationId)
             }
             return preparedAccessibilityNodeInfo(virtualViewId)
         }
@@ -674,21 +697,20 @@ class ProseViewerView @JvmOverloads constructor(
     // and API 24-28 services still read it.
     @Suppress("DEPRECATION")
     private fun preparedAccessibilityNodeInfo(virtualViewId: Int): AccessibilityNodeInfo? {
-        val node =
-            preparedAccessibleNodes().getOrNull(virtualViewId - FIRST_VIRTUAL_ANNOTATION_ID)
-                ?: return null
-        val parentBounds = Rect(node.bounds).apply {
-            offset(preparedDrawingView.left, preparedDrawingView.top)
-        }
-        val screenBounds = preparedAccessibilityScreenBounds(node)
-        val visibleToUser = accessibilityNodeVisibleOnScreen(screenBounds)
+        val presented = registeredAccessibilityNode(virtualViewId) ?: return null
+        val node = presented.node
+        val parentBounds = preparedAccessibilityParentBounds(presented)
+        val screenBounds = preparedAccessibilityScreenBounds(presented)
+        val visibleToUser = preparedAccessibilityNodeVisible(presented)
         reconcileVirtualAccessibilityFocus()
-        val identity = accessibilityIdentity(node)
+        val identity = accessibilityIdentity(presented)
         return AccessibilityNodeInfo.obtain().apply {
             packageName = context.packageName
             className = android.widget.Button::class.java.name
             setSource(this@ProseViewerView, virtualViewId)
-            setParent(this@ProseViewerView)
+            val parentId = accessibilityNodeRegistry.parentId(virtualViewId)
+            if (parentId == null) setParent(this@ProseViewerView)
+            else setParent(this@ProseViewerView, parentId)
             text = node.label
             contentDescription = node.label
             isClickable = true
@@ -718,12 +740,10 @@ class ProseViewerView @JvmOverloads constructor(
     }
 
     private fun performPreparedAccessibilityAction(virtualViewId: Int, action: Int): Boolean {
-        val node =
-            preparedAccessibleNodes().getOrNull(virtualViewId - FIRST_VIRTUAL_ANNOTATION_ID)
-                ?: return false
+        val node = registeredAccessibilityNode(virtualViewId) ?: return false
         return when (action) {
             AccessibilityNodeInfo.ACTION_CLICK -> if (preparedAccessibilityNodeVisible(node)) {
-                preparedArtifact?.interactions?.getOrNull(node.interactionIndex)
+                node.layout.interactions.getOrNull(node.node.interactionIndex)
                     ?.let(::activatePreparedInteraction) ?: false
             } else {
                 false
@@ -744,8 +764,7 @@ class ProseViewerView @JvmOverloads constructor(
     }
 
     private fun requestVirtualAccessibilityFocus(virtualViewId: Int): Boolean {
-        val node = preparedAccessibleNodes()
-            .getOrNull(virtualViewId - FIRST_VIRTUAL_ANNOTATION_ID) ?: return false
+        val node = registeredAccessibilityNode(virtualViewId) ?: return false
         if (!preparedAccessibilityNodeVisible(node)) return false
         val identity = accessibilityIdentity(node)
         if (accessibilityFocusedNode?.identity == identity) return false
@@ -783,39 +802,40 @@ class ProseViewerView @JvmOverloads constructor(
     private fun reconcileVirtualAccessibilityFocus() {
         tableAccessibility.reconcile()
         val focused = accessibilityFocusedNode ?: return
-        val nodes = preparedAccessibleNodes()
-        val index = nodes.indexOfFirst { accessibilityIdentity(it) == focused.identity }
-        if (index < 0 || index + FIRST_VIRTUAL_ANNOTATION_ID != focused.virtualId) {
-            clearVirtualAccessibilityFocus(focused.virtualId)
-            return
-        }
-        if (!preparedAccessibilityNodeVisible(nodes[index])) {
+        val node = registeredAccessibilityNode(focused.virtualId)
+        if (node == null || accessibilityIdentity(node) != focused.identity || !preparedAccessibilityNodeVisible(node)) {
             clearVirtualAccessibilityFocus(focused.virtualId)
         }
     }
 
-    private fun preparedAccessibilityNodeVisible(node: PreparedProseAccessibilityNode): Boolean =
-        preparedAccessibilityScreenBounds(node).let { bounds ->
-            accessibilityVisibilityForTesting?.invoke(bounds)
-                ?: accessibilityNodeVisibleOnScreen(bounds)
-        }
+    private fun preparedAccessibilityNodeVisible(node: ViewerTablePresentedAccessibilityNode): Boolean {
+        if (preparedAccessibilityParentBounds(node).isEmpty) return false
+        val bounds = preparedAccessibilityScreenBounds(node)
+        return accessibilityVisibilityForTesting?.invoke(bounds) ?: accessibilityNodeVisibleOnScreen(bounds)
+    }
 
-    private fun preparedAccessibilityScreenBounds(node: PreparedProseAccessibilityNode): Rect {
-        val bounds = Rect(node.bounds).apply {
+    private fun preparedAccessibilityParentBounds(node: ViewerTablePresentedAccessibilityNode): Rect {
+        val bounds = RectF(node.bounds)
+        if (!bounds.intersect(node.clip)) return Rect()
+        return Rect(bounds.left.toInt(), bounds.top.toInt(), bounds.right.toInt(), bounds.bottom.toInt()).apply {
             offset(preparedDrawingView.left, preparedDrawingView.top)
         }
+    }
+
+    private fun preparedAccessibilityScreenBounds(node: ViewerTablePresentedAccessibilityNode): Rect {
+        val bounds = preparedAccessibilityParentBounds(node)
         val location = IntArray(2)
         getLocationOnScreen(location)
         bounds.offset(location[0], location[1])
         return bounds
     }
 
-    private fun accessibilityIdentity(node: PreparedProseAccessibilityNode) =
+    private fun accessibilityIdentity(node: ViewerTablePresentedAccessibilityNode) =
         AccessibilityNodeIdentity(
-            preparedArtifact?.key?.generationIdentity,
-            node.interactionIndex,
-            node.role,
-            node.label
+            node.sourceIdentity,
+            node.node.interactionIndex,
+            node.node.role,
+            node.node.label
         )
 
     private fun updatePreparedInteractionCapabilities() {
@@ -856,8 +876,6 @@ class ProseViewerView @JvmOverloads constructor(
     }
 
     companion object {
-        private const val FIRST_VIRTUAL_ANNOTATION_ID = 1
-
         /**
          * Explicit availability signal for custom-family loaders. Unknown
          * Typeface fallback is intentionally not treated as a missing font.
