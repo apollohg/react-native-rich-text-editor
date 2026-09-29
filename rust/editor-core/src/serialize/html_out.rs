@@ -86,6 +86,20 @@ pub fn to_html(doc: &Document, schema: &Schema) -> String {
     buf
 }
 
+fn scalar_attribute(value: &serde_json::Value) -> Option<String> {
+    if let Some(value) = value.as_str() {
+        Some(value.to_owned())
+    } else if let Some(value) = value.as_bool() {
+        Some(value.to_string())
+    } else if let Some(value) = value.as_i64() {
+        Some(value.to_string())
+    } else if let Some(value) = value.as_u64() {
+        Some(value.to_string())
+    } else {
+        value.as_f64().map(|value| value.to_string())
+    }
+}
+
 fn serialize_html_rules_node(node: &Node, rules: &crate::schema::HtmlRules, buf: &mut String) {
     buf.push('<');
     buf.push_str(&rules.tag);
@@ -103,11 +117,7 @@ fn serialize_html_rules_node(node: &Node, rules: &crate::schema::HtmlRules, buf:
         if value.is_null() {
             continue;
         }
-        let rendered = match value {
-            serde_json::Value::String(text) => text.clone(),
-            serde_json::Value::Bool(_) | serde_json::Value::Number(_) => value.to_string(),
-            _ => json_value_string(value),
-        };
+        let rendered = scalar_attribute(value).unwrap_or_else(|| json_value_string(value));
         buf.push(' ');
         buf.push_str(html_attr);
         buf.push_str("=\"");
@@ -148,17 +158,7 @@ fn serialize_node_attrs(node: &Node, spec: &crate::schema::NodeSpec, buf: &mut S
             continue;
         }
 
-        let rendered = if let Some(string_value) = value.as_str() {
-            string_value.to_string()
-        } else if let Some(bool_value) = value.as_bool() {
-            bool_value.to_string()
-        } else if let Some(number_value) = value.as_i64() {
-            number_value.to_string()
-        } else if let Some(number_value) = value.as_u64() {
-            number_value.to_string()
-        } else if let Some(number_value) = value.as_f64() {
-            number_value.to_string()
-        } else {
+        let Some(rendered) = scalar_attribute(value) else {
             continue;
         };
 
