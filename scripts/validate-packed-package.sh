@@ -362,6 +362,15 @@ reject_dist_symbol() {
   fi
 }
 
+table_consumer_config() {
+  node - "$1" <<'NODE'
+const path = require('node:path');
+const { withTablesSchema, prosemirrorSchema } = require(path.resolve(process.argv[2], 'dist/schemas.js'));
+const config = { schema: withTablesSchema(prosemirrorSchema), initialization: { type: 'localEmpty' } };
+process.stdout.write(Buffer.from(JSON.stringify(config)).toString('base64'));
+NODE
+}
+
 validate_ios_consumer() {
   local root="$1"
   local tarball_path="$2"
@@ -499,6 +508,21 @@ func packedEditorCoreLinkProbe() {
   _ = editorV2CollaborationNackOutbound(editorId: "1", generation: "1", leaseId: "1")
   _ = editorV2CollaborationDetach(editorId: "1")
   _ = editorV2CollaborationReattach(editorId: "1")
+}
+SWIFT
+  local table_config
+  table_config="$(table_consumer_config "$resolved_package_dir")" || fail "Cannot generate packed table schema"
+  cat >> "$ios_project/PackedConsumer/Probe.swift" <<SWIFT
+import Foundation
+
+func packedTableLinkProbe(frame: FfiTableFrame, cell: FfiTableCellRecord) {
+  let config = String(data: Data(base64Encoded: "$table_config")!, encoding: .utf8)!
+  _ = editorV2Create(configJson: config, snapshotState: nil)
+  _ = editorV2RenderNativeFrame(editorId: "1", ownerId: nil, mirrorScalarAnchor: nil, mirrorScalarHead: nil)
+  _ = frame.cellUpdates
+  _ = frame.extents
+  _ = cell.inputBlocks
+  _ = cell.nestedTables
 }
 SWIFT
   if [[ -n "${CODE_HIGHLIGHTING_TARBALL:-}" ]]; then
@@ -688,6 +712,17 @@ object PackedEditorCoreProbe {
   }
 }
 KOTLIN
+  local table_config
+  table_config="$(table_consumer_config "$root")" || fail "Cannot generate packed table schema"
+  cat >> "$android_consumer/android/app/src/main/java/com/apollohg/nativeeditorexample/PackedEditorCoreProbe.kt" <<KOTLIN
+
+fun packedTableLinkProbe(frame: FfiTableFrame, cell: FfiTableCellRecord) {
+  val config = String(android.util.Base64.decode("$table_config", android.util.Base64.DEFAULT), Charsets.UTF_8)
+  editorV2Create(config, null)
+  editorV2RenderNativeFrame("1", null, null, null)
+  listOf(frame.cellUpdates, frame.extents, cell.inputBlocks, cell.nestedTables)
+}
+KOTLIN
   (
     cd "$android_consumer/android"
     PACKED_EDITOR_ANDROID_DIR="$root/android" \
@@ -803,6 +838,7 @@ validate_packed_package_root() {
   local ffi_header_count modulemap_count
 
   validate_package_entries "$root"
+  node "$repo_root/scripts/tests/validate-table-package.mjs" "$root"
   "$repo_root/scripts/validate-android-rn076-consumer.sh" --validate-package-root "$root"
   validate_abi_root "$root"
   validate_xcframework "$root/ios/EditorCore.xcframework" "$(ios_deployment_target "$root")"
