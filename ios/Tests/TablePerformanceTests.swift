@@ -332,6 +332,43 @@ final class TablePerformanceTests: XCTestCase {
         XCTAssertGreaterThan(try XCTUnwrap(typing.nonWrapCount), 0)
     }
 
+    func testStructuralCounterRecognizesRebuiltCellAfterItsRowMoves() throws {
+        clock = FrameClock()
+        defer { clock.close(); clock = nil }
+        let fixture = Fixture(rows: 3, columns: 3, rich: false)
+        let host = try EditorHost()
+        defer { host.close() }
+        try host.load(fixture.source())
+        _ = try host.bind(0)
+        _ = try measure(host.drawing) {}
+        let rebuild = try XCTUnwrap(host.table().cells[fixture.columns].content.cellPreparation)
+        let previousRevision = host.adapter.baseDocumentRevision
+        let command = try XCTUnwrap(TableAccessibilityAction.all.first { $0.key == "addRowAfter" }).command
+        var counters = PreparedProseInstrumentation.TablePerformanceCounters()
+        _ = try measureChange(host, counters: &counters) {
+            let update = try XCTUnwrap(host.adapter.commandAtSelection(command, anchor: 0, head: 0))
+            XCTAssertTrue(host.view.textView.applyUpdateJSON(update))
+            host.view.layoutIfNeeded()
+            _ = rebuild()
+        }
+        XCTAssertGreaterThan(host.adapter.baseDocumentRevision, previousRevision)
+        XCTAssertEqual(counters.unchangedCellRemeasurements, 1,
+            "The rebuilt original second-row cell is unchanged after moving to the third row")
+        XCTAssertEqual(counters.changedCellRemeasurements, 1,
+            "The inserted empty cells share one newly prepared shape")
+    }
+
+    func testLargeStructuralChangesReuseUnchangedGeometry() throws {
+        clock = FrameClock()
+        defer { clock.close(); clock = nil }
+        let fixture = Fixture(rows: 1_000, columns: 20, rich: false)
+        try structural(fixture, source: fixture.source())
+        let sample = try XCTUnwrap(samples.first { $0.metric == "structuralCommand" })
+        XCTAssertEqual(sample.counters.unchangedCellRemeasurements, 0)
+        XCTAssertEqual(sample.counters.changedCellRemeasurements, 1,
+            "All inserted empty rows share one shape and keep separate bindings")
+    }
+
     func testLargeBoundCellPreparationStartsAfterActivationFrame() throws {
         clock = FrameClock()
         defer { clock.close(); clock = nil }
@@ -446,15 +483,13 @@ final class TablePerformanceTests: XCTestCase {
     private func measureChange(_ host: EditorHost,
                                counters: inout PreparedProseInstrumentation.TablePerformanceCounters,
                                action: () throws -> Void) throws -> Measurement {
-        let oldKeys = Set(try host.table().cells.map { $0.contentKey.semanticKey })
-        var prepared: [Int] = []
-        host.surface.onTableCellPreparedForTesting = { prepared.append($0) }
+        let oldKeys = Set(try XCTUnwrap(host.table().sourceTable).cells.map(\.contentKey))
+        var prepared: [(Int, String)] = []
+        host.surface.onTableCellPreparedForTesting = { prepared.append(($0, $1)) }
         defer { host.surface.onTableCellPreparedForTesting = nil }
         let duration = try measure(host.drawing, action: action)
-        let next = try host.table()
         var unchanged: [Int] = []
-        for index in prepared {
-            let key = try XCTUnwrap(next.cell(sourceIndex: index)).contentKey.semanticKey
+        for (index, key) in prepared {
             if oldKeys.contains(key) {
                 counters.unchangedCellRemeasurements += 1
                 unchanged.append(index)

@@ -59,6 +59,31 @@ final class PreparedViewerTableCell {
         layoutStore.insert(content)
     }
 
+    init(reusing cell: PreparedViewerTableCell, at position: TableGridCell, layoutStore: TableCellLayoutStore) {
+        sourceIndex = position.sourceIndex
+        row = position.row
+        column = position.column
+        rowspan = position.rowspan
+        colspan = position.colspan
+        contentOrigin = cell.contentOrigin
+        isHeader = cell.isHeader
+        attributesKey = cell.attributesKey
+        contentKey = cell.contentKey
+        contentSize = cell.contentSize
+        accessibilityNodes = cell.accessibilityNodes
+        hasNestedTables = cell.hasNestedTables
+        hasAtoms = cell.hasAtoms
+        hasImages = cell.hasImages
+        isPositionFree = cell.isPositionFree
+        contentError = cell.contentError
+        metadataRetainedBytes = cell.metadataRetainedBytes
+        self.layoutStore = layoutStore
+        prepareContent = cell.prepareContent
+        if layoutStore !== cell.layoutStore, let content = cell.cachedContent {
+            layoutStore.insert(content, for: contentKey)
+        }
+    }
+
 }
 
 final class ViewerTableSurface {
@@ -104,6 +129,7 @@ final class ViewerTableSurface {
         sourceTable: TableSurfaceSource? = nil,
         sourceAttributes: [String: [String: Any]] = [:],
         layoutStore: TableCellLayoutStore = TableCellLayoutStore(),
+        reuseCell: ((TableGridCell, CGFloat) -> PreparedViewerTableCell?)? = nil,
         prepareCellWorkers: [(TableGridCell, CGFloat) -> PreparedProseLayout] = [],
         parallelCellIndices: Set<Int> = [],
         prepareCell: @escaping (TableGridCell, CGFloat) -> PreparedProseLayout
@@ -146,6 +172,10 @@ final class ViewerTableSurface {
                 content: content, isHeader: sourceCell?.header ?? false, attributesKey: sourceCell?.attrsKey,
                 layoutStore: layoutStore, prepareContent: { prepareCell(cell, width) })
         }
+        func reused(_ cell: TableGridCell, width: CGFloat) -> PreparedViewerTableCell? {
+            guard let previous = reuseCell?(cell, width) else { return nil }
+            return PreparedViewerTableCell(reusing: previous, at: cell, layoutStore: layoutStore)
+        }
         var firstPreparationError: ProseViewerError?
         let canonicalScale = displayScale.isFinite && displayScale > 0 ? displayScale : 1
         let grid = TableGridLayout(displayScale: canonicalScale)
@@ -170,7 +200,9 @@ final class ViewerTableSurface {
                 textScale: textScale
             ) { measuredCell, width in
                 guard let cell = sourceCells[measuredCell.sourceIndex] else { return nil }
-                let content = capture(cell, width: width, content: prepareCell(cell, width))
+                let content: PreparedViewerTableCell
+                if let previous = reused(cell, width: width) { content = previous }
+                else { content = capture(cell, width: width, content: prepareCell(cell, width)) }
                 prepared[cell.sourceIndex] = content
                 if let error = content.contentError, firstPreparationError == nil { firstPreparationError = error }
                 return content.contentSize.height
@@ -181,8 +213,10 @@ final class ViewerTableSurface {
             let inner = max(0, frame.width - 2 * (style.cellPadding + style.borderWidth))
             let pixels = (inner * canonicalScale).rounded()
             guard pixels.isFinite, pixels >= 0, let widthPixels = Int(exactly: pixels) else { continue }
-            let content = capture(cell, width: CGFloat(widthPixels) / canonicalScale,
-                                  content: prepareCell(cell, CGFloat(widthPixels) / canonicalScale))
+            let width = CGFloat(widthPixels) / canonicalScale
+            let content: PreparedViewerTableCell
+            if let previous = reused(cell, width: width) { content = previous }
+            else { content = capture(cell, width: width, content: prepareCell(cell, width)) }
             if let error = content.contentError, firstPreparationError == nil { firstPreparationError = error }
             prepared[cell.sourceIndex] = content
         }

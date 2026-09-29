@@ -57,7 +57,7 @@ class NativeTableHostTest {
             listOf(0f, LARGE_TABLE_SCROLL_MIDDLE, 1f).forEach { fraction ->
                 val preparations = mutableListOf<Int>()
                 scenario.onActivity { activity ->
-                    activity.richTextView.editorTableSurface.onTableCellPreparedForTesting = preparations::add
+                    activity.richTextView.editorTableSurface.onTableCellPreparedForTesting = { index, _ -> preparations.add(index); Unit }
                     val scroll = activity.richTextView.editorScrollView
                     val bottom = (scroll.getChildAt(0).height - scroll.height).coerceAtLeast(0)
                     scroll.scrollTo(0, (bottom * fraction).toInt())
@@ -115,7 +115,7 @@ class NativeTableHostTest {
                 scenario.onActivity { activity ->
                     val view = activity.richTextView
                     val prepared = mutableListOf<Int>()
-                    view.editorTableSurface.onTableCellPreparedForTesting = prepared::add
+                    view.editorTableSurface.onTableCellPreparedForTesting = { index, _ -> prepared.add(index); Unit }
                     try {
                         val input = view.activeTextInput
                         assertTrue(input !== view.editorEditText)

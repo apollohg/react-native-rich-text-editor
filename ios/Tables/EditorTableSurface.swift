@@ -105,23 +105,22 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
             let displayScaleBits: UInt64
         }
 
-        private var contents: [Key: [PreparedProseLayout]] = [:]
+        private var contents: [Key: [PreparedViewerTableCell]] = [:]
 
         init(_ entry: Entry?, themeDigest: String) {
             guard let entry, entry.themeDigest == themeDigest, let source = entry.surface.sourceTable else { return }
             for cell in entry.surface.cells.reversed() {
                 let index = cell.sourceIndex
-                guard source.cells.indices.contains(index), cell.isPositionFree,
-                      let content = cell.cachedContent else { continue }
+                guard source.cells.indices.contains(index), cell.isPositionFree else { continue }
                 let sourceCell = source.cells[index]
-                contents[Key(contentKey: sourceCell.contentKey, header: sourceCell.header,
-                             attributesKey: sourceCell.attrsKey, widthPixels: content.key.widthPixels,
-                             displayScaleBits: content.key.displayScaleBits),
-                         default: []].append(content)
+                let key = Key(contentKey: sourceCell.contentKey, header: sourceCell.header,
+                    attributesKey: sourceCell.attrsKey, widthPixels: cell.contentKey.widthPixels,
+                    displayScaleBits: cell.contentKey.displayScaleBits)
+                contents[key, default: []].append(cell)
             }
         }
 
-        mutating func take(_ cell: TableSurfaceCell, widthPixels: Int, displayScale: CGFloat) -> PreparedProseLayout? {
+        mutating func take(_ cell: TableSurfaceCell, widthPixels: Int, displayScale: CGFloat) -> PreparedViewerTableCell? {
             let key = Key(contentKey: cell.contentKey, header: cell.header, attributesKey: cell.attrsKey,
                           widthPixels: widthPixels, displayScaleBits: Double(displayScale).bitPattern)
             return contents[key]?.popLast()
@@ -229,7 +228,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     private(set) var resizePreview: TableResizePreview?
     private var preparedResizePreview: TableResizePreview?
     var onSelectionGeometryMayChange: (() -> Void)?
-    var onTableCellPreparedForTesting: ((Int) -> Void)?
+    var onTableCellPreparedForTesting: ((Int, String) -> Void)?
     private lazy var cellEditMenu = TableCellEditMenu(
         anchor: { [weak self] in self?.cellEditMenuAnchor() },
         visibilityChanged: { [weak self] in self?.onSelectionGeometryMayChange?() }
@@ -1219,6 +1218,10 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         theme.contentInsets = .zero
         theme.tableDirection = hostTableDirection
         let appearanceDigest = "editor-table-\(appearanceRevision)-\(textView.renderAppearanceRevision)"
+        let shapeCatalog = PreparedCellShapeCatalog()
+        let previousLayouts = tableIDs.flatMap { self.entries[$0]?.surface.layoutStore.residentLayouts ?? [] }
+        let shapes = shapeCatalog.newBuildContext(reusing: previousLayouts)
+        defer { shapes.close() }
         return tableIDs.reduce(into: [:]) { entries, tableID in
             guard var table = presentation.index.record(tableKey: tableID) else { return }
             var themeDigest = appearanceDigest
@@ -1249,10 +1252,13 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
             let previousEntry = self.entries[tableID]
             var reusable: ReusableCellContents?
             let engine = CoreTextProseLayoutEngine()
-            engine.tableCellPreparationObserver = { [weak self] index in self?.onTableCellPreparedForTesting?(index) }
+            engine.tableCellPreparationObserver = { [weak self] index, contentKey in
+                self?.onTableCellPreparedForTesting?(index, contentKey)
+            }
             defer {
                 engine.incrementalTableSurface = nil
-                engine.reusableTableCellContent = nil
+                engine.reusableTableCell = nil
+                engine.reusableTableCellStore = nil
                 engine.tableIncrementalRelayoutObserver = nil
             }
             if let previous = self.entries[tableID], previous.themeDigest == themeDigest,
@@ -1265,8 +1271,9 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
                 }
                 engine.tableIncrementalRelayoutObserver = { self.incrementalRelayoutsForTesting += 1 }
             }
-            if previousEntry != nil {
-                engine.reusableTableCellContent = { cell, widthPixels in
+            if let previousEntry {
+                engine.reusableTableCellStore = previousEntry.surface.layoutStore
+                engine.reusableTableCell = { cell, widthPixels in
                     if reusable == nil { reusable = ReusableCellContents(previousEntry, themeDigest: themeDigest) }
                     return reusable?.take(cell, widthPixels: widthPixels, displayScale: displayScale)
                 }
@@ -1286,7 +1293,8 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
                 document: document,
                 key: key,
                 widthPoints: width,
-                displayScale: displayScale
+                displayScale: displayScale,
+                cellShapeContext: shapes
             ), let tableBlock = prepared.blocks.first(where: { $0.tableSurface != nil }),
                let surface = tableBlock.tableSurface,
                let localTableBounds = tableBlock.tableBounds

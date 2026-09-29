@@ -219,7 +219,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
     ): TablePreparationWorkers {
         val count = minOf(MAX_TABLE_PREPARATION_WORKERS, tablePreparationWorkerLimit.coerceAtLeast(1),
             (Runtime.getRuntime().availableProcessors() - 1).coerceAtLeast(1))
-        if (cellMode || count <= 1 || theme.codeHighlighting != null || reusableTableCellContent != null) return TablePreparationWorkers()
+        if (cellMode || count <= 1 || theme.codeHighlighting != null || reusableTableCell != null) return TablePreparationWorkers()
         val frequencies = table.cells.groupingBy { it.contentKey }.eachCount()
         val indices = table.cells.filter { source ->
             (context == null || frequencies[source.contentKey] == 1) && document.cellDocument(source, tableKey).blocks.all { block ->
@@ -231,7 +231,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
         val engines = List(count) {
             StaticLayoutAndroidProseLayoutEngine().also { worker ->
                 worker.tablePreparationWorkerLimit = 1
-                worker.tableCellPreparationObserver = { index -> synchronized(observerLock) { tableCellPreparationObserver?.invoke(index); Unit } }
+                worker.tableCellPreparationObserver = { index, contentKey -> synchronized(observerLock) { tableCellPreparationObserver?.invoke(index, contentKey); Unit } }
                 worker.tableCellLayoutObserverForTesting = { index, layout ->
                     synchronized(observerLock) { tableCellLayoutObserverForTesting?.invoke(index, layout); Unit }
                 }
@@ -246,10 +246,11 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
     /** Test seam: drawing must never increment this prepared-layout counter. */
     internal var staticLayoutsBuilt: Int = 0
         private set
-    internal var tableCellPreparationObserver: ((Int) -> Unit)? = null
+    internal var tableCellPreparationObserver: ((Int, String) -> Unit)? = null
     internal var incrementalTableSurface: ((String) -> Pair<ViewerTableSurface, Set<Int>>?)? = null
     internal var tableIncrementalRelayoutObserver: (() -> Unit)? = null
-    internal var reusableTableCellContent: ((TableSurfaceCell, Int) -> PreparedProseLayout?)? = null
+    internal var reusableTableCell: ((TableSurfaceCell, Int) -> com.apollohg.editor.tables.PreparedViewerTableCell?)? = null
+    internal var reusableTableCellStore: com.apollohg.editor.tables.TableCellLayoutStore? = null
 
     override fun prepare(
         document: ViewerDocument,
@@ -312,7 +313,8 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
         cellMode: Boolean,
         cellShapeContext: PreparedCellShapeBuildContext? = null
     ): PreparedProseLayout {
-        val tableLayoutStore = com.apollohg.editor.tables.TableCellLayoutStore()
+        val tableLayoutStore = if (cellMode) com.apollohg.editor.tables.TableCellLayoutStore()
+            else reusableTableCellStore ?: com.apollohg.editor.tables.TableCellLayoutStore()
         val warningSemanticGeneration = semanticGenerationIdentity
         if (widthPx <= 0 || !density.isFinite() ||
             density <= 0f
@@ -472,22 +474,19 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                     cellShapeStyleDigest(childTheme, key.nativeFontRevision, key.fontEnvironmentRevision)
                 }
                 fun prepareCell(cell: com.apollohg.editor.tables.TableGridCell, cellWidth: Float,
-                                reuseContent: Boolean, worker: StaticLayoutAndroidProseLayoutEngine? = null,
+                                worker: StaticLayoutAndroidProseLayoutEngine? = null,
                                 workerContext: PreparedCellShapeBuildContext? = null): PreparedProseLayout {
                     val engine = worker ?: this
                     val context = if (worker == null) cellShapeContext else workerContext
                     val source = surfaceSource.cells.getOrNull(cell.sourceIndex)
                     val childWidth = cellWidth.toInt().coerceAtLeast(1)
-                    if (reuseContent && !cellMode) {
-                        source?.let { reusableTableCellContent?.invoke(it, childWidth) }?.let { return it }
-                    }
                     val child = source?.let { document.cellDocument(it, tableKey) }
                     if (child == null) return PreparedProseLayout.error(
                         key, cellWidth.toInt(), ProseViewerError.layout("Invalid table cell.")
                     )
                     val childKey = key.copy(semanticKey = child.semanticKey, widthPx = childWidth)
                     val build = {
-                        engine.tableCellPreparationObserver?.invoke(cell.sourceIndex)
+                        engine.tableCellPreparationObserver?.invoke(cell.sourceIndex, cell.contentKey)
                         engine.prepare(
                             child, childKey, childTheme, childWidth, density, false,
                             warningSemanticGeneration, true, context
@@ -519,22 +518,28 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                     val contents = changed.associateWith { index ->
                         val cell = record.cells[index]
                         val frame = requireNotNull(previous.frameOfCell(index))
-                        prepareCell(cell, maxOf(0f, frame.width - 2f * (tableStyle.cellPadding + tableStyle.borderWidth)), false)
+                        prepareCell(cell, maxOf(0f, frame.width - 2f * (tableStyle.cellPadding + tableStyle.borderWidth)))
                     }
                     tableIncrementalRelayoutObserver?.invoke()
                     previous.replacingCells(contents, contents.mapValues { it.value.heightPx.toFloat() },
-                        record, surfaceSource, document.tableAttributes) { cell, width -> prepareCell(cell, width, false) }
+                        record, surfaceSource, document.tableAttributes) { cell, width -> prepareCell(cell, width) }
                 } else {
                     val workers = tablePreparationWorkers(document, surfaceSource, tableKey, theme, cellMode, cellShapeContext) { cell, width, worker, context ->
-                        prepareCell(cell, width, true, worker, context)
+                        prepareCell(cell, width, worker, context)
                     }
                     try {
                         ViewerTableSurface(document.tablePresentationIdentity(tableKey), record, tableWidth.toFloat(),
                             tableStyle, rtl, displayScale = 1f, sourceTable = surfaceSource,
                             editorTableId = tableKey, sourceAttributes = document.tableAttributes,
-                            layoutStore = tableLayoutStore, prepareCellWorkers = workers.prepare,
+                            layoutStore = tableLayoutStore,
+                            reuseCell = if (cellMode) null else reusableTableCell?.let { reuse ->
+                                { cell, width -> surfaceSource.cells.getOrNull(cell.sourceIndex)?.let {
+                                    reuse(it, width.toInt().coerceAtLeast(1))
+                                } }
+                            },
+                            prepareCellWorkers = workers.prepare,
                             parallelCellIndices = workers.indices) { cell, width ->
-                            prepareCell(cell, width, true)
+                            prepareCell(cell, width)
                         }
                     } finally {
                         workers.contexts.forEach { it.close() }
@@ -877,7 +882,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                     val childKey = key.copy(semanticKey = child.semanticKey, widthPx = childWidth)
                     val childShapeKey = cellShapeKey(cell.contentKey, child, childWidth, childTheme, density, shapeStyleDigest)
                     context.resolve(childShapeKey, {
-                        tableCellPreparationObserver?.invoke(cell.sourceIndex)
+                        tableCellPreparationObserver?.invoke(cell.sourceIndex, cell.contentKey)
                         prepare(
                             child, childKey, childTheme, childWidth, density, false,
                             warningSemanticGeneration, true, context

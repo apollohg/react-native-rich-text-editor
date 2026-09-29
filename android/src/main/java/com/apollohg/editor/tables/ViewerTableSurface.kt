@@ -12,46 +12,110 @@ import com.apollohg.editor.viewer.PreparedProseAccessibilityNode
 import com.apollohg.editor.viewer.PreparedViewerAtom
 import com.apollohg.editor.viewer.ViewerImageAttachment
 
-internal class PreparedViewerTableCell(
-    val sourceIndex: Int,
-    val row: Int,
-    val column: Int,
-    val rowspan: Int,
-    val colspan: Int,
-    val contentOrigin: Pair<Int, Int>,
-    content: PreparedProseLayout,
-    val isHeader: Boolean,
-    val attributesKey: String?,
-    val layoutStore: TableCellLayoutStore = TableCellLayoutStore(),
-    prepareContent: () -> PreparedProseLayout = { content }
-) {
-    private val prepareContent = content.cellPreparation ?: prepareContent
-    val contentKey = content.key
-    val contentWidthPx = content.widthPx
-    val contentHeightPx = content.heightPx
-    val contentError = content.error
-    val codeHighlightBlocks = promotedCodeHighlightBlocks(content.blocks, content.codeHighlightBlocks)
-    val highlightedCodeKeys: Set<String> = content.highlightedCodeKeys + content.blocks.flatMap { block ->
-        block.tableSurface?.cells.orEmpty().flatMap { it.highlightedCodeKeys }
+internal class PreparedViewerTableCell {
+    val sourceIndex: Int
+    val row: Int
+    val column: Int
+    val rowspan: Int
+    val colspan: Int
+    val contentOrigin: Pair<Int, Int>
+    val isHeader: Boolean
+    val attributesKey: String?
+    val layoutStore: TableCellLayoutStore
+    val contentKey: ProseLayoutKey
+    val contentWidthPx: Int
+    val contentHeightPx: Int
+    val contentError: ProseViewerError?
+    val codeHighlightBlocks: List<com.apollohg.editor.CodeHighlightBlock>
+    val highlightedCodeKeys: Set<String>
+    val accessibilityText: String
+    val hasNestedTables: Boolean
+    val hasAtoms: Boolean
+    val hasImages: Boolean
+    val isPositionFree: Boolean
+    val metadataRetainedBytes: Long
+    private val prepareContent: () -> PreparedProseLayout
+
+    constructor(
+        sourceIndex: Int,
+        row: Int,
+        column: Int,
+        rowspan: Int,
+        colspan: Int,
+        contentOrigin: Pair<Int, Int>,
+        content: PreparedProseLayout,
+        isHeader: Boolean,
+        attributesKey: String?,
+        layoutStore: TableCellLayoutStore = TableCellLayoutStore(),
+        prepareContent: () -> PreparedProseLayout = { content }
+    ) {
+        this.sourceIndex = sourceIndex
+        this.row = row
+        this.column = column
+        this.rowspan = rowspan
+        this.colspan = colspan
+        this.contentOrigin = contentOrigin
+        this.isHeader = isHeader
+        this.attributesKey = attributesKey
+        this.layoutStore = layoutStore
+        this.prepareContent = content.cellPreparation ?: prepareContent
+        contentKey = content.key
+        contentWidthPx = content.widthPx
+        contentHeightPx = content.heightPx
+        contentError = content.error
+        codeHighlightBlocks = promotedCodeHighlightBlocks(content.blocks, content.codeHighlightBlocks)
+        highlightedCodeKeys = content.highlightedCodeKeys + content.blocks.flatMap { block ->
+            block.tableSurface?.cells.orEmpty().flatMap { it.highlightedCodeKeys }
+        }
+        accessibilityText = TableAccessibility.text(content).joinToString(TableAccessibility.LABEL_SEPARATOR)
+        hasNestedTables = content.blocks.any { it.tableSurface != null }
+        hasAtoms = content.viewerAtoms.isNotEmpty() || content.blocks.any { it.tableSurface?.hasAtoms == true }
+        hasImages = content.imageAttachments.isNotEmpty() || content.blocks.any {
+            it.imageAttachment != null || it.tableSurface?.cells?.any { cell -> cell.hasImages } == true
+        }
+        isPositionFree = content.error == null && !hasNestedTables && !hasAtoms && !hasImages &&
+            content.interactions.all { it.docPos == null }
+        metadataRetainedBytes = METADATA_RETAINED_BYTES +
+            accessibilityText.length * 2L + codeHighlightBlocks.sumOf { CODE_DESCRIPTOR_RETAINED_BYTES + it.text.length * 2L } +
+            highlightedCodeKeys.sumOf { it.length * 2L }
+        layoutStore.insert(content)
     }
-    val accessibilityText = TableAccessibility.text(content).joinToString(TableAccessibility.LABEL_SEPARATOR)
-    val hasNestedTables = content.blocks.any { it.tableSurface != null }
-    val hasAtoms: Boolean = content.viewerAtoms.isNotEmpty() || content.blocks.any { it.tableSurface?.hasAtoms == true }
-    val hasImages: Boolean = content.imageAttachments.isNotEmpty() || content.blocks.any {
-        it.imageAttachment != null || it.tableSurface?.cells?.any { cell -> cell.hasImages } == true
+
+
+    private constructor(cell: PreparedViewerTableCell, position: TableGridCell, store: TableCellLayoutStore) {
+        sourceIndex = position.sourceIndex
+        row = position.row
+        column = position.column
+        rowspan = position.rowspan
+        colspan = position.colspan
+        contentOrigin = cell.contentOrigin
+        isHeader = cell.isHeader
+        attributesKey = cell.attributesKey
+        layoutStore = store
+        contentKey = cell.contentKey
+        contentWidthPx = cell.contentWidthPx
+        contentHeightPx = cell.contentHeightPx
+        contentError = cell.contentError
+        codeHighlightBlocks = cell.codeHighlightBlocks
+        highlightedCodeKeys = cell.highlightedCodeKeys
+        accessibilityText = cell.accessibilityText
+        hasNestedTables = cell.hasNestedTables
+        hasAtoms = cell.hasAtoms
+        hasImages = cell.hasImages
+        isPositionFree = cell.isPositionFree
+        metadataRetainedBytes = cell.metadataRetainedBytes
+        prepareContent = cell.prepareContent
+        if (store !== cell.layoutStore) cell.cachedContent?.let { store.insert(it) }
     }
-    val isPositionFree = content.error == null && !hasNestedTables && !hasAtoms && !hasImages &&
-        content.interactions.all { it.docPos == null }
+
+    fun relocated(position: TableGridCell, store: TableCellLayoutStore): PreparedViewerTableCell =
+        PreparedViewerTableCell(this, position, store)
+
     val content: PreparedProseLayout get() = layoutStore.value(contentKey) {
         prepareContent().copy(cellPreparation = prepareContent)
     }
     val cachedContent: PreparedProseLayout? get() = layoutStore.peek(contentKey)
     val retainedBytes: Long get() = metadataRetainedBytes + (cachedContent?.retainedBytes ?: 0L)
-    val metadataRetainedBytes: Long = METADATA_RETAINED_BYTES +
-        accessibilityText.length * 2L + codeHighlightBlocks.sumOf { CODE_DESCRIPTOR_RETAINED_BYTES + it.text.length * 2L } +
-        highlightedCodeKeys.sumOf { it.length * 2L }
-
-    init { layoutStore.insert(content) }
 
     private companion object {
         const val METADATA_RETAINED_BYTES = 384L
@@ -95,12 +159,13 @@ internal class ViewerTableSurface(
         sourceAttributes: Map<String, org.json.JSONObject> = emptyMap(),
         editorTableId: String? = null,
         layoutStore: TableCellLayoutStore = TableCellLayoutStore(),
+        reuseCell: ((TableGridCell, Float) -> PreparedViewerTableCell?)? = null,
         prepareCellWorkers: List<(TableGridCell, Float) -> PreparedProseLayout> = emptyList(),
         parallelCellIndices: Set<Int> = emptySet(),
         prepareCell: (TableGridCell, Float) -> PreparedProseLayout
     ) : this(identity, hostViewportWidth, style, isRightToLeft,
         prepare(record, hostViewportWidth, style, isRightToLeft, displayScale, themeDigest,
-            fontEnvironmentRevision, textScale, sourceTable, layoutStore, prepareCellWorkers, parallelCellIndices, prepareCell),
+            fontEnvironmentRevision, textScale, sourceTable, layoutStore, reuseCell, prepareCellWorkers, parallelCellIndices, prepareCell),
         sourceTable, sourceAttributes, editorTableId, displayScale)
 
     fun replacingCells(contents: Map<Int, PreparedProseLayout>, contentHeights: Map<Int, Float>,
@@ -169,6 +234,7 @@ internal class ViewerTableSurface(
             isRightToLeft: Boolean, displayScale: Float, themeDigest: String,
             fontEnvironmentRevision: Long, textScale: Float, sourceTable: TableSurfaceSource?,
             layoutStore: TableCellLayoutStore,
+            reuseCell: ((TableGridCell, Float) -> PreparedViewerTableCell?)?,
             prepareCellWorkers: List<(TableGridCell, Float) -> PreparedProseLayout>,
             parallelCellIndices: Set<Int>,
             prepareCell: (TableGridCell, Float) -> PreparedProseLayout
@@ -185,6 +251,9 @@ internal class ViewerTableSurface(
                 return PreparedViewerTableCell(cell.sourceIndex, cell.row, cell.column, cell.rowspan, cell.colspan,
                     inset to inset, content, source?.header ?: false, source?.attrsKey, layoutStore) { prepareCell(cell, width) }
             }
+            fun prepare(cell: TableGridCell, width: Float): PreparedViewerTableCell =
+                reuseCell?.invoke(cell, width)?.relocated(cell, layoutStore)
+                    ?: capture(cell, width, prepareCell(cell, width))
             var error: ProseViewerError? = null
             val grid = TableGridLayout(scale)
             val layout = if (prepareCellWorkers.size > 1 && parallelCellIndices.isNotEmpty()) {
@@ -196,10 +265,10 @@ internal class ViewerTableSurface(
             } else {
                 grid.layout(measurementRecord, hostViewportWidth, style, isRightToLeft, themeDigest, fontEnvironmentRevision, textScale) { measuredCell, width ->
                     val cell = sourceCells[measuredCell.sourceIndex] ?: return@layout null
-                    prepareCell(cell, width).also { artifact ->
-                        prepared[cell.sourceIndex] = capture(cell, width, artifact)
-                        if (error == null) error = artifact.error
-                    }.heightPx.toFloat()
+                    prepare(cell, width).also { artifact ->
+                        prepared[cell.sourceIndex] = artifact
+                        if (error == null) error = artifact.contentError
+                    }.contentHeightPx.toFloat()
                 }
             }
             record.cells.forEach { cell ->
@@ -208,9 +277,9 @@ internal class ViewerTableSurface(
                     val width = maxOf(0f, frame.width - 2f * (style.cellPadding + style.borderWidth))
                     val pixels = kotlin.math.round(width * scale)
                     if (pixels.isFinite() && pixels in 0f..Int.MAX_VALUE.toFloat()) {
-                        prepareCell(cell, pixels.toInt() / scale).also { artifact ->
-                            prepared[cell.sourceIndex] = capture(cell, pixels.toInt() / scale, artifact)
-                            if (error == null) error = artifact.error
+                        prepare(cell, pixels.toInt() / scale).also { artifact ->
+                            prepared[cell.sourceIndex] = artifact
+                            if (error == null) error = artifact.contentError
                         }
                     }
                 }

@@ -259,7 +259,7 @@ class ViewerTableTest {
         val threads = java.util.concurrent.ConcurrentHashMap<Int, Boolean>()
         val engine = StaticLayoutAndroidProseLayoutEngine().apply {
             tablePreparationWorkerLimit = StaticLayoutAndroidProseLayoutEngine.MAX_TABLE_PREPARATION_WORKERS
-            tableCellPreparationObserver = { threads[it] = Thread.currentThread() === caller }
+            tableCellPreparationObserver = { index, _ -> threads[index] = Thread.currentThread() === caller }
         }
         val layout = prepare(document,
             theme = """{"viewerAtoms":{"generation":"parallel","revision":"one","nodeTypes":["card"],"estimatedHeights":{"card":40}}}""",
@@ -310,7 +310,7 @@ class ViewerTableTest {
         ))
         val engine = StaticLayoutAndroidProseLayoutEngine()
         var preparations = 0
-        engine.tableCellPreparationObserver = { preparations++ }
+        engine.tableCellPreparationObserver = { _, _ -> preparations++ }
         val original = prepare(document, engine = engine).blocks.first { it.tableSurface != null }.tableSurface!!
         assertTrue(preparations > 0)
         preparations = 0
@@ -526,7 +526,7 @@ class ViewerTableTest {
     fun `real table registry reuses parent and nested cell artifacts at one physical width`() {
         val preparations = mutableListOf<Int>()
         val engine = StaticLayoutAndroidProseLayoutEngine().apply {
-            tableCellPreparationObserver = preparations::add
+            tableCellPreparationObserver = { index, _ -> preparations.add(index); Unit }
         }
         val registry = PreparedProseLayoutRegistry(compiler = ::compileWithRust, layoutEngine = engine)
         val request = ProseViewerRequest(
@@ -586,7 +586,7 @@ class ViewerTableTest {
         )
         val preparations = mutableListOf<Int>()
         val engine = StaticLayoutAndroidProseLayoutEngine().apply {
-            tableCellPreparationObserver = preparations::add
+            tableCellPreparationObserver = { index, _ -> preparations.add(index); Unit }
         }
         val registry = PreparedProseLayoutRegistry(compiler = ::compileWithRust, layoutEngine = engine)
         val surface = FabricSurfaceToken(777, 7770)
@@ -695,7 +695,7 @@ class ViewerTableTest {
         )
         val preparations = mutableListOf<Int>()
         val engine = StaticLayoutAndroidProseLayoutEngine().apply {
-            tableCellPreparationObserver = preparations::add
+            tableCellPreparationObserver = { index, _ -> preparations.add(index); Unit }
         }
         val registry = PreparedProseLayoutRegistry(compiler = ::compileWithRust, layoutEngine = engine)
 
@@ -739,7 +739,7 @@ class ViewerTableTest {
         )
         val preparations = mutableListOf<Int>()
         val engine = StaticLayoutAndroidProseLayoutEngine().apply {
-            tableCellPreparationObserver = preparations::add
+            tableCellPreparationObserver = { index, _ -> preparations.add(index); Unit }
         }
         val registry = PreparedProseLayoutRegistry(compiler = ::compileWithRust, layoutEngine = engine)
         val initial = registry.measure(request, 390, 1f)
@@ -790,7 +790,7 @@ class ViewerTableTest {
         ))
         val preparations = mutableListOf<Int>()
         val engine = StaticLayoutAndroidProseLayoutEngine().apply {
-            tableCellPreparationObserver = preparations::add
+            tableCellPreparationObserver = { index, _ -> preparations.add(index); Unit }
         }
         val registry = PreparedProseLayoutRegistry(compiler = ::compileWithRust, layoutEngine = engine)
         val initial = registry.measure(initialRequest, 390, 1f)
@@ -842,7 +842,7 @@ class ViewerTableTest {
         )
         val preparations = mutableListOf<Int>()
         val engine = StaticLayoutAndroidProseLayoutEngine().apply {
-            tableCellPreparationObserver = preparations::add
+            tableCellPreparationObserver = { index, _ -> preparations.add(index); Unit }
         }
         val layout = PreparedProseLayoutRegistry(compiler = ::compileWithRust, layoutEngine = engine)
             .measure(request, 390, 1f)
@@ -871,7 +871,7 @@ class ViewerTableTest {
         val request = ProseViewerRequest(ProseViewerSource.Json(identicalLinkCellsSource()), configuration)
         val preparations = mutableListOf<Int>()
         val engine = StaticLayoutAndroidProseLayoutEngine().apply {
-            tableCellPreparationObserver = preparations::add
+            tableCellPreparationObserver = { index, _ -> preparations.add(index); Unit }
         }
         val registry = PreparedProseLayoutRegistry(compiler = ::compileWithRust, layoutEngine = engine)
         fun first(layout: PreparedProseLayout) = requireNotNull(
@@ -933,7 +933,7 @@ class ViewerTableTest {
         val initialRequest = probe.copy(configuration = configuration)
         val preparations = mutableListOf<Int>()
         val engine = StaticLayoutAndroidProseLayoutEngine().apply {
-            tableCellPreparationObserver = preparations::add
+            tableCellPreparationObserver = { index, _ -> preparations.add(index); Unit }
         }
         val registry = PreparedProseLayoutRegistry(compiler = ::compileWithRust, layoutEngine = engine)
         fun shapes(layout: PreparedProseLayout): Pair<Any?, Any?> {
@@ -976,7 +976,7 @@ class ViewerTableTest {
         val ceiling = 32L * 1024L * 1024L
         var cellPreparations = 0
         val engine = StaticLayoutAndroidProseLayoutEngine().apply {
-            tableCellPreparationObserver = { cellPreparations += 1 }
+            tableCellPreparationObserver = { _, _ -> cellPreparations += 1 }
         }
         val registry = PreparedProseLayoutRegistry(
             compiler = ::compileWithRust,
@@ -1032,7 +1032,7 @@ class ViewerTableTest {
         val source = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_header","attrs":{"colwidth":[600]},"content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"table_header","attrs":{"colwidth":[600]},"content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[600]},"content":[{"type":"paragraph","content":[{"type":"text","text":"three"}]}]},{"type":"table_cell","attrs":{"colwidth":[600]},"content":[{"type":"paragraph","content":[{"type":"text","text":"four"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[600]},"content":[{"type":"paragraph","content":[{"type":"text","text":"five"}]}]},{"type":"table_cell","attrs":{"colwidth":[600]},"content":[{"type":"paragraph","content":[{"type":"text","text":"six"}]}]}]}]}]}"""
         val cellPreparations = mutableListOf<Int>()
         val engine = StaticLayoutAndroidProseLayoutEngine().apply {
-            tableCellPreparationObserver = { cellPreparations += it }
+            tableCellPreparationObserver = { index, _ -> cellPreparations += index }
         }
         val document = compileWithRust(
             ProseViewerRequest(ProseViewerSource.Json(source), ProseViewerConfiguration(CONFIG, imagesEnabled = true))
@@ -1911,7 +1911,7 @@ class ViewerTableTest {
         val source = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[600]},"content":[{"type":"card"}]},{"type":"table_cell","attrs":{"colwidth":[600]},"content":[{"type":"card"}]}]}]}]}"""
         val theme = """{"viewerAtoms":{"generation":"table-events","revision":"1","nodeTypes":["card"],"estimatedHeights":{"card":40}}}"""
         var preparations = 0
-        val engine = StaticLayoutAndroidProseLayoutEngine().apply { tableCellPreparationObserver = { preparations += 1 } }
+        val engine = StaticLayoutAndroidProseLayoutEngine().apply { tableCellPreparationObserver = { _, _ -> preparations += 1 } }
         val document = compileWithRust(ProseViewerRequest(ProseViewerSource.Json(source), ProseViewerConfiguration(CONFIG, themeJson = theme)))
         val layout = prepare(document, theme, engine)
         val surface = requireNotNull(layout.blocks.single().tableSurface)

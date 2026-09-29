@@ -481,16 +481,50 @@ internal class EditorTableSurfaceMountTest {
         val input = view.activeTextInput
         input.setSelection(input.text.length)
         val prepared = mutableListOf<Int>()
-        view.editorTableSurface.onTableCellPreparedForTesting = prepared::add
+        view.editorTableSurface.onTableCellPreparedForTesting = { index, _ -> prepared.add(index); Unit }
         assertTrue(requireNotNull(input.onCreateInputConnection(EditorInfo())).commitText("x", 1))
         assertEquals("A large-table edit must not resolve offscreen metadata", 1, prepared.size)
         assertEquals(listOf(0), prepared)
     }
 
     @Test
+    fun testStructuralRowInsertionReusesEvictedCellGeometry() = withAttachedMountedView(uniqueLargeTable()) { view, adapter ->
+        tapFirstCell(view)
+        val canvas = requireNotNull(drawing(view))
+        val before = requireNotNull(canvas.preparedLayout?.blocks?.single()?.tableSurface)
+        val oldKeys = requireNotNull(before.sourceTable).cells.map { it.contentKey }.toSet()
+        val middleIndex = before.cells.size / 2
+        val middle = before.cells[middleIndex]
+        assertNull("The regression requires an evicted unchanged cell", middle.cachedContent)
+        val preparedKeys = mutableListOf<String>()
+        view.editorTableSurface.onTableCellPreparedForTesting = { _, key -> preparedKeys.add(key); Unit }
+        val tableKey = adapter.tableIndex.rootExtents.keys.single()
+        val command = com.apollohg.editor.tables.TableAccessibilityAction.ALL.first {
+            it.id == R.id.table_accessibility_add_row_after
+        }.commandJson()
+        val update = requireNotNull(adapter.applyTableCommandAtSelection(command, adapter.tableMutationAdmission(tableKey)))
+        assertTrue(view.activeTextInput.applyUpdateJSON(update))
+        measure(view, TABLE_HOST_WIDTH)
+        val after = requireNotNull(canvas.preparedLayout?.blocks?.single()?.tableSurface)
+        assertEquals(before.cells.size + PlainTableFixture.LARGE_COLUMNS, after.cells.size)
+        assertEquals("Structural geometry must reuse evicted unchanged cell metadata",
+            0, preparedKeys.count { it in oldKeys })
+        val moved = after.cells[middleIndex + PlainTableFixture.LARGE_COLUMNS]
+        assertEquals(middle.contentHeightPx, moved.contentHeightPx)
+        assertTrue(requireNotNull(after.frameOfCell(moved.sourceIndex)).top > requireNotNull(before.frameOfCell(middleIndex)).top)
+        assertNull("Structural edits must not repopulate offscreen drawing objects", moved.cachedContent)
+        val rebuilt = moved.content
+        assertEquals("Moved content still rebuilds after geometry reuse", middle.contentHeightPx, rebuilt.heightPx)
+        assertEquals("Reconstruction preserves the moved cell's text", middle.accessibilityText,
+            com.apollohg.editor.tables.TableAccessibility.text(rebuilt)
+                .joinToString(com.apollohg.editor.tables.TableAccessibility.LABEL_SEPARATOR))
+        assertTrue(after.layoutStore.unmountedRetainedBytes <= com.apollohg.editor.viewer.PREPARED_LAYOUT_UNMOUNTED_BYTE_BUDGET)
+    }
+
+    @Test
     fun testScrollingPreparesOnlyEnteringCells() = withAttachedMountedView(uniqueLargeTable()) { view, _ ->
         val prepared = mutableListOf<Int>()
-        view.editorTableSurface.onTableCellPreparedForTesting = prepared::add
+        view.editorTableSurface.onTableCellPreparedForTesting = { index, _ -> prepared.add(index); Unit }
         val scroll = view.editorScrollView
         scroll.scrollTo(0, scroll.getChildAt(0).height / 2)
         val canvas = requireNotNull(drawing(view))
@@ -528,7 +562,7 @@ internal class EditorTableSurfaceMountTest {
             .singleOrNull { it !== view.editorEditText }) { "cell input after host tap" }
         cellInput.setSelection(cellInput.text.length)
         val prepared = mutableListOf<Int>()
-        view.editorTableSurface.onTableCellPreparedForTesting = { prepared += it }
+        view.editorTableSurface.onTableCellPreparedForTesting = { index, _ -> prepared += index }
         val relayouts = view.editorTableSurface.incrementalRelayoutsForTesting
 
         assertTrue(requireNotNull(cellInput.onCreateInputConnection(EditorInfo())).commitText(TYPED, 1))
@@ -548,7 +582,7 @@ internal class EditorTableSurfaceMountTest {
         input.setSelection(input.text.length)
         val before = requireNotNull(drawing(view)?.preparedLayout?.blocks?.single()?.tableSurface)
         val prepared = mutableListOf<Int>()
-        view.editorTableSurface.onTableCellPreparedForTesting = { prepared += it }
+        view.editorTableSurface.onTableCellPreparedForTesting = { index, _ -> prepared += index }
         val relayouts = view.editorTableSurface.incrementalRelayoutsForTesting
         assertTrue(requireNotNull(input.onCreateInputConnection(EditorInfo())).commitText(" wrapping text".repeat(GRID_ROWS), 1))
         measure(view, TABLE_HOST_WIDTH)
@@ -589,6 +623,7 @@ internal class EditorTableSurfaceMountTest {
     }
 
     @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
     fun `structural row insertion retains original prepared content`() = withMountedView(gridDocument) { view, adapter, _ ->
         tapFirstCell(view)
         val before = requireNotNull(drawing(view)?.preparedLayout?.blocks?.single()?.tableSurface)
@@ -602,6 +637,11 @@ internal class EditorTableSurfaceMountTest {
         val after = requireNotNull(drawing(view)?.preparedLayout?.blocks?.single()?.tableSurface)
         assertEquals(GRID_CELLS + GRID_COLUMNS, after.cells.size)
         assertEquals(GRID_CELLS, after.cells.count { next -> before.cells.any { it.content === next.content } })
+        val identities = java.util.Collections.newSetFromMap(
+            java.util.IdentityHashMap<com.apollohg.editor.viewer.PreparedProseLayout, Boolean>())
+        after.cells.forEach { identities.add(it.content) }
+        assertEquals("Equal text must keep separate drawing identities", after.cells.size, identities.size)
+        recordTableDrawing(view)
     }
 
     private fun recordTableDrawing(view: RichTextEditorView): PreparedProseDrawingView {
@@ -674,7 +714,7 @@ internal class EditorTableSurfaceMountTest {
     fun `identical cells shape once when the table reflows`() = withMountedView(gridDocument) { view, _, _ ->
         measure(view, TABLE_HOST_WIDTH)
         val prepared = mutableListOf<Int>()
-        view.editorTableSurface.onTableCellPreparedForTesting = { prepared += it }
+        view.editorTableSurface.onTableCellPreparedForTesting = { index, _ -> prepared += index }
 
         measure(view, REFLOW_WIDTH)
 

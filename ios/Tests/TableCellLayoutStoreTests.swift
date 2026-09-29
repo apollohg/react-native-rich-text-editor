@@ -71,6 +71,25 @@ final class TableCellLayoutStoreTests: XCTestCase {
             "Every resident entry counts even when its key is absent from both surfaces")
     }
 
+    func testSeedingResidentShapesBoundsWorkBeforeStaging() {
+        let capacity = TableCellLayoutStore.maximumResidentLayouts
+        let layouts = (0..<(capacity * 2)).map { index -> PreparedProseLayout in
+            let name = "seed-\(index)"
+            let local = layout(name)
+            let key = PreparedCellShapeKey(contentKey: name, widthPixels: local.key.widthPixels,
+                scaleBits: local.key.displayScaleBits, styleDigest: "store-test",
+                atomGeometryDigest: "", imageGeometryDigest: "")
+            return local.withCellShape(PreparedCellShape(key: key, localLayout: local))
+        }
+        let catalog = PreparedCellShapeCatalog()
+        let context = catalog.newBuildContext(reusing: layouts)
+        defer { context.close() }
+        XCTAssertLessThanOrEqual(catalog.prunePassesForTesting, 1,
+            "Seeding multiple resident tables must not scan the catalog once per excess shape")
+        XCTAssertEqual(catalog.countForTesting, capacity,
+            "The build context seeds at most the existing resident-layout capacity")
+    }
+
     func testParallelBuildContextsReleaseEvictedShapesBeforeClosing() {
         let catalog = PreparedCellShapeCatalog()
         let workerCount = CoreTextProseLayoutEngine.maxTablePreparationWorkers

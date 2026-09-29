@@ -538,7 +538,7 @@ class PreparedProseRevisionTest {
             )
             val preparations = mutableListOf<Int>()
             val engine = StaticLayoutAndroidProseLayoutEngine().apply {
-                tableCellPreparationObserver = preparations::add
+                tableCellPreparationObserver = { index, _ -> preparations.add(index); Unit }
             }
             val registry = PreparedProseLayoutRegistry(compiler = ::compileWithRust, layoutEngine = engine)
             val initialRequest = request("before")

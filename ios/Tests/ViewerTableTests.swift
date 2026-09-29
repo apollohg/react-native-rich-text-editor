@@ -107,7 +107,7 @@ final class ViewerTableTests: XCTestCase {
         let caller = Thread.current
         let lock = NSLock()
         var callerPreparations: [Int: Bool] = [:]
-        engine.tableCellPreparationObserver = { index in
+        engine.tableCellPreparationObserver = { index, _ in
             lock.lock(); defer { lock.unlock() }
             callerPreparations[index] = Thread.current === caller
         }
@@ -147,7 +147,7 @@ final class ViewerTableTests: XCTestCase {
         let document = try ViewerDocument(compiled: try XCTUnwrap(compiled.value))
         let engine = CoreTextProseLayoutEngine()
         var preparations = 0
-        engine.tableCellPreparationObserver = { _ in preparations += 1 }
+        engine.tableCellPreparationObserver = { _, _ in preparations += 1 }
         let prepared = try prepare(document, engine: engine)
         let original = try XCTUnwrap(prepared.blocks.compactMap(\.tableSurface).first)
         XCTAssertGreaterThan(preparations, 0)
@@ -495,7 +495,7 @@ final class ViewerTableTests: XCTestCase {
         result.value = nil
         let engine = CoreTextProseLayoutEngine()
         var preparations: [Int] = []
-        engine.tableCellPreparationObserver = { preparations.append($0) }
+        engine.tableCellPreparationObserver = { index, _ in preparations.append(index) }
         let layout = try prepare(document, engine: engine)
         let surface = try XCTUnwrap(layout.blocks.first { $0.tableSurface != nil }?.tableSurface)
         XCTAssertGreaterThan(surface.bounds.width, surface.hostViewportWidth)
@@ -1739,7 +1739,7 @@ final class ViewerTableTests: XCTestCase {
     func testCompilerBackedWidth390TableMeasurementsReuseRecursiveCellArtifacts() throws {
         let engine = CoreTextProseLayoutEngine()
         var preparedCellPositions: [Int] = []
-        engine.tableCellPreparationObserver = { preparedCellPositions.append($0) }
+        engine.tableCellPreparationObserver = { index, _ in preparedCellPositions.append(index) }
         let registry = PreparedProseLayoutRegistry(
             compile: PreparedProseLayoutRegistry.compileWithRust,
             prepare: { document, key, width, scale in
@@ -1815,7 +1815,7 @@ final class ViewerTableTests: XCTestCase {
         var preparedCellPositions: [Int] = []
         var shapeBuilds: [Int] = []
         var boundCellPositions: [Int] = []
-        engine.tableCellPreparationObserver = { preparedCellPositions.append($0) }
+        engine.tableCellPreparationObserver = { index, _ in preparedCellPositions.append(index) }
         engine.tableCellShapeBuildObserver = { shapeBuilds.append($0) }
         engine.tableCellBindingObserver = { boundCellPositions.append($0) }
         let registry = PreparedProseLayoutRegistry(
@@ -1941,7 +1941,7 @@ final class ViewerTableTests: XCTestCase {
         let compiledByteBudget = 8 * 1024 * 1024
         let engine = CoreTextProseLayoutEngine()
         var preparedCells = 0
-        engine.tableCellPreparationObserver = { _ in preparedCells += 1 }
+        engine.tableCellPreparationObserver = { _, _ in preparedCells += 1 }
         let registry = PreparedProseLayoutRegistry(
             byteBudget: byteBudget,
             compile: PreparedProseLayoutRegistry.compileWithRust,

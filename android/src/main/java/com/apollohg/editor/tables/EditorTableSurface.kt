@@ -143,22 +143,21 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
     private class ReusableCellContents(entry: Entry?, appearance: String) {
         private data class Key(val contentKey: String, val header: Boolean, val attributesKey: String, val widthPx: Int)
 
-        private val contents = mutableMapOf<Key, ArrayDeque<PreparedProseLayout>>()
+        private val contents = mutableMapOf<Key, ArrayDeque<PreparedViewerTableCell>>()
 
         init {
             val reusable = entry?.takeIf { it.appearance == appearance }
             val source = reusable?.surface?.sourceTable
             reusable?.surface?.cells?.forEach { cell ->
                 val sourceCell = source?.cells?.getOrNull(cell.sourceIndex)
-                val content = cell.cachedContent
-                if (sourceCell != null && cell.isPositionFree && content != null) {
-                    contents.getOrPut(Key(sourceCell.contentKey, sourceCell.header, sourceCell.attrsKey,
-                        content.key.widthPx)) { ArrayDeque() }.addLast(content)
+                if (sourceCell != null && cell.isPositionFree) {
+                    val key = Key(sourceCell.contentKey, sourceCell.header, sourceCell.attrsKey, cell.contentKey.widthPx)
+                    contents.getOrPut(key) { ArrayDeque() }.addLast(cell)
                 }
             }
         }
 
-        fun take(cell: TableSurfaceCell, widthPx: Int): PreparedProseLayout? =
+        fun take(cell: TableSurfaceCell, widthPx: Int): PreparedViewerTableCell? =
             contents[Key(cell.contentKey, cell.header, cell.attrsKey, widthPx)]?.removeFirstOrNull()
     }
     private data class TableResizePreview(val edge: TableResizeEdge, val width: Int)
@@ -206,7 +205,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
     val isCellEditMenuVisible: Boolean get() = cellEditMenu.isVisible
     internal var incrementalRelayoutsForTesting = 0
         private set
-    internal var onTableCellPreparedForTesting: ((Int) -> Unit)? = null
+    internal var onTableCellPreparedForTesting: ((Int, String) -> Unit)? = null
     private val cellShapes = PreparedCellShapeCatalog()
     private data class ActiveCell(val tableId: String, val cellIndex: Int)
     private var activeCell: ActiveCell? = null
@@ -940,7 +939,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
                 .copy(insetTopPx = 0, insetRightPx = 0, insetBottomPx = 0, insetLeftPx = 0,
                     tableDirection = tableDirection)
             val engine = StaticLayoutAndroidProseLayoutEngine().apply {
-                tableCellPreparationObserver = { onTableCellPreparedForTesting?.invoke(it) }
+                tableCellPreparationObserver = { index, contentKey -> onTableCellPreparedForTesting?.invoke(index, contentKey) }
                 tableIncrementalRelayoutObserver = { incrementalRelayoutsForTesting += 1 }
             }
             val appearance = "${input.renderAppearanceRevision}:$tableDirection:$density"
@@ -970,7 +969,8 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
                         0, 0, density.toBits().toLong(), revision.toLong(), semantic,
                         tableDirection = tableDirection)
                     val reusable by lazy { ReusableCellContents(entries[id], appearance) }
-                    engine.reusableTableCellContent = if (entries[id] != null) {
+                    engine.reusableTableCellStore = entries[id]?.surface?.layoutStore
+                    engine.reusableTableCell = if (entries[id] != null) {
                         { cell, cellWidth -> reusable.take(cell, cellWidth) }
                     } else null
                     val changes = adapter.cachedTablePresentation?.changes
@@ -993,7 +993,8 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
                 }.toMap()
             } finally {
                 shapes.close()
-                engine.reusableTableCellContent = null
+                engine.reusableTableCell = null
+                engine.reusableTableCellStore = null
                 engine.incrementalTableSurface = null
                 engine.tableIncrementalRelayoutObserver = null
             }

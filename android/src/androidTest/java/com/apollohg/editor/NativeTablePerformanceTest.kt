@@ -340,15 +340,14 @@ class NativeTablePerformanceTest {
 
     private fun measureChange(host: EditorHost, counters: PreparedProseInstrumentation.TablePerformanceCounters,
                               action: () -> Unit): Measurement {
-        val keys = onMain { host.table.cells.map { it.contentKey.semanticKey }.toSet() }
-        val prepared = mutableListOf<Int>()
-        onMain { host.view.editorTableSurface.onTableCellPreparedForTesting = { prepared.add(it) } }
+        val keys = onMain { requireNotNull(host.table.sourceTable).cells.map { it.contentKey }.toSet() }
+        val prepared = mutableListOf<String>()
+        onMain { host.view.editorTableSurface.onTableCellPreparedForTesting = { _, key -> prepared.add(key); Unit } }
         try {
             val result = measure(host.drawing, action)
             onMain {
-                val table = host.table
-                prepared.forEach { index ->
-                    if (requireNotNull(table.cell(index)).contentKey.semanticKey in keys) counters.unchangedCellRemeasurements++
+                prepared.forEach { key ->
+                    if (key in keys) counters.unchangedCellRemeasurements++
                     else counters.changedCellRemeasurements++
                 }
                 counters.observe(host.drawing, inputInstances = host.inputInstances)
@@ -586,6 +585,40 @@ class NativeTablePerformanceTest {
         val output = saveExport(SMOKE_OUTPUT_FILE)
         assertEquals("Gradle must collect the export before uninstalling the test app",
             expected.canonicalFile, output.parentFile!!.canonicalFile)
+    }
+
+    @Test fun structuralCounterRecognizesRebuiltCellAfterItsRowMoves() = withActivity {
+        val fixture = Fixture(SMALL_ROWS, SMALL_COLUMNS, false)
+        val host = onMain { EditorHost().also { it.load(fixture.source()); it.bind(0) } }
+        try {
+            measure(host.drawing) {}
+            val rebuild = onMain { requireNotNull(host.table.cells[fixture.columns].content.cellPreparation) }
+            val previousRevision = onMain { host.adapter.baseDocumentRevision }
+            val action = TableAccessibilityAction.ALL.single { it.applicability == "addTableRowAfter" }
+            val counters = PreparedProseInstrumentation.TablePerformanceCounters()
+            measureChange(host, counters) {
+                val cell = host.drawing.tableAccessibilityItems().filterIsInstance<TableAccessibilityItem.Table>()
+                    .single().table.cells.first()
+                assertTrue(host.view.editorTableSurface.performTableAccessibilityAction(action, cell))
+                layout(host.view)
+                rebuild()
+            }
+            assertTrue(onMain { host.adapter.baseDocumentRevision > previousRevision })
+            assertEquals("The original second-row content remains unchanged after its row moves",
+                1, counters.unchangedCellRemeasurements)
+            assertEquals("The inserted empty cells share one newly prepared shape",
+                1, counters.changedCellRemeasurements)
+        } finally { onMain { host.close() } }
+    }
+
+    @Test fun largeStructuralChangesReuseUnchangedGeometry() = withActivity {
+        val (rows, columns) = PlainTableFixture.TWENTY_THOUSAND_SLOT_SHAPES.first()
+        val fixture = Fixture(rows, columns, false)
+        structural(fixture, fixture.source())
+        val counters = samples.getJSONObject(0).getJSONObject("counters")
+        assertEquals(0, counters.getInt("unchangedCellRemeasurements"))
+        assertEquals("All inserted empty rows share one shape and keep separate bindings",
+            1, counters.getInt("changedCellRemeasurements"))
     }
 
     @Test fun largeBoundCellPreparationStartsAfterActivationFrame() = withActivity {

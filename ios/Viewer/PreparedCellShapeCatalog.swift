@@ -85,7 +85,7 @@ final class PreparedCellShapeBuildContext {
         resolved.removeAll()
     }
 
-    private func rememberPinned(_ shape: PreparedCellShape) {
+    fileprivate func rememberPinned(_ shape: PreparedCellShape) {
         if let previous = resolved.removeValue(forKey: shape.key)?.shape { release(previous) }
         if resolved.count >= TableCellLayoutStore.maximumResidentLayouts {
             for (key, reference) in resolved where reference.shape == nil { resolved.removeValue(forKey: key) }
@@ -113,9 +113,18 @@ final class PreparedCellShapeCatalog {
     private var owners: [ObjectIdentifier: Set<PreparedCellShapeKey>] = [:]
     private var ownerCounts: [ObjectIdentifier: Int] = [:]
     private var stagedSincePrune = 0
+    private(set) var prunePassesForTesting = 0
 
-    func newBuildContext() -> PreparedCellShapeBuildContext {
-        PreparedCellShapeBuildContext(catalog: self)
+    func newBuildContext(reusing layouts: [PreparedProseLayout] = []) -> PreparedCellShapeBuildContext {
+        let context = PreparedCellShapeBuildContext(catalog: self)
+        var shapes: [PreparedCellShapeKey: PreparedCellShape] = [:]
+        let capacity = TableCellLayoutStore.maximumResidentLayouts
+        for layout in layouts {
+            guard shapes.count < capacity else { break }
+            collectShapes(in: layout, into: &shapes, maximumCount: capacity)
+        }
+        shapes.values.forEach { context.rememberPinned(stageForBuild($0)) }
+        return context
     }
 
     func acquireForBuild(_ key: PreparedCellShapeKey) -> PreparedCellShape? {
@@ -199,6 +208,7 @@ final class PreparedCellShapeCatalog {
     }
 
     private func pruneLocked() {
+        prunePassesForTesting += 1
         buildPins = buildPins.filter { $0.value.reference.shape != nil }
         let owned = Set(owners.values.flatMap { $0 })
         entries = entries.filter { key, reference in
@@ -209,10 +219,11 @@ final class PreparedCellShapeCatalog {
 
     private func collectShapes(
         in layout: PreparedProseLayout,
-        into destination: inout [PreparedCellShapeKey: PreparedCellShape]
+        into destination: inout [PreparedCellShapeKey: PreparedCellShape],
+        maximumCount: Int = Int.max
     ) {
         layout.forEachRetainedLayout { retained in
-            if let shape = retained.cellShape { destination[shape.key] = shape }
+            if destination.count < maximumCount, let shape = retained.cellShape { destination[shape.key] = shape }
         }
     }
 }

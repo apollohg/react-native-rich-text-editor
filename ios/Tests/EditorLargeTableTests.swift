@@ -15,12 +15,12 @@ final class EditorLargeTableTests: XCTestCase {
         static let text = "text"
     }
 
-    private func plainTableDocument(rows: Int, columns: Int) throws -> String {
+    private func plainTableDocument(rows: Int, columns: Int, repeatedText: String? = nil) throws -> String {
         let tableRows: [[String: Any]] = (0..<rows).map { row in
             let type = row == PlainTable.headerRow ? PlainTable.headerCell : PlainTable.cell
             return ["type": PlainTable.row, "content": (0..<columns).map { column in [
                 "type": type,
-                "content": [["type": PlainTable.paragraph, "content": [["type": PlainTable.text, "text": PlainTable.cellText(row: row, column: column)]]]]
+                "content": [["type": PlainTable.paragraph, "content": [["type": PlainTable.text, "text": repeatedText ?? PlainTable.cellText(row: row, column: column)]]]]
             ] }]
         }
         let data = try JSONSerialization.data(withJSONObject: [
@@ -59,6 +59,7 @@ final class EditorLargeTableTests: XCTestCase {
     private func withMountedTable(
         rows: Int,
         columns: Int,
+        repeatedText: String? = nil,
         _ body: (RichTextEditorView, EditorTableSurface, PreparedProseDrawingView) throws -> Void
     ) throws {
         let label = "\(rows)x\(columns)"
@@ -71,7 +72,7 @@ final class EditorLargeTableTests: XCTestCase {
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
         view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
-        let update = try XCTUnwrap(adapter.setContentJson(try plainTableDocument(rows: rows, columns: columns)),
+        let update = try XCTUnwrap(adapter.setContentJson(try plainTableDocument(rows: rows, columns: columns, repeatedText: repeatedText)),
                                    "\(label): the fixture renders instead of failing: \(adapter.debugNotes)")
         XCTAssertTrue(view.textView.applyUpdateJSON(update), "\(label): the render applies")
         view.layoutIfNeeded()
@@ -91,10 +92,47 @@ final class EditorLargeTableTests: XCTestCase {
         }
     }
 
+    func testStructuralRowInsertionReusesEvictedCellGeometry() throws {
+        let shape = Self.twentyThousandSlotTables[0]
+        try withMountedTable(rows: shape.rows, columns: shape.columns) { view, surface, drawing in
+            let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: view.editorId))
+            let tableID = try adapter.editableTableID()
+            XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: .zero))
+            view.layoutIfNeeded()
+            let before = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface)
+            let source = try XCTUnwrap(before.sourceTable)
+            let oldKeys = Set(source.cells.map(\.contentKey))
+            let middleIndex = before.cells.count / 2
+            let middle = before.cells[middleIndex]
+            XCTAssertNil(middle.cachedContent, "The regression requires an evicted unchanged cell")
+            var preparedKeys: [String] = []
+            surface.onTableCellPreparedForTesting = { _, key in preparedKeys.append(key) }
+            let command = try XCTUnwrap(TableAccessibilityAction.all.first { $0.key == "addRowAfter" }).command
+            let update = try XCTUnwrap(adapter.commandAtSelection(command, anchor: 0, head: 0))
+            XCTAssertTrue(view.textView.applyUpdateJSON(update))
+            view.layoutIfNeeded()
+            let after = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface)
+            XCTAssertEqual(after.cells.count, before.cells.count + shape.columns)
+            XCTAssertEqual(preparedKeys.filter { oldKeys.contains($0) }.count, 0,
+                "Structural geometry must reuse unchanged cell metadata even after drawing eviction")
+            let moved = after.cells[middleIndex + shape.columns]
+            XCTAssertEqual(moved.contentSize, middle.contentSize)
+            XCTAssertGreaterThan(after.frame(ofCell: moved).minY, before.frame(ofCell: middle).minY)
+            XCTAssertNil(moved.cachedContent, "Structural updates must not populate offscreen drawing objects")
+            let rebuilt = moved.content
+            XCTAssertEqual(rebuilt.size, middle.contentSize,
+                "The moved cell must still rebuild after geometry reuse")
+            XCTAssertEqual(TableAccessibility.contentNodes(of: rebuilt), middle.accessibilityNodes,
+                "Reconstruction must preserve the moved cell's text and local accessibility geometry")
+            XCTAssertLessThanOrEqual(after.layoutStore.unmountedRetainedBytes,
+                PreparedProseLayoutCache.preparedLayoutUnmountedByteBudget)
+        }
+    }
+
     func testScrollingPreparesOnlyEnteringCells() throws {
         try withMountedTable(rows: 1000, columns: 20) { view, surface, drawing in
             var preparations: [Int] = []
-            surface.onTableCellPreparedForTesting = { preparations.append($0) }
+            surface.onTableCellPreparedForTesting = { index, _ in preparations.append(index) }
             view.textView.contentOffset.y = view.textView.contentSize.height / 2
             view.layoutIfNeeded()
             let first = try XCTUnwrap(drawing.mountedTablePresentation())
@@ -247,7 +285,7 @@ final class EditorLargeTableTests: XCTestCase {
         let input = view.activeTextInput
         XCTAssertTrue(input.becomeFirstResponder())
         var prepared: [Int] = []
-        surface.onTableCellPreparedForTesting = { prepared.append($0) }
+        surface.onTableCellPreparedForTesting = { index, _ in prepared.append(index) }
 
         let replacementsBefore = surface.incrementalRelayoutsForTesting
         let fullBefore = adapter.fullFrameAdoptionCountForTesting
@@ -275,7 +313,7 @@ final class EditorLargeTableTests: XCTestCase {
             let input = view.activeTextInput
             input.selectedRange = NSRange(location: input.textStorage.length, length: 0)
             var prepared: [Int] = []
-            surface.onTableCellPreparedForTesting = { prepared.append($0) }
+            surface.onTableCellPreparedForTesting = { index, _ in prepared.append(index) }
             input.insertText(String(repeating: " wrapping text", count: 12))
             view.layoutIfNeeded()
             let after = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface)
@@ -310,7 +348,7 @@ final class EditorLargeTableTests: XCTestCase {
             let before = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface)
             let retained = Set(before.cells.map { ObjectIdentifier($0.content) })
             var prepared: [Int] = []
-            surface.onTableCellPreparedForTesting = { prepared.append($0) }
+            surface.onTableCellPreparedForTesting = { index, _ in prepared.append(index) }
             let key = try adapter.editableTableID()
             let scalar = try XCTUnwrap(adapter.tableIndex.scalarStart(tableKey: key, cellIndex: 4))
             XCTAssertNotNil(adapter.syncSelection(anchor: scalar, head: scalar))
@@ -319,7 +357,34 @@ final class EditorLargeTableTests: XCTestCase {
             view.layoutIfNeeded()
             let after = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface)
             XCTAssertEqual(after.cells.filter { retained.contains(ObjectIdentifier($0.content)) }.count, before.cells.count)
-            XCTAssertEqual(prepared.count, 2, "only the new row is prepared")
+            XCTAssertEqual(prepared.count, 1, "the new row shares one empty-cell shape")
+        }
+    }
+
+    func testStructuralReuseKeepsIdenticalCellsIndependentlyDrawable() throws {
+        try withMountedTable(rows: 4, columns: 2, repeatedText: "repeated cell") { view, surface, drawing in
+            let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: view.editorId))
+            let tableID = try adapter.editableTableID()
+            XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 2, contentRect: .zero))
+            let command = try XCTUnwrap(TableAccessibilityAction.all.first { $0.key == "addRowAfter" }).command
+            for _ in 0..<2 {
+                let previous = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface.sourceTable)
+                let oldKeys = Set(previous.cells.map(\.contentKey))
+                var preparedKeys: [String] = []
+                surface.onTableCellPreparedForTesting = { _, key in preparedKeys.append(key) }
+                let update = try XCTUnwrap(adapter.commandAtSelection(command, anchor: 0, head: 0))
+                XCTAssertTrue(view.textView.applyUpdateJSON(update))
+                view.layoutIfNeeded()
+                let table = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface)
+                let identities = Set(table.cells.map { ObjectIdentifier($0.content) })
+                XCTAssertEqual(identities.count, table.cells.count,
+                    "Equal text must preserve separate drawing identities and active-cell exclusion")
+                guard identities.count == table.cells.count else { return }
+                drawing.layer.displayIfNeeded()
+                try assertLayeredMatchesSinglePass(drawing)
+                XCTAssertEqual(preparedKeys.filter { oldKeys.contains($0) }.count, 0,
+                    "New bindings with existing content should share its shape without reshaping")
+            }
         }
     }
 
