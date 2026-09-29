@@ -108,6 +108,8 @@ internal class PreparedCellShapeBuildContext internal constructor(
     private val pins = IdentityHashMap<PreparedCellShape, Unit>()
     private var closed = false
 
+    fun fork(): PreparedCellShapeBuildContext = catalog.newBuildContext()
+
     fun resolve(
         key: PreparedCellShapeKey,
         build: () -> PreparedProseLayout,

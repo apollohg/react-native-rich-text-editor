@@ -68,25 +68,30 @@ class TableGridLayout(private val displayScale: Float = 1f, private val cache: T
                themeDigest: String = "", fontEnvironmentRevision: Long = 0, textScale: Float = 1f,
                measureCell: (TableGridCell, Float) -> Float?): TableLayoutResult {
         val heights = mutableMapOf<Int, Float>()
-        if (record.failure == null && style.isValid() && viewportWidth.isFinite() && viewportWidth >= 0f &&
-            record.columns > 0 && record.rows > 0 && record.cells.all { valid(it, record) } &&
-            record.columnWidths.all { it == null || it.isFinite() && it >= 0f }) {
-            columnGeometry(record, viewportWidth, style)?.let { (_, offsets) ->
-                for (cell in record.cells.sortedBy { it.sourceIndex }) {
-                    val inner = maxOf(0f, offsets[cell.column + cell.colspan] - offsets[cell.column] -
-                        2 * (style.cellPadding + style.borderWidth))
-                    val pixels = inner * scale()
-                    if (!pixels.isFinite() || pixels < 0f || pixels > Int.MAX_VALUE.toFloat()) break
-                    val pixelWidth = kotlin.math.round(pixels).toInt()
-                    val key = TableCellMeasurementKey(record.documentOwner, cell.contentKey, pixelWidth,
-                        themeDigest, fontEnvironmentRevision, textScale, cell.attachmentRevision)
-                    val measured = cache.get(key) ?: measureCell(cell, pixelWidth / scale())
-                        ?.takeIf { it.isFinite() && it >= 0f }?.also { cache.put(key, it) } ?: break
-                    heights[cell.sourceIndex] = measured
-                }
-            }
+        for ((cell, pixelWidth) in measurementInputs(record, viewportWidth, style)) {
+            val key = TableCellMeasurementKey(record.documentOwner, cell.contentKey, pixelWidth,
+                themeDigest, fontEnvironmentRevision, textScale, cell.attachmentRevision)
+            val measured = cache.get(key) ?: measureCell(cell, pixelWidth / scale())
+                ?.takeIf { it.isFinite() && it >= 0f }?.also { cache.put(key, it) } ?: break
+            heights[cell.sourceIndex] = measured
         }
         return relayout(record, viewportWidth, style, rtl, heights)
+    }
+
+    internal fun measurementInputs(record: TableGridRecord, viewportWidth: Float, style: TableStyle): List<Pair<TableGridCell, Int>> {
+        if (record.failure != null || !style.isValid() || !viewportWidth.isFinite() || viewportWidth < 0f ||
+            record.columns <= 0 || record.rows <= 0 || !record.cells.all { valid(it, record) } ||
+            !record.columnWidths.all { it == null || it.isFinite() && it >= 0f }) return emptyList()
+        val (_, offsets) = columnGeometry(record, viewportWidth, style) ?: return emptyList()
+        val inputs = mutableListOf<Pair<TableGridCell, Int>>()
+        for (cell in record.cells.sortedBy { it.sourceIndex }) {
+            val inner = maxOf(0f, offsets[cell.column + cell.colspan] - offsets[cell.column] -
+                2 * (style.cellPadding + style.borderWidth))
+            val pixels = inner * scale()
+            if (!pixels.isFinite() || pixels < 0f || pixels > Int.MAX_VALUE.toFloat()) break
+            inputs += cell to kotlin.math.round(pixels).toInt()
+        }
+        return inputs
     }
 
     fun relayout(record: TableGridRecord, viewportWidth: Float, style: TableStyle, rtl: Boolean,

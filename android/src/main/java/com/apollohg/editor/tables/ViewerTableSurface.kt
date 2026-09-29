@@ -91,10 +91,12 @@ internal class ViewerTableSurface(
         sourceAttributes: Map<String, org.json.JSONObject> = emptyMap(),
         editorTableId: String? = null,
         layoutStore: TableCellLayoutStore = TableCellLayoutStore(),
+        prepareCellWorkers: List<(TableGridCell, Float) -> PreparedProseLayout> = emptyList(),
+        parallelCellIndices: Set<Int> = emptySet(),
         prepareCell: (TableGridCell, Float) -> PreparedProseLayout
     ) : this(identity, hostViewportWidth, style, isRightToLeft,
         prepare(record, hostViewportWidth, style, isRightToLeft, displayScale, themeDigest,
-            fontEnvironmentRevision, textScale, sourceTable, layoutStore, prepareCell),
+            fontEnvironmentRevision, textScale, sourceTable, layoutStore, prepareCellWorkers, parallelCellIndices, prepareCell),
         sourceTable, sourceAttributes, editorTableId, displayScale)
 
     fun replacingCells(contents: Map<Int, PreparedProseLayout>, contentHeights: Map<Int, Float>,
@@ -126,11 +128,44 @@ internal class ViewerTableSurface(
         columnEdgeHandleRows.size * 16L
 
     companion object {
+        private fun prepareParallelCells(
+            inputs: List<Pair<TableGridCell, Int>>, scale: Float, indices: Set<Int>,
+            workers: List<(TableGridCell, Float) -> PreparedProseLayout>,
+            prepare: (TableGridCell, Float) -> PreparedProseLayout,
+            capture: (TableGridCell, Float, PreparedProseLayout) -> PreparedViewerTableCell
+        ): Map<Int, PreparedViewerTableCell> {
+            val prepared = java.util.concurrent.ConcurrentHashMap<Int, PreparedViewerTableCell>()
+            fun measure(input: Pair<TableGridCell, Int>, prepare: (TableGridCell, Float) -> PreparedProseLayout) {
+                val (cell, pixels) = input
+                val width = pixels / scale
+                prepared[cell.sourceIndex] = capture(cell, width, prepare(cell, width))
+            }
+            inputs.filter { it.first.sourceIndex !in indices }.forEach { measure(it, prepare) }
+            val executor = java.util.concurrent.Executors.newFixedThreadPool(workers.size)
+            try {
+                val tasks = workers.mapIndexed { worker, prepareWorker ->
+                    java.util.concurrent.CompletableFuture.runAsync({
+                        val start = inputs.size * worker / workers.size
+                        val end = inputs.size * (worker + 1) / workers.size
+                        for (index in start until end) {
+                            if (inputs[index].first.sourceIndex in indices) measure(inputs[index], prepareWorker)
+                        }
+                    }, executor)
+                }
+                java.util.concurrent.CompletableFuture.allOf(*tasks.toTypedArray()).join()
+            } finally {
+                executor.shutdown()
+            }
+            return prepared
+        }
+
         private fun prepare(
             record: TableGridRecord, hostViewportWidth: Float, style: TableStyle,
             isRightToLeft: Boolean, displayScale: Float, themeDigest: String,
             fontEnvironmentRevision: Long, textScale: Float, sourceTable: TableSurfaceSource?,
             layoutStore: TableCellLayoutStore,
+            prepareCellWorkers: List<(TableGridCell, Float) -> PreparedProseLayout>,
+            parallelCellIndices: Set<Int>,
             prepareCell: (TableGridCell, Float) -> PreparedProseLayout
         ): Preparation {
             val scale = displayScale.takeIf { it.isFinite() && it > 0f } ?: 1f
@@ -146,12 +181,21 @@ internal class ViewerTableSurface(
                     inset to inset, content, source?.header ?: false, source?.attrsKey, layoutStore) { prepareCell(cell, width) }
             }
             var error: ProseViewerError? = null
-            val layout = TableGridLayout(scale).layout(measurementRecord, hostViewportWidth, style, isRightToLeft, themeDigest, fontEnvironmentRevision, textScale) { measuredCell, width ->
-                val cell = sourceCells[measuredCell.sourceIndex] ?: return@layout null
-                prepareCell(cell, width).also { artifact ->
-                    prepared[cell.sourceIndex] = capture(cell, width, artifact)
-                    if (error == null) error = artifact.error
-                }.heightPx.toFloat()
+            val grid = TableGridLayout(scale)
+            val layout = if (prepareCellWorkers.size > 1 && parallelCellIndices.isNotEmpty()) {
+                prepared.putAll(prepareParallelCells(grid.measurementInputs(record, hostViewportWidth, style),
+                    scale, parallelCellIndices, prepareCellWorkers, prepareCell, ::capture))
+                error = record.cells.sortedBy { it.sourceIndex }.firstNotNullOfOrNull { prepared[it.sourceIndex]?.contentError }
+                grid.relayout(record, hostViewportWidth, style, isRightToLeft,
+                    prepared.mapValues { it.value.contentHeightPx.toFloat() })
+            } else {
+                grid.layout(measurementRecord, hostViewportWidth, style, isRightToLeft, themeDigest, fontEnvironmentRevision, textScale) { measuredCell, width ->
+                    val cell = sourceCells[measuredCell.sourceIndex] ?: return@layout null
+                    prepareCell(cell, width).also { artifact ->
+                        prepared[cell.sourceIndex] = capture(cell, width, artifact)
+                        if (error == null) error = artifact.error
+                    }.heightPx.toFloat()
+                }
             }
             record.cells.forEach { cell ->
                 if (cell.sourceIndex !in prepared) {

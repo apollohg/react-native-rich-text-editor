@@ -199,6 +199,50 @@ internal class ResolvedTextStyleSpan(internal val typeface: Typeface, internal v
 }
 
 internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
+    companion object {
+        const val MAX_TABLE_PREPARATION_WORKERS = 4
+    }
+    internal var tablePreparationWorkerLimit = MAX_TABLE_PREPARATION_WORKERS
+    internal var tableCellLayoutObserverForTesting: ((Int, PreparedProseLayout) -> Unit)? = null
+
+    private data class TablePreparationWorkers(
+        val indices: Set<Int> = emptySet(),
+        val engines: List<StaticLayoutAndroidProseLayoutEngine> = emptyList(),
+        val contexts: List<PreparedCellShapeBuildContext> = emptyList(),
+        val prepare: List<(com.apollohg.editor.tables.TableGridCell, Float) -> PreparedProseLayout> = emptyList()
+    )
+
+    private fun tablePreparationWorkers(
+        document: ViewerDocument, table: com.apollohg.editor.tables.TableSurfaceSource, tableKey: String,
+        theme: PreparedProseTheme, cellMode: Boolean, context: PreparedCellShapeBuildContext?,
+        prepare: (com.apollohg.editor.tables.TableGridCell, Float, StaticLayoutAndroidProseLayoutEngine, PreparedCellShapeBuildContext?) -> PreparedProseLayout
+    ): TablePreparationWorkers {
+        val count = minOf(MAX_TABLE_PREPARATION_WORKERS, tablePreparationWorkerLimit.coerceAtLeast(1),
+            (Runtime.getRuntime().availableProcessors() - 1).coerceAtLeast(1))
+        if (cellMode || count <= 1 || theme.codeHighlighting != null || reusableTableCellContent != null) return TablePreparationWorkers()
+        val frequencies = table.cells.groupingBy { it.contentKey }.eachCount()
+        val indices = table.cells.filter { source ->
+            (context == null || frequencies[source.contentKey] == 1) && document.cellDocument(source, tableKey).blocks.all { block ->
+                !block.isBlockAtom && block.nodeType != "image" && block.tableKey == null && block.inlines.none { it is ViewerInline.Atom }
+            }
+        }.mapTo(mutableSetOf()) { it.sourceIndex }
+        if (indices.isEmpty()) return TablePreparationWorkers()
+        val observerLock = Any()
+        val engines = List(count) {
+            StaticLayoutAndroidProseLayoutEngine().also { worker ->
+                worker.tablePreparationWorkerLimit = 1
+                worker.tableCellPreparationObserver = { index -> synchronized(observerLock) { tableCellPreparationObserver?.invoke(index); Unit } }
+                worker.tableCellLayoutObserverForTesting = { index, layout ->
+                    synchronized(observerLock) { tableCellLayoutObserverForTesting?.invoke(index, layout); Unit }
+                }
+            }
+        }
+        val contexts = List(count) { context?.fork() }
+        return TablePreparationWorkers(indices, engines, contexts.filterNotNull(), engines.mapIndexed { index, worker ->
+            { cell, width -> prepare(cell, width, worker, contexts[index]) }
+        })
+    }
+
     /** Test seam: drawing must never increment this prepared-layout counter. */
     internal var staticLayoutsBuilt: Int = 0
         private set
@@ -427,7 +471,10 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                     cellShapeStyleDigest(childTheme, key.nativeFontRevision, key.fontEnvironmentRevision)
                 }
                 fun prepareCell(cell: com.apollohg.editor.tables.TableGridCell, cellWidth: Float,
-                                reuseContent: Boolean): PreparedProseLayout {
+                                reuseContent: Boolean, worker: StaticLayoutAndroidProseLayoutEngine? = null,
+                                workerContext: PreparedCellShapeBuildContext? = null): PreparedProseLayout {
+                    val engine = worker ?: this
+                    val context = if (worker == null) cellShapeContext else workerContext
                     val source = surfaceSource.cells.getOrNull(cell.sourceIndex)
                     val childWidth = cellWidth.toInt().coerceAtLeast(1)
                     if (reuseContent && !cellMode) {
@@ -439,20 +486,20 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                     )
                     val childKey = key.copy(semanticKey = child.semanticKey, widthPx = childWidth)
                     val build = {
-                        tableCellPreparationObserver?.invoke(cell.sourceIndex)
-                        prepare(
+                        engine.tableCellPreparationObserver?.invoke(cell.sourceIndex)
+                        engine.prepare(
                             child, childKey, childTheme, childWidth, density, false,
-                            warningSemanticGeneration, true, cellShapeContext
-                        )
+                            warningSemanticGeneration, true, context
+                        ).also { engine.tableCellLayoutObserverForTesting?.invoke(cell.sourceIndex, it) }
                     }
-                    return if (cellShapeContext == null || theme.codeHighlighting != null) {
+                    return if (context == null || theme.codeHighlighting != null) {
                         build()
                     } else {
                         val shapeKey = cellShapeKey(cell.contentKey, child, childWidth, childTheme, density, shapeStyleDigest)
-                        cellShapeContext.resolve(shapeKey, build) { shape ->
-                            bindCellShape(
+                        context.resolve(shapeKey, build) { shape ->
+                            engine.bindCellShape(
                                 shape, child, childKey, childTheme, childWidth, density,
-                                warningSemanticGeneration, cellShapeContext
+                                warningSemanticGeneration, context
                             )
                         }
                     }
@@ -476,11 +523,20 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                     previous.replacingCells(contents, contents.mapValues { it.value.heightPx.toFloat() },
                         record, surfaceSource, document.tableAttributes) { cell, width -> prepareCell(cell, width, false) }
                 } else {
-                    ViewerTableSurface(document.tablePresentationIdentity(tableKey), record, tableWidth.toFloat(),
-                        tableStyle, rtl, displayScale = 1f, sourceTable = surfaceSource,
-                        editorTableId = tableKey, sourceAttributes = document.tableAttributes,
-                        layoutStore = tableLayoutStore) { cell, width ->
-                        prepareCell(cell, width, true)
+                    val workers = tablePreparationWorkers(document, surfaceSource, tableKey, theme, cellMode, cellShapeContext) { cell, width, worker, context ->
+                        prepareCell(cell, width, true, worker, context)
+                    }
+                    try {
+                        ViewerTableSurface(document.tablePresentationIdentity(tableKey), record, tableWidth.toFloat(),
+                            tableStyle, rtl, displayScale = 1f, sourceTable = surfaceSource,
+                            editorTableId = tableKey, sourceAttributes = document.tableAttributes,
+                            layoutStore = tableLayoutStore, prepareCellWorkers = workers.prepare,
+                            parallelCellIndices = workers.indices) { cell, width ->
+                            prepareCell(cell, width, true)
+                        }
+                    } finally {
+                        workers.contexts.forEach { it.close() }
+                        staticLayoutsBuilt += workers.engines.sumOf { it.staticLayoutsBuilt }
                     }
                 }
                 if (surface.preparationError != null) return PreparedProseLayout.error(key, widthPx, surface.preparationError!!)

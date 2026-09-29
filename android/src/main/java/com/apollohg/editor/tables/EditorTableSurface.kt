@@ -968,7 +968,9 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
                         0, 0, density.toBits().toLong(), revision.toLong(), semantic,
                         tableDirection = tableDirection)
                     val reusable by lazy { ReusableCellContents(entries[id], appearance) }
-                    engine.reusableTableCellContent = { cell, cellWidth -> reusable.take(cell, cellWidth) }
+                    engine.reusableTableCellContent = if (entries[id] != null) {
+                        { cell, cellWidth -> reusable.take(cell, cellWidth) }
+                    } else null
                     val changes = adapter.cachedTablePresentation?.changes
                     engine.incrementalTableSurface = { tableKey ->
                         val previous = entries[tableKey]?.takeIf { it.appearance == appearance }

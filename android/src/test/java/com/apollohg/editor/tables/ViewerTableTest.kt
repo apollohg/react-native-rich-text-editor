@@ -73,6 +73,104 @@ import uniffi.editor_core.TableRenderFailure
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class ViewerTableTest {
+    private class CellGeometryProbe {
+        private val caller = Thread.currentThread()
+        val heights = mutableMapOf<String, Int>()
+        val glyphBounds = mutableMapOf<String, List<Rect>>()
+        val lineMetrics = mutableMapOf<String, List<Float>>()
+        var backgroundPreparations = 0
+
+        @Synchronized fun record(index: Int, layout: PreparedProseLayout) {
+            heights[layout.key.semanticKey] = layout.heightPx
+            glyphBounds[layout.key.semanticKey] = layout.blocks.flatMap { it.fragments }.flatMap { fragment ->
+                val text = fragment.layout ?: return@flatMap listOf(Rect(fragment.bounds))
+                listOf(Rect(fragment.bounds)) + (0 until text.lineCount).map { line ->
+                    Rect().also { bounds ->
+                        val value = text.text.subSequence(text.getLineStart(line), text.getLineEnd(line)).toString()
+                        text.paint.getTextBounds(value, 0, value.length, bounds)
+                    }
+                }
+            }
+            lineMetrics[layout.key.semanticKey] = layout.blocks.flatMap { it.fragments }.flatMap { fragment ->
+                val text = fragment.layout ?: return@flatMap emptyList()
+                (0 until text.lineCount).flatMap { line -> listOf(text.getLineLeft(line), text.getLineRight(line),
+                    text.getLineTop(line).toFloat(), text.getLineBottom(line).toFloat()) }
+            }
+            if (Thread.currentThread() !== caller) backgroundPreparations++
+        }
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun testParallelMeasurementEqualsSequentialMeasurement() {
+        val rich = """{"type":"doc","content":[{"type":"table","content":[
+            {"type":"table_row","content":[
+                {"type":"table_cell","attrs":{"rowspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"Bold café العربية 👩🏽‍💻","marks":[{"type":"bold"}]}]}]},
+                {"type":"table_cell","attrs":{"colspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"wide merged text wraps"}]}]}]},
+            {"type":"table_row","content":[
+                {"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"é accents"}]}]},
+                {"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"אבג RTL"}]}]}]}]}]}"""
+        val fixtures = listOf("plain-1000x20" to PlainTableFixture.document(1_000, 20, PlainTableFixture::coordinateText),
+            "rich-merged" to rich, "nested-image" to nestedHeaderImageSource())
+        for ((name, source) in fixtures) {
+            val document = compileWithRust(ProseViewerRequest(ProseViewerSource.Json(source),
+                ProseViewerConfiguration(CONFIG, imagesEnabled = true)))
+            val expectedGeometry = CellGeometryProbe()
+            val sequential = StaticLayoutAndroidProseLayoutEngine().apply {
+                tablePreparationWorkerLimit = 1
+                tableCellLayoutObserverForTesting = expectedGeometry::record
+            }
+            val expected = prepare(document, engine = sequential)
+            val actualGeometry = CellGeometryProbe()
+            val parallel = StaticLayoutAndroidProseLayoutEngine().apply {
+                tablePreparationWorkerLimit = StaticLayoutAndroidProseLayoutEngine.MAX_TABLE_PREPARATION_WORKERS
+                tableCellLayoutObserverForTesting = actualGeometry::record
+            }
+            val actual = prepare(document, engine = parallel)
+            assertNull(name, actual.error)
+            assertEquals(name, expected.heightPx, actual.heightPx)
+            assertEquals("$name: every measured height", expectedGeometry.heights, actualGeometry.heights)
+            assertEquals("$name: glyph bounds", expectedGeometry.glyphBounds, actualGeometry.glyphBounds)
+            assertEquals("$name: line metrics", expectedGeometry.lineMetrics, actualGeometry.lineMetrics)
+            assertEquals("$name: engine work counters", sequential.staticLayoutsBuilt, parallel.staticLayoutsBuilt)
+            expected.blocks.zip(actual.blocks).forEach { (left, right) ->
+                val lhs = left.tableSurface ?: return@forEach
+                val rhs = requireNotNull(right.tableSurface)
+                assertEquals(name, lhs.layout, rhs.layout)
+                assertEquals(name, lhs.cells.map { it.contentHeightPx }, rhs.cells.map { it.contentHeightPx })
+            }
+            if (name == "plain-1000x20" && Runtime.getRuntime().availableProcessors() > 2) {
+                assertTrue("The equivalence test must exercise worker preparation", actualGeometry.backgroundPreparations > 0)
+            }
+        }
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun testCellsWithAtomsAreMeasuredOnTheCallingThread() {
+        val source = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[
+            {"type":"table_cell","content":[{"type":"card"}]},
+            {"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"plain one"}]}]},
+            {"type":"table_cell","content":[{"type":"image","attrs":{"src":"https://example.test/image.png","width":20,"height":20}}]},
+            {"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"plain two"}]}]}
+        ]}]}]}"""
+        val document = compileWithRust(ProseViewerRequest(ProseViewerSource.Json(source),
+            ProseViewerConfiguration(CONFIG, imagesEnabled = true)))
+        val caller = Thread.currentThread()
+        val threads = java.util.concurrent.ConcurrentHashMap<Int, Boolean>()
+        val engine = StaticLayoutAndroidProseLayoutEngine().apply {
+            tablePreparationWorkerLimit = StaticLayoutAndroidProseLayoutEngine.MAX_TABLE_PREPARATION_WORKERS
+            tableCellPreparationObserver = { threads[it] = Thread.currentThread() === caller }
+        }
+        val layout = prepare(document,
+            theme = """{"viewerAtoms":{"generation":"parallel","revision":"one","nodeTypes":["card"],"estimatedHeights":{"card":40}}}""",
+            engine = engine)
+        assertNull(layout.error)
+        assertEquals(4, threads.size)
+        assertEquals("Custom atoms stay on the caller", true, threads[0])
+        assertEquals("Images stay on the caller", true, threads[2])
+    }
+
     @Test fun testSurfaceSourceFromViewerTableKeepsSourceOrder() {
         val document = compileWithRust(ProseViewerRequest(
             ProseViewerSource.Json(PlainTableFixture.document(2, 2)),
