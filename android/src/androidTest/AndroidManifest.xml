@@ -13,6 +13,7 @@
         <activity
             android:name="com.apollohg.editor.NativeEditorOutsideTapActivity"
             android:exported="false"
+            android:screenOrientation="portrait"
             android:theme="@style/Theme.AppCompat.Light.NoActionBar" />
         <activity
             android:name="com.apollohg.editor.AndroidApi24SmokeActivity"

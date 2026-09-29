@@ -779,23 +779,28 @@ class NativeTablePerformanceTest {
     }
 
     @Test fun exportTablePerformance() = withActivity {
-        for (rich in listOf(false, true)) {
-            for ((rows, columns) in listOf(SMALL_ROWS to SMALL_COLUMNS) + PlainTableFixture.TWENTY_THOUSAND_SLOT_SHAPES) {
-                val fixture = Fixture(rows, columns, rich)
-                val source = fixture.source()
-                cold(fixture, source)
-                repeat(if (rich) 1 else TYPING_RUNS) { typing(fixture, source, it + 1) }
-                cellChange(fixture, source, atEnd = false)
-                cellChange(fixture, source, atEnd = true)
-                if (!rich) {
-                    warm(fixture, source)
-                    scroll(fixture, source, horizontal = true)
-                    scroll(fixture, source, horizontal = false)
-                    structural(fixture, source)
-                    remote(fixture, source)
-                }
-                saveExport()
+        val fixtures = listOf(false, true).flatMap { rich ->
+            (listOf(SMALL_ROWS to SMALL_COLUMNS) + PlainTableFixture.TWENTY_THOUSAND_SLOT_SHAPES)
+                .map { (rows, columns) -> Fixture(rows, columns, rich) }
+        }
+        val requested = InstrumentationRegistry.getArguments().getString(FIXTURE_ARGUMENT)?.split(',')?.toSet()
+        require(requested == null || requested.all { name -> fixtures.any { it.name == name } }) {
+            "Unknown table performance fixtures: $requested"
+        }
+        for (fixture in fixtures.filter { requested == null || it.name in requested }) {
+            val source = fixture.source()
+            cold(fixture, source)
+            repeat(if (fixture.rich) 1 else TYPING_RUNS) { typing(fixture, source, it + 1) }
+            cellChange(fixture, source, atEnd = false)
+            cellChange(fixture, source, atEnd = true)
+            if (!fixture.rich) {
+                warm(fixture, source)
+                scroll(fixture, source, horizontal = true)
+                scroll(fixture, source, horizontal = false)
+                structural(fixture, source)
+                remote(fixture, source)
             }
+            saveExport()
         }
         val output = saveExport()
         println("TABLE_PERFORMANCE_EXPORT_PATH ${output.absolutePath}")
@@ -843,6 +848,7 @@ class NativeTablePerformanceTest {
         const val OUTPUT_FILE = "table-performance-android.json"
         const val SMOKE_OUTPUT_FILE = "table-performance-android-storage-smoke.json"
         const val ADDITIONAL_OUTPUT_ARGUMENT = "additionalTestOutputDir"
+        const val FIXTURE_ARGUMENT = "tablePerformanceFixtures"
         val PRE_DRAW_STAGES = intArrayOf(FrameMetrics.UNKNOWN_DELAY_DURATION,
             FrameMetrics.INPUT_HANDLING_DURATION, FrameMetrics.ANIMATION_DURATION,
             FrameMetrics.LAYOUT_MEASURE_DURATION)
