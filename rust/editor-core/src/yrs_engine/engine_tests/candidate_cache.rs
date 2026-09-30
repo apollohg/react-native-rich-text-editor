@@ -1,6 +1,65 @@
 use super::*;
 
 #[test]
+fn candidate_rebinding_preserves_tombstones_in_cached_and_bootstrapped_stores() {
+    const DELETE_REQUEST: u64 = 71_100;
+    const INSERT_REQUEST: u64 = DELETE_REQUEST + 1;
+    for bootstrap in [false, true] {
+        let mut engine = transaction_engine();
+        engine.import_json(
+            r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"abc"}]}]}"#,
+            TransactionOrigin::DocumentImport,
+        ).unwrap();
+        let position = |offset| RevisionedPosition {
+            offset,
+            kind: EditorOffsetKind::Scalar,
+            affinity: Affinity::After,
+        };
+        let before = engine.doc.transact().state_vector();
+        engine
+            .apply_command(
+                DELETE_REQUEST,
+                TypedCommand::DeleteRange {
+                    range: RevisionedRange {
+                        from: position(0),
+                        to: position(1),
+                    },
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            engine.doc.transact().state_vector(),
+            before,
+            "deletion-only fixture must not advance the state vector"
+        );
+        assert!(!engine.doc.transact().snapshot().delete_set.is_empty());
+        if bootstrap {
+            engine.prepared_candidate_cache = None;
+        }
+        reset_prepared_candidate_cache_counts_for_test();
+        engine
+            .apply_typed_transaction(insert_transaction(&engine, INSERT_REQUEST))
+            .unwrap();
+        assert_eq!(
+            take_prepared_candidate_cache_counts_for_test(),
+            if bootstrap { (0, 1) } else { (1, 0) }
+        );
+        let candidate = engine.prepared_candidate_cache.as_ref().unwrap();
+        assert_eq!(
+            candidate.doc.transact().snapshot(),
+            engine.doc.transact().snapshot(),
+            "rebound candidate must retain exact clocks and tombstones; bootstrap={bootstrap}"
+        );
+        assert_eq!(
+            super::encode_state_bounded(&candidate.doc, &engine.resource_limits).unwrap(),
+            engine.encoded_state().unwrap(),
+            "bootstrap={bootstrap}"
+        );
+    }
+}
+
+#[test]
 fn candidate_state_vector_seal_accepts_redundant_inherited_mark_clock_below_bound() {
     let local = ClientID::new(7);
     let remote = ClientID::new(8);

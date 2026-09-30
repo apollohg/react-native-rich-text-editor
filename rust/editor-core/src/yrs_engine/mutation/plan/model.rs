@@ -171,6 +171,7 @@ impl YrsMutationPlan {
         })
     }
 
+    /// Only for the engine's privately maintained equivalent commit candidate.
     pub(crate) fn rebind_and_preflight_equivalent_store<T: ReadTxn>(
         mut self,
         request_id: u64,
@@ -231,8 +232,15 @@ impl YrsMutationPlan {
                 }
             }
         }
-        self.document_guard = Some(capture_document_guard(request_id, txn)?);
-        // The new guard describes this same uninterrupted read view.
+        if txn.store().pending_update().is_some() || txn.store().pending_ds().is_some() {
+            return Err(OperationError::engine_not_ready(request_id));
+        }
+        if let Some(guard) = self.document_guard.as_mut() {
+            guard.store_token = txn.store() as *const _ as usize;
+        } else {
+            self.document_guard = Some(capture_document_guard(request_id, txn)?);
+        }
+        // The private candidate lifecycle proves equivalence to the live plan's snapshot.
         let snapshot = self.document_guard.as_ref().map(|guard| &guard.snapshot);
         preflight_mutation_plan_with_snapshot(request_id, &self, txn, snapshot)?;
         Ok(self)

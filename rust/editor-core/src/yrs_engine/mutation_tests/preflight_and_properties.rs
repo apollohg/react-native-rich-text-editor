@@ -403,13 +403,67 @@ fn pending_crdt_state_rejects_local_compilation_atomically() {
 
 #[test]
 fn document_guard_rejects_pending_crdt_state_before_snapshot_validation() {
-    let source = json!({
-        "type": "doc",
-        "content": [{
-            "type": "paragraph",
-            "content": [{ "type": "text", "text": "ready" }]
-        }]
-    });
+    for deletion_only in [false, true] {
+        let source = json!({
+            "type": "doc",
+            "content": [{
+                "type": "paragraph",
+                "content": [{ "type": "text", "text": "ready" }]
+            }]
+        });
+        let (doc, _schema, _limits, compiled) = compile_operations_with_schema(
+            &source,
+            vec![TypedOperation::InsertText {
+                at: point_for_test(1),
+                text: "!".into(),
+                marks: vec![],
+            }],
+            tiptap_schema(),
+        );
+        let remote = Doc::with_client_id(78);
+        let remote_text = remote.get_or_insert_text("missing-prefix");
+        {
+            let mut txn = remote.transact_mut();
+            remote_text.insert(&mut txn, 0, "a");
+        }
+        let suffix_update = {
+            let mut txn = remote.transact_mut();
+            if deletion_only {
+                remote_text.remove_range(&mut txn, 0, 1);
+            } else {
+                remote_text.insert(&mut txn, 1, "b");
+            }
+            txn.commit();
+            txn.encode_update_v1()
+        };
+        doc.transact_mut()
+            .apply_update(Update::decode_v1(&suffix_update).unwrap())
+            .unwrap();
+        let txn = doc.transact();
+        assert!(if deletion_only {
+            txn.store().pending_ds().is_some()
+        } else {
+            txn.store().pending_update().is_some()
+        });
+        let before = txn.encode_state_as_update_v1(&StateVector::default());
+        let error = preflight_mutation_plan(178, &compiled.mutation_plan, &txn).unwrap_err();
+        assert_eq!(error.code, "ENGINE_NOT_READY");
+        let rebound_error = compiled
+            .mutation_plan
+            .clone()
+            .rebind_and_preflight_equivalent_store(178, &txn)
+            .unwrap_err();
+        assert_eq!(rebound_error.code, "ENGINE_NOT_READY");
+        assert_eq!(
+            txn.encode_state_as_update_v1(&StateVector::default()),
+            before
+        );
+    }
+}
+
+#[test]
+fn equivalent_candidate_rebind_rejects_clock_drift_without_writing() {
+    let source = serde_json::from_str(TWO_PARAGRAPHS).unwrap();
     let (doc, _schema, _limits, compiled) = compile_operations_with_schema(
         &source,
         vec![TypedOperation::InsertText {
@@ -419,26 +473,26 @@ fn document_guard_rejects_pending_crdt_state_before_snapshot_validation() {
         }],
         tiptap_schema(),
     );
-    let remote = Doc::with_client_id(78);
-    let remote_text = remote.get_or_insert_text("missing-prefix");
-    {
-        let mut txn = remote.transact_mut();
-        remote_text.insert(&mut txn, 0, "a");
-    }
-    let suffix_update = {
-        let mut txn = remote.transact_mut();
-        remote_text.insert(&mut txn, 1, "b");
-        txn.commit();
-        txn.encode_update_v1()
-    };
-    doc.transact_mut()
-        .apply_update(Update::decode_v1(&suffix_update).unwrap())
+    let candidate = utf16_doc();
+    let base = doc
+        .transact()
+        .encode_state_as_update_v1(&StateVector::default());
+    candidate
+        .transact_mut()
+        .apply_update(Update::decode_v1(&base).unwrap())
         .unwrap();
-    let txn = doc.transact();
-    assert!(txn.store().pending_update().is_some());
+    let unrelated = candidate.get_or_insert_text("candidate-clock-drift");
+    unrelated.insert(&mut candidate.transact_mut(), 0, "x");
+    let txn = candidate.transact();
     let before = txn.encode_state_as_update_v1(&StateVector::default());
-    let error = preflight_mutation_plan(178, &compiled.mutation_plan, &txn).unwrap_err();
-    assert_eq!(error.code, "ENGINE_NOT_READY");
+    let error = compiled
+        .mutation_plan
+        .rebind_and_preflight_equivalent_store(179, &txn)
+        .unwrap_err();
+    assert_eq!(error.code, "ENGINE_INVARIANT_FAILED");
+    assert!(error
+        .message
+        .contains("state changed before mutation preflight"));
     assert_eq!(
         txn.encode_state_as_update_v1(&StateVector::default()),
         before
