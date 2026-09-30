@@ -253,6 +253,8 @@ final class TablePerformanceTests: XCTestCase {
     }
 
     func testEveryFixtureIsAdmitted() throws {
+        clock = FrameClock()
+        defer { clock.close(); clock = nil }
         for rich in [false, true] {
             for (rows, columns) in [(3, 3), (1_000, 20), (100, 200)] {
                 try autoreleasepool {
@@ -261,6 +263,7 @@ final class TablePerformanceTests: XCTestCase {
                     defer { host.close() }
                     try host.load(fixture.source())
                     XCTAssertEqual(try host.table().cells.count, rows * columns - (rich ? 1 : 0), fixture.name)
+                    _ = try measure(host.drawing) {}
                 }
             }
         }
