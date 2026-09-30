@@ -167,7 +167,9 @@ internal class PreparedCellShapeCatalog {
 
     fun synchronizeOwners(liveLayouts: Collection<PreparedProseLayout>) = synchronized(lock) {
         val next = linkedMapOf<PreparedCellShapeKey, PreparedCellShape>()
-        liveLayouts.forEach { layout -> layout.collectCellShapes(next) }
+        liveLayouts.forEachRetainedLayout(visit = { layout ->
+            layout.cellShape?.let { next.putIfAbsent(it.key, it) }
+        })
         buildPins.keys.forEach { shape -> next.putIfAbsent(shape.key, shape) }
         entries = next.mapValues { WeakReference(it.value) }
     }
@@ -192,12 +194,6 @@ internal class PreparedCellShapeCatalog {
 internal fun PreparedCellShapeKey.catalogMetadataBytes(): Long =
     112L + contentKey.length * 2L + styleDigest.length * 2L +
         atomGeometryDigest.length * 2L + imageGeometryDigest.length * 2L
-
-private fun PreparedProseLayout.collectCellShapes(
-    destination: MutableMap<PreparedCellShapeKey, PreparedCellShape>
-) {
-    forEachRetainedLayout(visit = { layout -> layout.cellShape?.let { destination.putIfAbsent(it.key, it) } })
-}
 
 internal fun PreparedProseLayout.cellShapeCatalogBytes(): Long {
     val shapes = Collections.newSetFromMap(IdentityHashMap<PreparedCellShape, Boolean>())

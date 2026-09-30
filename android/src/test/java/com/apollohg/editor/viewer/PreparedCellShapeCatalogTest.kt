@@ -20,6 +20,76 @@ import kotlin.concurrent.thread
 @Config(sdk = [34])
 internal class PreparedCellShapeCatalogTest {
     @Test
+    fun `owner synchronization traverses aliased roots once and preserves first shape`() {
+        val catalog = PreparedCellShapeCatalog()
+        val first = shape("shared-key")
+        val later = shape("shared-key")
+        val block = PreparedProseBlock(emptyList(), android.graphics.Rect(0, 0, 100, 20))
+        var blockReads = 0
+        val observed = object : AbstractList<PreparedProseBlock>() {
+            override val size get() = 1
+            override fun get(index: Int): PreparedProseBlock { blockReads++; return block }
+        }
+        val parent = owner(first).copy(blocks = observed)
+        val duplicateRoots = 8
+        blockReads = 0
+        catalog.synchronizeOwners(List(duplicateRoots) { parent } + owner(later))
+        assertEquals("Aliases must not traverse separate ownership walks", 1, blockReads)
+        assertSame("The first live shape with a shared key wins", first, catalog.acquireForBuild(first.key))
+        catalog.releaseBuildPins(listOf(first))
+        catalog.synchronizeOwners(listOf(owner(later)))
+        assertSame("Traversal state must not survive synchronization", later, catalog.acquireForBuild(later.key))
+        catalog.releaseBuildPins(listOf(later))
+        catalog.synchronizeOwners(emptyList())
+        assertNull(catalog.acquireForBuild(first.key))
+    }
+
+    @Test
+    fun `shared nested stores preserve depth first owners and refresh after eviction`() {
+        val catalog = PreparedCellShapeCatalog()
+        val nestedShape = shape("shared-nested")
+        val laterShape = shape("shared-nested")
+        val replacementShape = shape("shared-nested")
+        val width = 100
+        val store = TableCellLayoutStore(capacity = 1)
+        val nested = owner(nestedShape)
+        val record = com.apollohg.editor.tables.TableGridRecord("nested", 1, 1, listOf(width.toFloat()),
+            listOf(com.apollohg.editor.tables.TableGridCell(0, 0, 0, contentKey = "nested")))
+        val surface = com.apollohg.editor.tables.ViewerTableSurface("nested", record, width.toFloat(),
+            com.apollohg.editor.tables.TableStyle(), isRightToLeft = false, layoutStore = store) { _, _ -> nested }
+        val otherSurface = com.apollohg.editor.tables.ViewerTableSurface("other", width.toFloat(),
+            surface.style, false, surface.layout, surface.cells, null)
+        val bounds = android.graphics.Rect(0, 0, width, surface.layout.contentHeight.toInt())
+        val firstRoot = bareLayout().copy(blocks = listOf(PreparedProseBlock(emptyList(), bounds,
+            tableSurface = surface, tableBounds = bounds)))
+        val secondRoot = bareLayout().copy(blocks = listOf(PreparedProseBlock(emptyList(), bounds,
+            tableSurface = otherSurface, tableBounds = bounds)))
+        val roots = listOf(firstRoot, secondRoot, firstRoot)
+        val visited = mutableListOf<PreparedProseLayout>()
+        val tables = mutableListOf<com.apollohg.editor.tables.ViewerTableSurface>()
+        roots.forEachRetainedLayout(visited::add, tables::add)
+        assertEquals(3, visited.size)
+        assertSame(firstRoot, visited[0])
+        assertSame(nested, visited[1])
+        assertSame(secondRoot, visited[2])
+        assertEquals(2, tables.size)
+        assertSame(surface, tables[0])
+        assertSame(otherSurface, tables[1])
+        catalog.stageForBuild(laterShape)
+        catalog.synchronizeOwners(roots + owner(laterShape))
+        assertSame("Nested live owner precedes later roots and build pins", nestedShape,
+            catalog.acquireForBuild(nestedShape.key))
+        catalog.releaseBuildPins(listOf(nestedShape, laterShape))
+        store.insert(owner(replacementShape).copy(key = nested.key.copy(semanticKey = "replacement")))
+        catalog.synchronizeOwners(roots + owner(laterShape))
+        assertSame("A later synchronization traverses the store's new resident", replacementShape,
+            catalog.acquireForBuild(replacementShape.key))
+        catalog.releaseBuildPins(listOf(replacementShape))
+        catalog.synchronizeOwners(emptyList())
+        assertEquals(0, catalog.countForTesting)
+    }
+
+    @Test
     fun `parallel build contexts release evicted shapes before closing`() {
         val catalog = PreparedCellShapeCatalog()
         val workerCount = StaticLayoutAndroidProseLayoutEngine.MAX_TABLE_PREPARATION_WORKERS
