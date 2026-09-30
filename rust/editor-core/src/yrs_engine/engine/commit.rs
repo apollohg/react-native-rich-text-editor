@@ -2,7 +2,8 @@ use super::candidate_cache::{seal_candidate_state_vector, PreparedCandidateCache
 use super::commit_installation::{PreparedCompiledCommit, PreparedCompiledHistory};
 use super::compilation::validate_compiled_selection_plans;
 use super::history_state::{
-    history_document_snapshots_fit, history_local_state, history_snapshot_template,
+    history_document_snapshots_fit, history_local_state, history_metadata_bytes,
+    history_snapshot_template,
 };
 use super::outbound::OutboundUpdateSink;
 use super::selection_commit::SelectionCommitContext;
@@ -87,6 +88,7 @@ impl YrsDocumentEngine {
                 "compiled Yrs transaction is stale",
             ));
         }
+        let mut previous_canonical_cache = self.canonical_splice_cache.take();
         let installed = self
             .derived_state
             .as_ref()
@@ -449,6 +451,13 @@ impl YrsDocumentEngine {
         }
         let captures_history = compiled.history_policy != yrs_engine::HistoryPolicy::Skip
             && compiled.history_class != yrs_engine::compiler::HistoryClass::Skip;
+        let mut next_canonical_cache = None;
+        if !captures_history
+            || prepared_history_before.is_some()
+            || prepared_history_after.is_some()
+        {
+            previous_canonical_cache = None;
+        }
         let (history_before, history_after_template) = if captures_history {
             if let (Some(before), Some(after)) = (
                 prepared_history_before.take(),
@@ -506,6 +515,37 @@ impl YrsDocumentEngine {
                             self.editing_limits.max_derived_output_bytes,
                         )
                     });
+                if document_snapshot_retained_bytes.is_none() {
+                    let pending =
+                        history_metadata_bytes(before.stored_marks.as_deref(), &self.fragment_name)
+                            .checked_add(history_metadata_bytes(
+                                stored_marks.as_deref(),
+                                &self.fragment_name,
+                            ));
+                    let path = compiled
+                        .localized_textblock_edit_admission
+                        .as_ref()
+                        .and_then(|admission| before.position_map.block(admission.block_index()))
+                        .map(|block| block.node_path.as_slice());
+                    if let (Some(budget), Some(path)) = (
+                        pending.and_then(|pending| {
+                            self.history
+                                .cache_metadata_headroom(compiled.request_id, pending)
+                        }),
+                        path,
+                    ) {
+                        next_canonical_cache = yrs_engine::canonical::CanonicalSpliceCache::prepare(
+                            previous_canonical_cache.take(),
+                            &before.canonical_artifact,
+                            &canonical_artifact,
+                            path,
+                            self.revision,
+                            next_document_revision,
+                            budget,
+                        );
+                    }
+                }
+                drop(previous_canonical_cache.take());
                 let prepared = (
                     Some(history_local_state(
                         before,
@@ -1044,6 +1084,7 @@ impl YrsDocumentEngine {
             publish_active_state_drop,
             result,
             next_candidate_cache,
+            next_canonical_cache,
         };
         // Frozen local mutation flow: reserve bounded outbox count/bytes and
         // stage the candidate-captured Update-v1 from the compiler's

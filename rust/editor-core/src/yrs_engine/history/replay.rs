@@ -492,9 +492,7 @@ impl YrsHistory {
         let event_ceiling = self.event_ceiling();
         let next_count = self.replay_events.len().saturating_add(1);
         let next_bytes = self.replay_bytes.saturating_add(event.encoded_bytes());
-        let retained_metadata = self
-            .replay_metadata_bytes
-            .saturating_add(self.unmirrored_stack_metadata_bytes(request_id)?);
+        let retained_metadata = self.retained_metadata_bytes(request_id)?;
         if next_count >= event_ceiling
             || next_bytes > self.max_encoded_state_bytes
             || retained_metadata > self.limits.max_derived_output_bytes

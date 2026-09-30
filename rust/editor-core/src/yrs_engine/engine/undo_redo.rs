@@ -173,6 +173,7 @@ impl YrsDocumentEngine {
             Option<yrs_engine::TypedTransactionResult>,
         )>,
     > {
+        self.canonical_splice_cache = None;
         match self.prepare_history_pop(request_id, undoing, with_result)? {
             HistoryPopPreparation::Prepared(prepared) => self
                 .commit_prepared_history_pop(*prepared, outbound)

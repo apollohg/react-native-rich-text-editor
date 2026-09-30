@@ -30,6 +30,7 @@ impl YrsDocumentEngine {
             .derived_state
             .as_ref()
             .is_some_and(|state| state.mutation_lookup_seed.is_unavailable());
+        self.canonical_splice_cache = None;
         let prepared_history = if prepare_history_before_context {
             self.prepare_execution_command_history_admission(&execution_admission)?
         } else {

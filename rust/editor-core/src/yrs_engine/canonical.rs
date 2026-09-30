@@ -7,6 +7,11 @@ use crate::model::{Document, Node};
 use crate::schema::{schema_fingerprint, Schema};
 use crate::serialize::to_prosemirror_json;
 
+mod splice_cache;
+pub(crate) use splice_cache::CanonicalSpliceCache;
+#[cfg(test)]
+pub(crate) use splice_cache::CacheAllocation;
+
 pub(crate) const CANONICAL_ARTIFACT_FORMAT_VERSION: u8 = 1;
 
 const MIN_CANONICAL_JSON_INITIAL_CAPACITY: usize = 128;
@@ -399,20 +404,11 @@ impl CanonicalArtifact {
 
     pub(crate) fn sha256(&self) -> [u8; 32] {
         *self.0.sha256.get_or_init(|| {
-            let serialized = if let Some(value) = self.0.value.get() {
-                serialize_canonical_json_with_hint(value.as_value(), self.0.admission_upper_bound)
-            } else {
-                let mut bytes = Vec::with_capacity(bounded_canonical_json_initial_capacity(
-                    self.0.admission_upper_bound,
-                ));
-                crate::serialize::json_out::write_node_json(
-                    &mut bytes,
-                    self.0.source_document.root(),
-                    &self.0.schema_context.0.schema,
-                )
+            let mut serialized = Vec::with_capacity(bounded_canonical_json_initial_capacity(
+                self.0.admission_upper_bound,
+            ));
+            self.write_canonical_json(&mut serialized)
                 .expect("canonical nodes always serialize to an in-memory buffer");
-                bytes
-            };
             #[cfg(test)]
             super::observability::record_canonical_serialization();
             #[cfg(test)]
@@ -422,6 +418,18 @@ impl CanonicalArtifact {
             super::observability::record_canonical_hash();
             canonical_sha256(&serialized)
         })
+    }
+
+    fn write_canonical_json(&self, output: &mut impl std::io::Write) -> std::io::Result<()> {
+        if let Some(value) = self.0.value.get() {
+            crate::boundary::write_json_value_stack_safe(output, value.as_value())
+        } else {
+            crate::serialize::json_out::write_node_json(
+                output,
+                self.0.source_document.root(),
+                &self.0.schema_context.0.schema,
+            )
+        }
     }
 
     pub(crate) fn admitted_serialized_upper_bound(&self) -> usize {

@@ -537,6 +537,8 @@ include!("history_and_commit/snapshot_metadata.rs");
 
 include!("history_and_commit/snapshot_fallback.rs");
 
+include!("history_and_commit/canonical_cache.rs");
+
 include!("history_and_commit/commit_atomicity.rs");
 
 include!("history_and_commit/state_only.rs");

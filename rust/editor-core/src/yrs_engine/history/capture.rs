@@ -53,9 +53,8 @@ impl YrsHistory {
             .checked_add(if compatible { 0 } else { before_metadata_bytes })
             .ok_or_else(|| metadata_limit_error(request_id, &self.limits, usize::MAX))?;
         let pending_metadata_bytes = self
-            .replay_metadata_bytes
-            .checked_add(self.unmirrored_stack_metadata_bytes(request_id)?)
-            .and_then(|bytes| bytes.checked_add(prospective_metadata_increment))
+            .retained_metadata_bytes(request_id)?
+            .checked_add(prospective_metadata_increment)
             .unwrap_or(usize::MAX);
         let should_roll = pending_metadata_bytes > self.limits.max_derived_output_bytes
             || self.capture_would_roll(
@@ -307,6 +306,21 @@ impl YrsHistory {
             && self
                 .last_capture_millis
                 .is_some_and(|last| now >= last && now - last < CAPTURE_TIMEOUT_MILLIS)
+    }
+
+    fn retained_metadata_bytes(&self, request_id: u64) -> OperationResult<usize> {
+        Ok(self
+            .replay_metadata_bytes
+            .checked_add(self.unmirrored_stack_metadata_bytes(request_id)?)
+            .unwrap_or(usize::MAX))
+    }
+
+    pub(crate) fn cache_metadata_headroom(&self, request_id: u64, pending: usize) -> Option<usize> {
+        self.limits.max_derived_output_bytes.checked_sub(
+            self.retained_metadata_bytes(request_id)
+                .ok()?
+                .checked_add(pending)?,
+        )
     }
 
     fn unmirrored_stack_metadata_bytes(&self, request_id: u64) -> OperationResult<usize> {

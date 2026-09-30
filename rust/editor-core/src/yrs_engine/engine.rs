@@ -123,6 +123,7 @@ pub struct YrsDocumentEngine {
     scope: Option<DocumentScope>,
     schema_fingerprint: String,
     canonical_schema: CanonicalSchemaContext,
+    canonical_splice_cache: Option<super::canonical::CanonicalSpliceCache>,
     derived_state: Option<DerivedStateCache>,
     revision: u64,
     encoded_state_upper_bound: usize,
@@ -257,6 +258,7 @@ impl YrsDocumentEngine {
             scope,
             schema_fingerprint,
             canonical_schema,
+            canonical_splice_cache: None,
             derived_state,
             revision: 0,
             document_scope_revision: 0,
@@ -980,6 +982,7 @@ impl YrsDocumentEngine {
     }
 
     fn reset_history_binding(&mut self) {
+        self.canonical_splice_cache = None;
         let fragment = {
             let txn = self.doc.transact();
             txn.get_xml_fragment(self.fragment_name.as_str())

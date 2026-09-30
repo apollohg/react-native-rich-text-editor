@@ -115,6 +115,7 @@ impl YrsDocumentEngine {
         request_id: u64,
         update: &[u8],
     ) -> yrs_engine::OperationResult<PreparedRemoteUpdate> {
+        self.canonical_splice_cache = None;
         let admitted_revision = self.revision;
         let admitted_state_revision = self.state_revision;
         let admitted_epoch = self.yrs_state_epoch;
@@ -599,6 +600,7 @@ impl YrsDocumentEngine {
         &mut self,
         prepared: PreparedRemoteUpdate,
     ) -> yrs_engine::OperationResult<EngineCommit> {
+        self.canonical_splice_cache = None;
         let PreparedRemoteUpdate {
             seal,
             document,

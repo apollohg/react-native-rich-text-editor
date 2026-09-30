@@ -33,6 +33,7 @@ pub(super) struct PreparedCompiledCommit {
     pub(super) publish_active_state_drop: bool,
     pub(super) result: Option<yrs_engine::TypedTransactionResult>,
     pub(super) next_candidate_cache: Option<PreparedCandidateCache>,
+    pub(super) next_canonical_cache: Option<yrs_engine::canonical::CanonicalSpliceCache>,
 }
 
 impl YrsDocumentEngine {
@@ -108,6 +109,7 @@ impl YrsDocumentEngine {
         self.last_committed_origin = Some(prepared.origin);
         self.document_origin = prepared.origin.into();
         self.prepared_candidate_cache = prepared.next_candidate_cache.take();
+        self.canonical_splice_cache = prepared.next_canonical_cache.take();
         let commit = yrs_engine::TransactionCommit {
             request_id: prepared.request_id,
             changed: true,

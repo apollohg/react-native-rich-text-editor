@@ -141,6 +141,7 @@ impl YrsDocumentEngine {
         candidate: CandidateDocument,
         origin: TransactionOrigin,
     ) -> YrsEngineResult<EngineCommit> {
+        self.canonical_splice_cache = None;
         admit_candidate_derived_output(&candidate, &self.editing_limits)?;
         admit_candidate_max_length(&candidate, self.max_length)?;
         let candidate_document = match &candidate.state {

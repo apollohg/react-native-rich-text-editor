@@ -83,6 +83,7 @@ impl YrsDocumentEngine {
         &mut self,
         snapshot: &DocumentSnapshot,
     ) -> YrsEngineResult<EngineCommit> {
+        self.canonical_splice_cache = None;
         self.validate_snapshot_manifest(snapshot)?;
 
         let current_state = encode_state_bounded(&self.doc, &self.resource_limits)?;
