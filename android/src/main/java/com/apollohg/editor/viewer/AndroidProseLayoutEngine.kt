@@ -311,8 +311,8 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
         cellMode: Boolean,
         cellShapeContext: PreparedCellShapeBuildContext? = null
     ): PreparedProseLayout {
-        val tableLayoutStore = if (cellMode) com.apollohg.editor.tables.TableCellLayoutStore()
-            else reusableTableCellStore ?: com.apollohg.editor.tables.TableCellLayoutStore()
+        val reusableStore = if (cellMode) null else reusableTableCellStore
+        val tableLayoutStore by lazy { reusableStore ?: com.apollohg.editor.tables.TableCellLayoutStore() }
         val warningSemanticGeneration = semanticGenerationIdentity
         if (widthPx <= 0 || !density.isFinite() ||
             density <= 0f
@@ -503,7 +503,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                     }
                     return prepared.copy(cellPreparation = build)
                 }
-                val record = TableGridRecord.from(surfaceSource, document.semanticKey).physical(density)
+                val record by lazy { TableGridRecord.from(surfaceSource, document.semanticKey).physical(density) }
                 val tableStyle = theme.tableStyle.physical(density)
                 val rtl = TableLayoutDirection.isRightToLeft(surfaceSource.direction, theme.tableDirection)
                 val retainedSurface = incrementalTableSurface?.invoke(tableKey)?.takeIf { (surface, _) ->
@@ -514,13 +514,13 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                 val surface = if (retainedSurface != null) {
                     val (previous, changed) = retainedSurface
                     val contents = changed.associateWith { index ->
-                        val cell = record.cells[index]
+                        val cell = com.apollohg.editor.tables.TableGridCell.from(surfaceSource.cells[index])
                         val frame = requireNotNull(previous.frameOfCell(index))
                         prepareCell(cell, maxOf(0f, frame.width - 2f * (tableStyle.cellPadding + tableStyle.borderWidth)))
                     }
                     tableIncrementalRelayoutObserver?.invoke()
                     previous.replacingCells(contents,
-                        record, surfaceSource, document.tableAttributes) { cell, width -> prepareCell(cell, width) }
+                        { record }, surfaceSource, document.tableAttributes) { cell, width -> prepareCell(cell, width) }
                 } else {
                     val workers = tablePreparationWorkers(document, surfaceSource, tableKey, theme, cellMode, cellShapeContext) { cell, width, worker, context ->
                         prepareCell(cell, width, worker, context)

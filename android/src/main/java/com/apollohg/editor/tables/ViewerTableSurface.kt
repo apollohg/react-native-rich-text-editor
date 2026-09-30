@@ -183,17 +183,17 @@ internal class ViewerTableSurface private constructor(
         sourceTable, sourceAttributes, editorTableId, displayScale)
 
     fun replacingCells(contents: Map<Int, PreparedProseLayout>,
-                       record: TableGridRecord, sourceTable: TableSurfaceSource,
+                       gridRecord: () -> TableGridRecord, sourceTable: TableSurfaceSource,
                        sourceAttributes: Map<String, org.json.JSONObject>,
                        prepareCell: (TableGridCell, Float) -> PreparedProseLayout): ViewerTableSurface {
         var heightsUnchanged = true
         var membershipUnchanged = true
         val updated = cells.map { cell ->
-            val source = sourceTable.cells[cell.sourceIndex]
             val content = contents[cell.sourceIndex] ?: return@map cell
+            val source = sourceTable.cells[cell.sourceIndex]
             heightsUnchanged = heightsUnchanged && content.heightPx == cell.contentHeightPx
             val width = content.widthPx.toFloat()
-            val gridCell = record.cells.first { it.sourceIndex == cell.sourceIndex }
+            val gridCell = TableGridCell.from(source)
             PreparedViewerTableCell(cell.sourceIndex, cell.row, cell.column, cell.rowspan, cell.colspan,
                 cell.contentOrigin, content, source.header, source.attrsKey, layoutStore) { prepareCell(gridCell, width) }.also {
                 membershipUnchanged = membershipUnchanged && cell.hasNestedTables == it.hasNestedTables && cell.hasAtoms == it.hasAtoms
@@ -203,14 +203,13 @@ internal class ViewerTableSurface private constructor(
         // The caller certifies unchanged cell positions, spans, and presentation inputs.
         val structureUnchanged = previousSource != null && layout.failure == null &&
             layout.typedFailure == null && previousSource.failure == null && sourceTable.failure == null &&
-            record.failure == null && record.typedFailure == null &&
             previousSource.rows == sourceTable.rows && previousSource.columns == sourceTable.columns &&
             previousSource.columnWidths == sourceTable.columnWidths
         val next = if (heightsUnchanged && structureUnchanged) {
             layout
         } else {
             val heights = updated.associate { it.sourceIndex to it.contentHeightPx.toFloat() }
-            TableGridLayout(displayScale).relayout(record, hostViewportWidth, style, isRightToLeft, heights)
+            TableGridLayout(displayScale).relayout(gridRecord(), hostViewportWidth, style, isRightToLeft, heights)
         }
         return ViewerTableSurface(identity, hostViewportWidth, style, isRightToLeft, next, updated,
             updated.firstNotNullOfOrNull { it.contentError }, sourceTable, sourceAttributes, editorTableId, displayScale,
@@ -283,10 +282,6 @@ internal class ViewerTableSurface private constructor(
             prepareCell: (TableGridCell, Float) -> PreparedProseLayout
         ): Preparation {
             val scale = displayScale.takeIf { it.isFinite() && it > 0f } ?: 1f
-            val sourceCells = record.cells.associateBy { it.sourceIndex }
-            val measurementRecord = record.copy(cells = record.cells.map { cell ->
-                cell.copy(contentKey = "${cell.contentKey}:${cell.sourceIndex}")
-            })
             val prepared = mutableMapOf<Int, PreparedViewerTableCell>()
             val inset = (style.cellPadding + style.borderWidth).toInt()
             fun capture(cell: TableGridCell, width: Float, content: PreparedProseLayout): PreparedViewerTableCell {
@@ -306,6 +301,10 @@ internal class ViewerTableSurface private constructor(
                 grid.relayout(record, hostViewportWidth, style, isRightToLeft,
                     prepared.mapValues { it.value.contentHeightPx.toFloat() })
             } else {
+                val sourceCells = record.cells.associateBy { it.sourceIndex }
+                val measurementRecord = record.copy(cells = record.cells.map { cell ->
+                    cell.copy(contentKey = "${cell.contentKey}:${cell.sourceIndex}")
+                })
                 grid.layout(measurementRecord, hostViewportWidth, style, isRightToLeft, themeDigest, fontEnvironmentRevision, textScale) { measuredCell, width ->
                     val cell = sourceCells[measuredCell.sourceIndex] ?: return@layout null
                     prepare(cell, width).also { artifact ->

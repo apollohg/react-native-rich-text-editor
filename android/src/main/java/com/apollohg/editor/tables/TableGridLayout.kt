@@ -32,7 +32,12 @@ internal enum class TableLayoutDirection {
 internal fun tablePhysicalX(logicalX: Float, width: Float, totalWidth: Float, rtl: Boolean): Float =
     if (rtl) totalWidth - logicalX - width else logicalX
 
-data class TableGridCell(val sourceIndex: Int, val row: Int, val column: Int, val rowspan: Int = 1, val colspan: Int = 1, val contentKey: String, val attachmentRevision: Long = 0)
+data class TableGridCell(val sourceIndex: Int, val row: Int, val column: Int, val rowspan: Int = 1, val colspan: Int = 1, val contentKey: String, val attachmentRevision: Long = 0) {
+    companion object {
+        internal fun from(cell: TableSurfaceCell) = TableGridCell(
+            cell.sourceIndex, cell.row, cell.column, cell.rowspan, cell.colspan, cell.contentKey)
+    }
+}
 
 enum class TableLayoutFailure { GRID_LIMIT, WORK_LIMIT, ALLOCATION, INVALID_STRUCTURE, INVALID_ATTRIBUTES }
 
@@ -45,7 +50,7 @@ data class TableGridRecord(
     companion object {
         fun from(table: TableSurfaceSource, documentOwner: String) = TableGridRecord(
             documentOwner, table.columns, table.rows, table.columnWidths,
-            table.cells.map { TableGridCell(it.sourceIndex, it.row, it.column, it.rowspan, it.colspan, it.contentKey) },
+            table.cells.map(TableGridCell::from),
             table.failure?.let { TableLayoutFailure.valueOf(it.name) }, table.compatibilityDiagnostic, table.failure
         )
     }

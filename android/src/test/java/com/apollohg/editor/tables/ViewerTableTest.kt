@@ -90,10 +90,13 @@ class ViewerTableTest {
                 val fresh = requireNotNull(prepare(source(text), direction = direction).blocks.single().tableSurface)
                 val changed = requireNotNull(fresh.cell(0)).content
                 val table = requireNotNull(fresh.sourceTable)
+                var gridConversions = 0
                 val incremental = base.replacingCells(mapOf(0 to changed),
-                    TableGridRecord.from(table, base.identity), table, fresh.sourceAttributes) { cell, _ ->
+                    { gridConversions++; TableGridRecord.from(table, base.identity) }, table, fresh.sourceAttributes) { cell, _ ->
                     requireNotNull(fresh.cell(cell.sourceIndex)).content
                 }
+                assertEquals("$direction: full grid conversion is only needed when row geometry changes",
+                    if (changed.heightPx == requireNotNull(base.cell(0)).contentHeightPx) 0 else 1, gridConversions)
                 assertEquals("$direction: every rectangle and row offset must match fresh layout", fresh.layout, incremental.layout)
                 assertSame("$direction: unchanged cells keep their content owner", original.cell(1), incremental.cell(1))
                 assertEquals(changed.heightPx, requireNotNull(incremental.cell(0)).contentHeightPx)
@@ -119,11 +122,86 @@ class ViewerTableTest {
             assertSame("$direction: another edit at the wrapped height must reuse geometry", wrapped.layout, editedWrapped.layout)
 
             val table = requireNotNull(original.sourceTable).copy(columnWidths = listOf(240f, 80f))
-            val resized = original.replacingCells(emptyMap(), TableGridRecord.from(table, original.identity),
+            val resized = original.replacingCells(emptyMap(), { TableGridRecord.from(table, original.identity) },
                 table, original.sourceAttributes) { cell, _ -> requireNotNull(original.cell(cell.sourceIndex)).content }
             assertNotSame("$direction: a width change cannot retain geometry", original.layout, resized.layout)
             assertFalse("$direction: explicit widths must take effect", original.layout.columnWidths == resized.layout.columnWidths)
             assertEquals(requireNotNull(original.cell(0)).contentHeightPx, requireNotNull(sameHeight.cell(0)).contentHeightPx)
+
+            for (failure in TableRenderFailure.entries) {
+                val failed = requireNotNull(original.sourceTable).copy(failure = failure)
+                var conversions = 0
+                val fallback = original.replacingCells(emptyMap(),
+                    { conversions++; TableGridRecord.from(failed, original.identity) },
+                    failed, original.sourceAttributes) { _, _ -> error("A failed table must not prepare content") }
+                assertEquals("$direction: $failure must force full failure handling", 1, conversions)
+                assertEquals(failure, fallback.layout.typedFailure)
+                assertTrue(fallback.layout.rectangles.isEmpty())
+            }
+        }
+    }
+
+    @Test fun deferredCellRefillDoesNotRetainTheGridProvider() {
+        val source = """{"type":"doc","content":[{"type":"table","content":[
+            {"type":"table_row","content":[${tableCell("before")},${tableCell("adjacent")}]}
+        ]}]}"""
+        val original = requireNotNull(prepare(source).blocks.single().tableSurface)
+        val table = requireNotNull(original.sourceTable)
+        val content = requireNotNull(original.cell(0)).content.copy(cellPreparation = null)
+        var conversions = 0
+        var refills = 0
+        val updated = original.replacingCells(mapOf(0 to content),
+            { conversions++; TableGridRecord.from(table, original.identity) },
+            table, original.sourceAttributes) { cell, width ->
+                refills++
+                assertEquals(table.cells.first().contentKey, cell.contentKey)
+                assertEquals(content.widthPx.toFloat(), width)
+                content
+            }
+        val changed = requireNotNull(updated.cell(0))
+        updated.layoutStore.insert(content.copy(
+            retainedBytes = com.apollohg.editor.viewer.PREPARED_LAYOUT_UNMOUNTED_BYTE_BUDGET + 1))
+        assertNull("The oversized replacement must evict the changed cell", changed.cachedContent)
+        assertEquals(content.heightPx, changed.content.heightPx)
+        assertEquals("The later refill uses the changed cell's captured input", 1, refills)
+        assertEquals("Neither preparation nor later refill needs the full grid", 0, conversions)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun incrementalEnginePreservesScaledGridGeometry() {
+        val density = 2f
+        val width = 640
+        fun document(text: String) = compileWithRust(ProseViewerRequest(ProseViewerSource.Json(
+            """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[
+                {"type":"table_cell","attrs":{"colwidth":[160]},"content":[{"type":"paragraph","content":[{"type":"text","text":"$text"}]}]},
+                ${tableCell("adjacent")}
+            ]}]}]}"""), ProseViewerConfiguration(CONFIG)))
+        val engine = StaticLayoutAndroidProseLayoutEngine()
+        fun surface(document: ViewerDocument, incremental: Boolean): ViewerTableSurface {
+            val key = ProseLayoutKey(document.semanticKey, width, "scaled-grid", 0, 0,
+                density.toBits().toLong(), 0, "scaled-grid")
+            val selected = if (incremental) engine else StaticLayoutAndroidProseLayoutEngine()
+            return requireNotNull(selected.prepare(document, key, PreparedProseTheme.resolve(null, density),
+                width, density, false).blocks.single().tableSurface)
+        }
+        var previous = surface(document("before"), false)
+        for (text in listOf("after", "a long wrapped row with several words ".repeat(20), "short")) {
+            val next = document(text)
+            val fresh = surface(next, false)
+            val retained = previous
+            engine.incrementalTableSurface = { retained to setOf(0) }
+            engine.reusableTableCellStore = retained.layoutStore
+            val updated = try { surface(next, true) } finally {
+                engine.incrementalTableSurface = null
+                engine.reusableTableCellStore = null
+            }
+            assertEquals("$text: incremental engine must preserve physical widths and all row rectangles", fresh.layout, updated.layout)
+            assertSame("Only the edited cell is replaced", retained.cell(1), updated.cell(1))
+            if (requireNotNull(retained.cell(0)).contentHeightPx == requireNotNull(updated.cell(0)).contentHeightPx) {
+                assertSame("Same-height edits keep the prepared geometry", retained.layout, updated.layout)
+            }
+            previous = updated
         }
     }
 
@@ -144,7 +222,7 @@ class ViewerTableTest {
             val fresh = surface(content)
             val table = requireNotNull(fresh.sourceTable)
             val incremental = previous.replacingCells(mapOf(0 to requireNotNull(fresh.cell(0)).content),
-                TableGridRecord.from(table, previous.identity), table, fresh.sourceAttributes) { cell, _ ->
+                { TableGridRecord.from(table, previous.identity) }, table, fresh.sourceAttributes) { cell, _ ->
                 requireNotNull(fresh.cell(cell.sourceIndex)).content
             }
             assertNotSame("Changed nested/atom membership must invalidate the index: $content", indexField.get(previous), indexField.get(incremental))
