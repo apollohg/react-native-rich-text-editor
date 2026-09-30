@@ -103,16 +103,38 @@ pub(super) fn capture_document_guard<T: ReadTxn>(
     request_id: u64,
     txn: &T,
 ) -> OperationResult<DocumentGuard> {
+    capture_document_guard_with_read_scope(request_id, txn, None)
+}
+
+pub(super) fn capture_document_guard_with_read_scope<T: ReadTxn>(
+    request_id: u64,
+    txn: &T,
+    scope: Option<crate::yrs_engine::compiler::CompilationReadScope<'_>>,
+) -> OperationResult<DocumentGuard> {
     if txn.store().pending_update().is_some() || txn.store().pending_ds().is_some() {
         return Err(OperationError::engine_not_ready(request_id));
     }
-    #[cfg(test)]
-    crate::yrs_engine::observability::record_mutation_guard_snapshot_request();
-    let snapshot = txn.snapshot();
-    let state_clock_work = snapshot_state_clock_work(request_id, &snapshot.state_map)?;
+    let evidence = if let Some(scope) = scope {
+        if !scope.matches_store(txn) {
+            return Err(OperationError::engine_invariant_failed(
+                request_id,
+                None,
+                "Yrs mutation guard read scope belongs to a different document store",
+            ));
+        }
+        DocumentGuardEvidence::Held {
+            state: txn.state_vector(),
+            scope: scope.stamp(),
+        }
+    } else {
+        #[cfg(test)]
+        crate::yrs_engine::observability::record_mutation_guard_snapshot_request();
+        DocumentGuardEvidence::Snapshot(txn.snapshot())
+    };
+    let state_clock_work = snapshot_state_clock_work(request_id, evidence.state())?;
     Ok(DocumentGuard {
         store_token: txn.store() as *const _ as usize,
-        snapshot,
+        evidence,
         state_clock_work,
     })
 }

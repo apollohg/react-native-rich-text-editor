@@ -451,7 +451,7 @@ fn document_guard_rejects_pending_crdt_state_before_snapshot_validation() {
         let rebound_error = compiled
             .mutation_plan
             .clone()
-            .rebind_and_preflight_equivalent_store(178, &txn)
+            .rebind_and_preflight_equivalent_store(178, &txn, None)
             .unwrap_err();
         assert_eq!(rebound_error.code, "ENGINE_NOT_READY");
         assert_eq!(
@@ -487,7 +487,7 @@ fn equivalent_candidate_rebind_rejects_clock_drift_without_writing() {
     let before = txn.encode_state_as_update_v1(&StateVector::default());
     let error = compiled
         .mutation_plan
-        .rebind_and_preflight_equivalent_store(179, &txn)
+        .rebind_and_preflight_equivalent_store(179, &txn, None)
         .unwrap_err();
     assert_eq!(error.code, "ENGINE_INVARIANT_FAILED");
     assert!(error

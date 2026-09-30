@@ -538,9 +538,9 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
             table_command_availability_plans: 0,
             yrs_tree_walks: 0,
             whole_state_encodings: 0,
-            mutation_guard_snapshot_requests: 3,
+            mutation_guard_snapshot_requests: 0,
             compilation_snapshot_scans: 1,
-            compilation_snapshot_reuses: 2,
+            compilation_snapshot_reuses: 0,
             cell_content_keys: 0,
             attribute_serializations: 0,
             epoch_block_rebuilds: 0,
@@ -581,9 +581,9 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
             table_command_availability_plans: 19,
             yrs_tree_walks: 0,
             whole_state_encodings: 0,
-            mutation_guard_snapshot_requests: 3,
+            mutation_guard_snapshot_requests: 0,
             compilation_snapshot_scans: 1,
-            compilation_snapshot_reuses: 2,
+            compilation_snapshot_reuses: 0,
             cell_content_keys: 0,
             attribute_serializations: 0,
             epoch_block_rebuilds: 0,
@@ -625,9 +625,9 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
                 * TABLE_AVAILABILITY_PLANS_PER_PASS,
             yrs_tree_walks: 0,
             whole_state_encodings: 0,
-            mutation_guard_snapshot_requests: 3,
+            mutation_guard_snapshot_requests: 0,
             compilation_snapshot_scans: 1,
-            compilation_snapshot_reuses: 2,
+            compilation_snapshot_reuses: 0,
             cell_content_keys: 0,
             attribute_serializations: 0,
             epoch_block_rebuilds: 0,
@@ -639,16 +639,19 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
         (1, 1, 0),
     );
     for (index, actual) in commit_counts.iter().enumerate() {
-        let expected = expected_commit;
+        let mut expected = expected_commit;
+        expected.0.compilation_snapshot_scans = usize::from(index == 0);
         assert_eq!(*actual, expected, "direct commit edit {index}");
     }
     for (index, actual) in result_counts.iter().enumerate() {
-        let expected = expected_result;
+        let mut expected = expected_result;
+        expected.0.compilation_snapshot_scans = usize::from(index == 0);
         assert_eq!(*actual, expected, "direct result edit {index}");
     }
     for (index, actual) in command_counts.iter().enumerate() {
         let mut expected = expected_command;
         let first = index == 0;
+        expected.0.compilation_snapshot_scans = usize::from(first);
         expected.0.whole_state_encodings = command_full_encodings[index];
         expected.0.canonical_serializations = usize::from(!first);
         expected.0.canonical_hashes = usize::from(!first);

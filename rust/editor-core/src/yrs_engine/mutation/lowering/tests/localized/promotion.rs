@@ -62,6 +62,7 @@ fn promoted_marked_fragmented_non_bmp_insert_preserves_second_insert_exact_work_
         "schema-a",
         3,
         2,
+        None,
     )
     .unwrap()
     .expect("fragmented marked text must localize")
@@ -137,6 +138,7 @@ fn promoted_marked_fragmented_non_bmp_insert_preserves_second_insert_exact_work_
             "schema-a",
             4,
             3,
+            None,
         )?
         .expect("promoted fragmented marked text must localize again")
         .compile(0, second_position, "界", std::slice::from_ref(&italic))
@@ -215,6 +217,7 @@ fn promoted_insert_materialization_work_admits_chained_localized_format() {
         "schema-a",
         5,
         8,
+        None,
     )
     .unwrap()
     .expect("existing insert must localize")

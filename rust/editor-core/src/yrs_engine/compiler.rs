@@ -65,7 +65,10 @@ use std::sync::Arc;
 use yrs::branch::{Branch, BranchPtr};
 use yrs::types::Attrs;
 use yrs_compilation::compile_transaction_with_yrs_impl;
-pub(super) use yrs_compilation::{CompilationReadTransaction, CompilationReadView};
+pub(super) use yrs_compilation::{
+    CompilationReadScope, CompilationReadScopeStamp, CompilationReadTransaction,
+    CompilationReadView,
+};
 
 #[derive(Clone, Copy)]
 pub(crate) struct CompilationContext<'a> {

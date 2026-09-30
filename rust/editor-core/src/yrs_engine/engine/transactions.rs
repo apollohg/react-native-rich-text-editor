@@ -48,7 +48,8 @@ impl YrsDocumentEngine {
 
         let (execution_admission, prepared_history) = prepared_execution.into_parts();
         let authority_doc = self.doc.clone();
-        let read_transaction = CompilationReadTransaction::new(authority_doc.transact());
+        let read_transaction =
+            CompilationReadTransaction::for_immediate_commit(authority_doc.transact());
         let compiled = {
             let state = self
                 .derived_state
@@ -151,7 +152,8 @@ impl YrsDocumentEngine {
         let request_id = transaction.request_id;
         let context = self.prepare_mutation_lookup_seed(request_id)?;
         let authority_doc = self.doc.clone();
-        let read_transaction = CompilationReadTransaction::new(authority_doc.transact());
+        let read_transaction =
+            CompilationReadTransaction::for_immediate_commit(authority_doc.transact());
         let compiled = self.with_compiled_base_authority(
             request_id,
             Some(&context),

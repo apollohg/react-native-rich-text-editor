@@ -435,6 +435,7 @@ fn seeded_localized_insert_is_restricted_and_matches_eager_without_eager_rebuild
         "schema-a",
         9,
         4,
+        None,
     )
     .unwrap()
     .expect("existing text insert must localize");
@@ -511,6 +512,7 @@ fn seeded_marked_non_bmp_insert_preserves_exact_action_and_input_ceilings() {
             "schema-a",
             3,
             2,
+            None,
         )?
         .expect("marked existing-text insert must localize")
         .compile(0, position, "🦀", &marks)

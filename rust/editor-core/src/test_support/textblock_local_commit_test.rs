@@ -801,6 +801,44 @@ fn a_large_table_keystroke_limits_document_wide_work_to_the_fallback_hash() {
 }
 
 #[test]
+fn repeated_native_table_insertion_uses_the_held_read_scope_without_snapshot_scans() {
+    let mut session =
+        session_with_document(&plain_table_document(LARGE_TABLE_ROWS, LARGE_TABLE_COLUMNS));
+    let cell = keystroke_cell(LARGE_TABLE_ROWS, LARGE_TABLE_COLUMNS);
+    let (row, column) = (cell / LARGE_TABLE_COLUMNS, cell % LARGE_TABLE_COLUMNS);
+    let block_path = [0, row as u32, column as u32, CELL_PARAGRAPH_INDEX];
+    let caret = caret_scalar(&session, &block_path, CaretOffset::At(MIDDLE_OFFSET));
+    let first = insert_request(&mut session, caret);
+    submit_insert(&mut session, &first).expect("first edit consumes the import seal");
+    session
+        .engine
+        .active_state()
+        .expect("the first edit is displayed");
+    let next_caret = caret + u32::try_from(INSERTED_TEXT.chars().count()).unwrap();
+    let mut second: Value =
+        serde_json::from_str(&insert_request(&mut session, next_caret)).unwrap();
+    second["requestId"] = json!((INSERT_REQUEST_ID + 1).to_string());
+    reset_full_pass_counts_for_test();
+    submit_insert(&mut session, &second.to_string()).expect("the next real keystroke applies");
+    let passes = take_full_pass_counts_for_test();
+    let original = fixture_cell_text(row, column);
+    let middle = usize::try_from(MIDDLE_OFFSET).unwrap();
+    assert_eq!(
+        session.engine.document_json().unwrap()["content"][0]["content"][row]["content"][column]
+            ["content"][0]["content"][0]["text"],
+        format!(
+            "{}{INSERTED_TEXT}{INSERTED_TEXT}{}",
+            &original[..middle],
+            &original[middle..]
+        )
+    );
+    assert_eq!(
+        passes.compilation_snapshot_scans, 0,
+        "ordinary repeated typing must use the continuously held read scope: {passes:#?}"
+    );
+}
+
+#[test]
 fn a_native_delete_in_a_large_table_is_validated_locally() {
     assert_large_table_edit_is_validated_locally("deleteBackward");
 }
@@ -902,9 +940,7 @@ fn assert_large_table_edit_is_validated_locally(intent: &str) {
             },
             canonical_serializations: 1,
             canonical_hashes: 1,
-            mutation_guard_snapshot_requests: 3,
-            compilation_snapshot_scans: 1,
-            compilation_snapshot_reuses: if intent == INSERT_INTENTS[0] { 2 } else { 3 },
+            compilation_snapshot_scans: usize::from(intent != INSERT_INTENTS[0]),
             canonical_identity_predicate_nodes_visited: passes
                 .canonical_identity_predicate_nodes_visited,
             position_map_clones: passes.position_map_clones,

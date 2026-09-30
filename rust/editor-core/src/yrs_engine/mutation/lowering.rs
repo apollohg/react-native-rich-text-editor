@@ -20,11 +20,11 @@ use super::super::codec::{
 };
 use super::super::{EditingLimits, OperationError, OperationResult};
 use super::plan::{
-    attrs_work, binary_partition_work, capture_document_guard, crdt_clock_scan_reservation,
-    expected_preflight_work, fenwick_add, fenwick_prefix, invalid_action_range, scan_overflow,
-    work_overflow, CreatedTextAction, DocumentGuard, ElementSignature, ParentSignature,
-    StructuralParentSignature, TargetSignature, TextSignatureRun, XmlParentRef, YrsMutationAction,
-    YrsMutationPlan,
+    attrs_work, binary_partition_work, capture_document_guard,
+    capture_document_guard_with_read_scope, crdt_clock_scan_reservation, expected_preflight_work,
+    fenwick_add, fenwick_prefix, invalid_action_range, scan_overflow, work_overflow,
+    CreatedTextAction, DocumentGuard, ElementSignature, ParentSignature, StructuralParentSignature,
+    TargetSignature, TextSignatureRun, XmlParentRef, YrsMutationAction, YrsMutationPlan,
 };
 
 #[cfg(test)]

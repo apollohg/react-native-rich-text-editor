@@ -171,6 +171,7 @@ impl LocalizedInsertCompiler {
         schema_fingerprint: &str,
         yrs_state_epoch: u64,
         document_revision: u64,
+        read_scope: Option<crate::yrs_engine::compiler::CompilationReadScope<'_>>,
     ) -> OperationResult<Option<Self>> {
         if !seed.matches(
             txn,
@@ -188,7 +189,7 @@ impl LocalizedInsertCompiler {
         let Some(seed_payload) = seed.ready_payload() else {
             return Ok(None);
         };
-        let document_guard = capture_document_guard(request_id, txn)?;
+        let document_guard = capture_document_guard_with_read_scope(request_id, txn, read_scope)?;
         let Some(LocalizedTextblockTargets {
             targets,
             path_parent_widths,

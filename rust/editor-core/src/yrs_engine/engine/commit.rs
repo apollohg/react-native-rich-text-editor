@@ -23,7 +23,7 @@ use crate::yrs_engine::compiler::{
     StoredMarksPlan,
 };
 use crate::yrs_engine::derived_state::operation_result_to_relative;
-use crate::yrs_engine::mutation::{execute_mutation_plan, preflight_mutation_plan};
+use crate::yrs_engine::mutation::{execute_mutation_plan, preflight_mutation_plan_with_read_scope};
 use std::sync::Arc;
 use yrs::branch::Branch;
 use yrs::types::xml::XmlFragmentRef;
@@ -283,12 +283,12 @@ impl YrsDocumentEngine {
                 }
                 (None, None) => {}
             }
-            preflight_mutation_plan(
+            preflight_mutation_plan_with_read_scope(
                 compiled.request_id,
                 &compiled.mutation_plan,
                 commit_authority.txn(),
+                authority_txn.scope(),
             )?;
-            authority_txn.clear_snapshot_memo();
             #[cfg(test)]
             yrs_engine::compiler::check_atomic_failpoint(
                 compiled.request_id,
@@ -301,6 +301,8 @@ impl YrsDocumentEngine {
                 &self.doc,
                 commit_authority.fragment(),
                 &compiled.mutation_plan,
+                &authority_txn,
+                authority_txn.scope(),
                 self.revision,
                 self.yrs_state_epoch,
                 self.resource_limits.max_encoded_state_bytes,
@@ -310,6 +312,7 @@ impl YrsDocumentEngine {
             COMMIT_SEALED_STATE_REUSES.set(COMMIT_SEALED_STATE_REUSES.get().saturating_add(1));
             let _ = encoded_state.set(encoded);
         }
+        authority_txn.clear_snapshot_memo();
         let current_encoded_state = || -> &[u8] {
             encoded_state.get_or_init(|| {
                 if commit_authority.state_vector().is_empty() {
@@ -761,7 +764,11 @@ impl YrsDocumentEngine {
                 let txn = candidate_doc.transact();
                 mutation_plan
                     .clone()
-                    .rebind_and_preflight_equivalent_store(request_id, &txn)?
+                    .rebind_and_preflight_equivalent_store(
+                        request_id,
+                        &txn,
+                        authority_txn.scope(),
+                    )?
             };
             let history_update = {
                 let mut txn = candidate_doc.transact_mut();

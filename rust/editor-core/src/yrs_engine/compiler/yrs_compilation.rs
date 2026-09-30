@@ -17,33 +17,75 @@ use crate::yrs_engine::compiler::{
     SemanticCompilationShortcuts, StoredMarksCompilationContext, TransactionMutationLowering,
 };
 use crate::yrs_engine::mutation::{
-    crdt_envelope, preflight_mutation_plan, LocalizedFormatCompiler, LocalizedFormatLocator,
-    LocalizedInsertCompiler, LocalizedInsertLocator, LocalizedRootWindowCompiler,
-    LocalizedRootWindowLocator, MutationCompiler,
+    crdt_envelope, preflight_mutation_plan_with_read_scope, LocalizedFormatCompiler,
+    LocalizedFormatLocator, LocalizedInsertCompiler, LocalizedInsertLocator,
+    LocalizedRootWindowCompiler, LocalizedRootWindowLocator, MutationCompiler,
 };
 use crate::yrs_engine::{
     OperationError, OperationResult, SelectionIntent, TypedOperation, TypedTransaction,
 };
 
-// The memo cannot outlive its continuously held immutable transaction.
+#[derive(Debug, Clone)]
+pub(crate) struct CompilationReadScopeStamp(std::sync::Weak<()>);
+
+#[derive(Clone, Copy)]
+pub(crate) struct CompilationReadScope<'a> {
+    identity: &'a std::sync::Arc<()>,
+    store_token: usize,
+}
+
+impl CompilationReadScope<'_> {
+    pub(crate) fn matches_store<T: yrs::ReadTxn>(&self, txn: &T) -> bool {
+        self.matches_store_token(txn.store() as *const _ as usize)
+    }
+
+    pub(crate) fn matches_store_token(&self, store_token: usize) -> bool {
+        self.store_token == store_token
+    }
+
+    pub(crate) fn stamp(&self) -> CompilationReadScopeStamp {
+        CompilationReadScopeStamp(std::sync::Arc::downgrade(self.identity))
+    }
+}
+
+impl CompilationReadScopeStamp {
+    pub(crate) fn matches(&self, scope: CompilationReadScope<'_>) -> bool {
+        self.0
+            .upgrade()
+            .is_some_and(|identity| std::sync::Arc::ptr_eq(&identity, scope.identity))
+    }
+}
+
+// Only this owner retains the strong scope token and its immutable Yrs lock.
+pub(crate) struct CompilationReadTransaction<'doc> {
+    txn: yrs::Transaction<'doc>,
+    snapshot: std::cell::RefCell<std::cell::OnceCell<yrs::Snapshot>>,
+    scope: Option<std::sync::Arc<()>>,
+}
+
+// Neither the memo nor the borrowed capability can outlive its owner.
 pub(crate) struct CompilationReadView<'a, T> {
     txn: &'a T,
     snapshot: &'a std::cell::RefCell<std::cell::OnceCell<yrs::Snapshot>>,
+    scope: Option<CompilationReadScope<'a>>,
 }
 
-#[cfg(test)]
 impl<'a, T> CompilationReadView<'a, T> {
+    #[cfg(test)]
     pub(crate) fn new(
         txn: &'a T,
         snapshot: &'a std::cell::RefCell<std::cell::OnceCell<yrs::Snapshot>>,
     ) -> Self {
-        Self { txn, snapshot }
+        Self {
+            txn,
+            snapshot,
+            scope: None,
+        }
     }
-}
 
-pub(crate) struct CompilationReadTransaction<'doc> {
-    txn: yrs::Transaction<'doc>,
-    snapshot: std::cell::RefCell<std::cell::OnceCell<yrs::Snapshot>>,
+    pub(crate) fn scope(&self) -> Option<CompilationReadScope<'_>> {
+        self.scope
+    }
 }
 
 impl<'doc> CompilationReadTransaction<'doc> {
@@ -51,7 +93,22 @@ impl<'doc> CompilationReadTransaction<'doc> {
         Self {
             txn,
             snapshot: std::cell::RefCell::new(std::cell::OnceCell::new()),
+            scope: None,
         }
+    }
+
+    pub(crate) fn for_immediate_commit(txn: yrs::Transaction<'doc>) -> Self {
+        Self {
+            scope: Some(std::sync::Arc::new(())),
+            ..Self::new(txn)
+        }
+    }
+
+    pub(crate) fn scope(&self) -> Option<CompilationReadScope<'_>> {
+        self.scope.as_ref().map(|identity| CompilationReadScope {
+            identity,
+            store_token: yrs::ReadTxn::store(&self.txn) as *const _ as usize,
+        })
     }
 
     pub(crate) fn clear_snapshot_memo(&self) {
@@ -62,6 +119,7 @@ impl<'doc> CompilationReadTransaction<'doc> {
         CompilationReadView {
             txn: &self.txn,
             snapshot: &self.snapshot,
+            scope: self.scope(),
         }
     }
 }
@@ -244,6 +302,7 @@ pub(super) fn compile_transaction_with_yrs_impl<T: yrs::ReadTxn>(
                             view.schema_fingerprint,
                             view.yrs_state_epoch,
                             context.document_revision,
+                            txn.scope(),
                         )? {
                             localized_compiler = Some(localized);
                         }
@@ -498,13 +557,11 @@ pub(super) fn compile_transaction_with_yrs_impl<T: yrs::ReadTxn>(
                 ));
             }
         };
-    // The server owns this read view through compilation and preflight. The
-    // plan's document guard was captured only after the CRDT clock scan and
-    // its input-work reservation above admitted full snapshot construction.
-    // Preflight checks that sealed snapshot before any eager Yrs target reads.
+    // Guard capture follows the admitted clock scan; preflight authenticates
+    // its snapshot or continuously held read scope before target reads.
     #[cfg(test)]
     check_atomic_failpoint(request_id, AtomicFailpoint::MutationPreflight)?;
-    preflight_mutation_plan(request_id, &compiled.mutation_plan, txn)?;
+    preflight_mutation_plan_with_read_scope(request_id, &compiled.mutation_plan, txn, txn.scope())?;
     if compiled.localized_semantic_used {
         compiled.prepared_derived_evidence = engine_view.and_then(|view| {
             let admission = compiled.localized_textblock_edit_admission.as_ref()?;
@@ -652,6 +709,7 @@ mod snapshot_tests {
             let view = CompilationReadView {
                 txn: &underlying,
                 snapshot: &RefCell::new(OnceCell::new()),
+                scope: None,
             };
             assert_eq!(
                 underlying.scans.get(),
@@ -682,6 +740,7 @@ mod snapshot_tests {
         let view = CompilationReadView {
             txn: &underlying,
             snapshot: &RefCell::new(OnceCell::new()),
+            scope: None,
         };
         let after = view.snapshot();
         assert_eq!(after, txn.snapshot());

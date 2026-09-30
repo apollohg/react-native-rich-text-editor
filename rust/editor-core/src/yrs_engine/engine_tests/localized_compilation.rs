@@ -576,9 +576,9 @@ fn existing_text_command_skips_every_proved_document_wide_compiler_pass() {
                 * TABLE_AVAILABILITY_PLANS_PER_PASS,
             yrs_tree_walks: 0,
             whole_state_encodings: 0,
-            mutation_guard_snapshot_requests: 3,
+            mutation_guard_snapshot_requests: 0,
             compilation_snapshot_scans: 1,
-            compilation_snapshot_reuses: 2,
+            compilation_snapshot_reuses: 0,
             cell_content_keys: 0,
             attribute_serializations: 0,
             epoch_block_rebuilds: 0,
@@ -1463,16 +1463,16 @@ fn large_table_native_input_reuses_materialization_costs() {
             "only the approved over-budget history hash is required for native table edit {edit}"
         );
         assert_eq!(
-            passes.mutation_guard_snapshot_requests, 3,
-            "native edit {edit} must retain compiler guard captures and the live-store recheck while reusing the equivalent candidate seal: {passes:#?}"
+            passes.mutation_guard_snapshot_requests, 0,
+            "native edit {edit} authenticates compiler, live, and candidate guards through the held read scope: {passes:#?}"
         );
         assert_eq!(
-            passes.compilation_snapshot_scans, 1,
-            "each native input captures one underlying compilation snapshot"
+            passes.compilation_snapshot_scans, 0,
+            "native insertion must not scan the delete set while its read scope remains held"
         );
         assert_eq!(
-            passes.compilation_snapshot_reuses, 2,
-            "compilation and immediate commit preflight must reuse one continuously held read view"
+            passes.compilation_snapshot_reuses, 0,
+            "held read-scope evidence requires no snapshot reuse"
         );
         assert!(
             session.engine.doc.try_transact_mut().is_ok(),

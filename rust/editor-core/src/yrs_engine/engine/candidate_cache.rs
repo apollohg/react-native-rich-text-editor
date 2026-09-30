@@ -229,11 +229,13 @@ pub(super) struct EncodedStateSeal {
 }
 
 impl PreparedCandidateCache {
-    pub(super) fn take_matching_encoded_state(
+    pub(super) fn take_matching_encoded_state<T: yrs::ReadTxn>(
         &mut self,
         live_doc: &Doc,
         live_fragment: &XmlFragmentRef,
         mutation_plan: &YrsMutationPlan,
+        live_txn: &T,
+        live_scope: Option<crate::yrs_engine::compiler::CompilationReadScope<'_>>,
         document_revision: u64,
         yrs_state_epoch: u64,
         max_encoded_state_bytes: usize,
@@ -262,7 +264,7 @@ impl PreparedCandidateCache {
             && seal.skip_gc == self.doc.skip_gc()
             && seal.fragment_id == live_fragment_id
             && seal.fragment_id == candidate_fragment_id
-            && mutation_plan.matches_sealed_import_state(&self.state_vector);
+            && mutation_plan.matches_sealed_import_state(&self.state_vector, live_txn, live_scope);
         matches.then_some(seal.encoded_state)
     }
 

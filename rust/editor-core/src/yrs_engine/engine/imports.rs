@@ -490,7 +490,9 @@ impl YrsDocumentEngine {
                 .map_err(RootReplacementError::Transaction)?;
             let authority_doc = self.doc.clone();
             let read_transaction =
-                yrs_engine::compiler::CompilationReadTransaction::new(authority_doc.transact());
+                yrs_engine::compiler::CompilationReadTransaction::for_immediate_commit(
+                    authority_doc.transact(),
+                );
             let mut compiled = self
                 .with_compiled_base_authority(
                     request_id,

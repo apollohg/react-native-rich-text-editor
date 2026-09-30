@@ -211,7 +211,7 @@ fn diagnostic_doc(
     (doc, schema, limits, editing_limits, document)
 }
 
-fn compile_operations_with_schema(
+pub(super) fn compile_operations_with_schema(
     source: &Value,
     operations: Vec<TypedOperation>,
     schema: crate::schema::Schema,

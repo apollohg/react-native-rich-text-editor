@@ -116,8 +116,41 @@ pub(crate) struct YrsMutationPlan {
 #[derive(Debug, Clone)]
 pub(super) struct DocumentGuard {
     store_token: usize,
-    snapshot: Snapshot,
+    evidence: DocumentGuardEvidence,
     state_clock_work: usize,
+}
+
+#[derive(Debug, Clone)]
+enum DocumentGuardEvidence {
+    Snapshot(Snapshot),
+    Held {
+        state: StateVector,
+        scope: crate::yrs_engine::compiler::CompilationReadScopeStamp,
+    },
+}
+
+impl DocumentGuardEvidence {
+    fn state(&self) -> &StateVector {
+        match self {
+            Self::Snapshot(snapshot) => &snapshot.state_map,
+            Self::Held { state, .. } => state,
+        }
+    }
+
+    fn authenticates_scope(
+        &self,
+        scope: Option<crate::yrs_engine::compiler::CompilationReadScope<'_>>,
+        store_token: usize,
+    ) -> bool {
+        match self {
+            Self::Snapshot(_) => true,
+            Self::Held {
+                scope: expected, ..
+            } => scope.is_some_and(|scope| {
+                scope.matches_store_token(store_token) && expected.matches(scope)
+            }),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -138,9 +171,28 @@ impl YrsMutationPlan {
         self.actions.is_empty()
     }
 
-    pub(crate) fn matches_sealed_import_state(&self, state_vector: &StateVector) -> bool {
+    pub(crate) fn matches_sealed_import_state<T: ReadTxn>(
+        &self,
+        state_vector: &StateVector,
+        txn: &T,
+        scope: Option<crate::yrs_engine::compiler::CompilationReadScope<'_>>,
+    ) -> bool {
         self.document_guard.as_ref().is_some_and(|guard| {
-            guard.snapshot.state_map == *state_vector && guard.snapshot.delete_set.is_empty()
+            if guard.evidence.state() != state_vector {
+                return false;
+            }
+            match &guard.evidence {
+                DocumentGuardEvidence::Snapshot(snapshot) => snapshot.delete_set.is_empty(),
+                DocumentGuardEvidence::Held { .. } => {
+                    if guard.store_token != txn.store() as *const _ as usize
+                        || !guard.evidence.authenticates_scope(scope, guard.store_token)
+                    {
+                        return false;
+                    }
+                    let snapshot = txn.snapshot();
+                    snapshot.state_map == *state_vector && snapshot.delete_set.is_empty()
+                }
+            }
         })
     }
 
@@ -176,7 +228,20 @@ impl YrsMutationPlan {
         mut self,
         request_id: u64,
         txn: &T,
+        live_scope: Option<crate::yrs_engine::compiler::CompilationReadScope<'_>>,
     ) -> OperationResult<Self> {
+        if let Some(guard) = self.document_guard.as_ref() {
+            if !guard
+                .evidence
+                .authenticates_scope(live_scope, guard.store_token)
+            {
+                return Err(document_guard_error(
+                    request_id,
+                    &self,
+                    "Yrs document snapshot changed before mutation preflight",
+                ));
+            }
+        }
         fn branch<T: ReadTxn>(
             request_id: u64,
             txn: &T,
@@ -240,9 +305,9 @@ impl YrsMutationPlan {
         } else {
             self.document_guard = Some(capture_document_guard(request_id, txn)?);
         }
-        // The private candidate lifecycle proves equivalence to the live plan's snapshot.
-        let snapshot = self.document_guard.as_ref().map(|guard| &guard.snapshot);
-        preflight_mutation_plan_with_snapshot(request_id, &self, txn, snapshot)?;
+        // The private candidate lifecycle and authenticated live scope establish equivalence.
+        let evidence = self.document_guard.as_ref().map(|guard| &guard.evidence);
+        preflight_mutation_plan_with_evidence(request_id, &self, txn, evidence, live_scope)?;
         Ok(self)
     }
 

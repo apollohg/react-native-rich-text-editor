@@ -394,6 +394,8 @@ fn sealed_state_vector_drift_falls_back() {
             &live_doc,
             &live_fragment,
             &compiled.mutation_plan,
+            &live_txn,
+            None,
             engine.revision,
             engine.yrs_state_epoch,
             engine.resource_limits.max_encoded_state_bytes,

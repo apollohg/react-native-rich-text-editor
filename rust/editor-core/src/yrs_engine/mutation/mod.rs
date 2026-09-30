@@ -19,15 +19,15 @@ pub(crate) use lowering::{
 pub(crate) use plan::{
     crdt_clock_scan_reservation, crdt_envelope, deleting_plan_undo_units,
     direct_xml_replacement_growth, estimate_undo_units, estimate_update_v1_growth,
-    planned_insertion_units, preflight_mutation_plan, CrdtEnvelope, YrsMutationAction,
-    YrsMutationPlan,
+    planned_insertion_units, preflight_mutation_plan_with_read_scope, CrdtEnvelope,
+    YrsMutationAction, YrsMutationPlan,
 };
 
 #[allow(unused_imports)] // Production execution is consumed by the engine boundary.
 pub(crate) use plan::execute_mutation_plan;
 
 #[cfg(test)]
-pub(crate) use plan::preflight_mutation_work_for_test;
+pub(crate) use plan::{preflight_mutation_plan, preflight_mutation_work_for_test};
 
 #[cfg(test)]
 pub(crate) use lowering::{

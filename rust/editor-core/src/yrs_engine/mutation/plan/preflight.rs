@@ -260,14 +260,29 @@ pub(crate) fn preflight_mutation_plan<T: ReadTxn>(
     plan: &YrsMutationPlan,
     txn: &T,
 ) -> OperationResult<()> {
-    preflight_mutation_plan_with_snapshot(request_id, plan, txn, None)
+    preflight_mutation_plan_with_evidence(request_id, plan, txn, None, None)
 }
 
-fn preflight_mutation_plan_with_snapshot<T: ReadTxn>(
+pub(crate) fn preflight_mutation_plan_with_read_scope<T: ReadTxn>(
     request_id: u64,
     plan: &YrsMutationPlan,
     txn: &T,
-    current_snapshot: Option<&Snapshot>,
+    scope: Option<crate::yrs_engine::compiler::CompilationReadScope<'_>>,
+) -> OperationResult<()> {
+    match scope {
+        Some(scope) => {
+            preflight_mutation_plan_with_evidence(request_id, plan, txn, None, Some(scope))
+        }
+        None => preflight_mutation_plan(request_id, plan, txn),
+    }
+}
+
+fn preflight_mutation_plan_with_evidence<T: ReadTxn>(
+    request_id: u64,
+    plan: &YrsMutationPlan,
+    txn: &T,
+    candidate_evidence: Option<&DocumentGuardEvidence>,
+    scope: Option<crate::yrs_engine::compiler::CompilationReadScope<'_>>,
 ) -> OperationResult<()> {
     let total_work = plan
         .compilation_work
@@ -301,7 +316,7 @@ fn preflight_mutation_plan_with_snapshot<T: ReadTxn>(
         return Err(OperationError::engine_not_ready(request_id));
     }
     let state = txn.state_vector();
-    if state != guard.snapshot.state_map
+    if &state != guard.evidence.state()
         || snapshot_state_clock_work(request_id, &state)? != guard.state_clock_work
     {
         return Err(document_guard_error(
@@ -310,17 +325,34 @@ fn preflight_mutation_plan_with_snapshot<T: ReadTxn>(
             "Yrs document state changed before mutation preflight",
         ));
     }
-    let captured_snapshot;
-    let current_snapshot = match current_snapshot {
-        Some(snapshot) => snapshot,
-        None => {
-            #[cfg(test)]
-            crate::yrs_engine::observability::record_mutation_guard_snapshot_request();
-            captured_snapshot = txn.snapshot();
-            &captured_snapshot
+    let evidence_matches = match &guard.evidence {
+        DocumentGuardEvidence::Snapshot(expected) => match candidate_evidence {
+            Some(DocumentGuardEvidence::Snapshot(current)) => current == expected,
+            Some(DocumentGuardEvidence::Held { .. }) => false,
+            None => {
+                #[cfg(test)]
+                crate::yrs_engine::observability::record_mutation_guard_snapshot_request();
+                txn.snapshot() == *expected
+            }
+        },
+        DocumentGuardEvidence::Held {
+            scope: expected, ..
+        } => {
+            // Candidate evidence is supplied only after original-store scope authentication.
+            scope.is_some_and(|scope| {
+                expected.matches(scope)
+                    && match candidate_evidence {
+                        Some(DocumentGuardEvidence::Held {
+                            scope: candidate,
+                            state,
+                        }) => candidate.matches(scope) && state == guard.evidence.state(),
+                        Some(DocumentGuardEvidence::Snapshot(_)) => false,
+                        None => scope.matches_store(txn),
+                    }
+            })
         }
     };
-    if current_snapshot != &guard.snapshot {
+    if !evidence_matches {
         return Err(document_guard_error(
             request_id,
             plan,

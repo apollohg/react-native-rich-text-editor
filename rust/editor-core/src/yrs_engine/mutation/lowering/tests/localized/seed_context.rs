@@ -205,6 +205,7 @@ fn seeded_localized_insert_treats_stale_schema_epoch_revision_and_store_as_cache
             fingerprint,
             epoch,
             revision,
+            None,
         )
     };
     for result in [
