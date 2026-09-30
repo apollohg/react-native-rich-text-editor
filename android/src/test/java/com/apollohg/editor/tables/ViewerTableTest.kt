@@ -21,6 +21,7 @@ import com.apollohg.editor.viewer.ViewerDocument
 import com.apollohg.editor.viewer.ViewerImageAttachment
 import com.apollohg.editor.viewer.ViewerImagePipeline
 import com.apollohg.editor.viewer.ViewerImageIntrinsicStore
+import com.apollohg.editor.viewer.cellSupportsBackgroundPreparation
 import com.apollohg.editor.viewer.cellDocument
 import com.apollohg.editor.viewer.compileWithRust
 import com.apollohg.editor.viewer.PreparedProseFragmentKind
@@ -333,6 +334,47 @@ class ViewerTableTest {
             }
             if (Thread.currentThread() !== caller) backgroundPreparations++
         }
+    }
+
+    @Test
+    fun backgroundCellEligibilityPreservesLoweringAndScansPlainElementsOnce() {
+        val document = ViewerDocument("eligibility", emptyList(), true, 0L)
+        val paragraph = FfiViewerElement.BlockStart("paragraph", null, 0u, null)
+        val image = FfiViewerElement.BlockStart("image", null, 0u, null)
+        val text = FfiViewerElement.TextRun("café 🦀 العربية", emptyList())
+        val variants = listOf(
+            "empty" to emptyList(), "plain" to listOf(paragraph, text, FfiViewerElement.BlockEnd),
+            "nested" to listOf(paragraph, paragraph, text, FfiViewerElement.BlockEnd, FfiViewerElement.BlockEnd),
+            "unclosed" to listOf(paragraph, text), "unmatched end" to listOf(FfiViewerElement.BlockEnd),
+            "orphan text" to listOf(text), "empty image" to listOf(image, FfiViewerElement.BlockEnd),
+            "image text" to listOf(image, text, FfiViewerElement.BlockEnd),
+            "inline atom" to listOf(paragraph, FfiViewerElement.InlineAtom("mention", 1u, "{}", "name"), FfiViewerElement.BlockEnd),
+            "orphan atom" to listOf(FfiViewerElement.InlineAtom("mention", 1u, "{}", "name")),
+            "block atom" to listOf(FfiViewerElement.BlockAtom("card", 1u, "{}", "card")),
+            "dangling table" to listOf(FfiViewerElement.Table("missing"))
+        )
+        for ((name, elements) in variants) {
+            val cell = TableSurfaceCell(0, 0, 0, 1, 1, false, "attrs", name, elements)
+            for (source in listOf(document, document.copy(frameIndex = EditorTableIndex()))) {
+                val expected = runCatching { source.cellDocument(cell, "table").blocks.all { block ->
+                    !block.isBlockAtom && block.nodeType != "image" && block.tableKey == null &&
+                        block.inlines.none { it is ViewerInline.Atom }
+                } }
+                val actual = runCatching { source.cellSupportsBackgroundPreparation(cell, "table") }
+                assertEquals("$name: eligibility", expected.getOrNull(), actual.getOrNull())
+                assertEquals("$name: failure type", expected.exceptionOrNull()?.javaClass, actual.exceptionOrNull()?.javaClass)
+                assertEquals("$name: failure detail", expected.exceptionOrNull()?.message, actual.exceptionOrNull()?.message)
+            }
+        }
+        val plain = listOf(paragraph, text, FfiViewerElement.BlockEnd)
+        var reads = 0
+        val observed = object : AbstractList<FfiViewerElement>() {
+            override val size: Int get() = plain.size
+            override fun get(index: Int): FfiViewerElement { reads++; return plain[index] }
+        }
+        val cell = TableSurfaceCell(0, 0, 0, 1, 1, false, "attrs", "plain", observed)
+        assertTrue(document.cellSupportsBackgroundPreparation(cell, "table"))
+        assertEquals("plain eligibility must avoid the child document's repeated element traversals", plain.size, reads)
     }
 
     @Test

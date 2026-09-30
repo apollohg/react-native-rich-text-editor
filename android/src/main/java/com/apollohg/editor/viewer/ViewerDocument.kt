@@ -525,6 +525,27 @@ private fun lowerElements(
 
 }
 
+internal fun ViewerDocument.cellSupportsBackgroundPreparation(cell: TableSurfaceCell, tableId: String): Boolean {
+    var depth = 0
+    var plain = true
+    for (element in cell.elements) {
+        when (element) {
+            is FfiViewerElement.BlockStart -> {
+                if (element.nodeType == "image") plain = false
+                depth++
+            }
+            FfiViewerElement.BlockEnd -> if (depth == 0) plain = false else depth--
+            is FfiViewerElement.TextRun -> if (depth == 0) plain = false
+            is FfiViewerElement.InlineAtom, is FfiViewerElement.BlockAtom, is FfiViewerElement.Table -> plain = false
+        }
+        if (!plain) break
+    }
+    if (plain && depth == 0) return true
+    return cellDocument(cell, tableId).blocks.all { block ->
+        !block.isBlockAtom && block.nodeType != "image" && block.tableKey == null && block.inlines.none { it is ViewerInline.Atom }
+    }
+}
+
 internal fun ViewerDocument.cellDocument(cell: TableSurfaceCell, tableId: String): ViewerDocument {
     val elements = if (frameIndex == null) cell.elements else cell.elements.map { element ->
         fun absolute(relative: UInt): UInt = requireNotNull(frameIndex.absoluteDocPos(tableId, cell.sourceIndex, relative))

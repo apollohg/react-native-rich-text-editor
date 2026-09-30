@@ -222,9 +222,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
         if (cellMode || count <= 1 || theme.codeHighlighting != null || reusableTableCell != null) return TablePreparationWorkers()
         val frequencies = table.cells.groupingBy { it.contentKey }.eachCount()
         val indices = table.cells.filter { source ->
-            (context == null || frequencies[source.contentKey] == 1) && document.cellDocument(source, tableKey).blocks.all { block ->
-                !block.isBlockAtom && block.nodeType != "image" && block.tableKey == null && block.inlines.none { it is ViewerInline.Atom }
-            }
+            (context == null || frequencies[source.contentKey] == 1) && document.cellSupportsBackgroundPreparation(source, tableKey)
         }.mapTo(mutableSetOf()) { it.sourceIndex }
         if (indices.isEmpty()) return TablePreparationWorkers()
         val observerLock = Any()
