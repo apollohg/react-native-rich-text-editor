@@ -754,6 +754,16 @@ final class TablePerformanceTests: XCTestCase {
             "All inserted empty rows share one shape and keep separate bindings")
     }
 
+    func testLargeTableColdLayout() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["PREPARED_PROSE_DEVICE_BENCHMARK"] == "1",
+                          "Run through NativeEditorPreparedProsePerformance.")
+        clock = TableTestFrameClock()
+        defer { clock.close(); clock = nil }
+        let fixture = Fixture(rows: 1_000, columns: 20, rich: false)
+        try cold(fixture, source: fixture.source())
+        _ = try saveExport()
+    }
+
     func testLargeTableTypingPreservesIncrementalPreparation() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["PREPARED_PROSE_DEVICE_BENCHMARK"] == "1",
                           "Run through NativeEditorPreparedProsePerformance.")

@@ -353,7 +353,7 @@ final class CoreTextProseLayoutEngine {
             scope?.preassign(document: document)
         }
         let highlighting = scope.flatMap { PreparedViewerHighlightingStore.result(for: $0.generation) }
-        let tableLayoutStore = cellMode ? TableCellLayoutStore() : (reusableTableCellStore ?? TableCellLayoutStore())
+        var preparedTableStore: TableCellLayoutStore? = cellMode ? nil : reusableTableCellStore
         var cursorY = theme.contentInsets.top
         var blocks: [PreparedProseBlock] = []
         var containerBounds: [Int: CGRect] = [:]
@@ -421,6 +421,8 @@ final class CoreTextProseLayoutEngine {
                 let bottom = closing.reduce(CGFloat.zero) { $0 + (theme.styleSheet?.box($1.nodeType, ancestors: block.ancestors(before: $1)).outerInsets.bottom ?? 0) }
                 cursorY += top
                 if let table = block.tableSurfaceSource, let tableKey = block.tableKey {
+                    let tableLayoutStore = preparedTableStore ?? TableCellLayoutStore()
+                    preparedTableStore = tableLayoutStore
                     var cellTheme = theme
                     cellTheme.contentInsets = .zero
                     let tableBox = theme.styleSheet?.box(block.nodeType, ancestors: block.styleAncestors.map(\.nodeType)) ?? EditorStyleBox()
@@ -552,7 +554,9 @@ final class CoreTextProseLayoutEngine {
                             tableRetainedBytes += surfaceRetainedBytes
                             resume()
                         }
-                        if incremental != nil {
+                        if incremental != nil || !surfaceSource.cells.contains(where: { cell in
+                            cell.elements.contains { if case .table = $0 { return true }; return false }
+                        }) {
                             assemble([:])
                         } else if let record {
                             let inputs = TableGridLayout(displayScale: displayScale).measurementInputs(

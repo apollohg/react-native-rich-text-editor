@@ -174,21 +174,6 @@ final class ViewerTableSurface {
             (sourceTable?.cells ?? []).map { (Int($0.column + $0.colspan) - 1, Int($0.row)) },
             uniquingKeysWith: min
         )
-        let sourceCells = Dictionary(uniqueKeysWithValues: record.cells.map { ($0.sourceIndex, $0) })
-        let measurementRecord = TableGridRecord(
-            documentOwner: record.documentOwner,
-            columns: record.columns,
-            rows: record.rows,
-            columnWidths: record.columnWidths,
-            cells: record.cells.map {
-                TableGridCell(sourceIndex: $0.sourceIndex, row: $0.row, column: $0.column,
-                              rowspan: $0.rowspan, colspan: $0.colspan,
-                              contentKey: "\($0.contentKey):\($0.sourceIndex)",
-                              attachmentRevision: $0.attachmentRevision)
-            },
-            failure: record.failure,
-            compatibilityDiagnostic: record.compatibilityDiagnostic
-        )
         var prepared: [Int: PreparedViewerTableCell] = [:]
         func capture(_ cell: TableGridCell, width: CGFloat, content: PreparedProseLayout) -> PreparedViewerTableCell {
             Self.captureCell(cell, content: content, sourceTable: sourceTable,
@@ -212,6 +197,21 @@ final class ViewerTableSurface {
             resolvedLayout = grid.relayout(record: record, viewportWidth: viewportWidth, style: style,
                 direction: direction, cachedContentHeights: prepared.mapValues { $0.contentSize.height })
         } else {
+            let sourceCells = Dictionary(uniqueKeysWithValues: record.cells.map { ($0.sourceIndex, $0) })
+            let measurementRecord = TableGridRecord(
+                documentOwner: record.documentOwner,
+                columns: record.columns,
+                rows: record.rows,
+                columnWidths: record.columnWidths,
+                cells: record.cells.map {
+                    TableGridCell(sourceIndex: $0.sourceIndex, row: $0.row, column: $0.column,
+                                  rowspan: $0.rowspan, colspan: $0.colspan,
+                                  contentKey: "\($0.contentKey):\($0.sourceIndex)",
+                                  attachmentRevision: $0.attachmentRevision)
+                },
+                failure: record.failure,
+                compatibilityDiagnostic: record.compatibilityDiagnostic
+            )
             resolvedLayout = grid.layout(
                 record: measurementRecord,
                 viewportWidth: viewportWidth,
