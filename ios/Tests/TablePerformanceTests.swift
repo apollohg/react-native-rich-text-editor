@@ -101,6 +101,11 @@ final class TablePerformanceTests: XCTestCase {
         var stagesMs: [String: Double] = [:]
     }
 
+    private enum MeasurementEndpoint {
+        case exactLayout
+        case presentedFrame
+    }
+
     private final class StageProbe {
         private let lock = NSLock()
         private var spans: [PreparedProseInstrumentation.TableStage: [PreparedProseInstrumentation.ViewerWorkSpan]] = [:]
@@ -134,7 +139,7 @@ final class TablePerformanceTests: XCTestCase {
         let run: Int
         let samplesMs: [Double]
         let stageSamplesMs: [String: [Double]]
-        let stageTimingSemantics = "inclusive wall-time unions; native stages include Rust and FFI; preparation includes geometry; presentationWait includes scheduling, render server and GPU without separating them"
+        let stageTimingSemantics = "inclusive wall-time unions through the full frame drain, not a decomposition of cold-layout duration; native stages include Rust and FFI; preparation includes geometry; presentationWait includes scheduling, render server and GPU without separating them; postLayoutPresentationWait is diagnostic and excluded from cold-layout duration"
         let warmupSamplesDiscarded: Int?
         let tableAttributed: [Bool]?
         let wrapCount: Int?
@@ -349,6 +354,10 @@ final class TablePerformanceTests: XCTestCase {
         let fixture = Fixture(rows: 3, columns: 3, rich: false)
         let source = try fixture.source()
         try cold(fixture, source: source)
+        for sample in samples {
+            XCTAssertEqual(sample.samplesMs, sample.stageSamplesMs["synchronousAction"],
+                "Cold source compilation and exact layout must end before presentation waiting: \(sample.metric)")
+        }
         try autoreleasepool { try typing(fixture, source: source, run: 1) }
         try autoreleasepool { try cellChange(fixture, source: source, atEnd: true) }
         try autoreleasepool { try warm(fixture, source: source) }
@@ -798,7 +807,8 @@ final class TablePerformanceTests: XCTestCase {
                        Benchmark.baselineSamples)
     }
 
-    private func measure(_ drawing: PreparedProseDrawingView, action: () throws -> Void) throws -> Measurement {
+    private func measure(_ drawing: PreparedProseDrawingView, endpoint: MeasurementEndpoint = .presentedFrame,
+                         action: () throws -> Void) throws -> Measurement {
         let stages = StageProbe()
         PreparedProseInstrumentation.tableStageObserverForTesting = stages.record
         var commitTime: Double?
@@ -826,8 +836,16 @@ final class TablePerformanceTests: XCTestCase {
         let end = try XCTUnwrap(presented, "No presented frame followed the dirty table transaction")
         var measured = stages.durationsMs()
         measured["synchronousAction"] = (actionEnd - start) * Benchmark.millisecondsPerSecond
-        measured["presentationWait"] = (end - actionEnd) * Benchmark.millisecondsPerSecond
-        return Measurement(durationMs: (end - start) * Benchmark.millisecondsPerSecond, stagesMs: measured)
+        let measurementEnd: Double
+        switch endpoint {
+        case .exactLayout:
+            measurementEnd = actionEnd
+            measured["postLayoutPresentationWait"] = (end - actionEnd) * Benchmark.millisecondsPerSecond
+        case .presentedFrame:
+            measurementEnd = end
+            measured["presentationWait"] = (end - actionEnd) * Benchmark.millisecondsPerSecond
+        }
+        return Measurement(durationMs: (measurementEnd - start) * Benchmark.millisecondsPerSecond, stagesMs: measured)
     }
 
     private func append(_ fixture: Fixture, metric: String, run: Int = 1, values: [Measurement],
@@ -870,7 +888,7 @@ final class TablePerformanceTests: XCTestCase {
             try autoreleasepool {
                 let host = try EditorHost()
                 defer { host.close() }
-                editor.append(try measure(host.drawing) { try host.load(source) })
+                editor.append(try measure(host.drawing, endpoint: .exactLayout) { try host.load(source) })
                 editorCounters.observe(host.drawing, cellInputs: host.view.textInputs)
                 editorCounters.authoritativeDocumentBytes = max(editorCounters.authoritativeDocumentBytes, try host.authoritativeBytes())
             }
@@ -881,7 +899,7 @@ final class TablePerformanceTests: XCTestCase {
                 window.addSubview(view)
                 window.makeKeyAndVisible()
                 defer { view.prepareForReuse(); window.isHidden = true }
-                viewer.append(try measure(view.drawingViewForTesting) {
+                viewer.append(try measure(view.drawingViewForTesting, endpoint: .exactLayout) {
                     XCTAssertTrue(view.apply(source: .json(source), configuration: .init(configJSON: Benchmark.schema)))
                     let exact = view.intrinsicContentSize
                     XCTAssertGreaterThan(exact.height, 0)
