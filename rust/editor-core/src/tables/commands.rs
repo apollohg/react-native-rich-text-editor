@@ -23,6 +23,9 @@ use crate::tables::selection::{resolve_cell_rect, CellSelectionRect};
 use crate::tables::types::{try_resize, TableActionKind};
 use crate::yrs_engine::OperationResult;
 
+#[cfg(test)]
+mod deletion_tests;
+
 pub(crate) mod columns;
 pub(crate) mod headers;
 pub(crate) mod merge;

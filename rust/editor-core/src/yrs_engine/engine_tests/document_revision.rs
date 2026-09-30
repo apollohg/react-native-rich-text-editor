@@ -297,19 +297,39 @@ fn table_availability_cache_respects_limit_changes_and_optional_retention() {
     let mut session = session_with_document(&plain_table_document(SIDE, SIDE));
     let _ = session.engine.active_state().unwrap();
     let original_limits = session.engine.resource_limits.clone();
-    session.engine.resource_limits.max_table_grid_slots = SIDE;
-    let state = session.engine.derived_state.as_ref().unwrap();
-    assert_eq!(
-        session.engine.active_state().unwrap(),
-        crate::editor_state::active_state_for_debug_invariant(
-            &state.document,
-            session.engine.schema(),
-            &state.legacy_selection(),
-            session.engine.stored_marks(),
-            session.engine.resource_limits(),
-            state.document_node_count
-        )
-    );
+    let mut grid_limits = original_limits.clone();
+    grid_limits.max_table_grid_slots = SIDE;
+    let mut node_limits = original_limits.clone();
+    node_limits.max_document_nodes = SIDE;
+    for tighter_limits in [grid_limits, node_limits] {
+        session.engine.resource_limits = tighter_limits;
+        let state = session.engine.derived_state.as_ref().unwrap();
+        assert!(
+            state
+                .table_command_availability(
+                    &state.document,
+                    session.engine.schema(),
+                    &state.legacy_selection(),
+                    session.engine.resource_limits(),
+                    session.engine.editing_limits.max_derived_output_bytes,
+                    &state.render_blocks,
+                    session.engine.document_scope_revision(),
+                )
+                .is_none(),
+            "a retained projection cannot certify changed resource limits"
+        );
+        assert_eq!(
+            session.engine.active_state().unwrap(),
+            crate::editor_state::active_state_for_debug_invariant(
+                &state.document,
+                session.engine.schema(),
+                &state.legacy_selection(),
+                session.engine.stored_marks(),
+                session.engine.resource_limits(),
+                state.document_node_count
+            )
+        );
+    }
     session.engine.resource_limits = original_limits;
     let state = session.engine.derived_state.as_ref().unwrap();
     let commands = state

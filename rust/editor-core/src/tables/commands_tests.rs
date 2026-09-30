@@ -54,7 +54,6 @@ pub(crate) const PROSE_PREFIX_TABLE_POSITION: u32 = 8;
 const OPERATION_INVALID_CODE: &str = "OPERATION_INVALID";
 const OUTSIDE_RESIZE_FIXTURE: u32 = 2;
 const SHARED_SURFACE_PROJECTIONS: usize = 1;
-const STAGED_DELETION_PROJECTIONS: usize = 2;
 
 pub(crate) fn engine_with(schema: Schema, content: Vec<Value>) -> YrsDocumentEngine {
     let mut engine = YrsDocumentEngine::new(YrsEngineConfig {
@@ -821,6 +820,48 @@ fn a_row_command_normalizes_a_ragged_table_before_it_inserts() {
 }
 
 #[test]
+fn deletion_uses_the_normalized_target_and_undo_restores_the_ragged_source() {
+    for command in [
+        TableCommand::DeleteTableRows,
+        TableCommand::DeleteTableColumns,
+    ] {
+        let mut engine = seeded(ragged_fixture());
+        select_cell(&mut engine, ANCHOR_FOR_AVAILABILITY);
+        let before = table_of(&engine);
+        applied(&mut engine, command);
+        let after = table_of(&engine);
+        match command {
+            TableCommand::DeleteTableRows => {
+                assert_eq!(geometry(&projection_of(&engine)), (1, 2, false));
+                assert_eq!(row_texts(&after, 0), vec!["b0", ""]);
+            }
+            TableCommand::DeleteTableColumns => {
+                assert_eq!(geometry(&projection_of(&engine)), (2, 1, false));
+                assert_eq!(row_texts(&after, 0), vec!["a1"]);
+                assert_eq!(row_texts(&after, 1), vec![""]);
+            }
+            _ => unreachable!(),
+        }
+        engine
+            .undo(REQUEST_ID + 1)
+            .expect("deletion and normalization undo together");
+        assert_eq!(
+            table_of(&engine),
+            before,
+            "{command:?}: restore the irregular source"
+        );
+        engine
+            .redo(REQUEST_ID + 2)
+            .expect("normalized deletion redoes");
+        assert_eq!(
+            table_of(&engine),
+            after,
+            "{command:?}: redo the normalized deletion"
+        );
+    }
+}
+
+#[test]
 fn availability_separates_geometry_from_content_on_an_irregular_grid() {
     let engine = seeded(ragged_fixture());
     let document = document_of(&engine).clone();
@@ -884,8 +925,8 @@ fn availability_projects_the_document_once_for_the_whole_command_surface() {
     assert_eq!(
         crate::yrs_engine::observability::take_full_pass_counts_for_test()
             .table_projection_derivations,
-        SHARED_SURFACE_PROJECTIONS + STAGED_DELETION_PROJECTIONS,
-        "the surface must project once and pay only for the documents deletion stages",
+        SHARED_SURFACE_PROJECTIONS,
+        "single-row and single-column deletion must reuse the unchanged surface projection",
     );
 }
 

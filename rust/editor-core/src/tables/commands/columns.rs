@@ -90,7 +90,9 @@ pub(crate) fn plan_delete_columns(
     let mut candidate = document.clone();
     let mut operations = Vec::new();
     for column in (rect.left..rect.right).rev() {
-        let step = {
+        let step = if column.checked_add(ONE_SLOT)? == rect.right {
+            plan_delete_one_column(target, column)?
+        } else {
             let stage = TableTarget::resolve(
                 &candidate,
                 target.table_pos(),
@@ -114,7 +116,10 @@ pub(crate) fn plan_delete_columns(
     })
 }
 
-fn plan_delete_one_column(target: &TableTarget<'_>, column: u32) -> Option<Vec<SemanticOperation>> {
+pub(super) fn plan_delete_one_column(
+    target: &TableTarget<'_>,
+    column: u32,
+) -> Option<Vec<SemanticOperation>> {
     let mut operations = Vec::new();
     let mut row = FIRST_ROW;
     while row < target.rows() {
