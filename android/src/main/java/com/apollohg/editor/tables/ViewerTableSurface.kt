@@ -152,6 +152,10 @@ internal class ViewerTableSurface private constructor(
     private var retainedBytesRevision = -1L
     private var cellRetainedBytes = 0L
 
+    val cachedContents: List<PreparedProseLayout> get() = if (hasSingleLayoutStore) {
+        layoutStore.peekAll(cells.asSequence().map { it.contentKey })
+    } else cells.mapNotNull { it.cachedContent }
+
     private data class Preparation(
         val layout: TableLayoutResult,
         val cells: List<PreparedViewerTableCell>,

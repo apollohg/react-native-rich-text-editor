@@ -281,6 +281,8 @@ class ViewerTableTest {
         val surface = ViewerTableSurface("memory", cellWidth.toFloat(), TableStyle(), false,
             prepared.layout, observed, null)
         fun assertCharge(stage: String, bytes: Long) {
+            assertEquals("Owner lookup preserves per-cell order and duplicates: $stage",
+                surface.cells.mapNotNull { it.cachedContent }, surface.cachedContents)
             assertEquals(stage, surface.metadataRetainedBytes + bytes, surface.retainedBytes)
             assertEquals("A second surface sharing the store must refresh: $stage",
                 prepared.metadataRetainedBytes + bytes, prepared.retainedBytes)
@@ -297,6 +299,8 @@ class ViewerTableTest {
         assertCharge("Unpinning evicts the oversized entry", 0)
         prepared.cells.first().content
         assertCharge("Refill invalidates the charge", cellBytes * 2)
+        store.insert(content("alias"), key)
+        assertCharge("Aliased entries retain their lookup-key ownership", cellBytes * 2)
         store.insert(content("unmapped"))
         assertCharge("Unmapped replacement preserves the existing charge policy", 0)
 
@@ -307,11 +311,15 @@ class ViewerTableTest {
             prepared.layout, mixedCells, null)
         assertEquals(mixed.metadataRetainedBytes + cellBytes * 2, mixed.retainedBytes)
         otherStore.insert(content("same", cellBytes * 3))
+        assertEquals("Mixed-store owner lookup keeps both layouts in cell order",
+            mixed.cells.mapNotNull { it.cachedContent }, mixed.cachedContents)
         assertEquals("Mixed-store surfaces must observe mutations in their second store",
             mixed.metadataRetainedBytes + cellBytes * 4, mixed.retainedBytes)
         store.insert(content("unmapped"))
         assertEquals("Mixed-store surfaces must also observe their first store's eviction",
             mixed.metadataRetainedBytes + cellBytes * 3, mixed.retainedBytes)
+        assertEquals("Unmapped entries cannot become cell shape owners",
+            mixed.cells.mapNotNull { it.cachedContent }, mixed.cachedContents)
     }
 
     @Test fun currentParentMemoryCountsSharedStoresAndLayoutsOnce() {

@@ -1002,7 +1002,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
                 engine.incrementalTableSurface = null
                 engine.tableIncrementalRelayoutObserver = null
             }
-            cellShapes.synchronizeOwners(prepared.values.flatMap { entry -> entry.surface.cells.mapNotNull { it.cachedContent } })
+            cellShapes.synchronizeOwners(prepared.values.flatMap { it.surface.cachedContents })
             entries = prepared
             key = nextKey
             PreparedProseInstrumentation.laidOut(tableLayoutStarted, "editor-table-$revision")
