@@ -310,6 +310,7 @@ public final class PreparedProseLayout: NSObject {
     var currentRetainedBytes: Int {
         var bytes = 0
         forEachRetainedLayout(visit: { bytes += $0.retainedBytes - $0.tableRetainedBytesAtPreparation },
+                              storeBytes: { bytes += $0 },
                               table: { bytes += $0.metadataRetainedBytes })
         return bytes
     }
@@ -322,6 +323,7 @@ public final class PreparedProseLayout: NSObject {
     }
 
     func forEachRetainedLayout(visit: (PreparedProseLayout) -> Void,
+                              storeBytes: (Int) -> Void = { _ in },
                               table: (ViewerTableSurface) -> Void = { _ in }) {
         var layouts = Set<ObjectIdentifier>()
         var stores = Set<ObjectIdentifier>()
@@ -332,8 +334,11 @@ public final class PreparedProseLayout: NSObject {
             for block in layout.blocks {
                 guard let surface = block.tableSurface else { continue }
                 if surfaces.insert(ObjectIdentifier(surface)).inserted { table(surface) }
-                if stores.insert(ObjectIdentifier(surface.layoutStore)).inserted {
-                    surface.layoutStore.residentLayouts.forEach(walk)
+                surface.forEachLayoutStore { store in
+                    guard stores.insert(ObjectIdentifier(store)).inserted else { return }
+                    let snapshot = store.residentSnapshot
+                    storeBytes(snapshot.keyBytes)
+                    snapshot.layouts.forEach(walk)
                 }
             }
         }

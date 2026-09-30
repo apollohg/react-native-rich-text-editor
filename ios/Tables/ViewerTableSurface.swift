@@ -9,7 +9,8 @@ final class PreparedViewerTableCell {
     let contentOrigin: CGPoint
     let isHeader: Bool
     let attributesKey: String?
-    let contentKey: ProseLayoutKey
+    let storeKey: TableCellLayoutStore.Key
+    var contentKey: ProseLayoutKey { storeKey.layoutKey }
     let contentSize: CGSize
     let accessibilityNodes: [PreparedProseAccessibilityNode]
     let hasNestedTables: Bool
@@ -21,12 +22,12 @@ final class PreparedViewerTableCell {
     let prepareContent: () -> PreparedProseLayout
 
     var content: PreparedProseLayout {
-        layoutStore.value(for: contentKey) {
+        layoutStore.value(for: storeKey) {
             let rebuilt = prepareContent()
             return rebuilt.withCellShape(rebuilt.cellShape, preparation: prepareContent)
         }
     }
-    var cachedContent: PreparedProseLayout? { layoutStore.peek(contentKey) }
+    var cachedContent: PreparedProseLayout? { layoutStore.peek(storeKey) }
     let metadataRetainedBytes: Int
     var retainedBytes: Int { metadataRetainedBytes + (cachedContent?.retainedBytes ?? 0) }
 
@@ -42,11 +43,12 @@ final class PreparedViewerTableCell {
         self.contentOrigin = contentOrigin
         self.isHeader = isHeader
         self.attributesKey = attributesKey
-        self.contentKey = content.key
+        self.storeKey = .init(content.key)
         self.contentSize = content.size
         self.contentError = content.error
         self.accessibilityNodes = TableAccessibility.contentNodes(of: content)
-        self.metadataRetainedBytes = 96 + accessibilityNodes.reduce(0) { $0 + $1.estimatedRetainedBytes }
+        self.metadataRetainedBytes = 96 + TableCellLayoutStore.Key.additionalRetainedBytes
+            + accessibilityNodes.reduce(0) { $0 + $1.estimatedRetainedBytes }
         self.hasNestedTables = content.blocks.contains { $0.tableSurface != nil }
         self.hasAtoms = content.blocks.contains { $0.atomSlot != nil || $0.tableSurface?.hasAtoms == true }
         self.hasImages = !content.imageAttachments.isEmpty || content.blocks.contains {
@@ -56,14 +58,14 @@ final class PreparedViewerTableCell {
             && content.interactions.allSatisfy { $0.docPos == nil }
         self.layoutStore = layoutStore
         self.prepareContent = content.cellPreparation ?? prepareContent ?? { content }
-        layoutStore.insert(content)
+        layoutStore.insert(content, for: storeKey)
     }
 
     convenience init(reusing cell: PreparedViewerTableCell, at position: TableGridCell, layoutStore: TableCellLayoutStore) {
         self.init(copyingGeometry: cell, at: position, contentKey: cell.contentKey,
             attributesKey: cell.attributesKey, layoutStore: layoutStore, prepareContent: cell.prepareContent)
         if layoutStore !== cell.layoutStore, let content = cell.cachedContent {
-            layoutStore.insert(content, for: contentKey)
+            layoutStore.insert(content, for: storeKey)
         }
     }
 
@@ -78,7 +80,7 @@ final class PreparedViewerTableCell {
         contentOrigin = cell.contentOrigin
         isHeader = cell.isHeader
         self.attributesKey = attributesKey
-        self.contentKey = contentKey
+        self.storeKey = contentKey == cell.contentKey ? cell.storeKey : .init(contentKey)
         contentSize = cell.contentSize
         accessibilityNodes = cell.accessibilityNodes
         hasNestedTables = cell.hasNestedTables
@@ -115,10 +117,21 @@ final class ViewerTableSurface {
 
     var bounds: CGRect { CGRect(origin: .zero, size: layout.contentSize) }
     var retainedBytes: Int {
-        let contentBytes = hasSharedCellStore
-            ? layoutStore.retainedLayoutBytes(for: cells.lazy.map(\.contentKey), snapshot: retainedByteSnapshot)
-            : cells.reduce(0) { $0 + ($1.cachedContent?.retainedBytes ?? 0) }
-        return metadataRetainedBytes + contentBytes
+        if hasSharedCellStore {
+            return metadataRetainedBytes + layoutStore.retainedBytes(for: cells.lazy.map(\.storeKey), snapshot: retainedByteSnapshot)
+        }
+        var bytes = metadataRetainedBytes + cells.reduce(0) { $0 + ($1.cachedContent?.retainedBytes ?? 0) }
+        forEachLayoutStore { bytes += $0.residentKeyRetainedBytes }
+        return bytes
+    }
+
+    func forEachLayoutStore(_ visit: (TableCellLayoutStore) -> Void) {
+        visit(layoutStore)
+        guard !hasSharedCellStore else { return }
+        var visited: Set<ObjectIdentifier> = [ObjectIdentifier(layoutStore)]
+        for cell in cells where visited.insert(ObjectIdentifier(cell.layoutStore)).inserted {
+            visit(cell.layoutStore)
+        }
     }
     var metadataRetainedBytes: Int {
         256 + cellMetadataRetainedBytes + TableCellLayoutStore.RetainedByteSnapshot.estimatedRetainedBytes

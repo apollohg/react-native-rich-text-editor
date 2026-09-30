@@ -1,6 +1,7 @@
 import XCTest
 
 final class TableCellLayoutStoreTests: XCTestCase {
+    private let cachedKeyBytes = MemoryLayout<Int>.stride
     private func layout(_ name: String, bytes: Int = 100) -> PreparedProseLayout {
         let key = ProseLayoutKey(semanticKey: name, widthPixels: 100, themeDigest: "store-test",
             nativeFontRevision: 0, fontEnvironmentRevision: 0, displayScale: 1,
@@ -8,8 +9,33 @@ final class TableCellLayoutStoreTests: XCTestCase {
         return PreparedProseLayout(key: key, size: CGSize(width: 100, height: 20), blocks: [], retainedBytes: bytes)
     }
 
+    func testResidentAdmissionChargesCachedLookupKeyStorage() {
+        let payloadBytes = 100
+        let cachedHashBytes = MemoryLayout<Int>.stride
+        let exactBudget = (payloadBytes + cachedHashBytes) * 2
+        for (budget, expectedCount) in [(exactBudget, 2), (exactBudget - 1, 1)] {
+            let store = TableCellLayoutStore(byteBudget: budget)
+            store.insert(layout("first", bytes: payloadBytes))
+            store.insert(layout("second", bytes: payloadBytes))
+            XCTAssertEqual(store.count, expectedCount, "budget=\(budget) must charge the cached dictionary key")
+            XCTAssertEqual(store.unmountedRetainedBytes, (payloadBytes + cachedHashBytes) * expectedCount)
+        }
+    }
+
+    func testStoreLookupPreservesCanonicalStringEquality() {
+        let store = TableCellLayoutStore()
+        let composed = layout("caf\u{e9}")
+        let decomposed = layout("cafe\u{301}", bytes: 200)
+        store.insert(composed)
+        XCTAssertTrue(store.peek(decomposed.key) === composed)
+        store.insert(decomposed)
+        XCTAssertEqual(store.count, 1, "Canonically equivalent keys must replace the same resident entry")
+        XCTAssertTrue(store.peek(composed.key) === decomposed)
+    }
+
     func testStoreEvictsByRetainedBytes() {
-        let store = TableCellLayoutStore(byteBudget: 200)
+        let budget = (100 + cachedKeyBytes) * 2
+        let store = TableCellLayoutStore(byteBudget: budget)
         let first = layout("first")
         let second = layout("second")
         let third = layout("third")
@@ -20,12 +46,12 @@ final class TableCellLayoutStoreTests: XCTestCase {
         XCTAssertNil(store.peek(second.key), "Least-recent cell must be released to respect the byte budget")
         XCTAssertTrue(store.peek(first.key) === first)
         XCTAssertTrue(store.peek(third.key) === third)
-        XCTAssertEqual(store.unmountedRetainedBytes, 200)
+        XCTAssertEqual(store.unmountedRetainedBytes, budget)
     }
 
     func testSurfaceRetainedBytesTracksReplacementEvictionAndPinning() {
         let cellBytes = 100
-        let store = TableCellLayoutStore(byteBudget: cellBytes * 3, capacity: 3)
+        let store = TableCellLayoutStore(byteBudget: (cellBytes + cachedKeyBytes) * 3, capacity: 3)
         let names = ["first", "second", "third"]
         let cells = names.enumerated().map {
             TableGridCell(sourceIndex: $0.offset, row: 0, column: $0.offset, contentKey: $0.element)
@@ -39,21 +65,21 @@ final class TableCellLayoutStoreTests: XCTestCase {
                 return self.layout(cell.contentKey, bytes: cellBytes)
             }
         let metadata = surface.metadataRetainedBytes
-        XCTAssertEqual(surface.retainedBytes, metadata + cellBytes * 3)
-        XCTAssertEqual(surface.retainedBytes, metadata + cellBytes * 3)
+        XCTAssertEqual(surface.retainedBytes, metadata + cellBytes * 3 + cachedKeyBytes * 3)
+        XCTAssertEqual(surface.retainedBytes, metadata + cellBytes * 3 + cachedKeyBytes * 3)
         store.insert(layout(names[0], bytes: cellBytes + cellBytes / 2))
-        XCTAssertEqual(surface.retainedBytes, metadata + cellBytes * 2 + cellBytes / 2,
+        XCTAssertEqual(surface.retainedBytes, metadata + cellBytes * 2 + cellBytes / 2 + cachedKeyBytes * 2,
             "Replacing the same key changes its charge and evicts the least-recent sibling")
         let second = layout(names[1], bytes: cellBytes)
         store.pin(second.key)
         store.insert(second)
-        XCTAssertEqual(surface.retainedBytes, metadata + cellBytes * 3 + cellBytes / 2)
+        XCTAssertEqual(surface.retainedBytes, metadata + cellBytes * 3 + cellBytes / 2 + cachedKeyBytes * 3)
         store.insert(layout("unmapped-first", bytes: cellBytes * 2))
-        XCTAssertEqual(surface.retainedBytes, metadata + cellBytes,
+        XCTAssertEqual(surface.retainedBytes, metadata + cellBytes + cachedKeyBytes * 2,
             "Only the pinned mapped cell remains resident")
         store.unpin(second.key)
         store.insert(layout("unmapped-second", bytes: cellBytes * 2))
-        XCTAssertEqual(surface.retainedBytes, metadata,
+        XCTAssertEqual(surface.retainedBytes, metadata + cachedKeyBytes,
             "Unpin-triggered eligibility and later eviction invalidate the old resident charge")
         XCTAssertEqual(preparations, names.count, "Reading memory charges must never rebuild evicted content")
     }
@@ -75,24 +101,31 @@ final class TableCellLayoutStoreTests: XCTestCase {
             style: TableStyle(), direction: .leftToRight) { _, _ in content.size.height }
         let surface = ViewerTableSurface(identity: "mixed-stores", hostViewportWidth: 300,
             style: TableStyle(), direction: .leftToRight, layout: grid, cells: cells, preparationError: nil)
-        XCTAssertEqual(surface.retainedBytes, surface.metadataRetainedBytes + cellBytes * cells.count)
+        XCTAssertEqual(surface.retainedBytes, surface.metadataRetainedBytes + cellBytes * cells.count + cachedKeyBytes * 2)
         secondStore.insert(layout("shared", bytes: cellBytes * 2))
-        XCTAssertEqual(surface.retainedBytes, surface.metadataRetainedBytes + cellBytes * 4,
+        XCTAssertEqual(surface.retainedBytes, surface.metadataRetainedBytes + cellBytes * 4 + cachedKeyBytes * 2,
             "A surface assembled from multiple stores must observe changes in each store")
         let shared = ViewerTableSurface(identity: "one-store", hostViewportWidth: 300,
             style: TableStyle(), direction: .leftToRight, layout: grid, cells: Array(cells.prefix(2)), preparationError: nil)
         DispatchQueue.concurrentPerform(iterations: 64) { _ in
-            XCTAssertEqual(shared.retainedBytes, shared.metadataRetainedBytes + cellBytes * 2,
+            XCTAssertEqual(shared.retainedBytes, shared.metadataRetainedBytes + cellBytes * 2 + cachedKeyBytes,
                 "Concurrent readers preserve the original per-cell multiplicity for a shared key")
         }
         firstStore.insert(layout("shared", bytes: cellBytes * 2))
-        XCTAssertEqual(shared.retainedBytes, shared.metadataRetainedBytes + cellBytes * 4)
+        XCTAssertEqual(shared.retainedBytes, shared.metadataRetainedBytes + cellBytes * 4 + cachedKeyBytes)
+        let parentBytes = 64
+        let parent = PreparedProseLayout(key: layout("mixed-parent").key, size: surface.bounds.size,
+            blocks: [PreparedProseBlock(fragments: [], bounds: surface.bounds, tableSurface: surface)],
+            retainedBytes: parentBytes + surface.retainedBytes)
+        XCTAssertEqual(parent.currentRetainedBytes,
+            parentBytes + surface.metadataRetainedBytes + cellBytes * 4 + MemoryLayout<Int>.stride * 2,
+            "A mixed-store parent must count each resident layout and cached lookup key once")
     }
 
     func testCurrentParentMemoryFollowsCellEvictionAndRebuild() {
         let cellBytes = 100
         let parentBytes = 64
-        let store = TableCellLayoutStore(byteBudget: cellBytes, capacity: 1)
+        let store = TableCellLayoutStore(byteBudget: cellBytes + cachedKeyBytes, capacity: 1)
         let record = TableGridRecord(documentOwner: "memory", columns: 1, rows: 1, columnWidths: [100],
             cells: [TableGridCell(sourceIndex: 0, row: 0, column: 0, contentKey: "cell")])
         let surface = ViewerTableSurface(identity: "memory", record: record, viewportWidth: 100,
@@ -129,11 +162,11 @@ final class TableCellLayoutStoreTests: XCTestCase {
             blocks: surfaces.map { PreparedProseBlock(fragments: [], bounds: $0.bounds, tableSurface: $0) },
             retainedBytes: parentBytes + surfaces.reduce(0) { $0 + $1.retainedBytes })
         XCTAssertEqual(parent.currentRetainedBytes,
-            parentBytes + first.metadataRetainedBytes + second.metadataRetainedBytes + cellBytes,
+            parentBytes + first.metadataRetainedBytes + second.metadataRetainedBytes + cellBytes + cachedKeyBytes,
             "Aliased surfaces and a shared store must not multiply retained cell ownership")
         store.insert(layout("larger-unmapped", bytes: cellBytes * 2))
         XCTAssertEqual(parent.currentRetainedBytes,
-            parentBytes + first.metadataRetainedBytes + second.metadataRetainedBytes + cellBytes * 2,
+            parentBytes + first.metadataRetainedBytes + second.metadataRetainedBytes + cellBytes * 2 + cachedKeyBytes,
             "Every resident entry counts even when its key is absent from both surfaces")
     }
 
@@ -388,13 +421,13 @@ final class TableCellLayoutStoreTests: XCTestCase {
             scaleBits: Double(1).bitPattern, styleDigest: "store-test", atomGeometryDigest: "", imageGeometryDigest: "")
         let prepared = try context.resolve(key, build: { plain }, bind: { _ in nil })
         XCTAssertGreaterThan(prepared.cellShapeCatalogRetainedBytes, 0)
-        let store = TableCellLayoutStore(byteBudget: prepared.retainedBytes)
+        let store = TableCellLayoutStore(byteBudget: prepared.retainedBytes + cachedKeyBytes)
         store.insert(prepared)
         XCTAssertNil(store.peek(prepared.key), "The shape graph must also fit the unmounted budget")
     }
 
     func testPresentationPinsOnlyItsCurrentWindow() {
-        let store = TableCellLayoutStore(byteBudget: 100, capacity: 1)
+        let store = TableCellLayoutStore(byteBudget: 100 + cachedKeyBytes, capacity: 1)
         let record = TableGridRecord(documentOwner: "window", columns: 1, rows: 3, columnWidths: [100],
             cells: (0..<3).map { TableGridCell(sourceIndex: $0, row: $0, column: 0, contentKey: "cell-\($0)") })
         let surface = ViewerTableSurface(identity: "window", record: record, viewportWidth: 100,
@@ -410,7 +443,7 @@ final class TableCellLayoutStoreTests: XCTestCase {
         XCTAssertTrue(surface.cells.allSatisfy { $0.cachedContent != nil }, "Presented cells must survive LRU pressure")
         _ = ViewerTablePresentation.project(layout: parent, owner: owner, viewport: .known(.zero))
         XCTAssertEqual(store.count, 1, "Hidden cells must return to the bounded unmounted cache")
-        XCTAssertLessThanOrEqual(store.unmountedRetainedBytes, 100)
+        XCTAssertLessThanOrEqual(store.unmountedRetainedBytes, 100 + cachedKeyBytes)
     }
 
     func testRebuiltReusedCellKeepsItsStoreKey() {

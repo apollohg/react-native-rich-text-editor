@@ -3,6 +3,20 @@ import Foundation
 final class TableCellLayoutStore {
     static let maximumResidentLayouts = 2_272
 
+    struct Key: Hashable {
+        let layoutKey: ProseLayoutKey
+        private let cachedHash: Int
+        static let additionalRetainedBytes = MemoryLayout<Self>.stride - MemoryLayout<ProseLayoutKey>.stride
+
+        init(_ layoutKey: ProseLayoutKey) {
+            self.layoutKey = layoutKey
+            cachedHash = layoutKey.hashValue
+        }
+
+        func hash(into hasher: inout Hasher) { hasher.combine(cachedHash) }
+        static func == (lhs: Self, rhs: Self) -> Bool { lhs.layoutKey == rhs.layoutKey }
+    }
+
     // Each snapshot belongs to one immutable sequence of cell keys.
     final class RetainedByteSnapshot {
         // Includes the snapshot, its surface handle, and the store revision.
@@ -24,14 +38,14 @@ final class TableCellLayoutStore {
         init(_ layout: PreparedProseLayout, key: ProseLayoutKey) {
             self.key = key
             self.layout = layout
-            self.retainedBytes = layout.retainedBytes + layout.cellShapeCatalogRetainedBytes
+            self.retainedBytes = layout.retainedBytes + layout.cellShapeCatalogRetainedBytes + Key.additionalRetainedBytes
         }
     }
 
     private let lock = NSRecursiveLock()
     private let byteBudget: Int
     private let capacity: Int
-    private var entries: [ProseLayoutKey: Entry] = [:]
+    private var entries: [Key: Entry] = [:]
     private var pins: [ProseLayoutKey: Int] = [:]
     private var newest: Entry?
     private var oldest: Entry?
@@ -45,25 +59,38 @@ final class TableCellLayoutStore {
         self.capacity = max(0, capacity)
     }
 
-    var residentLayouts: [PreparedProseLayout] {
+    var residentLayouts: [PreparedProseLayout] { residentSnapshot.layouts }
+
+    var residentSnapshot: (layouts: [PreparedProseLayout], keyBytes: Int) {
         lock.lock(); defer { lock.unlock() }
-        return entries.values.map(\.layout)
+        return (entries.values.map(\.layout), entries.count * Key.additionalRetainedBytes)
+    }
+
+    var residentKeyRetainedBytes: Int {
+        lock.lock(); defer { lock.unlock() }
+        return entries.count * Key.additionalRetainedBytes
     }
 
     var count: Int { lock.lock(); defer { lock.unlock() }; return entries.count }
     var unmountedRetainedBytes: Int { lock.lock(); defer { lock.unlock() }; return bytes - pinnedBytes }
 
     func peek(_ key: ProseLayoutKey) -> PreparedProseLayout? {
+        peek(Key(key))
+    }
+
+    func peek(_ key: Key) -> PreparedProseLayout? {
         lock.lock(); defer { lock.unlock() }
         return entries[key]?.layout
     }
 
-    func retainedLayoutBytes<Keys: Sequence>(for keys: Keys, snapshot: RetainedByteSnapshot) -> Int
-        where Keys.Element == ProseLayoutKey {
+    func retainedBytes<Keys: Sequence>(for keys: Keys, snapshot: RetainedByteSnapshot) -> Int
+        where Keys.Element == Key {
         lock.lock(); defer { lock.unlock() }
         let canCache = snapshot.store === self && contentRevision != UInt64.max
         if canCache, snapshot.revision == contentRevision { return snapshot.bytes }
-        let total = keys.reduce(0) { $0 + (entries[$1]?.layout.retainedBytes ?? 0) }
+        let total = keys.reduce(entries.count * Key.additionalRetainedBytes) {
+            $0 + (entries[$1]?.layout.retainedBytes ?? 0)
+        }
         if canCache {
             snapshot.revision = contentRevision
             snapshot.bytes = total
@@ -76,6 +103,10 @@ final class TableCellLayoutStore {
     }
 
     func value(for key: ProseLayoutKey, build: () -> PreparedProseLayout) -> PreparedProseLayout {
+        value(for: Key(key), build: build)
+    }
+
+    func value(for key: Key, build: () -> PreparedProseLayout) -> PreparedProseLayout {
         lock.lock(); defer { lock.unlock() }
         if let entry = entries[key] {
             unlink(entry)
@@ -88,11 +119,15 @@ final class TableCellLayoutStore {
     }
 
     func insert(_ layout: PreparedProseLayout, for key: ProseLayoutKey? = nil) {
+        insert(layout, for: Key(key ?? layout.key))
+    }
+
+    func insert(_ layout: PreparedProseLayout, for key: Key) {
         lock.lock(); defer { lock.unlock() }
-        let entry = Entry(layout, key: key ?? layout.key)
-        if let existing = entries[entry.key] { remove(existing) }
+        let entry = Entry(layout, key: key.layoutKey)
+        if let existing = entries[key] { remove(existing) }
         recordContentMutation()
-        entries[entry.key] = entry
+        entries[key] = entry
         bytes += entry.retainedBytes
         if pins[entry.key, default: 0] > 0 { pinnedBytes += entry.retainedBytes }
         link(entry)
@@ -101,7 +136,7 @@ final class TableCellLayoutStore {
 
     func pin(_ key: ProseLayoutKey) {
         lock.lock(); defer { lock.unlock() }
-        if pins[key, default: 0] == 0 { pinnedBytes += entries[key]?.retainedBytes ?? 0 }
+        if pins[key, default: 0] == 0 { pinnedBytes += entries[Key(key)]?.retainedBytes ?? 0 }
         pins[key, default: 0] += 1
     }
 
@@ -110,7 +145,7 @@ final class TableCellLayoutStore {
         guard let count = pins[key] else { return }
         if count > 1 { pins[key] = count - 1; return }
         pins.removeValue(forKey: key)
-        pinnedBytes -= entries[key]?.retainedBytes ?? 0
+        pinnedBytes -= entries[Key(key)]?.retainedBytes ?? 0
         evict()
     }
 
@@ -126,7 +161,7 @@ final class TableCellLayoutStore {
     private func remove(_ entry: Entry) {
         recordContentMutation()
         unlink(entry)
-        entries.removeValue(forKey: entry.key)
+        entries.removeValue(forKey: Key(entry.key))
         bytes -= entry.retainedBytes
         if pins[entry.key, default: 0] > 0 { pinnedBytes -= entry.retainedBytes }
     }
