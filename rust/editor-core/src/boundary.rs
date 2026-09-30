@@ -200,6 +200,12 @@ impl Eq for StackSafeJsonValue {}
 
 impl Drop for StackSafeJsonValue {
     fn drop(&mut self) {
+        if !matches!(
+            self.value,
+            serde_json::Value::Array(_) | serde_json::Value::Object(_)
+        ) {
+            return;
+        }
         let mut pending = vec![std::mem::take(&mut self.value)];
         while let Some(mut value) = pending.pop() {
             match &mut value {
@@ -218,6 +224,12 @@ pub(crate) fn drop_json_value_stack_safe(value: serde_json::Value) {
 }
 
 pub(crate) fn clone_json_value_stack_safe(value: &serde_json::Value) -> serde_json::Value {
+    if !matches!(
+        value,
+        serde_json::Value::Array(_) | serde_json::Value::Object(_)
+    ) {
+        return value.clone();
+    }
     enum Frame<'a> {
         Visit(&'a serde_json::Value),
         BuildArray(usize),
