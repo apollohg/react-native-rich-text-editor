@@ -44,8 +44,12 @@ final class PreparedCellShapeBuildContext {
     private var pins: [ObjectIdentifier: PreparedCellShapeReference] = [:]
     private var closed = false
 
-    fileprivate init(catalog: PreparedCellShapeCatalog) {
+    fileprivate init(catalog: PreparedCellShapeCatalog,
+                     resolved: [PreparedCellShapeKey: PreparedCellShapeReference] = [:],
+                     pins: [ObjectIdentifier: PreparedCellShapeReference] = [:]) {
         self.catalog = catalog
+        self.resolved = resolved
+        self.pins = pins
     }
 
     func fork() -> PreparedCellShapeBuildContext { catalog.newBuildContext() }
@@ -130,44 +134,68 @@ final class PreparedCellShapeCatalog {
     private(set) var prunePassesForTesting = 0
 
     func newBuildContext(reusing layouts: [PreparedProseLayout] = []) -> PreparedCellShapeBuildContext {
-        let context = PreparedCellShapeBuildContext(catalog: self)
         var shapes: [PreparedCellShapeKey: PreparedCellShape] = [:]
         let capacity = TableCellLayoutStore.maximumResidentLayouts
         for layout in layouts {
             guard shapes.count < capacity else { break }
             collectShapes(in: layout, into: &shapes, maximumCount: capacity)
         }
-        shapes.values.forEach { context.rememberPinned(stageForBuild($0)) }
-        return context
+        guard !shapes.isEmpty else { return PreparedCellShapeBuildContext(catalog: self) }
+        var resolved: [PreparedCellShapeKey: PreparedCellShapeReference] = [:]
+        var pins: [ObjectIdentifier: PreparedCellShapeReference] = [:]
+        resolved.reserveCapacity(shapes.count)
+        pins.reserveCapacity(shapes.count)
+        lock.lock()
+        if entries.isEmpty { entries.reserveCapacity(shapes.count) }
+        if buildPins.isEmpty { buildPins.reserveCapacity(shapes.count) }
+        for shape in shapes.values {
+            let (retained, reference) = stageLocked(shape)
+            resolved[retained.key] = reference
+            pins[ObjectIdentifier(retained)] = reference
+        }
+        lock.unlock()
+        return PreparedCellShapeBuildContext(catalog: self, resolved: resolved, pins: pins)
     }
 
     func acquireForBuild(_ key: PreparedCellShapeKey) -> PreparedCellShape? {
         lock.lock()
         defer { lock.unlock() }
-        guard let shape = entries[key]?.shape else { return nil }
-        pinLocked(shape)
+        guard let reference = entries[key], let shape = reference.shape else { return nil }
+        pinLocked(shape, reference: reference)
         return shape
     }
 
     func stageForBuild(_ shape: PreparedCellShape) -> PreparedCellShape {
         lock.lock()
+        defer { lock.unlock() }
+        return stageLocked(shape).0
+    }
+
+    private func stageLocked(_ shape: PreparedCellShape) -> (PreparedCellShape, PreparedCellShapeReference) {
         stagedSincePrune += 1
         if stagedSincePrune >= TableCellLayoutStore.maximumResidentLayouts {
             pruneLocked()
             stagedSincePrune = 0
         }
-        let retained = entries[shape.key]?.shape ?? shape
-        if entries[shape.key]?.shape == nil { entries[shape.key] = PreparedCellShapeReference(shape) }
-        pinLocked(retained)
-        lock.unlock()
-        return retained
+        let retained: PreparedCellShape
+        let reference: PreparedCellShapeReference
+        if let existing = entries[shape.key], let live = existing.shape {
+            retained = live
+            reference = existing
+        } else {
+            retained = shape
+            reference = PreparedCellShapeReference(shape)
+            entries[shape.key] = reference
+        }
+        pinLocked(retained, reference: reference)
+        return (retained, reference)
     }
 
-    private func pinLocked(_ shape: PreparedCellShape) {
+    private func pinLocked(_ shape: PreparedCellShape, reference: PreparedCellShapeReference) {
         let identifier = ObjectIdentifier(shape)
         let previous = buildPins[identifier]
         let count = previous?.reference.shape === shape ? (previous?.count ?? 0) : 0
-        buildPins[identifier] = (PreparedCellShapeReference(shape), count + 1)
+        buildPins[identifier] = (reference, count + 1)
     }
 
     func releaseBuildPins(_ shapes: [PreparedCellShape]) {

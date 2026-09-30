@@ -185,6 +185,35 @@ final class TableCellLayoutStoreTests: XCTestCase {
             store.residentLayouts.reduce(0) { $0 + $1.cellShapeCatalogRetainedBytes })
     }
 
+    func testSeededContextsShareLiveWinnerAndReleasePinsIndependently() {
+        let catalog = PreparedCellShapeCatalog()
+        let local = layout("seed-winner")
+        let key = PreparedCellShapeKey(contentKey: "same-content", widthPixels: local.key.widthPixels,
+            scaleBits: local.key.displayScaleBits, styleDigest: "store-test",
+            atomGeometryDigest: "", imageGeometryDigest: "")
+        var winner: PreparedCellShape? = PreparedCellShape(key: key, localLayout: local)
+        weak var releasedWinner = winner
+        var owner: PreparedProseLayout? = local.withCellShape(winner!)
+        let first = catalog.newBuildContext(reusing: [owner!])
+        let competingOwner = local.withCellShape(PreparedCellShape(key: key, localLayout: local))
+        let second = catalog.newBuildContext(reusing: [competingOwner])
+        if case let .cached(selected) = second.beginResolution(key) {
+            XCTAssertTrue(selected === winner, "Seeding must preserve the catalog's live same-key winner")
+        } else { XCTFail("The second context must reuse the already resident shape") }
+        first.close()
+        XCTAssertEqual(catalog.countForTesting, 1, "Closing one context must preserve the other's pin")
+        if case let .cached(selected) = second.beginResolution(key) {
+            XCTAssertTrue(selected === winner)
+        } else { XCTFail("The remaining context lost its reusable shape") }
+        owner = nil
+        winner = nil
+        XCTAssertNil(releasedWinner, "Open contexts and catalog pins must remain weak")
+        XCTAssertEqual(catalog.countForTesting, 0, "Releasing the actual owner removes the weak entry")
+        second.close()
+        second.close()
+        withExtendedLifetime(competingOwner) {}
+    }
+
     func testParentCacheRechargesMutatedStoresBeforeReleasingMounts() throws {
         let heavyBytes = 4_096
         let lightBytes = 128
