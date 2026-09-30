@@ -1056,8 +1056,10 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         positionedBlocks = blocks
         val key = ProseLayoutKey("editor-table-canvas", width, "editor-table-canvas", 0, 0,
             input.resources.displayMetrics.density.toBits().toLong(), 0, "editor-table-canvas")
+        val tableRetainedBytes = blocks.sumOf { it.tableSurface?.retainedBytes ?: 0L }
         drawingView.install(PreparedProseLayout(key, width, height, blocks,
-            retainedBytes = blocks.sumOf { it.retainedBytes }))
+            retainedBytes = blocks.sumOf { it.nonTableRetainedBytes } + tableRetainedBytes,
+            tableRetainedBytesAtPreparation = tableRetainedBytes))
         host.layoutEditorContentChild(drawingView)
         positionActiveInput()
         selectionGeometryMayChange()

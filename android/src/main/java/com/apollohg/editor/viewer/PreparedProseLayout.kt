@@ -107,7 +107,8 @@ internal data class PreparedProseBlock(
     val topPx: Int get() = bounds.top
     val bottomPx: Int get() = bounds.bottom
     fun intersects(clip: Rect): Boolean = bottomPx > clip.top && topPx < clip.bottom
-    val retainedBytes: Long get() = 192L + fragments.sumOf { it.retainedBytes } + (tableSurface?.retainedBytes ?: 0L)
+    val nonTableRetainedBytes: Long get() = 192L + fragments.sumOf { it.retainedBytes }
+    val retainedBytes: Long get() = nonTableRetainedBytes + (tableSurface?.retainedBytes ?: 0L)
 }
 
 internal data class PreparedProseInteraction(

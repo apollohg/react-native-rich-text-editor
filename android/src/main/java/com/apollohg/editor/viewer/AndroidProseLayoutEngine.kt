@@ -584,8 +584,9 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                     tableSurface = surface,
                     tableBounds = Rect(tableBounds)
                 )
-                retained += tableBlock.retainedBytes
-                tableRetainedBytes += surface.retainedBytes
+                val surfaceRetainedBytes = surface.retainedBytes
+                retained += tableBlock.nonTableRetainedBytes + surfaceRetainedBytes
+                tableRetainedBytes += surfaceRetainedBytes
                 return@mapIndexed tableBlock
             }
             var prepared = prepareBlock(
