@@ -446,6 +446,32 @@ final class TableCellLayoutStoreTests: XCTestCase {
         XCTAssertLessThanOrEqual(store.unmountedRetainedBytes, 100 + cachedKeyBytes)
     }
 
+    func testProjectionUsesOneContentIdentityWhenCellExceedsUnmountedBudget() throws {
+        let cellName = "oversized-projected-cell"
+        let store = TableCellLayoutStore(byteBudget: 0)
+        let record = TableGridRecord(documentOwner: "projection-identity", columns: 1, rows: 1,
+            columnWidths: [100], cells: [TableGridCell(sourceIndex: 0, row: 0, column: 0, contentKey: cellName)])
+        var preparations = 0
+        let surface = ViewerTableSurface(identity: "projection-identity", record: record, viewportWidth: 100,
+            style: TableStyle(), direction: .leftToRight, displayScale: 1, layoutStore: store) { _, _ in
+                preparations += 1
+                return self.layout(cellName)
+            }
+        let parent = PreparedProseLayout(key: layout("parent").key, size: surface.bounds.size,
+            blocks: [PreparedProseBlock(fragments: [], bounds: surface.bounds, tableSurface: surface,
+                                       tableBounds: surface.bounds)], retainedBytes: 100)
+        preparations = 0
+        let owner = ViewerTablePresentationOwner()
+        let snapshot = ViewerTablePresentation.project(layout: parent, owner: owner, viewport: .known(surface.bounds))
+        let cell = try XCTUnwrap(snapshot.cells.first)
+        let content = try XCTUnwrap(snapshot.layouts.first { $0.layout.key.semanticKey == cellName })
+        XCTAssertEqual(preparations, 1, "A projected cell must resolve its oversized content only once")
+        XCTAssertTrue(cell.content === content.layout,
+            "Cell painting joins projected layouts by identity, even when the unmounted cache cannot retain them")
+        _ = ViewerTablePresentation.project(layout: parent, owner: owner, viewport: .known(.zero))
+        XCTAssertEqual(store.unmountedRetainedBytes, 0, "Projection must preserve the unmounted memory budget")
+    }
+
     func testRebuiltReusedCellKeepsItsStoreKey() {
         let store = TableCellLayoutStore()
         let retainedKey = layout("before-rebind").key

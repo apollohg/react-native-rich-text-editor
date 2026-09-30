@@ -898,7 +898,7 @@ enum ViewerTablePresentation {
                 for cell in windowCells {
                     let presented = present(cell, of: surface, contentOrigin: contentOrigin, clip: hostClip)
                     cells.append(presented)
-                    appendLayout(cell.content, origin: presented.contentBounds.origin,
+                    appendLayout(presented.content, origin: presented.contentBounds.origin,
                                  clip: hostClip.intersection(presented.contentBounds),
                                  parentScrollIdentity: surface.scrollIdentity)
                 }
