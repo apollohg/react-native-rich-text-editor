@@ -442,12 +442,12 @@ public final class PreparedProseDrawingView: UIView {
     }
 
     func selectionHandles(visibleIn requestedViewport: CGRect? = nil) -> [TableSelectionHandle] {
-        guard let snapshot = presentationSnapshot(),
-              let endpoints = selectedTableCellEndpoints,
-              let table = snapshot.tables.first(where: { $0.surface.identity == endpoints.tableID }),
+        guard let endpoints = selectedTableCellEndpoints,
               let selectedPositions = selectedTableCellSourceIndices[endpoints.tableID],
               let visible = configuredVisibleRect()?.intersection(requestedViewport ?? .infinite),
-              !visible.isNull, !visible.isEmpty
+              !visible.isNull, !visible.isEmpty,
+              let snapshot = presentationSnapshot(),
+              let table = snapshot.tables.first(where: { $0.surface.identity == endpoints.tableID })
         else { return [] }
         let cells = snapshot.cells.filter {
             $0.surface === table.surface && $0.surface.sourceTable != nil
