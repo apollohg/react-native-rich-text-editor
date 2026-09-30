@@ -159,6 +159,33 @@ impl CachedRenderBlocks {
         self.blocks.iter().map(|block| block.elements.as_slice())
     }
 
+    pub(crate) fn table_cell_output_bytes(
+        &self,
+        index: usize,
+        actual: &crate::tables::render::TableRenderRecord,
+    ) -> Option<usize> {
+        let block = self.blocks.get(index)?;
+        let [RenderElement::Table { table: cached, .. }] = block.elements.as_slice() else {
+            return None;
+        };
+        if cached.cells.len() != actual.cells.len()
+            || !cached
+                .cells
+                .iter()
+                .zip(&actual.cells)
+                .all(|(cached, actual)| Arc::ptr_eq(cached, actual))
+        {
+            return None;
+        }
+        Some(*block.cell_output_bytes.get_or_init(|| {
+            cached.cells.iter().fold(0usize, |bytes, cell| {
+                bytes.saturating_add(
+                    cell.retained_bytes(crate::render::output_bytes::render_element_bytes),
+                )
+            })
+        }))
+    }
+
     pub(crate) fn materialize(&self) -> Vec<Vec<RenderElement>> {
         self.blocks
             .iter()

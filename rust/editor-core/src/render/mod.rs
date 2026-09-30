@@ -1,5 +1,6 @@
 pub mod generate;
 pub mod incremental;
+pub(crate) mod output_bytes;
 
 use crate::model::{integral_unsigned, Document, Node};
 use crate::schema::{NodeRole, Schema};

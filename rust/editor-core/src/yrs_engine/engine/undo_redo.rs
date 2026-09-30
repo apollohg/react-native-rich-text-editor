@@ -548,7 +548,7 @@ impl YrsDocumentEngine {
             },
             render_update,
         };
-        self.admit_typed_result(request_id, &result)?;
+        self.admit_typed_result(request_id, &result, None)?;
         Ok(result)
     }
 

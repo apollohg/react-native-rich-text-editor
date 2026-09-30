@@ -204,6 +204,7 @@ fn render_cached_block(
         elements: Arc::new(elements),
         element_count,
         position_element_indices: Arc::new(position_element_indices),
+        cell_output_bytes: std::sync::OnceLock::new(),
     })
 }
 
@@ -289,6 +290,20 @@ fn render_localized_table_block(
         .try_reserve_exact(table.cells.capacity())
         .map_err(|_| CachedRenderError::AllocationFailed)?;
     cells.extend(table.cells.iter().cloned());
+    let cell_output_bytes = std::sync::OnceLock::new();
+    if let Some(previous) = old
+        .cell_output_bytes
+        .get()
+        .filter(|bytes| **bytes != usize::MAX)
+    {
+        let meter = crate::render::output_bytes::render_element_bytes;
+        if let Some(updated) = previous
+            .checked_sub(table.cells[index].retained_bytes(meter))
+            .and_then(|bytes| bytes.checked_add(replacement.retained_bytes(meter)))
+        {
+            let _ = cell_output_bytes.set(updated);
+        }
+    }
     cells[index] = Arc::new(replacement);
     let mut structure = (*table.structure).clone();
     structure.doc_size = new.node_size();
@@ -312,6 +327,7 @@ fn render_localized_table_block(
         elements: Arc::new(elements),
         element_count,
         position_element_indices: Arc::clone(&old.position_element_indices),
+        cell_output_bytes,
     }))
 }
 
@@ -385,6 +401,7 @@ fn rebase_cached_block(
         elements,
         element_count: old_block.element_count,
         position_element_indices: Arc::clone(&old_block.position_element_indices),
+        cell_output_bytes: old_block.cell_output_bytes.clone(),
     })
 }
 

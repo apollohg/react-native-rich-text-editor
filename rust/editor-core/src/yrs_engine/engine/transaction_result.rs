@@ -82,7 +82,7 @@ impl YrsDocumentEngine {
             },
             render_update: yrs_engine::RenderUpdate::None,
         };
-        self.admit_typed_result(request_id, &result)?;
+        self.admit_typed_result(request_id, &result, None)?;
         Ok(result)
     }
 
@@ -256,7 +256,11 @@ impl YrsDocumentEngine {
                                     },
                                     render_update,
                                 };
-                                self.admit_typed_result(compiled.request_id, &result)?;
+                                self.admit_typed_result(
+                                    compiled.request_id,
+                                    &result,
+                                    Some(render),
+                                )?;
                                 return Ok((result, None));
                             }
                         }
@@ -335,7 +339,7 @@ impl YrsDocumentEngine {
             },
             render_update,
         };
-        self.admit_typed_result(compiled.request_id, &result)?;
+        self.admit_typed_result(compiled.request_id, &result, Some(render))?;
         Ok((result, prepared_active_cache))
     }
 
@@ -343,8 +347,12 @@ impl YrsDocumentEngine {
         &self,
         request_id: u64,
         result: &yrs_engine::TypedTransactionResult,
+        render: Option<&crate::render::incremental::CachedRenderBlocks>,
     ) -> yrs_engine::OperationResult<()> {
-        let actual = result.derived_output_bytes();
+        let actual = render.map_or_else(
+            || result.derived_output_bytes(),
+            |render| result.derived_output_bytes_with_render_cache(Some(render)),
+        );
         if actual > self.editing_limits.max_derived_output_bytes {
             return Err(yrs_engine::OperationError::document_limit_exceeded(
                 request_id,
@@ -697,5 +705,54 @@ mod cached_render_error_classification_tests {
             code(CachedRenderError::ResourceLimitExceeded),
             "DOCUMENT_LIMIT_EXCEEDED"
         );
+    }
+}
+
+#[cfg(test)]
+mod output_meter_tests {
+    use super::*;
+
+    #[test]
+    fn cached_table_output_admission_preserves_exact_and_one_byte_short_limits() {
+        use crate::test_support::large_table_fixture::{
+            multi_paragraph_cell_document, session_with_document,
+        };
+        const REQUEST_ID: u64 = 1;
+        let mut session = session_with_document(&multi_paragraph_cell_document());
+        let engine = &mut session.engine;
+        let render = engine.derived_state.as_ref().unwrap().render_blocks.clone();
+        let mut result = engine
+            .prepare_empty_skip_result(
+                REQUEST_ID,
+                TransactionOrigin::LocalApi,
+                &yrs_engine::ResolvedSelection::All,
+                None,
+                false,
+                0,
+            )
+            .unwrap();
+        result.render_update = yrs_engine::RenderUpdate::Full(render.materialize());
+        let exact = result.derived_output_bytes();
+        assert_eq!(
+            result.derived_output_bytes_with_render_cache(Some(&render)),
+            exact
+        );
+        engine.editing_limits.max_derived_output_bytes = exact;
+        engine
+            .admit_typed_result(REQUEST_ID, &result, Some(&render))
+            .unwrap();
+        engine
+            .admit_typed_result(REQUEST_ID, &result, None)
+            .unwrap();
+        engine.editing_limits.max_derived_output_bytes = exact - 1;
+        let cached_error = engine
+            .admit_typed_result(REQUEST_ID, &result, Some(&render))
+            .unwrap_err();
+        let ordinary_error = engine
+            .admit_typed_result(REQUEST_ID, &result, None)
+            .unwrap_err();
+        assert_eq!(cached_error, ordinary_error);
+        assert_eq!(cached_error.actual, Some(exact as u64));
+        assert_eq!(cached_error.limit, Some((exact - 1) as u64));
     }
 }

@@ -1249,3 +1249,174 @@ fn localized_table_element_counts_follow_split_merge_and_resource_boundaries() {
         );
     }
 }
+
+#[test]
+fn table_output_meter_reuses_only_identical_ordered_cell_allocations() {
+    use crate::render::output_bytes::render_element_bytes;
+    use crate::tables::render::CELL_OUTPUT_METER_VISITS;
+    let schema = crate::schema::presets::prosemirror_table_schema();
+    let document = crate::serialize::from_prosemirror_json(
+        &crate::test_support::large_table_fixture::plain_table_document(3, 3),
+        &schema,
+        crate::serialize::UnknownTypeMode::Error,
+    )
+    .unwrap();
+    let cache = CachedRenderBlocks::build(&document, &schema, &ResourceLimits::default()).unwrap();
+    let output = cache.materialize();
+    let RenderElement::Table { table, .. } = &output[0][0] else {
+        panic!("table fixture");
+    };
+    let expected = table.cells.iter().fold(0usize, |bytes, cell| {
+        bytes.saturating_add(cell.retained_bytes(render_element_bytes))
+    });
+    CELL_OUTPUT_METER_VISITS.set(0);
+    assert_eq!(cache.table_cell_output_bytes(0, table), Some(expected));
+    assert_eq!(CELL_OUTPUT_METER_VISITS.replace(0), table.cells.len());
+    assert_eq!(cache.table_cell_output_bytes(0, table), Some(expected));
+    assert_eq!(
+        CELL_OUTPUT_METER_VISITS.replace(0),
+        0,
+        "an unchanged public clone must not recursively meter its cells again"
+    );
+    assert_eq!(cache.table_cell_output_bytes(usize::MAX, table), None);
+    let mut reordered = table.clone();
+    reordered.cells.swap(0, 1);
+    assert_eq!(cache.table_cell_output_bytes(0, &reordered), None);
+    let mut duplicated = table.clone();
+    duplicated.cells[1] = Arc::clone(&duplicated.cells[0]);
+    assert_eq!(cache.table_cell_output_bytes(0, &duplicated), None);
+    let mut changed = table.clone();
+    const EXTRA_CAPACITY: usize = 1024;
+    Arc::make_mut(&mut changed.cells[0])
+        .attrs_key
+        .reserve(EXTRA_CAPACITY);
+    assert_eq!(
+        cache.table_cell_output_bytes(0, &changed),
+        None,
+        "a detached key with different capacity cannot reuse the aggregate"
+    );
+    assert_eq!(
+        cache.table_cell_output_bytes(0, table),
+        Some(expected),
+        "old snapshots remain unchanged"
+    );
+}
+
+#[test]
+fn table_output_meter_tracks_localized_edits_rebases_and_saturation() {
+    use crate::render::output_bytes::render_element_bytes;
+    use crate::tables::render::CELL_OUTPUT_METER_VISITS;
+    const TABLE_INDEX: usize = 1;
+    const INLINE_OFFSET: u32 = 3;
+    let schema = crate::schema::presets::prosemirror_table_schema();
+    let limits = ResourceLimits::default();
+    let table_document = crate::serialize::from_prosemirror_json(
+        &crate::test_support::large_table_fixture::plain_table_document(3, 3),
+        &schema,
+        crate::serialize::UnknownTypeMode::Error,
+    )
+    .unwrap();
+    let mut document = doc(vec![
+        paragraph(vec![text("before")]),
+        table_document.root().child(0).unwrap().clone(),
+    ]);
+    let mut cache = CachedRenderBlocks::build(&document, &schema, &limits).unwrap();
+    let old_snapshot = cache.clone();
+    let mut records = Vec::new();
+    cache.visit_table_records(&mut records);
+    let (table_pos, table) = records[0];
+    let position = crate::tables::render::absolute_cell_starts(table, table_pos)[0] + INLINE_OFFSET;
+    let original = cache.table_cell_output_bytes(TABLE_INDEX, table).unwrap();
+    for iteration in 0..4 {
+        let inserting = iteration % 2 == 0;
+        let step = if inserting {
+            crate::transform::Step::InsertText {
+                pos: position,
+                text: "x".into(),
+                marks: vec![Mark::new("strong".into(), HashMap::new())],
+            }
+        } else {
+            crate::transform::Step::DeleteRange {
+                from: position,
+                to: position + 1,
+            }
+        };
+        let (next, _) = crate::transform::apply_step(&document, &step, &schema).unwrap();
+        let transition = cache
+            .transition_localized_textblock(
+                &document,
+                &next,
+                &schema,
+                TABLE_INDEX,
+                if inserting { 1 } else { -1 },
+                &limits,
+            )
+            .unwrap();
+        let output = transition.cache.materialize();
+        let RenderElement::Table { table, .. } = &output[TABLE_INDEX][0] else {
+            panic!("table fixture");
+        };
+        let expected = table.cells.iter().fold(0usize, |bytes, cell| {
+            bytes.saturating_add(cell.retained_bytes(render_element_bytes))
+        });
+        CELL_OUTPUT_METER_VISITS.set(0);
+        assert_eq!(
+            transition.cache.table_cell_output_bytes(TABLE_INDEX, table),
+            Some(expected),
+            "edit {iteration}"
+        );
+        assert_eq!(
+            CELL_OUTPUT_METER_VISITS.replace(0),
+            0,
+            "edit {iteration}: transferred aggregate avoids full scan"
+        );
+        document = next;
+        cache = transition.cache;
+    }
+    let rebased = super::rebase_cached_block(
+        &cache.blocks[TABLE_INDEX],
+        document.root().child(TABLE_INDEX).unwrap(),
+        cache.blocks[TABLE_INDEX].start_pos + 1,
+    )
+    .unwrap();
+    assert_eq!(
+        rebased.cell_output_bytes.get(),
+        cache.blocks[TABLE_INDEX].cell_output_bytes.get()
+    );
+    let original_output = old_snapshot.materialize();
+    let RenderElement::Table { table, .. } = &original_output[TABLE_INDEX][0] else {
+        panic!("table fixture");
+    };
+    assert_eq!(
+        old_snapshot.table_cell_output_bytes(TABLE_INDEX, table),
+        Some(original)
+    );
+    cache.blocks[TABLE_INDEX].cell_output_bytes = std::sync::OnceLock::from(usize::MAX);
+    let step = crate::transform::Step::InsertText {
+        pos: position,
+        text: "z".into(),
+        marks: vec![],
+    };
+    let (next, _) = crate::transform::apply_step(&document, &step, &schema).unwrap();
+    let transition = cache
+        .transition_localized_textblock(&document, &next, &schema, TABLE_INDEX, 1, &limits)
+        .unwrap();
+    assert!(
+        transition.cache.blocks[TABLE_INDEX]
+            .cell_output_bytes
+            .get()
+            .is_none(),
+        "saturated sum must be recomputed"
+    );
+    let output = transition.cache.materialize();
+    let RenderElement::Table { table, .. } = &output[TABLE_INDEX][0] else {
+        panic!("table fixture");
+    };
+    let expected = table.cells.iter().fold(0usize, |bytes, cell| {
+        bytes.saturating_add(cell.retained_bytes(render_element_bytes))
+    });
+    assert_eq!(
+        transition.cache.table_cell_output_bytes(TABLE_INDEX, table),
+        Some(expected)
+    );
+}

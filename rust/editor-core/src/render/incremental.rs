@@ -339,6 +339,7 @@ struct CachedRenderBlock {
     elements: Arc<Vec<RenderElement>>,
     element_count: usize,
     position_element_indices: Arc<Vec<usize>>,
+    cell_output_bytes: std::sync::OnceLock<usize>,
 }
 
 impl Drop for CachedRenderBlock {

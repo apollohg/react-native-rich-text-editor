@@ -6,6 +6,7 @@ use crate::editor_state::{ActiveState, HistoryState};
 use crate::ffi_v2::types::decimal_u64;
 use crate::model::{Fragment, Mark, Node};
 use crate::render::incremental::RenderBlocksPatch;
+use crate::render::output_bytes::{json_bytes, render_element_bytes, string_bytes};
 use crate::render::RenderElement;
 
 use super::TransactionOrigin;
@@ -383,6 +384,13 @@ pub struct TypedTransactionResult {
 impl TypedTransactionResult {
     /// Deterministic allocation/payload charge used by pre-write admission.
     pub fn derived_output_bytes(&self) -> usize {
+        self.derived_output_bytes_with_render_cache(None)
+    }
+
+    pub(crate) fn derived_output_bytes_with_render_cache(
+        &self,
+        cache: Option<&crate::render::incremental::CachedRenderBlocks>,
+    ) -> usize {
         let mut bytes = 8usize
             .saturating_add(1)
             .saturating_add(1)
@@ -391,7 +399,7 @@ impl TypedTransactionResult {
         bytes = bytes.saturating_add(selection_bytes(&self.selection));
         bytes = bytes.saturating_add(active_state_bytes(&self.active_state));
         bytes = bytes.saturating_add(2);
-        bytes.saturating_add(render_update_bytes(&self.render_update))
+        bytes.saturating_add(render_update_bytes(&self.render_update, cache))
     }
 }
 
@@ -440,103 +448,125 @@ pub(crate) fn active_state_bytes(state: &ActiveState) -> usize {
         .saturating_add(strings(&state.insertable_nodes))
 }
 
-fn render_update_bytes(update: &RenderUpdate) -> usize {
+fn render_update_bytes(
+    update: &RenderUpdate,
+    cache: Option<&crate::render::incremental::CachedRenderBlocks>,
+) -> usize {
     match update {
         RenderUpdate::None => 1,
         RenderUpdate::Patch(patch) => 1usize
             .saturating_add(16)
-            .saturating_add(render_blocks_bytes(&patch.blocks)),
-        RenderUpdate::Full(blocks) => 1usize.saturating_add(render_blocks_bytes(blocks)),
+            .saturating_add(render_blocks_bytes(&patch.blocks, patch.start_index, cache)),
+        RenderUpdate::Full(blocks) => 1usize.saturating_add(render_blocks_bytes(blocks, 0, cache)),
     }
 }
 
-fn render_blocks_bytes(blocks: &[Vec<RenderElement>]) -> usize {
-    blocks.iter().fold(8usize, |bytes, block| {
-        block
-            .iter()
-            .fold(bytes.saturating_add(8), |bytes, element| {
-                bytes.saturating_add(render_element_bytes(element))
-            })
-    })
-}
-
-fn attrs_bytes(attrs: &HashMap<String, serde_json::Value>) -> usize {
-    let serialized_len = if attrs.is_empty() {
-        b"{}".len()
-    } else {
-        serde_json::to_vec(attrs).map_or(usize::MAX, |value| value.len())
-    };
-    8usize.saturating_add(serialized_len)
-}
-
-fn json_bytes(value: &serde_json::Value) -> usize {
-    8usize.saturating_add(serde_json::to_vec(value).map_or(usize::MAX, |value| value.len()))
-}
-
-fn string_bytes(value: &str) -> usize {
-    8usize.saturating_add(value.len())
-}
-
-fn render_element_bytes(element: &RenderElement) -> usize {
-    let payload = match element {
-        RenderElement::Table { table, .. } => table.retained_bytes(render_element_bytes),
-        RenderElement::TextRun { text, marks } => {
-            marks
+fn render_blocks_bytes(
+    blocks: &[Vec<RenderElement>],
+    start: usize,
+    cache: Option<&crate::render::incremental::CachedRenderBlocks>,
+) -> usize {
+    blocks
+        .iter()
+        .enumerate()
+        .fold(8usize, |bytes, (offset, block)| {
+            block
                 .iter()
-                .fold(string_bytes(text).saturating_add(8), |bytes, mark| {
-                    bytes
-                        .saturating_add(string_bytes(&mark.mark_type))
-                        .saturating_add(attrs_bytes(&mark.attrs))
+                .fold(bytes.saturating_add(8), |bytes, element| {
+                    let cached_cells = match element {
+                        RenderElement::Table { table, .. } if block.len() == 1 => {
+                            cache.and_then(|cache| {
+                                cache.table_cell_output_bytes(start.checked_add(offset)?, table)
+                            })
+                        }
+                        _ => None,
+                    };
+                    let element_bytes = match (element, cached_cells) {
+                        (RenderElement::Table { table, .. }, Some(cells)) => 1usize.saturating_add(
+                            table.retained_bytes_with_cell_bytes(render_element_bytes, Some(cells)),
+                        ),
+                        _ => render_element_bytes(element),
+                    };
+                    bytes.saturating_add(element_bytes)
                 })
-        }
-        RenderElement::VoidInline {
-            node_type, attrs, ..
-        }
-        | RenderElement::VoidBlock {
-            node_type, attrs, ..
-        } => string_bytes(node_type)
-            .saturating_add(4)
-            .saturating_add(attrs_bytes(attrs)),
-        RenderElement::OpaqueInlineAtom {
-            node_type,
-            label,
-            attrs,
-            mention_theme,
-            ..
-        } => string_bytes(node_type)
-            .saturating_add(string_bytes(label))
-            .saturating_add(4)
-            .saturating_add(1)
-            .saturating_add(attrs_bytes(attrs))
-            .saturating_add(mention_theme.as_ref().map_or(0, attrs_bytes)),
-        RenderElement::OpaqueBlockAtom {
-            node_type,
-            label,
-            attrs,
-            ..
-        } => string_bytes(node_type)
-            .saturating_add(string_bytes(label))
-            .saturating_add(4)
-            .saturating_add(attrs_bytes(attrs)),
-        RenderElement::BlockStart {
-            node_type,
-            list_context,
-            ..
-        } => string_bytes(node_type)
-            .saturating_add(2)
-            .saturating_add(1)
-            .saturating_add(list_context.as_ref().map_or(0, |context| {
-                18usize.saturating_add(context.kind.as_ref().map_or(0, |kind| string_bytes(kind)))
-            })),
-        RenderElement::BlockEnd => 0,
-    };
-    1usize.saturating_add(payload)
+        })
 }
 
 #[cfg(test)]
 mod result_meter_tests {
     use super::*;
     use crate::render::RenderMark;
+
+    #[test]
+    fn cached_table_output_meter_matches_actual_public_payloads() {
+        use crate::boundary::ResourceLimits;
+        use crate::render::incremental::CachedRenderBlocks;
+        use std::sync::Arc;
+        const EXTRA_CAPACITY: usize = 1024;
+        let session = crate::test_support::large_table_fixture::session_with_document(
+            &crate::test_support::large_table_fixture::multi_paragraph_cell_document(),
+        );
+        let cache = CachedRenderBlocks::build(
+            session.engine.document().unwrap(),
+            session.engine.schema(),
+            &ResourceLimits::default(),
+        )
+        .unwrap();
+        let base = cache.materialize();
+        for variation in 0..7 {
+            let mut blocks = base.clone();
+            let RenderElement::Table { table, .. } = &mut blocks[0][0] else {
+                panic!("table fixture");
+            };
+            match variation {
+                0 => {}
+                1 => table.cells.reserve(EXTRA_CAPACITY),
+                2 => Arc::make_mut(&mut table.structure)
+                    .attrs_key
+                    .reserve(EXTRA_CAPACITY),
+                3 => table.source_fallback = Some(Arc::new(base[0].clone())),
+                4 => {
+                    let cell = Arc::make_mut(&mut table.cells[0]);
+                    Arc::make_mut(&mut cell.elements).push(RenderElement::TextRun {
+                        text: "changed".into(),
+                        marks: vec![],
+                    });
+                }
+                5 => {
+                    table.cells.remove(0);
+                }
+                _ => table.cells.reverse(),
+            }
+            for patch_start in [None, Some(0), Some(usize::MAX)] {
+                let update = match patch_start {
+                    None => RenderUpdate::Full(blocks.clone()),
+                    Some(start_index) => RenderUpdate::Patch(RenderBlocksPatch {
+                        start_index,
+                        delete_count: 1,
+                        blocks: blocks.clone(),
+                    }),
+                };
+                // Mutate after the final public clone so its actual capacity is tested.
+                let mut update = update;
+                let actual = match &mut update {
+                    RenderUpdate::Full(blocks) => blocks,
+                    RenderUpdate::Patch(patch) => &mut patch.blocks,
+                    _ => unreachable!(),
+                };
+                if variation == 1 {
+                    let RenderElement::Table { table, .. } = &mut actual[0][0] else {
+                        unreachable!()
+                    };
+                    table.cells.reserve(EXTRA_CAPACITY);
+                }
+                assert_eq!(
+                    render_update_bytes(&update, Some(&cache)),
+                    render_update_bytes(&update, None),
+                    "variation={variation} patch_start={patch_start:?}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn result_meter_charges_nested_containers_fields_and_attribute_payloads() {

@@ -1413,6 +1413,7 @@ fn large_table_native_input_reuses_materialization_costs() {
     const OWNER: u64 = 71;
     const REQUEST: u64 = 71_000;
     const EDITS: usize = 4;
+    const CHANGED_CELL_METER_VISITS: usize = 2;
     const CELL_BOUNDARY_SCALARS: usize = 1;
     let mut session = session_with_document(&plain_table_document(ROWS, COLUMNS));
     let text_len = fixture_cell_text(0, 0).chars().count();
@@ -1434,11 +1435,19 @@ fn large_table_native_input_reuses_materialization_costs() {
             "ownerId": OWNER.to_string(), "positionEpoch": epoch.to_string(),
             "intent": {"type": "insertText", "anchor": caret + edit, "head": caret + edit, "text": "x"},
         }).to_string();
+        crate::tables::render::CELL_OUTPUT_METER_VISITS.set(0);
         crate::yrs_engine::observability::reset_full_pass_counts_for_test();
         NativeTransactionBridge::new(&mut session)
             .submit_native_intent(&request)
             .unwrap();
         let passes = crate::yrs_engine::observability::take_full_pass_counts_for_test();
+        let cell_visits = crate::tables::render::CELL_OUTPUT_METER_VISITS.replace(0);
+        if edit > 0 {
+            assert_eq!(
+                cell_visits, CHANGED_CELL_METER_VISITS,
+                "native edit {edit} must meter only the old and new changed cell"
+            );
+        }
         let after = &session
             .engine
             .derived_state

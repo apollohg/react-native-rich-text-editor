@@ -157,8 +157,42 @@ impl Drop for TableRenderCell {
     }
 }
 
+#[cfg(test)]
+std::thread_local! {
+    pub(crate) static CELL_OUTPUT_METER_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+impl TableRenderCell {
+    pub(crate) fn retained_bytes(&self, element_bytes: impl Fn(&RenderElement) -> usize) -> usize {
+        stacker::maybe_grow(RENDER_STACK_RED_ZONE, RENDER_STACK_SEGMENT, || {
+            #[cfg(test)]
+            CELL_OUTPUT_METER_VISITS.set(CELL_OUTPUT_METER_VISITS.get() + 1);
+            let bytes = crate::model::arc_allocation_retained_bytes(std::mem::size_of::<Self>())
+                .unwrap_or(usize::MAX)
+                .saturating_add(self.attrs_key.capacity())
+                .saturating_add(self.content_key.capacity())
+                .saturating_add(
+                    self.elements
+                        .capacity()
+                        .saturating_mul(std::mem::size_of::<RenderElement>()),
+                );
+            self.elements.iter().fold(bytes, |bytes, element| {
+                bytes.saturating_add(element_bytes(element))
+            })
+        })
+    }
+}
+
 impl TableRenderRecord {
     pub(crate) fn retained_bytes(&self, element_bytes: impl Fn(&RenderElement) -> usize) -> usize {
+        self.retained_bytes_with_cell_bytes(element_bytes, None)
+    }
+
+    pub(crate) fn retained_bytes_with_cell_bytes(
+        &self,
+        element_bytes: impl Fn(&RenderElement) -> usize,
+        cell_bytes: Option<usize>,
+    ) -> usize {
         stacker::maybe_grow(RENDER_STACK_RED_ZONE, RENDER_STACK_SEGMENT, || {
             let mut bytes = std::mem::size_of::<Self>()
                 .saturating_add(
@@ -195,25 +229,11 @@ impl TableRenderRecord {
                     .saturating_add(std::mem::size_of::<TableRenderSyntheticRegion>())
                     .saturating_add(region.attrs_key.capacity());
             }
-            for cell in &self.cells {
-                bytes = bytes
-                    .saturating_add(
-                        crate::model::arc_allocation_retained_bytes(std::mem::size_of::<
-                            TableRenderCell,
-                        >())
-                        .unwrap_or(usize::MAX),
-                    )
-                    .saturating_add(cell.attrs_key.capacity())
-                    .saturating_add(cell.content_key.capacity())
-                    .saturating_add(
-                        cell.elements
-                            .capacity()
-                            .saturating_mul(std::mem::size_of::<RenderElement>()),
-                    );
-                for element in cell.elements.iter() {
-                    bytes = bytes.saturating_add(element_bytes(element));
-                }
-            }
+            bytes = bytes.saturating_add(cell_bytes.unwrap_or_else(|| {
+                self.cells.iter().fold(0usize, |total, cell| {
+                    total.saturating_add(cell.retained_bytes(&element_bytes))
+                })
+            }));
             if let Some(elements) = &self.source_fallback {
                 bytes = bytes
                     .saturating_add(
@@ -786,4 +806,37 @@ pub(crate) fn absolute_source_rows(
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod output_meter_tests {
+    use super::*;
+
+    #[test]
+    fn standalone_cell_output_meter_preserves_the_render_stack_guard() {
+        use crate::test_support::large_table_fixture::{
+            plain_table_document, session_with_document,
+        };
+        let session = session_with_document(&plain_table_document(1, 1));
+        let cache = crate::render::incremental::CachedRenderBlocks::build(
+            session.engine.document().unwrap(),
+            session.engine.schema(),
+            &crate::boundary::ResourceLimits::default(),
+        )
+        .unwrap();
+        let output = cache.materialize();
+        let RenderElement::Table { table, .. } = &output[0][0] else {
+            panic!("table fixture");
+        };
+        stacker::grow(RENDER_STACK_RED_ZONE / 2, || {
+            table.cells[0].retained_bytes(|_| {
+                let remaining = stacker::remaining_stack().expect("known grown stack bounds");
+                assert!(
+                    remaining >= RENDER_STACK_RED_ZONE,
+                    "recursive payload meter reached with only {remaining} stack bytes"
+                );
+                0
+            });
+        });
+    }
 }
