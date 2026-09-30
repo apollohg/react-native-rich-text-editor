@@ -39,11 +39,7 @@ final class CoreTextProseLayoutEngine {
         let frequencies = Dictionary(table.cells.map { ($0.contentKey, 1) }, uniquingKeysWith: +)
         for source in table.cells {
             guard context == nil || frequencies[source.contentKey] == 1,
-                  let child = try? document.cellDocument(for: source, in: tableKey),
-                  child.blocks.allSatisfy({ block in
-                      !block.isBlockAtom && block.nodeType != "image" && block.tableKey == nil
-                          && block.inlines.allSatisfy { if case .atom = $0 { return false }; return true }
-                  }) else { continue }
+                  document.cellSupportsBackgroundPreparation(source, in: tableKey) else { continue }
             result.indices.insert(source.sourceIndex)
         }
         guard !result.indices.isEmpty else { return result }

@@ -655,6 +655,34 @@ struct ViewerDocument {
         }
     }
 
+    func cellSupportsBackgroundPreparation(_ cell: TableSurfaceCell, in tableID: String) -> Bool {
+        if let frameIndex, frameIndex.docStart(tableKey: tableID, cellIndex: cell.sourceIndex) == nil {
+            return false
+        }
+        var depth = 0
+        var plain = true
+        for element in cell.elements {
+            switch element {
+            case let .blockStart(nodeType, _, _, _):
+                if nodeType == "image" { plain = false }
+                depth += 1
+            case .blockEnd:
+                if depth == 0 { plain = false } else { depth -= 1 }
+            case .textRun:
+                if depth == 0 { plain = false }
+            case .inlineAtom, .blockAtom, .table:
+                plain = false
+            }
+            if !plain { break }
+        }
+        if plain, depth == 0 { return true }
+        guard let child = try? cellDocument(for: cell, in: tableID) else { return false }
+        return child.blocks.allSatisfy { block in
+            !block.isBlockAtom && block.nodeType != "image" && block.tableKey == nil
+                && block.inlines.allSatisfy { if case .atom = $0 { return false }; return true }
+        }
+    }
+
     func cellDocument(for cell: TableSurfaceCell, in tableID: String) throws -> ViewerDocument {
         let atomDocOffset: UInt32 = try frameIndex.map { index in
             guard let position = index.docStart(tableKey: tableID, cellIndex: cell.sourceIndex) else {

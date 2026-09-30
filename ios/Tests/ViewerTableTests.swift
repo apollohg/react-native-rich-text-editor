@@ -82,6 +82,38 @@ final class ViewerTableTests: XCTestCase {
         }
     }
 
+    func testBackgroundCellEligibilityMatchesLoweredContent() throws {
+        let document = ViewerDocument(semanticKey: "eligibility", blocks: [], isEmpty: true, retainedBytes: 0)
+        let paragraph = FfiViewerElement.blockStart(nodeType: "paragraph", language: nil, depth: 0, listContextJson: nil)
+        let image = FfiViewerElement.blockStart(nodeType: "image", language: nil, depth: 0, listContextJson: nil)
+        let text = FfiViewerElement.textRun(text: "café 🦀 العربية", marks: [])
+        let variants: [(String, [FfiViewerElement])] = [
+            ("empty", []), ("plain", [paragraph, text, .blockEnd]),
+            ("nested", [paragraph, paragraph, text, .blockEnd, .blockEnd]),
+            ("unclosed", [paragraph, text]), ("unmatched end", [.blockEnd]),
+            ("orphan text", [text]), ("empty image", [image, .blockEnd]),
+            ("image text", [image, text, .blockEnd]),
+            ("inline atom", [paragraph, .inlineAtom(nodeType: "mention", docPos: 1, attrsJson: "{}", label: "name"), .blockEnd]),
+            ("orphan atom", [.inlineAtom(nodeType: "mention", docPos: 1, attrsJson: "{}", label: "name")]),
+            ("block atom", [.blockAtom(nodeType: "card", docPos: 1, attrsJson: "{}", label: "card")]),
+            ("dangling table", [.table(tableId: "missing")])
+        ]
+        for (name, elements) in variants {
+            let cell = TableSurfaceCell(sourceIndex: 0, row: 0, column: 0, rowspan: 1, colspan: 1,
+                header: false, attrsKey: "attrs", contentKey: name, elements: elements)
+            let lowered = try? document.cellDocument(for: cell, in: "table")
+            let expected = lowered?.blocks.allSatisfy { block in
+                !block.isBlockAtom && block.nodeType != "image" && block.tableKey == nil
+                    && block.inlines.allSatisfy { if case .atom = $0 { return false }; return true }
+            } ?? false
+            XCTAssertEqual(document.cellSupportsBackgroundPreparation(cell, in: "table"), expected, name)
+            let missingFrame = ViewerDocument(semanticKey: "missing-frame", blocks: [], isEmpty: true,
+                retainedBytes: 0, frameIndex: EditorTableIndex())
+            XCTAssertFalse(missingFrame.cellSupportsBackgroundPreparation(cell, in: "table"),
+                "Missing frame ownership must reject even plain cells: \(name)")
+        }
+    }
+
     func testParallelMeasurementEqualsSequentialMeasurement() throws {
         let rows = 1_000
         let columns = 20
