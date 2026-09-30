@@ -19,8 +19,6 @@ final class TablePerformanceTests: XCTestCase {
         static let millisecondsPerSecond = 1_000.0
         static let nanosecondsPerSecond = 1_000_000_000.0
         static let nanosecondsPerMillisecond = nanosecondsPerSecond / millisecondsPerSecond
-        static let frameTimeout = 120.0
-        static let runLoopSlice = 0.005
         static let text = "x"
         static let richParagraphStride = 2
         static let marker = "TABLE_PERFORMANCE_EXPORT "
@@ -58,24 +56,6 @@ final class TablePerformanceTests: XCTestCase {
             }
             return String(decoding: try JSONSerialization.data(withJSONObject: ["type": "doc",
                 "content": [["type": "table", "content": tableRows]]], options: [.sortedKeys]), as: UTF8.self)
-        }
-    }
-
-    private final class FrameClock: NSObject {
-        private var link: CADisplayLink!
-        var onTick: ((CADisplayLink) -> Void)?
-
-        override init() {
-            super.init()
-            link = CADisplayLink(target: self, selector: #selector(tick(_:)))
-            PreparedProseInstrumentation.configureBenchmarkCadence(link)
-            link.add(to: .main, forMode: .common)
-        }
-
-        func close() { onTick = nil; link.invalidate() }
-
-        @objc private func tick(_ link: CADisplayLink) {
-            onTick?(link)
         }
     }
 
@@ -227,7 +207,7 @@ final class TablePerformanceTests: XCTestCase {
     }
 
     private var samples: [Sample] = []
-    private var clock: FrameClock!
+    private var clock: TableTestFrameClock!
 
     func testInputCounterBelongsToTheMeasuredEditor() throws {
         let first = try EditorHost()
@@ -241,7 +221,7 @@ final class TablePerformanceTests: XCTestCase {
     }
 
     func testWarmLargeTableMeasurementsMeetBudget() throws {
-        clock = FrameClock()
+        clock = TableTestFrameClock()
         defer { clock.close(); clock = nil }
         for (rows, columns) in [(1_000, 20), (100, 200)] {
             try autoreleasepool {
@@ -259,7 +239,7 @@ final class TablePerformanceTests: XCTestCase {
     }
 
     func testEveryFixtureIsAdmitted() throws {
-        clock = FrameClock()
+        clock = TableTestFrameClock()
         defer { clock.close(); clock = nil }
         for rich in [false, true] {
             for (rows, columns) in [(3, 3), (1_000, 20), (100, 200)] {
@@ -311,7 +291,7 @@ final class TablePerformanceTests: XCTestCase {
     func testExportTablePerformance() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["PREPARED_PROSE_DEVICE_BENCHMARK"] == "1",
                           "Run through NativeEditorPreparedProsePerformance.")
-        clock = FrameClock()
+        clock = TableTestFrameClock()
         defer { clock.close(); clock = nil }
         for rich in [false, true] {
             for (rows, columns) in [(3, 3), (1_000, 20), (100, 200)] {
@@ -350,7 +330,7 @@ final class TablePerformanceTests: XCTestCase {
     func testExporterPrimitives() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["PREPARED_PROSE_DEVICE_BENCHMARK"] == "1",
                           "Run through NativeEditorPreparedProsePerformance.")
-        clock = FrameClock()
+        clock = TableTestFrameClock()
         defer { clock.close(); clock = nil }
         let fixture = Fixture(rows: 3, columns: 3, rich: false)
         let source = try fixture.source()
@@ -376,7 +356,7 @@ final class TablePerformanceTests: XCTestCase {
     func testLargeTableHorizontalScrollPresentation() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["PREPARED_PROSE_DEVICE_BENCHMARK"] == "1",
                           "Run through NativeEditorPreparedProsePerformance.")
-        clock = FrameClock()
+        clock = TableTestFrameClock()
         defer { clock.close(); clock = nil }
         let fixture = Fixture(rows: 1_000, columns: 20, rich: false)
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
@@ -468,7 +448,7 @@ final class TablePerformanceTests: XCTestCase {
     }
 
     func testStructuralCounterRecognizesRebuiltCellAfterItsRowMoves() throws {
-        clock = FrameClock()
+        clock = TableTestFrameClock()
         defer { clock.close(); clock = nil }
         let fixture = Fixture(rows: 3, columns: 3, rich: false)
         let host = try EditorHost()
@@ -518,7 +498,7 @@ final class TablePerformanceTests: XCTestCase {
     }
 
     func testCellLineBreaksFitTheSharedPreparedRow() throws {
-        clock = FrameClock()
+        clock = TableTestFrameClock()
         defer { clock.close(); clock = nil }
         var config = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(Benchmark.schema.utf8)) as? [String: Any])
         var schema = try XCTUnwrap(config["schema"] as? [String: Any])
@@ -609,7 +589,7 @@ final class TablePerformanceTests: XCTestCase {
 
     private func checkRowScroll(pasteNewlines: Bool, wraps: Bool = false,
                                autoGrow: Bool = false, keyboard: Bool = false, theme: EditorTheme? = nil) throws {
-        clock = FrameClock()
+        clock = TableTestFrameClock()
         defer { clock.close(); clock = nil }
         let host = try EditorHost()
         defer { host.close() }
@@ -722,7 +702,7 @@ final class TablePerformanceTests: XCTestCase {
     }
 
     func testEndCellActivationAfterAnotherHostStaysWithinScrollBounds() throws {
-        clock = FrameClock()
+        clock = TableTestFrameClock()
         defer { clock.close(); clock = nil }
         let fixture = Fixture(rows: 1_000, columns: 20, rich: false)
         let source = try fixture.source()
@@ -764,7 +744,7 @@ final class TablePerformanceTests: XCTestCase {
     }
 
     func testLargeStructuralChangesReuseUnchangedGeometry() throws {
-        clock = FrameClock()
+        clock = TableTestFrameClock()
         defer { clock.close(); clock = nil }
         let fixture = Fixture(rows: 1_000, columns: 20, rich: false)
         try structural(fixture, source: fixture.source())
@@ -777,7 +757,7 @@ final class TablePerformanceTests: XCTestCase {
     func testLargeTableTypingPreservesIncrementalPreparation() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["PREPARED_PROSE_DEVICE_BENCHMARK"] == "1",
                           "Run through NativeEditorPreparedProsePerformance.")
-        clock = FrameClock()
+        clock = TableTestFrameClock()
         defer { clock.close(); clock = nil }
         for rich in [false, true] {
             let fixture = Fixture(rows: 1_000, columns: 20, rich: rich)
@@ -796,7 +776,7 @@ final class TablePerformanceTests: XCTestCase {
     }
 
     func testLargeBoundCellPreparationStartsAfterActivationFrame() throws {
-        clock = FrameClock()
+        clock = TableTestFrameClock()
         defer { clock.close(); clock = nil }
         let fixture = Fixture(rows: 1_000, columns: 20, rich: false)
         let source = try fixture.source()
@@ -809,7 +789,7 @@ final class TablePerformanceTests: XCTestCase {
     }
 
     func testInputTimingUsesDisplayedFrameAfterCommit() throws {
-        clock = FrameClock()
+        clock = TableTestFrameClock()
         defer { clock.close(); clock = nil }
         let host = try EditorHost()
         defer { host.close() }
@@ -834,32 +814,11 @@ final class TablePerformanceTests: XCTestCase {
                          action: () throws -> Void) throws -> Measurement {
         let stages = StageProbe()
         PreparedProseInstrumentation.tableStageObserverForTesting = stages.record
-        var commitTime: Double?
-        var presented: Double?
-        var displayed: Double?
-        drawing.onMountedTableCellsDrawnForTesting = { _ in
-            CATransaction.setCompletionBlock { if commitTime == nil { commitTime = CACurrentMediaTime() } }
-        }
-        clock.onTick = { link in
-            guard presented == nil, let commitTime, link.timestamp >= commitTime else { return }
-            displayed = link.timestamp
-            presented = link.timestamp
-        }
-        defer {
-            drawing.onMountedTableCellsDrawnForTesting = nil
-            clock.onTick = nil
-            PreparedProseInstrumentation.tableStageObserverForTesting = nil
-        }
-        let start = CACurrentMediaTime()
-        try action()
-        let actionEnd = CACurrentMediaTime()
-        drawing.setNeedsDisplay()
-        CATransaction.flush()
-        let deadline = start + Benchmark.frameTimeout
-        while presented == nil && CACurrentMediaTime() < deadline {
-            RunLoop.main.run(until: Date().addingTimeInterval(Benchmark.runLoopSlice))
-        }
-        let end = try XCTUnwrap(presented, "No presented frame followed the dirty table transaction")
+        defer { PreparedProseInstrumentation.tableStageObserverForTesting = nil }
+        let frame = try clock.present(drawing, action: action)
+        let start = frame.start
+        let actionEnd = frame.actionEnd
+        let end = frame.displayed
         var measured = stages.durationsMs()
         measured["synchronousAction"] = (actionEnd - start) * Benchmark.millisecondsPerSecond
         let measurementEnd: Double
@@ -872,7 +831,7 @@ final class TablePerformanceTests: XCTestCase {
             measured["presentationWait"] = (end - actionEnd) * Benchmark.millisecondsPerSecond
         }
         return Measurement(durationMs: (measurementEnd - start) * Benchmark.millisecondsPerSecond, stagesMs: measured,
-            presentation: (try XCTUnwrap(commitTime), try XCTUnwrap(displayed), end))
+            presentation: (frame.commit, frame.displayed, end))
     }
 
     private func append(_ fixture: Fixture, metric: String, run: Int = 1, values: [Measurement],
@@ -1098,7 +1057,7 @@ final class TablePerformanceTests: XCTestCase {
             host.drawing.onMountedTableCellsDrawnForTesting = nil
             PreparedProseInstrumentation.tableWorkObserverForTesting = nil
         }
-        while !finished { RunLoop.main.run(until: Date().addingTimeInterval(Benchmark.runLoopSlice)) }
+        while !finished { RunLoop.main.run(until: Date().addingTimeInterval(TableTestFrameClock.runLoopSlice)) }
         counters.observe(host.drawing, cellInputs: host.view.textInputs)
         counters.authoritativeDocumentBytes = try host.authoritativeBytes()
         append(fixture, metric: horizontal ? "scrollHorizontal" : "scrollVertical", values: values,

@@ -307,6 +307,12 @@ final class EditorLargeTableTests: XCTestCase {
         XCTAssertEqual(surface.incrementalRelayoutsForTesting, replacementsBefore + 1)
         XCTAssertEqual(surface.seededShapeLayoutsForTesting, seededBefore,
             "An incremental cell edit must not enumerate previous resident layouts to seed shapes")
+        let clock = TableTestFrameClock()
+        defer { clock.close() }
+        let drawing = try XCTUnwrap(surface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
+        XCTAssertTrue(input.isFirstResponder)
+        _ = try clock.present(drawing)
+        XCTAssertTrue(input.isFirstResponder, "The focused fixture must present its edit before teardown")
     }
 
     func testRetainedEditedCellRebuildsWithoutKeepingItsEditorAlive() throws {
