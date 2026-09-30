@@ -148,6 +148,9 @@ internal class ViewerTableSurface private constructor(
         sourceTable, sourceAttributes, editorTableId, displayScale, null, null)
 
     val layoutStore = cells.firstOrNull()?.layoutStore ?: TableCellLayoutStore()
+    private val hasSingleLayoutStore = cells.all { it.layoutStore === layoutStore }
+    private var retainedBytesRevision = -1L
+    private var cellRetainedBytes = 0L
 
     private data class Preparation(
         val layout: TableLayoutResult,
@@ -219,13 +222,25 @@ internal class ViewerTableSurface private constructor(
     val columnEdgeHandleRows: Map<Int, Int> = reusableColumnEdgeHandleRows ?: sourceTable?.cells.orEmpty()
         .groupBy { (it.column + it.colspan).toInt() - 1 }
         .mapValues { (_, cells) -> cells.minOf { it.row }.toInt() }
-    val retainedBytes: Long get() = metadataRetainedBytes + cells.sumOf { it.cachedContent?.retainedBytes ?: 0L }
-    val metadataRetainedBytes: Long = 256L + cells.sumOf { it.metadataRetainedBytes } +
+    val retainedBytes: Long get() {
+        if (!hasSingleLayoutStore) return metadataRetainedBytes + cells.sumOf { it.cachedContent?.retainedBytes ?: 0L }
+        return synchronized(layoutStore) {
+            val revision = layoutStore.revision
+            if (revision != retainedBytesRevision) {
+                cellRetainedBytes = cells.sumOf { it.cachedContent?.retainedBytes ?: 0L }
+                retainedBytesRevision = revision
+            }
+            metadataRetainedBytes + cellRetainedBytes
+        }
+    }
+    val metadataRetainedBytes: Long = 256L + ACCOUNTING_CACHE_RETAINED_BYTES + cells.sumOf { it.metadataRetainedBytes } +
         (sourceTable?.cells?.size ?: 0) * 16L + layout.columnWidths.size * 16L +
         layout.columnOffsets.size * 16L + layout.rowOffsets.size * 16L + layout.rectangles.size * 48L + layout.sourceOrder.size * 16L +
         columnEdgeHandleRows.size * 16L
 
     companion object {
+        private const val ACCOUNTING_CACHE_RETAINED_BYTES = 32L
+
         private fun prepareParallelCells(
             inputs: List<Pair<TableGridCell, Int>>, scale: Float, indices: Set<Int>,
             workers: List<(TableGridCell, Float) -> PreparedProseLayout>,

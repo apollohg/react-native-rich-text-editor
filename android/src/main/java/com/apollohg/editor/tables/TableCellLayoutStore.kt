@@ -17,6 +17,9 @@ internal class TableCellLayoutStore(
     private val pins = mutableMapOf<ProseLayoutKey, Int>()
     private var bytes = 0L
     private var pinnedBytes = 0L
+    var revision: Long = 0
+        @Synchronized get
+        private set
 
     val residentLayouts: List<PreparedProseLayout> @Synchronized get() = entries.values.map { it.layout }
     val count: Int @Synchronized get() = entries.size
@@ -36,6 +39,7 @@ internal class TableCellLayoutStore(
         entries.remove(key)?.let { removeCharge(key, it) }
         val entry = Entry(layout)
         entries[key] = entry
+        revision++
         bytes += entry.bytes
         if (pins.getOrDefault(key, 0) > 0) pinnedBytes += entry.bytes
         evict()
@@ -66,6 +70,7 @@ internal class TableCellLayoutStore(
     }
 
     private fun removeCharge(key: ProseLayoutKey, entry: Entry) {
+        revision++
         bytes -= entry.bytes
         if (pins.getOrDefault(key, 0) > 0) pinnedBytes -= entry.bytes
     }

@@ -183,6 +183,58 @@ class ViewerTableTest {
         assertEquals(initial, parent.currentRetainedBytes)
     }
 
+    @Test fun repeatedSurfaceAccountingReusesOnlyAnUnchangedStore() {
+        val cellBytes = 100L
+        val cellWidth = 100
+        val store = TableCellLayoutStore(byteBudget = cellBytes, capacity = 1)
+        fun content(name: String, bytes: Long = cellBytes) = PreparedProseLayout(
+            ProseLayoutKey(name, cellWidth, "memory", 0, 0, 1, 0, "memory"),
+            cellWidth, 20, emptyList(), retainedBytes = bytes)
+        val record = TableGridRecord("memory", 2, 1, listOf(cellWidth.toFloat(), cellWidth.toFloat()),
+            listOf(TableGridCell(0, 0, 0, contentKey = "same"), TableGridCell(1, 0, 1, contentKey = "same")))
+        val prepared = ViewerTableSurface("memory", record, cellWidth.toFloat(), TableStyle(),
+            isRightToLeft = false, layoutStore = store) { _, _ -> content("same") }
+        var reads = 0
+        val observed = object : AbstractList<PreparedViewerTableCell>() {
+            override val size get() = prepared.cells.size
+            override fun get(index: Int): PreparedViewerTableCell { reads++; return prepared.cells[index] }
+        }
+        val surface = ViewerTableSurface("memory", cellWidth.toFloat(), TableStyle(), false,
+            prepared.layout, observed, null)
+        fun assertCharge(stage: String, bytes: Long) {
+            assertEquals(stage, surface.metadataRetainedBytes + bytes, surface.retainedBytes)
+            assertEquals("A second surface sharing the store must refresh: $stage",
+                prepared.metadataRetainedBytes + bytes, prepared.retainedBytes)
+            reads = 0
+            assertEquals(stage, surface.metadataRetainedBytes + bytes, surface.retainedBytes)
+            assertEquals("Repeated accounting must not revisit cells: $stage", 0, reads)
+        }
+        assertCharge("Shared keys preserve the per-cell charge", cellBytes * 2)
+        val key = prepared.cells.first().contentKey
+        store.pin(key)
+        store.insert(content("same", cellBytes * 2))
+        assertCharge("Pinned replacement invalidates the charge", cellBytes * 4)
+        store.unpin(key)
+        assertCharge("Unpinning evicts the oversized entry", 0)
+        prepared.cells.first().content
+        assertCharge("Refill invalidates the charge", cellBytes * 2)
+        store.insert(content("unmapped"))
+        assertCharge("Unmapped replacement preserves the existing charge policy", 0)
+
+        prepared.cells.first().content
+        val otherStore = TableCellLayoutStore()
+        val mixedCells = listOf(prepared.cells.first(), prepared.cells.last().relocated(record.cells.last(), otherStore))
+        val mixed = ViewerTableSurface("mixed", cellWidth.toFloat(), TableStyle(), false,
+            prepared.layout, mixedCells, null)
+        assertEquals(mixed.metadataRetainedBytes + cellBytes * 2, mixed.retainedBytes)
+        otherStore.insert(content("same", cellBytes * 3))
+        assertEquals("Mixed-store surfaces must observe mutations in their second store",
+            mixed.metadataRetainedBytes + cellBytes * 4, mixed.retainedBytes)
+        store.insert(content("unmapped"))
+        assertEquals("Mixed-store surfaces must also observe their first store's eviction",
+            mixed.metadataRetainedBytes + cellBytes * 3, mixed.retainedBytes)
+    }
+
     @Test fun currentParentMemoryCountsSharedStoresAndLayoutsOnce() {
         val cellBytes = 100L
         val parentBytes = 64L
