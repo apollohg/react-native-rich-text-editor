@@ -788,7 +788,8 @@ mod table_cell_presence {
             "the extension must be what crosses the ceiling: text {text_bytes}, cell {cell_bytes}",
         );
 
-        let mut bounded = two_table_peers();
+        // Relative-position encodings include this document's random client ID.
+        let mut bounded = measured;
         bounded.limits.max_awareness_peer_bytes = cell_bytes - 1;
         let accepted = bounded
             .try_publish(json!({ "type": "text", "anchor": anchor, "head": head }))
