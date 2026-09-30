@@ -209,32 +209,25 @@ fn protected_container_ids(
     request_id: u64,
     doc: &Doc,
     fragment: &XmlFragmentRef,
-    reachable: &IdSet,
-    removable: &IdSet,
+    deletions: &IdSet,
 ) -> OperationResult<Vec<ID>> {
-    if reachable.is_empty() {
+    if deletions.is_empty() {
         return Ok(Vec::new());
     }
     let BranchID::Root(fragment_name) = AsRef::<Branch>::as_ref(fragment).id() else {
         return Ok(Vec::new());
     };
-    let (candidates, containers) = {
+    let containers = {
         let txn = doc.transact();
-        let candidates = if txn.state_vector().len() > 1 {
-            reachable
-        } else {
-            removable
-        };
-        let containers = flatten_reverted_containers(&txn, fragment, candidates)
+        flatten_reverted_containers(&txn, fragment, deletions)
             .into_iter()
             .filter_map(|node| node.reverted)
-            .collect::<Vec<ID>>();
-        (candidates.clone(), containers)
+            .collect::<Vec<ID>>()
     };
     if containers.is_empty() {
         return Ok(Vec::new());
     }
-    let removal = id_set_difference(removable, &id_set_of(&containers));
+    let removal = id_set_difference(deletions, &id_set_of(&containers));
     let Some(projection) = project_document_without(request_id, doc, &fragment_name, &removal)?
     else {
         return Ok(Vec::new());
@@ -243,56 +236,11 @@ fn protected_container_ids(
     let Some(projected_fragment) = txn.get_xml_fragment(fragment_name.as_ref()) else {
         return Ok(Vec::new());
     };
-    let mut nodes = flatten_reverted_containers(&txn, &projected_fragment, &candidates);
+    let mut nodes = flatten_reverted_containers(&txn, &projected_fragment, deletions);
     Ok(surviving_container_ids(&mut nodes))
 }
 
 impl YrsHistory {
-    fn redone_reach(&self, insertions: &IdSet) -> (IdSet, IdSet) {
-        let mut reachable = insertions.clone();
-        let mut removable = insertions.clone();
-        for _ in 0..=self.redone_chains.len() {
-            let mut grew = false;
-            for chain in &self.redone_chains {
-                if id_sets_intersect(&reachable, &chain.originals)
-                    && !id_set_contains_all(&reachable, &chain.copies)
-                {
-                    reachable.merge_with(chain.copies.clone());
-                    grew = true;
-                }
-                if id_set_contains_all(&removable, &chain.originals)
-                    && !id_set_contains_all(&removable, &chain.copies)
-                {
-                    removable.merge_with(chain.copies.clone());
-                    grew = true;
-                }
-            }
-            if !grew {
-                break;
-            }
-        }
-        (reachable, removable)
-    }
-
-    fn redone_origins_of(&self, protected: &IdSet) -> IdSet {
-        let mut blocked = protected.clone();
-        for _ in 0..=self.redone_chains.len() {
-            let mut grew = false;
-            for chain in &self.redone_chains {
-                if id_sets_intersect(&blocked, &chain.copies)
-                    && !id_set_contains_all(&blocked, &chain.originals)
-                {
-                    blocked.merge_with(chain.originals.clone());
-                    grew = true;
-                }
-            }
-            if !grew {
-                break;
-            }
-        }
-        blocked
-    }
-
     pub(crate) fn record_redone_chain(&mut self, originals: IdSet, copies: IdSet) {
         if originals.is_empty() || copies.is_empty() {
             return;
@@ -337,12 +285,24 @@ impl YrsHistory {
         let Some(top) = stack.last() else {
             return Ok(false);
         };
-        let (reachable, removable) = self.redone_reach(top.insertions());
-        let protected = protected_container_ids(request_id, doc, fragment, &reachable, &removable)?;
+        let resolved = self.manager.resolved_deletions(&mut doc.transact_mut(), top)
+            .ok_or_else(|| OperationError::engine_invariant_failed(request_id, None,
+                "history deletion targets cannot be resolved"))?;
+        let mut deletions = IdSet::new();
+        for mapping in &resolved {
+            deletions.insert(mapping.target, mapping.target_len);
+        }
+        let protected = protected_container_ids(request_id, doc, fragment, &deletions)?;
         if protected.is_empty() {
             return Ok(false);
         }
-        let blocked = self.redone_origins_of(&id_set_of(&protected));
+        let protected = id_set_of(&protected);
+        let mut blocked = IdSet::new();
+        for mapping in resolved {
+            if protected.contains(&mapping.target) {
+                blocked.insert(mapping.source, mapping.source_len);
+            }
+        }
         let stack = match action {
             HistoryAction::Undo => self.manager.undo_stack(),
             HistoryAction::Redo => self.manager.redo_stack(),
@@ -350,7 +310,7 @@ impl YrsHistory {
         let top = stack
             .last()
             .expect("filtered history stack retains its top item");
-        let filtered_insertions = id_set_difference(&removable, &blocked);
+        let filtered_insertions = id_set_difference(top.insertions(), &blocked);
         if &filtered_insertions == top.insertions() {
             return Ok(false);
         }

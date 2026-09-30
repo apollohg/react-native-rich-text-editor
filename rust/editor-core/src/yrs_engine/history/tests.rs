@@ -261,7 +261,10 @@ fn id_set_accounting_counts_clock_ranges_not_clients() {
 }
 
 fn insert_peer_text(doc: &Doc, text: &str) {
-    let peer = Doc::new();
+    insert_text_from_peer(doc, &Doc::new(), text);
+}
+
+fn insert_text_from_peer(doc: &Doc, peer: &Doc, text: &str) {
     let peer_fragment = peer.get_or_insert_xml_fragment("history-test");
     let shared = doc
         .transact()
@@ -280,6 +283,109 @@ fn insert_peer_text(doc: &Doc, text: &str) {
     doc.transact_mut_with(TransactionOrigin::RemoteSync.as_yrs_origin())
         .apply_update(Update::decode_v1(&peer_update).expect("local decodes the peer update"))
         .expect("local applies the peer update");
+}
+
+#[test]
+fn repeated_history_preserves_foreign_text_written_before_container_removal() {
+    const EXCLUDED_ORIGIN: &str = "excluded-history-fixture";
+    const FIRST_CLIENT: u64 = 1;
+    const SECOND_CLIENT: u64 = 2;
+    for (peer, local_client, peer_client) in [
+        (false, FIRST_CLIENT, SECOND_CLIENT),
+        (true, FIRST_CLIENT, SECOND_CLIENT),
+        (true, SECOND_CLIENT, FIRST_CLIENT),
+    ] {
+        for local in ["local", "lo🦀cal"] {
+            let doc = Doc::with_client_id(local_client);
+            let expected = format!("foreign{local}");
+            let fragment = doc.get_or_insert_xml_fragment("history-test");
+            let mut history = YrsHistory::new(
+                &doc,
+                &fragment,
+                EditingLimits::default(),
+                usize::MAX,
+                Arc::new(|| 10_000),
+            );
+            let text = fragment.push_back(
+                &mut doc.transact_mut_with(INPUT_ORIGIN),
+                XmlTextPrelim::new(local),
+            );
+            if peer {
+                insert_text_from_peer(&doc, &Doc::with_client_id(peer_client), "foreign");
+            } else {
+                text.insert(&mut doc.transact_mut_with(EXCLUDED_ORIGIN), 0, "foreign");
+            }
+            history.manager.reset();
+            fragment.remove(&mut doc.transact_mut_with(INPUT_ORIGIN), 0);
+            assert_eq!(fragment.get_string(&doc.transact()), "");
+            for cycle in 0..3 {
+                let request = cycle * 4 + 1;
+                assert!(history.undo(request, &doc, &fragment).unwrap().changed);
+                assert_eq!(
+                    fragment.get_string(&doc.transact()),
+                    expected,
+                    "restore removal, peer={peer}, cycle={cycle}"
+                );
+                assert!(history.undo(request + 1, &doc, &fragment).unwrap().changed);
+                assert_eq!(fragment.get_string(&doc.transact()), "foreign", "undo creation must preserve earlier foreign content, peer={peer}, cycle={cycle}");
+                assert!(history.redo(request + 2, &doc, &fragment).unwrap().changed);
+                assert_eq!(fragment.get_string(&doc.transact()), expected);
+                assert!(history.redo(request + 3, &doc, &fragment).unwrap().changed);
+                assert_eq!(
+                    fragment.get_string(&doc.transact()),
+                    "",
+                    "redo explicit removal must not leave an empty container"
+                );
+                assert_eq!(fragment.len(&doc.transact()), 0);
+            }
+        }
+    }
+}
+
+#[test]
+fn undo_creation_preserves_an_independently_inserted_empty_child_after_recreation() {
+    const EXCLUDED_ORIGIN: &str = "excluded-empty-child-fixture";
+    let doc = Doc::new();
+    let fragment = doc.get_or_insert_xml_fragment("history-test");
+    let mut history = YrsHistory::new(
+        &doc,
+        &fragment,
+        EditingLimits::default(),
+        usize::MAX,
+        Arc::new(|| 10_000),
+    );
+    let parent = {
+        let mut txn = doc.transact_mut_with(INPUT_ORIGIN);
+        let parent = fragment.push_back(&mut txn, yrs::XmlElementPrelim::empty("paragraph"));
+        parent.push_back(&mut txn, XmlTextPrelim::new("local"));
+        parent
+    };
+    parent.push_back(
+        &mut doc.transact_mut_with(EXCLUDED_ORIGIN),
+        XmlTextPrelim::new(""),
+    );
+    history.manager.reset();
+    fragment.remove(&mut doc.transact_mut_with(INPUT_ORIGIN), 0);
+    assert!(history.undo(1, &doc, &fragment).unwrap().changed);
+    assert!(history.undo(2, &doc, &fragment).unwrap().changed);
+    let txn = doc.transact();
+    assert_eq!(
+        fragment.len(&txn),
+        1,
+        "the independently authored empty child keeps its parent"
+    );
+    let XmlOut::Element(parent) = fragment.get(&txn, 0).unwrap() else {
+        panic!("preserved parent")
+    };
+    assert_eq!(
+        parent.len(&txn),
+        1,
+        "only the independently inserted child survives"
+    );
+    let XmlOut::Text(child) = parent.get(&txn, 0).unwrap() else {
+        panic!("preserved empty child")
+    };
+    assert_eq!(child.len(&txn), 0);
 }
 
 #[test]
