@@ -15,6 +15,8 @@ import com.apollohg.editor.viewer.PREPARED_LAYOUT_UNMOUNTED_BYTE_BUDGET
 import uniffi.editor_core.editorV2RenderNativeFrame
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -105,8 +107,21 @@ internal class EditorTableIndexTest {
                     listOf(ViewerBlock("table", 0, false, null, null, emptyList(), frameRecord = index.record(ROOT_KEY))),
                     false, 0, tableAttributes = index.attributeObjects, frameIndex = index)
                 val key = ProseLayoutKey(document.semanticKey, width, "retention", 0, 0, 1, 0, "retention")
+                val previousSource = retained?.blocks?.first()?.tableSurface?.sourceTable
                 retained = engine.prepare(document, key, PreparedProseTheme.resolve(null, 1f), width, 1f, false)
                 engine.incrementalTableSurface = null
+                val currentSource = requireNotNull(retained.blocks.first().tableSurface?.sourceTable)
+                assertEquals("Revision $step must retain exactly the current native source",
+                    TableSurfaceSource.from(requireNotNull(index.record(ROOT_KEY))), currentSource)
+                if (previousSource != null) {
+                    currentSource.cells.indices.forEach { cellIndex ->
+                        if (cellIndex == step - 1) {
+                            assertNotSame("Revision $step must convert the changed source cell", previousSource.cells[cellIndex], currentSource.cells[cellIndex])
+                        } else {
+                            assertSame("Revision $step must reuse unchanged source cell $cellIndex", previousSource.cells[cellIndex], currentSource.cells[cellIndex])
+                        }
+                    }
+                }
                 references += WeakReference(index)
             }
             return requireNotNull(retained)
@@ -125,8 +140,9 @@ internal class EditorTableIndexTest {
         }
     }
 
-    private fun withEngineFrame(source: String, check: (FfiTableFrame, EditorV2Adapter, ULong) -> Unit) {
-        val created = UniffiEditorV2Backend.create(PlainTableFixture.CONFIG, null) as EditorV2CallResult.Ok
+    private fun withEngineFrame(source: String, config: String = PlainTableFixture.CONFIG,
+                               check: (FfiTableFrame, EditorV2Adapter, ULong) -> Unit) {
+        val created = UniffiEditorV2Backend.create(config, null) as EditorV2CallResult.Ok
         val adapter = requireNotNull(EditorV2Adapter.attach(UniffiEditorV2Backend,
             JSONObject(created.value).getString("editorId"), false))
         try {
@@ -138,6 +154,66 @@ internal class EditorTableIndexTest {
             adapter.destroy()
         }
     }
+
+    @Test fun `source reuse preserves shifted positions and leaves reuse after atom introduction`() =
+        withEngineFrame(PlainTableFixture.document(1, 3), ViewerTableTest.CONFIG) { _, adapter, _ ->
+            val width = 400
+            val prefix = "🙂 "
+            val prefixScalars = prefix.codePointCount(0, prefix.length)
+            val nativeOwnerToken = 1L
+            adapter.claimNativeBindingIfUnowned(nativeOwnerToken)
+            val tableId = adapter.tableIndex.tableKeys.single()
+            val theme = PreparedProseTheme.resolve(
+                """{"viewerAtoms":{"generation":"source-reuse","revision":"one","nodeTypes":["card"],"estimatedHeights":{"card":40}}}""", 1f)
+            var previous: ViewerTableSurface? = null
+            var previousRevision: ULong? = null
+            fun prepareCurrent(): ViewerTableSurface {
+                val index = adapter.tableIndex
+                val document = ViewerDocument("source-${adapter.baseDocumentRevision}",
+                    listOf(ViewerBlock("table", 0, false, null, null, emptyList(), frameRecord = index.record(tableId))),
+                    false, 0, tableAttributes = index.attributeObjects, frameIndex = index)
+                val key = ProseLayoutKey(document.semanticKey, width, "source-reuse", 0, 0, 1, 0, "source-reuse")
+                val engine = StaticLayoutAndroidProseLayoutEngine()
+                val retained = previous
+                val presentation = requireNotNull(adapter.cachedTablePresentation)
+                if (retained != null && previousRevision == presentation.baseDocumentRevision &&
+                    !presentation.changes.fullReset && tableId !in presentation.changes.replacedTables &&
+                    retained.cells.all { it.isPositionFree }) {
+                    engine.incrementalTableSurface = { retained to presentation.changes.changedCells[tableId].orEmpty() }
+                }
+                val actual = engine.prepare(document, key, theme, width, 1f, false)
+                val fresh = StaticLayoutAndroidProseLayoutEngine().prepare(document, key, theme, width, 1f, false)
+                assertNull(actual.error)
+                val surface = requireNotNull(actual.blocks.single().tableSurface)
+                val reference = requireNotNull(fresh.blocks.single().tableSurface)
+                assertEquals(reference.sourceTable, surface.sourceTable)
+                assertEquals(reference.layout, surface.layout)
+                surface.cells.zip(reference.cells).forEach { (cell, expected) ->
+                    assertEquals(expected.accessibilityText, cell.accessibilityText)
+                    assertEquals(expected.content.viewerAtoms, cell.content.viewerAtoms)
+                }
+                previous = surface
+                previousRevision = adapter.baseDocumentRevision
+                return surface
+            }
+            val initial = prepareCurrent()
+            val scalarBefore = requireNotNull(adapter.tableIndex.scalarStart(tableId, 1))
+            val docBefore = requireNotNull(adapter.tableIndex.docStart(tableId, 1))
+            requireNotNull(adapter.insertText(prefix, requireNotNull(adapter.tableIndex.scalarStart(tableId, 0)).toInt()))
+            val grown = prepareCurrent()
+            assertSame(initial.sourceTable!!.cells[1], grown.sourceTable!!.cells[1])
+            assertEquals(scalarBefore + prefixScalars.toUInt(), adapter.tableIndex.scalarStart(tableId, 1))
+            assertEquals(docBefore + prefixScalars.toUInt(), adapter.tableIndex.docStart(tableId, 1))
+            val at = requireNotNull(adapter.tableIndex.scalarStart(tableId, 1)).toInt()
+            requireNotNull(adapter.insertNode("card", at, at))
+            val withAtom = prepareCurrent()
+            val atomBefore = withAtom.cells[1].content.viewerAtoms.single().docPos
+            assertTrue(withAtom.cells[1].hasAtoms)
+            requireNotNull(adapter.insertText(prefix, requireNotNull(adapter.tableIndex.scalarStart(tableId, 0)).toInt()))
+            val moved = prepareCurrent()
+            assertNotSame("Position-bearing sources must use full conversion", withAtom.sourceTable!!.cells[1], moved.sourceTable!!.cells[1])
+            assertEquals(atomBefore + prefixScalars, moved.cells[1].content.viewerAtoms.single().docPos)
+        }
 
     @Test
     fun `void element metadata rejects duplicates non atoms and out of range indices atomically`() {

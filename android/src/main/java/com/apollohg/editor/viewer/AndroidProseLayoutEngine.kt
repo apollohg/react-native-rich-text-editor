@@ -457,7 +457,16 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
             val blockCursorY = cursorY + outer.top.toInt()
             if (block.tableKey != null) {
                 val tableKey = requireNotNull(block.tableKey)
-                val surfaceSource = requireNotNull(block.tableSource())
+                val incremental = incrementalTableSurface?.invoke(tableKey)?.takeIf { (surface, changed) ->
+                    surface.identity == document.tablePresentationIdentity(tableKey) &&
+                        (block.frameRecord == null || (surface.sourceTable?.cells?.size == block.frameRecord.cells.size &&
+                            changed.all { it in block.frameRecord.cells.indices }))
+                }
+                val frameRecord = block.frameRecord
+                val previousSource = incremental?.first?.sourceTable
+                val surfaceSource = if (frameRecord != null && previousSource != null) {
+                    com.apollohg.editor.tables.TableSurfaceSource.from(frameRecord, previousSource, incremental.second)
+                } else requireNotNull(block.tableSource())
                 val placement = listPlacement(
                     block,
                     markers,
@@ -506,9 +515,8 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                 val record by lazy { TableGridRecord.from(surfaceSource, document.semanticKey).physical(density) }
                 val tableStyle = theme.tableStyle.physical(density)
                 val rtl = TableLayoutDirection.isRightToLeft(surfaceSource.direction, theme.tableDirection)
-                val retainedSurface = incrementalTableSurface?.invoke(tableKey)?.takeIf { (surface, _) ->
-                    surface.identity == document.tablePresentationIdentity(tableKey) &&
-                        surface.hostViewportWidth == tableWidth.toFloat() && surface.style == tableStyle &&
+                val retainedSurface = incremental?.takeIf { (surface, _) ->
+                    surface.hostViewportWidth == tableWidth.toFloat() && surface.style == tableStyle &&
                         surface.isRightToLeft == rtl
                 }
                 val surface = if (retainedSurface != null) {
