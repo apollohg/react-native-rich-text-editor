@@ -99,11 +99,12 @@ final class TablePerformanceTests: XCTestCase {
     private struct Measurement {
         let durationMs: Double
         var stagesMs: [String: Double] = [:]
+        var presentation: (commit: Double, displayed: Double, measured: Double)?
     }
 
     private enum MeasurementEndpoint {
         case exactLayout
-        case presentedFrame
+        case displayedFrameAfterCommit
     }
 
     private final class StageProbe {
@@ -139,7 +140,7 @@ final class TablePerformanceTests: XCTestCase {
         let run: Int
         let samplesMs: [Double]
         let stageSamplesMs: [String: [Double]]
-        let stageTimingSemantics = "inclusive wall-time unions through the full frame drain, not a decomposition of cold-layout duration; native stages include Rust and FFI; preparation includes geometry; presentationWait includes scheduling, render server and GPU without separating them; postLayoutPresentationWait is diagnostic and excluded from cold-layout duration"
+        let stageTimingSemantics = "inclusive wall-time unions through the full frame drain, not a decomposition of cold-layout duration; native stages include Rust and FFI; preparation includes geometry; presentationWait ends at the first display-clock timestamp after draw transaction completion, not a content-specific GPU presentation acknowledgment; postLayoutPresentationWait is diagnostic and excluded from cold-layout duration"
         let warmupSamplesDiscarded: Int?
         let tableAttributed: [Bool]?
         let wrapCount: Int?
@@ -807,17 +808,42 @@ final class TablePerformanceTests: XCTestCase {
                        Benchmark.baselineSamples)
     }
 
-    private func measure(_ drawing: PreparedProseDrawingView, endpoint: MeasurementEndpoint = .presentedFrame,
+    func testInputTimingUsesDisplayedFrameAfterCommit() throws {
+        clock = FrameClock()
+        defer { clock.close(); clock = nil }
+        let host = try EditorHost()
+        defer { host.close() }
+        let fixture = Fixture(rows: 3, columns: 3, rich: false)
+        try host.load(fixture.source())
+        let input = try host.bind(fixture.rows * fixture.columns / 2)
+        _ = try measure(host.drawing) {}
+        for edit in 0..<Benchmark.baselineSamples {
+            let measurement = try measure(host.drawing) {
+                input.insertText(Benchmark.text)
+                host.view.layoutIfNeeded()
+            }
+            let frame = try XCTUnwrap(measurement.presentation)
+            XCTAssertGreaterThanOrEqual(frame.displayed, frame.commit,
+                "Edit \(edit): a delayed callback for a pre-commit frame cannot acknowledge this edit")
+            XCTAssertEqual(frame.measured, frame.displayed,
+                "Edit \(edit): a scheduled future frame is not a displayed frame")
+        }
+    }
+
+    private func measure(_ drawing: PreparedProseDrawingView, endpoint: MeasurementEndpoint = .displayedFrameAfterCommit,
                          action: () throws -> Void) throws -> Measurement {
         let stages = StageProbe()
         PreparedProseInstrumentation.tableStageObserverForTesting = stages.record
         var commitTime: Double?
         var presented: Double?
+        var displayed: Double?
         drawing.onMountedTableCellsDrawnForTesting = { _ in
             CATransaction.setCompletionBlock { if commitTime == nil { commitTime = CACurrentMediaTime() } }
         }
         clock.onTick = { link in
-            if commitTime != nil { presented = link.targetTimestamp }
+            guard presented == nil, let commitTime, link.timestamp >= commitTime else { return }
+            displayed = link.timestamp
+            presented = link.timestamp
         }
         defer {
             drawing.onMountedTableCellsDrawnForTesting = nil
@@ -841,11 +867,12 @@ final class TablePerformanceTests: XCTestCase {
         case .exactLayout:
             measurementEnd = actionEnd
             measured["postLayoutPresentationWait"] = (end - actionEnd) * Benchmark.millisecondsPerSecond
-        case .presentedFrame:
+        case .displayedFrameAfterCommit:
             measurementEnd = end
             measured["presentationWait"] = (end - actionEnd) * Benchmark.millisecondsPerSecond
         }
-        return Measurement(durationMs: (measurementEnd - start) * Benchmark.millisecondsPerSecond, stagesMs: measured)
+        return Measurement(durationMs: (measurementEnd - start) * Benchmark.millisecondsPerSecond, stagesMs: measured,
+            presentation: (try XCTUnwrap(commitTime), try XCTUnwrap(displayed), end))
     }
 
     private func append(_ fixture: Fixture, metric: String, run: Int = 1, values: [Measurement],
