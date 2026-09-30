@@ -132,6 +132,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     private let activeCellClipView = UIView(frame: .zero)
     private var entries: [String: Entry] = [:]
     private(set) var incrementalRelayoutsForTesting = 0
+    private(set) var seededShapeLayoutsForTesting = 0
     private var latestPresentation: EditorV2Adapter.EditorTablePresentationSnapshot?
     private var pinnedInputCell: PreparedViewerTableCell?
     var presentedDocumentRevision: UInt64? { presentationRevision }
@@ -1262,9 +1263,12 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         theme.contentInsets = .zero
         theme.tableDirection = hostTableDirection
         let shapeCatalog = PreparedCellShapeCatalog()
-        let previousLayouts = tableIDs.flatMap { self.entries[$0]?.surface.layoutStore.residentLayouts ?? [] }
-        let shapes = shapeCatalog.newBuildContext(reusing: previousLayouts)
-        defer { shapes.close() }
+        let shapes = shapeCatalog.newBuildContext()
+        var seededShapes: PreparedCellShapeBuildContext?
+        defer {
+            shapes.close()
+            seededShapes?.close()
+        }
         return tableIDs.reduce(into: [:]) { entries, tableID in
             guard var table = presentation.index.record(tableKey: tableID) else { return }
             var themeDigest = appearanceDigest
@@ -1295,11 +1299,21 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
             let previousEntry = self.entries[tableID]
             var reusable: ReusableCellContents?
             let engine = CoreTextProseLayoutEngine()
+            engine.tableCellShapeContextProvider = { incremental in
+                if incremental { return shapes }
+                if let seededShapes { return seededShapes }
+                let previousLayouts = tableIDs.flatMap { self.entries[$0]?.surface.layoutStore.residentLayouts ?? [] }
+                self.seededShapeLayoutsForTesting += previousLayouts.count
+                let context = shapeCatalog.newBuildContext(reusing: previousLayouts)
+                seededShapes = context
+                return context
+            }
             engine.tableCellPreparationObserver = { [weak self] index, contentKey in
                 self?.onTableCellPreparedForTesting?(index, contentKey)
             }
             defer {
                 engine.incrementalTableSurface = nil
+                engine.tableCellShapeContextProvider = nil
                 engine.reusableTableCell = nil
                 engine.reusableTableCellStore = nil
                 engine.tableIncrementalRelayoutObserver = nil

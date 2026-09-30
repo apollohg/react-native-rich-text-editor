@@ -16,6 +16,7 @@ final class CoreTextProseLayoutEngine {
     var tableCellShapeBuildObserver: ((Int) -> Void)?
     var tableCellBindingObserver: ((Int) -> Void)?
     var incrementalTableSurface: ((String) -> (ViewerTableSurface, IndexSet)?)?
+    var tableCellShapeContextProvider: ((Bool) -> PreparedCellShapeBuildContext)?
     var tableIncrementalRelayoutObserver: (() -> Void)?
     var reusableTableCell: ((TableSurfaceCell, Int) -> PreparedViewerTableCell?)?
     var reusableTableCellStore: TableCellLayoutStore?
@@ -431,11 +432,17 @@ final class CoreTextProseLayoutEngine {
                     let tableWidth = max(1, canonicalWidth - theme.contentInsets.left - theme.contentInsets.right
                         - tableAncestors.left - tableAncestors.right - tableBox.margin.left - tableBox.margin.right - tableBox.inset.left - tableBox.inset.right - placement.listInset - placement.quoteInset)
                     let surfaceSource = table
+                    let incremental: (ViewerTableSurface, IndexSet)? = cellMode ? nil : incrementalTableSurface?(tableKey).flatMap { previous, changed in
+                        guard previous.hostViewportWidth == tableWidth, previous.displayScale == displayScale,
+                              previous.direction == TableLayoutDirection.resolve(declared: table.direction, host: theme.tableDirection) else { return nil }
+                        return (previous, changed)
+                    }
+                    let tableShapes = (cellMode ? nil : tableCellShapeContextProvider?(incremental != nil)) ?? cellShapeContext
                     func cellRequest(_ cell: TableGridCell, width cellWidth: CGFloat,
                                      worker: CoreTextProseLayoutEngine? = nil,
                                      workerContext: PreparedCellShapeBuildContext? = nil) -> CellPreparation {
                         let engine = worker ?? self
-                        let context = worker == nil ? cellShapeContext : workerContext
+                        let context = worker == nil ? tableShapes : workerContext
                         guard surfaceSource.cells.indices.contains(cell.sourceIndex) else {
                             let failure = PreparedProseLayout.error(key: key, width: cellWidth, error: .layout(message: "Invalid table cell."))
                             return CellPreparation(prepare: { _, completion in completion(failure) }, rebuild: { failure })
@@ -461,11 +468,6 @@ final class CoreTextProseLayoutEngine {
                             return reuse(surfaceSource.cells[cell.sourceIndex], pixels)
                         }
                     }
-                    let incremental: (ViewerTableSurface, IndexSet)? = cellMode ? nil : incrementalTableSurface?(tableKey).flatMap { previous, changed in
-                        guard previous.hostViewportWidth == tableWidth, previous.displayScale == displayScale,
-                              previous.direction == TableLayoutDirection.resolve(declared: table.direction, host: theme.tableDirection) else { return nil }
-                        return (previous, changed)
-                    }
                     let record = incremental == nil ? TableGridRecord(table: surfaceSource, documentOwner: document.semanticKey) : nil
                     return .pending { queue, resume in
                         let assemble: ([Int: PreparedViewerTableCell]) -> Void = { nested in
@@ -486,7 +488,7 @@ final class CoreTextProseLayoutEngine {
                                 self.tableIncrementalRelayoutObserver?()
                             } else if let record {
                                 let workers = self.tablePreparationWorkers(document: document, table: surfaceSource, tableKey: tableKey,
-                                    theme: theme, cellMode: cellMode, context: cellShapeContext) { cell, width, worker, context in
+                                    theme: theme, cellMode: cellMode, context: tableShapes) { cell, width, worker, context in
                                         prepareCell(cell, width: width, worker: worker, workerContext: context)
                                     }
                                 defer { workers.contexts.forEach { $0.close() } }

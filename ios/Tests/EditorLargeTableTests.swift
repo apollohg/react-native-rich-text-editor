@@ -290,6 +290,7 @@ final class EditorLargeTableTests: XCTestCase {
         var prepared: [Int] = []
         surface.onTableCellPreparedForTesting = { index, _ in prepared.append(index) }
 
+        let seededBefore = surface.seededShapeLayoutsForTesting
         let replacementsBefore = surface.incrementalRelayoutsForTesting
         let fullBefore = adapter.fullFrameAdoptionCountForTesting
         let deltaBefore = adapter.deltaFrameAdoptionCountForTesting
@@ -304,6 +305,59 @@ final class EditorLargeTableTests: XCTestCase {
         XCTAssertEqual(editedText.count, 1, "the keystroke lands in exactly one cell")
         XCTAssertEqual(prepared.count, 1, "only the edited cell is measured again: \(prepared)")
         XCTAssertEqual(surface.incrementalRelayoutsForTesting, replacementsBefore + 1)
+        XCTAssertEqual(surface.seededShapeLayoutsForTesting, seededBefore,
+            "An incremental cell edit must not enumerate previous resident layouts to seed shapes")
+    }
+
+    func testRetainedEditedCellRebuildsWithoutKeepingItsEditorAlive() throws {
+        weak var releasedView: RichTextEditorView?
+        weak var releasedSurface: EditorTableSurface?
+        var retainedCell: PreparedViewerTableCell?
+        try autoreleasepool {
+            try withMountedTable(rows: 4, columns: 2) { view, surface, drawing in
+                releasedView = view
+                releasedSurface = surface
+                let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: view.editorId))
+                XCTAssertTrue(view.bindTableCell(tableID: try adapter.editableTableID(), cellIndex: 0, contentRect: .zero))
+                view.activeTextInput.insertText(EditedTable.typed)
+                view.layoutIfNeeded()
+                retainedCell = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface.cell(sourceIndex: 0))
+                view.bindEditor(id: 0, initialUpdateJSON: nil)
+                view.removeFromSuperview()
+            }
+        }
+        XCTAssertNil(releasedView, "A retained rebuild closure must not own the editor")
+        XCTAssertNil(releasedSurface, "A cleared lazy seed provider must release its previous table owners")
+        let cell = try XCTUnwrap(retainedCell)
+        let expectedSize = cell.contentSize
+        let expectedText = cell.accessibilityNodes.map(\.label)
+        let oversizedBytes = PreparedProseLayoutCache.preparedLayoutUnmountedByteBudget + 1
+        cell.layoutStore.insert(PreparedProseLayout(key: cell.contentKey, size: .zero, blocks: [], retainedBytes: oversizedBytes))
+        XCTAssertNil(cell.cachedContent, "The regression must exercise reconstruction after eviction")
+        let rebuilt = cell.content
+        XCTAssertEqual(rebuilt.size, expectedSize)
+        XCTAssertEqual(TableAccessibility.contentNodes(of: rebuilt).map(\.label), expectedText)
+        XCTAssertTrue(cell.content === rebuilt, "Reconstruction must preserve the cell's store identity")
+    }
+
+    func testWidthFallbackSeedsShapesAfterIncrementalAdmissionIsRejected() throws {
+        try withMountedTable(rows: 4, columns: 2) { view, surface, drawing in
+            let before = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface)
+            XCTAssertGreaterThan(before.layoutStore.count, 0)
+            let seededBefore = surface.seededShapeLayoutsForTesting
+            let incrementalBefore = surface.incrementalRelayoutsForTesting
+            let widthChange: CGFloat = 40
+            view.frame.size.width -= widthChange
+            view.setNeedsLayout()
+            view.layoutIfNeeded()
+            let after = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface)
+            XCTAssertEqual(after.hostViewportWidth, before.hostViewportWidth - widthChange)
+            XCTAssertEqual(surface.incrementalRelayoutsForTesting, incrementalBefore)
+            XCTAssertGreaterThan(surface.seededShapeLayoutsForTesting, seededBefore,
+                "The final width guard must preserve resident shape reuse for a full rebuild")
+            XCTAssertEqual(after.cells.count, before.cells.count)
+            XCTAssertTrue(after.cells.allSatisfy { $0.contentSize.height.isFinite && $0.contentSize.height > 0 })
+        }
     }
     func testWrappingEditMovesLaterRowsWithoutPreparingThem() throws {
         try withMountedTable(rows: 4, columns: 2) { view, surface, drawing in

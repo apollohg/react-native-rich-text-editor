@@ -45,6 +45,43 @@ final class ViewerTableTests: XCTestCase {
         }
     }
 
+    func testShapeContextSelectionFollowsFinalIncrementalGeometryGuard() throws {
+        let source = try jsonSource(["type": "doc", "content": [["type": "table", "content": [
+            ["type": "table_row", "content": [cell("first cell"), cell("second cell")]]
+        ]]]])
+        let compiled = viewerCompile(request: FfiViewerCompileRequest(sourceKind: .json, source: source,
+            configJson: Self.config, imagesEnabled: true, mentionPrefix: nil))
+        let document = try ViewerDocument(compiled: XCTUnwrap(compiled.value))
+        let initialWidth: CGFloat = 320
+        let changedWidth: CGFloat = 280
+        let initial = try prepare(document, widthPoints: initialWidth, tableDirection: .leftToRight)
+        let previous = try XCTUnwrap(initial.blocks.first?.tableSurface)
+        for width in [initialWidth, changedWidth] {
+            for direction in [TableLayoutDirection.leftToRight, .rightToLeft] {
+                let engine = CoreTextProseLayoutEngine()
+                let context = PreparedCellShapeCatalog().newBuildContext(reusing: previous.layoutStore.residentLayouts)
+                defer { context.close() }
+                var selections: [Bool] = []
+                engine.incrementalTableSurface = { _ in (previous, IndexSet()) }
+                engine.tableCellShapeContextProvider = { incremental in
+                    selections.append(incremental)
+                    return context
+                }
+                let actual = try prepare(document, engine: engine, widthPoints: width, tableDirection: direction)
+                let expected = try prepare(document, widthPoints: width, tableDirection: direction)
+                XCTAssertEqual(selections, [width == initialWidth && direction == .leftToRight])
+                let actualTable = try XCTUnwrap(actual.blocks.first?.tableSurface)
+                let expectedTable = try XCTUnwrap(expected.blocks.first?.tableSurface)
+                XCTAssertEqual(actual.size, expected.size)
+                XCTAssertEqual(actualTable.cells.count, expectedTable.cells.count)
+                for (actualCell, expectedCell) in zip(actualTable.cells, expectedTable.cells) {
+                    XCTAssertEqual(actualTable.frame(ofCell: actualCell), expectedTable.frame(ofCell: expectedCell))
+                    XCTAssertEqual(actualCell.contentSize, expectedCell.contentSize)
+                }
+            }
+        }
+    }
+
     func testParallelMeasurementEqualsSequentialMeasurement() throws {
         let rows = 1_000
         let columns = 20
