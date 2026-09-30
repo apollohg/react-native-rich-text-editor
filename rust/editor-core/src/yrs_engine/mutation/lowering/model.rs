@@ -103,6 +103,7 @@ pub(crate) struct ReplacementInput<'a> {
     pub(crate) to: u32,
     pub(crate) boundaries: &'a [u32],
     pub(crate) content: &'a Fragment,
+    pub(crate) canonical_content: Option<&'a [serde_json::Value]>,
 }
 
 #[derive(Debug, Clone)]

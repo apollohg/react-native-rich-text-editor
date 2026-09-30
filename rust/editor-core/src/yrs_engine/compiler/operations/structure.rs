@@ -98,18 +98,32 @@ impl OperationCompiler<'_> {
                         .map_err(|error| {
                         map_transform_error(request_id, operation_index, "structure", error)
                     })?;
-                if lowering.is_some()
-                    && !prepared_candidate_matches(
+                let candidate_matches = (lowering.is_some() || localized_root_window.is_some())
+                    && prepared_candidate_matches(
                         prepared_semantics,
                         transaction.operations.len(),
                         operation_index,
                         &next,
                         context,
                         canonical_schema,
-                    )
-                {
+                    );
+                if lowering.is_some() && !candidate_matches {
                     validate_preview(request_id, Some(operation_index), &next, context)?;
                 }
+                let canonical_content =
+                    if candidate_matches && from == 0 && to == preview.content_size() {
+                        prepared_semantics.and_then(|prepared| {
+                            prepared
+                                .admission
+                                .canonical_artifact()
+                                .materialized_content_for(
+                                    prepared.expected_preview,
+                                    replacement.content(),
+                                )
+                        })
+                    } else {
+                        None
+                    };
                 operation_changed = next != *preview;
                 if operation_changed {
                     if let Some(lowering) = &mut lowering {
@@ -133,6 +147,7 @@ impl OperationCompiler<'_> {
                                 to,
                                 boundaries: &boundaries,
                                 content: replacement.content(),
+                                canonical_content,
                             },
                         )?;
                     } else if localized_root_window.is_some() {
@@ -161,6 +176,7 @@ impl OperationCompiler<'_> {
                                     to,
                                     boundaries: &boundaries,
                                     content: replacement.content(),
+                                    canonical_content,
                                 },
                             )?;
                         prelowered_plan = Some(plan);

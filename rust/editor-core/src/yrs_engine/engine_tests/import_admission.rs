@@ -953,6 +953,7 @@ include!("import_admission/staged_authority.rs");
 
 #[test]
 fn a_table_import_performs_each_document_wide_pass_once() {
+    crate::yrs_engine::observability::take_replacement_json_projections_for_test();
     use crate::render::incremental::{
         reset_cached_render_counts_for_test, take_cached_render_counts_for_test,
     };
@@ -986,6 +987,11 @@ fn a_table_import_performs_each_document_wide_pass_once() {
     let counts = take_full_pass_counts_for_test();
     let renders = take_cached_render_counts_for_test();
     eprintln!("table import: {counts:#?}; cached renders: {renders:?}");
+    assert_eq!(
+        crate::yrs_engine::observability::take_replacement_json_projections_for_test(),
+        0,
+        "root import must reuse the admitted canonical children during Yrs lowering"
+    );
     assert_eq!(counts.document_validations, 1);
     assert_eq!(counts.rendered_text_derivations, 0);
     assert_eq!(renders.0, 1);
@@ -995,4 +1001,50 @@ fn a_table_import_performs_each_document_wide_pass_once() {
         engine.document_json().unwrap(),
         serde_json::from_str::<serde_json::Value>(&source).unwrap()
     );
+}
+
+#[test]
+fn canonical_child_reuse_preserves_reset_and_undoable_root_replacements() {
+    use crate::yrs_engine::observability::take_replacement_json_projections_for_test;
+    use crate::yrs_engine::ReplacementHistory;
+    const REQUEST: u64 = 65_300;
+    let source = serde_json::json!({"type":"doc","content":[
+        {"type":"heading","attrs":{"level":1},"content":[{"type":"text","text":"hé🙂","marks":[{"type":"bold"}]}]},
+        {"type":"blockquote","content":[{"type":"paragraph","content":[{"type":"text","text":"nested"}]}]},
+        {"type":"unknown","attrs":{"nested":[true,null]}}
+    ]});
+    let schema = tiptap_schema();
+    let parsed = crate::serialize::from_prosemirror_json(
+        &source,
+        &schema,
+        crate::serialize::UnknownTypeMode::Preserve,
+    )
+    .unwrap();
+    let expected = crate::serialize::to_prosemirror_json(&parsed, &schema);
+    for history in [
+        ReplacementHistory::ResetAndClear,
+        ReplacementHistory::UndoableBoundary,
+    ] {
+        let mut engine = transaction_engine();
+        let before = engine.document_json().unwrap();
+        take_replacement_json_projections_for_test();
+        engine
+            .prepare_root_replacement_json(REQUEST, &source.to_string(), history)
+            .unwrap();
+        assert_eq!(
+            take_replacement_json_projections_for_test(),
+            0,
+            "an exact admitted replacement must borrow canonical children"
+        );
+        assert_eq!(engine.document_json().unwrap(), expected);
+        let undone = engine.undo(REQUEST + 1).unwrap();
+        if history == ReplacementHistory::UndoableBoundary {
+            assert!(undone.is_some());
+            assert_eq!(engine.document_json().unwrap(), before);
+            assert!(engine.redo(REQUEST + 2).unwrap().is_some());
+            assert_eq!(engine.document_json().unwrap(), expected);
+        } else {
+            assert!(undone.is_none(), "reset must retain no undo entry");
+        }
+    }
 }

@@ -368,6 +368,7 @@ impl OperationCompiler<'_> {
                                 limits: context.resource_limits,
                             },
                             ReplacementInput {
+                                canonical_content: None,
                                 from,
                                 to,
                                 boundaries: &boundaries,

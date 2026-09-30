@@ -9,9 +9,9 @@ use crate::serialize::to_prosemirror_json;
 
 mod hash_prefix;
 mod splice_cache;
-pub(crate) use splice_cache::CanonicalSpliceCache;
 #[cfg(test)]
 pub(crate) use splice_cache::CacheAllocation;
+pub(crate) use splice_cache::CanonicalSpliceCache;
 
 pub(crate) const CANONICAL_ARTIFACT_FORMAT_VERSION: u8 = 1;
 
@@ -392,6 +392,26 @@ impl CanonicalArtifact {
             .as_value()
     }
 
+    pub(crate) fn materialized_content_for(
+        &self,
+        document: &Document,
+        content: &crate::model::Fragment,
+    ) -> Option<&[serde_json::Value]> {
+        if !self.matches_exact_source_document(document)
+            || document.root().node_type() == "__opaque_json"
+            || document.root().content() != Some(content)
+        {
+            return None;
+        }
+        self.0
+            .value
+            .get()?
+            .as_value()
+            .get("content")?
+            .as_array()
+            .map(Vec::as_slice)
+    }
+
     pub(crate) fn serialized_len(&self) -> usize {
         *self.0.serialized_len.get_or_init(|| {
             #[cfg(test)]
@@ -752,6 +772,52 @@ mod tests {
     };
     use crate::schema::{presets::tiptap_schema, schema_fingerprint};
     use crate::serialize::{from_prosemirror_json, to_prosemirror_json, UnknownTypeMode};
+
+    #[test]
+    fn materialized_children_require_exact_source_and_matching_fragment_without_forcing_json() {
+        let schema = tiptap_schema();
+        let context = CanonicalSchemaContext::new(&schema);
+        let source = serde_json::json!({"type":"doc","content":[
+            {"type":"heading","attrs":{"level":1},"content":[{"type":"text","text":"hé🙂"}]},
+            {"type":"unknown","attrs":{"nested":[true,null]}}
+        ]});
+        let document = from_prosemirror_json(&source, &schema, UnknownTypeMode::Preserve).unwrap();
+        let independently_parsed =
+            from_prosemirror_json(&source, &schema, UnknownTypeMode::Preserve).unwrap();
+        let content = document.root().content().unwrap();
+        let artifact = context
+            .derive_validated_json(&document, source.to_string().len(), 0)
+            .unwrap();
+        assert!(artifact.0.value.get().is_none());
+        assert!(artifact
+            .materialized_content_for(&document, content)
+            .is_none());
+        assert!(
+            artifact.0.value.get().is_none(),
+            "lookup must not materialize an absent JSON tree"
+        );
+        let expected = content
+            .iter()
+            .map(|node| crate::serialize::node_to_prosemirror_json(node, &schema))
+            .collect::<Vec<_>>();
+        artifact.value();
+        assert_eq!(
+            artifact.materialized_content_for(&document, content),
+            Some(expected.as_slice())
+        );
+        assert!(
+            artifact
+                .materialized_content_for(&independently_parsed, content)
+                .is_none(),
+            "equal documents cannot confer source identity"
+        );
+        assert!(
+            artifact
+                .materialized_content_for(&document, &crate::model::Fragment::empty())
+                .is_none(),
+            "different replacement children cannot reuse a root artifact"
+        );
+    }
 
     #[test]
     fn artifact_metrics_are_from_the_exact_canonical_projection() {
