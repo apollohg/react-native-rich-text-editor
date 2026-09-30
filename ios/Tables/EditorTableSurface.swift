@@ -470,8 +470,9 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
             drawingView.setNeedsDisplay()
             drawingView.updateConfiguredImagesForVisibleWindow()
         }
-        updateExcludedCellContent()
-        refreshActiveInputFrame()
+        let presented = activeCell.flatMap { presentedCell(tableID: $0.tableID, cellIndex: $0.cellIndex) }
+        updateExcludedCellContent(presented)
+        if let presented { placeInput(in: presented, fallback: .zero) }
     }
 
     func selectionGeometry(obstructions: TableSelectionObstructions) -> TableSelectionGeometry? {
@@ -632,8 +633,9 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
                 return TableAccessibility.customActions(for: cell, tableID: tableID, editing: self)
             }
         )
-        updateExcludedCellContent()
-        placeInput(in: presentedCell(tableID: tableID, cellIndex: cellIndex), fallback: contentRect)
+        let presented = presentedCell(tableID: tableID, cellIndex: cellIndex)
+        updateExcludedCellContent(presented)
+        placeInput(in: presented, fallback: contentRect)
         inputCoordinator.cellInput.isHidden = false
         if changedCell { scheduleActiveInputReveal() }
         selectionGeometryMayChange()
@@ -744,7 +746,11 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     }
 
     func nestedTableHeights(tableID: String, cellIndex: UInt32, input: EditorTextView? = nil) -> [String: CGFloat]? {
-        guard let cell = presentedCell(tableID: tableID, cellIndex: cellIndex)?.cell else { return nil }
+        guard let presented = presentedCell(tableID: tableID, cellIndex: cellIndex) else { return nil }
+        return nestedTableHeights(content: presented.content, input: input)
+    }
+
+    private func nestedTableHeights(content: PreparedProseLayout, input: EditorTextView?) -> [String: CGFloat]? {
         var precedingSpacing: [String: CGFloat] = [:]
         if let input, input.textStorage.length > 0 {
             input.textStorage.enumerateAttribute(
@@ -761,13 +767,13 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
             }
         }
         var heights: [String: CGFloat] = [:]
-        let blocks = cell.content.blocks
+        let blocks = content.blocks
         for index in blocks.indices {
             let block = blocks[index]
             guard let nested = block.tableSurface else { continue }
             let previous = index > blocks.startIndex ? blocks[index - 1] : nil
             let nextStart = index + 1 < blocks.endIndex
-                ? blocks[index + 1].bounds.minY : cell.content.size.height
+                ? blocks[index + 1].bounds.minY : content.size.height
             let leading = previous?.tableSurface == nil
                 ? block.bounds.minY - (previous?.bounds.maxY ?? 0) : 0
             let trailing = nextStart - block.bounds.maxY
@@ -1494,14 +1500,13 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         placeInput(in: presented, fallback: .zero)
     }
 
-    private func updateExcludedCellContent() {
+    private func updateExcludedCellContent(_ presented: ViewerTablePresentedCell?) {
         if let pinnedInputCell { pinnedInputCell.layoutStore.unpin(pinnedInputCell.contentKey) }
         pinnedInputCell = nil
         drawingView.tableLayerCell = activeCell.map {
             PreparedProseDrawingView.TableLayerCell(tableID: $0.tableID, sourceIndex: Int($0.cellIndex))
         }
-        guard let activeCell,
-              let presented = presentedCell(tableID: activeCell.tableID, cellIndex: activeCell.cellIndex) else {
+        guard let presented else {
             drawingView.excludedTableCellContentLayout = nil
             return
         }
@@ -1509,11 +1514,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         presented.cell.layoutStore.insert(presented.content, for: presented.cell.contentKey)
         pinnedInputCell = presented.cell
         drawingView.excludedTableCellContentLayout = presented.content
-        if let heights = nestedTableHeights(
-            tableID: activeCell.tableID,
-            cellIndex: activeCell.cellIndex,
-            input: inputCoordinator.cellInput
-        ) {
+        if let heights = nestedTableHeights(content: presented.content, input: inputCoordinator.cellInput) {
             inputCoordinator.cellInput.reserveRootTableHeights(heights)
         }
     }
