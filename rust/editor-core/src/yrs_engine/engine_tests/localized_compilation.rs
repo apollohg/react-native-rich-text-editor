@@ -1400,6 +1400,60 @@ fn large_table_canonical_history_charge_exceeds_the_snapshot_budget() {
 }
 
 #[test]
+fn large_table_native_input_reuses_materialization_costs() {
+    use crate::native_transaction_bridge::NativeTransactionBridge;
+    use crate::test_support::large_table_fixture::{
+        fixture_cell_text, keystroke_cell, plain_table_document, session_with_document,
+    };
+    const ROWS: usize = 1_000;
+    const COLUMNS: usize = 20;
+    const OWNER: u64 = 71;
+    const REQUEST: u64 = 71_000;
+    const EDITS: usize = 4;
+    const CELL_BOUNDARY_SCALARS: usize = 1;
+    let mut session = session_with_document(&plain_table_document(ROWS, COLUMNS));
+    let text_len = fixture_cell_text(0, 0).chars().count();
+    let caret = keystroke_cell(ROWS, COLUMNS) * (text_len + CELL_BOUNDARY_SCALARS) + text_len;
+    for edit in 0..EDITS {
+        let epoch = session
+            .pin_position_epoch(OWNER, session.engine.revision())
+            .unwrap();
+        let before = Arc::clone(
+            &session
+                .engine
+                .derived_state
+                .as_ref()
+                .unwrap()
+                .mutation_lookup_seed,
+        );
+        let request = serde_json::json!({
+            "version": 1, "requestId": (REQUEST + edit as u64).to_string(),
+            "ownerId": OWNER.to_string(), "positionEpoch": epoch.to_string(),
+            "intent": {"type": "insertText", "anchor": caret + edit, "head": caret + edit, "text": "x"},
+        }).to_string();
+        crate::yrs_engine::observability::reset_full_pass_counts_for_test();
+        NativeTransactionBridge::new(&mut session)
+            .submit_native_intent(&request)
+            .unwrap();
+        let passes = crate::yrs_engine::observability::take_full_pass_counts_for_test();
+        let after = &session
+            .engine
+            .derived_state
+            .as_ref()
+            .unwrap()
+            .mutation_lookup_seed;
+        assert!(
+            before.shares_materialization_base_for_test(after),
+            "native table edit {edit} cloned the full materialization map"
+        );
+        assert_eq!(
+            passes.canonical_hashes, 1,
+            "only the approved over-budget history hash is required for native table edit {edit}"
+        );
+    }
+}
+
+#[test]
 fn localized_history_charges_and_eviction_equal_the_generic_path() {
     use crate::native_transaction_bridge::NativeTransactionBridge;
     use crate::test_support::large_table_fixture::{
