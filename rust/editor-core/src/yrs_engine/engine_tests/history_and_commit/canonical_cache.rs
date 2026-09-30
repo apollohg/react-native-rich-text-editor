@@ -248,6 +248,10 @@ fn canonical_cache_drops_failed_staging_and_invalidates_external_transitions() {
 fn optional_canonical_cache_allocation_failure_preserves_edit_and_history() {
     use crate::yrs_engine::canonical::{CacheAllocation, CanonicalSpliceCache};
     for allocation in [CacheAllocation::Buffer, CacheAllocation::Path] {
+        let failed_request = match allocation {
+            CacheAllocation::Buffer => 108_601,
+            CacheAllocation::Path => 108_600,
+        };
         let mut cached = canonical_cache_engine();
         let mut uncached = canonical_cache_engine();
         for request_id in 108_600..108_603 {
@@ -258,7 +262,7 @@ fn optional_canonical_cache_allocation_failure_preserves_edit_and_history() {
                     HistoryPolicy::Boundary,
                 ))
             };
-            let actual = if request_id == 108_601 {
+            let actual = if request_id == failed_request {
                 CanonicalSpliceCache::failing_allocation_for_test(allocation, apply)
             } else {
                 let mut apply = apply;
@@ -288,7 +292,7 @@ fn optional_canonical_cache_allocation_failure_preserves_edit_and_history() {
             );
             assert_eq!(
                 cached.canonical_splice_cache.is_some(),
-                request_id != 108_601
+                request_id != failed_request
             );
         }
         for request_id in 108_610..108_613 {

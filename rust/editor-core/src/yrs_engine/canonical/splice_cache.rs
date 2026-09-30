@@ -92,7 +92,7 @@ impl CanonicalSpliceCache {
     }
 
     pub(crate) fn prepare(
-        previous: Option<Self>,
+        mut previous: Option<Self>,
         before: &CanonicalArtifact,
         after: &CanonicalArtifact,
         path: &[u32],
@@ -112,26 +112,6 @@ impl CanonicalSpliceCache {
             .checked_add(expected_len)?
             .checked_add(path.len().checked_mul(std::mem::size_of::<u32>())?)?;
         if required > byte_budget {
-            return None;
-        }
-        let mut bytes = Vec::new();
-        #[cfg(test)]
-        Self::allocation_allowed(CacheAllocation::Buffer)?;
-        bytes.try_reserve_exact(expected_len).ok()?;
-        let mut owned_path = Vec::new();
-        #[cfg(test)]
-        Self::allocation_allowed(CacheAllocation::Path)?;
-        owned_path.try_reserve_exact(path.len()).ok()?;
-        owned_path.extend_from_slice(path);
-        let retained = previous_bytes
-            .checked_add(Self::fixed_bytes()?)?
-            .checked_add(bytes.capacity())?
-            .checked_add(
-                owned_path
-                    .capacity()
-                    .checked_mul(std::mem::size_of::<u32>())?,
-            )?;
-        if retained > byte_budget {
             return None;
         }
         let reusable = previous.as_ref().filter(|prior| {
@@ -154,6 +134,43 @@ impl CanonicalSpliceCache {
                 expected_len.checked_sub(prior.bytes.len().checked_sub(prior.range.len())?)?;
             Some((prior, node, replaced_len))
         });
+        if let Some((prior, node, _)) = replacement {
+            let reused_charge = previous_bytes
+                .checked_add(previous_bytes)
+                .and_then(|charge| {
+                    charge.checked_add(expected_len.saturating_sub(prior.bytes.capacity()))
+                });
+            if reused_charge.is_some_and(|charge| charge <= byte_budget) {
+                return previous.take()?.splice(
+                    after,
+                    node,
+                    expected_len,
+                    next_revision,
+                    previous_bytes,
+                    byte_budget,
+                );
+            }
+        }
+        let mut bytes = Vec::new();
+        #[cfg(test)]
+        Self::allocation_allowed(CacheAllocation::Buffer)?;
+        bytes.try_reserve_exact(expected_len).ok()?;
+        let mut owned_path = Vec::new();
+        #[cfg(test)]
+        Self::allocation_allowed(CacheAllocation::Path)?;
+        owned_path.try_reserve_exact(path.len()).ok()?;
+        owned_path.extend_from_slice(path);
+        let retained = previous_bytes
+            .checked_add(Self::fixed_bytes()?)?
+            .checked_add(bytes.capacity())?
+            .checked_add(
+                owned_path
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<u32>())?,
+            )?;
+        if retained > byte_budget {
+            return None;
+        }
         let range = if let Some((prior, node, replaced_len)) = replacement {
             bytes.extend_from_slice(prior.bytes.get(..prior.range.start)?);
             crate::serialize::json_out::write_node_json(
@@ -193,17 +210,78 @@ impl CanonicalSpliceCache {
             artifact: Arc::downgrade(&after.0),
             hash_prefix,
         };
-        if previous_bytes.checked_add(candidate.retained_bytes()?)? > byte_budget {
+        candidate.finish(after, previous_bytes, byte_budget)
+    }
+
+    fn splice(
+        mut self,
+        after: &CanonicalArtifact,
+        node: &Node,
+        expected_len: usize,
+        next_revision: u64,
+        previous_bytes: usize,
+        byte_budget: usize,
+    ) -> Option<Self> {
+        self.bytes.get(self.range.clone())?;
+        let old_len = self.bytes.len();
+        let suffix_len = old_len.checked_sub(self.range.end)?;
+        let end = expected_len.checked_sub(suffix_len)?;
+        if end < self.range.start {
             return None;
         }
-        let digest = candidate
+        if expected_len > self.bytes.capacity() {
+            #[cfg(test)]
+            Self::allocation_allowed(CacheAllocation::Buffer)?;
+            self.bytes
+                .try_reserve_exact(expected_len.checked_sub(old_len)?)
+                .ok()?;
+        }
+        // Keep the existing old-plus-new staging headroom policy.
+        if previous_bytes.checked_add(self.retained_bytes()?)? > byte_budget {
+            return None;
+        }
+        if expected_len > old_len {
+            self.bytes.resize(expected_len, 0);
+        }
+        if end != self.range.end {
+            self.bytes.copy_within(self.range.end..old_len, end);
+        }
+        self.bytes.truncate(expected_len);
+        let mut output = self.bytes.get_mut(self.range.start..end)?;
+        crate::serialize::json_out::write_node_json(
+            &mut output,
+            node,
+            &after.0.schema_context.0.schema,
+        )
+        .ok()?;
+        if !output.is_empty() {
+            return None;
+        }
+        self.range.end = end;
+        self.revision = next_revision;
+        self.artifact = Arc::downgrade(&after.0);
+        self.finish(after, previous_bytes, byte_budget)
+    }
+
+    fn finish(
+        self,
+        after: &CanonicalArtifact,
+        previous_bytes: usize,
+        byte_budget: usize,
+    ) -> Option<Self> {
+        if self.bytes.len() != after.serialized_len()
+            || previous_bytes.checked_add(self.retained_bytes()?)? > byte_budget
+        {
+            return None;
+        }
+        let digest = self
             .hash_prefix
-            .finish(candidate.bytes.get(candidate.range.start..)?)?;
+            .finish(self.bytes.get(self.range.start..)?)?;
         #[cfg(test)]
         super::super::observability::record_canonical_hash();
         let _ = after.0.sha256.set(digest);
         debug_assert_eq!(after.0.sha256.get(), Some(&digest));
-        Some(candidate)
+        Some(self)
     }
 }
 
@@ -346,64 +424,99 @@ mod tests {
 
     #[test]
     fn repeated_unicode_marked_splices_match_full_canonical_bytes_and_digest() {
+        const BLOCKS: usize = 3;
+        const DELETED_SCALARS: u32 = 1;
         let schema = crate::prosemirror_schema();
         let context = CanonicalSchemaContext::new(&schema);
-        let mut document = initial(&schema);
-        let mut artifact = context.derive(&document).unwrap();
-        let path = [1];
-        let mut cache =
-            CanonicalSpliceCache::prepare(None, &artifact, &artifact, &path, 0, 0, usize::MAX);
-        assert!(cache.is_some());
-        let position = document.root().child(0).unwrap().node_size() + 2;
-        const DELETED_SCALARS: u32 = 1;
-        let steps = ["🙂", "e\u{301}", "\"\\\n雪"]
-            .into_iter()
-            .map(|text| Step::InsertText {
-                pos: position,
-                text: text.into(),
-                marks: vec![Mark::new("strong".into(), HashMap::new())],
-            })
-            .chain(std::iter::repeat_n(
-                Step::DeleteRange {
-                    from: position,
-                    to: position + DELETED_SCALARS,
-                },
-                3,
+        for target in 0..BLOCKS {
+            let block = initial(&schema).root().child(0).unwrap().clone();
+            let mut document = Document::new(Node::element(
+                "doc".into(),
+                HashMap::new(),
+                crate::model::Fragment::from(vec![block; BLOCKS]),
             ));
-        for (index, step) in steps.enumerate() {
-            let (next, _) = apply_step(&document, &step, &schema).unwrap();
-            let after = CanonicalArtifact::derive_localized(
-                &artifact,
-                &next,
-                document.root().child(1).unwrap(),
-                next.root().child(1).unwrap(),
-            )
-            .unwrap();
-            reset_canonical_artifact_counts_for_test();
-            cache = CanonicalSpliceCache::prepare(
-                cache,
-                &artifact,
-                &after,
-                &path,
-                index as u64,
-                index as u64 + 1,
-                usize::MAX,
-            );
-            let cached = cache.as_ref().unwrap();
-            assert_eq!(
-                take_canonical_artifact_counts_for_test().1,
-                0,
-                "A certified hit serializes only the changed text block"
-            );
-            let expected = crate::boundary::serialize_json_value_stack_safe(
-                &crate::serialize::to_prosemirror_json(&next, &schema),
-                0,
-            );
-            assert_eq!(cached.bytes, expected, "edit={index}");
-            assert_eq!(after.sha256(), canonical_sha256(&expected), "edit={index}");
-            assert_eq!(cached.range, emitted_range(&expected, &path).unwrap());
-            document = next;
-            artifact = after;
+            let mut artifact = context.derive(&document).unwrap();
+            let path = [target as u32];
+            let mut cache =
+                CanonicalSpliceCache::prepare(None, &artifact, &artifact, &path, 0, 0, usize::MAX);
+            assert!(cache.is_some());
+            let position = (0..target)
+                .map(|index| document.root().child(index).unwrap().node_size())
+                .sum::<u32>()
+                + 2;
+            let replacement = Step::ReplaceRange {
+                from: position,
+                to: position + DELETED_SCALARS,
+                content: crate::model::Fragment::from(vec![Node::text("X".into(), vec![])]),
+            };
+            let steps =
+                std::iter::once(replacement)
+                    .chain(["🙂", "e\u{301}", "\"\\\n雪"].into_iter().map(|text| {
+                        Step::InsertText {
+                            pos: position,
+                            text: text.into(),
+                            marks: vec![Mark::new("strong".into(), HashMap::new())],
+                        }
+                    }))
+                    .chain(std::iter::repeat_n(
+                        Step::DeleteRange {
+                            from: position,
+                            to: position + DELETED_SCALARS,
+                        },
+                        3,
+                    ));
+            for (index, step) in steps.enumerate() {
+                let (next, _) = apply_step(&document, &step, &schema).unwrap();
+                let after = CanonicalArtifact::derive_localized(
+                    &artifact,
+                    &next,
+                    document.root().child(target).unwrap(),
+                    next.root().child(target).unwrap(),
+                )
+                .unwrap();
+                let previous = cache.as_ref().unwrap();
+                let prior_buffer = previous.bytes.as_ptr();
+                let prior_path = previous.path.as_ptr();
+                let fits_buffer = after.serialized_len() <= previous.bytes.capacity();
+                reset_canonical_artifact_counts_for_test();
+                cache = CanonicalSpliceCache::prepare(
+                    cache,
+                    &artifact,
+                    &after,
+                    &path,
+                    index as u64,
+                    index as u64 + 1,
+                    usize::MAX,
+                );
+                let cached = cache.as_ref().unwrap();
+                assert_eq!(
+                    take_canonical_artifact_counts_for_test().1,
+                    0,
+                    "A certified hit serializes only the changed text block"
+                );
+                let expected = crate::boundary::serialize_json_value_stack_safe(
+                    &crate::serialize::to_prosemirror_json(&next, &schema),
+                    0,
+                );
+                assert_eq!(cached.bytes, expected, "target={target}, edit={index}");
+                assert_eq!(
+                    after.sha256(),
+                    canonical_sha256(&expected),
+                    "target={target}, edit={index}"
+                );
+                assert_eq!(cached.range, emitted_range(&expected, &path).unwrap());
+                if fits_buffer {
+                    assert_eq!(cached.bytes.as_ptr(), prior_buffer,
+                        "target={target}, edit={index}: a certified splice that fits must reuse its owned buffer");
+                }
+                assert_eq!(
+                    cached.path.as_ptr(),
+                    prior_path,
+                    "The certified path stays owned across hits"
+                );
+                document = next;
+                artifact = after;
+            }
         }
     }
 
@@ -510,6 +623,59 @@ mod tests {
             charge * 2 - 1
         )
         .is_none());
+        let position = document.root().child(0).unwrap().node_size() + 2;
+        let (shrunk_document, _) = apply_step(
+            &document,
+            &Step::DeleteRange {
+                from: position,
+                to: position + 1,
+            },
+            &schema,
+        )
+        .unwrap();
+        let shrunk = context.derive(&shrunk_document).unwrap();
+        let fresh_charge =
+            CanonicalSpliceCache::prepare(None, &shrunk, &shrunk, &[1], 0, 0, usize::MAX)
+                .unwrap()
+                .retained_bytes()
+                .unwrap();
+        let exact_budget = charge + fresh_charge;
+        let compact = CanonicalSpliceCache::prepare(
+            Some(seed()),
+            &artifact,
+            &shrunk,
+            &[1],
+            0,
+            1,
+            exact_budget,
+        )
+        .expect("Retaining old capacity must not reject a previously affordable fresh cache");
+        assert_eq!(compact.retained_bytes(), Some(fresh_charge));
+        assert!(CanonicalSpliceCache::prepare(
+            Some(seed()),
+            &artifact,
+            &shrunk,
+            &[1],
+            0,
+            1,
+            exact_budget - 1
+        )
+        .is_none());
+        let retained = CanonicalSpliceCache::prepare(
+            Some(seed()),
+            &artifact,
+            &shrunk,
+            &[1],
+            0,
+            1,
+            charge + charge,
+        )
+        .unwrap();
+        assert_eq!(
+            retained.retained_bytes(),
+            Some(charge),
+            "A shrinking reused buffer is charged for its retained capacity"
+        );
         let cache = seed();
         let weak = Arc::downgrade(&artifact.0);
         drop(artifact);
