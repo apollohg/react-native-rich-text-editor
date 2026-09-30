@@ -3,6 +3,7 @@ import Foundation
 extension EditorV2Adapter {
     struct EditorTablePresentationSnapshot {
         let documentRevision: UInt64
+        let baseDocumentRevision: UInt64?
         let positionEpoch: UInt64?
         let index: EditorTableIndex
         let changes: TableFrameChanges

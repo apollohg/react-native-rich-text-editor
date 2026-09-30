@@ -67,7 +67,9 @@ extension EditorV2Adapter {
             return nil
         }
         let tablePresentation = EditorTablePresentationSnapshot(
-            documentRevision: snapshot.documentRevision, positionEpoch: snapshot.positionEpoch,
+            documentRevision: snapshot.documentRevision,
+            baseDocumentRevision: changes.fullReset ? nil : installedFrameRevision,
+            positionEpoch: snapshot.positionEpoch,
             index: nextIndex, changes: changes
         )
         tableIndex = nextIndex

@@ -90,6 +90,28 @@ final class EditorLargeTableTests: XCTestCase {
         }
     }
 
+    func testCoalescedNativeFramesDoNotReuseStaleCellContent() throws {
+        let text = "Cell text"
+        let firstPrefix = "first "
+        let secondPrefix = "second "
+        try withMountedTable(rows: 2, columns: 3, repeatedText: text) { view, _, drawing in
+            let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: view.editorId))
+            let tableID = try adapter.editableTableID()
+            let original = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface)
+            let first = try XCTUnwrap(adapter.tableIndex.scalarStart(tableKey: tableID, cellIndex: 0))
+            _ = try XCTUnwrap(adapter.insertText(firstPrefix, atScalar: first))
+            let second = try XCTUnwrap(adapter.tableIndex.scalarStart(tableKey: tableID, cellIndex: 1))
+            _ = try XCTUnwrap(adapter.insertText(secondPrefix, atScalar: second))
+            XCTAssertEqual(original.cells[0].accessibilityNodes.map(\.label).joined(separator: " "), text)
+            XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.initialUpdateJSON())))
+            view.layoutIfNeeded()
+            let current = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface)
+            XCTAssertEqual(current.cells[0].accessibilityNodes.map(\.label).joined(separator: " "), firstPrefix + text, "A skipped frame's edit must appear")
+            XCTAssertEqual(current.cells[1].accessibilityNodes.map(\.label).joined(separator: " "), secondPrefix + text, "The latest edit must also appear")
+            XCTAssertEqual(current.cells[2].accessibilityNodes.map(\.label).joined(separator: " "), text)
+        }
+    }
+
     func testStructuralRowInsertionReusesEvictedCellGeometry() throws {
         let shape = Self.twentyThousandSlotTables[0]
         try withMountedTable(rows: shape.rows, columns: shape.columns) { view, surface, drawing in

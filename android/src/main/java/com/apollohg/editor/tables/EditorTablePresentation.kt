@@ -6,6 +6,7 @@ import uniffi.editor_core.FfiViewerElement
 
 internal data class EditorTablePresentationSnapshot(
     val documentRevision: ULong,
+    val baseDocumentRevision: ULong?,
     val positionEpoch: String?,
     val index: EditorTableIndex,
     val changes: TableFrameChanges

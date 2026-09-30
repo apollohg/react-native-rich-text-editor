@@ -974,10 +974,13 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
                     engine.reusableTableCell = if (entries[id] != null) {
                         { cell, cellWidth -> reusable.take(cell, cellWidth) }
                     } else null
-                    val changes = adapter.cachedTablePresentation?.changes
+                    val presentation = adapter.cachedTablePresentation
+                    val changes = presentation?.changes
                     engine.incrementalTableSurface = { tableKey ->
                         val previous = entries[tableKey]?.takeIf { it.appearance == appearance }
                         if (preview == null && key?.resizePreview == null && previous != null &&
+                            key?.adapter === adapter && key?.documentGeneration == adapter.tablePresentationDocumentGeneration &&
+                            key?.revision == presentation?.baseDocumentRevision &&
                             changes != null && !changes.fullReset && tableKey !in changes.replacedTables &&
                             previous.surface.cells.all { it.isPositionFree }) {
                             previous.surface to changes.changedCells[tableKey].orEmpty()

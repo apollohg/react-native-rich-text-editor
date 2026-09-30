@@ -131,6 +131,25 @@ internal class EditorTableSurfaceMountTest {
         }
     }
 
+    @Test fun `coalesced native frames cannot reuse stale cell content`() =
+        withMountedView(gridDocument) { view, adapter, _ ->
+            val tableId = adapter.tableIndex.tableKeys.single()
+            val original = requireNotNull(drawing(view)?.preparedLayout?.blocks?.first()?.tableSurface)
+            val firstPrefix = "first "
+            val secondPrefix = "second "
+            val firstPosition = requireNotNull(adapter.tableIndex.scalarStart(tableId, 0)).toInt()
+            requireNotNull(adapter.insertText(firstPrefix, firstPosition))
+            val secondPosition = requireNotNull(adapter.tableIndex.scalarStart(tableId, 1)).toInt()
+            requireNotNull(adapter.insertText(secondPrefix, secondPosition))
+            assertEquals("The presented table has not consumed either native edit", GRID_TEXT, original.cells[0].accessibilityText)
+            assertTrue(view.editorEditText.applyUpdateJSON(requireNotNull(adapter.initialUpdateJson())))
+            measure(view, TABLE_HOST_WIDTH)
+            val current = requireNotNull(drawing(view)?.preparedLayout?.blocks?.first()?.tableSurface)
+            assertEquals("A skipped frame's first cell edit must appear", firstPrefix + GRID_TEXT, current.cells[0].accessibilityText)
+            assertEquals("The latest cell edit must also appear", secondPrefix + GRID_TEXT, current.cells[1].accessibilityText)
+            assertEquals(GRID_TEXT, current.cells[2].accessibilityText)
+        }
+
     @Test
     fun `nested only outer cell has a representable selection endpoint`() =
         withMountedView(nestedTableDocument) { _, adapter, _ ->

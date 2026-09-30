@@ -1325,6 +1325,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
                 engine.tableIncrementalRelayoutObserver = nil
             }
             if let previous = self.entries[tableID], previous.themeDigest == themeDigest,
+               let presentationRevision, presentationRevision == presentation.baseDocumentRevision,
                !presentation.changes.fullReset, !presentation.changes.replacedTables.contains(tableID),
                previous.surface.scrollIdentity == (document.tableSourceIDs[tableID] ?? tableID),
                previous.surface.cells.allSatisfy(\.isPositionFree) {

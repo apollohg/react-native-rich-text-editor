@@ -44,9 +44,10 @@ private fun EditorV2Adapter.adopt(
         val updateObject = if (stripViewSelection) JSONObject(snapshot.viewUpdateJson).apply { remove("selection") } else snapshot.renderObject
         val updateJson = if (stripViewSelection) updateObject.toString() else snapshot.viewUpdateJson
         tableIndex = nextIndex
-        installedFrameRevision = snapshot.documentRevision
         cachedTablePresentation = EditorTablePresentationSnapshot(
-            snapshot.documentRevision, snapshot.positionEpoch, nextIndex, adoption.changes)
+            snapshot.documentRevision, if (adoption.changes.fullReset) null else installedFrameRevision,
+            snapshot.positionEpoch, nextIndex, adoption.changes)
+        installedFrameRevision = snapshot.documentRevision
         if (adoption.changes.fullReset) fullFrameAdoptionCountForTesting++ else deltaFrameAdoptionCountForTesting++
         baseDocumentRevision = snapshot.documentRevision
         stateRevision = snapshot.stateRevision

@@ -131,7 +131,8 @@ extension EditorV2Adapter {
             guard pinCurrentPositionEpoch(revision) else { return }
             if let presentation = cachedTablePresentation {
                 cachedTablePresentation = EditorTablePresentationSnapshot(
-                    documentRevision: revision, positionEpoch: positionEpoch,
+                    documentRevision: revision, baseDocumentRevision: presentation.baseDocumentRevision,
+                    positionEpoch: positionEpoch,
                     index: presentation.index, changes: presentation.changes
                 )
             }
