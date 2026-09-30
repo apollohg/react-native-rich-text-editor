@@ -431,12 +431,14 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
                 generationIdentity: "editor-table-presentation",
                 semanticGenerationIdentity: "editor-table-presentation"
             )
-            let retainedBytes = blocks.reduce(0) { $0 + $1.estimatedRetainedBytes }
+            let tableRetainedBytes = blocks.reduce(0) { $0 + ($1.tableSurface?.retainedBytes ?? 0) }
+            let retainedBytes = blocks.reduce(tableRetainedBytes) { $0 + $1.nonTableRetainedBytes }
             drawingView.install(layout: PreparedProseLayout(
                 key: key,
                 size: canvasSize,
                 blocks: blocks,
-                retainedBytes: retainedBytes
+                retainedBytes: retainedBytes,
+                tableRetainedBytesAtPreparation: tableRetainedBytes
             ))
             mountedTableFrames = tableFrames
             mountedSurfaces = currentSurfaces

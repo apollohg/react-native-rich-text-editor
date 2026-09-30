@@ -220,8 +220,12 @@ final class PreparedProseBlock {
         self.tableSurface = tableSurface
     }
 
+    var nonTableRetainedBytes: Int {
+        160 + fragments.reduce(0) { $0 + $1.estimatedRetainedBytes } + (atomSlot?.estimatedRetainedBytes ?? 0)
+    }
+
     var estimatedRetainedBytes: Int {
-        160 + fragments.reduce(0) { $0 + $1.estimatedRetainedBytes } + (atomSlot?.estimatedRetainedBytes ?? 0) + (tableSurface?.retainedBytes ?? 0)
+        nonTableRetainedBytes + (tableSurface?.retainedBytes ?? 0)
     }
 
     /// Compatibility initializer retained for test seams.

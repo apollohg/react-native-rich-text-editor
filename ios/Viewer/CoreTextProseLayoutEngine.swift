@@ -540,8 +540,9 @@ final class CoreTextProseLayoutEngine {
                                 }
                             }
                             cursorY = bounds.maxY + bottom + placement.itemSpacing
-                            retainedBytes += tableBlock.estimatedRetainedBytes
-                            tableRetainedBytes += tableBlock.tableSurface?.retainedBytes ?? 0
+                            let surfaceRetainedBytes = surface.retainedBytes
+                            retainedBytes += tableBlock.nonTableRetainedBytes + surfaceRetainedBytes
+                            tableRetainedBytes += surfaceRetainedBytes
                             resume()
                         }
                         if incremental != nil {
