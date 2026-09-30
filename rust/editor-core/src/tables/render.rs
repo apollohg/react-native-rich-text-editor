@@ -313,6 +313,17 @@ pub(crate) struct TableRenderContext {
 }
 
 impl TableRenderContext {
+    #[cfg(test)]
+    pub(crate) fn attribute_identity_count_for_test(&self) -> usize {
+        self.attribute_nodes.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_attribute_identity_for_test(&self, node: &Node, cell: bool) -> bool {
+        self.attribute_nodes
+            .contains_key(&(node.attrs() as *const _ as usize, cell))
+    }
+
     pub(crate) fn retain_referenced_attributes(
         &mut self,
         roots: impl Iterator<Item = impl AsRef<[RenderElement]>>,
@@ -383,8 +394,10 @@ impl TableRenderContext {
                     )
                 {
                     let key = &self.attribute_keys[json];
-                    self.attribute_nodes
-                        .insert(identity, (node.clone(), key.clone()));
+                    if !attrs.is_empty() {
+                        self.attribute_nodes
+                            .insert(identity, (node.clone(), key.clone()));
+                    }
                     return key.clone();
                 }
             }

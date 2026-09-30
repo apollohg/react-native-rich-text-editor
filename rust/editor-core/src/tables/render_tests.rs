@@ -63,6 +63,7 @@ fn attribute_pool_collision_keeps_canonical_key_and_exact_json() {
         "{\"different\":true}"
     );
 
+    let identities = context.attribute_identity_count_for_test();
     let duplicate = fixture("collision");
     let reused = crate::tables::render::generate_table(
         duplicate.root().child(0).unwrap(),
@@ -73,6 +74,11 @@ fn attribute_pool_collision_keeps_canonical_key_and_exact_json() {
     )
     .unwrap();
     assert_eq!(reused.structure.attrs_key, record.structure.attrs_key);
+    assert_eq!(
+        context.attribute_identity_count_for_test(),
+        identities,
+        "equal attribute values must not retain another node identity for every cell"
+    );
     assert_eq!(
         context.attributes[&reused.structure.attrs_key].as_ref(),
         json.as_ref()
@@ -291,6 +297,25 @@ fn shared_default_fixture() -> (crate::model::Document, crate::schema::Schema, S
 #[test]
 fn shared_synthetic_attributes_are_retained_and_serialized_once() {
     let (document, schema, payload) = shared_default_fixture();
+    let index = Arc::new(
+        crate::tables::admission::TableProjectionIndex::derive_or_fallback(
+            &document,
+            &schema,
+            &ResourceLimits::default(),
+        ),
+    );
+    let mut context = crate::tables::render::TableRenderContext::new(
+        index,
+        &crate::schema::schema_fingerprint(&schema),
+    );
+    let table = document.root().child(0).unwrap();
+    crate::tables::render::generate_table(table, &schema, 0, &mut context, false).unwrap();
+    for row in table.content().unwrap().iter() {
+        for cell in row.content().unwrap().iter() {
+            assert!(context.has_attribute_identity_for_test(cell, true),
+                "equal complex attributes must retain identity reuse to avoid repeated deep hashing");
+        }
+    }
     let distinct_attrs = 2;
     crate::yrs_engine::observability::reset_full_pass_counts_for_test();
     let cache = CachedRenderBlocks::build(&document, &schema, &ResourceLimits::default()).unwrap();
