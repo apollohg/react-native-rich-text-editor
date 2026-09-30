@@ -24,6 +24,8 @@ final class EditorTableInputCoordinator {
     private(set) var positionMap: TableCellPositionMap?
     private(set) var activeTableID: String?
     private(set) var activeCellIndex: UInt32?
+    private weak var inputTraitsSource: EditorTextView?
+    private var copiedAppearanceRevisions: (source: UInt64, input: UInt64)?
     var inputInstanceCountForTesting: Int { 1 }
 
     init() {
@@ -134,15 +136,23 @@ final class EditorTableInputCoordinator {
     }
 
     func copyInputTraits(from root: EditorTextView) {
-        cellInput.baseFont = root.baseFont
-        cellInput.baseTextColor = root.baseTextColor
-        cellInput.baseBackgroundColor = root.baseBackgroundColor
-        cellInput.baseTextContainerInset = root.baseTextContainerInset
-        cellInput.baseLineFragmentPadding = root.baseLineFragmentPadding
-        cellInput.theme = root.theme
-        cellInput.atomRenderConfiguration = root.atomRenderConfiguration
+        cellInput.baseTextContainerInset = .zero
+        cellInput.baseLineFragmentPadding = 0
+        if inputTraitsSource !== root || copiedAppearanceRevisions?.source != root.renderAppearanceRevision ||
+            copiedAppearanceRevisions?.input != cellInput.renderAppearanceRevision ||
+            cellInput.baseBackgroundColor != root.baseBackgroundColor {
+            cellInput.baseFont = root.baseFont
+            cellInput.baseTextColor = root.baseTextColor
+            cellInput.baseBackgroundColor = root.baseBackgroundColor
+            cellInput.theme = root.theme
+            cellInput.atomRenderConfiguration = root.atomRenderConfiguration
+            inputTraitsSource = root
+            copiedAppearanceRevisions = (root.renderAppearanceRevision, cellInput.renderAppearanceRevision)
+        }
+        if cellInput.textContainerInset != .zero { cellInput.textContainerInset = .zero }
+        if cellInput.textContainer.lineFragmentPadding != 0 { cellInput.textContainer.lineFragmentPadding = 0 }
         cellInput.allowImageResizing = root.allowImageResizing
-        cellInput.isEditable = root.isEditable
+        if cellInput.isEditable != root.isEditable { cellInput.isEditable = root.isEditable }
     }
 
     func beginComposition() {

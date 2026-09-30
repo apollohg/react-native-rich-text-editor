@@ -3839,6 +3839,63 @@ final class EditorTableInputTests: XCTestCase {
         ))
     }
 
+    func testCoordinatorReusesUnchangedAppearanceAndRefreshesCellConfiguration() {
+        let root = EditorTextView(frame: .zero, textContainer: nil)
+        let coordinator = EditorTableInputCoordinator()
+        let input = coordinator.cellInput
+        let themes: [EditorTheme?] = [nil,
+            EditorTheme(dictionary: ["contentInsets": ["top": 12, "left": 20]]),
+            EditorTheme(dictionary: ["version": 1, "styles": ["content": ["paddingTop": 12, "paddingLeft": 20]]])]
+        for theme in themes {
+            root.theme = theme
+            coordinator.copyInputTraits(from: root)
+            XCTAssertEqual(input.textContainerInset, .zero, "Cell positioning already includes prepared content insets")
+            XCTAssertEqual(input.textContainer.lineFragmentPadding, 0)
+            let revision = input.renderAppearanceRevision
+            coordinator.copyInputTraits(from: root)
+            XCTAssertEqual(input.renderAppearanceRevision, revision, "An unchanged cell appearance must not invalidate TextKit rendering")
+
+            root.isEditable = false
+            root.allowImageResizing = false
+            coordinator.copyInputTraits(from: root)
+            XCTAssertFalse(input.isEditable)
+            XCTAssertFalse(input.allowImageResizing)
+            XCTAssertEqual(input.renderAppearanceRevision, revision, "Input permissions must propagate independently of appearance")
+            root.isEditable = true
+            root.allowImageResizing = true
+            coordinator.copyInputTraits(from: root)
+            XCTAssertTrue(input.isEditable)
+            XCTAssertTrue(input.allowImageResizing)
+        }
+        root.baseBackgroundColor = .red
+        coordinator.copyInputTraits(from: root)
+        XCTAssertEqual(input.baseBackgroundColor, root.baseBackgroundColor)
+        root.baseFont = .monospacedSystemFont(ofSize: 22, weight: .bold)
+        root.baseTextColor = .blue
+        coordinator.copyInputTraits(from: root)
+        XCTAssertEqual(input.baseFont, root.baseFont)
+        XCTAssertEqual(input.baseTextColor, root.baseTextColor)
+        input.baseFont = .systemFont(ofSize: 10)
+        coordinator.copyInputTraits(from: root)
+        XCTAssertEqual(input.baseFont, root.baseFont, "Local input changes must not make the source configuration stale")
+        input.baseTextContainerInset = UIEdgeInsets(top: 4, left: 6, bottom: 8, right: 10)
+        input.textContainerInset = input.baseTextContainerInset
+        input.baseLineFragmentPadding = 5
+        input.textContainer.lineFragmentPadding = input.baseLineFragmentPadding
+        coordinator.copyInputTraits(from: root)
+        XCTAssertEqual(input.baseTextContainerInset, .zero)
+        XCTAssertEqual(input.textContainerInset, .zero)
+        XCTAssertEqual(input.baseLineFragmentPadding, 0)
+        XCTAssertEqual(input.textContainer.lineFragmentPadding, 0)
+
+        let replacement = EditorTextView(frame: .zero, textContainer: nil)
+        replacement.baseBackgroundColor = root.baseBackgroundColor
+        replacement.renderAppearanceRevision = root.renderAppearanceRevision
+        coordinator.copyInputTraits(from: replacement)
+        XCTAssertEqual(input.baseFont, replacement.baseFont, "A new root with the same revision must refresh the cell")
+        XCTAssertEqual(input.baseTextColor, replacement.baseTextColor)
+    }
+
     func testCoordinatorReusesOneInputAcrossThreeCellBindings() {
         let coordinator = EditorTableInputCoordinator()
         let input = coordinator.cellInput

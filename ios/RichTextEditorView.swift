@@ -306,10 +306,6 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         }
 
         tableInputCoordinator.copyInputTraits(from: textView)
-        tableInputCoordinator.cellInput.baseTextContainerInset = .zero
-        tableInputCoordinator.cellInput.baseLineFragmentPadding = 0
-        tableInputCoordinator.cellInput.textContainerInset = .zero
-        tableInputCoordinator.cellInput.textContainer.lineFragmentPadding = 0
         guard tableInputCoordinator.bind(
             projection.target,
             text: projection.text,
