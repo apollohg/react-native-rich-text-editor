@@ -150,6 +150,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     private var mountedCanvasSize = CGSize.zero
     private var drawingOffset = CGPoint.zero
     private var activeCell: (tableID: String, cellIndex: UInt32)?
+    private var activeInputRevealScheduled = false
     private(set) weak var interactionHost: RichTextEditorView?
     private lazy var selectionGesture: TableSelectionHandleGestureRecognizer = {
         let recognizer = TableSelectionHandleGestureRecognizer(target: self, action: #selector(handleSelectionGesture(_:)))
@@ -260,6 +261,12 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         activeCellClipView.clipsToBounds = true
         addSubview(activeCellClipView)
         inputCoordinator.cellInput.isHidden = true
+        inputCoordinator.cellInput.onSelectionOrContentMayChange = { [weak self] in
+            self?.scheduleActiveInputReveal()
+        }
+        for name in [UIResponder.keyboardWillChangeFrameNotification, UIResponder.keyboardWillHideNotification] {
+            NotificationCenter.default.addObserver(self, selector: #selector(scheduleActiveInputReveal), name: name, object: nil)
+        }
         activeCellClipView.addSubview(inputCoordinator.cellInput)
         drawingView.onTableGeometryChanged = { [weak self] in
             self?.refreshActiveInputFrame()
@@ -288,6 +295,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     }
 
     deinit {
+        NotificationCenter.default.removeObserver(self)
         if let pinnedInputCell { pinnedInputCell.layoutStore.unpin(pinnedInputCell.contentKey) }
         discardActiveDrag()
         selectionGesture.view?.removeGestureRecognizer(selectionGesture)
@@ -609,6 +617,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     }
 
     func placeActiveInput(tableID: String, cellIndex: UInt32, fallback contentRect: CGRect) {
+        let changedCell = activeCell?.tableID != tableID || activeCell?.cellIndex != cellIndex
         activeCell = (tableID, cellIndex)
         let sourceIndex = Int(cellIndex)
         inputCoordinator.cellInput.tableAccessibilityCell = TableAccessibilityActiveCell(
@@ -625,7 +634,37 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         updateExcludedCellContent()
         placeInput(in: presentedCell(tableID: tableID, cellIndex: cellIndex), fallback: contentRect)
         inputCoordinator.cellInput.isHidden = false
+        if changedCell { scheduleActiveInputReveal() }
         selectionGeometryMayChange()
+    }
+
+    @objc func scheduleActiveInputReveal() {
+        guard !activeInputRevealScheduled else { return }
+        activeInputRevealScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.activeInputRevealScheduled = false
+            self.revealActiveInput()
+        }
+    }
+
+    private func revealActiveInput() {
+        let input = inputCoordinator.cellInput
+        guard activeCell != nil, !input.isHidden, input.isFirstResponder,
+              !input.authoritativeCellSelectionActive,
+              let host = interactionHost, host.window != nil,
+              let scroll = verticalScrollTarget(for: host) else { return }
+        host.layoutIfNeeded()
+        input.layoutIfNeeded()
+        updateGeometry(from: host.textView)
+        guard let selection = input.selectedTextRange,
+              let viewport = interactionViewport() else { return }
+        let logical = input.isComposing ? nil : input.currentLogicalScalarSelection()
+        let backward = logical.map { $0.head < $0.anchor } ?? false
+        let caret = scroll.convert(input.caretRect(for: backward ? selection.start : selection.end), from: input)
+        if scroll.scrollVerticallyToReveal(caret, within: scroll.convert(viewport, from: drawingView)) {
+            updateGeometry(from: host.textView)
+        }
     }
 
     func hideActiveInput() {

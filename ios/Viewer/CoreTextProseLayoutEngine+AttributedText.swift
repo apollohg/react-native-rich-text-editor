@@ -14,9 +14,13 @@ extension CoreTextProseLayoutEngine {
         paint: PreparedTextPaint,
         theme: PreparedProseTheme,
         warningSemanticGeneration: String,
+        paragraphSpacing: CGFloat,
         ancestors: [String] = []
     ) -> PreparedAttributedBlock {
         let result = NSMutableAttributedString()
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.paragraphSpacing = paragraphSpacing
+        let immutableParagraphStyle = paragraphStyle.copy() as! NSParagraphStyle
         var atoms: [PreparedAtomSpec] = []
         var semanticRanges: [PreparedSemanticRange] = []
         var accessibilityRanges: [PreparedAccessibilityRange] = []
@@ -40,7 +44,9 @@ extension CoreTextProseLayoutEngine {
             switch inline {
             case let .text(text: text, marks: marks):
                 let start = result.length
-                result.append(NSAttributedString(string: text, attributes: attributes(for: marks, paint: paint, theme: theme, warningSemanticGeneration: warningSemanticGeneration, ancestors: ancestors)))
+                var textAttributes = attributes(for: marks, paint: paint, theme: theme, warningSemanticGeneration: warningSemanticGeneration, ancestors: ancestors)
+                textAttributes[.paragraphStyle] = immutableParagraphStyle
+                result.append(NSAttributedString(string: text, attributes: textAttributes))
                 let range = NSRange(location: start, length: (text as NSString).length)
                 if let href = href(in: marks), !text.isEmpty {
                     let semanticIndex: Int
@@ -58,6 +64,7 @@ extension CoreTextProseLayoutEngine {
                 }
             case let .atom(nodeType: nodeType, docPos: docPos, attrsJSON: attrsJSON, label: label):
                 if nodeType == "hardBreak" || nodeType == "hard_break" {
+                    RenderBridge.overrideTrailingParagraphSpacing(in: result, paragraphSpacing: 0)
                     let range = NSRange(location: result.length, length: 1)
                     result.append(NSAttributedString(string: "\n", attributes: baseAttributes(paint)))
                     appendAccessibilityRange(range, label: "\n", role: .text)

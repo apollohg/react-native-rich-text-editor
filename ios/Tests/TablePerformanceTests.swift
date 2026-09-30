@@ -204,9 +204,9 @@ final class TablePerformanceTests: XCTestCase {
             _ = drawing.scrollTables(in: [table.scrollIdentity], by: -horizontal)
             view.layoutIfNeeded()
             let contentRect = try XCTUnwrap(surface.cellFrame(tableID: table.identity, cellIndex: UInt32(cellIndex)))
-            XCTAssertTrue(view.bindTableCell(tableID: table.identity, cellIndex: UInt32(cellIndex), contentRect: contentRect))
-            let input = view.activeTextInput
-            XCTAssertTrue(input is TableCellInputTextView)
+            let bound = view.bindTableCell(tableID: table.identity, cellIndex: UInt32(cellIndex), contentRect: contentRect)
+            let input = try XCTUnwrap(bound ? view.activeTextInput as? TableCellInputTextView : nil,
+                                     "Table cell \(cellIndex) rejected its input binding")
             XCTAssertTrue(input.becomeFirstResponder())
             input.selectedRange = NSRange(location: input.textStorage.length, length: 0)
             return input
@@ -415,9 +415,7 @@ final class TablePerformanceTests: XCTestCase {
                 XCTAssertGreaterThanOrEqual(contrast, minimumTextContrast,
                     "appearance=\(appearance.rawValue), character=\(index): bound header text must contrast with its painted background")
             }
-            let image = UIGraphicsImageRenderer(bounds: host.window.bounds).image { context in
-                host.window.layer.render(in: context.cgContext)
-            }
+            let image = try captureWindow(host.window, name: "typed-header-appearance-\(appearance.rawValue)")
             let cellFrame = try XCTUnwrap(host.surface.cellFrame(tableID: table.identity, cellIndex: 0))
             let point = host.surface.convert(CGPoint(x: cellFrame.minX - table.style.cellPadding / 2,
                                                      y: cellFrame.minY - table.style.cellPadding / 2), to: host.window)
@@ -438,13 +436,6 @@ final class TablePerformanceTests: XCTestCase {
             XCTAssertEqual(pixels[pixelIndex + 3], UInt8(channelMaximum), "The composited header sample remains opaque")
             XCTAssertEqual(luminance(painted, traits: input.traitCollection), background, accuracy: 0.01,
                 "The header bitmap must use the mounted view's appearance")
-            let name = "typed-header-appearance-\(appearance.rawValue)"
-            let attachment = XCTAttachment(image: image)
-            attachment.name = name
-            attachment.lifetime = .keepAlways
-            add(attachment)
-            try XCTUnwrap(image.pngData()).write(to: FileManager.default.temporaryDirectory
-                .appendingPathComponent("\(name).png"))
         }
     }
 
@@ -487,6 +478,234 @@ final class TablePerformanceTests: XCTestCase {
             "The rebuilt original second-row cell is unchanged after moving to the third row")
         XCTAssertEqual(counters.changedCellRemeasurements, 1,
             "The inserted empty cells share one newly prepared shape")
+    }
+
+    func testTypingBeyondViewportKeepsTheWholeRowAligned() throws {
+        try checkRowScroll(pasteNewlines: false)
+    }
+
+    func testPastingNewlinesBeyondViewportKeepsTheWholeRowAligned() throws {
+        try checkRowScroll(pasteNewlines: true)
+    }
+
+    func testWrappingBeyondViewportKeepsTheWholeRowAligned() throws {
+        try checkRowScroll(pasteNewlines: false, wraps: true)
+    }
+
+    func testKeyboardTypingScrollsTheRootAndAutoGrowAncestor() throws {
+        for autoGrow in [false, true] {
+            try checkRowScroll(pasteNewlines: false, autoGrow: autoGrow, keyboard: true)
+        }
+    }
+
+    func testExplicitParagraphSpacingKeepsTheWholeRowAligned() throws {
+        for spacing in [0, 12] {
+            try checkRowScroll(pasteNewlines: true, theme: EditorTheme(dictionary: ["paragraph": ["spacingAfter": spacing]]))
+        }
+    }
+
+    func testCellLineBreaksFitTheSharedPreparedRow() throws {
+        clock = FrameClock()
+        defer { clock.close(); clock = nil }
+        var config = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(Benchmark.schema.utf8)) as? [String: Any])
+        var schema = try XCTUnwrap(config["schema"] as? [String: Any])
+        var nodes = try XCTUnwrap(schema["nodes"] as? [[String: Any]])
+        nodes += [
+            ["name": "codeBlock", "content": "text*", "group": "block", "role": "textBlock"],
+            ["name": "h1", "content": "inline*", "group": "block", "role": "textBlock"],
+            ["name": "blockquote", "content": "block+", "group": "block", "role": "block"],
+            ["name": "bulletList", "content": "listItem+", "group": "block", "role": "list"],
+            ["name": "listItem", "content": "block+", "role": "listItem"],
+            ["name": "hardBreak", "content": "", "group": "inline", "role": "hardBreak", "isVoid": true]
+        ]
+        schema["nodes"] = nodes
+        config["schema"] = schema
+        let configJSON = String(decoding: try JSONSerialization.data(withJSONObject: config), as: UTF8.self)
+        let paragraph: [String: Any] = ["type": "paragraph", "content": [["type": "text", "text": "a\n\nb\n"]]]
+        let splitCRLF: [String: Any] = ["type": "paragraph", "content": [
+            ["type": "text", "text": "a\r", "marks": [["type": TableToolbarTestItems.strongMark]]],
+            ["type": "text", "text": "\nb\n"]
+        ]]
+        let hardBreak: [String: Any] = ["type": "paragraph", "content": [
+            ["type": "text", "text": "a\n"], ["type": "hardBreak"]
+        ]]
+        let listParagraph: [String: Any] = ["type": "paragraph", "content": [["type": "text", "text": "List line"]]]
+        let listParagraphs = Array(repeating: listParagraph, count: 20)
+        let nestedList: [String: Any] = ["type": "bulletList", "content": [["type": "listItem", "content": [listParagraph]]]]
+        let quotedHeadings: [String: Any] = ["type": "blockquote", "content": Array(repeating:
+            ["type": "h1", "content": [["type": "text", "text": "Heading"]]], count: 10)]
+        let contents: [[String: Any]] = [paragraph, splitCRLF, hardBreak, quotedHeadings,
+            ["type": "bulletList", "content": [["type": "listItem", "content": [listParagraph, nestedList, listParagraph]]]],
+            ["type": "bulletList", "content": [["type": "listItem", "content": [hardBreak]], ["type": "listItem", "content": [listParagraph]]]],
+            ["type": "bulletList", "content": listParagraphs.map { ["type": "listItem", "content": [$0]] }],
+            ["type": "bulletList", "content": [["type": "listItem", "content": listParagraphs]]],
+            ["type": "bulletList", "content": [["type": "listItem", "content": [hardBreak]]]],
+            ["type": "blockquote", "content": [["type": "codeBlock", "content": [["type": "text", "text": "a\nb\n"]]]]],
+            ["type": "blockquote", "content": [["type": "h1", "content": [["type": "text", "text": "a\nb\n"]]]]]
+        ]
+        let themes: [[String: Any]] = [[:], ["text": ["spacingAfter": 0]],
+            ["paragraph": ["spacingAfter": 20]],
+            ["paragraph": ["spacingAfter": 12], "list": ["itemSpacing": 3]],
+            ["blockquote": ["text": ["spacingAfter": 20]], "headings": ["h1": ["fontSize": 32, "fontWeight": "700"]]],
+            ["version": 1, "styles": ["paragraph": ["marginTop": 3, "marginBottom": 7]]]
+        ]
+        for theme in themes {
+            let host = try EditorHost(id: makeV2Editor(configJson: configJSON))
+            defer { host.close() }
+            XCTAssertTrue(host.view.applyTheme(EditorTheme(dictionary: theme)))
+            for content in contents {
+                let source: [String: Any] = ["type": "doc", "content": [["type": "table", "content": [
+                    ["type": "table_row", "content": [["type": "table_cell", "content": [content]]]]
+                ]]]]
+                try host.load(String(decoding: try JSONSerialization.data(withJSONObject: source), as: UTF8.self))
+                let input = try host.bind(0)
+                _ = try measure(host.drawing) {}
+                let diagnostic = "content=\(content), theme=\(theme), input=\(input.bounds)"
+                XCTAssertEqual(NSMaxRange(input.layoutManager.glyphRange(for: input.textContainer)),
+                               input.layoutManager.numberOfGlyphs, diagnostic)
+                let caret = input.caretRect(for: try XCTUnwrap(input.selectedTextRange).end)
+                XCTAssertGreaterThanOrEqual(caret.height, input.baseFont.lineHeight / 2, diagnostic)
+                XCTAssertLessThanOrEqual(caret.maxY, input.bounds.height + 1, diagnostic)
+                let cell = try XCTUnwrap(host.table().cell(sourceIndex: 0))
+                let fragments = cell.content.blocks.flatMap(\.fragments)
+                if content["type"] as? String == "bulletList" {
+                    let preparedLines = fragments.filter { $0.kind == .text }.map { $0.origin.y }
+                    var nativeLines: [CGFloat] = []
+                    var visibleLineIndices: [Int] = []
+                    input.layoutManager.enumerateLineFragments(forGlyphRange: NSRange(location: 0, length: input.layoutManager.numberOfGlyphs)) { rect, _, _, range, _ in
+                        let characters = input.layoutManager.characterRange(forGlyphRange: range, actualGlyphRange: nil)
+                        let text = (input.textStorage.string as NSString).substring(with: characters)
+                        let whitespace = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: String(EditorTextView.emptyBlockPlaceholderScalar)))
+                        if !text.trimmingCharacters(in: whitespace).isEmpty { visibleLineIndices.append(nativeLines.count) }
+                        nativeLines.append(rect.minY + input.layoutManager.location(forGlyphAt: range.location).y)
+                    }
+                    XCTAssertEqual(preparedLines.count, nativeLines.count, diagnostic)
+                    for (previous, index) in zip(visibleLineIndices, visibleLineIndices.dropFirst()) where preparedLines.indices.contains(index) {
+                        XCTAssertEqual(preparedLines[index] - preparedLines[previous],
+                                       nativeLines[index] - nativeLines[previous],
+                                       accuracy: 1, "line=\(index), \(diagnostic)")
+                    }
+                }
+                if let marker = fragments.first(where: { $0.kind == .marker }),
+                   let firstLine = fragments.first(where: { $0.kind == .text }) {
+                    XCTAssertEqual(marker.bounds.midY, firstLine.bounds.midY, accuracy: 1, diagnostic)
+                }
+            }
+        }
+    }
+
+    private func checkRowScroll(pasteNewlines: Bool, wraps: Bool = false,
+                               autoGrow: Bool = false, keyboard: Bool = false, theme: EditorTheme? = nil) throws {
+        clock = FrameClock()
+        defer { clock.close(); clock = nil }
+        let host = try EditorHost()
+        defer { host.close() }
+        if let theme { XCTAssertTrue(host.view.applyTheme(theme)) }
+        let scroll: UIScrollView
+        if autoGrow {
+            let ancestor = UIScrollView(frame: host.window.bounds)
+            host.view.removeFromSuperview()
+            host.window.addSubview(ancestor)
+            ancestor.addSubview(host.view)
+            let minimumHeight = host.window.bounds.height
+            host.view.onHeightMayChange = { [weak view = host.view, weak ancestor] height in
+                guard let view, let ancestor else { return }
+                let resolved = max(minimumHeight, height)
+                view.frame.size.height = resolved
+                ancestor.contentSize = CGSize(width: view.bounds.width, height: resolved)
+            }
+            host.view.heightBehavior = .autoGrow
+            scroll = ancestor
+        } else {
+            scroll = host.view.textView
+        }
+        try host.load(Fixture(rows: 3, columns: 3, rich: false).source())
+        let input = try host.bind(0)
+        let keyboardHeight: CGFloat = 300
+        if keyboard {
+            if autoGrow { scroll.contentInset.bottom = keyboardHeight }
+            let frame = host.window.convert(CGRect(x: 0, y: host.window.bounds.maxY - keyboardHeight,
+                width: host.window.bounds.width, height: keyboardHeight), to: host.window.screen.coordinateSpace)
+            NotificationCenter.default.post(name: UIResponder.keyboardWillChangeFrameNotification, object: nil,
+                userInfo: [UIResponder.keyboardFrameEndUserInfoKey: NSValue(cgRect: frame),
+                           UIResponder.keyboardAnimationDurationUserInfoKey: 0])
+        }
+        defer {
+            if keyboard { NotificationCenter.default.post(name: UIResponder.keyboardWillHideNotification, object: nil) }
+        }
+        _ = try measure(host.drawing) {}
+        let initialOffset = scroll.contentOffset.y
+        let overflowLines = 10
+        let lineCount = Int(ceil(scroll.bounds.height / input.baseFont.lineHeight)) + overflowLines
+        for line in 0..<lineCount {
+            _ = try measure(host.drawing) {
+                if wraps {
+                    input.insertText("wrapped text line \(line) ")
+                } else if pasteNewlines {
+                    input.insertText("\nline \(line)")
+                } else {
+                    input.insertText("\n")
+                    input.insertText("line \(line)")
+                }
+                host.view.layoutIfNeeded()
+            }
+        }
+        let table = try host.table()
+        let edited = try XCTUnwrap(table.cell(sourceIndex: 0))
+        let adjacent = try XCTUnwrap(table.cell(sourceIndex: 1))
+        XCTAssertGreaterThan(table.frame(ofCell: edited).height, scroll.bounds.height)
+        XCTAssertEqual(table.frame(ofCell: edited).height, table.frame(ofCell: adjacent).height)
+        XCTAssertEqual(NSMaxRange(input.layoutManager.glyphRange(for: input.textContainer)), input.layoutManager.numberOfGlyphs,
+                       "The shared row must contain every native input glyph")
+        XCTAssertEqual(input.contentOffset.y, 0, accuracy: 1,
+                       "The active cell must not scroll its text independently of its row")
+        XCTAssertGreaterThan(scroll.contentOffset.y, initialOffset,
+                             "Caret reveal must move the whole document row")
+        let selection = try XCTUnwrap(input.selectedTextRange)
+        XCTAssertEqual(input.selectedRange, NSRange(location: input.textStorage.length, length: 0))
+        XCTAssertGreaterThanOrEqual(input.caretRect(for: selection.end).height, input.baseFont.lineHeight / 2)
+        XCTAssertLessThanOrEqual(input.caretRect(for: selection.end).maxY, input.bounds.height + 1)
+        let caret = scroll.convert(input.caretRect(for: selection.end), from: input)
+        let visibleBottom = scroll.bounds.maxY - scroll.adjustedContentInset.bottom
+        XCTAssertLessThanOrEqual(caret.maxY, visibleBottom + 1,
+                                 "The typed caret must remain above the keyboard")
+        if wraps { _ = try captureWindow(host.window, name: "typed-tall-row") }
+        let manualOffset = max(-scroll.adjustedContentInset.top, scroll.contentOffset.y - scroll.bounds.height / 2)
+        scroll.setContentOffset(CGPoint(x: scroll.contentOffset.x, y: manualOffset), animated: false)
+        _ = try measure(host.drawing) {}
+        _ = try measure(host.drawing) {}
+        XCTAssertEqual(scroll.contentOffset.y, manualOffset, accuracy: 1,
+                       "Ordinary scrolling must not snap back to the caret")
+        let map = try XCTUnwrap(input.tableCellPositionMap)
+        let first = try XCTUnwrap(map.globalScalar(forLocalScalar: 0))
+        let last = try XCTUnwrap(map.globalScalar(forLocalScalar: UInt32(input.textStorage.string.unicodeScalars.count)))
+        _ = input.applySelectionFromJSON(["type": "text", "anchor": NSNumber(value: last), "head": NSNumber(value: first),
+                                         "anchorScalar": NSNumber(value: last), "headScalar": NSNumber(value: first)])
+        input.textViewDidChangeSelection(input)
+        _ = try measure(host.drawing) {}
+        XCTAssertEqual(input.currentLogicalScalarSelection()?.head, first)
+        let headCaret = scroll.convert(input.caretRect(for: try XCTUnwrap(input.selectedTextRange).start), from: input)
+        XCTAssertGreaterThanOrEqual(headCaret.minY, scroll.bounds.minY + scroll.adjustedContentInset.top - 1,
+                                   "A backward selection must reveal its head")
+        XCTAssertLessThanOrEqual(headCaret.maxY, scroll.bounds.maxY - scroll.adjustedContentInset.bottom + 1)
+        input.selectedRange = NSRange(location: input.textStorage.length / 2, length: 0)
+        let revision = host.adapter.baseDocumentRevision
+        input.setMarkedText("仮\n文", selectedRange: NSRange(location: 3, length: 0))
+        _ = try measure(host.drawing) {}
+        XCTAssertNotNil(input.markedTextRange)
+        XCTAssertEqual(host.adapter.baseDocumentRevision, revision, "Visual reveal must not commit composition")
+    }
+
+    private func captureWindow(_ window: UIWindow, name: String) throws -> UIImage {
+        let image = UIGraphicsImageRenderer(bounds: window.bounds).image { context in
+            window.layer.render(in: context.cgContext)
+        }
+        let attachment = XCTAttachment(image: image)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        try XCTUnwrap(image.pngData()).write(to: FileManager.default.temporaryDirectory.appendingPathComponent("\(name).png"))
+        return image
     }
 
     func testEndCellActivationAfterAnotherHostStaysWithinScrollBounds() throws {

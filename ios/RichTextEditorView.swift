@@ -392,7 +392,9 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
     private func applyActiveTableCellUpdate(_ updateJSON: String, notifyDelegate: Bool) -> Bool {
         isApplyingActiveTableCellUpdate = true
         defer { isApplyingActiveTableCellUpdate = false }
-        return textView.applyUpdateJSON(updateJSON, notifyDelegate: notifyDelegate)
+        let applied = textView.applyUpdateJSON(updateJSON, notifyDelegate: notifyDelegate)
+        if applied { tableSurface.scheduleActiveInputReveal() }
+        return applied
     }
 
     private func moveFromActiveTableCell(backward: Bool) {

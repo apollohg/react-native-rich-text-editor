@@ -26,6 +26,10 @@ final class EditorTableInputCoordinator {
     private(set) var activeCellIndex: UInt32?
     var inputInstanceCountForTesting: Int { 1 }
 
+    init() {
+        cellInput.isScrollEnabled = false
+    }
+
     static func canBind(_ target: Target) -> Bool {
         !target.isSynthetic && !target.isNestedTarget
     }

@@ -597,6 +597,32 @@ final class PositionBridgeTests: XCTestCase {
         )
     }
 
+    func testLiteralNewlineAcrossMarkedRunsPreservesOnlyStructuralListMarkers() {
+        let json = #"""
+        [
+            {"type":"blockStart","nodeType":"listItem","depth":1,"listContext":{"ordered":false,"index":1,"total":2,"start":1,"isFirst":true,"isLast":false}},
+            {"type":"blockStart","nodeType":"paragraph","depth":2},
+            {"type":"textRun","text":"A\n","marks":[]},
+            {"type":"textRun","text":"B","marks":[{"type":"bold"}]},
+            {"type":"blockEnd"},{"type":"blockEnd"},
+            {"type":"blockStart","nodeType":"listItem","depth":1,"listContext":{"ordered":false,"index":2,"total":2,"start":1,"isFirst":false,"isLast":true}},
+            {"type":"blockStart","nodeType":"paragraph","depth":2},
+            {"type":"textRun","text":"C","marks":[]},
+            {"type":"blockEnd"},{"type":"blockEnd"}
+        ]
+        """#
+        let rendered = RenderBridge.renderElements(fromJSON: json, baseFont: .systemFont(ofSize: 16), textColor: .label)
+        let view = makeTextView(with: rendered)
+        XCTAssertEqual(rendered.string, "A\nB\nC")
+        let positions: [(Int, UInt32)] = [(0, 2), (2, 4), (3, 5), (4, 8), (5, 9)]
+        for (offset, scalar) in positions {
+            XCTAssertEqual(PositionBridge.utf16OffsetToScalar(offset, in: view), scalar,
+                           "Only real list item boundaries contribute marker scalars at UTF-16 offset \(offset)")
+        }
+        XCTAssertTrue(RenderBridge.isListContinuationParagraph(2, in: rendered))
+        XCTAssertFalse(RenderBridge.isListContinuationParagraph(4, in: rendered))
+    }
+
     func testUtf16ToScalar_hardBreakInsideListParagraphDoesNotAddAnotherVirtualMarker() {
         let json = """
         [
@@ -622,7 +648,7 @@ final class PositionBridgeTests: XCTestCase {
             "A hardBreak inside a list paragraph should not create a second virtual marker"
         )
         XCTAssertTrue(
-            EditorLayoutManager.isParagraphStartCreatedByHardBreak(2, in: textView.textStorage),
+            RenderBridge.isListContinuationParagraph(2, in: textView.textStorage),
             "The visual line after a hardBreak should be recognized as a synthetic paragraph start"
         )
     }

@@ -360,6 +360,17 @@ struct TableAccessibilityDetachedFrame {
 final class TableCellInputTextView: EditorTextView, UIAccessibilityContainerDataTableCell {
     var tableAccessibilityCell: TableAccessibilityActiveCell?
 
+    override func becomeFirstResponder() -> Bool {
+        let focused = super.becomeFirstResponder()
+        if focused { onSelectionOrContentMayChange?() }
+        return focused
+    }
+
+    override func setMarkedText(_ markedText: String?, selectedRange: NSRange) {
+        super.setMarkedText(markedText, selectedRange: selectedRange)
+        onSelectionOrContentMayChange?()
+    }
+
     override var accessibilityCustomActions: [UIAccessibilityCustomAction]? {
         get { tableAccessibilityCell.map { $0.actions() } ?? super.accessibilityCustomActions }
         set { super.accessibilityCustomActions = newValue }

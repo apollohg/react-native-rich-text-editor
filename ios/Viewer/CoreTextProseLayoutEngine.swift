@@ -7,6 +7,8 @@ let preparedAtomAttribute = NSAttributedString.Key("PREPPreparedAtom")
 let preparedStrikeAttribute = NSAttributedString.Key("PREPPreparedStrike")
 
 final class CoreTextProseLayoutEngine {
+    private static let paragraphSeparators: Set<unichar> = [0x000A, 0x000D, 0x2029]
+    private static let lineSeparator: unichar = 0x2028
     static let maxTablePreparationWorkers = 4
     var tablePreparationWorkerLimit = maxTablePreparationWorkers
     var tableCellLayoutObserverForTesting: ((Int, PreparedProseLayout) -> Void)?
@@ -396,6 +398,9 @@ final class CoreTextProseLayoutEngine {
                         .filter { !nextAncestorIdentities.contains($0.identity) }
                         .map(\.identity)
                 )
+                let currentAncestorIdentities = Set(listItemAncestors(block).map(\.identity))
+                let entersNestedListItem = nextAncestorIdentities.count > 1
+                    && !nextAncestorIdentities.subtracting(currentAncestorIdentities).isEmpty
                 let priorIds = Set(index > 0 ? document.blocks[index - 1].styleAncestors.map(\.identity) : [])
                 let followingIds = Set(document.blocks.indices.contains(index + 1) ? document.blocks[index + 1].styleAncestors.map(\.identity) : [])
                 let opening = block.styleAncestors.filter { !priorIds.contains($0.identity) }
@@ -418,7 +423,7 @@ final class CoreTextProseLayoutEngine {
                     var cellTheme = theme
                     cellTheme.contentInsets = .zero
                     let tableBox = theme.styleSheet?.box(block.nodeType, ancestors: block.styleAncestors.map(\.nodeType)) ?? EditorStyleBox()
-                    let placement = listPlacement(block: block, listMarker: listMarker, theme: theme, sheet: theme.styleSheet, paint: theme.paint(for: block), box: tableBox, omitBottomMargin: omitBottomMargin, disappearingListItemIdentities: disappearingListItemIdentities)
+                    let placement = listPlacement(block: block, listMarker: listMarker, theme: theme, sheet: theme.styleSheet, paint: theme.paint(for: block), box: tableBox, omitBottomMargin: omitBottomMargin, disappearingListItemIdentities: disappearingListItemIdentities, entersNestedListItem: entersNestedListItem)
                     let tableAncestors = block.styleAncestors.reduce(UIEdgeInsets.zero) {
                         $0.adding(theme.styleSheet?.box($1.nodeType, ancestors: block.ancestors(before: $1)).outerInsets ?? .zero)
                     }
@@ -566,6 +571,7 @@ final class CoreTextProseLayoutEngine {
                     cursorY: cursorY,
                     omitBottomMargin: omitBottomMargin,
                     disappearingListItemIdentities: disappearingListItemIdentities,
+                    entersNestedListItem: entersNestedListItem,
                     displayScale: displayScale,
                     warningSemanticGeneration: warningSemanticGeneration
                 )
@@ -933,7 +939,8 @@ final class CoreTextProseLayoutEngine {
         paint: PreparedTextPaint,
         box: EditorStyleBox,
         omitBottomMargin: Bool,
-        disappearingListItemIdentities: Set<Int>
+        disappearingListItemIdentities: Set<Int>,
+        entersNestedListItem: Bool
     ) -> ListPlacement {
         let listDepth = block.listContext == nil ? 0 : (block.listItemBoundary.map { Int($0.nestingDepth) } ?? max(0, Int(block.depth) - 1))
         let fallbackMarkerNestingDepth = max(0, block.listItemAncestors.count - 1)
@@ -963,13 +970,31 @@ final class CoreTextProseLayoutEngine {
         let checkbox = block.listContext.flatMap { $0.kind == "task" ? sheet?.checkbox(checked: $0.checked, ancestors: block.markerStyleAncestors) : nil }
         let gap = checkbox?.number("gap", fallback: 8) ?? EditorTheme.cgFloat(markerValues["gap"]) ?? theme.listMarkerGap
         let gutter = measured.map { max(gap, $0.width + gap) } ?? 0
+        var trailingSpacing = paint.paragraphSpacing(inBlockquote: block.inBlockquote, inList: block.listContext != nil)
+        switch block.inlines.last {
+        case let .atom(nodeType, _, _, _) where EditorNodeTypes.isHardBreak(nodeType):
+            trailingSpacing = 0
+        case let .text(text, _) where block.nodeType == "codeBlock" && text.hasSuffix("\n"):
+            trailingSpacing = 0
+        default: break
+        }
         let spacing: CGFloat
-        if sheet != nil { spacing = omitBottomMargin ? 0 : box.margin.bottom } else if block.listContext == nil { spacing = paint.spacingAfter } else {
-            spacing = listItemAncestors(block).reduce(CGFloat.zero) { result, ancestor in
-                if disappearingListItemIdentities.contains(ancestor.identity) { return result + (ancestor.context.isLast ? theme.listSpacingAfter : theme.listItemSpacing) }
-                if ancestor.identity == block.listItemBoundary?.identity, block.listItemBoundary?.isFinalRenderableLeaf == true { return result + theme.listItemSpacing }
-                return result
+        if sheet != nil {
+            spacing = omitBottomMargin ? 0 : box.margin.bottom
+        } else if block.listContext == nil {
+            spacing = theme.usesEditorParagraphSpacing ? trailingSpacing : paint.spacingAfter
+        } else {
+            let closingSpacing = listItemAncestors(block).reduce(Optional<CGFloat>.none) { result, ancestor in
+                let override: CGFloat?
+                if disappearingListItemIdentities.contains(ancestor.identity) {
+                    override = ancestor.context.isLast ? theme.listSpacingAfter : theme.listItemSpacing
+                } else if ancestor.identity == block.listItemBoundary?.identity, block.listItemBoundary?.isFinalRenderableLeaf == true {
+                    override = theme.listItemSpacing
+                } else { override = nil }
+                return override.map { (result ?? 0) + $0 } ?? result
             }
+            let nestedSpacing = theme.usesEditorParagraphSpacing && entersNestedListItem ? theme.listItemSpacing : nil
+            spacing = closingSpacing ?? nestedSpacing ?? trailingSpacing
         }
         return ListPlacement(marker: marker, markerGutter: gutter, listInset: base + nested + contextual + gutter, quoteInset: block.inBlockquote ? theme.quoteBorderWidth + theme.quoteMarkerGap + theme.quoteIndent : 0, markerColor: color, checkbox: checkbox, itemSpacing: spacing)
     }
@@ -984,6 +1009,7 @@ final class CoreTextProseLayoutEngine {
         cursorY: CGFloat,
         omitBottomMargin: Bool,
         disappearingListItemIdentities: Set<Int>,
+        entersNestedListItem: Bool,
         displayScale: CGFloat,
         warningSemanticGeneration: String
     ) -> BlockPreparation {
@@ -994,7 +1020,7 @@ final class CoreTextProseLayoutEngine {
         let contentX = theme.contentInsets.left + ancestors.left + box.margin.left
         let contentWidth = max(1, width - theme.contentInsets.left - theme.contentInsets.right - ancestors.left - ancestors.right - box.margin.left - box.margin.right)
         let paint = theme.paint(for: block)
-        let placement = listPlacement(block: block, listMarker: listMarker, theme: theme, sheet: sheet, paint: paint, box: box, omitBottomMargin: omitBottomMargin, disappearingListItemIdentities: disappearingListItemIdentities)
+        let placement = listPlacement(block: block, listMarker: listMarker, theme: theme, sheet: sheet, paint: paint, box: box, omitBottomMargin: omitBottomMargin, disappearingListItemIdentities: disappearingListItemIdentities, entersNestedListItem: entersNestedListItem)
         let marker = placement.marker
         let markerGutter = placement.markerGutter
         let listInset = placement.listInset
@@ -1121,10 +1147,14 @@ final class CoreTextProseLayoutEngine {
         }
 
         let availableWidth = max(1, contentWidth - listInset - quoteInset - codeInset * 2 - box.inset.left - box.inset.right)
-        let attributed = makeAttributedString(block.inlines, paint: paint, theme: theme, warningSemanticGeneration: warningSemanticGeneration, ancestors: block.styleAncestors.map(\.nodeType) + [block.nodeType])
+        let attributed = makeAttributedString(block.inlines, paint: paint, theme: theme,
+            warningSemanticGeneration: warningSemanticGeneration,
+            paragraphSpacing: paint.paragraphSpacing(inBlockquote: block.inBlockquote, inList: block.listContext != nil),
+            ancestors: block.styleAncestors.map(\.nodeType) + [block.nodeType])
         let highlighted = NSMutableAttributedString(attributedString: attributed.string)
         NativeCodeHighlightPresentation.apply(highlighting, to: highlighted)
         let typesetter = CTTypesetterCreateWithAttributedString(highlighted)
+        let text = attributed.string.string as NSString
         var location = 0
         var fragments: [PreparedProseFragment] = []
         var interactionRects: [[CGRect]] = Array(repeating: [], count: attributed.semanticRanges.count)
@@ -1221,15 +1251,21 @@ final class CoreTextProseLayoutEngine {
             }
             location += count
             textTop += lineHeight
+            if Self.paragraphSeparators.contains(text.character(at: location - 1)) {
+                let style = attributed.string.attribute(.paragraphStyle, at: location - 1, effectiveRange: nil) as? NSParagraphStyle
+                textTop += style?.paragraphSpacing ?? 0
+            }
         }
-        if fragments.isEmpty {
+        let endsWithLineBreak = text.length > 0 && (Self.paragraphSeparators.contains(text.character(at: text.length - 1))
+            || text.character(at: text.length - 1) == Self.lineSeparator)
+        if fragments.isEmpty || endsWithLineBreak {
             let fallbackHeight = paint.lineHeight ?? paint.font.lineHeight
             let line = CTLineCreateWithAttributedString(NSAttributedString(string: "\u{200B}", attributes: baseAttributes(paint)))
             let alignment = paint.textValues["textAlign"] as? String
             let lineTextX = textX + (alignment == "center" ? max(0, availableWidth) / 2 : alignment == "right" ? max(0, availableWidth) : 0)
             let lineBounds = CGRect(x: lineTextX, y: textTop, width: 0, height: fallbackHeight)
             fragments.append(.init(kind: .text, line: line, origin: CGPoint(x: textX, y: textTop + paint.font.ascender), bounds: lineBounds))
-            firstLineBounds = lineBounds
+            if firstLineBounds == nil { firstLineBounds = lineBounds }
             textTop += fallbackHeight
         }
         let textEnd = textTop

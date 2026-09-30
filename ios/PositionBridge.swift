@@ -462,7 +462,7 @@ final class PositionBridge {
             let paragraphStart = nsString.paragraphRange(
                 for: NSRange(location: range.location, length: 0)
             ).location
-            guard !isParagraphStartCreatedByHardBreak(
+            guard !RenderBridge.isListContinuationParagraph(
                 paragraphStart,
                 in: attributedString
             ) else {
@@ -499,18 +499,6 @@ final class PositionBridge {
         syntheticPlaceholderOffsets(in: textStorage as NSAttributedString)
     }
 
-    private static func isParagraphStartCreatedByHardBreak(
-        _ paragraphStart: Int,
-        in attributedString: NSAttributedString
-    ) -> Bool {
-        guard paragraphStart > 0, paragraphStart <= attributedString.length else { return false }
-        let previousVoidType = attributedString.attribute(
-            RenderBridgeAttributes.voidNodeType,
-            at: paragraphStart - 1,
-            effectiveRange: nil
-        ) as? String
-        return EditorNodeTypes.isHardBreak(previousVoidType)
-    }
 }
 
 // MARK: - v2 position envelopes
