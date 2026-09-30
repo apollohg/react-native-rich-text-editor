@@ -87,6 +87,21 @@ public final class PreparedProseDrawingView: UIView {
         case above, boundRow, boundCell, below
     }
 
+    private struct BoundCellChrome: Equatable {
+        let row: Int
+        let column: Int
+        let rowspan: Int
+        let colspan: Int
+        let isHeader: Bool
+        let attributesKey: String?
+        let clip: CGRect
+        let drawingBounds: CGRect
+        let displayScaleBits: UInt64
+        let borderWidth: CGFloat
+        let borderColor: UIColor
+        let headerBackgroundColor: UIColor
+    }
+
     private struct TableLayerState {
         let cell: TableLayerCell?
         let window: CGRect
@@ -95,6 +110,8 @@ public final class PreparedProseDrawingView: UIView {
         let rowOffsets: [CGFloat]
         let revision: UInt64?
         let appearance: String
+        let excludesContent: Bool
+        let chrome: BoundCellChrome?
     }
 
     let aboveLayer = CALayer()
@@ -122,7 +139,12 @@ public final class PreparedProseDrawingView: UIView {
     private var tableLayers: [CALayer] { [aboveLayer, boundRowLayer, boundCellLayer, belowLayer] }
 
     private var retainedTableLayerBytes: Int {
-        tableLayers.reduce(0) { total, layer in
+        let stateBytes = tableLayerState.map { state in
+            Self.saturatingAdd(MemoryLayout<TableLayerState>.stride,
+                Self.saturatingAdd(Self.saturatingMultiply(state.rowOffsets.count, MemoryLayout<CGFloat>.stride),
+                    Self.saturatingAdd(state.appearance.utf8.count, state.chrome?.attributesKey?.utf8.count ?? 0)))
+        } ?? 0
+        return tableLayers.reduce(stateBytes) { total, layer in
             guard let contents = layer.contents else { return total }
             let image = contents as! CGImage
             return Self.saturatingAdd(total, image.bytesPerRow * image.height)
@@ -1363,6 +1385,24 @@ public final class PreparedProseDrawingView: UIView {
         layerRedrawsForTesting[name.rawValue, default: 0] += 1
     }
 
+    private func boundCellChrome(_ presented: ViewerTablePresentedCell, layout: PreparedProseLayout) -> BoundCellChrome? {
+        guard excludedTableCellContentLayout === presented.content, presented.cell.isPositionFree,
+              presented.surface.layout.failure == nil, layout.decorations.isEmpty,
+              layout.blocks.count == 1, let block = layout.blocks.first,
+              block.tableSurface === presented.surface, block.fragments.isEmpty,
+              block.atomSlot == nil, block.imageAttachment == nil,
+              selectedTableCellSourceIndices.isEmpty, selectedTableCellEndpoints == nil,
+              remoteTableCellSelections.isEmpty, tableCellDropTarget == nil, activeTableResizeEdge == nil
+        else { return nil }
+        let cell = presented.cell
+        let style = presented.surface.style
+        return BoundCellChrome(row: cell.row, column: cell.column, rowspan: cell.rowspan, colspan: cell.colspan,
+            isHeader: cell.isHeader, attributesKey: cell.attributesKey, clip: presented.clip,
+            drawingBounds: bounds, displayScaleBits: layout.key.displayScaleBits,
+            borderWidth: style.borderWidth, borderColor: style.borderColor.resolvedColor(with: traitCollection),
+            headerBackgroundColor: style.headerBackgroundColor.resolvedColor(with: traitCollection))
+    }
+
     private func updateTableLayers(snapshot: ViewerTablePresentationSnapshot) {
         guard let layout else { clearTableLayers(); return }
         let window = configuredVisibleRect() ?? bounds
@@ -1386,7 +1426,8 @@ public final class PreparedProseDrawingView: UIView {
                 recordTableLayer(aboveLayer, name: .above, rect: window, snapshot: snapshot, layout: layout)
             }
             tableLayerState = TableLayerState(cell: nil, window: window, frame: .zero, row: .zero, rowOffsets: [],
-                                             revision: tableLayerRevision, appearance: tableLayerAppearance)
+                                             revision: tableLayerRevision, appearance: tableLayerAppearance,
+                                             excludesContent: false, chrome: nil)
             return
         }
         let frame = presented.bounds
@@ -1407,6 +1448,9 @@ public final class PreparedProseDrawingView: UIView {
                          height: offsets[lastRow] - offsets[firstRow])
         let rowOffsets = offsets[firstRow...lastRow].map { $0 - offsets[firstRow] }
         let old = tableLayerState
+        let excludesContent = excludedTableCellContentLayout === presented.content
+        let chrome = boundCellChrome(presented, layout: layout)
+        let unchangedChrome = chrome != nil && old?.chrome == chrome && old?.row == row && old?.rowOffsets == rowOffsets
         let changedRevision = old?.revision != tableLayerRevision
         let changesAreBoundCellOnly = tableLayerChanges.map { changes in
             !changes.fullReset && changes.replacedTables.isEmpty && changes.removedTables.isEmpty &&
@@ -1442,12 +1486,14 @@ public final class PreparedProseDrawingView: UIView {
             recordTableLayer(boundRowLayer, name: .boundRow, rect: row.intersection(window),
                              excluding: frame, snapshot: snapshot, layout: layout)
         }
-        if !reusable || changedRevision || old?.frame != frame {
+        if !reusable || old?.frame != frame || old?.excludesContent != excludesContent || old?.chrome != chrome ||
+            old?.row != row || old?.rowOffsets != rowOffsets || (changedRevision && !unchangedChrome) {
             recordTableLayer(boundCellLayer, name: .boundCell, rect: frame.intersection(window),
                              snapshot: snapshot, layout: layout)
         }
         tableLayerState = TableLayerState(cell: binding, window: window, frame: frame, row: row, rowOffsets: rowOffsets,
-                                         revision: tableLayerRevision, appearance: tableLayerAppearance)
+                                         revision: tableLayerRevision, appearance: tableLayerAppearance,
+                                         excludesContent: excludesContent, chrome: chrome)
     }
 
     private func fillTableCell(_ cell: ViewerTablePresentedCell, color: UIColor, context: CGContext) {

@@ -445,7 +445,7 @@ final class EditorLargeTableTests: XCTestCase {
         }
     }
 
-    func testNonWrappingKeystrokeRedrawsOnlyTheBoundCellLayer() throws {
+    func testNonWrappingKeystrokeReusesExcludedCellChrome() throws {
         try withMountedTable(rows: 12, columns: 2) { view, _, drawing in
             let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: view.editorId))
             XCTAssertTrue(view.bindTableCell(tableID: try adapter.editableTableID(), cellIndex: 4, contentRect: .zero))
@@ -456,10 +456,46 @@ final class EditorLargeTableTests: XCTestCase {
             input.insertText("x")
             view.layoutIfNeeded()
             drawing.layer.displayIfNeeded()
-            for name in ["above", "boundRow", "below"] {
+            for name in ["above", "boundRow", "boundCell", "below"] {
                 XCTAssertEqual(drawing.layerRedrawsForTesting[name], before[name], name)
             }
-            XCTAssertEqual(drawing.layerRedrawsForTesting["boundCell", default: 0], before["boundCell", default: 0] + 1)
+            try assertLayeredMatchesSinglePass(drawing)
+        }
+    }
+
+    func testTallExcludedCellReusesChromeAndRepaintsWhenContentReturns() throws {
+        try withMountedTable(rows: 2, columns: 2) { view, _, drawing in
+            let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: view.editorId))
+            let cellIndex = 0
+            XCTAssertTrue(view.bindTableCell(tableID: try adapter.editableTableID(), cellIndex: UInt32(cellIndex), contentRect: .zero))
+            let input = view.activeTextInput
+            let font = try XCTUnwrap(input.font)
+            let linesToExceedViewport = Int((Window.viewport.height / font.lineHeight).rounded(.up)) + Window.straddlingCells
+            input.selectedRange = NSRange(location: input.textStorage.length, length: 0)
+            input.insertText(String(repeating: "line\n", count: linesToExceedViewport))
+            view.layoutIfNeeded()
+            drawing.layer.displayIfNeeded()
+            let beforeCell = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface.cell(sourceIndex: cellIndex))
+            XCTAssertGreaterThan(beforeCell.contentSize.height, Window.viewport.height)
+            let before = drawing.layerRedrawsForTesting
+            input.insertText(EditedTable.typed)
+            view.layoutIfNeeded()
+            drawing.layer.displayIfNeeded()
+            let afterCell = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface.cell(sourceIndex: cellIndex))
+            XCTAssertEqual(afterCell.contentSize.height, beforeCell.contentSize.height)
+            XCTAssertEqual(drawing.layerRedrawsForTesting, before,
+                "A tall native input edit must not rerasterize unchanged excluded cell chrome")
+            try assertLayeredMatchesSinglePass(drawing)
+
+            drawing.layer.displayIfNeeded()
+            let excluded = drawing.excludedTableCellContentLayout
+            let excludedCount = drawing.layerRedrawsForTesting["boundCell", default: 0]
+            drawing.excludedTableCellContentLayout = nil
+            drawing.layer.displayIfNeeded()
+            XCTAssertEqual(drawing.layerRedrawsForTesting["boundCell", default: 0], excludedCount + 1,
+                "Restoring prepared content without a document revision must invalidate the chrome-only raster")
+            try assertLayeredMatchesSinglePass(drawing)
+            drawing.excludedTableCellContentLayout = excluded
         }
     }
 
@@ -481,6 +517,36 @@ final class EditorLargeTableTests: XCTestCase {
             XCTAssertEqual(drawing.layerRedrawsForTesting["boundRow", default: 0], before["boundRow", default: 0] + 1)
             XCTAssertGreaterThan(drawing.belowLayer.position.y, below.y)
             try assertLayeredMatchesSinglePass(drawing)
+        }
+    }
+
+    func testBoundCellChromeTracksHeaderAppearanceAndSelection() throws {
+        try withMountedTable(rows: 3, columns: 2) { view, _, drawing in
+            let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: view.editorId))
+            let tableID = try adapter.editableTableID()
+            let cellIndex = 0
+            XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: UInt32(cellIndex), contentRect: .zero))
+            drawing.layer.displayIfNeeded()
+            let toggle = try XCTUnwrap(TableAccessibilityAction.all.first { $0.key == "toggleHeaderCell" }).command
+            for appearance in [UIUserInterfaceStyle.light, .dark] {
+                view.overrideUserInterfaceStyle = appearance
+                view.setNeedsLayout()
+                view.layoutIfNeeded()
+                XCTAssertEqual(drawing.traitCollection.userInterfaceStyle, appearance)
+                for _ in 0..<2 {
+                    let before = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface.cell(sourceIndex: cellIndex)).isHeader
+                    let update = try XCTUnwrap(adapter.commandAtSelection(toggle, anchor: 0, head: 0))
+                    XCTAssertTrue(view.textView.applyUpdateJSON(update))
+                    view.layoutIfNeeded()
+                    XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: UInt32(cellIndex), contentRect: .zero))
+                    let after = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface.cell(sourceIndex: cellIndex)).isHeader
+                    XCTAssertNotEqual(after, before)
+                    try assertLayeredMatchesSinglePass(drawing)
+                    drawing.selectedTableCellSourceIndices = [tableID: [cellIndex]]
+                    try assertLayeredMatchesSinglePass(drawing)
+                    drawing.selectedTableCellSourceIndices = [:]
+                }
+            }
         }
     }
 
@@ -620,12 +686,12 @@ final class EditorLargeTableTests: XCTestCase {
         let format = UIGraphicsImageRendererFormat()
         format.scale = drawing.contentScaleFactor
         let layered = UIGraphicsImageRenderer(bounds: drawing.bounds, format: format).image { _ in
-            drawing.drawInstalledLayersForTesting()
+            drawing.traitCollection.performAsCurrent { drawing.drawInstalledLayersForTesting() }
         }
         drawing.usesEditAnchoredLayers = false
         defer { drawing.usesEditAnchoredLayers = true }
         let painted = UIGraphicsImageRenderer(bounds: drawing.bounds, format: format).image { _ in
-            drawing.draw(drawing.bounds)
+            drawing.traitCollection.performAsCurrent { drawing.draw(drawing.bounds) }
         }
         let reference = CALayer()
         reference.bounds = CGRect(origin: .zero, size: drawing.bounds.size)
