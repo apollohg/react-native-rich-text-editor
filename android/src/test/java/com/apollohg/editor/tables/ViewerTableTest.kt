@@ -96,6 +96,16 @@ class ViewerTableTest {
                 assertEquals("$direction: every rectangle and row offset must match fresh layout", fresh.layout, incremental.layout)
                 assertSame("$direction: unchanged cells keep their content owner", original.cell(1), incremental.cell(1))
                 assertEquals(changed.heightPx, requireNotNull(incremental.cell(0)).contentHeightPx)
+                val cellIndexField = ViewerTableSurface::class.java.getDeclaredField("cellIndex").apply { isAccessible = true }
+                assertSame("$direction: content edits retain the immutable cell lookup index", cellIndexField.get(base), cellIndexField.get(incremental))
+                assertSame("$direction: content edits retain column handle row membership", base.columnEdgeHandleRows, incremental.columnEdgeHandleRows)
+                for (cell in fresh.cells) {
+                    val frame = fresh.frameOfCell(cell)
+                    val viewport = RectF(frame.left, frame.top, frame.left + frame.width, frame.top + frame.height)
+                    assertEquals("$direction: visibility uses current row geometry for cell ${cell.sourceIndex}",
+                        fresh.visibleCells(viewport).map { it.sourceIndex }, incremental.visibleCells(viewport).map { it.sourceIndex })
+                }
+                assertEquals("$direction: metadata charges match fresh preparation", fresh.metadataRetainedBytes, incremental.metadataRetainedBytes)
                 return fresh to incremental
             }
             val (_, sameHeight) = replace("after")
@@ -113,6 +123,39 @@ class ViewerTableTest {
             assertNotSame("$direction: a width change cannot retain geometry", original.layout, resized.layout)
             assertFalse("$direction: explicit widths must take effect", original.layout.columnWidths == resized.layout.columnWidths)
             assertEquals(requireNotNull(original.cell(0)).contentHeightPx, requireNotNull(sameHeight.cell(0)).contentHeightPx)
+        }
+    }
+
+    @Test fun contentMembershipChangesRebuildTheCellLookupIndex() {
+        val paragraph = """{"type":"paragraph","content":[{"type":"text","text":"plain"}]}"""
+        val nested = """{"type":"table","content":[{"type":"table_row","content":[${tableCell("nested")}]}]}"""
+        val atom = """{"type":"card"}"""
+        val theme = """{"viewerAtoms":{"generation":"membership","revision":"one","nodeTypes":["card"],"estimatedHeights":{"card":40}}}"""
+        fun surface(content: String): ViewerTableSurface {
+            val source = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[
+                {"type":"table_cell","content":[$content]},${tableCell("unchanged")}
+            ]}]}]}"""
+            return requireNotNull(prepare(source, theme = theme).blocks.single().tableSurface)
+        }
+        var previous = surface(paragraph)
+        val indexField = ViewerTableSurface::class.java.getDeclaredField("cellIndex").apply { isAccessible = true }
+        for (content in listOf(nested, paragraph, atom, paragraph)) {
+            val fresh = surface(content)
+            val table = requireNotNull(fresh.sourceTable)
+            val incremental = previous.replacingCells(mapOf(0 to requireNotNull(fresh.cell(0)).content),
+                TableGridRecord.from(table, previous.identity), table, fresh.sourceAttributes) { cell, _ ->
+                requireNotNull(fresh.cell(cell.sourceIndex)).content
+            }
+            assertNotSame("Changed nested/atom membership must invalidate the index: $content", indexField.get(previous), indexField.get(incremental))
+            assertEquals(fresh.nestedTableCells.map { it.sourceIndex }, incremental.nestedTableCells.map { it.sourceIndex })
+            assertEquals(fresh.hasAtoms, incremental.hasAtoms)
+            assertEquals(fresh.layout, incremental.layout)
+            assertEquals(fresh.metadataRetainedBytes, incremental.metadataRetainedBytes)
+            val outside = fresh.layout.contentWidth + 1f
+            assertEquals("Offscreen atoms must retain presentation membership",
+                fresh.presentationCells(outside, 0f, outside + 1f, 1f).map { it.sourceIndex },
+                incremental.presentationCells(outside, 0f, outside + 1f, 1f).map { it.sourceIndex })
+            previous = incremental
         }
     }
 

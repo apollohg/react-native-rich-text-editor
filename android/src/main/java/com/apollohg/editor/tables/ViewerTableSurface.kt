@@ -123,7 +123,7 @@ internal class PreparedViewerTableCell {
     }
 }
 
-internal class ViewerTableSurface(
+internal class ViewerTableSurface private constructor(
     val identity: String,
     val hostViewportWidth: Float,
     val style: TableStyle,
@@ -134,8 +134,19 @@ internal class ViewerTableSurface(
     val sourceTable: TableSurfaceSource? = null,
     val sourceAttributes: Map<String, org.json.JSONObject> = emptyMap(),
     val editorTableId: String? = null,
-    val displayScale: Float = 1f
+    val displayScale: Float,
+    reusableCellIndex: ViewerTableCellIndex?,
+    reusableColumnEdgeHandleRows: Map<Int, Int>?
 ) {
+    constructor(
+        identity: String, hostViewportWidth: Float, style: TableStyle, isRightToLeft: Boolean,
+        layout: TableLayoutResult, cells: List<PreparedViewerTableCell>, preparationError: ProseViewerError?,
+        sourceTable: TableSurfaceSource? = null,
+        sourceAttributes: Map<String, org.json.JSONObject> = emptyMap(),
+        editorTableId: String? = null, displayScale: Float = 1f
+    ) : this(identity, hostViewportWidth, style, isRightToLeft, layout, cells, preparationError,
+        sourceTable, sourceAttributes, editorTableId, displayScale, null, null)
+
     val layoutStore = cells.firstOrNull()?.layoutStore ?: TableCellLayoutStore()
 
     private data class Preparation(
@@ -173,6 +184,7 @@ internal class ViewerTableSurface(
                        sourceAttributes: Map<String, org.json.JSONObject>,
                        prepareCell: (TableGridCell, Float) -> PreparedProseLayout): ViewerTableSurface {
         var heightsUnchanged = true
+        var membershipUnchanged = true
         val updated = cells.map { cell ->
             val source = sourceTable.cells[cell.sourceIndex]
             val content = contents[cell.sourceIndex] ?: return@map cell
@@ -180,26 +192,31 @@ internal class ViewerTableSurface(
             val width = content.widthPx.toFloat()
             val gridCell = record.cells.first { it.sourceIndex == cell.sourceIndex }
             PreparedViewerTableCell(cell.sourceIndex, cell.row, cell.column, cell.rowspan, cell.colspan,
-                cell.contentOrigin, content, source.header, source.attrsKey, layoutStore) { prepareCell(gridCell, width) }
+                cell.contentOrigin, content, source.header, source.attrsKey, layoutStore) { prepareCell(gridCell, width) }.also {
+                membershipUnchanged = membershipUnchanged && cell.hasNestedTables == it.hasNestedTables && cell.hasAtoms == it.hasAtoms
+            }
         }
         val previousSource = this.sourceTable
         // The caller certifies unchanged cell positions, spans, and presentation inputs.
-        val next = if (heightsUnchanged && previousSource != null && layout.failure == null &&
+        val structureUnchanged = previousSource != null && layout.failure == null &&
             layout.typedFailure == null && previousSource.failure == null && sourceTable.failure == null &&
             record.failure == null && record.typedFailure == null &&
             previousSource.rows == sourceTable.rows && previousSource.columns == sourceTable.columns &&
-            previousSource.columnWidths == sourceTable.columnWidths) {
+            previousSource.columnWidths == sourceTable.columnWidths
+        val next = if (heightsUnchanged && structureUnchanged) {
             layout
         } else {
             val heights = updated.associate { it.sourceIndex to it.contentHeightPx.toFloat() }
             TableGridLayout(displayScale).relayout(record, hostViewportWidth, style, isRightToLeft, heights)
         }
         return ViewerTableSurface(identity, hostViewportWidth, style, isRightToLeft, next, updated,
-            updated.firstNotNullOfOrNull { it.contentError }, sourceTable, sourceAttributes, editorTableId, displayScale)
+            updated.firstNotNullOfOrNull { it.contentError }, sourceTable, sourceAttributes, editorTableId, displayScale,
+            if (structureUnchanged && membershipUnchanged) cellIndex else null,
+            if (structureUnchanged) columnEdgeHandleRows else null)
     }
 
     val bounds: RectF get() = RectF(0f, 0f, layout.contentWidth, layout.contentHeight)
-    val columnEdgeHandleRows: Map<Int, Int> = sourceTable?.cells.orEmpty()
+    val columnEdgeHandleRows: Map<Int, Int> = reusableColumnEdgeHandleRows ?: sourceTable?.cells.orEmpty()
         .groupBy { (it.column + it.colspan).toInt() - 1 }
         .mapValues { (_, cells) -> cells.minOf { it.row }.toInt() }
     val retainedBytes: Long get() = metadataRetainedBytes + cells.sumOf { it.cachedContent?.retainedBytes ?: 0L }
@@ -300,7 +317,7 @@ internal class ViewerTableSurface(
         }
     }
 
-    private val cellIndex = ViewerTableCellIndex(cells, isRightToLeft)
+    private val cellIndex = reusableCellIndex ?: ViewerTableCellIndex(cells, isRightToLeft)
 
     val nestedTableCells: List<PreparedViewerTableCell>
         get() = cellIndex.nestedTableCells.map { cells[it] }
