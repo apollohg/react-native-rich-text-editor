@@ -102,6 +102,8 @@ final class ViewerTableSurface {
     let layout: TableLayoutResult
     let cells: [PreparedViewerTableCell]
     private let cellMetadataRetainedBytes: Int
+    private let hasSharedCellStore: Bool
+    private let retainedByteSnapshot: TableCellLayoutStore.RetainedByteSnapshot
     let sourceTable: TableSurfaceSource?
     let sourceAttributes: [String: [String: Any]]
     let syntheticRegions: [TableRenderSyntheticRegion]
@@ -113,10 +115,13 @@ final class ViewerTableSurface {
 
     var bounds: CGRect { CGRect(origin: .zero, size: layout.contentSize) }
     var retainedBytes: Int {
-        metadataRetainedBytes + cells.reduce(0) { $0 + ($1.cachedContent?.retainedBytes ?? 0) }
+        let contentBytes = hasSharedCellStore
+            ? layoutStore.retainedLayoutBytes(for: cells.lazy.map(\.contentKey), snapshot: retainedByteSnapshot)
+            : cells.reduce(0) { $0 + ($1.cachedContent?.retainedBytes ?? 0) }
+        return metadataRetainedBytes + contentBytes
     }
     var metadataRetainedBytes: Int {
-        256 + cellMetadataRetainedBytes
+        256 + cellMetadataRetainedBytes + TableCellLayoutStore.RetainedByteSnapshot.estimatedRetainedBytes
             + (sourceTable?.cells.count ?? 0) * 16 + syntheticRegions.count * 64 + columnEdgeHandleRows.count * 16
             + (layout.columnWidths.count + layout.columnOffsets.count + layout.rowOffsets.count) * 16
             + layout.rectangles.count * 96 + layout.sourceOrder.count * 16
@@ -142,6 +147,7 @@ final class ViewerTableSurface {
         prepareCell: @escaping (TableGridCell, CGFloat) -> PreparedProseLayout
     ) {
         self.layoutStore = layoutStore
+        retainedByteSnapshot = .init(store: layoutStore)
         self.displayScale = displayScale
         self.identity = identity
         self.scrollIdentity = scrollIdentity ?? identity
@@ -227,6 +233,7 @@ final class ViewerTableSurface {
         preparationError = firstPreparationError
         let preparedCells = resolvedLayout.sourceOrder.compactMap { prepared[$0] }
         cells = preparedCells
+        hasSharedCellStore = preparedCells.allSatisfy { $0.layoutStore === layoutStore }
         cellMetadataRetainedBytes = preparedCells.reduce(0) { $0 + $1.metadataRetainedBytes }
         cellIndex = ViewerTableCellIndex(cells: preparedCells, direction: direction)
     }
@@ -251,7 +258,10 @@ final class ViewerTableSurface {
         self.style = style
         self.direction = direction
         self.layout = layout
-        self.layoutStore = cells.first?.layoutStore ?? TableCellLayoutStore()
+        let sharedStore = cells.first?.layoutStore ?? TableCellLayoutStore()
+        self.layoutStore = sharedStore
+        retainedByteSnapshot = .init(store: sharedStore)
+        hasSharedCellStore = cells.allSatisfy { $0.layoutStore === sharedStore }
         self.cells = cells
         self.cellMetadataRetainedBytes = cells.reduce(0) { $0 + $1.metadataRetainedBytes }
         self.cellIndex = ViewerTableCellIndex(cells: cells, direction: direction)
@@ -320,6 +330,8 @@ final class ViewerTableSurface {
         direction = previous.direction
         displayScale = previous.displayScale
         layoutStore = previous.layoutStore
+        retainedByteSnapshot = .init(store: previous.layoutStore)
+        hasSharedCellStore = previous.hasSharedCellStore || cells.allSatisfy { $0.layoutStore === previous.layoutStore }
         self.layout = layout
         self.cells = cells
         cellMetadataRetainedBytes = metadataBytes

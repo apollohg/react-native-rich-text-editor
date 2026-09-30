@@ -23,6 +23,72 @@ final class TableCellLayoutStoreTests: XCTestCase {
         XCTAssertEqual(store.unmountedRetainedBytes, 200)
     }
 
+    func testSurfaceRetainedBytesTracksReplacementEvictionAndPinning() {
+        let cellBytes = 100
+        let store = TableCellLayoutStore(byteBudget: cellBytes * 3, capacity: 3)
+        let names = ["first", "second", "third"]
+        let cells = names.enumerated().map {
+            TableGridCell(sourceIndex: $0.offset, row: 0, column: $0.offset, contentKey: $0.element)
+        }
+        let record = TableGridRecord(documentOwner: "live-charge", columns: names.count, rows: 1,
+                                     columnWidths: names.map { _ in 100 }, cells: cells)
+        var preparations = 0
+        let surface = ViewerTableSurface(identity: "live-charge", record: record, viewportWidth: 300,
+            style: TableStyle(), direction: .leftToRight, displayScale: 1, layoutStore: store) { cell, _ in
+                preparations += 1
+                return self.layout(cell.contentKey, bytes: cellBytes)
+            }
+        let metadata = surface.metadataRetainedBytes
+        XCTAssertEqual(surface.retainedBytes, metadata + cellBytes * 3)
+        XCTAssertEqual(surface.retainedBytes, metadata + cellBytes * 3)
+        store.insert(layout(names[0], bytes: cellBytes + cellBytes / 2))
+        XCTAssertEqual(surface.retainedBytes, metadata + cellBytes * 2 + cellBytes / 2,
+            "Replacing the same key changes its charge and evicts the least-recent sibling")
+        let second = layout(names[1], bytes: cellBytes)
+        store.pin(second.key)
+        store.insert(second)
+        XCTAssertEqual(surface.retainedBytes, metadata + cellBytes * 3 + cellBytes / 2)
+        store.insert(layout("unmapped-first", bytes: cellBytes * 2))
+        XCTAssertEqual(surface.retainedBytes, metadata + cellBytes,
+            "Only the pinned mapped cell remains resident")
+        store.unpin(second.key)
+        store.insert(layout("unmapped-second", bytes: cellBytes * 2))
+        XCTAssertEqual(surface.retainedBytes, metadata,
+            "Unpin-triggered eligibility and later eviction invalidate the old resident charge")
+        XCTAssertEqual(preparations, names.count, "Reading memory charges must never rebuild evicted content")
+    }
+
+    func testSurfaceMemoryChargePreservesDuplicateKeysAndSeparateStores() {
+        let cellBytes = 100
+        let firstStore = TableCellLayoutStore()
+        let secondStore = TableCellLayoutStore()
+        let content = layout("shared", bytes: cellBytes)
+        let cells = [firstStore, firstStore, secondStore].enumerated().map { index, store in
+            PreparedViewerTableCell(sourceIndex: index, row: 0, column: index, rowspan: 1, colspan: 1,
+                contentOrigin: .zero, content: content, isHeader: false, attributesKey: nil, layoutStore: store)
+        }
+        let record = TableGridRecord(documentOwner: "mixed-stores", columns: cells.count, rows: 1,
+            columnWidths: cells.map { _ in 100 }, cells: cells.map {
+                TableGridCell(sourceIndex: $0.sourceIndex, row: $0.row, column: $0.column, contentKey: "shared")
+            })
+        let grid = TableGridLayout(displayScale: 1).layout(record: record, viewportWidth: 300,
+            style: TableStyle(), direction: .leftToRight) { _, _ in content.size.height }
+        let surface = ViewerTableSurface(identity: "mixed-stores", hostViewportWidth: 300,
+            style: TableStyle(), direction: .leftToRight, layout: grid, cells: cells, preparationError: nil)
+        XCTAssertEqual(surface.retainedBytes, surface.metadataRetainedBytes + cellBytes * cells.count)
+        secondStore.insert(layout("shared", bytes: cellBytes * 2))
+        XCTAssertEqual(surface.retainedBytes, surface.metadataRetainedBytes + cellBytes * 4,
+            "A surface assembled from multiple stores must observe changes in each store")
+        let shared = ViewerTableSurface(identity: "one-store", hostViewportWidth: 300,
+            style: TableStyle(), direction: .leftToRight, layout: grid, cells: Array(cells.prefix(2)), preparationError: nil)
+        DispatchQueue.concurrentPerform(iterations: 64) { _ in
+            XCTAssertEqual(shared.retainedBytes, shared.metadataRetainedBytes + cellBytes * 2,
+                "Concurrent readers preserve the original per-cell multiplicity for a shared key")
+        }
+        firstStore.insert(layout("shared", bytes: cellBytes * 2))
+        XCTAssertEqual(shared.retainedBytes, shared.metadataRetainedBytes + cellBytes * 4)
+    }
+
     func testCurrentParentMemoryFollowsCellEvictionAndRebuild() {
         let cellBytes = 100
         let parentBytes = 64

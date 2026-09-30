@@ -3,6 +3,17 @@ import Foundation
 final class TableCellLayoutStore {
     static let maximumResidentLayouts = 2_272
 
+    // Each snapshot belongs to one immutable sequence of cell keys.
+    final class RetainedByteSnapshot {
+        // Includes the snapshot, its surface handle, and the store revision.
+        static let estimatedRetainedBytes = 80
+        fileprivate let store: TableCellLayoutStore
+        fileprivate var revision: UInt64?
+        fileprivate var bytes = 0
+
+        init(store: TableCellLayoutStore) { self.store = store }
+    }
+
     private final class Entry {
         let key: ProseLayoutKey
         let layout: PreparedProseLayout
@@ -26,6 +37,7 @@ final class TableCellLayoutStore {
     private var oldest: Entry?
     private var bytes = 0
     private var pinnedBytes = 0
+    private var contentRevision: UInt64 = 0
 
     init(byteBudget: Int = PreparedProseLayoutCache.preparedLayoutUnmountedByteBudget,
          capacity: Int = TableCellLayoutStore.maximumResidentLayouts) {
@@ -46,6 +58,23 @@ final class TableCellLayoutStore {
         return entries[key]?.layout
     }
 
+    func retainedLayoutBytes<Keys: Sequence>(for keys: Keys, snapshot: RetainedByteSnapshot) -> Int
+        where Keys.Element == ProseLayoutKey {
+        lock.lock(); defer { lock.unlock() }
+        let canCache = snapshot.store === self && contentRevision != UInt64.max
+        if canCache, snapshot.revision == contentRevision { return snapshot.bytes }
+        let total = keys.reduce(0) { $0 + (entries[$1]?.layout.retainedBytes ?? 0) }
+        if canCache {
+            snapshot.revision = contentRevision
+            snapshot.bytes = total
+        }
+        return total
+    }
+
+    private func recordContentMutation() {
+        if contentRevision != UInt64.max { contentRevision += 1 }
+    }
+
     func value(for key: ProseLayoutKey, build: () -> PreparedProseLayout) -> PreparedProseLayout {
         lock.lock(); defer { lock.unlock() }
         if let entry = entries[key] {
@@ -62,6 +91,7 @@ final class TableCellLayoutStore {
         lock.lock(); defer { lock.unlock() }
         let entry = Entry(layout, key: key ?? layout.key)
         if let existing = entries[entry.key] { remove(existing) }
+        recordContentMutation()
         entries[entry.key] = entry
         bytes += entry.retainedBytes
         if pins[entry.key, default: 0] > 0 { pinnedBytes += entry.retainedBytes }
@@ -94,6 +124,7 @@ final class TableCellLayoutStore {
     }
 
     private func remove(_ entry: Entry) {
+        recordContentMutation()
         unlink(entry)
         entries.removeValue(forKey: entry.key)
         bytes -= entry.retainedBytes
