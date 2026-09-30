@@ -614,8 +614,9 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
             render_top_level_start_scans: 0,
             active_applicability_passes: 1,
             ordinary_step_applications: 1,
-            table_projection_derivations: 1,
-            table_command_availability_plans: 19,
+            table_projection_derivations: DEBUG_TABLE_AVAILABILITY_PASSES,
+            table_command_availability_plans: DEBUG_TABLE_AVAILABILITY_PASSES
+                * TABLE_AVAILABILITY_PLANS_PER_PASS,
             yrs_tree_walks: 0,
             whole_state_encodings: 0,
             cell_content_keys: 0,
@@ -645,7 +646,7 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
         expected.0.active_applicability_passes = usize::from(first);
         expected.0.table_projection_derivations += usize::from(first);
         expected.0.table_command_availability_plans +=
-            usize::from(first) * expected_command.0.table_command_availability_plans;
+            usize::from(first) * TABLE_AVAILABILITY_PLANS_PER_PASS;
         assert_eq!(*actual, expected, "command edit {index}");
     }
 

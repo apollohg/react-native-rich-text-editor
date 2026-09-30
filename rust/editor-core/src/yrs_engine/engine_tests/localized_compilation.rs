@@ -1,5 +1,8 @@
 use super::*;
 
+const DEBUG_TABLE_AVAILABILITY_PASSES: usize = cfg!(debug_assertions) as usize;
+const TABLE_AVAILABILITY_PLANS_PER_PASS: usize = 19;
+
 #[test]
 fn localized_insert_preserves_semantic_validation_error_precedence_over_lowering_limits() {
     fn constrained_engine() -> YrsDocumentEngine {
@@ -198,8 +201,9 @@ fn existing_text_command_skips_every_proved_document_wide_compiler_pass() {
             render_top_level_start_scans: 0,
             active_applicability_passes: 1,
             ordinary_step_applications: 1,
-            table_projection_derivations: 2,
-            table_command_availability_plans: 38,
+            table_projection_derivations: 1 + DEBUG_TABLE_AVAILABILITY_PASSES,
+            table_command_availability_plans: (1 + DEBUG_TABLE_AVAILABILITY_PASSES)
+                * TABLE_AVAILABILITY_PLANS_PER_PASS,
             yrs_tree_walks: 0,
             whole_state_encodings: 0,
             cell_content_keys: 0,
