@@ -171,6 +171,17 @@ recorder!(record_canonical_serialization, canonical_serializations);
 recorder!(record_canonical_hash, canonical_hashes);
 recorder!(record_affected_top_level_scan, affected_top_level_scans);
 recorder!(record_position_map_clone, position_map_clones);
+std::thread_local! {
+    static STEP_MAP_PREFIX_RANGES_COPIED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+pub(crate) fn record_step_map_prefix_copy(ranges: usize) {
+    STEP_MAP_PREFIX_RANGES_COPIED.with(|count| count.set(count.get().saturating_add(ranges)));
+}
+
+pub(crate) fn take_step_map_prefix_ranges_copied() -> usize {
+    STEP_MAP_PREFIX_RANGES_COPIED.with(|count| count.replace(0))
+}
 recorder!(record_position_map_compaction, position_map_compactions);
 recorder!(record_rendered_text_derivation, rendered_text_derivations);
 recorder!(record_raw_document_text_scan, raw_document_text_scans);

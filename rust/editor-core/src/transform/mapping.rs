@@ -81,8 +81,14 @@ impl StepMap {
     /// Compose two step maps into one that represents applying `self` first,
     /// then `other`.
     pub fn compose(&self, other: &StepMap) -> StepMap {
-        let mut combined = self.ranges.clone();
-        combined.extend_from_slice(&other.ranges);
-        StepMap { ranges: combined }
+        #[cfg(test)]
+        crate::yrs_engine::observability::record_step_map_prefix_copy(self.ranges.len());
+        let mut combined = self.clone();
+        combined.append(other);
+        combined
+    }
+
+    pub(crate) fn append(&mut self, other: &StepMap) {
+        self.ranges.extend_from_slice(&other.ranges);
     }
 }

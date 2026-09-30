@@ -203,7 +203,7 @@ impl Transaction {
 
         for step in &self.steps {
             let (new_doc, step_map) = apply::apply_step(&current, step, schema)?;
-            composed_map = composed_map.compose(&step_map);
+            composed_map.append(&step_map);
             current = new_doc;
         }
 
