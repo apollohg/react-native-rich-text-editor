@@ -50,31 +50,45 @@ final class PreparedCellShapeBuildContext {
 
     func fork() -> PreparedCellShapeBuildContext { catalog.newBuildContext() }
 
+    enum Resolution {
+        case uncached
+        case cached(PreparedCellShape)
+        case fresh
+    }
+
+    func beginResolution(_ key: PreparedCellShapeKey) -> Resolution {
+        if closed { return .uncached }
+        if let shape = resolved[key]?.shape { return .cached(shape) }
+        if let shape = catalog.acquireForBuild(key) {
+            rememberPinned(shape)
+            return .cached(shape)
+        }
+        return .fresh
+    }
+
+    func stage(_ fresh: PreparedProseLayout, for key: PreparedCellShapeKey) -> (PreparedCellShape, PreparedCellShape) {
+        let candidate = PreparedCellShape(key: key, localLayout: fresh.sourceNeutralized(semanticKey: UUID().uuidString))
+        let shape = catalog.stageForBuild(candidate)
+        rememberPinned(shape)
+        return (candidate, shape)
+    }
+
     func resolve(
         _ key: PreparedCellShapeKey,
         build: () throws -> PreparedProseLayout,
         bind: (PreparedCellShape) -> PreparedProseLayout?
     ) throws -> PreparedProseLayout {
-        if closed { return try build() }
-        if let shape = resolved[key]?.shape {
+        switch beginResolution(key) {
+        case .uncached: return try build()
+        case let .cached(shape):
             if let bound = bind(shape) { return bound.withCellShape(shape) }
             return try build()
+        case .fresh:
+            let fresh = try build()
+            let (candidate, shape) = stage(fresh, for: key)
+            if shape !== candidate, let bound = bind(shape) { return bound.withCellShape(shape) }
+            return fresh.withCellShape(shape)
         }
-        if let shape = catalog.acquireForBuild(key) {
-            rememberPinned(shape)
-            if let bound = bind(shape) {
-                return bound.withCellShape(shape)
-            }
-            return try build()
-        }
-        let fresh = try build()
-        let candidate = PreparedCellShape(key: key, localLayout: fresh.sourceNeutralized(semanticKey: UUID().uuidString))
-        let shape = catalog.stageForBuild(candidate)
-        rememberPinned(shape)
-        if shape !== candidate, let bound = bind(shape) {
-            return bound.withCellShape(shape)
-        }
-        return fresh.withCellShape(shape)
     }
 
     func close() {
@@ -228,6 +242,15 @@ final class PreparedCellShapeCatalog {
     }
 }
 
+private extension ProseLayoutKey {
+    func sourceNeutralized(semanticKey: String) -> ProseLayoutKey {
+        ProseLayoutKey(semanticKey: semanticKey, widthPixels: widthPixels, themeDigest: themeDigest,
+            nativeFontRevision: nativeFontRevision, fontEnvironmentRevision: fontEnvironmentRevision,
+            displayScale: CGFloat(Double(bitPattern: displayScaleBits)), attachmentRevision: 0,
+            generationIdentity: "cell-shape", semanticGenerationIdentity: "cell-shape")
+    }
+}
+
 private extension PreparedProseLayout {
     func sourceNeutralized(semanticKey: String) -> PreparedProseLayout {
         let neutralBlocks = blocks.map { block -> PreparedProseBlock in
@@ -248,17 +271,7 @@ private extension PreparedProseLayout {
             )
         }
         return PreparedProseLayout(
-            key: ProseLayoutKey(
-                semanticKey: semanticKey,
-                widthPixels: key.widthPixels,
-                themeDigest: key.themeDigest,
-                nativeFontRevision: key.nativeFontRevision,
-                fontEnvironmentRevision: key.fontEnvironmentRevision,
-                displayScale: CGFloat(Double(bitPattern: key.displayScaleBits)),
-                attachmentRevision: 0,
-                generationIdentity: "cell-shape",
-                semanticGenerationIdentity: "cell-shape"
-            ),
+            key: key.sourceNeutralized(semanticKey: semanticKey),
             size: size,
             blocks: neutralBlocks,
             interactions: interactions.map {
@@ -281,17 +294,12 @@ private extension ViewerTableSurface {
         let store = TableCellLayoutStore()
         return ViewerTableSurface(identity: "cell-table", hostViewportWidth: hostViewportWidth,
             style: style, direction: direction, layout: layout, cells: cells.map { cell in
-                let content = cell.content
-                let rebuild = content.cellPreparation ?? { content }
+                let rebuild = cell.prepareContent
                 let semanticKey = "cell-shape:\(cell.sourceIndex)"
-                func neutralize(_ prepared: PreparedProseLayout) -> PreparedProseLayout {
-                    prepared.cellShape?.localLayout ?? prepared.sourceNeutralized(semanticKey: semanticKey)
-                }
-                let prepare = { neutralize(rebuild()) }
-                return PreparedViewerTableCell(sourceIndex: cell.sourceIndex, row: cell.row, column: cell.column,
-                    rowspan: cell.rowspan, colspan: cell.colspan, contentOrigin: cell.contentOrigin,
-                    content: neutralize(content), isHeader: cell.isHeader, attributesKey: nil,
-                    layoutStore: store, prepareContent: prepare)
+                let key = cell.contentKey.sourceNeutralized(semanticKey: semanticKey)
+                return PreparedViewerTableCell(copyingGeometry: cell, contentKey: key,
+                    attributesKey: nil, layoutStore: store,
+                    prepareContent: { rebuild().sourceNeutralized(semanticKey: semanticKey) })
             }, preparationError: preparationError, displayScale: displayScale)
     }
 

@@ -66,10 +66,8 @@ final class EditorLargeTableTests: XCTestCase {
         let editorId = makeV2Editor(configJson: TableInputTestSchema.tableConfig)
         defer { destroyV2Editor(id: editorId) }
         let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
-        let window = makeTestWindow(frame: CGRect(origin: .zero, size: Window.viewport))
-        let view = RichTextEditorView(frame: window.bounds)
-        window.addSubview(view)
-        window.makeKeyAndVisible()
+        let view = RichTextEditorView(frame: CGRect(origin: .zero, size: Window.viewport))
+        let window = hostEditorView(view, size: Window.viewport)
         defer { window.isHidden = true }
         view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
         let update = try XCTUnwrap(adapter.setContentJson(try plainTableDocument(rows: rows, columns: columns, repeatedText: repeatedText)),
@@ -214,6 +212,11 @@ final class EditorLargeTableTests: XCTestCase {
                 element.accessibilityElementDidBecomeFocused()
                 view.layoutIfNeeded()
                 let frame = element.accessibilityFrame
+                let presented = try XCTUnwrap(drawing.presentedAccessibilityCell(element.cell))
+                let expectedFrame = drawing.convert(presented.bounds.intersection(presented.clip),
+                    to: try XCTUnwrap(view.window).screen.coordinateSpace)
+                XCTAssertEqual(frame.minX, expectedFrame.minX, accuracy: 1 / drawing.contentScaleFactor)
+                XCTAssertEqual(frame.minY, expectedFrame.minY, accuracy: 1 / drawing.contentScaleFactor)
                 let headers = table.accessibilityHeaderElements(forColumn: column) ?? []
                 print("row \(row) column \(column): frame \(frame), headers \(headers.compactMap { ($0 as? NSObject)?.accessibilityLabel }), offset \(view.textView.contentOffset)")
                 XCTAssertTrue(screen.contains(CGPoint(x: frame.midX, y: frame.midY)), "row \(row) is revealed on screen: \(frame)")
@@ -427,6 +430,38 @@ final class EditorLargeTableTests: XCTestCase {
         }
     }
 
+    func testRemoteWrappingAboveViewportKeepsCachedRowsCovered() throws {
+        try withMountedTable(rows: 60, columns: 2) { view, _, drawing in
+            let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: view.editorId))
+            let boundCell = 4
+            XCTAssertTrue(view.bindTableCell(tableID: try adapter.editableTableID(), cellIndex: UInt32(boundCell), contentRect: .zero))
+            let input = view.activeTextInput
+            let text = input.textStorage.string
+            let scalar = try XCTUnwrap(input.tableCellPositionMap?.globalScalar(forLocalUTF16: text.utf16.count, in: text))
+            view.textView.contentOffset.y = Window.viewport.height
+            view.layoutIfNeeded()
+            drawing.layer.displayIfNeeded()
+            let window = drawing.bounds
+            let before = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface)
+            let oldHeight = before.layout.rowOffsets[3] - before.layout.rowOffsets[2]
+            let oldOffset = view.textView.contentOffset
+            let remote = RemoteTablePeer(adapter: adapter, requestIdBase: 90_000)
+            try remote.applySelection(EditorV2PositionBridge.textSelectionEnvelope(anchor: scalar, head: scalar, affinity: "before"))
+            try remote.applyCommand(["type": "insertText", "text": String(repeating: " wrapping text", count: 8)])
+            let preflight = input.prepareForExternalEditorUpdateResult()
+            XCTAssertTrue(preflight.ready)
+            XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(preflight.adoptedUpdateJSON ?? adapter.refreshFromRustState(mirrorSelection: nil))))
+            view.layoutIfNeeded()
+            drawing.layer.displayIfNeeded()
+            let after = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface)
+            XCTAssertGreaterThan(after.layout.rowOffsets[3] - after.layout.rowOffsets[2], oldHeight)
+            XCTAssertEqual(view.textView.contentOffset, oldOffset, "remote growth must leave the scrolled viewport fixed")
+            XCTAssertEqual(drawing.bounds, window)
+            XCTAssertLessThan(after.layout.rowOffsets[3], drawing.bounds.minY, "the changed row must remain above the viewport")
+            try assertLayeredMatchesSinglePass(drawing)
+        }
+    }
+
     func testUnboundWindowUsesOneLayer() throws {
         try withMountedTable(rows: 12, columns: 2) { _, _, drawing in
             drawing.layer.displayIfNeeded()
@@ -438,21 +473,125 @@ final class EditorLargeTableTests: XCTestCase {
         }
     }
 
+    func testHorizontalScrollingMatchesAFullRepaintAtPartialCellEdges() throws {
+        try withMountedTable(rows: 12, columns: 20) { view, _, drawing in
+            let table = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface)
+            let columnWidth = try XCTUnwrap(table.layout.columnOffsets.dropFirst().first)
+            let maximum = table.bounds.width - table.hostViewportWidth
+            let pixel = 1 / drawing.contentScaleFactor
+            let offsets: [CGFloat] = [0, pixel / 2, columnWidth - pixel / 2,
+                columnWidth, columnWidth + pixel / 2, maximum / 2, maximum - pixel / 2,
+                maximum, maximum / 2, 0]
+            for offset in offsets {
+                try XCTContext.runActivity(named: "horizontal offset \(offset)") { _ in
+                    let current = drawing.tableLogicalOffset(for: table.identity)
+                    drawing.scrollTables(in: [table.scrollIdentity], by: current - offset)
+                    view.layoutIfNeeded()
+                    try assertLayeredMatchesSinglePass(drawing)
+                }
+            }
+        }
+    }
+
+    func testFractionalRootScrollingKeepsBoundTableLayersAligned() throws {
+        try withMountedTable(rows: 12, columns: 20) { view, _, drawing in
+            let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: view.editorId))
+            XCTAssertTrue(view.bindTableCell(tableID: try adapter.editableTableID(), cellIndex: 2, contentRect: .zero))
+            view.layoutIfNeeded()
+            let pixel = 1 / drawing.contentScaleFactor
+            view.textView.contentOffset.y += pixel / 2
+            view.layoutIfNeeded()
+            let table = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface)
+            let columnWidth = try XCTUnwrap(table.layout.columnOffsets.dropFirst().first)
+            let current = drawing.tableLogicalOffset(for: table.identity)
+            drawing.scrollTables(in: [table.scrollIdentity], by: current - columnWidth - pixel / 2)
+            view.layoutIfNeeded()
+            try assertLayeredMatchesSinglePass(drawing)
+        }
+    }
+
+    func testHorizontalScrollingKeepsEnteringHeaderBackgroundOpaque() throws {
+        let frameCount = 120
+        let channels = 4
+        let opaqueAlpha: UInt8 = 255
+        for bindsHeader in [false, true] {
+            try withMountedTable(rows: 1_000, columns: 20) { view, _, drawing in
+                let table = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface)
+                if bindsHeader {
+                    let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: view.editorId))
+                    XCTAssertTrue(view.bindTableCell(tableID: try adapter.editableTableID(), cellIndex: 2, contentRect: .zero))
+                    view.layoutIfNeeded()
+                }
+                let scale = drawing.contentScaleFactor
+                let maximum = table.bounds.width - table.hostViewportWidth
+                for frame in 0...frameCount {
+                    let fraction = CGFloat((1 - cos(Double(frame) / Double(frameCount) * 2 * .pi)) / 2)
+                    let current = drawing.tableLogicalOffset(for: table.identity)
+                    drawing.scrollTables(in: [table.scrollIdentity], by: current - fraction * maximum)
+                    view.layoutIfNeeded()
+                    let geometry = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first)
+                    let clip = geometry.clip.intersection(drawing.bounds)
+                    let start = ceil((clip.minX + table.style.borderWidth) * scale) / scale
+                    let end = floor((clip.maxX - table.style.borderWidth) * scale) / scale
+                    let width = Int(((end - start) * scale).rounded())
+                    XCTAssertGreaterThan(width, 0)
+                    let y = floor(geometry.bounds.minY + table.style.borderWidth + table.style.cellPadding / 2)
+                    var pixels = [UInt8](repeating: 0, count: width * channels)
+                    let context = try XCTUnwrap(CGContext(data: &pixels, width: width, height: 1,
+                        bitsPerComponent: 8, bytesPerRow: width * channels,
+                        space: CGColorSpaceCreateDeviceRGB(),
+                        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
+                    context.scaleBy(x: scale, y: scale)
+                    context.translateBy(x: -start, y: -y)
+                    drawing.layer.displayIfNeeded()
+                    for layer in [drawing.aboveLayer, drawing.boundRowLayer, drawing.boundCellLayer, drawing.belowLayer]
+                    where !layer.isHidden {
+                        let image = try XCTUnwrap(layer.contents) as! CGImage
+                        XCTAssertEqual(image.width, Int((layer.bounds.width * scale).rounded()),
+                            "frame \(frame): bitmap width must match its physical-pixel frame \(layer.frame)")
+                        XCTAssertEqual(image.height, Int((layer.bounds.height * scale).rounded()),
+                            "frame \(frame): bitmap height must match its physical-pixel frame \(layer.frame)")
+                    }
+                    drawing.layer.render(in: context)
+                    let transparent = (0..<width).filter { pixels[$0 * channels + channels - 1] != opaqueAlpha }
+                    XCTAssertTrue(transparent.isEmpty,
+                        "header scanline (bound: \(bindsHeader), scale: \(scale)) lost opacity at frame \(frame), offset \(fraction * maximum), pixels \(transparent)")
+                }
+            }
+        }
+    }
+
     private func assertLayeredMatchesSinglePass(_ drawing: PreparedProseDrawingView,
                                                file: StaticString = #filePath, line: UInt = #line) throws {
         let format = UIGraphicsImageRendererFormat()
         format.scale = drawing.contentScaleFactor
-        func pixels() throws -> Data {
-            let image = UIGraphicsImageRenderer(size: drawing.bounds.size, format: format).image { _ in
-                drawing.drawInstalledLayersForTesting()
-            }
-            return try XCTUnwrap(image.cgImage?.dataProvider?.data) as Data
+        let layered = UIGraphicsImageRenderer(bounds: drawing.bounds, format: format).image { _ in
+            drawing.drawInstalledLayersForTesting()
         }
-        let layered = try pixels()
         drawing.usesEditAnchoredLayers = false
         defer { drawing.usesEditAnchoredLayers = true }
-        let singlePass = try pixels()
-        XCTAssertTrue(layered == singlePass, "translated layers must match a complete repaint pixel for pixel", file: file, line: line)
+        let painted = UIGraphicsImageRenderer(bounds: drawing.bounds, format: format).image { _ in
+            drawing.draw(drawing.bounds)
+        }
+        let reference = CALayer()
+        reference.bounds = CGRect(origin: .zero, size: drawing.bounds.size)
+        reference.contentsScale = format.scale
+        reference.contents = painted.cgImage
+        let singlePass = UIGraphicsImageRenderer(size: drawing.bounds.size, format: format).image { renderer in
+            reference.render(in: renderer.cgContext)
+        }
+        let layeredPixels = try XCTUnwrap(layered.cgImage?.dataProvider?.data) as Data
+        let singlePassPixels = try XCTUnwrap(singlePass.cgImage?.dataProvider?.data) as Data
+        if layeredPixels != singlePassPixels {
+            for (name, image) in [("cached layers", layered), ("full repaint", singlePass)] {
+                let attachment = XCTAttachment(image: image)
+                attachment.name = name
+                attachment.lifetime = .keepAlways
+                add(attachment)
+            }
+        }
+        XCTAssertTrue(layeredPixels == singlePassPixels,
+            "translated layers must match a complete repaint pixel for pixel", file: file, line: line)
     }
 
     func testWrappingInsideRowspanKeepsCrossingContentAndFollowingRowsAligned() throws {

@@ -82,12 +82,14 @@ final class TableCellLayoutStoreTests: XCTestCase {
             return local.withCellShape(PreparedCellShape(key: key, localLayout: local))
         }
         let catalog = PreparedCellShapeCatalog()
-        let context = catalog.newBuildContext(reusing: layouts)
-        defer { context.close() }
-        XCTAssertLessThanOrEqual(catalog.prunePassesForTesting, 1,
-            "Seeding multiple resident tables must not scan the catalog once per excess shape")
-        XCTAssertEqual(catalog.countForTesting, capacity,
-            "The build context seeds at most the existing resident-layout capacity")
+        withExtendedLifetime(layouts) {
+            let context = catalog.newBuildContext(reusing: layouts)
+            defer { context.close() }
+            XCTAssertLessThanOrEqual(catalog.prunePassesForTesting, 1,
+                "Seeding multiple resident tables must not scan the catalog once per excess shape")
+            XCTAssertEqual(catalog.countForTesting, capacity,
+                "The build context seeds at most the existing resident-layout capacity")
+        }
     }
 
     func testParallelBuildContextsReleaseEvictedShapesBeforeClosing() {
@@ -203,34 +205,47 @@ final class TableCellLayoutStoreTests: XCTestCase {
     }
 
     func testNestedNeutralShapeDoesNotRetainSourceCellStore() throws {
-        let catalog = PreparedCellShapeCatalog()
-        let context = catalog.newBuildContext()
-        defer { context.close() }
-        weak var sourceStore: TableCellLayoutStore?
-        var shape: PreparedCellShape!
-        try autoreleasepool {
-            let store = TableCellLayoutStore()
-            sourceStore = store
-            let record = TableGridRecord(documentOwner: "nested-source", columns: 1, rows: 1, columnWidths: [100],
-                cells: [TableGridCell(sourceIndex: 0, row: 0, column: 0, contentKey: "nested-cell")])
-            let surface = ViewerTableSurface(identity: "nested-source", record: record, viewportWidth: 100,
-                style: TableStyle(), direction: .leftToRight, displayScale: 1, layoutStore: store) { _, _ in
-                    self.layout("nested-cell").withCellShape(nil, preparation: { self.layout("nested-cell") })
-                }
-            let parent = PreparedProseLayout(key: layout("nested-parent").key, size: surface.bounds.size,
-                blocks: [PreparedProseBlock(fragments: [], bounds: surface.bounds, tableSurface: surface)],
-                retainedBytes: surface.retainedBytes)
-            let key = PreparedCellShapeKey(contentKey: "nested-parent", widthPixels: 100,
-                scaleBits: Double(1).bitPattern, styleDigest: "store-test", atomGeometryDigest: "", imageGeometryDigest: "")
-            shape = try context.resolve(key, build: { parent }, bind: { _ in nil }).cellShape
+        for budget in [PreparedProseLayoutCache.preparedLayoutUnmountedByteBudget, 0] {
+            let catalog = PreparedCellShapeCatalog()
+            let context = catalog.newBuildContext()
+            defer { context.close() }
+            var rebuilds = 0
+            weak var sourceStore: TableCellLayoutStore?
+            var shape: PreparedCellShape!
+            try autoreleasepool {
+                let store = TableCellLayoutStore(byteBudget: budget)
+                sourceStore = store
+                let record = TableGridRecord(documentOwner: "nested-source", columns: 1, rows: 1, columnWidths: [100],
+                    cells: [TableGridCell(sourceIndex: 0, row: 0, column: 0, contentKey: "nested-cell")])
+                let surface = ViewerTableSurface(identity: "nested-source", record: record, viewportWidth: 100,
+                    style: TableStyle(), direction: .leftToRight, displayScale: 1, layoutStore: store) { _, _ in
+                        self.layout("nested-cell").withCellShape(nil, preparation: {
+                            rebuilds += 1
+                            return self.layout("nested-cell")
+                        })
+                    }
+                let parent = PreparedProseLayout(key: layout("nested-parent").key, size: surface.bounds.size,
+                    blocks: [PreparedProseBlock(fragments: [], bounds: surface.bounds, tableSurface: surface)],
+                    retainedBytes: surface.retainedBytes)
+                let key = PreparedCellShapeKey(contentKey: "nested-parent", widthPixels: 100,
+                    scaleBits: Double(1).bitPattern, styleDigest: "store-test", atomGeometryDigest: "", imageGeometryDigest: "")
+                shape = try context.resolve(key, build: { parent }, bind: { _ in nil }).cellShape
+            }
+            XCTAssertEqual(rebuilds, 0, "neutralizing a parent must not materialize an evicted child")
+            XCTAssertNil(sourceStore, "A neutral nested shape must not keep the source cell's shared store alive")
+            let neutralTable = try XCTUnwrap(shape.localLayout.blocks.first?.tableSurface)
+            let expectedSize = neutralTable.cells[0].contentSize
+            neutralTable.layoutStore.insert(layout("evict-nested", bytes: PreparedProseLayoutCache.preparedLayoutUnmountedByteBudget))
+            XCTAssertNil(neutralTable.cells[0].cachedContent)
+            let rebuilt = neutralTable.cells[0].content
+            XCTAssertEqual(rebuilt.size, expectedSize,
+                "Nested neutral content must still reconstruct after its own store evicts it")
+            XCTAssertEqual(rebuilt.key, neutralTable.cells[0].contentKey)
+            XCTAssertEqual(rebuilds, 1, "the neutral child rebuilds only when requested")
+            XCTAssertTrue(neutralTable.cells[0].content === rebuilt,
+                "A second access must reuse the reconstructed neutral layout")
+            XCTAssertEqual(rebuilds, 1, "the reconstructed neutral key must hit the cache")
         }
-        XCTAssertNil(sourceStore, "A neutral nested shape must not keep the source cell's shared store alive")
-        let neutralTable = try XCTUnwrap(shape.localLayout.blocks.first?.tableSurface)
-        let expectedSize = neutralTable.cells[0].contentSize
-        neutralTable.layoutStore.insert(layout("evict-nested", bytes: PreparedProseLayoutCache.preparedLayoutUnmountedByteBudget))
-        XCTAssertNil(neutralTable.cells[0].cachedContent)
-        XCTAssertEqual(neutralTable.cells[0].content.size, expectedSize,
-            "Nested neutral content must still reconstruct after its own store evicts it")
     }
 
     func testOpenBuildContextsDoNotRetainEvictedUniqueShapes() throws {

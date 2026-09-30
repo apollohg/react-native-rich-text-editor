@@ -166,7 +166,8 @@ struct PreparedProseTheme {
         editorTheme: EditorTheme?,
         baseFont: UIFont,
         textColor: UIColor,
-        semanticGeneration: String
+        semanticGeneration: String,
+        styleIdentity: String
     ) -> PreparedProseTheme {
         resolve(
             theme: editorTheme ?? EditorTheme(dictionary: [:]),
@@ -174,7 +175,8 @@ struct PreparedProseTheme {
             defaultTextColor: textColor,
             fontScale: 1,
             semanticGeneration: semanticGeneration,
-            themeJSON: nil
+            themeJSON: nil,
+            styleIdentity: styleIdentity
         )
     }
 
@@ -184,7 +186,8 @@ struct PreparedProseTheme {
         defaultTextColor: UIColor,
         fontScale resolvedScale: CGFloat,
         semanticGeneration: String,
-        themeJSON: String?
+        themeJSON: String?,
+        styleIdentity: String? = nil
     ) -> PreparedProseTheme {
         func paint(_ style: EditorTextStyle?, fallback: PreparedTextPaint? = nil) -> PreparedTextPaint {
             let fallback = fallback ?? PreparedTextPaint(font: baseFont, color: defaultTextColor, lineHeight: nil, spacingAfter: 0)
@@ -243,7 +246,8 @@ struct PreparedProseTheme {
         cellShapeTheme.removeValue(forKey: "viewerAtoms")
         let styleData = (try? JSONSerialization.data(withJSONObject: cellShapeTheme, options: [.sortedKeys]))
             ?? Data((themeJSON ?? "").utf8)
-        let cellShapeStyleDigest = SHA256.hash(data: styleData).map { String(format: "%02x", $0) }.joined()
+        let cellShapeStyleDigest = (styleIdentity ?? SHA256.hash(data: styleData).map { String(format: "%02x", $0) }.joined())
+            + ":" + ProseViewerAppearance.current.identity
         return PreparedProseTheme(
             tableStyle: TableStyle(theme: theme) ?? TableStyle(),
             cellShapeStyleDigest: cellShapeStyleDigest,

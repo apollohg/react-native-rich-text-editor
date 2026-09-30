@@ -145,12 +145,14 @@ final class TablePerformanceTests: XCTestCase {
     private final class EditorHost {
         let id: UInt64
         let adapter: EditorV2Adapter
-        let window = makeTestWindow(frame: CGRect(origin: .zero, size: Benchmark.viewport))
-        let view = RichTextEditorView(frame: CGRect(origin: .zero, size: Benchmark.viewport))
+        let window: UIWindow
+        let view: RichTextEditorView
         let surface: EditorTableSurface
         let drawing: PreparedProseDrawingView
 
-        init(id: UInt64? = nil) throws {
+        init(id: UInt64? = nil, viewport: CGSize = Benchmark.viewport) throws {
+            window = makeTestWindow(frame: CGRect(origin: .zero, size: viewport))
+            view = RichTextEditorView(frame: window.bounds)
             self.id = id ?? makeV2Editor(configJson: Benchmark.schema)
             adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: self.id))
             window.addSubview(view)
@@ -353,6 +355,20 @@ final class TablePerformanceTests: XCTestCase {
         let typing = try XCTUnwrap(samples.first { $0.metric == "typing" })
         XCTAssertGreaterThan(try XCTUnwrap(typing.wrapCount), 0)
         XCTAssertGreaterThan(try XCTUnwrap(typing.nonWrapCount), 0)
+    }
+
+    func testLargeTableHorizontalScrollPresentation() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["PREPARED_PROSE_DEVICE_BENCHMARK"] == "1",
+                          "Run through NativeEditorPreparedProsePerformance.")
+        clock = FrameClock()
+        defer { clock.close(); clock = nil }
+        let fixture = Fixture(rows: 1_000, columns: 20, rich: false)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let viewport = scene.screen.bounds.size
+        print("TABLE_HORIZONTAL_VISUAL_PROBE_STARTED viewport=\(viewport)")
+        try scroll(fixture, source: fixture.source(), horizontal: true, viewport: viewport)
+        XCTAssertFalse(samples.isEmpty)
+        XCTAssertTrue(samples.allSatisfy { $0.samplesMs.allSatisfy { $0.isFinite && $0 >= 0 } })
     }
 
     func testStructuralCounterRecognizesRebuiltCellAfterItsRowMoves() throws {
@@ -638,14 +654,15 @@ final class TablePerformanceTests: XCTestCase {
         append(fixture, metric: "warmMeasurement", values: values, counters: counters)
     }
 
-    private func scroll(_ fixture: Fixture, source: String, horizontal: Bool) throws {
-        let host = try EditorHost()
+    private func scroll(_ fixture: Fixture, source: String, horizontal: Bool,
+                        viewport: CGSize = Benchmark.viewport) throws {
+        let host = try EditorHost(viewport: viewport)
         defer { host.close() }
         try host.load(source)
         _ = try measure(host.drawing) {}
         let table = try host.table()
         let horizontalRange = max(0, table.bounds.width - table.hostViewportWidth)
-        let verticalRange = max(0, host.view.textView.contentSize.height - Benchmark.viewport.height)
+        let verticalRange = max(0, host.view.textView.contentSize.height - host.view.bounds.height)
         var values: [Measurement] = []
         var attributed: [Bool] = []
         var counters = PreparedProseInstrumentation.TablePerformanceCounters()

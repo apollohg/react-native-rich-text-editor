@@ -1056,11 +1056,8 @@ public final class PreparedProseDrawingView: UIView {
     }
 
     func accessibilityScreenFrame(_ rect: CGRect, clip: CGRect) -> CGRect {
-        let visible = rect.intersection(clip)
-        guard layout != nil, !visible.isNull, !visible.isEmpty,
-              [visible.minX, visible.minY, visible.width, visible.height].allSatisfy(\.isFinite)
-        else { return .zero }
-        return UIAccessibility.convertToScreenCoordinates(visible, in: self)
+        guard layout != nil else { return .zero }
+        return accessibilityScreenRect(rect.intersection(clip), in: self)
     }
 
     func presentedRootTable(_ surface: ViewerTableSurface) -> ViewerTablePresentedTable? {
@@ -1134,19 +1131,23 @@ public final class PreparedProseDrawingView: UIView {
         guard self.layout != nil else { return .zero }
         let rect = clippedAccessibilityRects(for: node).reduce(CGRect.null) { $0.union($1) }
         guard !rect.isNull, !rect.isEmpty else { return .zero }
-        return UIAccessibility.convertToScreenCoordinates(rect, in: self)
+        return accessibilityScreenFrame(rect, clip: .infinite)
     }
 
     fileprivate func accessibilityPath(
         for node: ViewerTablePresentedAccessibilityNode
     ) -> UIBezierPath? {
         let rects = clippedAccessibilityRects(for: node)
-        guard self.layout != nil, !rects.isEmpty else { return nil }
+        guard self.layout != nil, let screen = window?.screen.coordinateSpace, !rects.isEmpty else { return nil }
         let path = UIBezierPath()
         for rect in rects {
-            path.append(UIBezierPath(rect: rect))
+            path.move(to: convert(CGPoint(x: rect.minX, y: rect.minY), to: screen))
+            path.addLine(to: convert(CGPoint(x: rect.maxX, y: rect.minY), to: screen))
+            path.addLine(to: convert(CGPoint(x: rect.maxX, y: rect.maxY), to: screen))
+            path.addLine(to: convert(CGPoint(x: rect.minX, y: rect.maxY), to: screen))
+            path.close()
         }
-        return UIAccessibility.convertToScreenCoordinates(path, in: self)
+        return path
     }
 
     func activateAccessibilityNode(
@@ -1321,16 +1322,29 @@ public final class PreparedProseDrawingView: UIView {
         }
     }
 
-    private func recordTableLayer(_ target: CALayer, name: TableLayerName, rect: CGRect,
+    private func alignedTableLayerRect(_ rect: CGRect, scale: CGFloat) -> CGRect {
+        guard !rect.isNull, !rect.isEmpty else { return rect }
+        let minX = ((rect.minX - bounds.minX) * scale).rounded()
+        let maxX = ((rect.maxX - bounds.minX) * scale).rounded()
+        let minY = ((rect.minY - bounds.minY) * scale).rounded()
+        let maxY = ((rect.maxY - bounds.minY) * scale).rounded()
+        return CGRect(x: bounds.minX + minX / scale, y: bounds.minY + minY / scale,
+                      width: (maxX - minX) / scale, height: (maxY - minY) / scale)
+    }
+
+    private func recordTableLayer(_ target: CALayer, name: TableLayerName, rect proposedRect: CGRect,
                                   excluding excluded: CGRect? = nil,
                                   snapshot: ViewerTablePresentationSnapshot, layout: PreparedProseLayout) {
+        let scale = CGFloat(Double(bitPattern: layout.key.displayScaleBits))
+        let rect = alignedTableLayerRect(proposedRect, scale: scale)
+        let excluded = excluded.map { alignedTableLayerRect($0, scale: scale) }
         guard !rect.isNull, !rect.isEmpty else {
             target.isHidden = true
             target.contents = nil
             return
         }
         let format = UIGraphicsImageRendererFormat()
-        format.scale = CGFloat(Double(bitPattern: layout.key.displayScaleBits))
+        format.scale = scale
         format.opaque = false
         let image = UIGraphicsImageRenderer(bounds: rect, format: format).image { renderer in
             let context = renderer.cgContext
@@ -1342,7 +1356,7 @@ public final class PreparedProseDrawingView: UIView {
             }
             paint(snapshot: snapshot, layout: layout, rect: rect, context: context, excludedRect: excluded)
         }
-        target.contentsScale = format.scale
+        target.contentsScale = scale
         target.contents = image.cgImage
         target.frame = rect
         target.isHidden = false
@@ -1404,21 +1418,24 @@ public final class PreparedProseDrawingView: UIView {
             old?.appearance == tableLayerAppearance && old?.row.minY == row.minY &&
             old?.frame.minX == frame.minX && old?.frame.width == frame.width &&
             (!changedRevision || changesAreBoundCellOnly)
+        let belowRect = CGRect(x: window.minX, y: max(row.maxY, window.minY), width: window.width,
+                               height: max(0, window.maxY - max(row.maxY, window.minY)))
         if !reusable {
             clearTableLayers()
             recordTableLayer(aboveLayer, name: .above,
                 rect: CGRect(x: window.minX, y: window.minY, width: window.width,
                              height: max(0, min(row.minY, window.maxY) - window.minY)), snapshot: snapshot, layout: layout)
-            recordTableLayer(belowLayer, name: .below,
-                rect: CGRect(x: window.minX, y: max(row.maxY, window.minY), width: window.width,
-                             height: max(0, window.maxY - max(row.maxY, window.minY))), snapshot: snapshot, layout: layout)
+            recordTableLayer(belowLayer, name: .below, rect: belowRect, snapshot: snapshot, layout: layout)
         } else if let old, old.row.height != row.height {
             let delta = row.height - old.row.height
-            belowLayer.position.y += delta
-            if belowLayer.frame.maxY < window.maxY {
-                recordTableLayer(belowLayer, name: .below,
-                    rect: CGRect(x: window.minX, y: max(row.maxY, window.minY), width: window.width,
-                                 height: max(0, window.maxY - max(row.maxY, window.minY))), snapshot: snapshot, layout: layout)
+            let scale = CGFloat(Double(bitPattern: layout.key.displayScaleBits))
+            let rasterDelta = (delta * scale).rounded() / scale
+            let fractionalTranslation = abs(delta - rasterDelta) > max(row.maxY.ulp, old.row.maxY.ulp)
+            belowLayer.position.y += rasterDelta
+            let required = alignedTableLayerRect(belowRect, scale: scale)
+            let coverage = alignedTableLayerRect(belowLayer.frame, scale: scale)
+            if fractionalTranslation || coverage.minY > required.minY || coverage.maxY < required.maxY {
+                recordTableLayer(belowLayer, name: .below, rect: belowRect, snapshot: snapshot, layout: layout)
             }
         }
         if !reusable || old?.rowOffsets != rowOffsets {
@@ -1482,13 +1499,16 @@ public final class PreparedProseDrawingView: UIView {
             for block in blocks[ObjectIdentifier(presented.layout)] ?? [] {
                 guard let surface = block.block.tableSurface else { continue }
                 let surfaceCells = cells[ObjectIdentifier(surface)] ?? []
+                context.saveGState()
+                context.setFillColor(surface.style.headerBackgroundColor.cgColor)
                 for cell in surfaceCells where cell.cell.isHeader {
-                    context.saveGState()
-                    context.clip(to: cell.clip)
-                    context.setFillColor(cell.surface.style.headerBackgroundColor.cgColor)
-                    context.fill(cell.bounds)
-                    context.restoreGState()
+                    let rect = cell.bounds.intersection(cell.clip)
+                    guard !rect.isNull, !rect.isEmpty else { continue }
+                    context.addRect(rect)
                 }
+                // One fill keeps shared fractional edges opaque during scrolling.
+                context.fillPath()
+                context.restoreGState()
                 for cell in surfaceCells {
                     guard let child = layouts[ObjectIdentifier(cell.content)],
                           mountedLayoutIDs.contains(ObjectIdentifier(cell.content))

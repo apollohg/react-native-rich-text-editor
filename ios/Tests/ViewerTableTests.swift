@@ -29,6 +29,7 @@ final class ViewerTableTests: XCTestCase {
         var heights: [String: CGFloat] = [:]
         var glyphBounds: [String: [CGRect]] = [:]
         var backgroundPreparations = 0
+        var preparationsByKey: [String: Int] = [:]
 
         func record(_ index: Int, _ layout: PreparedProseLayout) {
             let glyphs = layout.blocks.flatMap(\.fragments).flatMap { fragment -> [CGRect] in
@@ -37,6 +38,7 @@ final class ViewerTableTests: XCTestCase {
             }
             lock.lock()
             defer { lock.unlock() }
+            preparationsByKey[layout.key.semanticKey, default: 0] += 1
             heights[layout.key.semanticKey] = layout.size.height
             glyphBounds[layout.key.semanticKey] = glyphs
             if Thread.current !== caller { backgroundPreparations += 1 }
@@ -76,6 +78,8 @@ final class ViewerTableTests: XCTestCase {
             let actual = try prepare(document, engine: parallel)
             XCTAssertNil(actual.error, name)
             XCTAssertEqual(actual.size, expected.size, name)
+            XCTAssertTrue(actualGeometry.preparationsByKey.values.allSatisfy { $0 == 1 },
+                "\(name): each cell must prepare once, including nested cells on the caller thread")
             XCTAssertEqual(actualGeometry.heights, expectedGeometry.heights, "\(name): every measured cell height")
             XCTAssertEqual(actualGeometry.glyphBounds, expectedGeometry.glyphBounds, "\(name): every prepared glyph bound")
             for (left, right) in zip(expected.blocks, actual.blocks) {
@@ -843,12 +847,11 @@ final class ViewerTableTests: XCTestCase {
         drawing.setTableLogicalOffset(offset, sourceIdentity: surface.identity)
 
         let cellFrame = cell.accessibilityFrame
-        XCTAssertEqual(cellFrame, UIAccessibility.convertToScreenCoordinates(visible, in: drawing),
+        XCTAssertEqual(cellFrame, window.convert(drawing.convert(visible, to: window), to: window.screen.coordinateSpace),
                        "initial \(initialCellFrame), read \(cellFrame)")
         XCTAssertNotEqual(cellFrame, initialCellFrame)
-        XCTAssertEqual(table.accessibilityFrame, UIAccessibility.convertToScreenCoordinates(
-            scrolledTable.bounds.intersection(scrolledTable.clip), in: drawing
-        ), "initial table frame \(initialTableFrame)")
+        XCTAssertEqual(table.accessibilityFrame, window.convert(drawing.convert(scrolledTable.bounds.intersection(scrolledTable.clip), to: window),
+            to: window.screen.coordinateSpace), "initial table frame \(initialTableFrame)")
     }
 
     func testTableCellLinksStayReachableThroughTheLinksRotor() throws {
@@ -1044,7 +1047,8 @@ final class ViewerTableTests: XCTestCase {
         let partiallyVisible = try tableElement(in: drawing).allCellElements[0]
         XCTAssertEqual(
             partiallyVisible.accessibilityFrame,
-            UIAccessibility.convertToScreenCoordinates(partialCell.bounds.intersection(partialCell.clip), in: drawing)
+            window.convert(drawing.convert(partialCell.bounds.intersection(partialCell.clip), to: window),
+                to: window.screen.coordinateSpace)
         )
         XCTAssertTrue(perform(try action(named: openLink, on: partiallyVisible)))
         XCTAssertEqual(activated.last?.href, "https://cell-one.example")
@@ -1134,6 +1138,66 @@ final class ViewerTableTests: XCTestCase {
         let rejected = rejectedRegistry.measure(request: rejectedRequest, widthPoints: 320, scale: 2)
         XCTAssertEqual(rejected.error?.code, "ATTACHMENT_LIMIT_EXCEEDED")
         XCTAssertEqual(rejectedCounter.value, 0)
+    }
+
+    func testDeepRegistryShapeReuseAndEvictionKeepEveryNestedSurfaceAndAppearance() throws {
+        let depth = 340
+        let registry = PreparedProseLayoutRegistry()
+        let owner = "deep-registry-reuse"
+        defer { registry.releaseDirectMounted(owner) }
+        let configuration = ProseViewerConfiguration(configJSON: try configWithMaxDocumentDepth(1024))
+        let source = nestedTablesSource(depth: depth)
+        let prefix = #"{"type":"doc","content":["#
+        let shifted = prefix + (try jsonSource(paragraph("shifted anchor"))) + "," + source.dropFirst(prefix.count)
+        let traits = UITraitCollection(userInterfaceStyle: .dark)
+        func measure(_ source: String) -> PreparedProseLayout {
+            var layout: PreparedProseLayout!
+            traits.performAsCurrent {
+                layout = registry.measure(request: ProseViewerRequest(source: .json(source), configuration: configuration),
+                    widthPoints: 320, scale: 3)
+            }
+            return layout
+        }
+        let initial = measure(source)
+        XCTAssertNil(initial.error)
+        registry.registerDirectMounted(owner, layout: initial)
+        let initialTable = try XCTUnwrap(initial.blocks.first { $0.tableSurface != nil }?.tableSurface)
+        let initialShape = try XCTUnwrap(initialTable.cells.first?.content.cellShape)
+        let replacement = measure(shifted)
+        XCTAssertNil(replacement.error)
+        let replacementTable = try XCTUnwrap(replacement.blocks.first { $0.tableSurface != nil }?.tableSurface)
+        XCTAssertTrue(replacementTable.cells.first?.content.cellShape === initialShape,
+            "moving an unchanged deeply nested table must bind its retained shape")
+        var current = replacement
+        var count = 0
+        var evictedCell: PreparedViewerTableCell?
+        while let table = current.blocks.first(where: { $0.tableSurface != nil })?.tableSurface {
+            count += 1
+            let cell = try XCTUnwrap(table.cells.first)
+            XCTAssertTrue(cell.contentSize.width.isFinite && cell.contentSize.height.isFinite, "level \(count)")
+            current = cell.content
+            if count == depth / 2 {
+                table.layoutStore.insert(PreparedProseLayout(key: replacement.key, size: .zero, blocks: [],
+                    retainedBytes: PreparedProseLayoutCache.preparedLayoutUnmountedByteBudget))
+                XCTAssertNil(cell.cachedContent, "the regression must force a real nested cache miss")
+                evictedCell = cell
+            }
+        }
+        XCTAssertEqual(count, depth)
+        let cell = try XCTUnwrap(evictedCell)
+        var rebuilt: PreparedProseLayout!
+        UITraitCollection(userInterfaceStyle: .light).performAsCurrent { rebuilt = cell.content }
+        XCTAssertEqual(rebuilt.key, cell.contentKey)
+        var rebuiltCount = depth / 2
+        while let table = rebuilt.blocks.first?.tableSurface {
+            rebuiltCount += 1
+            rebuilt = try XCTUnwrap(table.cells.first).content
+        }
+        XCTAssertEqual(rebuiltCount, depth)
+        XCTAssertEqual(UIColor(cgColor: highlightColor(in: rebuilt)), UIColor.label.resolvedColor(with: traits))
+        let snapshot = ViewerTablePresentation.project(layout: replacement, owner: ViewerTablePresentationOwner(), viewport: .unknown)
+        XCTAssertEqual(snapshot.cells.count, depth)
+        XCTAssertEqual(snapshot.mountedCells.count, depth)
     }
 
     func testCompilerBackedRaisedDepth110TablesPrepareFiniteRetainedSurfaces() throws {
@@ -1663,14 +1727,14 @@ final class ViewerTableTests: XCTestCase {
     }
 
     func testCompilerBackedMountedPresentationTraversesAdmittedDepthWithoutDroppingMetadata() throws {
-        let layout = try prepare(nestedTablesSource(depth: 110), configJSON: try configWithMaxDocumentDepth(1024))
+        let layout = try prepare(nestedTablesSource(depth: 340), configJSON: try configWithMaxDocumentDepth(1024))
         let snapshot = ViewerTablePresentation.project(
             layout: layout,
             owner: ViewerTablePresentationOwner(),
             viewport: .unknown
         )
-        XCTAssertEqual(snapshot.cells.count, 110)
-        XCTAssertEqual(snapshot.mountedCells.count, 110)
+        XCTAssertEqual(snapshot.cells.count, 340)
+        XCTAssertEqual(snapshot.mountedCells.count, 340)
     }
 
     func testMountedTableOffsetsIncreaseAndResetFabricAndDirectHostRetention() throws {
@@ -2880,11 +2944,11 @@ final class ViewerTableTests: XCTestCase {
     }
 
     private func nestedTablesSource(depth: Int) -> String {
-        var node: [String: Any] = paragraph("deep")
-        for _ in 0..<depth {
-            node = ["type": "table", "content": [["type": "table_row", "content": [["type": "table_cell", "content": [node]]]]]]
-        }
-        return try! jsonSource(["type": "doc", "content": [node]])
+        let tablePrefix = #"{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":["#
+        let tableSuffix = "]}]}]}"
+        let leaf = try! jsonSource(paragraph("deep"))
+        return #"{"type":"doc","content":["# + String(repeating: tablePrefix, count: depth)
+            + leaf + String(repeating: tableSuffix, count: depth) + "]}"
     }
 
     private func tableHeavySource(payloadWordCount: Int) throws -> String {

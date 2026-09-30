@@ -1210,15 +1210,16 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     ) -> [String: Entry] {
         let layoutStarted = PreparedProseInstrumentation.now()
         defer { PreparedProseInstrumentation.laidOut(layoutStarted, generation: "editor-table-\(presentation.documentRevision)") }
+        let appearanceDigest = "editor-table-\(appearanceRevision)-\(textView.renderAppearanceRevision)"
         var theme = PreparedProseTheme.resolve(
             editorTheme: textView.theme,
             baseFont: textView.baseFont,
             textColor: textView.baseTextColor,
-            semanticGeneration: "editor-table"
+            semanticGeneration: "editor-table",
+            styleIdentity: appearanceDigest
         )
         theme.contentInsets = .zero
         theme.tableDirection = hostTableDirection
-        let appearanceDigest = "editor-table-\(appearanceRevision)-\(textView.renderAppearanceRevision)"
         let shapeCatalog = PreparedCellShapeCatalog()
         let previousLayouts = tableIDs.flatMap { self.entries[$0]?.surface.layoutStore.residentLayouts ?? [] }
         let shapes = shapeCatalog.newBuildContext(reusing: previousLayouts)
@@ -1329,13 +1330,15 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
             textView.reserveRootTableHeights(entries.mapValues(\.occupiedHeight))
             return
         }
-        entries = prepareEntries(
-            presentation,
-            tableIDs: anchorTableIDs(in: textView),
-            width: width,
-            displayScale: displayScale(for: textView),
-            textView: textView
-        )
+        textView.traitCollection.performAsCurrent {
+            entries = prepareEntries(
+                presentation,
+                tableIDs: anchorTableIDs(in: textView),
+                width: width,
+                displayScale: displayScale(for: textView),
+                textView: textView
+            )
+        }
         presentationRevision = presentation.documentRevision
         preparedWidth = width
         preparedAppearanceRevision = appearanceRevision
@@ -1559,7 +1562,7 @@ extension EditorTableSurface: TableAccessibilityEditing {
         let line = CGRect(x: insets.left, y: caret.minY,
                           width: max(caret.width, textView.bounds.width - insets.left - insets.right),
                           height: caret.height)
-        return UIAccessibility.convertToScreenCoordinates(line, in: textView)
+        return accessibilityScreenRect(line, in: textView)
     }
 
     func canDeleteTableAccessibilityFrame(tableID: String) -> Bool {

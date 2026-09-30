@@ -18,7 +18,7 @@ final class PreparedViewerTableCell {
     let isPositionFree: Bool
     let contentError: ProseViewerError?
     let layoutStore: TableCellLayoutStore
-    private let prepareContent: () -> PreparedProseLayout
+    let prepareContent: () -> PreparedProseLayout
 
     var content: PreparedProseLayout {
         layoutStore.value(for: contentKey) {
@@ -59,16 +59,26 @@ final class PreparedViewerTableCell {
         layoutStore.insert(content)
     }
 
-    init(reusing cell: PreparedViewerTableCell, at position: TableGridCell, layoutStore: TableCellLayoutStore) {
-        sourceIndex = position.sourceIndex
-        row = position.row
-        column = position.column
-        rowspan = position.rowspan
-        colspan = position.colspan
+    convenience init(reusing cell: PreparedViewerTableCell, at position: TableGridCell, layoutStore: TableCellLayoutStore) {
+        self.init(copyingGeometry: cell, at: position, contentKey: cell.contentKey,
+            attributesKey: cell.attributesKey, layoutStore: layoutStore, prepareContent: cell.prepareContent)
+        if layoutStore !== cell.layoutStore, let content = cell.cachedContent {
+            layoutStore.insert(content, for: contentKey)
+        }
+    }
+
+    init(copyingGeometry cell: PreparedViewerTableCell, at position: TableGridCell? = nil,
+         contentKey: ProseLayoutKey, attributesKey: String?, layoutStore: TableCellLayoutStore,
+         prepareContent: @escaping () -> PreparedProseLayout) {
+        sourceIndex = position?.sourceIndex ?? cell.sourceIndex
+        row = position?.row ?? cell.row
+        column = position?.column ?? cell.column
+        rowspan = position?.rowspan ?? cell.rowspan
+        colspan = position?.colspan ?? cell.colspan
         contentOrigin = cell.contentOrigin
         isHeader = cell.isHeader
-        attributesKey = cell.attributesKey
-        contentKey = cell.contentKey
+        self.attributesKey = attributesKey
+        self.contentKey = contentKey
         contentSize = cell.contentSize
         accessibilityNodes = cell.accessibilityNodes
         hasNestedTables = cell.hasNestedTables
@@ -78,10 +88,7 @@ final class PreparedViewerTableCell {
         contentError = cell.contentError
         metadataRetainedBytes = cell.metadataRetainedBytes
         self.layoutStore = layoutStore
-        prepareContent = cell.prepareContent
-        if layoutStore !== cell.layoutStore, let content = cell.cachedContent {
-            layoutStore.insert(content, for: contentKey)
-        }
+        self.prepareContent = prepareContent
     }
 
 }
@@ -165,12 +172,8 @@ final class ViewerTableSurface {
         )
         var prepared: [Int: PreparedViewerTableCell] = [:]
         func capture(_ cell: TableGridCell, width: CGFloat, content: PreparedProseLayout) -> PreparedViewerTableCell {
-            let sourceCell = sourceTable?.cells[cell.sourceIndex]
-            let inset = style.cellPadding + style.borderWidth
-            return PreparedViewerTableCell(sourceIndex: cell.sourceIndex, row: cell.row, column: cell.column,
-                rowspan: cell.rowspan, colspan: cell.colspan, contentOrigin: CGPoint(x: inset, y: inset),
-                content: content, isHeader: sourceCell?.header ?? false, attributesKey: sourceCell?.attrsKey,
-                layoutStore: layoutStore, prepareContent: { prepareCell(cell, width) })
+            Self.captureCell(cell, content: content, sourceTable: sourceTable,
+                style: style, layoutStore: layoutStore, prepareContent: { prepareCell(cell, width) })
         }
         func reused(_ cell: TableGridCell, width: CGFloat) -> PreparedViewerTableCell? {
             guard let previous = reuseCell?(cell, width) else { return nil }
@@ -184,7 +187,7 @@ final class ViewerTableSurface {
             prepared = Self.prepareParallelCells(
                 inputs: grid.measurementInputs(record: record, viewportWidth: viewportWidth, style: style),
                 scale: canonicalScale, indices: parallelCellIndices, workers: prepareCellWorkers,
-                prepare: prepareCell, capture: capture)
+                prepare: prepareCell, reuse: reused, capture: capture)
             firstPreparationError = record.cells.sorted { $0.sourceIndex < $1.sourceIndex }
                 .compactMap { prepared[$0.sourceIndex]?.contentError }.first
             resolvedLayout = grid.relayout(record: record, viewportWidth: viewportWidth, style: style,
@@ -262,18 +265,36 @@ final class ViewerTableSurface {
         self.preparationError = preparationError
     }
 
+    static func captureCell(
+        _ cell: TableGridCell, content: PreparedProseLayout,
+        sourceTable: TableSurfaceSource?, style: TableStyle, layoutStore: TableCellLayoutStore,
+        prepareContent: @escaping () -> PreparedProseLayout
+    ) -> PreparedViewerTableCell {
+        let sourceCell = sourceTable?.cells[cell.sourceIndex]
+        let inset = style.cellPadding + style.borderWidth
+        return PreparedViewerTableCell(sourceIndex: cell.sourceIndex, row: cell.row, column: cell.column,
+            rowspan: cell.rowspan, colspan: cell.colspan, contentOrigin: CGPoint(x: inset, y: inset),
+            content: content, isHeader: sourceCell?.header ?? false, attributesKey: sourceCell?.attrsKey,
+            layoutStore: layoutStore, prepareContent: prepareContent)
+    }
+
     private static func prepareParallelCells(
         inputs: [(TableGridCell, Int)], scale: CGFloat, indices: Set<Int>,
         workers: [(TableGridCell, CGFloat) -> PreparedProseLayout],
         prepare: (TableGridCell, CGFloat) -> PreparedProseLayout,
+        reuse: (TableGridCell, CGFloat) -> PreparedViewerTableCell?,
         capture: (TableGridCell, CGFloat, PreparedProseLayout) -> PreparedViewerTableCell
     ) -> [Int: PreparedViewerTableCell] {
         let lock = NSLock()
+        let traits = UITraitCollection.current
         var prepared: [Int: PreparedViewerTableCell] = [:]
         func measure(_ input: (TableGridCell, Int), using prepare: (TableGridCell, CGFloat) -> PreparedProseLayout) {
             let (cell, pixels) = input
             let width = CGFloat(pixels) / scale
-            let content = capture(cell, width, prepare(cell, width))
+            var content: PreparedViewerTableCell!
+            traits.performAsCurrent {
+                content = reuse(cell, width) ?? capture(cell, width, prepare(cell, width))
+            }
             lock.lock()
             prepared[cell.sourceIndex] = content
             lock.unlock()

@@ -1,5 +1,13 @@
 import UIKit
 
+func accessibilityScreenRect(_ rect: CGRect, in view: UIView) -> CGRect {
+    guard let screen = view.window?.screen.coordinateSpace,
+          !rect.isNull, !rect.isEmpty,
+          [rect.minX, rect.minY, rect.width, rect.height].allSatisfy(\.isFinite)
+    else { return .zero }
+    return view.convert(rect, to: screen)
+}
+
 enum TableAccessibilityText {
     case table
     case emptyCell
