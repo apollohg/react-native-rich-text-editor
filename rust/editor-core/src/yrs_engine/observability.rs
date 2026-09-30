@@ -30,7 +30,9 @@ pub(crate) struct FullPassCounts {
     pub table_command_availability_plans: usize,
     pub yrs_tree_walks: usize,
     pub whole_state_encodings: usize,
-    pub mutation_guard_snapshot_scans: usize,
+    pub mutation_guard_snapshot_requests: usize,
+    pub compilation_snapshot_scans: usize,
+    pub compilation_snapshot_reuses: usize,
     pub cell_content_keys: usize,
     pub attribute_serializations: usize,
     pub epoch_block_rebuilds: usize,
@@ -91,7 +93,9 @@ std::thread_local! {
             table_command_availability_plans: 0,
             yrs_tree_walks: 0,
             whole_state_encodings: 0,
-            mutation_guard_snapshot_scans: 0,
+            mutation_guard_snapshot_requests: 0,
+            compilation_snapshot_scans: 0,
+            compilation_snapshot_reuses: 0,
             cell_content_keys: 0,
             attribute_serializations: 0,
             epoch_block_rebuilds: 0,
@@ -111,8 +115,13 @@ std::thread_local! {
 }
 
 recorder!(
-    record_mutation_guard_snapshot_scan,
-    mutation_guard_snapshot_scans
+    record_mutation_guard_snapshot_request,
+    mutation_guard_snapshot_requests
+);
+recorder!(record_compilation_snapshot_scan, compilation_snapshot_scans);
+recorder!(
+    record_compilation_snapshot_reuse,
+    compilation_snapshot_reuses
 );
 recorder!(record_planner_simulation, planner_simulations);
 recorder!(record_import_model_parse, import_model_parses);

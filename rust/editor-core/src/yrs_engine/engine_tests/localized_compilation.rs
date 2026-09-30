@@ -576,7 +576,9 @@ fn existing_text_command_skips_every_proved_document_wide_compiler_pass() {
                 * TABLE_AVAILABILITY_PLANS_PER_PASS,
             yrs_tree_walks: 0,
             whole_state_encodings: 0,
-            mutation_guard_snapshot_scans: 4,
+            mutation_guard_snapshot_requests: 4,
+            compilation_snapshot_scans: 1,
+            compilation_snapshot_reuses: 1,
             cell_content_keys: 0,
             attribute_serializations: 0,
             epoch_block_rebuilds: 0,
@@ -1452,8 +1454,16 @@ fn large_table_native_input_reuses_materialization_costs() {
             "only the approved over-budget history hash is required for native table edit {edit}"
         );
         assert_eq!(
-            passes.mutation_guard_snapshot_scans, 4,
+            passes.mutation_guard_snapshot_requests, 4,
             "native edit {edit} must retain compiler/candidate guard captures and the live-store recheck without rescanning the unchanged candidate read view: {passes:#?}"
+        );
+        assert_eq!(
+            passes.compilation_snapshot_scans, 1,
+            "each native input captures one underlying compilation snapshot"
+        );
+        assert_eq!(
+            passes.compilation_snapshot_reuses, 1,
+            "compile preflight reuses the exact held-view snapshot"
         );
     }
 }

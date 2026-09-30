@@ -315,7 +315,7 @@ fn preflight_mutation_plan_with_snapshot<T: ReadTxn>(
         Some(snapshot) => snapshot,
         None => {
             #[cfg(test)]
-            crate::yrs_engine::observability::record_mutation_guard_snapshot_scan();
+            crate::yrs_engine::observability::record_mutation_guard_snapshot_request();
             captured_snapshot = txn.snapshot();
             &captured_snapshot
         }

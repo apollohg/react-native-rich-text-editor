@@ -902,7 +902,9 @@ fn assert_large_table_edit_is_validated_locally(intent: &str) {
             },
             canonical_serializations: 1,
             canonical_hashes: 1,
-            mutation_guard_snapshot_scans: 4,
+            mutation_guard_snapshot_requests: 4,
+            compilation_snapshot_scans: 1,
+            compilation_snapshot_reuses: if intent == INSERT_INTENTS[0] { 1 } else { 2 },
             canonical_identity_predicate_nodes_visited: passes
                 .canonical_identity_predicate_nodes_visited,
             position_map_clones: passes.position_map_clones,

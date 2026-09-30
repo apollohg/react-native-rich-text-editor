@@ -25,6 +25,32 @@ use crate::yrs_engine::{
     OperationError, OperationResult, SelectionIntent, TypedOperation, TypedTransaction,
 };
 
+// This cache cannot outlive the immutable read view held by one compilation.
+struct CompilationReadView<'a, T> {
+    txn: &'a T,
+    snapshot: std::cell::OnceCell<yrs::Snapshot>,
+}
+
+impl<T: yrs::ReadTxn> yrs::ReadTxn for CompilationReadView<'_, T> {
+    fn store(&self) -> &yrs::Store {
+        self.txn.store()
+    }
+
+    fn snapshot(&self) -> yrs::Snapshot {
+        #[cfg(test)]
+        if self.snapshot.get().is_some() {
+            crate::yrs_engine::observability::record_compilation_snapshot_reuse();
+        }
+        self.snapshot
+            .get_or_init(|| {
+                #[cfg(test)]
+                crate::yrs_engine::observability::record_compilation_snapshot_scan();
+                self.txn.snapshot()
+            })
+            .clone()
+    }
+}
+
 pub(super) fn compile_transaction_with_yrs_impl<T: yrs::ReadTxn>(
     context: CompilationContext<'_>,
     transaction: TypedTransaction,
@@ -34,6 +60,11 @@ pub(super) fn compile_transaction_with_yrs_impl<T: yrs::ReadTxn>(
     prepared_semantics: Option<PreparedSemanticContext<'_>>,
     engine_view: Option<EngineCompilationView<'_>>,
 ) -> OperationResult<CompiledTransaction> {
+    let read_view = CompilationReadView {
+        txn,
+        snapshot: std::cell::OnceCell::new(),
+    };
+    let txn = &read_view;
     let request_id = transaction.request_id;
     #[cfg(test)]
     check_atomic_failpoint(request_id, AtomicFailpoint::EnvelopeAdmission)?;
@@ -491,4 +522,84 @@ pub(super) fn validate_cached_compilation_view<'a>(
         ));
     }
     Ok(cached)
+}
+
+#[cfg(test)]
+mod snapshot_tests {
+    use super::CompilationReadView;
+    use std::cell::{Cell, OnceCell};
+    use yrs::{Doc, ReadTxn, Text, Transact};
+
+    struct CountingReadView<'a, T> {
+        txn: &'a T,
+        scans: Cell<usize>,
+    }
+
+    impl<T: ReadTxn> ReadTxn for CountingReadView<'_, T> {
+        fn store(&self) -> &yrs::Store {
+            self.txn.store()
+        }
+        fn snapshot(&self) -> yrs::Snapshot {
+            self.scans.set(self.scans.get() + 1);
+            self.txn.snapshot()
+        }
+    }
+
+    #[test]
+    fn compilation_snapshot_is_lazy_exact_and_limited_to_one_read_view() {
+        let doc = Doc::new();
+        let text = doc.get_or_insert_text("content");
+        text.insert(&mut doc.transact_mut(), 0, "abcdef");
+        let before = {
+            let txn = doc.transact();
+            let underlying = CountingReadView {
+                txn: &txn,
+                scans: Cell::new(0),
+            };
+            let view = CompilationReadView {
+                txn: &underlying,
+                snapshot: OnceCell::new(),
+            };
+            assert_eq!(
+                underlying.scans.get(),
+                0,
+                "creating the view must not scan before admission"
+            );
+            let expected = txn.snapshot();
+            for _ in 0..3 {
+                assert_eq!(
+                    view.snapshot(),
+                    expected,
+                    "both state and delete clocks must match the underlying snapshot"
+                );
+            }
+            assert_eq!(
+                underlying.scans.get(),
+                1,
+                "repeated reads must traverse the underlying store once"
+            );
+            expected
+        };
+        text.remove_range(&mut doc.transact_mut(), 1, 2);
+        let txn = doc.transact();
+        let underlying = CountingReadView {
+            txn: &txn,
+            scans: Cell::new(0),
+        };
+        let view = CompilationReadView {
+            txn: &underlying,
+            snapshot: OnceCell::new(),
+        };
+        let after = view.snapshot();
+        assert_eq!(after, txn.snapshot());
+        assert_eq!(
+            before.state_map, after.state_map,
+            "deletion must exercise unchanged state clocks"
+        );
+        assert_ne!(
+            before.delete_set, after.delete_set,
+            "a later read view must observe deletion-only changes"
+        );
+        assert_eq!(underlying.scans.get(), 1);
+    }
 }
