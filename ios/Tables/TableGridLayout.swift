@@ -28,6 +28,11 @@ struct TableGridCell: Hashable {
         self.rowspan = rowspan; self.colspan = colspan; self.contentKey = contentKey
         self.attachmentRevision = attachmentRevision
     }
+
+    init(source: TableSurfaceCell) {
+        self.init(sourceIndex: source.sourceIndex, row: source.row, column: source.column,
+                  rowspan: source.rowspan, colspan: source.colspan, contentKey: source.contentKey)
+    }
 }
 
 struct TableGridRecord {
@@ -49,7 +54,7 @@ struct TableGridRecord {
     init(table: TableSurfaceSource, documentOwner: String) {
         self.init(documentOwner: documentOwner, columns: table.columns, rows: table.rows,
                   columnWidths: table.columnWidths,
-                  cells: table.cells.map { TableGridCell(sourceIndex: $0.sourceIndex, row: $0.row, column: $0.column, rowspan: $0.rowspan, colspan: $0.colspan, contentKey: $0.contentKey) },
+                  cells: table.cells.map(TableGridCell.init(source:)),
                   failure: table.failure, compatibilityDiagnostic: table.compatibilityDiagnostic)
     }
 }

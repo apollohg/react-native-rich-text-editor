@@ -450,6 +450,27 @@ final class TablePerformanceTests: XCTestCase {
             "All inserted empty rows share one shape and keep separate bindings")
     }
 
+    func testLargeTableTypingPreservesIncrementalPreparation() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["PREPARED_PROSE_DEVICE_BENCHMARK"] == "1",
+                          "Run through NativeEditorPreparedProsePerformance.")
+        clock = FrameClock()
+        defer { clock.close(); clock = nil }
+        for rich in [false, true] {
+            let fixture = Fixture(rows: 1_000, columns: 20, rich: rich)
+            let source = try fixture.source()
+            for run in 1...(rich ? 1 : Benchmark.typingRuns) {
+                try autoreleasepool { try typing(fixture, source: source, run: run) }
+                let sample = try XCTUnwrap(samples.last)
+                XCTAssertEqual(sample.samplesMs.count, Benchmark.typingSamples)
+                XCTAssertEqual(sample.counters.unchangedCellRemeasurements, 0, fixture.name)
+                XCTAssertEqual(sample.counters.changedCellRemeasurements, Benchmark.typingSamples, fixture.name)
+                XCTAssertGreaterThan(try XCTUnwrap(sample.wrapCount), 0, fixture.name)
+                XCTAssertGreaterThan(try XCTUnwrap(sample.nonWrapCount), 0, fixture.name)
+                _ = try saveExport()
+            }
+        }
+    }
+
     func testLargeBoundCellPreparationStartsAfterActivationFrame() throws {
         clock = FrameClock()
         defer { clock.close(); clock = nil }

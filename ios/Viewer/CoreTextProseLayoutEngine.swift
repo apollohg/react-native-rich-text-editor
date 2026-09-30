@@ -426,18 +426,16 @@ final class CoreTextProseLayoutEngine {
                     let tableWidth = max(1, canonicalWidth - theme.contentInsets.left - theme.contentInsets.right
                         - tableAncestors.left - tableAncestors.right - tableBox.margin.left - tableBox.margin.right - tableBox.inset.left - tableBox.inset.right - placement.listInset - placement.quoteInset)
                     let surfaceSource = table
-                    let record = TableGridRecord(table: surfaceSource, documentOwner: document.semanticKey)
-                    let cellsByIndex = Dictionary(uniqueKeysWithValues: surfaceSource.cells.map { ($0.sourceIndex, $0) })
                     func cellRequest(_ cell: TableGridCell, width cellWidth: CGFloat,
                                      worker: CoreTextProseLayoutEngine? = nil,
                                      workerContext: PreparedCellShapeBuildContext? = nil) -> CellPreparation {
                         let engine = worker ?? self
                         let context = worker == nil ? cellShapeContext : workerContext
-                        guard let source = cellsByIndex[cell.sourceIndex] else {
+                        guard surfaceSource.cells.indices.contains(cell.sourceIndex) else {
                             let failure = PreparedProseLayout.error(key: key, width: cellWidth, error: .layout(message: "Invalid table cell."))
                             return CellPreparation(prepare: { _, completion in completion(failure) }, rebuild: { failure })
                         }
-                        return engine.makeCellPreparation(source: source, tableKey: tableKey,
+                        return engine.makeCellPreparation(source: surfaceSource.cells[cell.sourceIndex], tableKey: tableKey,
                             document: document, key: key, cellWidth: cellWidth, displayScale: displayScale,
                             cellTheme: cellTheme, warningSemanticGeneration: warningSemanticGeneration,
                             scope: scope, context: context)
@@ -453,9 +451,9 @@ final class CoreTextProseLayoutEngine {
                     }
                     let reuse: ((TableGridCell, CGFloat) -> PreparedViewerTableCell?)? = cellMode ? nil : reusableTableCell.map { reuse in
                         { cell, width in
-                            guard let source = cellsByIndex[cell.sourceIndex],
+                            guard surfaceSource.cells.indices.contains(cell.sourceIndex),
                                   let pixels = ProseLayoutMetrics.widthPixels(widthPoints: width, scale: displayScale) else { return nil }
-                            return reuse(source, pixels)
+                            return reuse(surfaceSource.cells[cell.sourceIndex], pixels)
                         }
                     }
                     let incremental: (ViewerTableSurface, IndexSet)? = cellMode ? nil : incrementalTableSurface?(tableKey).flatMap { previous, changed in
@@ -463,15 +461,16 @@ final class CoreTextProseLayoutEngine {
                               previous.direction == TableLayoutDirection.resolve(declared: table.direction, host: theme.tableDirection) else { return nil }
                         return (previous, changed)
                     }
+                    let record = incremental == nil ? TableGridRecord(table: surfaceSource, documentOwner: document.semanticKey) : nil
                     return .pending { queue, resume in
                         let assemble: ([Int: PreparedViewerTableCell]) -> Void = { nested in
                             let surface: ViewerTableSurface
                             if let (previous, changed) = incremental {
                                 var contents: [Int: PreparedProseLayout] = [:]
                                 for index in changed {
-                                    guard record.cells.indices.contains(index),
+                                    guard surfaceSource.cells.indices.contains(index),
                                           let old = previous.cell(sourceIndex: index) else { continue }
-                                    let cell = record.cells[index]
+                                    let cell = TableGridCell(source: surfaceSource.cells[index])
                                     let inner = max(0, previous.frame(ofCell: old).width - 2 * (theme.tableStyle.cellPadding + theme.tableStyle.borderWidth))
                                     contents[index] = prepareCell(cell, width: inner)
                                 }
@@ -480,7 +479,7 @@ final class CoreTextProseLayoutEngine {
                                     sourceTable: surfaceSource, sourceAttributes: document.tableAttributes,
                                     prepareCell: { prepareCell($0, width: $1) })
                                 self.tableIncrementalRelayoutObserver?()
-                            } else {
+                            } else if let record {
                                 let workers = self.tablePreparationWorkers(document: document, table: surfaceSource, tableKey: tableKey,
                                     theme: theme, cellMode: cellMode, context: cellShapeContext) { cell, width, worker, context in
                                         prepareCell(cell, width: width, worker: worker, workerContext: context)
@@ -504,6 +503,8 @@ final class CoreTextProseLayoutEngine {
                                     prepareCellWorkers: workers.prepare,
                                     parallelCellIndices: workers.indices,
                                     prepareCell: { prepareCell($0, width: $1) })
+                            } else {
+                                preconditionFailure("Full table preparation requires a grid record.")
                             }
                             let bounds = CGRect(x: tableX, y: cursorY + tableBox.margin.top, width: surface.bounds.width, height: surface.bounds.height)
                             if let error = surface.preparationError {
@@ -545,7 +546,7 @@ final class CoreTextProseLayoutEngine {
                         }
                         if incremental != nil {
                             assemble([:])
-                        } else {
+                        } else if let record {
                             let inputs = TableGridLayout(displayScale: displayScale).measurementInputs(
                                 record: record, viewportWidth: tableWidth, style: theme.tableStyle)
                             self.prepareNestedCells(inputs: inputs, source: surfaceSource, displayScale: displayScale,

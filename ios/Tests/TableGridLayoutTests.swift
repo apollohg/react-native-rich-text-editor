@@ -77,6 +77,69 @@ final class TableGridLayoutTests: XCTestCase {
         XCTAssertEqual(preparedContentKeys, ["same", "same"])
     }
 
+    func testCellReplacementMatchesFreshGeometryAndPreservesPreviousSurface() throws {
+        let gridCells = [
+            TableGridCell(sourceIndex: 0, row: 0, column: 0, rowspan: 2, contentKey: "span-a"),
+            TableGridCell(sourceIndex: 1, row: 0, column: 1, colspan: 2, contentKey: "wide"),
+            TableGridCell(sourceIndex: 2, row: 1, column: 1, rowspan: 2, contentKey: "span-b"),
+            TableGridCell(sourceIndex: 3, row: 1, column: 2, contentKey: "short"),
+            TableGridCell(sourceIndex: 4, row: 2, column: 0, contentKey: "last-a"),
+            TableGridCell(sourceIndex: 5, row: 2, column: 2, contentKey: "last-b")
+        ]
+        let record = record(columns: 3, rows: 3, widths: [81.2, 83.4, 85.6], cells: gridCells)
+        let viewport: CGFloat = 251.3
+        let style = TableStyle(cellPadding: 8.05)
+        for direction in [TableLayoutDirection.leftToRight, .rightToLeft] {
+            for scale in [CGFloat(1), 2, 3] {
+                var heights: [Int: CGFloat] = [0: 120.3, 1: 24.1, 2: 140.7, 3: 18.2, 4: 22.4, 5: 19.1]
+                var labels = Dictionary(uniqueKeysWithValues: gridCells.map { ($0.sourceIndex, $0.contentKey) })
+                func content(_ cell: TableGridCell, _ width: CGFloat, revision: Int) -> PreparedProseLayout {
+                    let key = ProseLayoutKey(semanticKey: "cell-\(cell.sourceIndex)-\(revision)",
+                        widthPixels: Int((width * scale).rounded()), themeDigest: "test", nativeFontRevision: 0,
+                        fontEnvironmentRevision: 0, displayScale: scale, attachmentRevision: 0,
+                        generationIdentity: "test", semanticGenerationIdentity: "test")
+                    let size = CGSize(width: width, height: heights[cell.sourceIndex]!)
+                    let node = PreparedProseAccessibilityNode(interactionIndex: nil, role: .text,
+                        label: labels[cell.sourceIndex]!, bounds: CGRect(origin: .zero, size: size))
+                    return PreparedProseLayout(key: key, size: size, blocks: [],
+                        accessibilityNodes: [node], retainedBytes: node.estimatedRetainedBytes)
+                }
+                var surface = ViewerTableSurface(identity: "incremental", record: record,
+                    viewportWidth: viewport, style: style, direction: direction, displayScale: scale,
+                    prepareCell: { content($0, $1, revision: 0) })
+                // Same height, spanning growth/shrink, then a cell below its row's maximum.
+                let edits: [(Int, CGFloat)] = [(1, 24.1), (0, 200.7), (2, 230.2), (0, 30.1), (2, 28.3), (3, 19.2)]
+                for (revision, edit) in edits.enumerated() {
+                    let (index, height) = edit
+                    let old = surface
+                    let oldRectangles = old.layout.rectangles
+                    let oldSizes = old.cells.map(\.contentSize)
+                    let cell = try XCTUnwrap(old.cell(sourceIndex: index))
+                    heights[index] = height
+                    labels[index, default: ""] += " edited"
+                    let replacement = content(gridCells[index], cell.contentSize.width, revision: revision + 1)
+                    surface = old.replacingCells([index: replacement], contentHeights: [index: height])
+                    let fresh = ViewerTableSurface(identity: "fresh", record: record,
+                        viewportWidth: viewport, style: style, direction: direction, displayScale: scale,
+                        prepareCell: { content($0, $1, revision: revision + 1) })
+                    let context = "direction=\(direction) scale=\(scale) edit=\(revision) cell=\(index) height=\(height)"
+                    XCTAssertEqual(surface.layout.rowOffsets, fresh.layout.rowOffsets, context)
+                    XCTAssertEqual(surface.layout.columnOffsets, fresh.layout.columnOffsets, context)
+                    XCTAssertEqual(surface.layout.rectangles, fresh.layout.rectangles, context)
+                    XCTAssertEqual(surface.metadataRetainedBytes, fresh.metadataRetainedBytes, context)
+                    XCTAssertGreaterThan(surface.metadataRetainedBytes, old.metadataRetainedBytes, context)
+                    XCTAssertEqual(surface.visibleCells(in: surface.bounds).map(\.sourceIndex),
+                                   fresh.visibleCells(in: fresh.bounds).map(\.sourceIndex), context)
+                    XCTAssertEqual(old.layout.rectangles, oldRectangles, context)
+                    XCTAssertEqual(old.cells.map(\.contentSize), oldSizes, context)
+                    for sibling in old.cells where sibling.sourceIndex != index {
+                        XCTAssertTrue(surface.cell(sourceIndex: sibling.sourceIndex) === sibling, context)
+                    }
+                }
+            }
+        }
+    }
+
     private func record(
         columns: Int = 2,
         rows: Int = 1,

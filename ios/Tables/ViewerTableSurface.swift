@@ -310,14 +310,42 @@ final class ViewerTableSurface {
         return prepared
     }
 
+    private init(replacing previous: ViewerTableSurface, layout: TableLayoutResult,
+                 cells: [PreparedViewerTableCell], metadataBytes: Int, reuseIndex: Bool,
+                 sourceTable: TableSurfaceSource?, sourceAttributes: [String: [String: Any]]) {
+        identity = previous.identity
+        scrollIdentity = previous.scrollIdentity
+        hostViewportWidth = previous.hostViewportWidth
+        style = previous.style
+        direction = previous.direction
+        displayScale = previous.displayScale
+        layoutStore = previous.layoutStore
+        self.layout = layout
+        self.cells = cells
+        cellMetadataRetainedBytes = metadataBytes
+        cellIndex = reuseIndex ? previous.cellIndex : ViewerTableCellIndex(cells: cells, direction: direction)
+        self.sourceTable = sourceTable
+        self.sourceAttributes = sourceAttributes
+        syntheticRegions = sourceTable?.syntheticRegions ?? []
+        columnEdgeHandleRows = previous.columnEdgeHandleRows
+        preparationError = cells.first(where: { $0.contentError != nil })?.contentError
+    }
+
     func replacingCells(_ contents: [Int: PreparedProseLayout], contentHeights: [Int: CGFloat],
                         sourceTable: TableSurfaceSource? = nil,
                         sourceAttributes: [String: [String: Any]]? = nil,
                         prepareCell: ((TableGridCell, CGFloat) -> PreparedProseLayout)? = nil) -> ViewerTableSurface {
         let source = sourceTable ?? self.sourceTable
-        let updated = cells.map { cell in
-            guard let content = contents[cell.sourceIndex] else { return cell }
-            return PreparedViewerTableCell(sourceIndex: cell.sourceIndex, row: cell.row, column: cell.column,
+        var updated = cells
+        var metadataBytes = cellMetadataRetainedBytes
+        var reuseIndex = true
+        var heightsUnchanged = contentHeights.allSatisfy { index, height in
+            cell(sourceIndex: index)?.contentSize.height == height
+        }
+        for (sourceIndex, content) in contents {
+            guard let index = cellIndex.bySourceIndex[sourceIndex] else { continue }
+            let cell = cells[index]
+            let replacement = PreparedViewerTableCell(sourceIndex: cell.sourceIndex, row: cell.row, column: cell.column,
                 rowspan: cell.rowspan, colspan: cell.colspan, contentOrigin: cell.contentOrigin,
                 content: content, isHeader: source?.cells[cell.sourceIndex].header ?? cell.isHeader,
                 attributesKey: source?.cells[cell.sourceIndex].attrsKey ?? cell.attributesKey,
@@ -327,24 +355,34 @@ final class ViewerTableSurface {
                     let width = content.size.width
                     return { prepare(gridCell, width) }
                 })
+            updated[index] = replacement
+            metadataBytes += replacement.metadataRetainedBytes - cell.metadataRetainedBytes
+            reuseIndex = reuseIndex && replacement.hasAtoms == cell.hasAtoms && replacement.hasNestedTables == cell.hasNestedTables
+            heightsUnchanged = heightsUnchanged && (contentHeights[sourceIndex] ?? content.size.height) == cell.contentSize.height
         }
-        let record = source.map { TableGridRecord(table: $0, documentOwner: identity) }
-            ?? TableGridRecord(documentOwner: identity, columns: layout.columnWidths.count,
-                               rows: layout.rowOffsets.count - 1, columnWidths: layout.columnWidths.map { $0 },
-                               cells: updated.map { TableGridCell(sourceIndex: $0.sourceIndex, row: $0.row,
-                                   column: $0.column, rowspan: $0.rowspan, colspan: $0.colspan,
-                                   contentKey: $0.contentKey.semanticKey) })
-        let heights = Dictionary(uniqueKeysWithValues: updated.map {
-            ($0.sourceIndex, contentHeights[$0.sourceIndex] ?? $0.contentSize.height)
-        })
-        let next = TableGridLayout(displayScale: displayScale).relayout(
-            record: record, viewportWidth: hostViewportWidth, style: style, direction: direction,
-            cachedContentHeights: heights)
-        return ViewerTableSurface(identity: identity, scrollIdentity: scrollIdentity,
-                                  hostViewportWidth: hostViewportWidth, style: style, direction: direction,
-                                  layout: next, cells: updated, preparationError: updated.compactMap { $0.contentError }.first,
-                                  displayScale: displayScale, sourceTable: source,
-                                  sourceAttributes: sourceAttributes ?? self.sourceAttributes)
+        let next: TableLayoutResult
+        // The caller certifies a content-only delta with unchanged cell positions and spans.
+        if heightsUnchanged, layout.failure == nil,
+           source?.rows == self.sourceTable?.rows, source?.columns == self.sourceTable?.columns,
+           source?.columnWidths == self.sourceTable?.columnWidths, source?.failure == nil {
+            next = layout
+        } else {
+            let record = source.map { TableGridRecord(table: $0, documentOwner: identity) }
+                ?? TableGridRecord(documentOwner: identity, columns: layout.columnWidths.count,
+                                   rows: layout.rowOffsets.count - 1, columnWidths: layout.columnWidths.map { $0 },
+                                   cells: updated.map { TableGridCell(sourceIndex: $0.sourceIndex, row: $0.row,
+                                       column: $0.column, rowspan: $0.rowspan, colspan: $0.colspan,
+                                       contentKey: $0.contentKey.semanticKey) })
+            let heights = Dictionary(uniqueKeysWithValues: updated.map {
+                ($0.sourceIndex, contentHeights[$0.sourceIndex] ?? $0.contentSize.height)
+            })
+            next = TableGridLayout(displayScale: displayScale).relayout(
+                record: record, viewportWidth: hostViewportWidth, style: style, direction: direction,
+                cachedContentHeights: heights)
+        }
+        return ViewerTableSurface(replacing: self, layout: next, cells: updated,
+            metadataBytes: metadataBytes, reuseIndex: reuseIndex, sourceTable: source,
+            sourceAttributes: sourceAttributes ?? self.sourceAttributes)
     }
 
     func parentImageAttachments(offset: Int, tableOrigin: CGPoint) -> [ViewerImageAttachment] {
