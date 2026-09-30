@@ -456,7 +456,7 @@ impl DeleteSet for IdSet {
     fn from_store(store: &BlockStore) -> Self {
         let mut set = IdSet::new();
         for (&client, blocks) in store.iter() {
-            let mut deletes = IdRange::with_capacity(blocks.len());
+            let mut deletes = IdRange::new();
             for block in blocks.iter() {
                 let block = block.as_ref();
                 if block.is_deleted() {

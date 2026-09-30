@@ -882,6 +882,76 @@ mod test {
     use super::*;
 
     #[test]
+    fn sparse_snapshot_deletions_do_not_reserve_for_live_blocks() {
+        use crate::updates::decoder::Decode;
+        use crate::updates::encoder::Encode;
+        use crate::{Array, Doc, MapPrelim, ReadTxn, Snapshot, StateVector, Transact, Update};
+        const LIVE_BLOCKS: u32 = 1_000;
+        let doc = Doc::new();
+        let array = doc.get_or_insert_array("items");
+        {
+            let mut txn = doc.transact_mut();
+            for index in 0..LIVE_BLOCKS {
+                array.insert(&mut txn, index, MapPrelim::default());
+            }
+            array.remove_range(&mut txn, 0, 1);
+        }
+        let txn = doc.transact();
+        let snapshot = txn.snapshot();
+        let ranges = snapshot.delete_set.get(&doc.client_id()).unwrap();
+        assert_eq!(
+            ranges
+                .iter()
+                .map(|(range, _)| range.clone())
+                .collect::<Vec<_>>(),
+            vec![0..1]
+        );
+        assert!(
+            !ranges.0.spilled(),
+            "one deleted range must remain inline despite {} live blocks",
+            LIVE_BLOCKS - 1
+        );
+        assert_eq!(array.len(&txn), LIVE_BLOCKS - 1);
+        drop(txn);
+        {
+            let mut txn = doc.transact_mut();
+            for index in (1..LIVE_BLOCKS - 1).step_by(2).rev() {
+                array.remove_range(&mut txn, index, 1);
+            }
+        }
+        let txn = doc.transact();
+        let snapshot = txn.snapshot();
+        let expected: Vec<_> = (0..LIVE_BLOCKS)
+            .step_by(2)
+            .map(|clock| clock..clock + 1)
+            .collect();
+        let ranges = snapshot.delete_set.get(&doc.client_id()).unwrap();
+        assert_eq!(
+            ranges
+                .iter()
+                .map(|(range, _)| range.clone())
+                .collect::<Vec<_>>(),
+            expected
+        );
+        assert_eq!(
+            Snapshot::decode_v1(&snapshot.encode_v1()).unwrap(),
+            snapshot
+        );
+        let encoded = txn.encode_state_as_update_v1(&StateVector::default());
+        let replica = Doc::new();
+        replica
+            .transact_mut()
+            .apply_update(Update::decode_v1(&encoded).unwrap())
+            .unwrap();
+        let replica_txn = replica.transact();
+        assert_eq!(replica_txn.snapshot(), snapshot);
+        assert_eq!(
+            replica_txn.encode_state_as_update_v1(&StateVector::default()),
+            encoded
+        );
+    }
+
+    #[test]
     fn insert_non_overlapping() {
         let mut r = IdRanges::<()>::new();
         r.insert(5..8);
