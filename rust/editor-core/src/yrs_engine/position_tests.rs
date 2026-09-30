@@ -35,6 +35,33 @@ const TYPED_TEXT: &str = "q😀z";
 const FIRST_EDIT_REQUEST: u64 = 1;
 const INSIDE_WORD: u32 = 1;
 
+#[test]
+fn scalar_to_utf16_preserves_mixed_text_boundaries() {
+    const ASCII_PREFIX_LENGTH: usize = 257;
+    let prefix = "a".repeat(ASCII_PREFIX_LENGTH);
+    let corpus = [
+        String::new(),
+        prefix.clone(),
+        format!("{prefix}é中🙂e\u{301}\r\n{prefix}"),
+        format!("🙂{prefix}🧑\u{200d}💻"),
+    ];
+    for text in corpus {
+        let mut expected_utf16 = 0;
+        for (scalar, character) in text.chars().enumerate() {
+            assert_eq!(
+                scalar_offset_to_utf16(&text, scalar as u32),
+                Some(expected_utf16),
+                "incorrect UTF-16 boundary at scalar {scalar} in {text:?}"
+            );
+            expected_utf16 += character.encode_utf16(&mut [0; 2]).len() as u32;
+        }
+        let end = text.chars().count() as u32;
+        assert_eq!(scalar_offset_to_utf16(&text, end), Some(expected_utf16));
+        assert_eq!(scalar_offset_to_utf16(&text, end + 1), None);
+        assert_eq!(scalar_offset_to_utf16(&text, u32::MAX), None);
+    }
+}
+
 fn corpus_schema() -> Schema {
     let base = prosemirror_table_schema();
     let mut nodes: Vec<NodeSpec> = base

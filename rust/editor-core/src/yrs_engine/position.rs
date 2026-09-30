@@ -921,11 +921,15 @@ fn scalar_len(value: &str) -> u32 {
 }
 
 pub fn scalar_offset_to_utf16(value: &str, scalar_offset: u32) -> Option<u32> {
+    if value
+        .as_bytes()
+        .get(..scalar_offset as usize)
+        .is_some_and(<[u8]>::is_ascii)
+    {
+        return Some(scalar_offset);
+    }
     let mut scalar_count = 0u32;
     let mut utf16_count = 0u32;
-    if scalar_offset == 0 {
-        return Some(0);
-    }
     for character in value.chars() {
         scalar_count += 1;
         utf16_count += character.len_utf16() as u32;
