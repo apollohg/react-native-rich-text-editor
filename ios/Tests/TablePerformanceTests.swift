@@ -756,7 +756,7 @@ final class TablePerformanceTests: XCTestCase {
         trace.append("idle \(scrollState()) unchanged=\(idleCounters.unchangedCellRemeasurements)")
         XCTAssertEqual(host.adapter.baseDocumentRevision, revision)
         var editCounters = PreparedProseInstrumentation.TablePerformanceCounters()
-        _ = try edit(host, input: input, counters: &editCounters)
+        _ = try edit(host, input: input, counters: &editCounters, sample: "end-cell activation after host replacement")
         trace.append("edited \(scrollState()) unchanged=\(editCounters.unchangedCellRemeasurements)")
         print("TABLE_ACTIVATION_TRACE " + trace.joined(separator: "\n"))
         XCTAssertEqual(idleCounters.unchangedCellRemeasurements, 0, trace.joined(separator: "\n"))
@@ -963,7 +963,13 @@ final class TablePerformanceTests: XCTestCase {
     }
 
     private func edit(_ host: EditorHost, input: EditorTextView,
-                      counters: inout PreparedProseInstrumentation.TablePerformanceCounters) throws -> (Measurement, Bool) {
+                      counters: inout PreparedProseInstrumentation.TablePerformanceCounters,
+                      sample: String) throws -> (Measurement, Bool) {
+        func requireFocus(_ phase: String) throws {
+            _ = try XCTUnwrap(input.isFirstResponder ? input : nil,
+                "\(sample) \(phase): editor=\(host.id), activeInput=\(host.view.activeTextInput === input), attached=\(input.window != nil), keyWindow=\(input.window?.isKeyWindow == true), hidden=\(input.isHidden)")
+        }
+        try requireFocus("before input")
         let cellIndex = try XCTUnwrap(input.tableCellPositionMap).binding.cellIndex
         let oldHeight = try XCTUnwrap(try host.table().cell(sourceIndex: Int(cellIndex))).contentSize.height
         let previousRevision = host.adapter.baseDocumentRevision
@@ -972,6 +978,7 @@ final class TablePerformanceTests: XCTestCase {
             input.insertText(Benchmark.text)
             host.view.layoutIfNeeded()
         }
+        try requireFocus("after frame")
         XCTAssertEqual(input.textStorage.length, previousLength + Benchmark.text.utf16.count)
         XCTAssertGreaterThan(host.adapter.baseDocumentRevision, previousRevision)
         let height = try XCTUnwrap(try host.table().cell(sourceIndex: Int(cellIndex))).contentSize.height
@@ -984,12 +991,15 @@ final class TablePerformanceTests: XCTestCase {
         try host.load(source)
         let input = try host.bind(0)
         var counters = PreparedProseInstrumentation.TablePerformanceCounters()
-        for _ in 0..<Benchmark.warmupSamples { _ = try edit(host, input: input, counters: &counters) }
+        for index in 0..<Benchmark.warmupSamples {
+            _ = try edit(host, input: input, counters: &counters, sample: "\(fixture.name) run=\(run) warmup=\(index)")
+        }
         counters = .init()
         var values: [Measurement] = []
         var wraps = 0
-        for _ in 0..<Benchmark.typingSamples {
-            let (duration, wrapped) = try edit(host, input: input, counters: &counters)
+        for index in 0..<Benchmark.typingSamples {
+            let (duration, wrapped) = try edit(host, input: input, counters: &counters,
+                sample: "\(fixture.name) run=\(run) sample=\(index)")
             values.append(duration)
             if wrapped { wraps += 1 }
         }
@@ -1005,7 +1015,10 @@ final class TablePerformanceTests: XCTestCase {
         _ = try measure(host.drawing) {}
         var counters = PreparedProseInstrumentation.TablePerformanceCounters()
         var values: [Measurement] = []
-        for _ in 0..<Benchmark.baselineSamples { values.append(try edit(host, input: input, counters: &counters).0) }
+        for index in 0..<Benchmark.baselineSamples {
+            values.append(try edit(host, input: input, counters: &counters,
+                sample: "\(fixture.name) cellChange atEnd=\(atEnd) sample=\(index)").0)
+        }
         counters.authoritativeDocumentBytes = try host.authoritativeBytes()
         append(fixture, metric: atEnd ? "cellChangeEnd" : "cellChangeStart", values: values, counters: counters)
     }
