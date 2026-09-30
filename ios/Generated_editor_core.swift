@@ -89,8 +89,9 @@ fileprivate func readInt<T: FixedWidthInteger>(_ reader: inout (data: Data, offs
         reader.offset += 1
         return value as! T
     }
-    var value: T = 0
-    let _ = withUnsafeMutableBytes(of: &value, { reader.data.copyBytes(to: $0, from: range)})
+    let value: T = reader.data.withUnsafeBytes { bytes in
+        bytes.loadUnaligned(fromByteOffset: reader.offset - reader.data.startIndex, as: T.self)
+    }
     reader.offset = range.upperBound
     return value.bigEndian
 }

@@ -140,4 +140,6 @@ if grep -En '[[:blank:]]+$' \
   exit 1
 fi
 
+bash "$repo_root/scripts/tests/validate-swift-reader.sh"
+
 echo "Generated binding normalization, ${#V2_SYMBOLS[@]} editor-v2 symbol, viewer ABI, checksum, and copy validation passed."
