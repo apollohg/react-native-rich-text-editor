@@ -30,6 +30,9 @@ internal class TableCellLayoutStore(
     @Synchronized fun peekAll(keys: Sequence<ProseLayoutKey>): List<PreparedProseLayout> =
         keys.mapNotNull { entries[it]?.layout }.toList()
 
+    @Synchronized fun retainedBytes(keys: Sequence<ProseLayoutKey>): Long =
+        keys.sumOf { entries[it]?.layout?.retainedBytes ?: 0L }
+
     @Synchronized fun value(key: ProseLayoutKey, build: () -> PreparedProseLayout): PreparedProseLayout {
         entries.remove(key)?.let { entry ->
             entries[key] = entry

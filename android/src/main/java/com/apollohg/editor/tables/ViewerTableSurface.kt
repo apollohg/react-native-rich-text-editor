@@ -236,7 +236,7 @@ internal class ViewerTableSurface private constructor(
         return synchronized(layoutStore) {
             val revision = layoutStore.revision
             if (revision != retainedBytesRevision) {
-                cellRetainedBytes = cells.sumOf { it.cachedContent?.retainedBytes ?: 0L }
+                cellRetainedBytes = layoutStore.retainedBytes(cells.asSequence().map { it.contentKey })
                 retainedBytesRevision = revision
             }
             metadataRetainedBytes + cellRetainedBytes

@@ -54,6 +54,29 @@ class TableCellLayoutStoreTest {
         assertSame(rebuilt, store.value(retainedKey) { error("The rebuilt cell was lost under a different artifact key") })
     }
 
+    @Test fun testBulkChargePreservesAliasesDuplicatesAndEvictionOrder() {
+        val store = TableCellLayoutStore(byteBudget = CELL_BYTES * 3, capacity = 2)
+        val lookup = layout("lookup").key
+        val aliased = layout("different-layout-key", CELL_BYTES * 2)
+        val second = layout("second")
+        store.insert(aliased, lookup)
+        store.insert(second)
+        val keys = listOf(second.key, lookup, lookup, layout("missing").key)
+        val revision = store.revision
+        val bytes = store.unmountedRetainedBytes
+        assertEquals("Each mapped occurrence retains its original charge",
+            keys.sumOf { store.peek(it)?.retainedBytes ?: 0L }, store.retainedBytes(keys.asSequence()))
+        assertEquals("Aliased duplicate entries are counted twice", CELL_BYTES * 5,
+            store.retainedBytes(keys.asSequence()))
+        assertEquals("Accounting must not mutate store revision", revision, store.revision)
+        assertEquals("Accounting must not change admission charges", bytes, store.unmountedRetainedBytes)
+        val third = layout("third")
+        store.insert(third)
+        assertNull("Reading the alias must not promote the oldest entry", store.peek(lookup))
+        assertSame(second, store.peek(second.key))
+        assertSame(third, store.peek(third.key))
+    }
+
     private companion object {
         const val CELL_BYTES = 100L
         const val SCROLL_CELLS = 20
