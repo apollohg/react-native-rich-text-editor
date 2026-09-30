@@ -19,7 +19,8 @@ use super::transaction_result::cached_transition_render_update;
 use super::{checked_operation_increment, YrsDocumentEngine};
 use crate::yrs_engine;
 use crate::yrs_engine::compiler::{
-    CompiledTransaction, RelativeSelectionPlan, SelectionPlan, StoredMarksPlan,
+    CompilationReadTransaction, CompiledTransaction, RelativeSelectionPlan, SelectionPlan,
+    StoredMarksPlan,
 };
 use crate::yrs_engine::derived_state::operation_result_to_relative;
 use crate::yrs_engine::mutation::{execute_mutation_plan, preflight_mutation_plan};
@@ -27,7 +28,7 @@ use std::sync::Arc;
 use yrs::branch::Branch;
 use yrs::types::xml::XmlFragmentRef;
 use yrs::updates::decoder::Decode;
-use yrs::{ReadTxn, StateVector, Transact, Transaction, Update};
+use yrs::{ReadTxn, StateVector, Transact, Update};
 
 enum CompiledCommitDerivedAuthority<'a> {
     Staged(yrs_engine::prepared_admission::StagedDerivedStateAuthority<'a>),
@@ -36,7 +37,7 @@ enum CompiledCommitDerivedAuthority<'a> {
 
 pub(super) struct CompiledCommitAuthority<'a, 'doc> {
     derived: CompiledCommitDerivedAuthority<'a>,
-    txn: &'a Transaction<'doc>,
+    txn: &'a CompilationReadTransaction<'doc>,
     fragment: &'a XmlFragmentRef,
     state_vector: std::cell::OnceCell<StateVector>,
 }
@@ -49,7 +50,7 @@ impl CompiledCommitAuthority<'_, '_> {
         }
     }
 
-    pub(super) fn txn(&self) -> &Transaction<'_> {
+    pub(super) fn txn(&self) -> &CompilationReadTransaction<'_> {
         self.txn
     }
 
@@ -69,6 +70,7 @@ impl YrsDocumentEngine {
         with_result: bool,
         prepared_history: Option<yrs_engine::prepared_admission::PreparedCommandHistoryAdmission>,
         prepared_context: Option<yrs_engine::prepared_admission::PreparedMutationContext>,
+        read_transaction: Option<CompilationReadTransaction<'_>>,
         outbound: &mut OutboundUpdateSink<'_>,
     ) -> yrs_engine::OperationResult<(
         yrs_engine::TransactionCommit,
@@ -76,9 +78,8 @@ impl YrsDocumentEngine {
     )> {
         #[cfg(test)]
         begin_compiled_commit_preparation_for_test();
-        // A compiled plan owns Yrs handles after its original read transaction
-        // closes. Reject a stale plan in O(1) before no-op classification or
-        // any state-vector/snapshot traversal.
+        // Split compiled plans can outlive their original read transaction.
+        // Reject stale revisions before no-op classification or store scans.
         if compiled.yrs_state_epoch != self.yrs_state_epoch
             || compiled.base_state_revision != self.state_revision
         {
@@ -96,7 +97,8 @@ impl YrsDocumentEngine {
         let authority_doc = self.doc.clone();
         #[cfg(test)]
         record_compiled_commit_live_view_for_test();
-        let authority_txn = authority_doc.transact();
+        let authority_txn = read_transaction
+            .unwrap_or_else(|| CompilationReadTransaction::new(authority_doc.transact()));
         let authority_fragment = authority_txn
             .get_xml_fragment(self.fragment_name.as_str())
             .ok_or_else(|| {
@@ -205,6 +207,7 @@ impl YrsDocumentEngine {
             None => (None, None),
         };
         if preview_is_unchanged {
+            authority_txn.clear_snapshot_memo();
             let prepared = Self::prepare_selection_commit(
                 SelectionCommitContext {
                     current: self.derived_state.as_ref(),
@@ -285,6 +288,7 @@ impl YrsDocumentEngine {
                 &compiled.mutation_plan,
                 commit_authority.txn(),
             )?;
+            authority_txn.clear_snapshot_memo();
             #[cfg(test)]
             yrs_engine::compiler::check_atomic_failpoint(
                 compiled.request_id,
@@ -636,9 +640,8 @@ impl YrsDocumentEngine {
             request_id,
             CompiledCommitPreparationStage::AllocationProbe,
         )?;
-        let next_render_blocks = Arc::new(
-            render_cache.expect("changed transaction has a prepared render cache"),
-        );
+        let next_render_blocks =
+            Arc::new(render_cache.expect("changed transaction has a prepared render cache"));
         #[cfg(test)]
         check_compiled_commit_preparation_stage_for_test(
             request_id,

@@ -12,9 +12,10 @@ use crate::transform::DocumentValidator;
 use crate::yrs_engine;
 use crate::yrs_engine::compiler::{
     compile_prepared_transaction_with_yrs_and_stored_marks,
-    compile_transaction_with_yrs_and_stored_marks, CompilationContext, CompiledTransaction,
-    EngineCompilationView, PreparedSemanticAdmission, PreparedSemanticContext,
-    RelativeSelectionPlan, SelectionPlan, StoredMarksCompilationContext, StoredMarksPlan,
+    compile_transaction_with_yrs_and_stored_marks, CompilationContext, CompilationReadTransaction,
+    CompilationReadView, CompiledTransaction, EngineCompilationView, PreparedSemanticAdmission,
+    PreparedSemanticContext, RelativeSelectionPlan, SelectionPlan, StoredMarksCompilationContext,
+    StoredMarksPlan,
 };
 use crate::yrs_engine::derived_state::{exact_point_is_representable, FinalizedSelectionState};
 use crate::yrs_engine::mutation::{YrsMutationAction, YrsMutationPlan};
@@ -116,7 +117,8 @@ impl YrsDocumentEngine {
                 "ready Yrs engine has no derived state",
             )
         })?;
-        let txn = self.doc.transact();
+        let read_transaction = CompilationReadTransaction::new(self.doc.transact());
+        let txn = read_transaction.view();
         let fragment = txn
             .get_xml_fragment(self.fragment_name.as_str())
             .ok_or_else(|| {
@@ -148,7 +150,7 @@ impl YrsDocumentEngine {
         proof_selection: &Selection,
         candidate_derivations: Option<&yrs_engine::compiler::CompiledDocumentDerivations>,
         authority: &dyn yrs_engine::prepared_admission::DerivedStateAuthority,
-        txn: &T,
+        txn: &CompilationReadView<'_, T>,
         fragment: &XmlFragmentRef,
     ) -> yrs_engine::OperationResult<CompiledTransaction> {
         let mut compiled = self.compile_typed_transaction_with_read_view(
@@ -398,7 +400,8 @@ impl YrsDocumentEngine {
                 "ready Yrs engine has no derived state",
             )
         })?;
-        let txn = self.doc.transact();
+        let read_transaction = CompilationReadTransaction::new(self.doc.transact());
+        let txn = read_transaction.view();
         let fragment = txn
             .get_xml_fragment(self.fragment_name.as_str())
             .ok_or_else(|| {
@@ -424,7 +427,7 @@ impl YrsDocumentEngine {
         transaction: yrs_engine::TypedTransaction,
         prepared_semantics: Option<(&PreparedSemanticAdmission, &Document)>,
         authority: &dyn yrs_engine::prepared_admission::DerivedStateAuthority,
-        txn: &T,
+        txn: &CompilationReadView<'_, T>,
         fragment: &XmlFragmentRef,
     ) -> yrs_engine::OperationResult<CompiledTransaction> {
         let state = authority.installed();
@@ -590,9 +593,10 @@ impl YrsDocumentEngine {
         &self,
         request_id: u64,
         context: Option<&yrs_engine::prepared_admission::PreparedMutationContext>,
+        read_transaction: &CompilationReadTransaction<'_>,
         use_authority: impl FnOnce(
             &dyn yrs_engine::prepared_admission::DerivedStateAuthority,
-            &yrs::Transaction<'_>,
+            &CompilationReadView<'_, yrs::Transaction<'_>>,
             &XmlFragmentRef,
         ) -> yrs_engine::OperationResult<R>,
     ) -> yrs_engine::OperationResult<R> {
@@ -602,7 +606,7 @@ impl YrsDocumentEngine {
             .ok_or_else(|| yrs_engine::OperationError::engine_not_ready(request_id))?;
         #[cfg(test)]
         record_compiled_commit_live_view_for_test();
-        let txn = self.doc.transact();
+        let txn = read_transaction.view();
         let fragment = txn
             .get_xml_fragment(self.fragment_name.as_str())
             .ok_or_else(|| {

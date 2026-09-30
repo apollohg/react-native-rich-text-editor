@@ -88,6 +88,10 @@ fn every_recoverable_atomic_stage_failpoint_is_pre_open_and_read_only() {
         let error = engine.apply_typed_transaction(transaction).unwrap_err();
 
         set_atomic_failpoint_for_test(None);
+        assert!(
+            engine.doc.try_transact_mut().is_ok(),
+            "failed stage {failpoint:?} retained its read lock"
+        );
         assert_eq!(error.code, "ENGINE_INVARIANT_FAILED", "{failpoint:?}");
         assert_eq!(
             error.details,
@@ -732,5 +736,69 @@ fn replay_guard_accepts_equivalent_text_item_splits() {
     assert_eq!(
         engine.document_json().unwrap()["content"][0]["content"][0]["text"],
         "z🦀x"
+    );
+}
+
+#[test]
+fn split_commit_rechecks_deletion_only_changes_after_compilation() {
+    use yrs::Text;
+    const REQUEST: u64 = 76_510;
+    const DELETED_OFFSET: u32 = 1;
+    const DELETED_LENGTH: u32 = 1;
+    let mut engine = transaction_engine();
+    engine.import_json(
+        r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"abc"}]}]}"#,
+        TransactionOrigin::DocumentImport,
+    ).unwrap();
+    let compiled = engine
+        .compile_typed_transaction(insert_transaction(&engine, REQUEST))
+        .unwrap();
+    let state_before = engine.doc.transact().state_vector();
+    let revision_before = (
+        engine.revision,
+        engine.state_revision,
+        engine.yrs_state_epoch,
+    );
+    {
+        let mut txn = engine
+            .doc
+            .try_transact_mut()
+            .expect("split compilation must release the read lock");
+        let fragment = txn.get_xml_fragment(engine.fragment_name.as_str()).unwrap();
+        let XmlOut::Element(paragraph) = fragment.get(&txn, 0).unwrap() else {
+            panic!("paragraph fixture")
+        };
+        let XmlOut::Text(text) = paragraph.get(&txn, 0).unwrap() else {
+            panic!("text fixture")
+        };
+        text.remove_range(&mut txn, DELETED_OFFSET, DELETED_LENGTH);
+    }
+    assert_eq!(engine.doc.transact().state_vector(), state_before);
+    assert_eq!(
+        (
+            engine.revision,
+            engine.state_revision,
+            engine.yrs_state_epoch
+        ),
+        revision_before,
+        "the fixture must exercise the fresh snapshot guard, not the revision gate"
+    );
+    let before = engine.encoded_state().unwrap();
+    let error = engine
+        .apply_compiled_transaction(compiled, false)
+        .unwrap_err();
+    assert_eq!(error.code, "ENGINE_INVARIANT_FAILED");
+    assert_eq!(
+        &*error.message,
+        "Yrs document snapshot changed before mutation preflight"
+    );
+    assert_eq!(
+        engine.encoded_state().unwrap(),
+        before,
+        "rejected commit must not write"
+    );
+    assert!(
+        engine.doc.try_transact_mut().is_ok(),
+        "rejected split commit retained its read lock"
     );
 }

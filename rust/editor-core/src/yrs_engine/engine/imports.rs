@@ -20,6 +20,7 @@ use crate::transform::{
 use crate::yrs_engine;
 use crate::yrs_engine::canonical::{CanonicalArtifact, CanonicalSchemaContext};
 use crate::yrs_engine::{EditingLimits, TransactionOrigin, YrsEngineError, YrsEngineResult};
+use yrs::Transact;
 
 #[derive(Clone)]
 pub(in crate::yrs_engine) struct RootBoundValidationReport {
@@ -487,10 +488,14 @@ impl YrsDocumentEngine {
             let context = self
                 .prepare_mutation_lookup_seed(request_id)
                 .map_err(RootReplacementError::Transaction)?;
+            let authority_doc = self.doc.clone();
+            let read_transaction =
+                yrs_engine::compiler::CompilationReadTransaction::new(authority_doc.transact());
             let mut compiled = self
                 .with_compiled_base_authority(
                     request_id,
                     Some(&context),
+                    &read_transaction,
                     |authority, txn, fragment| {
                         self.compile_typed_transaction_with_read_view(
                             transaction,
@@ -508,6 +513,7 @@ impl YrsDocumentEngine {
                 false,
                 None,
                 Some(context),
+                Some(read_transaction),
                 &mut outbound,
             )
         } else {

@@ -25,10 +25,54 @@ use crate::yrs_engine::{
     OperationError, OperationResult, SelectionIntent, TypedOperation, TypedTransaction,
 };
 
-// This cache cannot outlive the immutable read view held by one compilation.
-struct CompilationReadView<'a, T> {
+// The memo cannot outlive its continuously held immutable transaction.
+pub(crate) struct CompilationReadView<'a, T> {
     txn: &'a T,
-    snapshot: std::cell::OnceCell<yrs::Snapshot>,
+    snapshot: &'a std::cell::RefCell<std::cell::OnceCell<yrs::Snapshot>>,
+}
+
+#[cfg(test)]
+impl<'a, T> CompilationReadView<'a, T> {
+    pub(crate) fn new(
+        txn: &'a T,
+        snapshot: &'a std::cell::RefCell<std::cell::OnceCell<yrs::Snapshot>>,
+    ) -> Self {
+        Self { txn, snapshot }
+    }
+}
+
+pub(crate) struct CompilationReadTransaction<'doc> {
+    txn: yrs::Transaction<'doc>,
+    snapshot: std::cell::RefCell<std::cell::OnceCell<yrs::Snapshot>>,
+}
+
+impl<'doc> CompilationReadTransaction<'doc> {
+    pub(crate) fn new(txn: yrs::Transaction<'doc>) -> Self {
+        Self {
+            txn,
+            snapshot: std::cell::RefCell::new(std::cell::OnceCell::new()),
+        }
+    }
+
+    pub(crate) fn clear_snapshot_memo(&self) {
+        self.snapshot.borrow_mut().take();
+    }
+
+    pub(crate) fn view(&self) -> CompilationReadView<'_, yrs::Transaction<'doc>> {
+        CompilationReadView {
+            txn: &self.txn,
+            snapshot: &self.snapshot,
+        }
+    }
+}
+
+impl yrs::ReadTxn for CompilationReadTransaction<'_> {
+    fn store(&self) -> &yrs::Store {
+        self.txn.store()
+    }
+    fn snapshot(&self) -> yrs::Snapshot {
+        self.view().snapshot()
+    }
 }
 
 impl<T: yrs::ReadTxn> yrs::ReadTxn for CompilationReadView<'_, T> {
@@ -37,11 +81,12 @@ impl<T: yrs::ReadTxn> yrs::ReadTxn for CompilationReadView<'_, T> {
     }
 
     fn snapshot(&self) -> yrs::Snapshot {
+        let snapshot = self.snapshot.borrow();
         #[cfg(test)]
-        if self.snapshot.get().is_some() {
+        if snapshot.get().is_some() {
             crate::yrs_engine::observability::record_compilation_snapshot_reuse();
         }
-        self.snapshot
+        snapshot
             .get_or_init(|| {
                 #[cfg(test)]
                 crate::yrs_engine::observability::record_compilation_snapshot_scan();
@@ -54,17 +99,12 @@ impl<T: yrs::ReadTxn> yrs::ReadTxn for CompilationReadView<'_, T> {
 pub(super) fn compile_transaction_with_yrs_impl<T: yrs::ReadTxn>(
     context: CompilationContext<'_>,
     transaction: TypedTransaction,
-    txn: &T,
+    txn: &CompilationReadView<'_, T>,
     fragment: &yrs::types::xml::XmlFragmentRef,
     stored_marks: Option<StoredMarksCompilationContext<'_>>,
     prepared_semantics: Option<PreparedSemanticContext<'_>>,
     engine_view: Option<EngineCompilationView<'_>>,
 ) -> OperationResult<CompiledTransaction> {
-    let read_view = CompilationReadView {
-        txn,
-        snapshot: std::cell::OnceCell::new(),
-    };
-    let txn = &read_view;
     let request_id = transaction.request_id;
     #[cfg(test)]
     check_atomic_failpoint(request_id, AtomicFailpoint::EnvelopeAdmission)?;
@@ -526,8 +566,8 @@ pub(super) fn validate_cached_compilation_view<'a>(
 
 #[cfg(test)]
 mod snapshot_tests {
-    use super::CompilationReadView;
-    use std::cell::{Cell, OnceCell};
+    use super::{CompilationReadTransaction, CompilationReadView};
+    use std::cell::{Cell, OnceCell, RefCell};
     use yrs::{Doc, ReadTxn, Text, Transact};
 
     struct CountingReadView<'a, T> {
@@ -546,6 +586,59 @@ mod snapshot_tests {
     }
 
     #[test]
+    fn moving_compilation_read_transaction_preserves_the_lock_and_snapshot() {
+        use crate::yrs_engine::observability::{
+            reset_full_pass_counts_for_test, take_full_pass_counts_for_test,
+        };
+        let doc = Doc::new();
+        let text = doc.get_or_insert_text("content");
+        text.insert(&mut doc.transact_mut(), 0, "abcdef");
+        reset_full_pass_counts_for_test();
+        let transaction = CompilationReadTransaction::new(doc.transact());
+        let compiled_snapshot = transaction.view().snapshot();
+        assert!(
+            doc.try_transact_mut().is_err(),
+            "compilation must exclude live writes"
+        );
+        let commit_transaction = transaction;
+        assert!(
+            doc.try_transact_mut().is_err(),
+            "moving the read owner must retain its lock"
+        );
+        assert_eq!(commit_transaction.snapshot(), compiled_snapshot);
+        let passes = take_full_pass_counts_for_test();
+        assert_eq!(passes.compilation_snapshot_scans, 1);
+        assert_eq!(passes.compilation_snapshot_reuses, 1);
+        commit_transaction.clear_snapshot_memo();
+        assert!(commit_transaction.snapshot.borrow().get().is_none());
+        assert!(
+            doc.try_transact_mut().is_err(),
+            "clearing the memo must preserve the read lock"
+        );
+        assert_eq!(commit_transaction.snapshot(), compiled_snapshot);
+        assert_eq!(
+            take_full_pass_counts_for_test().compilation_snapshot_scans,
+            1,
+            "a later snapshot request must recapture from the same locked store"
+        );
+        drop(commit_transaction);
+        text.remove_range(
+            &mut doc
+                .try_transact_mut()
+                .expect("commit must release its read lock"),
+            1,
+            2,
+        );
+        let next = CompilationReadTransaction::new(doc.transact());
+        let next_snapshot = next.snapshot();
+        assert_eq!(compiled_snapshot.state_map, next_snapshot.state_map);
+        assert_ne!(
+            compiled_snapshot.delete_set, next_snapshot.delete_set,
+            "a later transaction must independently capture deletion-only changes"
+        );
+    }
+
+    #[test]
     fn compilation_snapshot_is_lazy_exact_and_limited_to_one_read_view() {
         let doc = Doc::new();
         let text = doc.get_or_insert_text("content");
@@ -558,7 +651,7 @@ mod snapshot_tests {
             };
             let view = CompilationReadView {
                 txn: &underlying,
-                snapshot: OnceCell::new(),
+                snapshot: &RefCell::new(OnceCell::new()),
             };
             assert_eq!(
                 underlying.scans.get(),
@@ -588,7 +681,7 @@ mod snapshot_tests {
         };
         let view = CompilationReadView {
             txn: &underlying,
-            snapshot: OnceCell::new(),
+            snapshot: &RefCell::new(OnceCell::new()),
         };
         let after = view.snapshot();
         assert_eq!(after, txn.snapshot());

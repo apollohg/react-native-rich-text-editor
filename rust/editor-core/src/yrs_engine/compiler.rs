@@ -65,6 +65,7 @@ use std::sync::Arc;
 use yrs::branch::{Branch, BranchPtr};
 use yrs::types::Attrs;
 use yrs_compilation::compile_transaction_with_yrs_impl;
+pub(super) use yrs_compilation::{CompilationReadTransaction, CompilationReadView};
 
 #[derive(Clone, Copy)]
 pub(crate) struct CompilationContext<'a> {
@@ -373,13 +374,15 @@ pub(super) fn compile_transaction_with_yrs<T: yrs::ReadTxn>(
     txn: &T,
     fragment: &yrs::types::xml::XmlFragmentRef,
 ) -> OperationResult<CompiledTransaction> {
-    compile_transaction_with_yrs_impl(context, transaction, txn, fragment, None, None, None)
+    let snapshot = std::cell::RefCell::new(std::cell::OnceCell::new());
+    let view = CompilationReadView::new(txn, &snapshot);
+    compile_transaction_with_yrs_impl(context, transaction, &view, fragment, None, None, None)
 }
 
 pub(super) fn compile_transaction_with_yrs_and_stored_marks<T: yrs::ReadTxn>(
     context: CompilationContext<'_>,
     transaction: TypedTransaction,
-    txn: &T,
+    txn: &CompilationReadView<'_, T>,
     fragment: &yrs::types::xml::XmlFragmentRef,
     stored_marks: StoredMarksCompilationContext<'_>,
     engine_view: EngineCompilationView<'_>,
@@ -398,7 +401,7 @@ pub(super) fn compile_transaction_with_yrs_and_stored_marks<T: yrs::ReadTxn>(
 pub(super) fn compile_prepared_transaction_with_yrs_and_stored_marks<T: yrs::ReadTxn>(
     context: CompilationContext<'_>,
     transaction: TypedTransaction,
-    txn: &T,
+    txn: &CompilationReadView<'_, T>,
     fragment: &yrs::types::xml::XmlFragmentRef,
     stored_marks: StoredMarksCompilationContext<'_>,
     prepared: PreparedSemanticContext<'_>,

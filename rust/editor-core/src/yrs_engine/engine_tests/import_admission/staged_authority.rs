@@ -154,7 +154,10 @@ fn staged_authority_supplies_every_unavailable_seed_consumer_without_installed_r
                 max_length: engine.max_length,
             },
             transaction.clone(),
-            &txn,
+            &crate::yrs_engine::compiler::CompilationReadView::new(
+                &txn,
+                &std::cell::RefCell::new(std::cell::OnceCell::new()),
+            ),
             &fragment,
             crate::yrs_engine::compiler::StoredMarksCompilationContext {
                 stored_marks: state.stored_marks.as_deref(),
@@ -182,7 +185,10 @@ fn staged_authority_supplies_every_unavailable_seed_consumer_without_installed_r
     assert!(compiled.prepared_derived_evidence.is_some());
     assert!(compiled.mutation_lookup_transition.is_some());
 
-    let admission = compiled.localized_textblock_edit_admission.as_ref().unwrap();
+    let admission = compiled
+        .localized_textblock_edit_admission
+        .as_ref()
+        .unwrap();
     let crate::yrs_engine::compiler::StoredMarksPlan::Set(stored_marks) =
         &compiled.stored_marks_plan
     else {

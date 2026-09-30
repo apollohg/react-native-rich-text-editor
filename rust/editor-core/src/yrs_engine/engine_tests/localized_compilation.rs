@@ -578,7 +578,7 @@ fn existing_text_command_skips_every_proved_document_wide_compiler_pass() {
             whole_state_encodings: 0,
             mutation_guard_snapshot_requests: 3,
             compilation_snapshot_scans: 1,
-            compilation_snapshot_reuses: 1,
+            compilation_snapshot_reuses: 2,
             cell_content_keys: 0,
             attribute_serializations: 0,
             epoch_block_rebuilds: 0,
@@ -1471,8 +1471,12 @@ fn large_table_native_input_reuses_materialization_costs() {
             "each native input captures one underlying compilation snapshot"
         );
         assert_eq!(
-            passes.compilation_snapshot_reuses, 1,
-            "compile preflight reuses the exact held-view snapshot"
+            passes.compilation_snapshot_reuses, 2,
+            "compilation and immediate commit preflight must reuse one continuously held read view"
+        );
+        assert!(
+            session.engine.doc.try_transact_mut().is_ok(),
+            "native edit {edit} left the compilation read lock held after commit"
         );
     }
 }
