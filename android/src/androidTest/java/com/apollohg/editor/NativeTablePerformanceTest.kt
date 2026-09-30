@@ -792,6 +792,13 @@ class NativeTablePerformanceTest {
         }
     }
 
+    @Test fun largeTableColdLayout() = withActivity {
+        val (rows, columns) = PlainTableFixture.TWENTY_THOUSAND_SLOT_SHAPES.first()
+        val fixture = Fixture(rows, columns, false)
+        cold(fixture, fixture.source())
+        saveExport(COLD_OUTPUT_FILE)
+    }
+
     @Test fun exportTablePerformance() = withActivity {
         val fixtures = listOf(false, true).flatMap { rich ->
             (listOf(SMALL_ROWS to SMALL_COLUMNS) + PlainTableFixture.TWENTY_THOUSAND_SLOT_SHAPES)
@@ -862,6 +869,7 @@ class NativeTablePerformanceTest {
         const val LINE_BREAK_TEXT = "\n"
         const val RICH_TEXT = "café العربية 👩🏽‍💻"
         const val OUTPUT_FILE = "table-performance-android.json"
+        const val COLD_OUTPUT_FILE = "table-performance-android-cold.json"
         const val SMOKE_OUTPUT_FILE = "table-performance-android-storage-smoke.json"
         const val ADDITIONAL_OUTPUT_ARGUMENT = "additionalTestOutputDir"
         const val FIXTURE_ARGUMENT = "tablePerformanceFixtures"

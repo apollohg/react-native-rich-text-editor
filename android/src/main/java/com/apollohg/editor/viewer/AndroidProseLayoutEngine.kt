@@ -200,7 +200,7 @@ internal class ResolvedTextStyleSpan(internal val typeface: Typeface, internal v
 
 internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
     companion object {
-        const val MAX_TABLE_PREPARATION_WORKERS = 4
+        const val MAX_TABLE_PREPARATION_WORKERS = 2
     }
     internal var tablePreparationWorkerLimit = MAX_TABLE_PREPARATION_WORKERS
     internal var tableCellLayoutObserverForTesting: ((Int, PreparedProseLayout) -> Unit)? = null
