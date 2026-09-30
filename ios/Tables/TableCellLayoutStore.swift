@@ -35,10 +35,10 @@ final class TableCellLayoutStore {
         weak var previous: Entry?
         var next: Entry?
 
-        init(_ layout: PreparedProseLayout, key: ProseLayoutKey) {
+        init(_ layout: PreparedProseLayout, key: ProseLayoutKey, retainedBytes: Int) {
             self.key = key
             self.layout = layout
-            self.retainedBytes = layout.retainedBytes + layout.cellShapeCatalogRetainedBytes + Key.additionalRetainedBytes
+            self.retainedBytes = retainedBytes
         }
     }
 
@@ -124,7 +124,13 @@ final class TableCellLayoutStore {
 
     func insert(_ layout: PreparedProseLayout, for key: Key) {
         lock.lock(); defer { lock.unlock() }
-        let entry = Entry(layout, key: key.layoutKey)
+        let retainedBytes = layout.retainedBytes + layout.cellShapeCatalogRetainedBytes + Key.additionalRetainedBytes
+        if let existing = entries[key], existing.layout === layout, existing.retainedBytes == retainedBytes {
+            unlink(existing)
+            link(existing)
+            return
+        }
+        let entry = Entry(layout, key: key.layoutKey, retainedBytes: retainedBytes)
         if let existing = entries[key] { remove(existing) }
         recordContentMutation()
         entries[key] = entry

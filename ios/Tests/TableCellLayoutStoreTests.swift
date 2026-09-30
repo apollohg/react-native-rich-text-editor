@@ -49,6 +49,67 @@ final class TableCellLayoutStoreTests: XCTestCase {
         XCTAssertEqual(store.unmountedRetainedBytes, budget)
     }
 
+    func testIdenticalInsertionKeepsRetainedSnapshotAndRefreshesRecency() {
+        let store = TableCellLayoutStore(capacity: 2)
+        let first = layout("first")
+        let second = layout("second")
+        store.insert(first)
+        store.insert(second)
+        var visitedKeys = 0
+        let keys = [first.key, second.key].map(TableCellLayoutStore.Key.init).lazy.map { key in
+            visitedKeys += 1
+            return key
+        }
+        let snapshot = TableCellLayoutStore.RetainedByteSnapshot(store: store)
+        let initialBytes = store.retainedBytes(for: keys, snapshot: snapshot)
+        XCTAssertEqual(visitedKeys, 2)
+        store.insert(first)
+        XCTAssertEqual(store.retainedBytes(for: keys, snapshot: snapshot), initialBytes)
+        XCTAssertEqual(visitedKeys, 2, "An identical resident insertion must not rescan every cell key")
+        let replacement = layout("first", bytes: first.retainedBytes * 2)
+        store.insert(replacement)
+        XCTAssertEqual(store.retainedBytes(for: keys, snapshot: snapshot), initialBytes + first.retainedBytes)
+        XCTAssertEqual(visitedKeys, 4, "A different layout must invalidate the retained snapshot")
+        store.insert(second)
+        store.insert(layout("third"))
+        XCTAssertNil(store.peek(first.key), "Identical reinsertion must still refresh LRU recency")
+        XCTAssertTrue(store.peek(second.key) === second)
+    }
+
+    func testIdenticalLayoutInsertionUpdatesChangedNestedShapeCharge() {
+        let child = layout("nested-child")
+        let nestedStore = TableCellLayoutStore(capacity: 1)
+        let record = TableGridRecord(documentOwner: "nested-charge", columns: 1, rows: 1, columnWidths: [100],
+            cells: [TableGridCell(sourceIndex: 0, row: 0, column: 0, contentKey: child.key.semanticKey)])
+        let surface = ViewerTableSurface(identity: record.documentOwner, record: record, viewportWidth: 100,
+            style: TableStyle(), direction: .leftToRight, displayScale: 1, layoutStore: nestedStore) { _, _ in child }
+        let parent = PreparedProseLayout(key: layout("nested-parent").key, size: surface.bounds.size,
+            blocks: [PreparedProseBlock(fragments: [], bounds: surface.bounds, tableSurface: surface)], retainedBytes: 100)
+        let baseCharge = parent.retainedBytes + cachedKeyBytes
+        let store = TableCellLayoutStore(byteBudget: baseCharge)
+        store.insert(parent)
+        store.pin(parent.key)
+        let shapeKey = PreparedCellShapeKey(contentKey: child.key.semanticKey, widthPixels: child.key.widthPixels,
+            scaleBits: child.key.displayScaleBits, styleDigest: "store-test", atomGeometryDigest: "", imageGeometryDigest: "")
+        let shapedChild = child.withCellShape(PreparedCellShape(key: shapeKey, localLayout: child))
+        nestedStore.insert(shapedChild)
+        XCTAssertGreaterThan(parent.cellShapeCatalogRetainedBytes, 0)
+        store.insert(parent)
+        XCTAssertTrue(store.peek(parent.key) === parent)
+        XCTAssertEqual(store.unmountedRetainedBytes, 0, "Nested growth remains charged to the pinned owner")
+        nestedStore.insert(child)
+        store.insert(parent)
+        store.unpin(parent.key)
+        XCTAssertTrue(store.peek(parent.key) === parent, "Same-object nested shrink must restore admission at the exact budget")
+        XCTAssertEqual(store.unmountedRetainedBytes, baseCharge)
+        store.pin(parent.key)
+        nestedStore.insert(shapedChild)
+        store.insert(parent)
+        store.unpin(parent.key)
+        XCTAssertNil(store.peek(parent.key), "The grown layout must be evicted when its final pin is released")
+        XCTAssertEqual(store.unmountedRetainedBytes, 0)
+    }
+
     func testSurfaceRetainedBytesTracksReplacementEvictionAndPinning() {
         let cellBytes = 100
         let store = TableCellLayoutStore(byteBudget: (cellBytes + cachedKeyBytes) * 3, capacity: 3)
