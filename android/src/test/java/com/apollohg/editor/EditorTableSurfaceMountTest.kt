@@ -613,6 +613,23 @@ internal class EditorTableSurfaceMountTest {
     }
 
     @Test
+    fun `local cell typing shares its checked projection with reconciliation`() = withMountedView(gridDocument) { view, adapter, _ ->
+        tapFirstCell(view)
+        val input = view.activeTextInput
+        input.setSelection(input.text.length)
+        val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+        val projections = view.editorTableSurface.cellProjectionsForTesting
+        assertTrue(connection.commitText(TYPED, 1))
+        assertEquals("Local input must project the edited cell only once",
+            projections + 1, view.editorTableSurface.cellProjectionsForTesting)
+        assertSame(input, view.activeTextInput)
+        assertEquals(GRID_TEXT + TYPED, input.text.toString())
+        assertEquals(GRID_TEXT + TYPED, firstCellText(adapter))
+        assertEquals(input.text.length, input.selectionStart)
+        assertEquals(input.selectionStart, input.selectionEnd)
+    }
+
+    @Test
     fun `matching authorized cell input skips rendering but appearance changes render`() = withMountedView(gridDocument) { view, adapter, _ ->
         tapFirstCell(view)
         val input = view.activeTextInput

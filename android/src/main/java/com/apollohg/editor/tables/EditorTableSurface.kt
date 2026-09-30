@@ -205,6 +205,8 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
     val isCellEditMenuVisible: Boolean get() = cellEditMenu.isVisible
     internal var incrementalRelayoutsForTesting = 0
         private set
+    internal var cellProjectionsForTesting = 0
+        private set
     internal var onTableCellPreparedForTesting: ((Int, String) -> Unit)? = null
     private val cellShapes = PreparedCellShapeCatalog()
     private data class ActiveCell(val tableId: String, val cellIndex: Int)
@@ -1131,6 +1133,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         if (!root.isEditable || !root.hasAuthorizedNativeTableOwner(adapter) ||
             adapter.cachedAtomicRenderDocumentRevision != adapter.baseDocumentRevision ||
             root.lastAppliedDocumentVersion != adapter.baseDocumentRevision.toString()) return null
+        cellProjectionsForTesting += 1
         return EditorTableCellProjection.project(cellIndex, tableId, adapter.tableIndex,
             adapter.baseDocumentRevision.toString(), adapter.positionEpoch ?: return null,
             root.baseFontSize, root.baseTextColor, root.theme, root.resources.displayMetrics.density)
@@ -1420,8 +1423,9 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             invalidateCell()
             return moveActiveCell(selection, range, adapter, cellWasFocused)
         }
-        if (coherent && (range == null || projection(active.tableId, active.cellIndex)?.holds(range) == true)) {
-            reconcileActiveCell(selection, localUpdate = true)
+        val projected = if (coherent && range != null) projection(active.tableId, active.cellIndex) else null
+        if (coherent && (range == null || projected?.holds(range) == true)) {
+            reconcileActiveCell(selection, localUpdate = true, checkedProjection = projected)
             return true
         }
         if (rootCoherent && selection != null && range != null) {
@@ -1485,7 +1489,11 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         return bindCell(target.first, target.second, target.third, selection = holding, focus = focus)
     }
 
-    private fun reconcileActiveCell(selection: JSONObject? = null, localUpdate: Boolean = false) {
+    private fun reconcileActiveCell(
+        selection: JSONObject? = null,
+        localUpdate: Boolean = false,
+        checkedProjection: EditorTableCellProjection.Projection? = null
+    ) {
         val active = activeCell ?: return
         val adapter = host.editorEditText.v2Driver as? EditorV2Adapter ?: return
         if (!localUpdate && coordinator?.positionMap?.binding?.revision !=
@@ -1493,7 +1501,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             retireActiveCell(refocusRoot = activeInput?.hasFocus() == true)
             return
         }
-        val projected = projection(active.tableId, active.cellIndex)
+        val projected = checkedProjection ?: projection(active.tableId, active.cellIndex)
         if (projected == null || projected.target.binding.tableKey != active.tableId || projected.target.binding.cellIndex != active.cellIndex) {
             invalidateCell()
             return
