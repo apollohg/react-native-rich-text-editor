@@ -106,6 +106,8 @@ pub(super) fn capture_document_guard<T: ReadTxn>(
     if txn.store().pending_update().is_some() || txn.store().pending_ds().is_some() {
         return Err(OperationError::engine_not_ready(request_id));
     }
+    #[cfg(test)]
+    crate::yrs_engine::observability::record_mutation_guard_snapshot_scan();
     let snapshot = txn.snapshot();
     let state_clock_work = snapshot_state_clock_work(request_id, &snapshot.state_map)?;
     Ok(DocumentGuard {

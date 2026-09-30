@@ -44,6 +44,7 @@ fn localized_insert_compile_only_skips_every_proved_full_pass() {
     assert_eq!(
         take_full_pass_counts_for_test(),
         FullPassCounts {
+            mutation_guard_snapshot_scans: 2,
             canonical_mark_nodes_visited: 2,
             canonical_projections: 0,
             canonical_serializations: 0,
@@ -64,6 +65,7 @@ fn localized_insert_compile_only_skips_every_proved_full_pass() {
     assert_eq!(
         take_full_pass_counts_for_test(),
         FullPassCounts {
+            mutation_guard_snapshot_scans: 2,
             document_validations: 2,
             canonical_mark_tree_scans: 1,
             canonical_mark_validation_attempts: 1,

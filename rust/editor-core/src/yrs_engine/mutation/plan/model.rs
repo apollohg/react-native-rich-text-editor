@@ -171,7 +171,7 @@ impl YrsMutationPlan {
         })
     }
 
-    pub(crate) fn rebind_to_equivalent_store<T: ReadTxn>(
+    pub(crate) fn rebind_and_preflight_equivalent_store<T: ReadTxn>(
         mut self,
         request_id: u64,
         txn: &T,
@@ -232,6 +232,9 @@ impl YrsMutationPlan {
             }
         }
         self.document_guard = Some(capture_document_guard(request_id, txn)?);
+        // The new guard describes this same uninterrupted read view.
+        let snapshot = self.document_guard.as_ref().map(|guard| &guard.snapshot);
+        preflight_mutation_plan_with_snapshot(request_id, &self, txn, snapshot)?;
         Ok(self)
     }
 

@@ -576,6 +576,7 @@ fn existing_text_command_skips_every_proved_document_wide_compiler_pass() {
                 * TABLE_AVAILABILITY_PLANS_PER_PASS,
             yrs_tree_walks: 0,
             whole_state_encodings: 0,
+            mutation_guard_snapshot_scans: 4,
             cell_content_keys: 0,
             attribute_serializations: 0,
             epoch_block_rebuilds: 0,
@@ -1449,6 +1450,10 @@ fn large_table_native_input_reuses_materialization_costs() {
         assert_eq!(
             passes.canonical_hashes, 1,
             "only the approved over-budget history hash is required for native table edit {edit}"
+        );
+        assert_eq!(
+            passes.mutation_guard_snapshot_scans, 4,
+            "native edit {edit} must retain compiler/candidate guard captures and the live-store recheck without rescanning the unchanged candidate read view: {passes:#?}"
         );
     }
 }

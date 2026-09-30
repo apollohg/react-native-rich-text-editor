@@ -758,11 +758,9 @@ impl YrsDocumentEngine {
                     CompiledCommitPreparationStage::DocumentValidation,
                 )?;
                 let txn = candidate_doc.transact();
-                let candidate_plan = mutation_plan
+                mutation_plan
                     .clone()
-                    .rebind_to_equivalent_store(request_id, &txn)?;
-                preflight_mutation_plan(request_id, &candidate_plan, &txn)?;
-                candidate_plan
+                    .rebind_and_preflight_equivalent_store(request_id, &txn)?
             };
             let history_update = {
                 let mut txn = candidate_doc.transact_mut();

@@ -260,6 +260,15 @@ pub(crate) fn preflight_mutation_plan<T: ReadTxn>(
     plan: &YrsMutationPlan,
     txn: &T,
 ) -> OperationResult<()> {
+    preflight_mutation_plan_with_snapshot(request_id, plan, txn, None)
+}
+
+fn preflight_mutation_plan_with_snapshot<T: ReadTxn>(
+    request_id: u64,
+    plan: &YrsMutationPlan,
+    txn: &T,
+    current_snapshot: Option<&Snapshot>,
+) -> OperationResult<()> {
     let total_work = plan
         .compilation_work
         .checked_add(plan.expected_preflight_work)
@@ -301,7 +310,17 @@ pub(crate) fn preflight_mutation_plan<T: ReadTxn>(
             "Yrs document state changed before mutation preflight",
         ));
     }
-    if txn.snapshot() != guard.snapshot {
+    let captured_snapshot;
+    let current_snapshot = match current_snapshot {
+        Some(snapshot) => snapshot,
+        None => {
+            #[cfg(test)]
+            crate::yrs_engine::observability::record_mutation_guard_snapshot_scan();
+            captured_snapshot = txn.snapshot();
+            &captured_snapshot
+        }
+    };
+    if current_snapshot != &guard.snapshot {
         return Err(document_guard_error(
             request_id,
             plan,
