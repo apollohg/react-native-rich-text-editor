@@ -153,6 +153,7 @@ fn render_cached_block(
     schema: &Schema,
     start_pos: u32,
     context: &mut TableRenderContext,
+    mut rendered_text: Option<&mut crate::render::RenderedTextBuilder>,
 ) -> Result<CachedRenderBlock, CachedRenderError> {
     let expected_end = start_pos
         .checked_add(node.node_size())
@@ -185,11 +186,23 @@ fn render_cached_block(
             position_element_indices.push(index);
         }
     }
+    let mut element_count = 0usize;
+    for element in crate::tables::render::all_elements(&elements) {
+        if !matches!(element, RenderElement::Table { .. }) {
+            if let Some(text) = rendered_text.as_deref_mut() {
+                text.push(element, schema);
+            }
+        }
+        element_count = element_count
+            .checked_add(crate::tables::render::element_shallow_count(element))
+            .ok_or(CachedRenderError::ResourceLimitExceeded)?;
+    }
     Ok(CachedRenderBlock {
         node: Arc::new(node.clone()),
         start_pos,
         node_size: node.node_size(),
         elements: Arc::new(elements),
+        element_count,
         position_element_indices: Arc::new(position_element_indices),
     })
 }
@@ -260,6 +273,13 @@ fn render_localized_table_block(
     };
     let (content_key, elements) =
         crate::tables::render::render_cell_content(cell, schema, start, context)?;
+    let element_count = old
+        .element_count
+        .checked_sub(crate::tables::render::element_count(
+            &table.cells[index].elements,
+        ))
+        .and_then(|count| count.checked_add(crate::tables::render::element_count(&elements)))
+        .ok_or(CachedRenderError::ResourceLimitExceeded)?;
     let mut replacement = (*table.cells[index]).clone();
     replacement.doc_size = cell.node_size();
     replacement.content_key = content_key;
@@ -290,6 +310,7 @@ fn render_localized_table_block(
         node_size: new.node_size(),
         start_pos: old.start_pos,
         elements: Arc::new(elements),
+        element_count,
         position_element_indices: Arc::clone(&old.position_element_indices),
     }))
 }
@@ -362,6 +383,7 @@ fn rebase_cached_block(
         start_pos: new_start,
         node_size: new_node.node_size(),
         elements,
+        element_count: old_block.element_count,
         position_element_indices: Arc::clone(&old_block.position_element_indices),
     })
 }

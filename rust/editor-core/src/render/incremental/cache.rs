@@ -100,18 +100,16 @@ impl CachedRenderBlocks {
             let node = root
                 .child(index)
                 .ok_or(CachedRenderError::CacheInvariantViolation)?;
-            let block = render_cached_block(node, schema, start_pos, &mut context)?;
-            for element in crate::tables::render::all_elements(&block.elements) {
-                if !matches!(element, RenderElement::Table { .. }) {
-                    if let Some(text) = rendered_text.as_deref_mut() {
-                        text.push(element, schema);
-                    }
-                }
-                let count = crate::tables::render::element_shallow_count(element);
-                element_count = element_count
-                    .checked_add(count)
-                    .ok_or(CachedRenderError::ResourceLimitExceeded)?;
-            }
+            let block = render_cached_block(
+                node,
+                schema,
+                start_pos,
+                &mut context,
+                rendered_text.as_deref_mut(),
+            )?;
+            element_count = element_count
+                .checked_add(block.element_count)
+                .ok_or(CachedRenderError::ResourceLimitExceeded)?;
             if element_count > max_cached_elements(limits)? {
                 return Err(CachedRenderError::ResourceLimitExceeded);
             }
@@ -365,6 +363,7 @@ impl CachedRenderBlocks {
             )?,
             None => None,
         };
+        let preserves_table_attributes = localized_table.is_some();
         if localized_table.is_none() {
             for block in &self.blocks {
                 context.retain_cells(
@@ -403,7 +402,7 @@ impl CachedRenderBlocks {
                 return Err(CachedRenderError::CacheInvariantViolation);
             }
             element_count = element_count
-                .checked_add(crate::tables::render::element_count(&block.elements))
+                .checked_add(block.element_count)
                 .ok_or(CachedRenderError::ResourceLimitExceeded)?;
             if element_count > max_elements {
                 return Err(CachedRenderError::ResourceLimitExceeded);
@@ -418,10 +417,11 @@ impl CachedRenderBlocks {
                 schema,
                 old_target_block.start_pos,
                 &mut context,
+                None,
             )?,
         };
         element_count = element_count
-            .checked_add(crate::tables::render::element_count(&target_block.elements))
+            .checked_add(target_block.element_count)
             .ok_or(CachedRenderError::ResourceLimitExceeded)?;
         check_forced_localized_render_resource_failure()?;
         if element_count > max_elements {
@@ -456,7 +456,7 @@ impl CachedRenderBlocks {
             let block = rebase_cached_block(old_block, new_node, new_start)
                 .ok_or(CachedRenderError::CacheInvariantViolation)?;
             element_count = element_count
-                .checked_add(crate::tables::render::element_count(&block.elements))
+                .checked_add(block.element_count)
                 .ok_or(CachedRenderError::ResourceLimitExceeded)?;
             if element_count > max_elements {
                 return Err(CachedRenderError::ResourceLimitExceeded);
@@ -468,7 +468,10 @@ impl CachedRenderBlocks {
         if blocks.len() != new_root.child_count() {
             return Err(CachedRenderError::CacheInvariantViolation);
         }
-        context.retain_referenced_attributes(blocks.iter().map(|block| block.elements.as_slice()));
+        if !preserves_table_attributes {
+            context
+                .retain_referenced_attributes(blocks.iter().map(|block| block.elements.as_slice()));
+        }
         let cache = Self {
             blocks,
             document_root_seal: new_root.clone(),
@@ -577,16 +580,16 @@ impl CachedRenderBlocks {
 
         let mut element_count = blocks.iter().try_fold(0usize, |total, block| {
             total
-                .checked_add(crate::tables::render::element_count(&block.elements))
+                .checked_add(block.element_count)
                 .ok_or(CachedRenderError::ResourceLimitExceeded)
         })?;
         for (index, start_pos) in starts.iter().enumerate().take(new_suffix).skip(prefix) {
             let node = new_root
                 .child(index)
                 .ok_or(CachedRenderError::CacheInvariantViolation)?;
-            let block = render_cached_block(node, schema, *start_pos, &mut context)?;
+            let block = render_cached_block(node, schema, *start_pos, &mut context, None)?;
             element_count = element_count
-                .checked_add(crate::tables::render::element_count(&block.elements))
+                .checked_add(block.element_count)
                 .ok_or(CachedRenderError::ResourceLimitExceeded)?;
             if element_count > max_cached_elements(limits)? {
                 return Err(CachedRenderError::ResourceLimitExceeded);
@@ -609,7 +612,7 @@ impl CachedRenderBlocks {
                 return Self::full_transition(new_document, schema, limits);
             };
             element_count = element_count
-                .checked_add(crate::tables::render::element_count(&block.elements))
+                .checked_add(block.element_count)
                 .ok_or(CachedRenderError::ResourceLimitExceeded)?;
             if element_count > max_cached_elements(limits)? {
                 return Err(CachedRenderError::ResourceLimitExceeded);

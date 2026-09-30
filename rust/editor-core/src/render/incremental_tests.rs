@@ -1132,5 +1132,120 @@ fn localized_textblock_nested_table_changes_rebuild_projection() {
             fresh.materialize(),
             "delta={delta}: nested content matches fresh rendering"
         );
+        for block in &transition.cache.blocks {
+            assert_eq!(
+                block.element_count,
+                crate::tables::render::element_count(&block.elements)
+            );
+        }
+    }
+}
+
+#[test]
+fn localized_table_element_counts_follow_split_merge_and_resource_boundaries() {
+    const TABLE_INDEX: usize = 1;
+    const INLINE_OFFSET: u32 = 3;
+    const RENDER_ELEMENTS_PER_NODE: usize = 3;
+    let schema = crate::schema::presets::prosemirror_table_schema();
+    let limits = ResourceLimits::default();
+    let table_document = crate::serialize::from_prosemirror_json(
+        &crate::test_support::large_table_fixture::plain_table_document(3, 3),
+        &schema,
+        crate::serialize::UnknownTypeMode::Error,
+    )
+    .unwrap();
+    let mut document = doc(vec![
+        paragraph(vec![text("before")]),
+        table_document.root().child(0).unwrap().clone(),
+        paragraph(vec![text("after")]),
+    ]);
+    let mut cache = CachedRenderBlocks::build(&document, &schema, &limits).unwrap();
+    let mut records = Vec::new();
+    cache.visit_table_records(&mut records);
+    let (table_pos, table) = records[0];
+    let starts = crate::tables::render::absolute_cell_starts(table, table_pos);
+    let position = starts[starts.len() / 2] + INLINE_OFFSET;
+    for iteration in 0..4 {
+        let inserting = iteration % 2 == 0;
+        let step = if inserting {
+            crate::transform::Step::InsertText {
+                pos: position,
+                text: "x".into(),
+                marks: vec![Mark::new("strong".into(), HashMap::new())],
+            }
+        } else {
+            crate::transform::Step::DeleteRange {
+                from: position,
+                to: position + 1,
+            }
+        };
+        let (next, _) = crate::transform::apply_step(&document, &step, &schema).unwrap();
+        let fresh = CachedRenderBlocks::build(&next, &schema, &limits).unwrap();
+        let required = fresh
+            .blocks
+            .iter()
+            .map(|block| crate::tables::render::element_count(&block.elements))
+            .sum::<usize>();
+        let exact = ResourceLimits {
+            max_document_nodes: fresh.blocks.len(),
+            max_table_grid_slots: required - fresh.blocks.len() * RENDER_ELEMENTS_PER_NODE,
+            ..limits.clone()
+        };
+        let one_under = ResourceLimits {
+            max_table_grid_slots: exact.max_table_grid_slots - 1,
+            ..exact.clone()
+        };
+        let delta = if inserting { 1 } else { -1 };
+        assert!(
+            matches!(
+                cache.transition_localized_textblock(
+                    &document,
+                    &next,
+                    &schema,
+                    TABLE_INDEX,
+                    delta,
+                    &one_under
+                ),
+                Err(super::CachedRenderError::ResourceLimitExceeded)
+            ),
+            "iteration={iteration}: one fewer allowed element must reject the localized edit"
+        );
+        let transition = cache
+            .transition_localized_textblock(&document, &next, &schema, TABLE_INDEX, delta, &exact)
+            .unwrap();
+        assert_eq!(
+            transition.cache.materialize(),
+            fresh.materialize(),
+            "iteration={iteration}"
+        );
+        assert_eq!(transition.cache.table_attributes, fresh.table_attributes);
+        for block in cache.blocks.iter().chain(&transition.cache.blocks) {
+            assert_eq!(block.element_count, crate::tables::render::element_count(&block.elements),
+                "iteration={iteration}: old and new snapshots retain exact counts, including rebased siblings");
+        }
+        assert_eq!(
+            transition.cache.blocks[TABLE_INDEX].element_count as isize
+                - cache.blocks[TABLE_INDEX].element_count as isize,
+            if inserting { 2 } else { -2 },
+            "Marked insertion splits a text run; deletion merges it again"
+        );
+        document = next;
+        cache = transition.cache;
+    }
+    let removed = replace_top_level(&document, TABLE_INDEX, paragraph(vec![text("replacement")]));
+    let transition = cache
+        .transition(&document, &removed, &schema, &[TABLE_INDEX], &limits)
+        .unwrap();
+    let fresh = CachedRenderBlocks::build(&removed, &schema, &limits).unwrap();
+    assert_eq!(transition.cache.materialize(), fresh.materialize());
+    assert!(
+        transition.cache.table_attributes.is_empty(),
+        "Structural fallback must prune attribute keys retained by preceding local edits"
+    );
+    for block in &transition.cache.blocks {
+        assert_eq!(
+            block.element_count,
+            crate::tables::render::element_count(&block.elements)
+        );
     }
 }

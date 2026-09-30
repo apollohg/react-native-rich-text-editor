@@ -337,6 +337,7 @@ struct CachedRenderBlock {
     start_pos: u32,
     node_size: u32,
     elements: Arc<Vec<RenderElement>>,
+    element_count: usize,
     position_element_indices: Arc<Vec<usize>>,
 }
 
@@ -628,7 +629,9 @@ fn generate_block_inner(
     in_cell: bool,
 ) -> Result<(), CachedRenderError> {
     let spec = schema.node(node.node_type());
-    if !context.source_only && spec.is_some_and(|spec| spec.table_role == Some(crate::tables::TableRole::Table)) {
+    if !context.source_only
+        && spec.is_some_and(|spec| spec.table_role == Some(crate::tables::TableRole::Table))
+    {
         let doc_offset = *pos;
         let absolute_pos = context
             .coordinate_origin
