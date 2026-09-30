@@ -1,7 +1,7 @@
 use serde_json::{json, Map, Value};
 
 use crate::model::{Document, Node};
-use crate::schema::Schema;
+use crate::schema::{NodeSpec, Schema};
 
 /// Serialize a document to ProseMirror JSON format using the given schema.
 ///
@@ -71,8 +71,9 @@ fn node_to_json_shallow(node: &Node, schema: &Schema) -> Value {
             .map(crate::boundary::clone_json_value_stack_safe)
             .unwrap_or(Value::Null);
     }
+    let spec = schema.node(node.node_type());
     let mut obj = Map::new();
-    obj.insert("type".to_string(), json!(projected_node_type(node, schema)));
+    obj.insert("type".to_string(), json!(projected_node_type(node, spec)));
 
     if node.is_text() {
         obj.insert("text".to_string(), json!(node.text_str().unwrap_or("")));
@@ -82,7 +83,7 @@ fn node_to_json_shallow(node: &Node, schema: &Schema) -> Value {
             obj.insert("marks".to_string(), Value::Array(marks_json));
         }
     } else {
-        let attrs_json = build_attrs_json(node, schema);
+        let attrs_json = build_attrs_json(node, spec);
         if !attrs_json.is_empty() {
             obj.insert("attrs".to_string(), Value::Object(attrs_json));
         }
@@ -91,10 +92,8 @@ fn node_to_json_shallow(node: &Node, schema: &Schema) -> Value {
     Value::Object(obj)
 }
 
-fn projected_node_type<'a>(node: &'a Node, schema: &'a Schema) -> &'a str {
-    schema
-        .node(node.node_type())
-        .and_then(|spec| spec.json_projection.as_ref())
+fn projected_node_type<'a>(node: &'a Node, spec: Option<&'a NodeSpec>) -> &'a str {
+    spec.and_then(|spec| spec.json_projection.as_ref())
         .map_or(node.node_type(), |projection| projection.node_type.as_str())
 }
 
@@ -127,9 +126,8 @@ fn projected_marks(node: &Node) -> Vec<Value> {
 
 /// Build the attrs JSON object for a node, omitting attributes whose values
 /// match the schema-defined defaults.
-fn build_attrs_json(node: &Node, schema: &Schema) -> Map<String, Value> {
+fn build_attrs_json(node: &Node, spec: Option<&NodeSpec>) -> Map<String, Value> {
     let mut attrs_map = Map::new();
-    let spec = schema.node(node.node_type());
 
     for (key, value) in node.attrs() {
         let is_default = spec
@@ -175,8 +173,9 @@ pub(crate) fn write_node_json<'a>(
                 });
                 return;
             }
+            let spec = schema.node(node.node_type());
             frames.push(Frame::Raw(b"}"));
-            frames.push(Frame::String(projected_node_type(node, schema)));
+            frames.push(Frame::String(projected_node_type(node, spec)));
             frames.push(Frame::Raw(b"\"type\":"));
             if node.is_text() {
                 frames.push(Frame::Raw(b","));
@@ -206,7 +205,7 @@ pub(crate) fn write_node_json<'a>(
                 frames.push(Frame::Raw(b"\"content\":["));
             }
             if !node.is_text() {
-                let attrs = build_attrs_json(node, schema);
+                let attrs = build_attrs_json(node, spec);
                 if !attrs.is_empty() {
                     frames.push(Frame::Raw(b","));
                     frames.push(Frame::OwnedValue(StackSafeJsonValue::new(Value::Object(

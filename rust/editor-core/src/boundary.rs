@@ -290,8 +290,9 @@ pub(crate) fn json_values_equal_stack_safe(
     left: &serde_json::Value,
     right: &serde_json::Value,
 ) -> bool {
-    let mut pending = vec![(left, right)];
-    while let Some((left, right)) = pending.pop() {
+    let mut pending = Vec::new();
+    let mut current = Some((left, right));
+    while let Some((left, right)) = current {
         match (left, right) {
             (serde_json::Value::Null, serde_json::Value::Null) => {}
             (serde_json::Value::Bool(left), serde_json::Value::Bool(right)) if left == right => {}
@@ -318,6 +319,7 @@ pub(crate) fn json_values_equal_stack_safe(
             }
             _ => return false,
         }
+        current = pending.pop();
     }
     true
 }
