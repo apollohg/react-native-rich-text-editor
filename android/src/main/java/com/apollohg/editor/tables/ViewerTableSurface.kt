@@ -192,17 +192,23 @@ internal class ViewerTableSurface private constructor(
                        prepareCell: (TableGridCell, Float) -> PreparedProseLayout): ViewerTableSurface {
         var heightsUnchanged = true
         var membershipUnchanged = true
-        val updated = cells.map { cell ->
-            val content = contents[cell.sourceIndex] ?: return@map cell
+        fun replacing(cell: PreparedViewerTableCell): PreparedViewerTableCell {
+            val content = contents[cell.sourceIndex] ?: return cell
             val source = sourceTable.cells[cell.sourceIndex]
             heightsUnchanged = heightsUnchanged && content.heightPx == cell.contentHeightPx
             val width = content.widthPx.toFloat()
             val gridCell = TableGridCell.from(source)
-            PreparedViewerTableCell(cell.sourceIndex, cell.row, cell.column, cell.rowspan, cell.colspan,
+            return PreparedViewerTableCell(cell.sourceIndex, cell.row, cell.column, cell.rowspan, cell.colspan,
                 cell.contentOrigin, content, source.header, source.attrsKey, layoutStore) { prepareCell(gridCell, width) }.also {
                 membershipUnchanged = membershipUnchanged && cell.hasNestedTables == it.hasNestedTables && cell.hasAtoms == it.hasAtoms
             }
         }
+        val updated = if (cellIndex.bySourceIndex.size == cells.size) {
+            val changed = contents.keys.mapNotNull { cellIndex.bySourceIndex[it] }.sorted()
+            cells.toMutableList().also { result ->
+                changed.forEach { index -> result[index] = replacing(cells[index]) }
+            }
+        } else cells.map(::replacing)
         val previousSource = this.sourceTable
         // The caller certifies unchanged cell positions, spans, and presentation inputs.
         val structureUnchanged = previousSource != null && layout.failure == null &&

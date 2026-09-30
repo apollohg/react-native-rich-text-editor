@@ -91,10 +91,17 @@ class ViewerTableTest {
                 val changed = requireNotNull(fresh.cell(0)).content
                 val table = requireNotNull(fresh.sourceTable)
                 var gridConversions = 0
-                val incremental = base.replacingCells(mapOf(0 to changed),
+                var changeReads = 0
+                val values = mapOf(0 to changed)
+                val changes = object : Map<Int, PreparedProseLayout> by values {
+                    override fun get(key: Int): PreparedProseLayout? { changeReads++; return values[key] }
+                }
+                val incremental = base.replacingCells(changes,
                     { gridConversions++; TableGridRecord.from(table, base.identity) }, table, fresh.sourceAttributes) { cell, _ ->
                     requireNotNull(fresh.cell(cell.sourceIndex)).content
                 }
+                assertEquals("$direction: unchanged cells must not probe the changed-content map",
+                    changes.size, changeReads)
                 assertEquals("$direction: full grid conversion is only needed when row geometry changes",
                     if (changed.heightPx == requireNotNull(base.cell(0)).contentHeightPx) 0 else 1, gridConversions)
                 assertEquals("$direction: every rectangle and row offset must match fresh layout", fresh.layout, incremental.layout)
@@ -137,6 +144,54 @@ class ViewerTableTest {
                 assertEquals("$direction: $failure must force full failure handling", 1, conversions)
                 assertEquals(failure, fallback.layout.typedFailure)
                 assertTrue(fallback.layout.rectangles.isEmpty())
+            }
+        }
+    }
+
+    @Test fun indexedReplacementPreservesCellOrderAndDuplicateSourceFallback() {
+        val source = """{"type":"doc","content":[{"type":"table","content":[
+            {"type":"table_row","content":[${tableCell("first")},${tableCell("second")}]}
+        ]}]}"""
+        val prepared = requireNotNull(prepare(source).blocks.single().tableSurface)
+        val table = requireNotNull(prepared.sourceTable)
+        val firstIndex = prepared.cells.first().sourceIndex
+        val lastIndex = prepared.cells.last().sourceIndex
+        for (duplicate in listOf(false, true)) {
+            for (alias in listOf(false, true)) {
+                for (mixedStores in listOf(false, true)) {
+                    val store = TableCellLayoutStore(capacity = 1)
+                    val otherStore = if (mixedStores) TableCellLayoutStore(capacity = 1) else store
+                    val cells = prepared.cells.mapIndexed { index, cell ->
+                        val position = TableGridCell.from(table.cells[if (duplicate) firstIndex else cell.sourceIndex])
+                        cell.relocated(position, if (index == 0) store else otherStore)
+                    }
+                    val surface = ViewerTableSurface(prepared.identity, prepared.hostViewportWidth,
+                        prepared.style, prepared.isRightToLeft, prepared.layout, cells, null,
+                        table, prepared.sourceAttributes, displayScale = prepared.displayScale)
+                    val first = prepared.cells.first().content.copy(cellPreparation = null)
+                    val last = prepared.cells.last().content.copy(
+                        key = if (alias) first.key else prepared.cells.last().contentKey,
+                        cellPreparation = null)
+                    val changes = linkedMapOf(lastIndex to last, firstIndex to first, Int.MAX_VALUE to last)
+                    val updated = surface.replacingCells(changes,
+                        { TableGridRecord.from(table, surface.identity) }, table, surface.sourceAttributes) { _, _ ->
+                        error("Replacement must not refill an existing layout")
+                    }
+                    val expected = if (duplicate) first else last
+                    val context = "duplicate=$duplicate alias=$alias mixedStores=$mixedStores"
+                    assertSame("Cell-order insertion wins over change-map order: $context",
+                        expected, store.residentLayouts.single())
+                    assertTrue("Changed cells retain the original primary-store behavior: $context",
+                        updated.cells.all { it.layoutStore === store })
+                    assertEquals("Unknown changes do not create cells: $context", cells.size, updated.cells.size)
+                    if (duplicate) {
+                        assertTrue("Every duplicate source occurrence is replaced: $context",
+                            updated.cells.all { it.contentKey == first.key && it.cachedContent === first })
+                    } else {
+                        assertSame("The last cell owns the last replacement: $context", last, updated.cells.last().cachedContent)
+                        if (!alias) assertNull("Capacity eviction preserves cell order: $context", updated.cells.first().cachedContent)
+                    }
+                }
             }
         }
     }
