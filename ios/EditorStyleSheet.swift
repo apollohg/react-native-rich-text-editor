@@ -503,11 +503,87 @@ final class EditorMentionRenderedBox: NSObject {
     }
 }
 
+extension UIView {
+    var editorVisibleRectInWindow: CGRect? {
+        guard let window, !isHidden, alpha > 0 else { return nil }
+        var visible = convert(window.bounds, from: window).intersection(bounds)
+        var ancestor = superview
+        while let view = ancestor, view !== window {
+            guard !view.isHidden, view.alpha > 0 else { return nil }
+            if view.clipsToBounds {
+                visible = visible.intersection(convert(view.bounds, from: view))
+            }
+            ancestor = view.superview
+        }
+        guard visible.origin.x.isFinite, visible.origin.y.isFinite,
+              visible.size.width.isFinite, visible.size.height.isFinite,
+              !visible.isNull, !visible.isEmpty else { return nil }
+        return visible
+    }
+}
+
 final class EditorStyleBoxView: UIView {
     var box: EditorStyleBox? { didSet { setNeedsDisplay() } }
+    var documentBounds: CGRect? {
+        didSet {
+            updateDocumentViewport()
+            if oldValue != documentBounds { setNeedsDisplay() }
+        }
+    }
+    private var observedAncestorIDs: [ObjectIdentifier] = []
+    private var viewportObservations: [NSKeyValueObservation] = []
+
+    override func didMoveToSuperview() {
+        super.didMoveToSuperview()
+        updateDocumentViewport()
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        updateDocumentViewport()
+    }
+
+    func updateDocumentViewport() {
+        refreshViewportObservations()
+        guard let documentBounds else { return }
+        let visible = superview?.editorVisibleRectInWindow?.intersection(documentBounds)
+        let nextFrame = visible.flatMap { $0.isNull || $0.isEmpty ? nil : $0 } ?? .zero
+        if frame != nextFrame {
+            frame = nextFrame
+            setNeedsDisplay()
+        }
+    }
+
+    private func refreshViewportObservations() {
+        var ancestors: [UIView] = []
+        if documentBounds != nil, window != nil {
+            var current = superview
+            while let view = current {
+                ancestors.append(view)
+                current = view.superview
+            }
+        }
+        let nextIDs = ancestors.map(ObjectIdentifier.init)
+        guard nextIDs != observedAncestorIDs else { return }
+        viewportObservations.removeAll()
+        observedAncestorIDs = nextIDs
+        viewportObservations = ancestors.flatMap { view in
+            [
+                view.observe(\.bounds, options: [.new]) { [weak self] _, _ in self?.updateDocumentViewport() },
+                view.observe(\.frame, options: [.new]) { [weak self] _, _ in self?.updateDocumentViewport() },
+                view.observe(\.center, options: [.new]) { [weak self] _, _ in self?.updateDocumentViewport() },
+                view.observe(\.transform, options: [.new]) { [weak self] _, _ in self?.updateDocumentViewport() },
+                view.observe(\.clipsToBounds, options: [.new]) { [weak self] _, _ in self?.updateDocumentViewport() },
+                view.observe(\.isHidden, options: [.new]) { [weak self] _, _ in self?.updateDocumentViewport() },
+                view.observe(\.alpha, options: [.new]) { [weak self] _, _ in self?.updateDocumentViewport() }
+            ]
+        }
+    }
+
     override func draw(_ rect: CGRect) {
         guard let context = UIGraphicsGetCurrentContext() else { return }
-        box?.draw(in: bounds, context: context)
+        let drawingBounds = documentBounds?.offsetBy(dx: -frame.minX, dy: -frame.minY) ?? bounds
+        box?.draw(in: drawingBounds, context: context)
     }
 }
 

@@ -846,20 +846,7 @@ public final class PreparedProseDrawingView: UIView {
     }
 
     private func configuredVisibleRect() -> CGRect? {
-        guard let window, !isHidden, alpha > 0 else { return nil }
-        var visible = convert(window.bounds, from: window).intersection(bounds)
-        var ancestor = superview
-        while let view = ancestor, view !== window {
-            guard !view.isHidden, view.alpha > 0 else { return nil }
-            if view.clipsToBounds {
-                visible = visible.intersection(convert(view.bounds, from: view))
-            }
-            ancestor = view.superview
-        }
-        guard visible.origin.x.isFinite, visible.origin.y.isFinite,
-              visible.size.width.isFinite, visible.size.height.isFinite,
-              !visible.isNull, !visible.isEmpty else { return nil }
-        return visible
+        editorVisibleRectInWindow
     }
 
     private var ancestorScrollViews: [UIScrollView] {

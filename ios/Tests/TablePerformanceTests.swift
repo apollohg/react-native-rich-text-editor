@@ -754,6 +754,22 @@ final class TablePerformanceTests: XCTestCase {
             "All inserted empty rows share one shape and keep separate bindings")
     }
 
+    func testLargeTableStyleBackgroundHasViewportSizedBacking() throws {
+        clock = TableTestFrameClock()
+        defer { clock.close(); clock = nil }
+        let host = try EditorHost()
+        defer { host.close() }
+        try host.load(Fixture(rows: 1_000, columns: 20, rich: true).source())
+        let background = host.view.textView.styleContentView
+        XCTAssertFalse(background.isOpaque, "A transparent or rounded background must clear its backing")
+        _ = try clock.present(host.drawing) {}
+        XCTAssertGreaterThan(background.bounds.height, 0)
+        XCTAssertGreaterThan(background.bounds.width, 0)
+        XCTAssertLessThanOrEqual(background.bounds.height, host.window.bounds.height,
+                                 "The stylesheet background must not allocate a document-height bitmap")
+        XCTAssertLessThanOrEqual(background.bounds.width, host.window.bounds.width)
+    }
+
     func testLargeTableColdLayout() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["PREPARED_PROSE_DEVICE_BENCHMARK"] == "1",
                           "Run through NativeEditorPreparedProsePerformance.")

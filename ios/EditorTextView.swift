@@ -73,6 +73,7 @@ class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegat
     /// Optional render theme supplied by React.
     lazy var styleContentView: EditorStyleBoxView = {
         let view = EditorStyleBoxView()
+        view.isOpaque = false
         view.isUserInteractionEnabled = false
         view.backgroundColor = .clear
         insertSubview(view, at: 0)
@@ -404,7 +405,7 @@ class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegat
     override func layoutSubviews() {
         super.layoutSubviews()
         updateKeyboardInset()
-        styleContentView.frame = CGRect(x: 0, y: 0, width: bounds.width, height: max(bounds.height, contentSize.height))
+        styleContentView.documentBounds = CGRect(x: 0, y: 0, width: bounds.width, height: max(bounds.height, contentSize.height))
         let placeholderX = textContainerInset.left + textContainer.lineFragmentPadding
         let placeholderY = textContainerInset.top
         let placeholderWidth = max(

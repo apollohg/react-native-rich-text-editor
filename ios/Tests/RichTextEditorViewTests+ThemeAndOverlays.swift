@@ -367,3 +367,101 @@ extension RichTextEditorViewTests {
         XCTAssertEqual(view.textView.selectedRange, selection)
     }
 }
+
+
+extension RichTextEditorViewTests {
+    func testDocumentStyleBackgroundStaysBoundedAndPreservesScrolledPixels() throws {
+        let viewport = CGSize(width: 320, height: 220)
+        let documentHeight: CGFloat = 142_016
+        let window = makeTestWindow(frame: CGRect(origin: .zero, size: viewport))
+        let scroll = UIScrollView(frame: window.bounds)
+        scroll.contentInsetAdjustmentBehavior = .never
+        scroll.contentSize = CGSize(width: viewport.width, height: documentHeight)
+        window.addSubview(scroll)
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        let background = EditorStyleBoxView()
+        background.backgroundColor = .clear
+        background.box = EditorStyleBox([
+            "backgroundColor": "#fafafaff", "borderWidth": 4, "borderColor": "#123456ff",
+            "borderTopLeftRadius": 24, "borderBottomRightRadius": 32
+        ])
+        scroll.addSubview(background)
+        let document = CGRect(origin: .zero, size: scroll.contentSize)
+        background.documentBounds = document
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.preferredRange = .standard
+        for offset in [CGFloat.zero, documentHeight / 2, documentHeight - viewport.height] {
+            scroll.contentOffset = CGPoint(x: 0, y: offset)
+            XCTAssertEqual(background.frame, CGRect(origin: scroll.contentOffset, size: viewport))
+            XCTAssertEqual(background.bounds.size, viewport)
+            let renderer = UIGraphicsImageRenderer(size: viewport, format: format)
+            let actual = renderer.image { _ in background.draw(background.bounds) }
+            let attachment = XCTAttachment(image: actual)
+            attachment.name = "Document background at offset \(Int(offset))"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            let expected = renderer.image { context in
+                background.box?.draw(in: document.offsetBy(dx: 0, dy: -offset), context: context.cgContext)
+            }
+            XCTAssertEqual(try XCTUnwrap(actual.cgImage?.dataProvider?.data) as Data,
+                           try XCTUnwrap(expected.cgImage?.dataProvider?.data) as Data,
+                           "Background, borders and corners remain anchored at document offset \(offset)")
+        }
+    }
+
+    func testAutoGrowStyleBackgroundTracksAncestorViewportAndVisibility() {
+        let viewport = CGSize(width: 320, height: 220)
+        let documentHeight: CGFloat = 142_016
+        let window = makeTestWindow(frame: CGRect(origin: .zero, size: viewport))
+        let scroll = UIScrollView(frame: window.bounds)
+        scroll.contentInsetAdjustmentBehavior = .never
+        scroll.contentSize = CGSize(width: viewport.width, height: documentHeight)
+        let content = UIView(frame: CGRect(origin: .zero, size: scroll.contentSize))
+        let background = EditorStyleBoxView()
+        content.addSubview(background)
+        background.documentBounds = content.bounds
+        XCTAssertEqual(background.bounds.size, .zero, "Detached content must have no backing")
+        scroll.addSubview(content)
+        window.addSubview(scroll)
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        for offset in [CGFloat.zero, documentHeight / 2, documentHeight - viewport.height] {
+            scroll.contentOffset = CGPoint(x: 0, y: offset)
+            XCTAssertEqual(background.frame, CGRect(origin: scroll.contentOffset, size: viewport))
+        }
+        scroll.contentOffset = .zero
+        let originalCenter = content.center
+        content.center.x += viewport.width / 2
+        XCTAssertEqual(background.bounds.width, viewport.width / 2, "Moving an ancestor clips the backing immediately")
+        content.center = originalCenter
+        content.transform = CGAffineTransform(scaleX: 2, y: 2)
+        XCTAssertEqual(background.bounds.width, viewport.width / 2, "Ancestor transforms refresh the visible geometry")
+        content.transform = .identity
+        XCTAssertEqual(background.bounds.size, viewport)
+        content.isHidden = true
+        XCTAssertEqual(background.bounds.size, .zero)
+        content.isHidden = false
+        XCTAssertEqual(background.bounds.size, viewport, "Unhiding must restore the backing without a scroll")
+        content.alpha = 0
+        XCTAssertEqual(background.bounds.size, .zero)
+        content.alpha = 1
+        XCTAssertEqual(background.bounds.size, viewport)
+        scroll.frame.size.width /= 2
+        XCTAssertEqual(background.bounds.width, scroll.bounds.width)
+        scroll.clipsToBounds = false
+        XCTAssertEqual(background.bounds.width, viewport.width, "Removing ancestor clipping reveals the full window")
+        scroll.clipsToBounds = true
+        XCTAssertEqual(background.bounds.width, scroll.bounds.width)
+        scroll.frame.size.width = viewport.width
+        scroll.bounds.size.height /= 2
+        XCTAssertEqual(background.bounds.height, scroll.bounds.height, "Ancestor resizing must bound the backing")
+        content.removeFromSuperview()
+        XCTAssertEqual(background.bounds.size, .zero)
+        scroll.addSubview(content)
+        XCTAssertEqual(background.bounds.height, scroll.bounds.height, "Reattachment restores observations")
+        scroll.contentOffset = .zero
+        XCTAssertEqual(background.frame.origin, .zero)
+    }
+}
