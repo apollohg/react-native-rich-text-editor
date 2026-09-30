@@ -488,7 +488,7 @@ struct EditorTheme {
                 cellPadding: EditorTheme.cgFloat(table["cellPadding"]) ?? 8,
                 borderWidth: EditorTheme.cgFloat(table["borderWidth"]) ?? 1,
                 borderColor: EditorTheme.color(from: table["borderColor"]) ?? EditorTheme.color(from: "#D1D5DB")!,
-                headerBackgroundColor: EditorTheme.color(from: table["headerBackgroundColor"]) ?? EditorTheme.color(from: "#F3F4F6")!,
+                headerBackgroundColor: EditorTheme.color(from: table["headerBackgroundColor"]) ?? TableStyle.defaultHeaderBackgroundColor,
                 selectionColor: EditorTheme.color(from: table["selectionColor"]) ?? EditorTheme.color(from: "#3B82F633")!,
                 resizeHandleColor: EditorTheme.color(from: table["resizeHandleColor"]) ?? EditorTheme.color(from: "#3B82F6")!
             )

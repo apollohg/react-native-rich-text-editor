@@ -1,3 +1,4 @@
+import CoreText
 import Darwin
 import QuartzCore
 import UIKit
@@ -150,8 +151,10 @@ final class TablePerformanceTests: XCTestCase {
         let surface: EditorTableSurface
         let drawing: PreparedProseDrawingView
 
-        init(id: UInt64? = nil, viewport: CGSize = Benchmark.viewport) throws {
+        init(id: UInt64? = nil, viewport: CGSize = Benchmark.viewport,
+             appearance: UIUserInterfaceStyle = .unspecified) throws {
             window = makeTestWindow(frame: CGRect(origin: .zero, size: viewport))
+            window.overrideUserInterfaceStyle = appearance
             view = RichTextEditorView(frame: window.bounds)
             self.id = id ?? makeV2Editor(configJson: Benchmark.schema)
             adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: self.id))
@@ -369,6 +372,95 @@ final class TablePerformanceTests: XCTestCase {
         try scroll(fixture, source: fixture.source(), horizontal: true, viewport: viewport)
         XCTAssertFalse(samples.isEmpty)
         XCTAssertTrue(samples.allSatisfy { $0.samplesMs.allSatisfy { $0.isFinite && $0 >= 0 } })
+    }
+
+    func testDefaultHeaderKeepsTypedTextReadableAcrossAppearances() throws {
+        let minimumTextContrast: CGFloat = 4.5
+        let proMaxViewport = CGSize(width: 440, height: 956)
+        func luminance(_ color: UIColor, traits: UITraitCollection) -> CGFloat {
+            var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+            XCTAssertTrue(color.resolvedColor(with: traits).getRed(&red, green: &green, blue: &blue, alpha: &alpha))
+            func linear(_ value: CGFloat) -> CGFloat {
+                value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
+            }
+            return 0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue)
+        }
+        let host = try EditorHost(viewport: proMaxViewport, appearance: .light)
+        defer { host.close() }
+        try host.load(Fixture(rows: 3, columns: 3, rich: false).source())
+        let input = try host.bind(0)
+        for appearance in [UIUserInterfaceStyle.light, .dark, .light] {
+            host.window.overrideUserInterfaceStyle = appearance
+            host.view.setNeedsLayout()
+            host.view.layoutIfNeeded()
+            let insertion = input.textStorage.length
+            input.insertText(" typed header")
+            host.view.layoutIfNeeded()
+            CATransaction.flush()
+            let table = try host.table()
+            let cell = try XCTUnwrap(table.cell(sourceIndex: 0))
+            XCTAssertTrue(cell.isHeader)
+            XCTAssertEqual(input.traitCollection.userInterfaceStyle, appearance)
+            let line = try XCTUnwrap(cell.content.blocks.flatMap(\.fragments).compactMap(\.line).first)
+            let run = try XCTUnwrap((CTLineGetGlyphRuns(line) as? [CTRun])?.first)
+            let attributes = try XCTUnwrap(CTRunGetAttributes(run) as? [NSAttributedString.Key: Any])
+            let preparedColor = try unwrapCoreTextAttribute(
+                XCTUnwrap(attributes[kCTForegroundColorAttributeName as NSAttributedString.Key]), as: CGColor.self)
+            XCTAssertEqual(UIColor(cgColor: preparedColor), UIColor.label.resolvedColor(with: input.traitCollection))
+            let background = luminance(table.style.headerBackgroundColor, traits: input.traitCollection)
+            for index in [0, insertion] {
+                let foreground = try XCTUnwrap(input.textStorage.attribute(.foregroundColor, at: index, effectiveRange: nil) as? UIColor)
+                let text = luminance(foreground, traits: input.traitCollection)
+                let contrast = (max(text, background) + 0.05) / (min(text, background) + 0.05)
+                XCTAssertGreaterThanOrEqual(contrast, minimumTextContrast,
+                    "appearance=\(appearance.rawValue), character=\(index): bound header text must contrast with its painted background")
+            }
+            let image = UIGraphicsImageRenderer(bounds: host.window.bounds).image { context in
+                host.window.layer.render(in: context.cgContext)
+            }
+            let cellFrame = try XCTUnwrap(host.surface.cellFrame(tableID: table.identity, cellIndex: 0))
+            let point = host.surface.convert(CGPoint(x: cellFrame.minX - table.style.cellPadding / 2,
+                                                     y: cellFrame.minY - table.style.cellPadding / 2), to: host.window)
+            let bitmap = try XCTUnwrap(image.cgImage)
+            let channelCount = 4
+            var pixels = [UInt8](repeating: 0, count: bitmap.width * bitmap.height * channelCount)
+            try pixels.withUnsafeMutableBytes { buffer in
+                let context = try XCTUnwrap(CGContext(data: buffer.baseAddress, width: bitmap.width, height: bitmap.height,
+                    bitsPerComponent: 8, bytesPerRow: bitmap.width * channelCount, space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
+                context.draw(bitmap, in: CGRect(x: 0, y: 0, width: bitmap.width, height: bitmap.height))
+            }
+            let pixelIndex = (Int(point.y * image.scale) * bitmap.width + Int(point.x * image.scale)) * channelCount
+            let channelMaximum: CGFloat = 255
+            let painted = UIColor(red: CGFloat(pixels[pixelIndex]) / channelMaximum,
+                green: CGFloat(pixels[pixelIndex + 1]) / channelMaximum,
+                blue: CGFloat(pixels[pixelIndex + 2]) / channelMaximum, alpha: 1)
+            XCTAssertEqual(pixels[pixelIndex + 3], UInt8(channelMaximum), "The composited header sample remains opaque")
+            XCTAssertEqual(luminance(painted, traits: input.traitCollection), background, accuracy: 0.01,
+                "The header bitmap must use the mounted view's appearance")
+            let name = "typed-header-appearance-\(appearance.rawValue)"
+            let attachment = XCTAttachment(image: image)
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            try XCTUnwrap(image.pngData()).write(to: FileManager.default.temporaryDirectory
+                .appendingPathComponent("\(name).png"))
+        }
+    }
+
+    func testHeaderColorDefaultsAndExplicitThemeOverrides() throws {
+        let light = UITraitCollection(userInterfaceStyle: .light)
+        let dark = UITraitCollection(userInterfaceStyle: .dark)
+        for style in [TableStyle(), try XCTUnwrap(EditorTheme(dictionary: ["table": ["cellPadding": 9]]).table)] {
+            XCTAssertEqual(style.headerBackgroundColor.resolvedColor(with: light), EditorTheme.color(from: "#F3F4F6"))
+            XCTAssertEqual(style.headerBackgroundColor.resolvedColor(with: dark), UIColor.secondarySystemBackground.resolvedColor(with: dark))
+            XCTAssertEqual(style.headerBackgroundColor.resolvedColor(with: light).cgColor.alpha, 1)
+            XCTAssertEqual(style.headerBackgroundColor.resolvedColor(with: dark).cgColor.alpha, 1)
+        }
+        let explicit = try XCTUnwrap(EditorTheme(dictionary: ["table": ["headerBackgroundColor": "#e8f0f5"]]).table)
+        for traits in [light, dark] {
+            XCTAssertEqual(explicit.headerBackgroundColor.resolvedColor(with: traits), EditorTheme.color(from: "#e8f0f5"))
+        }
     }
 
     func testStructuralCounterRecognizesRebuiltCellAfterItsRowMoves() throws {

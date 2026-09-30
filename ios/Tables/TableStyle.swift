@@ -1,17 +1,24 @@
 import UIKit
 
 struct TableStyle {
+    private static let lightHeaderBackgroundColor = EditorTheme.color(from: "#F3F4F6")!
+    static let defaultHeaderBackgroundColor = UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor.secondarySystemBackground.resolvedColor(with: traits)
+            : TableStyle.lightHeaderBackgroundColor
+    }
+
     var minColumnWidth: CGFloat = 80
     var cellPadding: CGFloat = 8
     var borderWidth: CGFloat = 1
     var borderColor: UIColor = EditorTheme.color(from: "#D1D5DB")!
-    var headerBackgroundColor: UIColor = EditorTheme.color(from: "#F3F4F6")!
+    var headerBackgroundColor: UIColor = TableStyle.defaultHeaderBackgroundColor
     var selectionColor: UIColor = EditorTheme.color(from: "#3B82F633")!
     var resizeHandleColor: UIColor = EditorTheme.color(from: "#3B82F6")!
 
     init(minColumnWidth: CGFloat = 80, cellPadding: CGFloat = 8, borderWidth: CGFloat = 1,
          borderColor: UIColor = EditorTheme.color(from: "#D1D5DB")!,
-         headerBackgroundColor: UIColor = EditorTheme.color(from: "#F3F4F6")!,
+         headerBackgroundColor: UIColor = TableStyle.defaultHeaderBackgroundColor,
          selectionColor: UIColor = EditorTheme.color(from: "#3B82F633")!,
          resizeHandleColor: UIColor = EditorTheme.color(from: "#3B82F6")!) {
         self.minColumnWidth = minColumnWidth

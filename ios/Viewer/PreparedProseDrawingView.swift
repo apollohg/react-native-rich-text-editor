@@ -1500,7 +1500,7 @@ public final class PreparedProseDrawingView: UIView {
                 guard let surface = block.block.tableSurface else { continue }
                 let surfaceCells = cells[ObjectIdentifier(surface)] ?? []
                 context.saveGState()
-                context.setFillColor(surface.style.headerBackgroundColor.cgColor)
+                context.setFillColor(surface.style.headerBackgroundColor.resolvedColor(with: traitCollection).cgColor)
                 for cell in surfaceCells where cell.cell.isHeader {
                     let rect = cell.bounds.intersection(cell.clip)
                     guard !rect.isNull, !rect.isEmpty else { continue }
