@@ -528,7 +528,7 @@ impl YrsDocumentEngine {
             &self.resource_limits,
         );
         let render_update =
-            cached_transition_render_update(&current.render_blocks.classify_transition_to(
+            cached_transition_render_update(current.render_blocks.classify_transition_to(
                 &current.document,
                 &candidate.document,
                 &candidate.render_blocks,

@@ -183,19 +183,19 @@ impl YrsDocumentEngine {
         } else {
             Some(self.prepare_commit_render_transition(&compiled)?)
         };
-        let render_update = render_transition
-            .as_ref()
-            .map(|transition| cached_transition_render_update(&transition.update))
-            .unwrap_or(yrs_engine::RenderUpdate::None);
+        let (render_update, render_cache) = match render_transition {
+            Some(transition) => (
+                cached_transition_render_update(transition.update),
+                Some(transition.cache),
+            ),
+            None => (yrs_engine::RenderUpdate::None, None),
+        };
         let prepared_result = with_result
             .then(|| {
                 self.prepare_typed_result(
                     &compiled,
                     render_update,
-                    render_transition
-                        .as_ref()
-                        .map(|transition| &transition.cache)
-                        .unwrap_or(&installed.render_blocks),
+                    render_cache.as_ref().unwrap_or(&installed.render_blocks),
                     &commit_authority,
                 )
             })
@@ -395,7 +395,7 @@ impl YrsDocumentEngine {
                             &compiled.preview,
                             &canonical_artifact,
                             compiled.preview_derivations.as_ref()?,
-                            &render_transition.as_ref()?.cache,
+                            render_cache.as_ref()?,
                             &self.resource_limits,
                             &self.editing_limits,
                             self.max_length,
@@ -507,7 +507,7 @@ impl YrsDocumentEngine {
                                 .as_ref()
                                 .map(|evidence| evidence.validation_depth_slots()),
                             after_derivations,
-                            &render_transition.as_ref()?.cache,
+                            render_cache.as_ref()?,
                             stored_marks.as_deref(),
                             &self.schema_fingerprint,
                             &self.fragment_name,
@@ -637,9 +637,7 @@ impl YrsDocumentEngine {
             CompiledCommitPreparationStage::AllocationProbe,
         )?;
         let next_render_blocks = Arc::new(
-            render_transition
-                .expect("changed transaction has a prepared render transition")
-                .cache,
+            render_cache.expect("changed transaction has a prepared render cache"),
         );
         #[cfg(test)]
         check_compiled_commit_preparation_stage_for_test(

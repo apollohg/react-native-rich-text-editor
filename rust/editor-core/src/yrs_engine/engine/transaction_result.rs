@@ -537,17 +537,17 @@ pub(super) fn surviving_selection<T: ReadTxn>(
 }
 
 pub(super) fn cached_transition_render_update(
-    update: &crate::render::incremental::CachedRenderTransitionUpdate,
+    update: crate::render::incremental::CachedRenderTransitionUpdate,
 ) -> yrs_engine::RenderUpdate {
     match update {
         crate::render::incremental::CachedRenderTransitionUpdate::None => {
             yrs_engine::RenderUpdate::None
         }
         crate::render::incremental::CachedRenderTransitionUpdate::Patch(patch) => {
-            yrs_engine::RenderUpdate::Patch(patch.clone())
+            yrs_engine::RenderUpdate::Patch(patch)
         }
         crate::render::incremental::CachedRenderTransitionUpdate::Full(blocks) => {
-            yrs_engine::RenderUpdate::Full(blocks.clone())
+            yrs_engine::RenderUpdate::Full(blocks)
         }
     }
 }
