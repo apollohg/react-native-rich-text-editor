@@ -277,7 +277,117 @@ struct MutationLookupPayload {
     target_count: usize,
     pending_traversal_work: usize,
     path_parent_widths: Arc<HashMap<BranchID, usize>>,
-    target_materialization_work: Arc<HashMap<BranchID, usize>>,
+    target_materialization_work: TargetMaterializationWork,
+}
+
+#[derive(Debug, Clone)]
+struct TargetMaterializationWork {
+    base: Arc<HashMap<BranchID, usize>>,
+    replacement: Option<(BranchID, usize)>,
+}
+
+impl TargetMaterializationWork {
+    fn new(entries: HashMap<BranchID, usize>) -> Self {
+        Self {
+            base: Arc::new(entries),
+            replacement: None,
+        }
+    }
+
+    fn get(&self, key: &BranchID) -> Option<&usize> {
+        if let Some((target, work)) = &self.replacement {
+            if target == key {
+                return Some(work);
+            }
+        }
+        self.base.get(key)
+    }
+
+    fn iter(&self) -> impl Iterator<Item = (&BranchID, &usize)> {
+        self.base.iter().map(|(key, value)| {
+            let value = match &self.replacement {
+                Some((target, work)) if target == key => work,
+                _ => value,
+            };
+            (key, value)
+        })
+    }
+
+    fn materialize(&self) -> Result<HashMap<BranchID, usize>, std::collections::TryReserveError> {
+        let mut entries = HashMap::new();
+        entries.try_reserve(self.base.len())?;
+        entries.extend(self.iter().map(|(key, value)| (key.clone(), *value)));
+        Ok(entries)
+    }
+
+    fn effective_map(
+        &self,
+        request_id: u64,
+    ) -> OperationResult<std::borrow::Cow<'_, HashMap<BranchID, usize>>> {
+        if self.replacement.is_none() {
+            Ok(std::borrow::Cow::Borrowed(&self.base))
+        } else {
+            self.materialize()
+                .map(std::borrow::Cow::Owned)
+                .map_err(|_| lookup_seed_allocation_error(request_id, "mapGrowth"))
+        }
+    }
+
+    fn promoted(&self, promotion: &MutationLookupPromotion) -> OperationResult<Self> {
+        let mismatch = || {
+            OperationError::engine_invariant_failed(
+                promotion.request_id,
+                None,
+                "localized mutation lookup promotion does not match its seed",
+            )
+        };
+        if promotion.source == MutationLookupPromotionSource::ExistingInsert {
+            if let [(target, old_work, new_work)] =
+                promotion.materialization_work_updates.as_slice()
+            {
+                if self.get(target) != Some(old_work) {
+                    return Err(mismatch());
+                }
+                if self
+                    .replacement
+                    .as_ref()
+                    .is_none_or(|(previous, _)| previous == target)
+                {
+                    return Ok(Self {
+                        base: Arc::clone(&self.base),
+                        replacement: Some((target.clone(), *new_work)),
+                    });
+                }
+            }
+        }
+        let allocation_error = || {
+            OperationError::engine_invariant_failed(
+                promotion.request_id,
+                None,
+                "localized mutation lookup promotion allocation failed",
+            )
+        };
+        if lookup_seed_hydration_should_fail("promotionMapReservation") {
+            return Err(allocation_error());
+        }
+        let mut entries = self.materialize().map_err(|_| allocation_error())?;
+        for (target, old_work, new_work) in &promotion.materialization_work_updates {
+            if entries.get(target) != Some(old_work) {
+                return Err(mismatch());
+            }
+            entries.insert(target.clone(), *new_work);
+        }
+        Ok(Self::new(entries))
+    }
+}
+
+impl PartialEq for TargetMaterializationWork {
+    fn eq(&self, other: &Self) -> bool {
+        self.base.len() == other.base.len()
+            && self
+                .iter()
+                .all(|(key, value)| other.get(key) == Some(value))
+    }
 }
 
 /// Opaque, one-owner payload collected while the validated codec projection
@@ -310,7 +420,7 @@ pub(crate) struct LocalizedInsertCompiler {
 pub(crate) struct LocalizedFormatCompiler {
     compiler: MutationCompiler,
     seed_pending_traversal_work: usize,
-    seed_materialization_work: Arc<HashMap<BranchID, usize>>,
+    seed_materialization_work: TargetMaterializationWork,
 }
 
 /// A capability for replacing exactly one complete child window of the

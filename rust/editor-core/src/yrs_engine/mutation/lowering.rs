@@ -37,6 +37,7 @@ pub(crate) enum LookupSeedHydrationFailpoint {
     SeedPublication,
     CandidateBindingPublication,
     CandidateSeedPublication,
+    PromotionMapReservation,
 }
 
 #[cfg(test)]
@@ -76,6 +77,7 @@ fn lookup_seed_hydration_should_fail_for_stage(stage: &str, error_stage: &str) -
             "mapPublication" => LookupSeedHydrationFailpoint::MapPublication,
             "bindingPublication" => LookupSeedHydrationFailpoint::BindingPublication,
             "seedPublication" => LookupSeedHydrationFailpoint::SeedPublication,
+            "promotionMapReservation" => LookupSeedHydrationFailpoint::PromotionMapReservation,
             _ => return false,
         };
         LOOKUP_SEED_HYDRATION_FAILPOINT.get() == Some(expected)

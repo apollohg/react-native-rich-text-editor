@@ -580,7 +580,8 @@ impl ImportLookupMaterializationCollector {
             "mapPublication",
             std::mem::size_of::<HashMap<BranchID, usize>>(),
         )?;
-        let target_materialization_work = Arc::new(self.target_materialization_work);
+        let target_materialization_work =
+            TargetMaterializationWork::new(self.target_materialization_work);
         Ok(MutationLookupPayload {
             target_count: self.target_count,
             pending_traversal_work: self.pending_traversal_work,

@@ -98,7 +98,7 @@ impl LocalizedFormatCompiler {
                 virtual_delete_visits: 0,
             },
             seed_pending_traversal_work: seed_payload.pending_traversal_work,
-            seed_materialization_work: Arc::clone(&seed_payload.target_materialization_work),
+            seed_materialization_work: seed_payload.target_materialization_work.clone(),
         }))
     }
 

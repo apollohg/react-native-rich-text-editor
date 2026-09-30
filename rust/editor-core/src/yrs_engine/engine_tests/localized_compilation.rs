@@ -4,6 +4,210 @@ const DEBUG_TABLE_AVAILABILITY_PASSES: usize = cfg!(debug_assertions) as usize;
 const TABLE_AVAILABILITY_PLANS_PER_PASS: usize = 19;
 
 #[test]
+fn repeated_local_input_shares_the_materialization_work_base() {
+    use crate::yrs_engine::mutation::{
+        set_lookup_seed_hydration_failpoint_for_test, LookupSeedHydrationFailpoint,
+    };
+    const REQUEST: u64 = 70_146;
+    const TARGETS: [usize; 10] = [0, 0, 0, 1, 1, 1, 0, 0, 1, 1];
+    let mut engine = transaction_engine();
+    engine.import_json(
+        r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"typing🦀"},{"type":"text","text":"bold","marks":[{"type":"bold"}]}]},{"type":"paragraph","content":[{"type":"text","text":"unchanged🦀"}]}]}"#,
+        TransactionOrigin::DocumentImport,
+    ).unwrap();
+    hydrate_import_for_compile_test(&mut engine);
+    let initial_document = engine.document_json().unwrap();
+    let assert_fresh_lookup = |engine: &YrsDocumentEngine| {
+        let state = engine.derived_state.as_ref().unwrap();
+        let txn = engine.doc.transact();
+        let fragment = txn.get_xml_fragment(engine.fragment_name.as_str()).unwrap();
+        let fresh = crate::yrs_engine::mutation::MutationLookupSeed::build(
+            REQUEST,
+            &txn,
+            &fragment,
+            &engine.schema,
+            &state.document,
+            &engine.resource_limits,
+            &engine.editing_limits,
+            engine.max_length,
+            &engine.schema_fingerprint,
+            engine.yrs_state_epoch,
+            engine.revision,
+        )
+        .unwrap();
+        assert!(
+            state
+                .mutation_lookup_seed
+                .has_same_ready_payload_for_test(&fresh),
+            "effective seed must match a full traversal"
+        );
+    };
+    let mut retained = Vec::new();
+    for (edit, target) in TARGETS.into_iter().enumerate() {
+        let before = Arc::clone(&engine.derived_state.as_ref().unwrap().mutation_lookup_seed);
+        retained.push((
+            Arc::clone(&before),
+            before.materialization_entries_for_test(),
+        ));
+        let position = engine
+            .derived_state
+            .as_ref()
+            .unwrap()
+            .position_map
+            .block(target)
+            .unwrap()
+            .scalar_start
+            + 1;
+        let mut transaction = insert_transaction(&engine, REQUEST + edit as u64);
+        transaction.origin = TransactionOrigin::LocalInput;
+        transaction.selection_intent = SelectionIntent::UseOperationResult;
+        transaction.history_policy = HistoryPolicy::Auto;
+        let TypedOperation::InsertText { at, .. } = &mut transaction.operations[0] else {
+            panic!("insert fixture")
+        };
+        at.offset = position;
+        if edit == 3 {
+            let document = engine.document_json().unwrap();
+            let revision = engine.revision();
+            let history = (engine.can_undo(), engine.can_redo());
+            set_lookup_seed_hydration_failpoint_for_test(Some(
+                LookupSeedHydrationFailpoint::PromotionMapReservation,
+            ));
+            let refused = engine.apply_typed_transaction(transaction.clone());
+            set_lookup_seed_hydration_failpoint_for_test(None);
+            assert!(
+                refused.is_err(),
+                "switching targets must exercise the fallback reservation"
+            );
+            assert_eq!(engine.document_json().unwrap(), document);
+            assert_eq!(engine.revision(), revision);
+            assert_eq!((engine.can_undo(), engine.can_redo()), history);
+            assert!(Arc::ptr_eq(
+                &before,
+                &engine.derived_state.as_ref().unwrap().mutation_lookup_seed
+            ));
+        }
+        if edit == 0 {
+            set_lookup_seed_hydration_failpoint_for_test(Some(
+                LookupSeedHydrationFailpoint::PromotionMapReservation,
+            ));
+        }
+        let result = engine
+            .compile_typed_transaction(transaction)
+            .and_then(|compiled| {
+                assert!(
+                    compiled.localized_textblock_edit_admission.is_some(),
+                    "edit {edit}: actual localized input required"
+                );
+                engine.apply_compiled_transaction(compiled, true)
+            });
+        set_lookup_seed_hydration_failpoint_for_test(None);
+        result.unwrap();
+        let state = engine.derived_state.as_ref().unwrap();
+        let current = &state.mutation_lookup_seed;
+        if edit == 0 || TARGETS[edit - 1] == target {
+            assert!(
+                before.shares_materialization_base_for_test(current),
+                "edit {edit}: one target update must not clone the whole materialization map"
+            );
+        }
+        assert_fresh_lookup(&engine);
+        for (snapshot, expected) in &retained {
+            assert_eq!(
+                &snapshot.materialization_entries_for_test(),
+                expected,
+                "edit {edit}: retained seeds must remain immutable"
+            );
+        }
+    }
+    let point = |offset| RevisionedPosition {
+        offset,
+        kind: EditorOffsetKind::Scalar,
+        affinity: Affinity::After,
+    };
+    let scalar_start = engine
+        .derived_state
+        .as_ref()
+        .unwrap()
+        .position_map
+        .block(1)
+        .unwrap()
+        .scalar_start;
+    let edited_target = engine
+        .derived_state
+        .as_ref()
+        .unwrap()
+        .mutation_lookup_seed
+        .replacement_target_for_test()
+        .unwrap();
+    let mut deletion = insert_transaction(&engine, REQUEST + TARGETS.len() as u64);
+    deletion.operations = vec![TypedOperation::DeleteRange {
+        range: RevisionedRange {
+            from: point(scalar_start + 1),
+            to: point(scalar_start + 2),
+        },
+    }];
+    deletion.origin = TransactionOrigin::LocalInput;
+    deletion.selection_intent = SelectionIntent::UseOperationResult;
+    deletion.history_policy = HistoryPolicy::Auto;
+    crate::yrs_engine::mutation::reset_localized_lookup_counts_for_test();
+    let compiled = engine.compile_typed_transaction(deletion).unwrap();
+    assert!(
+        compiled.localized_textblock_edit_admission.is_some(),
+        "deletion must exercise the retained subtree replacement path"
+    );
+    engine.apply_compiled_transaction(compiled, true).unwrap();
+    assert_eq!(
+        crate::yrs_engine::mutation::take_localized_lookup_counts_for_test().0,
+        0,
+        "localized deletion must not rebuild the full lookup seed"
+    );
+    assert_fresh_lookup(&engine);
+    let mut removal = insert_transaction(&engine, REQUEST + TARGETS.len() as u64 + 1);
+    removal.operations = vec![TypedOperation::ReplaceStructure(
+        crate::yrs_engine::StructuralReplacement::new(
+            vec![],
+            1,
+            2,
+            crate::model::Fragment::empty(),
+            crate::selection::Selection::cursor(1),
+        ),
+    )];
+    removal.origin = TransactionOrigin::LocalInput;
+    removal.selection_intent = SelectionIntent::UseOperationResult;
+    removal.history_policy = HistoryPolicy::Auto;
+    engine.apply_typed_transaction(removal).unwrap();
+    assert_fresh_lookup(&engine);
+    let after_removal = engine
+        .derived_state
+        .as_ref()
+        .unwrap()
+        .mutation_lookup_seed
+        .materialization_entries_for_test();
+    assert!(
+        !after_removal.contains_key(&edited_target),
+        "structural deletion removes the overridden branch"
+    );
+    let final_document = engine.document_json().unwrap();
+    let mut history_steps = 0;
+    let mut history_request = REQUEST + TARGETS.len() as u64 + 2;
+    while engine.can_undo() {
+        assert!(engine.undo(history_request).unwrap().is_some());
+        history_steps += 1;
+        history_request += 1;
+    }
+    assert_eq!(engine.document_json().unwrap(), initial_document);
+    for _ in 0..history_steps {
+        assert!(engine.redo(history_request).unwrap().is_some());
+        history_request += 1;
+    }
+    assert_eq!(engine.document_json().unwrap(), final_document);
+    for (snapshot, expected) in retained {
+        assert_eq!(snapshot.materialization_entries_for_test(), expected);
+    }
+}
+
+#[test]
 fn localized_insert_shares_unchanged_branch_index_and_preserves_position_mapping() {
     let mut engine = transaction_engine();
     engine

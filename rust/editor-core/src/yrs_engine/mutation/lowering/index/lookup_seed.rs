@@ -549,6 +549,32 @@ impl MutationLookupSeed {
     }
 
     #[cfg(test)]
+    pub(crate) fn replacement_target_for_test(&self) -> Option<BranchID> {
+        self.ready_payload()?.target_materialization_work.replacement.as_ref().map(|(target, _)| target.clone())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn materialization_entries_for_test(&self) -> HashMap<BranchID, usize> {
+        self.ready_payload()
+            .unwrap()
+            .target_materialization_work
+            .iter()
+            .map(|(key, value)| (key.clone(), *value))
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn shares_materialization_base_for_test(&self, other: &Self) -> bool {
+        match (self.ready_payload(), other.ready_payload()) {
+            (Some(left), Some(right)) => Arc::ptr_eq(
+                &left.target_materialization_work.base,
+                &right.target_materialization_work.base,
+            ),
+            _ => false,
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn has_same_ready_payload_for_test(&self, other: &Self) -> bool {
         match (self.ready_payload(), other.ready_payload()) {
             (Some(left), Some(right)) => {
@@ -622,32 +648,8 @@ impl MutationLookupSeed {
                 "localized mutation lookup promotion has an invalid source shape",
             ));
         }
-        let mut target_materialization_work = HashMap::new();
-        target_materialization_work
-            .try_reserve(payload.target_materialization_work.len())
-            .map_err(|_| {
-                OperationError::engine_invariant_failed(
-                    promotion.request_id,
-                    None,
-                    "localized mutation lookup promotion allocation failed",
-                )
-            })?;
-        target_materialization_work.extend(
-            payload
-                .target_materialization_work
-                .iter()
-                .map(|(target, work)| (target.clone(), *work)),
-        );
-        for (target_id, old_work, new_work) in &promotion.materialization_work_updates {
-            if target_materialization_work.get(target_id).copied() != Some(*old_work) {
-                return Err(OperationError::engine_invariant_failed(
-                    promotion.request_id,
-                    None,
-                    "localized mutation lookup promotion does not match its seed",
-                ));
-            }
-            target_materialization_work.insert(target_id.clone(), *new_work);
-        }
+        let target_materialization_work =
+            payload.target_materialization_work.promoted(promotion)?;
         #[cfg(test)]
         if promotion.source == MutationLookupPromotionSource::ExistingInsert {
             LOOKUP_SEED_PROMOTION_COUNT.set(LOOKUP_SEED_PROMOTION_COUNT.get().saturating_add(1));
@@ -670,7 +672,7 @@ impl MutationLookupSeed {
                 target_count: payload.target_count,
                 pending_traversal_work: promotion.next_pending_traversal_work,
                 path_parent_widths: payload.path_parent_widths.clone(),
-                target_materialization_work: Arc::new(target_materialization_work),
+                target_materialization_work,
             }),
         })
     }
@@ -775,9 +777,18 @@ impl MutationLookupSeed {
         )?;
         let target_materialization_work = replace_lookup_entries(
             request_id,
-            &payload.target_materialization_work,
-            &before.target_materialization_work,
-            &after.target_materialization_work,
+            payload
+                .target_materialization_work
+                .effective_map(request_id)?
+                .as_ref(),
+            before
+                .target_materialization_work
+                .effective_map(request_id)?
+                .as_ref(),
+            after
+                .target_materialization_work
+                .effective_map(request_id)?
+                .as_ref(),
         )?;
         probe_lookup_seed_publication(
             request_id,
@@ -790,7 +801,9 @@ impl MutationLookupSeed {
                 target_count,
                 pending_traversal_work,
                 path_parent_widths: Arc::new(path_parent_widths),
-                target_materialization_work: Arc::new(target_materialization_work),
+                target_materialization_work: TargetMaterializationWork::new(
+                    target_materialization_work,
+                ),
             }),
         })
     }
