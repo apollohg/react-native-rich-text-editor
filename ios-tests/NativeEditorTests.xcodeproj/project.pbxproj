@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		7AB9A9A00F83B0A3E9E665D1 /* table-toolbar-actions.json in Resources */ = {isa = PBXBuildFile; fileRef = 3DAD0064D844BE1558291BC2 /* table-toolbar-actions.json */; };
 		F20260930000000000000001 /* WindowTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20260930000000000000002 /* WindowTestSupport.swift */; };
 		A31000000000000000000011 /* TableCellPreparationBenchmarkTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A31000000000000000000001 /* TableCellPreparationBenchmarkTests.swift */; };
 		A39000000000000000000011 /* TablePerformanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A39000000000000000000001 /* TablePerformanceTests.swift */; };
@@ -255,6 +256,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		3DAD0064D844BE1558291BC2 /* table-toolbar-actions.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "table-toolbar-actions.json"; sourceTree = "<group>"; };
 		F20260930000000000000002 /* WindowTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowTestSupport.swift; sourceTree = "<group>"; };
 		A31000000000000000000001 /* TableCellPreparationBenchmarkTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellPreparationBenchmarkTests.swift; sourceTree = "<group>"; };
 		A39000000000000000000001 /* TablePerformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TablePerformanceTests.swift; sourceTree = "<group>"; };
@@ -919,6 +921,7 @@
 				C3845D8503B9EB586E692477 /* prepared-prose-benchmark-config.json */,
 				DD37D8C11947B70CF5213BE3 /* prepared-prose-harness-static-fixtures.json */,
 				609456B67A174C7062F4C3C9 /* security-contract-fixtures.json */,
+				3DAD0064D844BE1558291BC2 /* table-toolbar-actions.json */,
 				EAAEA72D6B36B64387DAC8D3 /* viewer-performance-corpus.json */,
 			);
 			path = tests;
@@ -1035,6 +1038,7 @@
 				CF81434F1BF8598ADBF2A46E /* prepared-prose-benchmark-config.json in Resources */,
 				56EEC26EE3197DA0363914DC /* prepared-prose-harness-static-fixtures.json in Resources */,
 				2D4DE27F01FB5A5C12DD4366 /* security-contract-fixtures.json in Resources */,
+				7AB9A9A00F83B0A3E9E665D1 /* table-toolbar-actions.json in Resources */,
 				A5CC2A434974FCEBEC188106 /* viewer-performance-corpus.json in Resources */,
 				754770FC478089090BC4561D /* shapes-and-text.svg in Resources */,
 			);

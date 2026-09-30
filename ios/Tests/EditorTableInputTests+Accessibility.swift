@@ -6,11 +6,6 @@ extension EditorTableInputTests {
         static let proseThenTableDocument = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"cell"}]}]}]}]}]}"#
         static let proseTableAndFrameDocument = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"cell"}]}]}]}]},{"type":"table"}]}"#
         static let frameBetweenTablesDocument = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]}]}]}]},{"type":"table"},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"last"}]}]}]}]}]}"#
-        static let parityFixture = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("scripts/tests/table-toolbar-actions.json")
         static let frameBesideTableDocument = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table"},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"keep"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"#
     }
 
@@ -66,7 +61,8 @@ extension EditorTableInputTests {
     }
 
     func testNativeTableActionsMatchTheToolbarActionFixture() throws {
-        let data = try Data(contentsOf: TableAccessibilityFixture.parityFixture)
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "table-toolbar-actions", withExtension: "json"))
+        let data = try Data(contentsOf: url)
         let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [[String: Any]])
         XCTAssertEqual(TableAccessibilityAction.all.map(\.key), fixture.compactMap { $0["action"] as? String },
                        "native actions must list the toolbar actions in toolbar order")
