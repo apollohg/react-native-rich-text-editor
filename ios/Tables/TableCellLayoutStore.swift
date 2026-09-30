@@ -14,7 +14,9 @@ final class TableCellLayoutStore {
         }
 
         func hash(into hasher: inout Hasher) { hasher.combine(cachedHash) }
-        static func == (lhs: Self, rhs: Self) -> Bool { lhs.layoutKey == rhs.layoutKey }
+        static func == (lhs: Self, rhs: Self) -> Bool {
+            lhs.cachedHash == rhs.cachedHash && lhs.layoutKey == rhs.layoutKey
+        }
     }
 
     // Each snapshot belongs to one immutable sequence of cell keys.
