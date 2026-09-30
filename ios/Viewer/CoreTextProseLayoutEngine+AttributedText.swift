@@ -315,7 +315,12 @@ extension CoreTextProseLayoutEngine {
 
     func baseAttributes(_ paint: PreparedTextPaint) -> [NSAttributedString.Key: Any] {
         var attributes: [NSAttributedString.Key: Any] = [.font: paint.font, .foregroundColor: paint.color]
-        if !paint.textValues.isEmpty { EditorStyleSheet.applyText(paint.textValues, to: &attributes) }
+        if paint.textValues.isEmpty {
+            attributes[kCTFontAttributeName as NSAttributedString.Key] = Self.coreTextFont(from: paint.font)
+            attributes[kCTForegroundColorAttributeName as NSAttributedString.Key] = paint.color.cgColor
+            return attributes
+        }
+        EditorStyleSheet.applyText(paint.textValues, to: &attributes)
         return coreTextAttributes(attributes)
     }
 
