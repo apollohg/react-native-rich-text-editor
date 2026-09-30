@@ -349,6 +349,7 @@ fn validated_document_evidence_rejects_every_seal_and_mixed_report_tamper() {
             &schema_fingerprint,
             ValidatedCandidateContext {
                 evidence: &tampered,
+                table_projection: None,
                 canonical_schema: &canonical_schema,
                 fragment_name: "article",
                 engine_epoch: 5,

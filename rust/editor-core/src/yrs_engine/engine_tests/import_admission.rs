@@ -79,6 +79,39 @@ fn validated_import_source_reuses_one_schema_ranked_canonical_result() {
 }
 
 #[test]
+fn canonicalized_import_projection_is_bound_to_the_final_root() {
+    let schema = tiptap_schema();
+    let limits = ResourceLimits::default();
+    let input = json!({"type": "doc", "content": [{"type": "paragraph", "content": [{
+        "type": "text", "text": "ordered", "marks": [{"type": "italic"}, {"type": "bold"}]
+    }]}]});
+    let parsed = from_prosemirror_json(&input, &schema, UnknownTypeMode::Preserve).unwrap();
+    let original = parsed.clone();
+    let canonical_schema = crate::yrs_engine::canonical::CanonicalSchemaContext::new(&schema);
+    let admitted =
+        ValidatedImportDocument::new(parsed, &schema, &canonical_schema, &limits, None).unwrap();
+    assert_ne!(
+        original, admitted.document,
+        "fixture must exercise mark canonicalization"
+    );
+    let proof = admitted.validation.table_projection.as_ref().unwrap();
+    assert!(proof
+        .matching_index(
+            &original,
+            &crate::schema::schema_fingerprint(&schema),
+            &limits
+        )
+        .is_none());
+    assert!(proof
+        .matching_index(
+            &admitted.document,
+            &crate::schema::schema_fingerprint(&schema),
+            &limits
+        )
+        .is_some());
+}
+
+#[test]
 fn admitted_import_runs_one_validation_certificate_and_render_path() {
     use crate::yrs_engine::observability::{
         reset_full_pass_counts_for_test, take_full_pass_counts_for_test,
@@ -957,7 +990,7 @@ fn a_table_import_performs_each_document_wide_pass_once() {
     assert_eq!(counts.rendered_text_derivations, 0);
     assert_eq!(renders.0, 1);
     assert!(counts.canonical_serializations <= 1, "{counts:#?}");
-    assert_eq!(counts.table_projection_derivations, 1);
+    assert_eq!(counts.table_projection_derivations, 0);
     assert_eq!(
         engine.document_json().unwrap(),
         serde_json::from_str::<serde_json::Value>(&source).unwrap()

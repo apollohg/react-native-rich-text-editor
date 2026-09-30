@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use crate::boundary::{BoundaryError, ResourceLimits};
 use crate::model::{Document, Node};
@@ -13,6 +14,42 @@ const DOCUMENT_INVALID: &str = "DOCUMENT_INVALID";
 const DOCUMENT_LIMIT_EXCEEDED: &str = "DOCUMENT_LIMIT_EXCEEDED";
 const TABLE_GRID_PHASE: &str = "tableGrid";
 const TABLE_SHAPE_PHASE: &str = "tableShape";
+
+#[derive(Clone)]
+pub(crate) struct AdmittedTableProjection {
+    root: Node,
+    schema_fingerprint: String,
+    limits: ResourceLimits,
+    index: Arc<TableProjectionIndex>,
+}
+
+impl AdmittedTableProjection {
+    pub(crate) fn admit(
+        document: &Document,
+        schema: &Schema,
+        limits: &ResourceLimits,
+    ) -> Result<Self, BoundaryError> {
+        let index = admit_table_shapes(document, schema, limits)?;
+        Ok(Self {
+            root: document.root().clone(),
+            schema_fingerprint: crate::schema::schema_fingerprint(schema),
+            limits: limits.clone(),
+            index: Arc::new(index),
+        })
+    }
+
+    pub(crate) fn matching_index(
+        &self,
+        document: &Document,
+        sealed_schema_fingerprint: &str,
+        limits: &ResourceLimits,
+    ) -> Option<Arc<TableProjectionIndex>> {
+        (self.root.shares_storage_with(document.root())
+            && self.limits == *limits
+            && self.schema_fingerprint == sealed_schema_fingerprint)
+            .then(|| Arc::clone(&self.index))
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ProjectionFailure {

@@ -447,6 +447,9 @@ impl DerivedStateCache {
                 schema_fingerprint,
                 validation.stats.node_count,
                 validation.stats.max_depth,
+                validated_candidate
+                    .as_ref()
+                    .and_then(|validated| validated.table_projection),
                 None,
             )
             .ok()?

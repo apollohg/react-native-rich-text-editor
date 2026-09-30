@@ -146,6 +146,42 @@ fn nested_table_document(nested_text: &str, nested_table_class: &str) -> serde_j
 }
 
 #[test]
+fn viewer_reuses_the_admitted_table_projection() {
+    use crate::yrs_engine::observability::{
+        reset_full_pass_counts_for_test, take_full_pass_counts_for_test,
+    };
+    let mut config: serde_json::Value = serde_json::from_str(&table_config()).unwrap();
+    for (index, tag) in [(1, "p"), (3, "table"), (4, "tr"), (5, "td"), (6, "th")] {
+        config["schema"]["nodes"][index]["htmlTag"] = serde_json::json!(tag);
+    }
+    for (source_kind, source) in [
+        (
+            FfiViewerSourceKind::Json,
+            nested_table_document("nested", "inner").to_string(),
+        ),
+        (
+            FfiViewerSourceKind::Html,
+            "<table><tr><td><table><tr><td>nested</td></tr></table></td></tr></table>".into(),
+        ),
+    ] {
+        reset_full_pass_counts_for_test();
+        let result = viewer_compile(FfiViewerCompileRequest {
+            source_kind,
+            source,
+            config_json: config.to_string(),
+            images_enabled: true,
+            mention_prefix: None,
+        });
+        assert!(result.error.is_none(), "{:#?}", result.error);
+        let compiled = result.value.unwrap();
+        assert_eq!(compiled.table_records.len(), 2);
+        let passes = take_full_pass_counts_for_test();
+        assert_eq!(passes.table_projection_derivations, 0,
+            "rendering must reuse the exact admitted projection instead of deriving it again: {passes:#?}");
+    }
+}
+
+#[test]
 fn nested_tables_compile_to_ordered_flat_records_and_affect_the_semantic_key() {
     let compile = |nested_text, nested_table_class| {
         compile_json_with(
@@ -861,5 +897,5 @@ fn viewer_reuses_import_validation_for_the_render_cache() {
         "a viewer needs no retained canonical JSON: {counts:#?}"
     );
     assert_eq!(counts.render_limit_tree_scans, 0, "{counts:#?}");
-    assert_eq!(counts.table_projection_derivations, 1, "{counts:#?}");
+    assert_eq!(counts.table_projection_derivations, 0, "{counts:#?}");
 }

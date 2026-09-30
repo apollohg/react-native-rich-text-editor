@@ -527,6 +527,7 @@ impl YrsDocumentEngine {
                     )?,
                     validation: RootBoundValidationReport {
                         source_root: compiled.preview.root().clone(),
+                        table_projection: None,
                         report: DocumentValidator::validate_report(
                             &compiled.preview,
                             &self.schema,

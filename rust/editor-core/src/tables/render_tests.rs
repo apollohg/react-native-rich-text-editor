@@ -136,6 +136,132 @@ fn fixture(first: &str) -> crate::model::Document {
     }] }), &schema, crate::serialize::UnknownTypeMode::Preserve).unwrap()
 }
 
+#[test]
+fn admitted_projection_reuses_only_the_exact_root_schema_and_limits() {
+    use crate::tables::admission::AdmittedTableProjection;
+    use crate::transform::DocumentValidator;
+    use crate::yrs_engine::observability::{
+        reset_full_pass_counts_for_test, take_full_pass_counts_for_test,
+    };
+
+    let document = fixture("admitted");
+    let schema = tabled_schema(PROSEMIRROR_TABLE_NAMES);
+    let limits = ResourceLimits::default();
+    let proof = AdmittedTableProjection::admit(&document, &schema, &limits).unwrap();
+    let admitted_index = proof
+        .matching_index(
+            &document,
+            &crate::schema::schema_fingerprint(&schema),
+            &limits,
+        )
+        .unwrap();
+    assert!(Arc::ptr_eq(
+        &admitted_index,
+        &proof
+            .matching_index(
+                &document.clone(),
+                &crate::schema::schema_fingerprint(&schema),
+                &limits
+            )
+            .unwrap()
+    ));
+    let distinct_root = fixture("admitted");
+    assert_eq!(document, distinct_root);
+    assert!(
+        proof
+            .matching_index(
+                &distinct_root,
+                &crate::schema::schema_fingerprint(&schema),
+                &limits
+            )
+            .is_none(),
+        "equal content does not certify distinct root storage"
+    );
+    let changed_document = fixture("changed");
+    assert!(proof
+        .matching_index(
+            &changed_document,
+            &crate::schema::schema_fingerprint(&schema),
+            &limits
+        )
+        .is_none());
+    let mut changed_schema_json = crate::tables::tests::tabled_schema_json(PROSEMIRROR_TABLE_NAMES);
+    changed_schema_json["nodes"][1]["htmlTag"] = json!("section");
+    let changed_schema = crate::schema::Schema::from_json(&changed_schema_json).unwrap();
+    assert_ne!(
+        crate::schema::schema_fingerprint(&schema),
+        crate::schema::schema_fingerprint(&changed_schema)
+    );
+    assert!(proof
+        .matching_index(
+            &document,
+            &crate::schema::schema_fingerprint(&changed_schema),
+            &limits
+        )
+        .is_none());
+    let restricted_limits = ResourceLimits {
+        max_table_grid_slots: 1,
+        ..limits.clone()
+    };
+    assert!(proof
+        .matching_index(
+            &document,
+            &crate::schema::schema_fingerprint(&schema),
+            &restricted_limits
+        )
+        .is_none());
+
+    for (label, candidate, candidate_schema, candidate_limits, expected_derivations) in [
+        ("exact", &document, &schema, &limits, 0),
+        ("distinct root", &distinct_root, &schema, &limits, 1),
+        ("changed document", &changed_document, &schema, &limits, 1),
+        ("changed schema", &document, &changed_schema, &limits, 1),
+        ("restricted grid", &document, &schema, &restricted_limits, 1),
+    ] {
+        let report =
+            DocumentValidator::validate_report(candidate, candidate_schema, candidate_limits)
+                .unwrap();
+        reset_full_pass_counts_for_test();
+        let reused = CachedRenderBlocks::build_validated(
+            candidate,
+            candidate_schema,
+            candidate_limits,
+            &crate::schema::schema_fingerprint(candidate_schema),
+            report.stats.node_count,
+            report.stats.max_depth,
+            Some(&proof),
+            None,
+        )
+        .unwrap();
+        let passes = take_full_pass_counts_for_test();
+        assert_eq!(
+            passes.table_projection_derivations, expected_derivations,
+            "{label}: {passes:#?}"
+        );
+        assert_eq!(
+            Arc::ptr_eq(&admitted_index, &reused.table_projection_index),
+            expected_derivations == 0,
+            "{label}"
+        );
+        let fresh =
+            CachedRenderBlocks::build(candidate, candidate_schema, candidate_limits).unwrap();
+        assert_eq!(
+            reused.materialize(),
+            fresh.materialize(),
+            "{label}: complete render output"
+        );
+        assert_eq!(
+            reused.table_projection_index, fresh.table_projection_index,
+            "{label}: projection including failures"
+        );
+        assert_eq!(
+            reused.history_snapshot_retained_bytes(),
+            fresh.history_snapshot_retained_bytes(),
+            "{label}: retained charge"
+        );
+    }
+}
+
 fn shared_default_fixture() -> (crate::model::Document, crate::schema::Schema, String) {
     let payload = "shared-attribute-payload".repeat(4096);
     let mut config = crate::tables::tests::tabled_schema_json(PROSEMIRROR_TABLE_NAMES);

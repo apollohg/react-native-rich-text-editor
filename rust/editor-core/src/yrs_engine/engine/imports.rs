@@ -12,7 +12,7 @@ use crate::serialize::{
     from_html_with_limits, from_prosemirror_json_with_limits, FromHtmlOptions, JsonParseError,
     ParseError, UnknownTypeMode,
 };
-use crate::tables::admission::admit_table_shapes;
+use crate::tables::admission::AdmittedTableProjection;
 use crate::transform::{
     canonicalize_yrs_document_with_evidence, validate_importable_marks_with_evidence,
     CanonicalMarksEvidence, DocumentValidationReport, DocumentValidator,
@@ -25,6 +25,7 @@ use crate::yrs_engine::{EditingLimits, TransactionOrigin, YrsEngineError, YrsEng
 pub(in crate::yrs_engine) struct RootBoundValidationReport {
     pub(in crate::yrs_engine) source_root: crate::model::Node,
     pub(in crate::yrs_engine) report: DocumentValidationReport,
+    pub(in crate::yrs_engine) table_projection: Option<AdmittedTableProjection>,
 }
 
 pub(in crate::yrs_engine) struct ValidatedImportDocument {
@@ -60,10 +61,6 @@ impl ValidatedImportDocument {
                 validate_import_document_report(&canonical_document, schema, resource_limits)?;
             (canonical_document, validation)
         };
-        let validation = RootBoundValidationReport {
-            source_root: document.root().clone(),
-            report: validation,
-        };
         let canonical_artifact = if let Some(input_len) = json_input_len {
             canonical_schema.derive_validated_json(
                 &document,
@@ -93,7 +90,11 @@ pub(crate) fn admit_local_import_document(
     resource_limits: &ResourceLimits,
     editing_limits: &EditingLimits,
     json_input_len: Option<usize>,
-) -> YrsEngineResult<(Document, DocumentValidationReport)> {
+) -> YrsEngineResult<(
+    Document,
+    DocumentValidationReport,
+    Option<AdmittedTableProjection>,
+)> {
     let canonical_schema = CanonicalSchemaContext::new(schema);
     let admitted = ValidatedImportDocument::new(
         document,
@@ -103,7 +104,11 @@ pub(crate) fn admit_local_import_document(
         json_input_len,
     )?;
     admit_canonical_output(&admitted.canonical_artifact, editing_limits)?;
-    Ok((admitted.document, admitted.validation.report))
+    Ok((
+        admitted.document,
+        admitted.validation.report,
+        admitted.validation.table_projection,
+    ))
 }
 
 fn contains_reserved_public_json_forge(root: &crate::model::Node) -> bool {
@@ -451,6 +456,7 @@ impl YrsDocumentEngine {
                 &self.schema_fingerprint,
                 source.validation.report.stats.node_count,
                 source.validation.report.stats.max_depth,
+                source.validation.table_projection.as_ref(),
                 Some(&mut rendered_text),
             )
             .map_err(|error| {
@@ -560,7 +566,7 @@ fn validate_import_document_report(
     document: &Document,
     schema: &Schema,
     resource_limits: &ResourceLimits,
-) -> YrsEngineResult<DocumentValidationReport> {
+) -> YrsEngineResult<RootBoundValidationReport> {
     let root_has_doc_role = schema
         .node(document.root().node_type())
         .is_some_and(|spec| matches!(spec.role, NodeRole::Doc));
@@ -573,9 +579,15 @@ fn validate_import_document_report(
             ),
         ));
     }
-    admit_table_shapes(document, schema, resource_limits).map_err(map_import_validation_error)?;
-    DocumentValidator::validate_report(document, schema, resource_limits)
-        .map_err(map_import_validation_error)
+    let table_projection = AdmittedTableProjection::admit(document, schema, resource_limits)
+        .map_err(map_import_validation_error)?;
+    let report = DocumentValidator::validate_report(document, schema, resource_limits)
+        .map_err(map_import_validation_error)?;
+    Ok(RootBoundValidationReport {
+        source_root: document.root().clone(),
+        report,
+        table_projection: Some(table_projection),
+    })
 }
 
 pub(super) fn map_json_import_error(error: JsonParseError) -> YrsEngineError {

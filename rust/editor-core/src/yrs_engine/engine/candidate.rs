@@ -386,6 +386,10 @@ pub(super) fn build_derived_state_for_candidate(
             schema_fingerprint,
             ValidatedCandidateContext {
                 evidence,
+                table_projection: candidate
+                    .validated_import
+                    .as_ref()
+                    .and_then(|validation| validation.table_projection.as_ref()),
                 canonical_schema,
                 fragment_name,
                 engine_epoch,

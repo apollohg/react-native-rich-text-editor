@@ -47,6 +47,7 @@ pub(crate) fn compile(request: FfiViewerCompileRequest) -> FfiViewerCompileResul
             &schema_key,
             resolved.validation.stats.node_count,
             resolved.validation.stats.max_depth,
+            resolved.table_projection.as_ref(),
             None,
         )
         .map_err(|_| {

@@ -42,7 +42,7 @@ impl CachedRenderBlocks {
         check_forced_cached_render_error()?;
         ensure_document_render_limits(document, schema, limits)?;
         let schema_fingerprint = Arc::<str>::from(schema_fingerprint(schema));
-        Self::build_after_validation(document, schema, limits, schema_fingerprint, None)
+        Self::build_after_validation(document, schema, limits, schema_fingerprint, None, None)
     }
 
     /// Builds a cache from an exact document whose node/depth bounds and
@@ -56,6 +56,7 @@ impl CachedRenderBlocks {
         sealed_schema_fingerprint: &str,
         validated_node_count: usize,
         validated_max_depth: usize,
+        table_projection: Option<&crate::tables::admission::AdmittedTableProjection>,
         rendered_text: Option<&mut crate::render::RenderedTextBuilder>,
     ) -> Result<Self, CachedRenderError> {
         record_cached_build();
@@ -72,6 +73,9 @@ impl CachedRenderBlocks {
             schema,
             limits,
             Arc::<str>::from(sealed_schema_fingerprint),
+            table_projection.and_then(|projection| {
+                projection.matching_index(document, sealed_schema_fingerprint, limits)
+            }),
             rendered_text,
         )
     }
@@ -81,11 +85,14 @@ impl CachedRenderBlocks {
         schema: &Schema,
         limits: &ResourceLimits,
         schema_fingerprint: Arc<str>,
+        table_projection_index: Option<Arc<TableProjectionIndex>>,
         mut rendered_text: Option<&mut crate::render::RenderedTextBuilder>,
     ) -> Result<Self, CachedRenderError> {
-        let table_projection_index = Arc::new(TableProjectionIndex::derive_or_fallback(
-            document, schema, limits,
-        ));
+        let table_projection_index = table_projection_index.unwrap_or_else(|| {
+            Arc::new(TableProjectionIndex::derive_or_fallback(
+                document, schema, limits,
+            ))
+        });
         let mut context =
             TableRenderContext::new(Arc::clone(&table_projection_index), &schema_fingerprint);
         let root = document.root();

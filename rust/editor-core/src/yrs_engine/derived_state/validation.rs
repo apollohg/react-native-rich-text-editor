@@ -38,6 +38,7 @@ pub(crate) struct ValidatedDocumentEvidence {
 
 pub(crate) struct ValidatedCandidateContext<'a> {
     pub evidence: &'a ValidatedDocumentEvidence,
+    pub table_projection: Option<&'a crate::tables::admission::AdmittedTableProjection>,
     pub canonical_schema: &'a yrs_engine::canonical::CanonicalSchemaContext,
     pub fragment_name: &'a str,
     pub engine_epoch: u64,
