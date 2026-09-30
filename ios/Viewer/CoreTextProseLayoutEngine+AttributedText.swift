@@ -169,6 +169,7 @@ extension CoreTextProseLayoutEngine {
             }
             return coreTextAttributes(resolved)
         }
+        if marks.isEmpty && paint.textValues.isEmpty { return baseAttributes(paint) }
         var linkTheme: EditorLinkTheme?
         var explicitForeground: UIColor?
         var background: UIColor?
