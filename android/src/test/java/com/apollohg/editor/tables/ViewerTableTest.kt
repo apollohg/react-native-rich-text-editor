@@ -76,6 +76,46 @@ import uniffi.editor_core.TableRenderFailure
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class ViewerTableTest {
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun contentOnlyEditsReuseGeometryUntilHeightOrColumnWidthChanges() {
+        fun source(text: String) = """{"type":"doc","content":[{"type":"table","content":[
+            {"type":"table_row","content":[${tableCell(text)},${tableCell("adjacent")}]},
+            {"type":"table_row","content":[${tableCell("below")},${tableCell("last")}]}
+        ]}]}"""
+        for (direction in TableLayoutDirection.entries) {
+            val original = requireNotNull(prepare(source("before"), direction = direction).blocks.single().tableSurface)
+            fun replace(text: String, base: ViewerTableSurface = original): Pair<ViewerTableSurface, ViewerTableSurface> {
+                val fresh = requireNotNull(prepare(source(text), direction = direction).blocks.single().tableSurface)
+                val changed = requireNotNull(fresh.cell(0)).content
+                val table = requireNotNull(fresh.sourceTable)
+                val incremental = base.replacingCells(mapOf(0 to changed),
+                    TableGridRecord.from(table, base.identity), table, fresh.sourceAttributes) { cell, _ ->
+                    requireNotNull(fresh.cell(cell.sourceIndex)).content
+                }
+                assertEquals("$direction: every rectangle and row offset must match fresh layout", fresh.layout, incremental.layout)
+                assertSame("$direction: unchanged cells keep their content owner", original.cell(1), incremental.cell(1))
+                assertEquals(changed.heightPx, requireNotNull(incremental.cell(0)).contentHeightPx)
+                return fresh to incremental
+            }
+            val (_, sameHeight) = replace("after")
+            assertSame("$direction: nonwrapping edits must retain table geometry", original.layout, sameHeight.layout)
+            val wrappedText = "long text that wraps across several lines in the edited cell ".repeat(8)
+            val (_, wrapped) = replace(wrappedText)
+            assertNotSame("$direction: changed height must recompute shared row geometry", original.layout, wrapped.layout)
+            assertTrue(wrapped.layout.contentHeight > original.layout.contentHeight)
+            val (_, editedWrapped) = replace(wrappedText.dropLast(1) + ".", wrapped)
+            assertSame("$direction: another edit at the wrapped height must reuse geometry", wrapped.layout, editedWrapped.layout)
+
+            val table = requireNotNull(original.sourceTable).copy(columnWidths = listOf(240f, 80f))
+            val resized = original.replacingCells(emptyMap(), TableGridRecord.from(table, original.identity),
+                table, original.sourceAttributes) { cell, _ -> requireNotNull(original.cell(cell.sourceIndex)).content }
+            assertNotSame("$direction: a width change cannot retain geometry", original.layout, resized.layout)
+            assertFalse("$direction: explicit widths must take effect", original.layout.columnWidths == resized.layout.columnWidths)
+            assertEquals(requireNotNull(original.cell(0)).contentHeightPx, requireNotNull(sameHeight.cell(0)).contentHeightPx)
+        }
+    }
+
     @Test fun currentParentMemoryFollowsCellEvictionAndRebuild() {
         val cellBytes = 100L
         val parentBytes = 64L

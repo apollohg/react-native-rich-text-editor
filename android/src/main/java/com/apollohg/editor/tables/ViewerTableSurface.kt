@@ -168,21 +168,32 @@ internal class ViewerTableSurface(
             fontEnvironmentRevision, textScale, sourceTable, layoutStore, reuseCell, prepareCellWorkers, parallelCellIndices, prepareCell),
         sourceTable, sourceAttributes, editorTableId, displayScale)
 
-    fun replacingCells(contents: Map<Int, PreparedProseLayout>, contentHeights: Map<Int, Float>,
+    fun replacingCells(contents: Map<Int, PreparedProseLayout>,
                        record: TableGridRecord, sourceTable: TableSurfaceSource,
                        sourceAttributes: Map<String, org.json.JSONObject>,
                        prepareCell: (TableGridCell, Float) -> PreparedProseLayout): ViewerTableSurface {
+        var heightsUnchanged = true
         val updated = cells.map { cell ->
             val source = sourceTable.cells[cell.sourceIndex]
             val content = contents[cell.sourceIndex] ?: return@map cell
+            heightsUnchanged = heightsUnchanged && content.heightPx == cell.contentHeightPx
             val width = content.widthPx.toFloat()
             val gridCell = record.cells.first { it.sourceIndex == cell.sourceIndex }
             PreparedViewerTableCell(cell.sourceIndex, cell.row, cell.column, cell.rowspan, cell.colspan,
                 cell.contentOrigin, content, source.header, source.attrsKey, layoutStore) { prepareCell(gridCell, width) }
         }
-        val heights = updated.associate { it.sourceIndex to
-            (contentHeights[it.sourceIndex] ?: it.contentHeightPx.toFloat()) }
-        val next = TableGridLayout(displayScale).relayout(record, hostViewportWidth, style, isRightToLeft, heights)
+        val previousSource = this.sourceTable
+        // The caller certifies unchanged cell positions, spans, and presentation inputs.
+        val next = if (heightsUnchanged && previousSource != null && layout.failure == null &&
+            layout.typedFailure == null && previousSource.failure == null && sourceTable.failure == null &&
+            record.failure == null && record.typedFailure == null &&
+            previousSource.rows == sourceTable.rows && previousSource.columns == sourceTable.columns &&
+            previousSource.columnWidths == sourceTable.columnWidths) {
+            layout
+        } else {
+            val heights = updated.associate { it.sourceIndex to it.contentHeightPx.toFloat() }
+            TableGridLayout(displayScale).relayout(record, hostViewportWidth, style, isRightToLeft, heights)
+        }
         return ViewerTableSurface(identity, hostViewportWidth, style, isRightToLeft, next, updated,
             updated.firstNotNullOfOrNull { it.contentError }, sourceTable, sourceAttributes, editorTableId, displayScale)
     }

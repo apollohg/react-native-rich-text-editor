@@ -521,7 +521,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                         prepareCell(cell, maxOf(0f, frame.width - 2f * (tableStyle.cellPadding + tableStyle.borderWidth)))
                     }
                     tableIncrementalRelayoutObserver?.invoke()
-                    previous.replacingCells(contents, contents.mapValues { it.value.heightPx.toFloat() },
+                    previous.replacingCells(contents,
                         record, surfaceSource, document.tableAttributes) { cell, width -> prepareCell(cell, width) }
                 } else {
                     val workers = tablePreparationWorkers(document, surfaceSource, tableKey, theme, cellMode, cellShapeContext) { cell, width, worker, context ->
