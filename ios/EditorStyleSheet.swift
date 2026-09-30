@@ -204,12 +204,16 @@ struct EditorStyleSheet {
 struct EditorStyleBox {
     let values: [String: Any]
     init(_ values: [String: Any] = [:]) { self.values = values }
-    func number(_ key: String, fallback: CGFloat = 0) -> CGFloat { EditorTheme.cgFloat(values[key]) ?? fallback }
+    func number(_ key: String, fallback: CGFloat = 0) -> CGFloat {
+        guard !values.isEmpty else { return fallback }
+        return EditorTheme.cgFloat(values[key]) ?? fallback
+    }
     func color(_ key: String) -> UIColor? { (values[key] as? UIColor) ?? EditorTheme.color(from: values[key]) }
     var padding: UIEdgeInsets { insets("padding") }
     var margin: UIEdgeInsets { insets("margin") }
     var borders: UIEdgeInsets {
-        UIEdgeInsets(top: number("borderTopWidth", fallback: number("borderWidth")), left: number("borderLeftWidth", fallback: number("borderWidth")), bottom: number("borderBottomWidth", fallback: number("borderWidth")), right: number("borderRightWidth", fallback: number("borderWidth")))
+        let width = number("borderWidth")
+        return UIEdgeInsets(top: number("borderTopWidth", fallback: width), left: number("borderLeftWidth", fallback: width), bottom: number("borderBottomWidth", fallback: width), right: number("borderRightWidth", fallback: width))
     }
     var inset: UIEdgeInsets { padding.adding(borders) }
     var outerInsets: UIEdgeInsets { inset.adding(margin) }
@@ -222,7 +226,8 @@ struct EditorStyleBox {
         ).adding(borders)
     }
     private func insets(_ key: String) -> UIEdgeInsets {
-        UIEdgeInsets(top: number(key + "Top", fallback: number(key)), left: number(key + "Left", fallback: number(key)), bottom: number(key + "Bottom", fallback: number(key)), right: number(key + "Right", fallback: number(key)))
+        let value = number(key)
+        return UIEdgeInsets(top: number(key + "Top", fallback: value), left: number(key + "Left", fallback: value), bottom: number(key + "Bottom", fallback: value), right: number(key + "Right", fallback: value))
     }
     var radii: [CGFloat] { ["TopLeft", "TopRight", "BottomRight", "BottomLeft"].map { number("border" + $0 + "Radius", fallback: number("borderRadius")) } }
 
