@@ -622,6 +622,8 @@ include!("position_test/void_and_unicode.rs");
 
 include!("position_test/incremental.rs");
 
+include!("position_test/lookup.rs");
+
 fn web_authored_ordered_list(start: serde_json::Value, labels: &[&str]) -> Document {
     let items = labels
         .iter()

@@ -14,6 +14,11 @@ use crate::schema::Schema;
 
 use delta_tree::DeltaTree;
 
+#[cfg(test)]
+std::thread_local! {
+    pub(crate) static DOCUMENT_BLOCK_LOOKUP_PROBES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Maps one "rendered block" between doc positions and scalar offsets.
 ///
 /// A block is either:
@@ -374,68 +379,38 @@ impl PositionMap {
             .find(|end| *end <= doc_pos)
     }
 
-    /// Find the block index that contains or is nearest to the given doc position.
-    ///
-    /// Returns `None` if the position is beyond all blocks.
+    /// Find the containing or nearest block, preserving zero-width block boundaries.
     pub(crate) fn find_block_for_doc_pos(&self, doc_pos: u32) -> Option<usize> {
-        if self.blocks.is_empty() {
-            return None;
+        let mut lo = 0usize;
+        let mut hi = self.blocks.len();
+        while lo < hi {
+            #[cfg(test)]
+            DOCUMENT_BLOCK_LOOKUP_PROBES.set(DOCUMENT_BLOCK_LOOKUP_PROBES.get() + 1);
+            let mid = lo + (hi - lo) / 2;
+            if self.effective_doc_end(mid) < doc_pos {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
         }
-
-        // For each block, the "coverage" is from some position before doc_start
-        // (the open tag) to some position after doc_end (the close tag).
-        // For precise matching we need to account for structural tokens.
-        //
-        // Strategy: find the block with the closest doc_start that is <= doc_pos.
-        // If doc_pos is past that block's doc_end, check if it's on the close
-        // tag or between blocks.
-
-        let mut best_idx: Option<usize> = None;
-
-        for i in 0..self.blocks.len() {
-            let eff_start = self.effective_doc_start(i);
-            let eff_end = self.effective_doc_end(i);
-            let block = &self.blocks[i];
-
-            if block.doc_start == block.doc_end {
-                // Void block: position is at or near the void's position.
-                // The void node occupies 1 doc token at doc_start.
-                // But doc_start here was set to the content position (after open tag
-                // of parent), and the void occupies that position.
-                if doc_pos == eff_start {
-                    return Some(i);
-                }
-                if doc_pos < eff_start {
-                    break;
-                }
-                best_idx = Some(i);
-                continue;
-            }
-
-            if doc_pos >= eff_start && doc_pos <= eff_end {
-                return Some(i);
-            }
-
-            if doc_pos < eff_start {
-                // Position is before this block (on a structural token).
-                // Snap to this block or the previous one.
-                if let Some(prev) = best_idx {
-                    let prev_end = self.effective_doc_end(prev);
-                    let dist_to_prev = doc_pos - prev_end;
-                    let dist_to_next = eff_start - doc_pos;
-                    if dist_to_prev <= dist_to_next {
-                        return Some(prev);
-                    } else {
-                        return Some(i);
-                    }
-                }
-                return Some(i);
-            }
-
-            best_idx = Some(i);
+        let Some(block) = self.blocks.get(lo) else {
+            return lo.checked_sub(1);
+        };
+        let start = self.effective_doc_start(lo);
+        if doc_pos >= start {
+            return Some(lo);
         }
-
-        best_idx
+        let previous = lo.checked_sub(1);
+        // Empty paragraphs share the existing zero-width boundary behavior.
+        if block.doc_start == block.doc_end {
+            return previous;
+        }
+        if let Some(previous) = previous {
+            if doc_pos - self.effective_doc_end(previous) <= start - doc_pos {
+                return Some(previous);
+            }
+        }
+        Some(lo)
     }
 
     /// Access the internal blocks slice (for testing / debugging).
