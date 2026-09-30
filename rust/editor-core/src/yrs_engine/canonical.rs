@@ -919,6 +919,52 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "release-mode canonical buffer hash lower-bound probe"]
+    fn canonical_buffer_hash_budget_probe() {
+        const FIXTURE_ROWS: usize = 1_000;
+        const FIXTURE_COLUMNS: usize = 20;
+        const SAMPLES: usize = 50;
+        const WARMUP: usize = 5;
+        const MILLISECONDS_PER_SECOND: f64 = 1_000.0;
+        let schema = crate::schema::presets::prosemirror_table_schema();
+        let input = crate::test_support::large_table_fixture::plain_table_document(
+            FIXTURE_ROWS,
+            FIXTURE_COLUMNS,
+        );
+        let document = from_prosemirror_json(&input, &schema, UnknownTypeMode::Error).unwrap();
+        let expected = crate::boundary::serialize_json_value_stack_safe(
+            &to_prosemirror_json(&document, &schema),
+            0,
+        );
+        let fingerprint = canonical_sha256(&expected);
+        let mut hash_samples = Vec::with_capacity(SAMPLES);
+        let mut copy_hash_samples = Vec::with_capacity(SAMPLES);
+        for iteration in 0..(WARMUP + SAMPLES) {
+            let started = std::time::Instant::now();
+            let hash = canonical_sha256(std::hint::black_box(&expected));
+            let hash_ms = started.elapsed().as_secs_f64() * MILLISECONDS_PER_SECOND;
+            assert_eq!(hash, fingerprint);
+            let started = std::time::Instant::now();
+            let candidate = std::hint::black_box(expected.clone());
+            let hash = canonical_sha256(std::hint::black_box(&candidate));
+            let copy_hash_ms = started.elapsed().as_secs_f64() * MILLISECONDS_PER_SECOND;
+            assert_eq!(hash, fingerprint);
+            if iteration >= WARMUP {
+                hash_samples.push(hash_ms);
+                copy_hash_samples.push(copy_hash_ms);
+            }
+        }
+        hash_samples.sort_by(f64::total_cmp);
+        copy_hash_samples.sort_by(f64::total_cmp);
+        eprintln!(
+            "CANONICAL_BUFFER_PROBE bytes={} hash_median_ms={:.3} copy_hash_median_ms={:.3}",
+            expected.len(),
+            hash_samples[SAMPLES / 2],
+            copy_hash_samples[SAMPLES / 2]
+        );
+    }
+
+    #[test]
     fn canonical_json_initial_capacity_is_strictly_bounded() {
         assert_eq!(bounded_canonical_json_initial_capacity(0), 128);
         assert_eq!(bounded_canonical_json_initial_capacity(127), 128);
