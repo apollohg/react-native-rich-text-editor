@@ -8,6 +8,7 @@ use crate::schema::Schema;
 use crate::tables::commands::NODE_OPENING_TOKENS;
 use smallvec::SmallVec;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Arc;
 use yrs::branch::{Branch, BranchID, BranchPtr};
 use yrs::types::xml::{XmlElementRef, XmlFragment, XmlFragmentRef, XmlOut};
 use yrs::{Assoc, Offset, ReadTxn, StickyIndex};
@@ -154,11 +155,11 @@ impl BlockBranchIndex {
     }
 
     pub(crate) fn with_block_replaced<T: ReadTxn>(
-        &self,
+        self: &Arc<Self>,
         txn: &T,
         block_index: usize,
         schema: &Schema,
-    ) -> Option<Self> {
+    ) -> Option<Arc<Self>> {
         let block = self.blocks.get(block_index)?;
         let element = XmlElementRef::from(block.element.get_branch(txn)?);
         if !super::codec::wire_element_node_spec(&element, txn, schema).is_some_and(|spec| {
@@ -166,11 +167,14 @@ impl BlockBranchIndex {
         }) {
             return None;
         }
-        let mut next = self.clone();
+        let texts = text_branches(txn, &element);
+        if texts == block.texts {
+            return Some(Arc::clone(self));
+        }
+        let mut next = self.as_ref().clone();
         for branch in &block.texts {
             next.by_branch.remove(branch);
         }
-        let texts = text_branches(txn, &element);
         for branch in &texts {
             if next
                 .by_branch
@@ -181,7 +185,7 @@ impl BlockBranchIndex {
             }
         }
         next.blocks[block_index].texts = texts;
-        Some(next)
+        Some(Arc::new(next))
     }
 
     pub(crate) fn table_key(&self, path: &[u32]) -> Option<&str> {

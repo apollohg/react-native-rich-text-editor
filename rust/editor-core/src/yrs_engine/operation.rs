@@ -461,7 +461,12 @@ fn render_blocks_bytes(blocks: &[Vec<RenderElement>]) -> usize {
 }
 
 fn attrs_bytes(attrs: &HashMap<String, serde_json::Value>) -> usize {
-    8usize.saturating_add(serde_json::to_vec(attrs).map_or(usize::MAX, |value| value.len()))
+    let serialized_len = if attrs.is_empty() {
+        b"{}".len()
+    } else {
+        serde_json::to_vec(attrs).map_or(usize::MAX, |value| value.len())
+    };
+    8usize.saturating_add(serialized_len)
 }
 
 fn json_bytes(value: &serde_json::Value) -> usize {

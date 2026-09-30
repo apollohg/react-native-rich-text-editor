@@ -4,6 +4,172 @@ const DEBUG_TABLE_AVAILABILITY_PASSES: usize = cfg!(debug_assertions) as usize;
 const TABLE_AVAILABILITY_PLANS_PER_PASS: usize = 19;
 
 #[test]
+fn localized_insert_shares_unchanged_branch_index_and_preserves_position_mapping() {
+    let mut engine = transaction_engine();
+    engine
+        .import_json(
+            r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"a🦀b"}]},{"type":"paragraph","content":[{"type":"text","text":"tail"}]}]}"#,
+            TransactionOrigin::DocumentImport,
+        )
+        .unwrap();
+    hydrate_import_for_compile_test(&mut engine);
+    let previous = Arc::clone(
+        engine
+            .derived_state
+            .as_ref()
+            .unwrap()
+            .block_branch_index
+            .as_ref()
+            .unwrap(),
+    );
+    let previous_texts = previous.block_branches(0).unwrap().texts.clone();
+    let mut transaction = insert_transaction(&engine, 70_144);
+    transaction.origin = TransactionOrigin::LocalInput;
+    transaction.selection_intent = SelectionIntent::UseOperationResult;
+    transaction.history_policy = HistoryPolicy::Auto;
+    let compiled = engine.compile_typed_transaction(transaction).unwrap();
+    assert!(
+        compiled.localized_textblock_edit_admission.is_some(),
+        "fixture must use localized input admission"
+    );
+    engine.apply_compiled_transaction(compiled, true).unwrap();
+    let state = engine.derived_state.as_ref().unwrap();
+    let current = state.block_branch_index.as_ref().unwrap();
+    assert!(
+        Arc::ptr_eq(&previous, current),
+        "text insertion must share unchanged branch IDs"
+    );
+    assert_eq!(previous.block_branches(0).unwrap().texts, previous_texts);
+    let txn = engine.doc.transact();
+    let fragment = txn.get_xml_fragment(engine.fragment_name.as_str()).unwrap();
+    let rebuilt = crate::yrs_engine::block_branch_index::BlockBranchIndex::build(
+        &txn,
+        &fragment,
+        &engine.schema,
+        &state.position_map,
+    )
+    .unwrap();
+    for position in 0..=state.document.root().content().unwrap().size() {
+        for assoc in [Assoc::Before, Assoc::After] {
+            let indexed = current.sticky_at_doc_pos(
+                &txn,
+                position,
+                assoc,
+                &state.position_map,
+                &state.document,
+            );
+            let walked = crate::yrs_engine::position::doc_pos_to_sticky_index(
+                &txn,
+                &fragment,
+                position,
+                assoc,
+                &engine.schema,
+            );
+            assert_eq!(
+                indexed,
+                rebuilt.sticky_at_doc_pos(
+                    &txn,
+                    position,
+                    assoc,
+                    &state.position_map,
+                    &state.document,
+                ),
+                "rebuilt position {position}, {assoc:?}"
+            );
+            if let Some(sticky) = indexed {
+                assert_eq!(
+                    Some(&sticky),
+                    walked.as_ref(),
+                    "position {position}, {assoc:?}"
+                );
+                assert_eq!(
+                    current.doc_pos_of_offset(
+                        &txn,
+                        &sticky.get_offset(&txn).unwrap(),
+                        &state.position_map,
+                        &state.document,
+                    ),
+                    crate::yrs_engine::position::sticky_index_to_doc_pos(
+                        &txn,
+                        &fragment,
+                        &sticky,
+                        &engine.schema,
+                    ),
+                    "reverse position {position}, {assoc:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn localized_branch_index_replaces_changed_text_branches_without_mutating_snapshots() {
+    use yrs::types::xml::XmlElementRef;
+
+    let mut engine = transaction_engine();
+    engine
+        .import_json(
+            r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"original"}]}]}"#,
+            TransactionOrigin::DocumentImport,
+        )
+        .unwrap();
+    let original = Arc::clone(
+        engine
+            .derived_state
+            .as_ref()
+            .unwrap()
+            .block_branch_index
+            .as_ref()
+            .unwrap(),
+    );
+    let original_branches = original.block_branches(0).unwrap();
+    let original_texts = original_branches.texts.clone();
+    let mut txn = engine.doc.transact_mut();
+    let element = XmlElementRef::from(original_branches.element.get_branch(&txn).unwrap());
+    let inserted = element.push_back(&mut txn, XmlTextPrelim::new("added"));
+    let inserted_id = AsRef::<Branch>::as_ref(&inserted).id();
+    let expanded = original
+        .with_block_replaced(&txn, 0, &engine.schema)
+        .unwrap();
+    assert!(
+        !Arc::ptr_eq(&original, &expanded),
+        "new text branch requires a new index"
+    );
+    assert_eq!(
+        expanded.block_branches(0).unwrap().texts.as_slice(),
+        &[original_texts[0].clone(), inserted_id.clone()]
+    );
+    assert_eq!(
+        original.block_branches(0).unwrap().texts,
+        original_texts,
+        "retained snapshot must not acquire the new branch"
+    );
+
+    element.remove_range(&mut txn, 0, 1);
+    let reduced = expanded
+        .with_block_replaced(&txn, 0, &engine.schema)
+        .unwrap();
+    assert!(
+        !Arc::ptr_eq(&expanded, &reduced),
+        "removed text branch requires a new index"
+    );
+    assert_eq!(
+        reduced.block_branches(0).unwrap().texts.as_slice(),
+        &[inserted_id]
+    );
+    assert_eq!(
+        expanded.block_branches(0).unwrap().texts.len(),
+        2,
+        "retained expanded snapshot must remain intact"
+    );
+    assert_eq!(original.block_branches(0).unwrap().texts, original_texts);
+    let unchanged = reduced
+        .with_block_replaced(&txn, 0, &engine.schema)
+        .unwrap();
+    assert!(Arc::ptr_eq(&reduced, &unchanged));
+}
+
+#[test]
 fn localized_insert_preserves_semantic_validation_error_precedence_over_lowering_limits() {
     fn constrained_engine() -> YrsDocumentEngine {
         let mut engine = transaction_engine();

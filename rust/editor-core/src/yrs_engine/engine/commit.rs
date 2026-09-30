@@ -892,7 +892,6 @@ impl YrsDocumentEngine {
                     .block_branch_index
                     .as_ref()?
                     .with_block_replaced(&txn, block_index, &self.schema)
-                    .map(Arc::new)
             });
             let explicit_relative_selection = match (&selection_plan, &prepared_selection_state) {
                 (SelectionPlan::Explicit(_), Some(prepared)) => Some(prepared.relative().clone()),
