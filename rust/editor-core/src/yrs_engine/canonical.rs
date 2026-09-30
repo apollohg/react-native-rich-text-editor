@@ -7,6 +7,7 @@ use crate::model::{Document, Node};
 use crate::schema::{schema_fingerprint, Schema};
 use crate::serialize::to_prosemirror_json;
 
+mod hash_prefix;
 mod splice_cache;
 pub(crate) use splice_cache::CanonicalSpliceCache;
 #[cfg(test)]

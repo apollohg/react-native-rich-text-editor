@@ -1,4 +1,6 @@
-use super::{canonical_sha256, CanonicalArtifact, CanonicalArtifactInner};
+#[cfg(test)]
+use super::canonical_sha256;
+use super::{hash_prefix::Sha256Prefix, CanonicalArtifact, CanonicalArtifactInner};
 use crate::model::Node;
 use serde::de::{DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use serde_json::value::RawValue;
@@ -25,6 +27,7 @@ pub(crate) struct CanonicalSpliceCache {
     range: Range<usize>,
     revision: u64,
     artifact: Weak<CanonicalArtifactInner>,
+    hash_prefix: Sha256Prefix,
 }
 
 impl CanonicalSpliceCache {
@@ -177,17 +180,25 @@ impl CanonicalSpliceCache {
         if bytes.len() != expected_len {
             return None;
         }
+        let hash_prefix = if let Some((prior, _, _)) = replacement {
+            prior.hash_prefix.clone()
+        } else {
+            Sha256Prefix::new(bytes.get(..range.start)?)?
+        };
         let candidate = Self {
             bytes,
             path: owned_path,
             range,
             revision: next_revision,
             artifact: Arc::downgrade(&after.0),
+            hash_prefix,
         };
         if previous_bytes.checked_add(candidate.retained_bytes()?)? > byte_budget {
             return None;
         }
-        let digest = canonical_sha256(&candidate.bytes);
+        let digest = candidate
+            .hash_prefix
+            .finish(candidate.bytes.get(candidate.range.start..)?)?;
         #[cfg(test)]
         super::super::observability::record_canonical_hash();
         let _ = after.0.sha256.set(digest);
@@ -344,17 +355,23 @@ mod tests {
             CanonicalSpliceCache::prepare(None, &artifact, &artifact, &path, 0, 0, usize::MAX);
         assert!(cache.is_some());
         let position = document.root().child(0).unwrap().node_size() + 2;
-        for (index, text) in ["🙂", "e\u{301}", "\"\\\n雪"].into_iter().enumerate() {
-            let (next, _) = apply_step(
-                &document,
-                &Step::InsertText {
-                    pos: position,
-                    text: text.into(),
-                    marks: vec![Mark::new("strong".into(), HashMap::new())],
+        const DELETED_SCALARS: u32 = 1;
+        let steps = ["🙂", "e\u{301}", "\"\\\n雪"]
+            .into_iter()
+            .map(|text| Step::InsertText {
+                pos: position,
+                text: text.into(),
+                marks: vec![Mark::new("strong".into(), HashMap::new())],
+            })
+            .chain(std::iter::repeat_n(
+                Step::DeleteRange {
+                    from: position,
+                    to: position + DELETED_SCALARS,
                 },
-                &schema,
-            )
-            .unwrap();
+                3,
+            ));
+        for (index, step) in steps.enumerate() {
+            let (next, _) = apply_step(&document, &step, &schema).unwrap();
             let after = CanonicalArtifact::derive_localized(
                 &artifact,
                 &next,
