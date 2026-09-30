@@ -264,11 +264,11 @@ extension CoreTextProseLayoutEngine {
     ) -> [PreparedProseFragment] {
         let unit = displayScale.isFinite && displayScale > 0 ? 1 / displayScale : 1
         return (CTLineGetGlyphRuns(line) as? [CTRun] ?? []).flatMap { run -> [PreparedProseFragment] in
-            let attributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
-            guard (attributes[preparedStrikeAttribute] as? NSNumber)?.boolValue == true,
-                  let colorValue = attributes[kCTForegroundColorAttributeName as NSAttributedString.Key]
+            let attributes = CTRunGetAttributes(run) as NSDictionary
+            guard (attributes[preparedStrikeAttribute.rawValue] as? NSNumber)?.boolValue == true,
+                  let colorValue = attributes[kCTForegroundColorAttributeName as String]
             else { return [] }
-            guard let color = (attributes[.strikethroughColor] as? UIColor)?.cgColor ?? coreTextColor(colorValue) else { return [] }
+            guard let color = (attributes[NSAttributedString.Key.strikethroughColor.rawValue] as? UIColor)?.cgColor ?? coreTextColor(colorValue) else { return [] }
             var ascent: CGFloat = 0
             let width = CGFloat(CTRunGetTypographicBounds(run, CFRange(location: 0, length: 0), &ascent, nil, nil))
             let stringRange = CTRunGetStringRange(run)
@@ -278,7 +278,7 @@ extension CoreTextProseLayoutEngine {
             guard extent.isFinite, extent > 0, ascent.isFinite, ascent > 0 else { return [] }
             let thickness = max(unit, min(2, ascent * 0.08))
             let centerY = lineOrigin.y - ascent * 0.35
-            let style = NSUnderlineStyle(rawValue: attributes[.strikethroughStyle] as? Int ?? NSUnderlineStyle.single.rawValue)
+            let style = NSUnderlineStyle(rawValue: attributes[NSAttributedString.Key.strikethroughStyle.rawValue] as? Int ?? NSUnderlineStyle.single.rawValue)
             let dotted = style.contains(.patternDot)
             let dashed = style.contains(.patternDash)
             let doubleLine = style.rawValue & 0xff == NSUnderlineStyle.double.rawValue
@@ -451,8 +451,8 @@ extension CoreTextProseLayoutEngine {
 
     func inlineBackgroundFragments(for line: CTLine, bounds: CGRect) -> [PreparedProseFragment] {
         (CTLineGetGlyphRuns(line) as? [CTRun] ?? []).compactMap { run in
-            let attributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
-            guard let value = attributes[kCTBackgroundColorAttributeName as NSAttributedString.Key] else { return nil }
+            let attributes = CTRunGetAttributes(run) as NSDictionary
+            guard let value = attributes[kCTBackgroundColorAttributeName as String] else { return nil }
             guard let color = coreTextColor(value) else { return nil }
             let range = CTRunGetStringRange(run)
             let start = CGFloat(CTLineGetOffsetForStringIndex(line, range.location, nil))
