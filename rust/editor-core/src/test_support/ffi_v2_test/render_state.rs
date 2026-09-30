@@ -667,6 +667,46 @@ fn render_update_cannot_mix_fields_with_a_concurrent_mutation() {
 const ACTIVE_STATE_DOC: &str = r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"plain "},{"type":"text","text":"bold","marks":[{"type":"bold"}]}]}]}"#;
 
 #[test]
+fn identical_selection_mirror_reuses_table_active_state_without_mutating_the_engine() {
+    use crate::yrs_engine::observability::{
+        reset_full_pass_counts_for_test, take_full_pass_counts_for_test,
+    };
+
+    let (id, [first, _, _, _], _) = exact_cell_fixture();
+    let scalar = ok_json(&v2_render::editor_v2_doc_to_scalar(
+        id.clone(),
+        (first + 3) as u32,
+    ))["scalar"]
+        .as_u64()
+        .unwrap() as u32;
+    ok_json(&v2::editor_v2_set_selection(
+        id.clone(),
+        selection_envelope(64, revision_of(&id), scalar, scalar),
+    ));
+    let expected = ok_json(&v2_render::editor_v2_render_update(id.clone(), None, None));
+    let state = state_of(&id);
+    let document = document_json_of(&id);
+    reset_full_pass_counts_for_test();
+    let mirrored = ok_json(&v2_render::editor_v2_render_update(
+        id.clone(),
+        Some(scalar),
+        Some(scalar),
+    ));
+    let passes = take_full_pass_counts_for_test();
+    assert_eq!(
+        mirrored, expected,
+        "the identical mirror must preserve every snapshot field"
+    );
+    assert_eq!(
+        passes.table_command_availability_plans, 0,
+        "an identical mirror must reuse admitted active state: {passes:#?}"
+    );
+    assert_eq!(state_of(&id), state);
+    assert_eq!(document_json_of(&id), document);
+    destroy_handle(&id);
+}
+
+#[test]
 fn render_update_active_state_uses_authoritative_or_explicit_mirror_selection() {
     let id = create_handle(local_json_config(ACTIVE_STATE_DOC));
 
@@ -726,6 +766,22 @@ fn render_update_active_state_no_mirror_uses_engine_stored_marks() {
     // stored marks together.
     let update = ok_json(&v2_render::editor_v2_render_update(id.clone(), None, None));
     assert_eq!(update["activeState"]["marks"]["bold"], json!(true));
+
+    let mirrored = ok_json(&v2_render::editor_v2_render_update(
+        id.clone(),
+        Some(3),
+        Some(3),
+    ));
+    assert_eq!(
+        mirrored["activeState"]["marks"]["bold"],
+        json!(false),
+        "an explicit mirror ignores stored marks even at the installed selection"
+    );
+    assert_eq!(
+        ok_json(&v2_render::editor_v2_render_update(id.clone(), None, None)),
+        update,
+        "reading a mirror must preserve the engine's stored marks"
+    );
 
     destroy_handle(&id);
 }

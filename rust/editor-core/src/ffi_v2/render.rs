@@ -267,7 +267,12 @@ pub(crate) fn root_snapshot_json(
             )
         }
     };
-    let active_state = if mirror.is_none() {
+    let active_state = if mirror.is_none()
+        || (engine.stored_marks().is_none()
+            && engine
+                .resolved_selection()
+                .is_some_and(|resolved| resolved_selection_to_legacy(resolved) == selection))
+    {
         engine.active_state().ok_or_else(engine_not_ready)?
     } else {
         let commands = crate::editor_state::command_applicability(
