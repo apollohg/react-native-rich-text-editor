@@ -807,6 +807,23 @@ internal object ViewerTablePresentation {
         presentTable(surface, tableBounds, 0f, 0f, UNBOUNDED)
     }
 
+    fun tableWithId(
+        root: PreparedProseLayout,
+        owner: ViewerTablePresentationOwner,
+        viewport: ViewerTablePresentationViewport,
+        tableId: String
+    ): ViewerTablePresentedSurface? {
+        val tables = rootTables(root)
+        if (tables.any { it.surface.nestedTableCells.isNotEmpty() }) {
+            return project(root, owner, viewport).tables.firstOrNull { it.surface.editorTableId == tableId }
+        }
+        val window = presentationWindow(viewport)
+        val cells = mutableListOf<ViewerTablePresentedCell>()
+        tables.forEach { table -> forEachPresentedCell(table, owner, window) { cells += it } }
+        owner.retainCells(cells)
+        return tables.firstOrNull { it.surface.editorTableId == tableId }
+    }
+
     fun contentAccessibilityNodes(
         cell: ViewerTablePresentedCell,
         owner: ViewerTablePresentationOwner
@@ -820,11 +837,28 @@ internal object ViewerTablePresentation {
         owner: ViewerTablePresentationOwner,
         viewport: ViewerTablePresentationViewport
     ): ViewerTablePresentationSnapshot {
-        val window = when (viewport) {
-            ViewerTablePresentationViewport.Unknown -> null
-            is ViewerTablePresentationViewport.Known -> viewport.window ?: Rect()
-        }
-        return project(root, owner, window, 0f, 0f, UNBOUNDED).also { owner.retainCells(it.cells) }
+        return project(root, owner, presentationWindow(viewport), 0f, 0f, UNBOUNDED)
+            .also { owner.retainCells(it.cells) }
+    }
+
+    private fun presentationWindow(viewport: ViewerTablePresentationViewport): Rect? = when (viewport) {
+        ViewerTablePresentationViewport.Unknown -> null
+        is ViewerTablePresentationViewport.Known -> viewport.window ?: Rect()
+    }
+
+    private inline fun forEachPresentedCell(
+        table: ViewerTablePresentedSurface,
+        owner: ViewerTablePresentationOwner,
+        window: Rect?,
+        visit: (ViewerTablePresentedCell) -> Unit
+    ) {
+        val surface = table.surface
+        val contentX = table.bounds.left - owner.physicalOffset(surface)
+        val contentY = table.bounds.top
+        val cells = window?.let {
+            surface.presentationCells(it.left - contentX, it.top - contentY, it.right - contentX, it.bottom - contentY)
+        } ?: surface.cells
+        cells.forEach { visit(present(it, surface, contentX, contentY, table.clip)) }
     }
 
     private fun project(
@@ -923,17 +957,10 @@ internal object ViewerTablePresentation {
                 val tableBounds = block.tableBounds ?: return@forEachIndexed
                 val table = presentTable(surface, tableBounds, originX, originY, clip)
                 tables += table
-                val hostY = table.bounds.top
-                val hostClip = table.clip
-                val contentX = table.bounds.left - owner.physicalOffset(surface)
-                val windowCells = window?.let {
-                    surface.presentationCells(it.left - contentX, it.top - hostY, it.right - contentX, it.bottom - hostY)
-                } ?: surface.cells
-                windowCells.forEach { cell ->
-                    val presented = present(cell, surface, contentX, hostY, hostClip)
+                forEachPresentedCell(table, owner, window) { presented ->
                     cells += presented
-                    appendLayout(cell.content, presented.contentBounds.left, presented.contentBounds.top,
-                        intersect(hostClip, presented.contentBounds))
+                    appendLayout(presented.cell.content, presented.contentBounds.left, presented.contentBounds.top,
+                        intersect(table.clip, presented.contentBounds))
                 }
             }
             layout.imageAttachments.filter { emittedImages.add(it.id) }.forEach { attachment ->

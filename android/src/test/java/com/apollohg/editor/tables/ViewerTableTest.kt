@@ -84,6 +84,150 @@ import uniffi.editor_core.TableRenderFailure
 class ViewerTableTest {
     @Test
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun activeCellTableLookupKeepsWindowPinsWithoutProjectingAccessibility() {
+        val rows = 6
+        val columns = 12
+        val viewportWidth = 120
+        val viewportHeight = 45
+        val pressureBytes = com.apollohg.editor.viewer.PREPARED_LAYOUT_UNMOUNTED_BYTE_BUDGET + 1L
+        val tableId = "active-table"
+        val document = JSONObject(PlainTableFixture.document(rows, columns, PlainTableFixture::coordinateText))
+        val sourceRows = document.getJSONArray("content").getJSONObject(0).getJSONArray("content")
+        repeat(rows) { row ->
+            val sourceCells = sourceRows.getJSONObject(row).getJSONArray("content")
+            repeat(columns) { column ->
+                sourceCells.getJSONObject(column).getJSONArray("content").getJSONObject(0)
+                    .getJSONArray("content").getJSONObject(0).put("marks", JSONArray().put(
+                        JSONObject().put("type", "link").put("attrs", JSONObject().put("href", "https://example.test/cell"))))
+            }
+        }
+        for (direction in TableLayoutDirection.entries) {
+            val prepared = prepare(document.toString(), config = interactionConfig(), direction = direction)
+            val block = prepared.blocks.single { it.tableSurface != null }
+            val original = requireNotNull(block.tableSurface)
+            val store = TableCellLayoutStore()
+            var accessibilityReads = 0
+            val cells = original.cells.map { cell ->
+                val content = cell.content
+                assertTrue("The fixture must contain actual accessibility metadata", content.accessibilityNodes.isNotEmpty())
+                val observed = object : AbstractList<PreparedProseAccessibilityNode>() {
+                    override val size get() = content.accessibilityNodes.size
+                    override fun get(index: Int): PreparedProseAccessibilityNode {
+                        accessibilityReads++
+                        return content.accessibilityNodes[index]
+                    }
+                }
+                val child = content.copy(accessibilityNodes = observed, cellPreparation = null)
+                PreparedViewerTableCell(cell.sourceIndex, cell.row, cell.column, cell.rowspan, cell.colspan,
+                    cell.contentOrigin, child, cell.isHeader, cell.attributesKey, store)
+            }
+            val surface = withEditorTableId(original, tableId, cells)
+            val layout = prepared.copy(blocks = prepared.blocks.map {
+                if (it === block) it.copy(tableSurface = surface) else it
+            })
+            val owner = ViewerTablePresentationOwner()
+            val viewport = ViewerTablePresentationViewport.Known(Rect(0, 0, viewportWidth, viewportHeight))
+            val scenarios = listOf(
+                viewport to 0f,
+                viewport to surface.layout.contentWidth,
+                ViewerTablePresentationViewport.Known(Rect(0, viewportHeight * 2,
+                    viewportWidth, viewportHeight * 3)) to 0f,
+                ViewerTablePresentationViewport.Unknown to 0f
+            )
+            for ((currentViewport, offset) in scenarios) {
+                owner.setLogicalOffset(offset, surface)
+                val oracleOwner = ViewerTablePresentationOwner()
+                oracleOwner.setLogicalOffset(offset, surface)
+                val expected = ViewerTablePresentation.project(layout, oracleOwner, currentViewport)
+                val expectedTable = expected.tables.first { it.surface.editorTableId == tableId }
+                val mounted = expected.cells.map { it.cell.contentKey }.toSet()
+                assertTrue("The fixture must have mounted cells", mounted.isNotEmpty())
+                oracleOwner.clearPreparedCells()
+                accessibilityReads = 0
+                val actual = ViewerTablePresentation.tableWithId(layout, owner, currentViewport, tableId)
+                assertEquals("$direction offset=$offset: exact bounds and clip", expectedTable, actual)
+                assertEquals("Active-cell lookup must not project every cell's accessibility metadata", 0, accessibilityReads)
+                val pressure = layout.copy(key = layout.key.copy(semanticKey = "pressure"),
+                    blocks = emptyList(), retainedBytes = pressureBytes)
+                store.insert(pressure)
+                assertEquals("Window cells remain pinned before the next draw", mounted,
+                    cells.filter { it.cachedContent != null }.map { it.contentKey }.toSet())
+            }
+            assertNull(ViewerTablePresentation.tableWithId(layout, owner,
+                ViewerTablePresentationViewport.Known(Rect()), "missing-table"))
+            store.insert(layout.copy(key = layout.key.copy(semanticKey = "hidden-pressure"),
+                blocks = emptyList(), retainedBytes = pressureBytes))
+            assertTrue("An empty viewport releases previous window pins", cells.all { it.cachedContent == null })
+            owner.clearPreparedCells()
+        }
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun activeCellTableLookupPreservesNestedAndDuplicateRootOrder() {
+        val tableId = "duplicate"
+        val nestedDepth = 2
+        val viewportSize = 40
+        val offscreenMultiplier = 4
+        val prepared = prepare(nestedTablesSource(nestedDepth))
+        val outerBlock = prepared.blocks.single { it.tableSurface != null }
+        val outer = requireNotNull(outerBlock.tableSurface)
+        val host = outer.nestedTableCells.single()
+        val content = host.content
+        val nestedBlock = content.blocks.single { it.tableSurface != null }
+        val nested = withEditorTableId(requireNotNull(nestedBlock.tableSurface), tableId)
+        val nestedContent = content.copy(blocks = content.blocks.map {
+            if (it === nestedBlock) it.copy(tableSurface = nested) else it
+        }, cellPreparation = null)
+        val hostCell = PreparedViewerTableCell(host.sourceIndex, host.row, host.column, host.rowspan,
+            host.colspan, host.contentOrigin, nestedContent, host.isHeader, host.attributesKey)
+        val parent = withEditorTableId(outer, "parent", outer.cells.map { if (it === host) hostCell else it })
+        val duplicate = withEditorTableId(nested, tableId)
+        val duplicateBounds = Rect(requireNotNull(nestedBlock.tableBounds)).apply { offset(0, prepared.heightPx) }
+        val duplicateBlock = nestedBlock.copy(tableSurface = duplicate, tableBounds = duplicateBounds,
+            bounds = Rect(duplicateBounds))
+        val root = prepared.copy(blocks = listOf(outerBlock.copy(tableSurface = parent), duplicateBlock),
+            heightPx = duplicateBounds.bottom)
+        val outside = root.heightPx * offscreenMultiplier
+        val scenarios = listOf(
+            ViewerTablePresentationViewport.Unknown to nested,
+            ViewerTablePresentationViewport.Known(Rect(0, outside, viewportSize, outside + viewportSize)) to duplicate,
+            ViewerTablePresentationViewport.Known(Rect()) to duplicate
+        )
+        for ((viewport, expectedSurface) in scenarios) {
+            val owner = ViewerTablePresentationOwner()
+            val oracle = ViewerTablePresentationOwner()
+            try {
+                val expected = ViewerTablePresentation.project(root, oracle, viewport).tables
+                    .first { it.surface.editorTableId == tableId }
+                assertSame("Fixture must change first match when the nested host leaves the window", expectedSurface, expected.surface)
+                assertEquals(expected, ViewerTablePresentation.tableWithId(root, owner, viewport, tableId))
+            } finally {
+                owner.clearPreparedCells()
+                oracle.clearPreparedCells()
+            }
+        }
+        val flat = root.copy(blocks = listOf(duplicateBlock, duplicateBlock.copy(tableSurface = nested)))
+        val owner = ViewerTablePresentationOwner()
+        try {
+            assertSame("Duplicate flat roots preserve first-match order", duplicate,
+                ViewerTablePresentation.tableWithId(flat, owner,
+                    ViewerTablePresentationViewport.Unknown, tableId)?.surface)
+        } finally {
+            owner.clearPreparedCells()
+        }
+    }
+
+    private fun withEditorTableId(
+        surface: ViewerTableSurface,
+        tableId: String,
+        cells: List<PreparedViewerTableCell> = surface.cells
+    ) = ViewerTableSurface(surface.identity, surface.hostViewportWidth, surface.style,
+        surface.isRightToLeft, surface.layout, cells, surface.preparationError,
+        surface.sourceTable, surface.sourceAttributes, tableId, surface.displayScale)
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
     fun contentOnlyEditsReuseGeometryUntilHeightOrColumnWidthChanges() {
         fun source(text: String) = """{"type":"doc","content":[{"type":"table","content":[
             {"type":"table_row","content":[${tableCell(text)},${tableCell("adjacent")}]},

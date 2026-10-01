@@ -428,7 +428,9 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         tableId: String,
         locate: (ViewerTableSurface) -> PreparedViewerTableCell?
     ): ViewerTablePresentedCell? {
-        val table = presentationSnapshot()?.tableWithId(tableId) ?: return null
+        val artifact = preparedLayout ?: return null
+        val table = ViewerTablePresentation.tableWithId(artifact, tablePresentationOwner,
+            presentationViewport(), tableId) ?: return null
         val cell = locate(table.surface) ?: return null
         return ViewerTablePresentation.present(cell, table, tablePresentationOwner)
     }
