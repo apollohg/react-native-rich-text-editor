@@ -344,7 +344,7 @@ class NativeTablePerformanceTest {
 
     private fun measureChange(host: EditorHost, counters: PreparedProseInstrumentation.TablePerformanceCounters,
                               action: () -> Unit): Measurement {
-        val keys = onMain { requireNotNull(host.table.sourceTable).cells.map { it.contentKey }.toSet() }
+        val keys = onMain { requireNotNull(host.table.sourceTable).cells.map { it.contentKey } }
         val prepared = mutableListOf<String>()
         onMain { host.view.editorTableSurface.onTableCellPreparedForTesting = { _, key -> prepared.add(key); Unit } }
         try {
