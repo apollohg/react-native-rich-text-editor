@@ -38,6 +38,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import uniffi.editor_core.FfiNativeRenderFrame
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Robolectric
 import org.robolectric.annotation.Config
@@ -96,11 +97,12 @@ internal class EditorTableSurfaceMountTest {
     private fun withMountedView(
         document: String = tableDocument,
         configJSON: String = config,
+        backend: EditorV2Backend = UniffiEditorV2Backend,
         block: (RichTextEditorView, EditorV2Adapter, String) -> Unit
     ) {
         val created = UniffiEditorV2Backend.create(configJSON, null) as EditorV2CallResult.Ok
         val adapter = requireNotNull(EditorV2Adapter.attach(
-            UniffiEditorV2Backend, JSONObject(created.value).getString("editorId"), false
+            backend, JSONObject(created.value).getString("editorId"), false
         ))
         val token = EditorV2Registry.register(adapter)
         try {
@@ -128,6 +130,126 @@ internal class EditorTableSurfaceMountTest {
             block(view, adapter)
         } finally {
             activityController.pause().stop().destroy()
+        }
+    }
+
+    @Test
+    fun rejectedCellCommitLeavesTheConnectionReadyForTheNextEdit() {
+        val initial = "ab"
+        val singleCell = 1
+        val bounded = JSONObject(config).put("policy", JSONObject().put("maxLength", initial.length)).toString()
+        withMountedView(PlainTableFixture.document(singleCell, singleCell, initial), bounded) { view, adapter, _ ->
+            tapFirstCell(view)
+            val input = view.activeTextInput
+            assertTrue(input !== view.editorEditText)
+            input.setSelection(input.text.length)
+            val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            val document = adapter.documentJson()
+            val revision = adapter.baseDocumentRevision
+            val history = adapter.historyCanUndo() to adapter.historyCanRedo()
+            assertTrue(connection.commitText("x", 1))
+            ShadowLooper.idleMainLooper()
+            assertEquals("A rejected commit must not leave optimistic text", initial, input.text.toString())
+            assertEquals(initial.length, input.selectionStart)
+            assertEquals(input.selectionStart, input.selectionEnd)
+            assertEquals(document, adapter.documentJson())
+            assertEquals(revision, adapter.baseDocumentRevision)
+            assertEquals(history, adapter.historyCanUndo() to adapter.historyCanRedo())
+            assertTrue(connection.deleteSurroundingTextInCodePoints(1, 0))
+            ShadowLooper.idleMainLooper()
+            assertEquals(initial.dropLast(1), cellText(adapter, 0))
+            assertTrue(connection.commitText("x", 1))
+            assertEquals(initial.dropLast(1) + "x", input.text.toString())
+            assertEquals(input.text.toString(), cellText(adapter, 0))
+            assertSame(input, view.activeTextInput)
+        }
+    }
+
+    @Test
+    fun rejectedCellCommitDoesNotOverwriteAnErrorCallbackReplacement() {
+        val initial = "ab"
+        val bounded = JSONObject(config).put("policy", JSONObject().put("maxLength", initial.length)).toString()
+        val document = PlainTableFixture.document(1, 1, initial)
+        withMountedView(document, bounded) { view, adapter, _ ->
+            tapFirstCell(view)
+            val input = view.activeTextInput
+            input.setSelection(initial.length)
+            val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            var errors = 0
+            adapter.onAutonomousError = {
+                errors++
+                val replacement = replaceTableDocumentExternallyForTest(adapter, PlainTableFixture.document(1, 1, "cd"))
+                assertTrue(view.editorEditText.applyUpdateJSON(replacement))
+            }
+            assertTrue(connection.commitText("x", 1))
+            ShadowLooper.idleMainLooper()
+            assertEquals("Only the rejected insertion should report an error", 1, errors)
+            assertEquals("cd", cellText(adapter, 0))
+            assertEquals("cd", view.activeTextInput.text.toString())
+            assertFalse("The replaced cell must retire its old connection", connection.beginBatchEdit())
+        }
+    }
+
+    @Test
+    fun failedCellRejectionRefreshRestoresTextAndDisablesTheStaleConnection() {
+        val initial = "ab"
+        val bounded = JSONObject(config).put("policy", JSONObject().put("maxLength", initial.length)).toString()
+        var rejectRefresh = false
+        var failedRefreshes = 0
+        val backend = object : EditorV2Backend by UniffiEditorV2Backend {
+            override fun renderNativeFrame(
+                editorId: String, ownerId: String?, mirrorAnchor: Int?, mirrorHead: Int?
+            ): EditorV2CallResult<FfiNativeRenderFrame> {
+                if (rejectRefresh) {
+                    failedRefreshes++
+                    return EditorV2CallResult.Err(EditorV2Adapter.contractError("Injected frame fetch failure"))
+                }
+                return UniffiEditorV2Backend.renderNativeFrame(editorId, ownerId, mirrorAnchor, mirrorHead)
+            }
+        }
+        withMountedView(PlainTableFixture.document(1, 1, initial), bounded, backend) { view, adapter, _ ->
+            tapFirstCell(view)
+            val input = view.activeTextInput
+            input.setSelection(initial.length)
+            val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            val document = adapter.documentJson()
+            rejectRefresh = true
+            assertTrue(connection.commitText("x", 1))
+            assertEquals("The failure control must reach the recovery fetch", 1, failedRefreshes)
+            assertEquals(initial, input.text.toString())
+            assertEquals(initial.length, input.selectionStart)
+            assertEquals(input.selectionStart, input.selectionEnd)
+            assertNull(input.pendingOptimisticRenderText)
+            assertNull(input.logicalSelectionSnapshot)
+            assertFalse(connection.beginBatchEdit())
+            assertFalse(input.canDispatchTableCellMutation())
+            assertEquals(document, adapter.documentJson())
+        }
+    }
+
+    @Test
+    fun rejectedCellCommitDoesNotRecoverAfterItsAuthorityIsRevoked() {
+        val initial = "ab"
+        val bounded = JSONObject(config).put("policy", JSONObject().put("maxLength", initial.length)).toString()
+        withMountedView(PlainTableFixture.document(1, 1, initial), bounded) { view, adapter, _ ->
+            tapFirstCell(view)
+            val input = view.activeTextInput
+            input.setSelection(initial.length)
+            val authority = requireNotNull(input.tableCellInputAuthority)
+            var authorized = true
+            input.tableCellInputAuthority = { authorized && authority() }
+            val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            val fetches = adapter.renderUpdateCallCountForTesting
+            var errors = 0
+            adapter.onAutonomousError = {
+                errors++
+                authorized = false
+            }
+            assertTrue(connection.commitText("x", 1))
+            assertEquals(1, errors)
+            assertEquals("Revoked inputs must not fetch a frame", fetches, adapter.renderUpdateCallCountForTesting)
+            assertFalse(input.canDispatchTableCellMutation())
+            assertEquals(initial, cellText(adapter, 0))
         }
     }
 

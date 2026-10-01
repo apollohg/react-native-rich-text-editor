@@ -36,6 +36,38 @@ class NativeDeviceTableCellTest {
     private val instrumentation: Instrumentation = InstrumentationRegistry.getInstrumentation()
 
     @Test
+    fun rejectedCellTypingRestoresTheCaretAndKeepsTheConnectionUsable() {
+        val initial = "ab"
+        val document = com.apollohg.editor.tables.PlainTableFixture.document(1, 1, initial)
+        val config = JSONObject(CONFIG).put("policy", JSONObject().put("maxLength", initial.length)).toString()
+        withEditor(document, config = config) { fixture ->
+            fixture.tapCell(0)
+            fixture.onActivity {
+                val input = fixture.cellInput()
+                input.setSelection(initial.length)
+                val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+                val before = fixture.adapter.documentJson()
+                val revision = fixture.adapter.baseDocumentRevision
+                assertTrue(connection.commitText("x", 1))
+                assertEquals(initial, input.text.toString())
+                assertEquals(initial.length, input.selectionStart)
+                assertEquals(input.selectionStart, input.selectionEnd)
+                assertEquals(before, fixture.adapter.documentJson())
+                assertEquals(revision, fixture.adapter.baseDocumentRevision)
+                assertTrue(connection.deleteSurroundingTextInCodePoints(1, 0))
+                val inserted = "😀"
+                assertTrue(connection.commitText(inserted, 1))
+                val expected = initial.dropLast(1) + inserted
+                assertEquals(expected, input.text.toString())
+                assertEquals(expected.length, input.selectionStart)
+                assertEquals(listOf(expected), fixture.cellTexts())
+                assertSame(input, fixture.cellInput())
+            }
+            fixture.awaitCommittedFrame()
+        }
+    }
+
+    @Test
     fun expoToolbarTypingInTwentyThousandSlotTableStaysWithinHeap() {
         val fixtureSource = com.apollohg.editor.tables.PlainTableFixture
         withEditor(fixtureSource.document(fixtureSource.LARGE_ROWS, fixtureSource.LARGE_COLUMNS), showToolbar = true) { fixture ->
@@ -369,10 +401,15 @@ class NativeDeviceTableCellTest {
         }
     }
 
-    private fun withEditor(document: String = DOCUMENT, showToolbar: Boolean = false, test: (Fixture) -> Unit) {
+    private fun withEditor(
+        document: String = DOCUMENT,
+        showToolbar: Boolean = false,
+        config: String = CONFIG,
+        test: (Fixture) -> Unit
+    ) {
         ActivityScenario.launch(NativeEditorOutsideTapActivity::class.java).use { scenario ->
             val editorRef = AtomicReference<NativeEditorExpoView>()
-            val created = when (val result = UniffiEditorV2Backend.create(CONFIG, null)) {
+            val created = when (val result = UniffiEditorV2Backend.create(config, null)) {
                 is EditorV2CallResult.Ok -> result.value
                 is EditorV2CallResult.Err -> error("create failed: ${result.error.code}: ${result.error.message}")
             }
@@ -454,8 +491,9 @@ class NativeDeviceTableCellTest {
         }
 
         fun cellTexts(): List<String> {
-            val rows = JSONObject(requireNotNull(adapter.documentJson())).getJSONArray("content")
-                .getJSONObject(1).getJSONArray("content").getJSONObject(0)
+            val content = JSONObject(requireNotNull(adapter.documentJson())).getJSONArray("content")
+            val rows = (0 until content.length()).map(content::getJSONObject)
+                .first { it.getString("type") == "table" }.getJSONArray("content").getJSONObject(0)
                 .getJSONArray("content")
             return (0 until rows.length()).map { index ->
                 rows.getJSONObject(index).getJSONArray("content").getJSONObject(0)

@@ -1,6 +1,7 @@
 package com.apollohg.editor
 
 import android.text.Spanned
+import com.apollohg.editor.EditorEditText.AuthoritativeInputSnapshot
 import org.json.JSONObject
 
 /**
@@ -15,8 +16,51 @@ internal fun EditorEditText.insertTextInRust(text: String, atScalarPos: Int) {
     }
     if (!canDispatchTableCellMutation()) return
     v2Driver?.let { driver ->
-        driver.insertText(text, globalPos)?.let { applyRustUpdateJSON(it) }
+        if (isTableCellInput) {
+            insertTableCellTextInRust(driver, text, globalPos, atScalarPos)
+        } else {
+            driver.insertText(text, globalPos)?.let { applyRustUpdateJSON(it) }
+        }
     }
+}
+
+private fun EditorEditText.insertTableCellTextInRust(
+    driver: EditorV2Driver,
+    insertedText: String,
+    globalPosition: Int,
+    localPosition: Int
+) {
+    val boundEditor = editorId
+    val boundMap = tableCellPositionMap
+    val consumer = tableCellUpdateConsumer ?: return
+    val authority = tableCellInputAuthority ?: return
+    val generation = inputConnectionGeneration
+    val authorizedText = lastAuthorizedText
+    val authorizedRenderedText = lastAuthorizedRenderedText ?: authorizedText
+    fun stillBound(): Boolean = editorId == boundEditor && v2Driver === driver &&
+        tableCellPositionMap === boundMap && tableCellUpdateConsumer === consumer &&
+        inputConnectionGeneration == generation && tableCellInputAuthority === authority &&
+        isEditable && hasLiveEditor() && authority()
+
+    val update = driver.insertText(insertedText, globalPosition)
+    if (!stillBound()) return
+    if (update != null) {
+        applyRustUpdateJSON(update)
+        return
+    }
+    // A missing response can follow either rejection or a failed render fetch.
+    val recovered = driver.refreshFromRustState(null)
+    if (!stillBound()) return
+    pendingOptimisticRenderText = null
+    logicalSelectionSnapshot = null
+    if (recovered != null && consumer(recovered, false, false)) return
+    if (!stillBound()) return
+    val cursor = PositionBridge.scalarToUtf16(localPosition, authorizedText)
+    restoreAuthoritativeInputForEditorImpl(
+        AuthoritativeInputSnapshot(authorizedRenderedText, cursor, cursor)
+    )
+    retireInputConnectionForEditor()
+    tableCellUpdateConsumer = null
 }
 
 internal fun EditorEditText.replaceTextRangeInRust(
