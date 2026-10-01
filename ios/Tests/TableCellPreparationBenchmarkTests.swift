@@ -15,6 +15,123 @@ final class TableCellPreparationBenchmarkTests: XCTestCase {
         static let generation = "table-cell-preparation-benchmark"
     }
 
+    func testScopedPlainTextTemplatesPreserveAttributesShapingAndPixels() {
+        let engine = CoreTextProseLayoutEngine()
+        let theme = PreparedProseTheme.resolve(themeJSON: nil)
+        let texts = ["", " ", "  ", "trailing  ", "line\n", "one\ntwo", "a\r\nb", "e\u{301}",
+            "👩🏽‍💻 family 👨‍👩‍👧", "العربية 123", "אבג Latin 42", "日本語", "office fi ffi", String(repeating: "wrap ", count: 40)]
+        func make(_ inlines: [ViewerInline], _ paint: PreparedTextPaint, _ spacing: CGFloat,
+                  _ template: CoreTextProseLayoutEngine.PlainTextPreparation? = nil) -> PreparedAttributedBlock {
+            engine.makeAttributedString(inlines, paint: paint, theme: theme,
+                warningSemanticGeneration: Benchmark.generation, paragraphSpacing: spacing,
+                textPreparation: template)
+        }
+        func raster(_ line: CTLine) -> Data? {
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 1
+            let size = CGSize(width: 224, height: 96)
+            return UIGraphicsImageRenderer(size: size, format: format).image { image in
+                image.cgContext.translateBy(x: 0, y: size.height)
+                image.cgContext.scaleBy(x: 1, y: -1)
+                image.cgContext.textPosition = CGPoint(x: 8, y: 40)
+                CTLineDraw(line, image.cgContext)
+            }.pngData()
+        }
+        func compare(_ expected: PreparedAttributedBlock, _ actual: PreparedAttributedBlock, _ context: String) {
+            XCTAssertEqual(expected.string, actual.string, context)
+            XCTAssertEqual(expected.retainedBytes, actual.retainedBytes, context)
+            XCTAssertEqual(expected.atoms.count, actual.atoms.count, context)
+            XCTAssertEqual(expected.semanticRanges.map(\.range), actual.semanticRanges.map(\.range), context)
+            XCTAssertEqual(expected.accessibilityRanges.map(\.range), actual.accessibilityRanges.map(\.range), context)
+            XCTAssertEqual(expected.accessibilityRanges.map(\.label), actual.accessibilityRanges.map(\.label), context)
+            XCTAssertEqual(expected.accessibilityRanges.map(\.role), actual.accessibilityRanges.map(\.role), context)
+            expected.string.enumerateAttributes(in: NSRange(location: 0, length: expected.string.length)) { attributes, range, _ in
+                var actualRange = NSRange()
+                let actualAttributes = actual.string.attributes(at: range.location, effectiveRange: &actualRange)
+                XCTAssertEqual(NSDictionary(dictionary: attributes), NSDictionary(dictionary: actualAttributes), context)
+                XCTAssertEqual(range, actualRange, context)
+            }
+            for width: CGFloat in [31, 62, 186] {
+                let before = CTTypesetterCreateWithAttributedString(expected.string)
+                let after = CTTypesetterCreateWithAttributedString(actual.string)
+                var start = 0
+                while start < expected.string.length {
+                    let count = max(1, CTTypesetterSuggestLineBreak(before, start, Double(width)))
+                    XCTAssertEqual(count, max(1, CTTypesetterSuggestLineBreak(after, start, Double(width))), context)
+                    let range = CFRange(location: start, length: count)
+                    let left = CTTypesetterCreateLine(before, range)
+                    let right = CTTypesetterCreateLine(after, range)
+                    var leftAscent: CGFloat = 0, leftDescent: CGFloat = 0, leftLeading: CGFloat = 0
+                    var rightAscent: CGFloat = 0, rightDescent: CGFloat = 0, rightLeading: CGFloat = 0
+                    XCTAssertEqual(CTLineGetTypographicBounds(left, &leftAscent, &leftDescent, &leftLeading),
+                        CTLineGetTypographicBounds(right, &rightAscent, &rightDescent, &rightLeading), context)
+                    XCTAssertEqual(leftAscent, rightAscent, context)
+                    XCTAssertEqual(leftDescent, rightDescent, context)
+                    XCTAssertEqual(leftLeading, rightLeading, context)
+                    for offset in start...(start + count) {
+                        var leftSecondary: CGFloat = 0, rightSecondary: CGFloat = 0
+                        XCTAssertEqual(CTLineGetOffsetForStringIndex(left, offset, &leftSecondary),
+                            CTLineGetOffsetForStringIndex(right, offset, &rightSecondary), context)
+                        XCTAssertEqual(leftSecondary, rightSecondary, context)
+                    }
+                    let expectedPixels = raster(left), actualPixels = raster(right)
+                    XCTAssertNotNil(expectedPixels, context)
+                    XCTAssertNotNil(actualPixels, context)
+                    XCTAssertEqual(expectedPixels, actualPixels, context)
+                    start += count
+                }
+            }
+        }
+        let sharedPreparation = CoreTextProseLayoutEngine.PlainTextPreparation()
+        for appearance in [UIUserInterfaceStyle.light, .dark] {
+            UITraitCollection(userInterfaceStyle: appearance).performAsCurrent {
+                for font in [theme.paragraph.font, UIFont.boldSystemFont(ofSize: theme.paragraph.font.pointSize)] {
+                    let paint = PreparedTextPaint(font: font, color: .label, lineHeight: nil, spacingAfter: 0)
+                    for spacing: CGFloat in [0, 7.25] {
+                        let template = sharedPreparation
+                        var retained: [(NSAttributedString, NSAttributedString)] = []
+                        for text in texts {
+                            let inlines: [ViewerInline] = [.text(text: text, marks: [])]
+                            let expected = make(inlines, paint, spacing)
+                            let actual = make(inlines, paint, spacing, template)
+                            compare(expected, actual, "appearance=\(appearance.rawValue) font=\(font.fontName) spacing=\(spacing) text=\(text)")
+                            retained.append((actual.string, NSAttributedString(attributedString: actual.string)))
+                        }
+                        for (actual, snapshot) in retained { XCTAssertEqual(actual, snapshot) }
+                        let fallbacks: [[ViewerInline]] = [[], [.text(text: "", marks: [])],
+                            [.text(text: "first", marks: []), .text(text: "second", marks: [])],
+                            [.text(text: "bold", marks: [.init(markType: "bold", attrsJson: "{}")])],
+                            [.atom(nodeType: "hard_break", docPos: 0, attrsJSON: "{}", label: "\n")]]
+                        for inlines in fallbacks { compare(make(inlines, paint, spacing), make(inlines, paint, spacing, template), "fallback") }
+                        var styled = paint
+                        styled.textValues = ["letterSpacing": 2]
+                        compare(make([.text(text: "styled", marks: [])], styled, spacing),
+                            make([.text(text: "styled", marks: [])], styled, spacing, template), "textValues fallback")
+                    }
+                }
+            }
+        }
+        let styleTheme = PreparedProseTheme.resolve(themeJSON: ##"{"version":1,"styles":{"paragraph":{"color":"#123456","letterSpacing":2}}}"##)
+        XCTAssertNotNil(styleTheme.styleSheet)
+        let inlines: [ViewerInline] = [.text(text: "styled fallback", marks: [])]
+        let baseline = engine.makeAttributedString(inlines, paint: styleTheme.paragraph, theme: styleTheme,
+            warningSemanticGeneration: Benchmark.generation, paragraphSpacing: 0)
+        let styled = engine.makeAttributedString(inlines, paint: styleTheme.paragraph, theme: styleTheme,
+            warningSemanticGeneration: Benchmark.generation, paragraphSpacing: 0, textPreparation: sharedPreparation)
+        compare(baseline, styled, "stylesheet fallback")
+        let colors = [UIColor { _ in .red }, UIColor { _ in .red }, UIColor { traits in
+            traits.userInterfaceStyle == .dark ? .yellow : .blue
+        }]
+        for appearance in [UIUserInterfaceStyle.light, .dark, .light] {
+            UITraitCollection(userInterfaceStyle: appearance).performAsCurrent {
+                for color in colors {
+                    let paint = PreparedTextPaint(font: theme.paragraph.font, color: color, lineHeight: nil, spacingAfter: 0)
+                    compare(make(inlines, paint, 0), make(inlines, paint, 0, sharedPreparation), "dynamic color identity")
+                }
+            }
+        }
+    }
+
     func testPrepareDiscardMeasureAndWarmChangedCell() throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["PREPARED_PROSE_DEVICE_BENCHMARK"] == "1",
                           "Run through the prepared prose performance scheme.")

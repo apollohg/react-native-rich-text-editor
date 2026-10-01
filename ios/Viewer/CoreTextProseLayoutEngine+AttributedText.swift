@@ -9,18 +9,59 @@ private extension Int {
 }
 
 extension CoreTextProseLayoutEngine {
+    final class PlainTextPreparation {
+        static let seedText = " "
+        private struct Template {
+            let font: UIFont
+            let color: UIColor
+            let resolvedColor: CGColor
+            let spacing: CGFloat
+            let traits: UITraitCollection
+            let string: NSAttributedString
+        }
+        private var cached: Template?
+
+        func template(paint: PreparedTextPaint, spacing: CGFloat,
+                      build: () -> NSAttributedString) -> NSAttributedString {
+            let resolvedColor = paint.color.cgColor
+            let traits = UITraitCollection.current
+            if let cached, cached.font === paint.font, cached.color === paint.color,
+               cached.resolvedColor == resolvedColor, cached.spacing == spacing,
+               cached.traits.isEqual(traits) { return cached.string }
+            let string = build()
+            cached = Template(font: paint.font, color: paint.color, resolvedColor: resolvedColor,
+                spacing: spacing, traits: traits, string: string)
+            return string
+        }
+    }
+
     func makeAttributedString(
         _ inlines: [ViewerInline],
         paint: PreparedTextPaint,
         theme: PreparedProseTheme,
         warningSemanticGeneration: String,
         paragraphSpacing: CGFloat,
-        ancestors: [String] = []
+        ancestors: [String] = [],
+        textPreparation: PlainTextPreparation? = nil
     ) -> PreparedAttributedBlock {
-        let result = NSMutableAttributedString()
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.paragraphSpacing = paragraphSpacing
-        let immutableParagraphStyle = paragraphStyle.copy() as! NSParagraphStyle
+        var template: NSAttributedString?
+        if let textPreparation, inlines.count == 1, theme.styleSheet == nil, paint.textValues.isEmpty,
+           case let .text(text, marks) = inlines[0], !text.isEmpty, marks.isEmpty {
+            template = textPreparation.template(paint: paint, spacing: paragraphSpacing) {
+                let seed = makeAttributedString([.text(text: PlainTextPreparation.seedText, marks: [])], paint: paint, theme: theme,
+                    warningSemanticGeneration: warningSemanticGeneration, paragraphSpacing: paragraphSpacing)
+                let immutable = NSAttributedString(attributedString: seed.string)
+                plainTextTemplateBuildObserverForTesting?(immutable)
+                return immutable
+            }
+        }
+        let result = template.map { NSMutableAttributedString(attributedString: $0) } ?? NSMutableAttributedString()
+        let immutableParagraphStyle: NSParagraphStyle?
+        if template == nil {
+            let paragraphStyle = NSMutableParagraphStyle()
+            paragraphStyle.paragraphSpacing = paragraphSpacing
+            immutableParagraphStyle = paragraphStyle.copy() as! NSParagraphStyle
+        } else { immutableParagraphStyle = nil }
         var atoms: [PreparedAtomSpec] = []
         var semanticRanges: [PreparedSemanticRange] = []
         var accessibilityRanges: [PreparedAccessibilityRange] = []
@@ -43,10 +84,14 @@ extension CoreTextProseLayoutEngine {
         for inline in inlines {
             switch inline {
             case let .text(text: text, marks: marks):
-                let start = result.length
-                var textAttributes = attributes(for: marks, paint: paint, theme: theme, warningSemanticGeneration: warningSemanticGeneration, ancestors: ancestors)
-                textAttributes[.paragraphStyle] = immutableParagraphStyle
-                result.append(NSAttributedString(string: text, attributes: textAttributes))
+                let start = template == nil ? result.length : 0
+                if template != nil {
+                    result.replaceCharacters(in: NSRange(location: 0, length: result.length), with: text)
+                } else {
+                    var textAttributes = attributes(for: marks, paint: paint, theme: theme, warningSemanticGeneration: warningSemanticGeneration, ancestors: ancestors)
+                    textAttributes[.paragraphStyle] = immutableParagraphStyle!
+                    result.append(NSAttributedString(string: text, attributes: textAttributes))
+                }
                 let range = NSRange(location: start, length: (text as NSString).length)
                 if let href = href(in: marks), !text.isEmpty {
                     let semanticIndex: Int

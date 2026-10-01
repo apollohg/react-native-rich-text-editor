@@ -11,6 +11,7 @@ final class CoreTextProseLayoutEngine {
     private static let lineSeparator: unichar = 0x2028
     static let maxTablePreparationWorkers = 4
     var tablePreparationWorkerLimit = maxTablePreparationWorkers
+    var plainTextTemplateBuildObserverForTesting: ((NSAttributedString) -> Void)?
     var tableCellLayoutObserverForTesting: ((Int, PreparedProseLayout) -> Void)?
     var tableCellPreparationObserver: ((Int, String) -> Void)?
     var tableCellShapeBuildObserver: ((Int) -> Void)?
@@ -25,13 +26,14 @@ final class CoreTextProseLayoutEngine {
         var indices = Set<Int>()
         var transientIndices = Set<Int>()
         var contexts: [PreparedCellShapeBuildContext] = []
+        var textPreparations: [PlainTextPreparation] = []
         var prepare: [(TableGridCell, CGFloat) -> PreparedProseLayout] = []
     }
 
     private func tablePreparationPlan(
         document: ViewerDocument, table: TableSurfaceSource, tableKey: String,
         theme: PreparedProseTheme, cellMode: Bool, context: PreparedCellShapeBuildContext?,
-        prepare: @escaping (TableGridCell, CGFloat, CoreTextProseLayoutEngine, PreparedCellShapeBuildContext?, Bool) -> PreparedProseLayout
+        prepare: @escaping (TableGridCell, CGFloat, CoreTextProseLayoutEngine, PreparedCellShapeBuildContext?, Bool, PlainTextPreparation?) -> PreparedProseLayout
     ) -> TablePreparationPlan {
         var result = TablePreparationPlan()
         let count = min(Self.maxTablePreparationWorkers, max(1, tablePreparationWorkerLimit),
@@ -52,6 +54,10 @@ final class CoreTextProseLayoutEngine {
         for _ in 0..<count {
             let worker = CoreTextProseLayoutEngine()
             worker.tablePreparationWorkerLimit = 1
+            worker.plainTextTemplateBuildObserverForTesting = { template in
+                observerLock.lock(); defer { observerLock.unlock() }
+                self.plainTextTemplateBuildObserverForTesting?(template)
+            }
             worker.tableCellPreparationObserver = { index, contentKey in
                 observerLock.lock(); defer { observerLock.unlock() }
                 self.tableCellPreparationObserver?(index, contentKey)
@@ -70,8 +76,10 @@ final class CoreTextProseLayoutEngine {
             }
             let workerContext = context?.fork()
             if let workerContext { result.contexts.append(workerContext) }
-            result.prepare.append { cell, width in
-                prepare(cell, width, worker, workerContext, !transientIndices.contains(cell.sourceIndex))
+            let textPreparation = PlainTextPreparation()
+            result.textPreparations.append(textPreparation)
+            result.prepare.append { [weak textPreparation] cell, width in
+                prepare(cell, width, worker, workerContext, !transientIndices.contains(cell.sourceIndex), textPreparation)
             }
         }
         return result
@@ -156,7 +164,12 @@ final class CoreTextProseLayoutEngine {
     private typealias Preparation = AnyIterator<PreparationStep>
 
     private final class PreparationQueue {
+        let textPreparation: PlainTextPreparation
         private var pending: [() -> Void] = []
+
+        init(textPreparation: PlainTextPreparation = PlainTextPreparation()) {
+            self.textPreparation = textPreparation
+        }
 
         func prepare(_ preparation: Preparation, completion: @escaping (PreparedProseLayout?) -> Void) {
             pending.append {
@@ -198,7 +211,8 @@ final class CoreTextProseLayoutEngine {
         var result: PreparedProseLayout?
         queue.prepare(makePreparation(document: document, key: key, widthPoints: widthPoints,
             displayScale: displayScale, semanticGenerationIdentity: semanticGenerationIdentity,
-            cellMode: cellMode, highlightingScope: highlightingScope, cellShapeContext: cellShapeContext)) {
+            cellMode: cellMode, highlightingScope: highlightingScope, cellShapeContext: cellShapeContext,
+            textPreparation: queue.textPreparation)) {
                 result = $0
             }
         queue.run()
@@ -228,12 +242,13 @@ final class CoreTextProseLayoutEngine {
             semanticGenerationIdentity: key.semanticGenerationIdentity)
         let childScope = scope?.scoped(to: child)
         let traits = UITraitCollection.current
-        let makeBuild = { [self] in
+        let makeBuild = { [self] (queue: PreparationQueue) in
             tableCellPreparationObserver?(source.sourceIndex, source.contentKey)
             tableCellShapeBuildObserver?(source.sourceIndex)
             return makePreparation(document: child, key: childKey, widthPoints: cellWidth,
                 displayScale: displayScale, semanticGenerationIdentity: warningSemanticGeneration,
-                cellMode: true, highlightingScope: childScope, cellShapeContext: context)
+                cellMode: true, highlightingScope: childScope, cellShapeContext: context,
+                textPreparation: queue.textPreparation)
         }
         let didBuild: (PreparedProseLayout) -> Void = { [self] prepared in
             tableCellBindingObserver?(source.sourceIndex)
@@ -243,7 +258,7 @@ final class CoreTextProseLayoutEngine {
             var result: PreparedProseLayout!
             traits.performAsCurrent {
                 let queue = PreparationQueue()
-                queue.prepare(makeBuild()) { prepared in
+                queue.prepare(makeBuild(queue)) { prepared in
                     guard let prepared else { preconditionFailure("Cell preparation returned no layout") }
                     didBuild(prepared)
                     result = prepared
@@ -257,7 +272,7 @@ final class CoreTextProseLayoutEngine {
                 completion(prepared.withCellShape(prepared.cellShape, preparation: rebuild))
             }
             let build: (@escaping (PreparedProseLayout) -> Void) -> Void = { built in
-                queue.prepare(makeBuild()) { prepared in
+                queue.prepare(makeBuild(queue)) { prepared in
                     guard let prepared else { preconditionFailure("Cell preparation returned no layout") }
                     didBuild(prepared)
                     built(prepared)
@@ -336,7 +351,8 @@ final class CoreTextProseLayoutEngine {
         semanticGenerationIdentity: String? = nil,
         cellMode: Bool = false,
         highlightingScope: HighlightingScope? = nil,
-        cellShapeContext: PreparedCellShapeBuildContext? = nil
+        cellShapeContext: PreparedCellShapeBuildContext? = nil,
+        textPreparation: PlainTextPreparation
     ) -> Preparation {
         // This context is deliberately passed separately from the layout key's
         // revision-sensitive generation identity. A replacement layout for an
@@ -459,11 +475,14 @@ final class CoreTextProseLayoutEngine {
                             cellTheme: cellTheme, warningSemanticGeneration: warningSemanticGeneration,
                             scope: scope, context: context, retainShape: retainShape)
                     }
+                    weak var batchTextPreparation = textPreparation
                     func prepareCell(_ cell: TableGridCell, width: CGFloat,
                                      worker: CoreTextProseLayoutEngine? = nil,
                                      workerContext: PreparedCellShapeBuildContext? = nil,
-                                     retainShape: Bool = true) -> PreparedProseLayout {
-                        let queue = PreparationQueue()
+                                     retainShape: Bool = true,
+                                     workerTextPreparation: PlainTextPreparation? = nil) -> PreparedProseLayout {
+                        let textPreparation = worker == nil ? batchTextPreparation : workerTextPreparation
+                        let queue = PreparationQueue(textPreparation: textPreparation ?? PlainTextPreparation())
                         var prepared: PreparedProseLayout!
                         cellRequest(cell, width: width, worker: worker, workerContext: workerContext,
                             retainShape: retainShape).prepare(queue) { prepared = $0 }
@@ -497,10 +516,15 @@ final class CoreTextProseLayoutEngine {
                                 self.tableIncrementalRelayoutObserver?()
                             } else if let record {
                                 let workers = self.tablePreparationPlan(document: document, table: surfaceSource, tableKey: tableKey,
-                                    theme: theme, cellMode: cellMode, context: tableShapes) { cell, width, worker, context, retainShape in
-                                        prepareCell(cell, width: width, worker: worker, workerContext: context, retainShape: retainShape)
+                                    theme: theme, cellMode: cellMode, context: tableShapes) { cell, width, worker, context, retainShape, textPreparation in
+                                        prepareCell(cell, width: width, worker: worker, workerContext: context,
+                                            retainShape: retainShape, workerTextPreparation: textPreparation)
                                     }
-                                defer { workers.contexts.forEach { $0.close() } }
+                                defer {
+                                    workers.contexts.forEach { $0.close() }
+                                    withExtendedLifetime(workers.textPreparations) {}
+                                }
+                                let transientIndices = workers.transientIndices
                                 surface = ViewerTableSurface(
                                     identity: tableKey,
                                     scrollIdentity: document.tableSourceIDs[tableKey],
@@ -520,7 +544,7 @@ final class CoreTextProseLayoutEngine {
                                     parallelCellIndices: workers.indices,
                                     transientCellIndices: workers.transientIndices,
                                     prepareCell: { prepareCell($0, width: $1,
-                                        retainShape: !workers.transientIndices.contains($0.sourceIndex)) })
+                                        retainShape: !transientIndices.contains($0.sourceIndex)) })
                             } else {
                                 preconditionFailure("Full table preparation requires a grid record.")
                             }
@@ -588,7 +612,8 @@ final class CoreTextProseLayoutEngine {
                     disappearingListItemIdentities: disappearingListItemIdentities,
                     entersNestedListItem: entersNestedListItem,
                     displayScale: displayScale,
-                    warningSemanticGeneration: warningSemanticGeneration
+                    warningSemanticGeneration: warningSemanticGeneration,
+                    textPreparation: textPreparation
                 )
                 let preparedBlockIndex = blocks.count
                 blocks.append(prepared.block)
@@ -1026,7 +1051,8 @@ final class CoreTextProseLayoutEngine {
         disappearingListItemIdentities: Set<Int>,
         entersNestedListItem: Bool,
         displayScale: CGFloat,
-        warningSemanticGeneration: String
+        warningSemanticGeneration: String,
+        textPreparation: PlainTextPreparation
     ) -> BlockPreparation {
         let sheet = theme.styleSheet
         let box = sheet?.box(block.nodeType, ancestors: block.styleAncestors.map(\.nodeType)) ?? EditorStyleBox()
@@ -1165,7 +1191,8 @@ final class CoreTextProseLayoutEngine {
         let attributed = makeAttributedString(block.inlines, paint: paint, theme: theme,
             warningSemanticGeneration: warningSemanticGeneration,
             paragraphSpacing: paint.paragraphSpacing(inBlockquote: block.inBlockquote, inList: block.listContext != nil),
-            ancestors: block.styleAncestors.map(\.nodeType) + [block.nodeType])
+            ancestors: block.styleAncestors.map(\.nodeType) + [block.nodeType],
+            textPreparation: textPreparation)
         let highlighted = NSMutableAttributedString(attributedString: attributed.string)
         NativeCodeHighlightPresentation.apply(highlighting, to: highlighted)
         let typesetter = CTTypesetterCreateWithAttributedString(highlighted)

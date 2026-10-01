@@ -23,6 +23,11 @@ private final class TablePanLifecycleProbe: NSObject {
 }
 
 final class ViewerTableTests: XCTestCase {
+    private final class WeakTemplate {
+        weak var value: NSAttributedString?
+        init(_ value: NSAttributedString) { self.value = value }
+    }
+
     private final class CellGeometryProbe {
         private let lock = NSLock()
         private let caller = Thread.current
@@ -118,6 +123,96 @@ final class ViewerTableTests: XCTestCase {
         }
     }
 
+    func testPlainTableTextTemplatesAreScopedToPreparationAndReleasedBeforeRebuild() throws {
+        let columns = 8
+        let rows = TableCellLayoutStore.maximumResidentLayouts / columns + 1
+        let source = try jsonSource(["type": "doc", "content": [["type": "table", "content": (0..<rows).map { row in
+            ["type": "table_row", "content": (0..<columns).map { column in
+                cell("unique cell \(row) \(column)")
+            }]
+        }]]])
+        let compiled = viewerCompile(request: FfiViewerCompileRequest(sourceKind: .json, source: source,
+            configJson: Self.config, imagesEnabled: true, mentionPrefix: nil))
+        let document = try ViewerDocument(compiled: try XCTUnwrap(compiled.value))
+        for workers in [1, CoreTextProseLayoutEngine.maxTablePreparationWorkers] {
+            let engine = CoreTextProseLayoutEngine()
+            engine.tablePreparationWorkerLimit = workers
+            var templates: [WeakTemplate] = []
+            engine.plainTextTemplateBuildObserverForTesting = { templates.append(WeakTemplate($0)) }
+            let layout = try autoreleasepool { try prepare(document, engine: engine) }
+            XCTAssertNil(layout.error)
+            XCTAssertFalse(templates.isEmpty)
+            XCTAssertLessThanOrEqual(templates.count, workers,
+                "A cold table should build at most one compatible text template per executing preparation scope")
+            XCTAssertTrue(templates.allSatisfy { $0.value == nil },
+                "Completed layouts and their rebuild callbacks must not retain batch templates")
+            let surface = try XCTUnwrap(layout.blocks.first?.tableSurface)
+            XCTAssertEqual(surface.layoutStore.count, 0)
+            templates.removeAll()
+            let owner = ViewerTablePresentationOwner()
+            let presented = ViewerTablePresentation.project(layout: layout, owner: owner,
+                viewport: .known(CGRect(x: 0, y: 0, width: 320, height: 100)))
+            XCTAssertFalse(presented.mountedCells.isEmpty)
+            XCTAssertFalse(templates.isEmpty, "Evicted cells must rebuild after the original scope has ended")
+            XCTAssertTrue(presented.mountedCells.allSatisfy { $0.content.error == nil })
+            XCTAssertTrue(templates.allSatisfy { $0.value == nil },
+                "Each lazy rebuild must release its own template")
+        }
+    }
+
+    func testTextTemplatesReleaseWhenTableCellWidthFails() throws {
+        let source = try jsonSource(["type": "doc", "content": [paragraph("seed template before failure"),
+            ["type": "table", "content": [["type": "table_row", "content": [cell("cannot fit")]]]]]])
+        let compiled = viewerCompile(request: FfiViewerCompileRequest(sourceKind: .json, source: source,
+            configJson: Self.config, imagesEnabled: true, mentionPrefix: nil))
+        let document = try ViewerDocument(compiled: XCTUnwrap(compiled.value))
+        let engine = CoreTextProseLayoutEngine()
+        var templates: [WeakTemplate] = []
+        engine.plainTextTemplateBuildObserverForTesting = { templates.append(WeakTemplate($0)) }
+        let layout = try autoreleasepool {
+            try prepare(document, themeJSON: #"{"table":{"cellPadding":200}}"#, engine: engine)
+        }
+        XCTAssertNotNil(layout.error, "The finite padding must leave no inner cell width")
+        XCTAssertEqual(templates.count, 1, "Leading prose must seed a template before cell preparation fails")
+        XCTAssertTrue(templates.allSatisfy { $0.value == nil },
+            "A retained error layout must not keep the failed preparation's template")
+    }
+
+    func testTextTemplateScopesRemainIndependentDuringObserverReentry() throws {
+        let source = try jsonSource(["type": "doc", "content": [["type": "table", "content": [
+            ["type": "table_row", "content": [cell("outer first"), cell("outer second")]]
+        ]]]])
+        let compiled = viewerCompile(request: FfiViewerCompileRequest(sourceKind: .json, source: source,
+            configJson: Self.config, imagesEnabled: true, mentionPrefix: nil))
+        let document = try ViewerDocument(compiled: XCTUnwrap(compiled.value))
+        let engine = CoreTextProseLayoutEngine()
+        engine.tablePreparationWorkerLimit = 1
+        var entered = false
+        var nested: PreparedProseLayout?
+        var templates: [WeakTemplate] = []
+        engine.plainTextTemplateBuildObserverForTesting = { template in
+            templates.append(WeakTemplate(template))
+            guard !entered else { return }
+            entered = true
+            do {
+                nested = try self.prepare(document, themeJSON: ##"{"paragraph":{"fontSize":23,"color":"#123456"}}"##,
+                    engine: engine)
+            } catch { XCTFail("Reentrant preparation failed: \(error)") }
+        }
+        defer { engine.plainTextTemplateBuildObserverForTesting = nil }
+        let actual = try autoreleasepool { try prepare(document, engine: engine) }
+        XCTAssertNotNil(nested)
+        XCTAssertNil(nested?.error)
+        XCTAssertEqual(templates.count, 2, "The outer and reentrant queues each own one template")
+        XCTAssertTrue(templates.allSatisfy { $0.value == nil })
+        let expected = try prepare(document)
+        XCTAssertEqual(actual.size, expected.size)
+        XCTAssertEqual(actual.blocks.first?.tableSurface?.cells.map(\.contentSize),
+            expected.blocks.first?.tableSurface?.cells.map(\.contentSize))
+        XCTAssertEqual(actual.blocks.first?.tableSurface?.cells.map(\.accessibilityNodes),
+            expected.blocks.first?.tableSurface?.cells.map(\.accessibilityNodes))
+    }
+
     func testParallelMeasurementEqualsSequentialMeasurement() throws {
         let rows = 1_000
         let columns = 20
@@ -156,7 +251,11 @@ final class ViewerTableTests: XCTestCase {
             parallel.tableCellShapeContextProvider = { _ in parallelContext }
             let actualGeometry = CellGeometryProbe()
             parallel.tableCellLayoutObserverForTesting = actualGeometry.record
-            let actual = try prepare(document, engine: parallel)
+            var templates: [WeakTemplate] = []
+            parallel.plainTextTemplateBuildObserverForTesting = { templates.append(WeakTemplate($0)) }
+            let actual = try autoreleasepool { try prepare(document, engine: parallel) }
+            XCTAssertTrue(templates.allSatisfy { $0.value == nil },
+                "\(name): nested preparation must release all templates while completed layouts remain alive")
             XCTAssertNil(actual.error, name)
             XCTAssertEqual(actual.size, expected.size, name)
             XCTAssertTrue(actualGeometry.preparationsByKey.values.allSatisfy { $0 == 1 },
