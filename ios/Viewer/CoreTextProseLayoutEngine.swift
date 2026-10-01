@@ -1193,8 +1193,14 @@ final class CoreTextProseLayoutEngine {
             paragraphSpacing: paint.paragraphSpacing(inBlockquote: block.inBlockquote, inList: block.listContext != nil),
             ancestors: block.styleAncestors.map(\.nodeType) + [block.nodeType],
             textPreparation: textPreparation)
-        let highlighted = NSMutableAttributedString(attributedString: attributed.string)
-        NativeCodeHighlightPresentation.apply(highlighting, to: highlighted)
+        let highlighted: NSAttributedString
+        if highlighting.isEmpty {
+            highlighted = attributed.string
+        } else {
+            let mutable = NSMutableAttributedString(attributedString: attributed.string)
+            NativeCodeHighlightPresentation.apply(highlighting, to: mutable)
+            highlighted = mutable
+        }
         let typesetter = CTTypesetterCreateWithAttributedString(highlighted)
         let text = attributed.string.string as NSString
         var location = 0
