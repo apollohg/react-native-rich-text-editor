@@ -255,6 +255,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         super.init(frame: .zero)
         clipsToBounds = true
         drawingView.usesEditAnchoredLayers = true
+        drawingView.preparesTableCellsOnViewportChange = true
         drawingView.isOpaque = false
         drawingView.backgroundColor = .clear
         drawingView.isUserInteractionEnabled = false
@@ -389,7 +390,11 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     }
 
     func updateGeometry(from textView: EditorTextView) {
-        defer { selectionGeometryMayChange() }
+        drawingView.performTablePresentationUpdate { installGeometry(from: textView) }
+        selectionGeometryMayChange()
+    }
+
+    private func installGeometry(from textView: EditorTextView) {
         discardInvalidDrag()
         reprepareIfNeeded(from: textView)
         drawingView.tableLayerRevision = latestPresentation?.documentRevision
@@ -468,7 +473,6 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         }
         if previousBounds != visibleBounds {
             drawingView.setNeedsDisplay()
-            drawingView.updateConfiguredImagesForVisibleWindow()
         }
         let presented = activeCell.flatMap { presentedCell(tableID: $0.tableID, cellIndex: $0.cellIndex) }
         updateExcludedCellContent(presented)
@@ -673,15 +677,14 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     func hideActiveInput() {
         defer { selectionGeometryMayChange() }
         activeCell = nil
-        drawingView.tableLayerCell = nil
+        updateExcludedCellContent(nil)
         inputCoordinator.cellInput.tableAccessibilityCell = nil
-        drawingView.excludedTableCellContentLayout = nil
         inputCoordinator.cellInput.isHidden = true
         activeCellClipView.frame = .zero
     }
 
     func cellFrame(tableID: String, cellIndex: UInt32) -> CGRect? {
-        guard let presented = presentedCell(tableID: tableID, cellIndex: cellIndex) else { return nil }
+        guard let presented = drawingView.tableCellGeometry(tableID: tableID, sourceIndex: Int(cellIndex)) else { return nil }
         let inset = presented.surface.style.cellPadding + presented.surface.style.borderWidth
         return presented.bounds.offsetBy(dx: -drawingOffset.x, dy: -drawingOffset.y)
             .insetBy(dx: inset, dy: inset)
@@ -696,7 +699,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
 
     func arrowDestination(tableID: String, cellIndex: UInt32,
                           direction: TableCellArrowDirection, caret: CGPoint) -> ArrowDestination? {
-        guard let presented = presentedCell(tableID: tableID, cellIndex: cellIndex),
+        guard let presented = drawingView.tableCellGeometry(tableID: tableID, sourceIndex: Int(cellIndex)),
               let source = presented.surface.cells.first(where: { $0.sourceIndex == Int(cellIndex) })
         else { return nil }
         func frame(_ cell: PreparedViewerTableCell) -> CGRect { presented.surface.frame(ofCell: cell) }
@@ -746,6 +749,8 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     }
 
     func nestedTableHeights(tableID: String, cellIndex: UInt32, input: EditorTextView? = nil) -> [String: CGFloat]? {
+        guard let cell = entries[tableID]?.surface.cell(sourceIndex: Int(cellIndex)) else { return nil }
+        guard cell.hasNestedTables else { return [:] }
         guard let presented = presentedCell(tableID: tableID, cellIndex: cellIndex) else { return nil }
         return nestedTableHeights(content: presented.content, input: input)
     }
@@ -1305,6 +1310,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
             let previousEntry = self.entries[tableID]
             var reusable: ReusableCellContents?
             let engine = CoreTextProseLayoutEngine()
+            engine.allowsTransientCellMeasurement = drawingView.preparesTableCellsOnViewportChange
             engine.tableCellShapeContextProvider = { incremental in
                 if incremental { return shapes }
                 if let seededShapes { return seededShapes }
@@ -1502,8 +1508,12 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     }
 
     private func updateExcludedCellContent(_ presented: ViewerTablePresentedCell?) {
+        if let presented {
+            presented.cell.layoutStore.pin(presented.cell.contentKey)
+            presented.cell.layoutStore.insert(presented.content, for: presented.cell.contentKey)
+        }
         if let pinnedInputCell { pinnedInputCell.layoutStore.unpin(pinnedInputCell.contentKey) }
-        pinnedInputCell = nil
+        pinnedInputCell = presented?.cell
         drawingView.tableLayerCell = activeCell.map {
             PreparedProseDrawingView.TableLayerCell(tableID: $0.tableID, sourceIndex: Int($0.cellIndex))
         }
@@ -1511,9 +1521,6 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
             drawingView.excludedTableCellContentLayout = nil
             return
         }
-        presented.cell.layoutStore.pin(presented.cell.contentKey)
-        presented.cell.layoutStore.insert(presented.content, for: presented.cell.contentKey)
-        pinnedInputCell = presented.cell
         drawingView.excludedTableCellContentLayout = presented.content
         if let heights = nestedTableHeights(content: presented.content, input: inputCoordinator.cellInput) {
             inputCoordinator.cellInput.reserveRootTableHeights(heights)
@@ -1571,7 +1578,7 @@ extension EditorTableSurface: TableAccessibilityEditing {
     func activateTableAccessibilityCell(_ cell: TableAccessibilityCell, tableID: String) -> Bool {
         guard let host = interactionHost,
               let index = UInt32(exactly: cell.sourceIndex),
-              let presented = presentedCell(tableID: tableID, cellIndex: index)
+              let presented = drawingView.tableCellGeometry(tableID: tableID, sourceIndex: Int(index))
         else { return false }
         let visible = presented.bounds.intersection(presented.clip)
         guard !visible.isNull, !visible.isEmpty,

@@ -79,6 +79,59 @@ final class EditorLargeTableTests: XCTestCase {
         try body(view, surface, drawing)
     }
 
+    func testOffscreenGeometryAndActiveCellRemainPreparedAcrossViewportAndCacheChanges() throws {
+        let rows = 200
+        let columns = 20
+        try withMountedTable(rows: rows, columns: columns) { view, surface, drawing in
+            defer { view.activeTextInput.resignFirstResponder(); surface.hideActiveInput() }
+            let table = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface)
+            let index = (rows / 2) * columns + columns - 1
+            let cell = try XCTUnwrap(table.cell(sourceIndex: index))
+            XCTAssertNil(cell.cachedContent, "The destination must start outside the prepared window")
+            var preparations: [Int] = []
+            surface.onTableCellPreparedForTesting = { index, _ in preparations.append(index) }
+            let frame = try XCTUnwrap(surface.cellFrame(tableID: table.identity, cellIndex: UInt32(index)))
+            if case let .cell(destination) = surface.arrowDestination(tableID: table.identity, cellIndex: UInt32(index),
+                direction: .left, caret: CGPoint(x: frame.midX, y: frame.midY)) {
+                XCTAssertEqual(destination, UInt32(index - 1))
+            } else {
+                XCTFail("The left arrow must resolve the adjacent offscreen cell from stored geometry")
+            }
+            XCTAssertEqual(surface.nestedTableHeights(tableID: table.identity, cellIndex: UInt32(index)), [:])
+            let element = try XCTUnwrap((0..<drawing.accessibilityElementCount()).compactMap {
+                drawing.accessibilityElement(at: $0) as? TableAccessibilityTableElement
+            }.first?.cellElement(sourceIndex: index))
+            XCTAssertFalse(element.accessibilityLabel?.isEmpty ?? true)
+            XCTAssertGreaterThan(element.accessibilityFrame.height, 0)
+            _ = element.accessibilityCustomActions
+            XCTAssertTrue(preparations.isEmpty, "Offscreen geometry and accessibility queries must not shape: \(preparations)")
+            element.accessibilityElementDidBecomeFocused()
+            view.layoutIfNeeded()
+            XCTAssertTrue(preparations.contains(index), "Reveal must prepare the destination before it can draw")
+            preparations.removeAll()
+            XCTAssertTrue(element.accessibilityActivate())
+            XCTAssertEqual(drawing.tableLayerCell?.sourceIndex, index)
+            let pinned = try XCTUnwrap(cell.cachedContent)
+            XCTAssertTrue(drawing.excludedTableCellContentLayout === pinned)
+            view.textView.contentOffset.y = 0
+            view.layoutIfNeeded()
+            let pressureKey = try XCTUnwrap(drawing.layout).key
+            table.layoutStore.insert(PreparedProseLayout(key: pressureKey, size: .zero, blocks: [],
+                retainedBytes: PreparedProseLayoutCache.preparedLayoutUnmountedByteBudget))
+            XCTAssertTrue(cell.cachedContent === pinned, "The active cell must survive eviction outside the viewport")
+            preparations.removeAll()
+            _ = drawing.mountedTablePresentation()
+            _ = drawing.atomLayoutsJSON(origin: .zero)
+            drawing.setNeedsDisplay()
+            drawing.layer.displayIfNeeded()
+            XCTAssertTrue(preparations.isEmpty, "Drawing must use visible and active-cell pins: \(preparations)")
+            surface.hideActiveInput()
+            table.layoutStore.insert(PreparedProseLayout(key: pressureKey, size: .zero, blocks: [],
+                retainedBytes: PreparedProseLayoutCache.preparedLayoutUnmountedByteBudget))
+            XCTAssertNil(cell.cachedContent, "Ending editing must release the independent offscreen input pin")
+        }
+    }
+
     func testColdLayoutRetainsOnlyWindowLayouts() throws {
         try withMountedTable(rows: 1000, columns: 20) { _, _, drawing in
             let table = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface)
@@ -102,13 +155,13 @@ final class EditorLargeTableTests: XCTestCase {
             _ = try XCTUnwrap(adapter.insertText(firstPrefix, atScalar: first))
             let second = try XCTUnwrap(adapter.tableIndex.scalarStart(tableKey: tableID, cellIndex: 1))
             _ = try XCTUnwrap(adapter.insertText(secondPrefix, atScalar: second))
-            XCTAssertEqual(original.cells[0].accessibilityNodes.map(\.label).joined(separator: " "), text)
+            XCTAssertEqual(original.cells[0].accessibilitySummary.map(\.label).joined(separator: " "), text)
             XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.initialUpdateJSON())))
             view.layoutIfNeeded()
             let current = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface)
-            XCTAssertEqual(current.cells[0].accessibilityNodes.map(\.label).joined(separator: " "), firstPrefix + text, "A skipped frame's edit must appear")
-            XCTAssertEqual(current.cells[1].accessibilityNodes.map(\.label).joined(separator: " "), secondPrefix + text, "The latest edit must also appear")
-            XCTAssertEqual(current.cells[2].accessibilityNodes.map(\.label).joined(separator: " "), text)
+            XCTAssertEqual(current.cells[0].accessibilitySummary.map(\.label).joined(separator: " "), firstPrefix + text, "A skipped frame's edit must appear")
+            XCTAssertEqual(current.cells[1].accessibilitySummary.map(\.label).joined(separator: " "), secondPrefix + text, "The latest edit must also appear")
+            XCTAssertEqual(current.cells[2].accessibilitySummary.map(\.label).joined(separator: " "), text)
         }
     }
 
@@ -142,8 +195,10 @@ final class EditorLargeTableTests: XCTestCase {
             let rebuilt = moved.content
             XCTAssertEqual(rebuilt.size, middle.contentSize,
                 "The moved cell must still rebuild after geometry reuse")
-            XCTAssertEqual(TableAccessibility.contentNodes(of: rebuilt), middle.accessibilityNodes,
-                "Reconstruction must preserve the moved cell's text and local accessibility geometry")
+            XCTAssertEqual(TableAccessibility.contentSummary(of: rebuilt), middle.accessibilitySummary,
+                "Reconstruction must preserve the moved cell's accessibility metadata")
+            XCTAssertEqual(rebuilt.accessibilityNodes, middle.prepareContent().accessibilityNodes,
+                "The moved cell must retain the original exact accessibility geometry")
             XCTAssertLessThanOrEqual(after.layoutStore.unmountedRetainedBytes,
                 PreparedProseLayoutCache.preparedLayoutUnmountedByteBudget)
         }
@@ -170,8 +225,8 @@ final class EditorLargeTableTests: XCTestCase {
             let table = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface)
             let before = table.layoutStore.count
             XCTAssertEqual(table.cells.count, 20_000)
-            XCTAssertTrue(table.cells.allSatisfy { !$0.accessibilityNodes.isEmpty })
-            XCTAssertFalse(try XCTUnwrap(table.cell(sourceIndex: 19_999)).accessibilityNodes.map(\.label).joined().isEmpty)
+            XCTAssertTrue(table.cells.allSatisfy { !$0.accessibilitySummary.isEmpty })
+            XCTAssertFalse(try XCTUnwrap(table.cell(sourceIndex: 19_999)).accessibilitySummary.map(\.label).joined().isEmpty)
             XCTAssertEqual(table.layoutStore.count, before, "Offscreen metadata must not prepare drawing layouts")
         }
     }
@@ -234,7 +289,7 @@ final class EditorLargeTableTests: XCTestCase {
                 element.accessibilityElementDidBecomeFocused()
                 view.layoutIfNeeded()
                 let frame = element.accessibilityFrame
-                let presented = try XCTUnwrap(drawing.presentedAccessibilityCell(element.cell))
+                let presented = try XCTUnwrap(drawing.accessibilityCellGeometry(element.cell))
                 let expectedFrame = drawing.convert(presented.bounds.intersection(presented.clip),
                     to: try XCTUnwrap(view.window).screen.coordinateSpace)
                 XCTAssertEqual(frame.minX, expectedFrame.minX, accuracy: 1 / drawing.contentScaleFactor)
@@ -362,13 +417,13 @@ final class EditorLargeTableTests: XCTestCase {
         XCTAssertNil(releasedSurface, "A cleared lazy seed provider must release its previous table owners")
         let cell = try XCTUnwrap(retainedCell)
         let expectedSize = cell.contentSize
-        let expectedText = cell.accessibilityNodes.map(\.label)
+        let expectedText = cell.accessibilitySummary.map(\.label)
         let oversizedBytes = PreparedProseLayoutCache.preparedLayoutUnmountedByteBudget + 1
         cell.layoutStore.insert(PreparedProseLayout(key: cell.contentKey, size: .zero, blocks: [], retainedBytes: oversizedBytes))
         XCTAssertNil(cell.cachedContent, "The regression must exercise reconstruction after eviction")
         let rebuilt = cell.content
         XCTAssertEqual(rebuilt.size, expectedSize)
-        XCTAssertEqual(TableAccessibility.contentNodes(of: rebuilt).map(\.label), expectedText)
+        XCTAssertEqual(TableAccessibility.contentSummary(of: rebuilt).map(\.label), expectedText)
         XCTAssertTrue(cell.content === rebuilt, "Reconstruction must preserve the cell's store identity")
     }
 

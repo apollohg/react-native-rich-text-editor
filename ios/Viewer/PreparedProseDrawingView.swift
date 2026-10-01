@@ -219,6 +219,13 @@ public final class PreparedProseDrawingView: UIView {
     private var imageRevisions = ViewerAttachmentRevisionState()
     private var imageGeneration = ""
     private var imageConfiguration: (enabled: Bool, policy: ImageLoadingPolicy) = (false, .default)
+    var preparesTableCellsOnViewportChange = false {
+        didSet { updateConfiguredImagesForVisibleWindow() }
+    }
+    private var isUpdatingTablePresentation = false
+    private var needsTablePresentationRefresh = false
+    private var viewportObservations: [NSKeyValueObservation] = []
+    private var observedViewportViewIDs: [ObjectIdentifier] = []
     private var scrollObservations: [NSKeyValueObservation] = []
     private var observedScrollViewIDs: [ObjectIdentifier] = []
     private var tableOwnerIdentityOverride: String?
@@ -227,7 +234,7 @@ public final class PreparedProseDrawingView: UIView {
     var layout: PreparedProseLayout? {
         didSet {
             guard oldValue !== layout else { return }
-            if layout == nil { clearTableLayers() }
+            if layout == nil { clearTableLayers(); tablePresentationOwner.retainCells([]) }
             else if tableLayerState?.revision == layout?.key.attachmentRevision { invalidateTableLayers() }
             tableInteractionController?.cancelMotion()
             let nextOwner = layout.map { tableOwnerIdentityOverride ?? $0.key.semanticKey }
@@ -238,6 +245,7 @@ public final class PreparedProseDrawingView: UIView {
                 tablePresentationOwner.retain(surfaces: ViewerTablePresentation.surfaces(in: layout))
             }
             mountedTableOwnerIdentity = nextOwner
+            if preparesTableCellsOnViewportChange { updateConfiguredImagesForVisibleWindow() }
             updateSidecarInstrumentation()
             invalidateAccessibilityNodes()
             setNeedsDisplay()
@@ -370,19 +378,30 @@ public final class PreparedProseDrawingView: UIView {
         imageRevisions = state
     }
 
+    func performTablePresentationUpdate(_ update: () -> Void) {
+        let wasUpdating = isUpdatingTablePresentation
+        isUpdatingTablePresentation = true
+        update()
+        isUpdatingTablePresentation = wasUpdating
+        if !wasUpdating, needsTablePresentationRefresh { updateConfiguredImagesForVisibleWindow() }
+    }
+
     @objc public func updateConfiguredImagesForVisibleWindow() {
+        needsTablePresentationRefresh = true
+        guard !isUpdatingTablePresentation else { return }
+        needsTablePresentationRefresh = false
         refreshScrollObservations()
+        refreshViewportObservations()
+        let prepared = preparesTableCellsOnViewportChange ? presentationSnapshot() : nil
         guard let layout, let visible = configuredVisibleRect() else {
             imagePipeline.leaveViewport()
             if !imagePixels.isEmpty { imagePixels = [:] }
             onVisibleRectChange?(nil)
             return
         }
-        let attachments: [ViewerImageAttachment] = ViewerTablePresentation.project(
-            layout: layout,
-            owner: tablePresentationOwner,
-            viewport: .known(visible)
-        ).images.compactMap { image in
+        let snapshot = prepared ?? ViewerTablePresentation.project(
+            layout: layout, owner: tablePresentationOwner, viewport: .known(visible))
+        let attachments: [ViewerImageAttachment] = snapshot.images.compactMap { image in
             let bounds = image.bounds.intersection(image.clip)
             guard !bounds.isNull, !bounds.isEmpty else { return nil }
             return ViewerImageAttachment(
@@ -407,6 +426,14 @@ public final class PreparedProseDrawingView: UIView {
 
     func mountedTablePresentation() -> ViewerTablePresentationSnapshot? {
         presentationSnapshot()
+    }
+
+    func tableCellGeometry(tableID: String, sourceIndex: Int) -> ViewerTableCellGeometry? {
+        guard let layout,
+              let table = ViewerTablePresentation.rootTables(in: layout).first(where: { $0.surface.identity == tableID }),
+              let cell = table.surface.cell(sourceIndex: sourceIndex)
+        else { return nil }
+        return ViewerTablePresentation.geometry(cell, in: table, owner: tablePresentationOwner)
     }
 
     func presentedTableCell(tableID: String, sourceIndex: Int) -> ViewerTablePresentedCell? {
@@ -474,8 +501,8 @@ public final class PreparedProseDrawingView: UIView {
                   return left == right ? lhs.sourceIndex < rhs.sourceIndex : left < right
               })
         else { return [] }
-        let first = ViewerTablePresentation.present(firstCell, in: table, owner: tablePresentationOwner)
-        let last = ViewerTablePresentation.present(lastCell, in: table, owner: tablePresentationOwner)
+        let first = ViewerTablePresentation.geometry(firstCell, in: table, owner: tablePresentationOwner)
+        let last = ViewerTablePresentation.geometry(lastCell, in: table, owner: tablePresentationOwner)
         let inset = TableHandleMetrics.radius
         let rtl = table.surface.direction == .rightToLeft
         let firstCenter = CGPoint(x: rtl ? first.bounds.maxX - inset : first.bounds.minX + inset,
@@ -688,7 +715,9 @@ public final class PreparedProseDrawingView: UIView {
     }
 
     private func presentationViewport() -> ViewerTablePresentationViewport {
-        guard window != nil else { return .unknown }
+        guard window != nil else {
+            return preparesTableCellsOnViewportChange ? .known(.zero) : .unknown
+        }
         guard !isHidden, alpha > 0 else { return .known(.zero) }
         guard let visible = configuredVisibleRect() else { return .known(.zero) }
         return .known(visible)
@@ -860,7 +889,7 @@ public final class PreparedProseDrawingView: UIView {
     }
 
     private func refreshScrollObservations() {
-        let activeScrollViews = window == nil ? [] : ancestorScrollViews
+        let activeScrollViews = window == nil || preparesTableCellsOnViewportChange ? [] : ancestorScrollViews
         let nextIDs = activeScrollViews.map(ObjectIdentifier.init)
         guard nextIDs != observedScrollViewIDs else { return }
         scrollObservations.removeAll()
@@ -872,6 +901,40 @@ public final class PreparedProseDrawingView: UIView {
                 self?.onTableGeometryChanged?()
             }
         }
+    }
+
+    private func refreshViewportObservations() {
+        var views: [UIView] = []
+        if preparesTableCellsOnViewportChange {
+            var current: UIView? = self
+            while let view = current {
+                views.append(view)
+                current = view.superview
+            }
+        }
+        let nextIDs = views.map(ObjectIdentifier.init)
+        guard nextIDs != observedViewportViewIDs else { return }
+        viewportObservations.removeAll()
+        observedViewportViewIDs = nextIDs
+        viewportObservations = views.flatMap { view in
+            [
+                view.observe(\.bounds, options: [.new]) { [weak self] _, _ in self?.tableViewportDidChange() },
+                view.observe(\.frame, options: [.new]) { [weak self] _, _ in self?.tableViewportDidChange() },
+                view.observe(\.center, options: [.new]) { [weak self] _, _ in self?.tableViewportDidChange() },
+                view.observe(\.transform, options: [.new]) { [weak self] _, _ in self?.tableViewportDidChange() },
+                view.observe(\.clipsToBounds, options: [.new]) { [weak self] _, _ in self?.tableViewportDidChange() },
+                view.observe(\.isHidden, options: [.new]) { [weak self] _, _ in self?.tableViewportDidChange() },
+                view.observe(\.alpha, options: [.new]) { [weak self] _, _ in self?.tableViewportDidChange() }
+            ]
+        }
+    }
+
+    private func tableViewportDidChange() {
+        needsTablePresentationRefresh = true
+        guard !isUpdatingTablePresentation else { return }
+        redrawIfVisibleRectLeftDrawnWindow()
+        updateConfiguredImagesForVisibleWindow()
+        onTableGeometryChanged?()
     }
 
     private func redrawIfVisibleRectLeftDrawnWindow() {
@@ -1073,21 +1136,23 @@ public final class PreparedProseDrawingView: UIView {
         layout.flatMap { ViewerTablePresentation.rootTables(in: $0).first { $0.surface === surface } }
     }
 
-    func presentedAccessibilityCell(_ cell: TableAccessibilityCell) -> ViewerTablePresentedCell? {
+    func accessibilityCellGeometry(_ cell: TableAccessibilityCell) -> ViewerTableCellGeometry? {
         presentedRootTable(cell.surface).map {
-            ViewerTablePresentation.present(cell.cell, in: $0, owner: tablePresentationOwner)
+            ViewerTablePresentation.geometry(cell.cell, in: $0, owner: tablePresentationOwner)
         }
     }
 
     func tableAccessibilityInteractions(for cell: TableAccessibilityCell) -> [ViewerTablePresentedAccessibilityNode] {
-        guard let presented = presentedAccessibilityCell(cell) else { return [] }
+        guard cell.cell.accessibilitySummary.contains(where: { $0.interactionIndex != nil }),
+              let table = presentedRootTable(cell.surface) else { return [] }
+        let presented = ViewerTablePresentation.present(cell.cell, in: table, owner: tablePresentationOwner)
         return readableAccessibilityNodes(
             ViewerTablePresentation.contentAccessibilityNodes(of: presented, owner: tablePresentationOwner)
         ).filter { $0.node.interactionIndex != nil }
     }
 
     func revealTableAccessibilityCell(_ cell: TableAccessibilityCell) {
-        guard let presented = presentedAccessibilityCell(cell) else { return }
+        guard let presented = accessibilityCellGeometry(cell) else { return }
         let visible = presented.bounds.intersection(presented.clip)
         if !visible.isNull, visible.width >= min(presented.bounds.width, presented.clip.width) {
             revealInEnclosingScrollView(presented.bounds)
@@ -1098,7 +1163,7 @@ public final class PreparedProseDrawingView: UIView {
         if tableLogicalOffset(for: surface.identity) != logical {
             setTableLogicalOffset(logical, sourceIdentity: surface.identity)
         }
-        guard let revealed = presentedAccessibilityCell(cell) else { return }
+        guard let revealed = accessibilityCellGeometry(cell) else { return }
         revealInEnclosingScrollView(revealed.bounds)
         let element = (0..<accessibilityElementCount()).lazy.compactMap { index in
             (self.accessibilityElement(at: index) as? TableAccessibilityTableElement)

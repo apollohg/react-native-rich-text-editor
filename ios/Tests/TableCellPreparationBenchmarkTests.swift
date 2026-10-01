@@ -15,6 +15,96 @@ final class TableCellPreparationBenchmarkTests: XCTestCase {
         static let generation = "table-cell-preparation-benchmark"
     }
 
+
+    func testCertifiedCellMeasurementPreservesExactSummaryAndCharges() throws {
+        let engine = CoreTextProseLayoutEngine()
+        let texts = ["", " ", "    ", "word ", " word", "office fi ffi", "R0001C0001XY",
+            "a-b/c.d, e! f?", String(repeating: "wrap ", count: 40), String(repeating: "x", count: 200)]
+        XCTAssertLessThanOrEqual(MemoryLayout<TableCellAccessibilitySummary>.stride,
+            MemoryLayout<PreparedProseAccessibilityNode>.stride,
+            "Summary storage must fit within the unchanged accessibility-node allowance")
+        for fontScale: CGFloat in [1, 1.3, 2] {
+            var theme = PreparedProseTheme.resolve(themeJSON: nil, fontScale: fontScale)
+            theme.contentInsets = .zero
+            for scale: CGFloat in [1, 1.5, 3] {
+                for width: CGFloat in [31.25, 62, 186.5] {
+                    for text in texts {
+                        let document = ViewerDocument(semanticKey: text, paragraphs: [.init(text: text)],
+                            isEmpty: false, retainedBytes: 0).withPreparedTheme(theme)
+                        let pixels = try XCTUnwrap(ProseLayoutMetrics.widthPixels(widthPoints: width, scale: scale))
+                        let key = ProseLayoutKey(semanticKey: text, widthPixels: pixels,
+                            themeDigest: Benchmark.generation, nativeFontRevision: 0, fontEnvironmentRevision: 0,
+                            displayScale: scale, attachmentRevision: 0, generationIdentity: Benchmark.generation,
+                            semanticGenerationIdentity: Benchmark.generation)
+                        let full = try engine.prepare(document: document, key: key, widthPoints: width,
+                            displayScale: scale, cellMode: true)
+                        var endpointReads = 0
+                        engine.accessibilityEndpointReadObserverForTesting = { endpointReads += 1 }
+                        let measured = try XCTUnwrap(engine.measurePlainCell(document: document, key: key,
+                            widthPoints: width, displayScale: scale, warningSemanticGeneration: Benchmark.generation,
+                            textPreparation: CoreTextProseLayoutEngine.PlainTextPreparation()),
+                            "text=<\(text)> fontScale=\(fontScale) scale=\(scale) width=\(width)")
+                        engine.accessibilityEndpointReadObserverForTesting = nil
+                        XCTAssertEqual(endpointReads, 0)
+                        XCTAssertEqual(measured.key, full.key)
+                        XCTAssertEqual(measured.size, full.size)
+                        XCTAssertEqual(measured.accessibilitySummary, TableAccessibility.contentSummary(of: full))
+                        XCTAssertEqual(measured.accessibilitySummary.reduce(0) { $0 + $1.estimatedRetainedBytes },
+                            full.accessibilityNodes.reduce(0) { $0 + $1.estimatedRetainedBytes })
+                        XCTAssertTrue(measured.isPositionFree)
+                        XCTAssertFalse(measured.hasNestedTables || measured.hasAtoms || measured.hasImages)
+                        XCTAssertNil(measured.error)
+                    }
+                }
+            }
+        }
+    }
+
+    func testCertifiedCellMeasurementRejectsUnsupportedContentAndStyles() throws {
+        let engine = CoreTextProseLayoutEngine()
+        var plainTheme = PreparedProseTheme.resolve(themeJSON: nil)
+        plainTheme.contentInsets = .zero
+        let width: CGFloat = 62
+        let scale: CGFloat = 2
+        let texts = ["line\n", "one\ntwo", "a\r\nb", "a\tb", "e\u{301}", "日本語",
+            "👩🏽‍💻 family 👨‍👩‍👧", "العربية 123", "אבג Latin 42"]
+        var documents = texts.map {
+            ViewerDocument(semanticKey: $0, paragraphs: [.init(text: $0)], isEmpty: false,
+                retainedBytes: 0).withPreparedTheme(plainTheme)
+        }
+        for inlines: [ViewerInline] in [
+            [.text(text: "marked", marks: [.init(markType: "bold", attrsJson: "{}")])],
+            [.text(text: "first", marks: []), .text(text: "second", marks: [])],
+            [.atom(nodeType: "hard_break", docPos: 0, attrsJSON: "{}", label: "\n")]
+        ] {
+            let block = ViewerBlock(nodeType: "paragraph", depth: 0, inBlockquote: false,
+                listContext: nil, listItemBoundary: nil, inlines: inlines)
+            documents.append(ViewerDocument(semanticKey: String(describing: inlines), blocks: [block],
+                isEmpty: false, retainedBytes: 0).withPreparedTheme(plainTheme))
+        }
+        var styledTheme = PreparedProseTheme.resolve(themeJSON:
+            ##"{"version":1,"styles":{"paragraph":{"letterSpacing":2,"lineHeight":31,"color":"#123456"}}}"##)
+        styledTheme.contentInsets = .zero
+        documents.append(ViewerDocument(semanticKey: "styled", paragraphs: [.init(text: "styled")],
+            isEmpty: false, retainedBytes: 0).withPreparedTheme(styledTheme))
+        for document in documents {
+            let key = ProseLayoutKey(semanticKey: document.semanticKey, widthPixels: Int(width * scale),
+                themeDigest: Benchmark.generation, nativeFontRevision: 0, fontEnvironmentRevision: 0,
+                displayScale: scale, attachmentRevision: 0, generationIdentity: Benchmark.generation,
+                semanticGenerationIdentity: Benchmark.generation)
+            let expected = try engine.prepare(document: document, key: key, widthPoints: width,
+                displayScale: scale, cellMode: true)
+            XCTAssertNil(engine.measurePlainCell(document: document, key: key, widthPoints: width,
+                displayScale: scale, warningSemanticGeneration: Benchmark.generation,
+                textPreparation: CoreTextProseLayoutEngine.PlainTextPreparation()), document.semanticKey)
+            let full = try engine.prepare(document: document, key: key, widthPoints: width,
+                displayScale: scale, cellMode: true)
+            XCTAssertEqual(full.size, expected.size)
+            XCTAssertEqual(full.accessibilityNodes, expected.accessibilityNodes)
+            XCTAssertEqual(full.retainedBytes, expected.retainedBytes)
+        }
+    }
+
     func testScopedPlainTextTemplatesPreserveAttributesShapingAndPixels() {
         let engine = CoreTextProseLayoutEngine()
         let theme = PreparedProseTheme.resolve(themeJSON: nil)

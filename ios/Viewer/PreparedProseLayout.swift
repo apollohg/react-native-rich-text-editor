@@ -291,7 +291,18 @@ struct PreparedProseAccessibilityNode: Hashable {
 
     var bounds: CGRect { rects.reduce(.null) { $0.union($1) } }
 
-    var estimatedRetainedBytes: Int { 96 + rects.count * 64 + label.utf8.count * 2 + (sourceBlockIndex == nil ? 0 : 8) }
+    var estimatedRetainedBytes: Int {
+        Self.estimatedRetainedBytes(label: label, rectangleCount: rects.count, sourceBlockIndex: sourceBlockIndex)
+    }
+
+    static func estimatedRetainedBytes(label: String, rectangleCount: Int, sourceBlockIndex: Int?) -> Int {
+        let nodeBytes = 96
+        let rectangleBytes = 64
+        let labelByteMultiplier = 2
+        let sourceIndexBytes = 8
+        return nodeBytes + rectangleCount * rectangleBytes + label.utf8.count * labelByteMultiplier
+            + (sourceBlockIndex == nil ? 0 : sourceIndexBytes)
+    }
 }
 
 public final class PreparedProseLayout: NSObject {

@@ -9,8 +9,12 @@ let preparedStrikeAttribute = NSAttributedString.Key("PREPPreparedStrike")
 final class CoreTextProseLayoutEngine {
     private static let paragraphSeparators: Set<unichar> = [0x000A, 0x000D, 0x2029]
     private static let lineSeparator: unichar = 0x2028
+    private static let firstPrintableASCII: UInt8 = 0x20
+    private static let lastPrintableASCII: UInt8 = 0x7E
     static let maxTablePreparationWorkers = 4
     var tablePreparationWorkerLimit = maxTablePreparationWorkers
+    var allowsTransientCellMeasurement = false
+    var accessibilityEndpointReadObserverForTesting: (() -> Void)?
     var plainTextTemplateBuildObserverForTesting: ((NSAttributedString) -> Void)?
     var tableCellLayoutObserverForTesting: ((Int, PreparedProseLayout) -> Void)?
     var tableCellPreparationObserver: ((Int, String) -> Void)?
@@ -27,13 +31,13 @@ final class CoreTextProseLayoutEngine {
         var transientIndices = Set<Int>()
         var contexts: [PreparedCellShapeBuildContext] = []
         var textPreparations: [PlainTextPreparation] = []
-        var prepare: [(TableGridCell, CGFloat) -> PreparedProseLayout] = []
+        var prepare: [(TableGridCell, CGFloat) -> PreparedTableCellContent] = []
     }
 
     private func tablePreparationPlan(
         document: ViewerDocument, table: TableSurfaceSource, tableKey: String,
         theme: PreparedProseTheme, cellMode: Bool, context: PreparedCellShapeBuildContext?,
-        prepare: @escaping (TableGridCell, CGFloat, CoreTextProseLayoutEngine, PreparedCellShapeBuildContext?, Bool, PlainTextPreparation?) -> PreparedProseLayout
+        prepare: @escaping (TableGridCell, CGFloat, CoreTextProseLayoutEngine, PreparedCellShapeBuildContext?, Bool, PlainTextPreparation?) -> PreparedTableCellContent
     ) -> TablePreparationPlan {
         var result = TablePreparationPlan()
         let count = min(Self.maxTablePreparationWorkers, max(1, tablePreparationWorkerLimit),
@@ -54,6 +58,11 @@ final class CoreTextProseLayoutEngine {
         for _ in 0..<count {
             let worker = CoreTextProseLayoutEngine()
             worker.tablePreparationWorkerLimit = 1
+            worker.allowsTransientCellMeasurement = allowsTransientCellMeasurement
+            worker.accessibilityEndpointReadObserverForTesting = {
+                observerLock.lock(); defer { observerLock.unlock() }
+                self.accessibilityEndpointReadObserverForTesting?()
+            }
             worker.plainTextTemplateBuildObserverForTesting = { template in
                 observerLock.lock(); defer { observerLock.unlock() }
                 self.plainTextTemplateBuildObserverForTesting?(template)
@@ -189,7 +198,7 @@ final class CoreTextProseLayoutEngine {
     }
 
     private struct CellPreparation {
-        let prepare: (PreparationQueue, @escaping (PreparedProseLayout) -> Void) -> Void
+        let prepare: (PreparationQueue, @escaping (PreparedTableCellContent) -> Void) -> Void
         let rebuild: () -> PreparedProseLayout
     }
 
@@ -228,12 +237,12 @@ final class CoreTextProseLayoutEngine {
     ) -> CellPreparation {
         guard let child = try? document.cellDocument(for: source, in: tableKey).withPreparedTheme(cellTheme) else {
             let failure = PreparedProseLayout.error(key: key, width: cellWidth, error: .layout(message: "Invalid table cell."))
-            return CellPreparation(prepare: { _, completion in completion(failure) }, rebuild: { failure })
+            return CellPreparation(prepare: { _, completion in completion(.full(failure)) }, rebuild: { failure })
         }
         guard let widthPixels = ProseLayoutMetrics.widthPixels(widthPoints: cellWidth, scale: displayScale) else {
             let failure = PreparedProseLayout.error(key: key, width: cellWidth,
                 error: .hostContract(message: "A finite positive table cell width is required."))
-            return CellPreparation(prepare: { _, completion in completion(failure) }, rebuild: { failure })
+            return CellPreparation(prepare: { _, completion in completion(.full(failure)) }, rebuild: { failure })
         }
         let childKey = ProseLayoutKey(semanticKey: child.semanticKey, widthPixels: widthPixels,
             themeDigest: key.themeDigest, nativeFontRevision: key.nativeFontRevision,
@@ -269,7 +278,7 @@ final class CoreTextProseLayoutEngine {
         }
         return CellPreparation(prepare: { [self] queue, completion in
             let finish: (PreparedProseLayout) -> Void = { prepared in
-                completion(prepared.withCellShape(prepared.cellShape, preparation: rebuild))
+                completion(.full(prepared.withCellShape(prepared.cellShape, preparation: rebuild)))
             }
             let build: (@escaping (PreparedProseLayout) -> Void) -> Void = { built in
                 queue.prepare(makeBuild(queue)) { prepared in
@@ -278,7 +287,19 @@ final class CoreTextProseLayoutEngine {
                     built(prepared)
                 }
             }
-            guard let context, cellTheme.codeHighlighting == nil else { build(finish); return }
+            let buildOrMeasure = {
+                if !retainShape, self.allowsTransientCellMeasurement,
+                   let measurement = self.measurePlainCell(document: child, key: childKey,
+                        widthPoints: cellWidth, displayScale: displayScale,
+                        warningSemanticGeneration: warningSemanticGeneration,
+                        textPreparation: queue.textPreparation) {
+                    self.tableCellPreparationObserver?(source.sourceIndex, source.contentKey)
+                    self.tableCellShapeBuildObserver?(source.sourceIndex)
+                    self.tableCellBindingObserver?(source.sourceIndex)
+                    completion(.measured(measurement, rebuild: rebuild))
+                } else { build(finish) }
+            }
+            guard let context, cellTheme.codeHighlighting == nil else { buildOrMeasure(); return }
             let shapeKey = preparedCellShapeKey(contentKey: source.contentKey, document: child,
                 widthPixels: widthPixels, theme: cellTheme, key: childKey)
             let bind: (PreparedCellShape, @escaping (PreparedProseLayout?) -> Void) -> Void = { shape, bound in
@@ -290,14 +311,14 @@ final class CoreTextProseLayoutEngine {
                     }
             }
             switch context.beginResolution(shapeKey) {
-            case .uncached: build(finish)
+            case .uncached: buildOrMeasure()
             case let .cached(shape):
                 bind(shape) { prepared in
                     if let prepared { finish(prepared.withCellShape(shape)) }
                     else { build(finish) }
                 }
             case .fresh:
-                guard retainShape else { build(finish); return }
+                guard retainShape else { buildOrMeasure(); return }
                 build { fresh in
                     let (candidate, selected) = context.stage(fresh, for: shapeKey)
                     if selected === candidate { finish(fresh.withCellShape(selected)) }
@@ -468,7 +489,7 @@ final class CoreTextProseLayoutEngine {
                         let context = worker == nil ? tableShapes : workerContext
                         guard surfaceSource.cells.indices.contains(cell.sourceIndex) else {
                             let failure = PreparedProseLayout.error(key: key, width: cellWidth, error: .layout(message: "Invalid table cell."))
-                            return CellPreparation(prepare: { _, completion in completion(failure) }, rebuild: { failure })
+                            return CellPreparation(prepare: { _, completion in completion(.full(failure)) }, rebuild: { failure })
                         }
                         return engine.makeCellPreparation(source: surfaceSource.cells[cell.sourceIndex], tableKey: tableKey,
                             document: document, key: key, cellWidth: cellWidth, displayScale: displayScale,
@@ -480,10 +501,10 @@ final class CoreTextProseLayoutEngine {
                                      worker: CoreTextProseLayoutEngine? = nil,
                                      workerContext: PreparedCellShapeBuildContext? = nil,
                                      retainShape: Bool = true,
-                                     workerTextPreparation: PlainTextPreparation? = nil) -> PreparedProseLayout {
+                                     workerTextPreparation: PlainTextPreparation? = nil) -> PreparedTableCellContent {
                         let textPreparation = worker == nil ? batchTextPreparation : workerTextPreparation
                         let queue = PreparationQueue(textPreparation: textPreparation ?? PlainTextPreparation())
-                        var prepared: PreparedProseLayout!
+                        var prepared: PreparedTableCellContent!
                         cellRequest(cell, width: width, worker: worker, workerContext: workerContext,
                             retainShape: retainShape).prepare(queue) { prepared = $0 }
                         queue.run()
@@ -507,12 +528,12 @@ final class CoreTextProseLayoutEngine {
                                           let old = previous.cell(sourceIndex: index) else { continue }
                                     let cell = TableGridCell(source: surfaceSource.cells[index])
                                     let inner = max(0, previous.frame(ofCell: old).width - 2 * (theme.tableStyle.cellPadding + theme.tableStyle.borderWidth))
-                                    contents[index] = prepareCell(cell, width: inner)
+                                    contents[index] = prepareCell(cell, width: inner).fullContent
                                 }
                                 surface = previous.replacingCells(contents,
                                     contentHeights: contents.mapValues { $0.size.height },
                                     sourceTable: surfaceSource, sourceAttributes: document.tableAttributes,
-                                    prepareCell: { prepareCell($0, width: $1) })
+                                    prepareCell: { prepareCell($0, width: $1).fullContent })
                                 self.tableIncrementalRelayoutObserver?()
                             } else if let record {
                                 let workers = self.tablePreparationPlan(document: document, table: surfaceSource, tableKey: tableKey,
@@ -540,10 +561,10 @@ final class CoreTextProseLayoutEngine {
                                     sourceAttributes: document.tableAttributes,
                                     layoutStore: tableLayoutStore,
                                     reuseCell: { cell, width in nested[cell.sourceIndex] ?? reuse?(cell, width) },
-                                    prepareCellWorkers: workers.prepare,
+                                    prepareCellContentWorkers: workers.prepare,
                                     parallelCellIndices: workers.indices,
                                     transientCellIndices: workers.transientIndices,
-                                    prepareCell: { prepareCell($0, width: $1,
+                                    prepareCellContent: { prepareCell($0, width: $1,
                                         retainShape: !transientIndices.contains($0.sourceIndex)) })
                             } else {
                                 preconditionFailure("Full table preparation requires a grid record.")
@@ -600,7 +621,7 @@ final class CoreTextProseLayoutEngine {
                         }
                     }
                 }
-                let prepared = prepareBlock(
+                guard case let .full(prepared) = prepareBlock(
                     block,
                     highlighting: scope.flatMap { $0.start(document: document, index: index, block: block) }.flatMap { highlighting?.ranges[$0] } ?? [],
                     attachmentOrdinal: imageAttachments.count,
@@ -614,7 +635,7 @@ final class CoreTextProseLayoutEngine {
                     displayScale: displayScale,
                     warningSemanticGeneration: warningSemanticGeneration,
                     textPreparation: textPreparation
-                )
+                ) else { preconditionFailure("Full block preparation returned a measurement") }
                 let preparedBlockIndex = blocks.count
                 blocks.append(prepared.block)
                 let interactionIndexOffset = interactions.count
@@ -891,7 +912,7 @@ final class CoreTextProseLayoutEngine {
                 scope: nil, context: context)
             let queue = PreparationQueue()
             var prepared: PreparedProseLayout!
-            request.prepare(queue) { prepared = $0 }
+            request.prepare(queue) { prepared = $0.fullContent }
             queue.run()
             return prepared
         }
@@ -950,6 +971,47 @@ final class CoreTextProseLayoutEngine {
               let context = block.listContext
         else { return [] }
         return [ViewerListItemAncestor(identity: boundary.identity, context: context)]
+    }
+
+    private struct BlockMeasurement {
+        let bounds: CGRect
+        let nextY: CGFloat
+        let accessibilitySummary: [TableCellAccessibilitySummary]
+    }
+
+    private enum BlockPreparationResult {
+        case full(BlockPreparation)
+        case measured(BlockMeasurement)
+        case unsupportedMeasurement
+    }
+
+    func measurePlainCell(
+        document: ViewerDocument, key: ProseLayoutKey, widthPoints: CGFloat, displayScale: CGFloat,
+        warningSemanticGeneration: String, textPreparation: PlainTextPreparation
+    ) -> PreparedTableCellMetadata? {
+        guard !document.isEmpty, document.blocks.count == 1,
+              let block = document.blocks.first, block.nodeType == "paragraph",
+              block.styleAncestors.isEmpty, block.listContext == nil, !block.inBlockquote,
+              !block.isBlockAtom, block.tableKey == nil, block.inlines.count == 1,
+              case let .text(text, marks) = block.inlines[0], marks.isEmpty,
+              text.utf8.allSatisfy({ $0 >= Self.firstPrintableASCII && $0 <= Self.lastPrintableASCII }),
+              let widthPixels = ProseLayoutMetrics.widthPixels(widthPoints: widthPoints, scale: displayScale)
+        else { return nil }
+        let theme = document.preparedTheme ?? PreparedProseTheme.resolve(themeJSON: nil)
+        guard theme.styleSheet == nil, theme.codeHighlighting == nil,
+              theme.paint(for: block).textValues.isEmpty else { return nil }
+        let width = ProseLayoutMetrics.canonicalWidth(widthPixels: widthPixels, scale: displayScale)
+        guard case let .measured(measurement) = prepareBlock(block, highlighting: [], attachmentOrdinal: 0,
+            listMarker: nil, theme: theme, width: width, cursorY: theme.contentInsets.top,
+            omitBottomMargin: false, disappearingListItemIdentities: [], entersNestedListItem: false,
+            displayScale: displayScale, warningSemanticGeneration: warningSemanticGeneration,
+            textPreparation: textPreparation, measureOnly: true) else { return nil }
+        let bottom = (theme.styleSheet == nil ? measurement.bounds.maxY
+            : max(measurement.nextY, measurement.bounds.maxY)) + theme.contentInsets.bottom
+        let size = CGSize(width: width, height: ceil(bottom * displayScale) / displayScale)
+        return PreparedTableCellMetadata(key: key, size: size,
+            accessibilitySummary: measurement.accessibilitySummary, hasNestedTables: false,
+            hasAtoms: false, hasImages: false, isPositionFree: true, error: nil)
     }
 
     private struct BlockPreparation {
@@ -1052,8 +1114,9 @@ final class CoreTextProseLayoutEngine {
         entersNestedListItem: Bool,
         displayScale: CGFloat,
         warningSemanticGeneration: String,
-        textPreparation: PlainTextPreparation
-    ) -> BlockPreparation {
+        textPreparation: PlainTextPreparation,
+        measureOnly: Bool = false
+    ) -> BlockPreparationResult {
         let sheet = theme.styleSheet
         let box = sheet?.box(block.nodeType, ancestors: block.styleAncestors.map(\.nodeType)) ?? EditorStyleBox()
         let ancestors = block.styleAncestors.reduce(UIEdgeInsets.zero) { $0.adding(sheet?.box($1.nodeType, ancestors: block.ancestors(before: $1)).outerInsets ?? .zero) }
@@ -1117,7 +1180,7 @@ final class CoreTextProseLayoutEngine {
                 bounds: blockBounds,
                 atomSlot: PreparedProseAtomSlot(nodeType: nodeType, docPos: docPos, attrsJSON: attrsJSON, bounds: bounds)
             )
-            return BlockPreparation(block: prepared, interactions: [], accessibilityNodes: [], attachment: nil, nextY: blockBounds.maxY + itemSpacing, retainedBytes: prepared.estimatedRetainedBytes)
+            return .full(BlockPreparation(block: prepared, interactions: [], accessibilityNodes: [], attachment: nil, nextY: blockBounds.maxY + itemSpacing, retainedBytes: prepared.estimatedRetainedBytes))
         }
         if block.nodeType == "image", let image = ViewerImageAttachment.sourceAndDeclaredSize(in: block) {
             let availableImageWidth = max(1, contentWidth - listInset - quoteInset - box.inset.left - box.inset.right)
@@ -1142,7 +1205,7 @@ final class CoreTextProseLayoutEngine {
                 label: accessibleImageLabel,
                 bounds: bounds
             )
-            return BlockPreparation(block: prepared, interactions: [], accessibilityNodes: [node], attachment: attachment, nextY: bounds.maxY + itemSpacing, retainedBytes: prepared.estimatedRetainedBytes + 192)
+            return .full(BlockPreparation(block: prepared, interactions: [], accessibilityNodes: [node], attachment: attachment, nextY: bounds.maxY + itemSpacing, retainedBytes: prepared.estimatedRetainedBytes + 192))
         }
         if block.nodeType == "horizontalRule" || block.nodeType == "horizontal_rule" {
             let thickness = sheet == nil ? theme.ruleThickness : box.number("height", fallback: theme.ruleThickness)
@@ -1172,7 +1235,7 @@ final class CoreTextProseLayoutEngine {
                 fragments: fragments,
                 bounds: bounds
             )
-            return BlockPreparation(
+            return .full(BlockPreparation(
                 block: prepared,
                 interactions: [],
                 accessibilityNodes: [PreparedProseAccessibilityNode(
@@ -1184,7 +1247,7 @@ final class CoreTextProseLayoutEngine {
                 attachment: nil,
                 nextY: totalEnd + itemSpacing,
                 retainedBytes: prepared.estimatedRetainedBytes
-            )
+            ))
         }
 
         let availableWidth = max(1, contentWidth - listInset - quoteInset - codeInset * 2 - box.inset.left - box.inset.right)
@@ -1216,6 +1279,7 @@ final class CoreTextProseLayoutEngine {
         }
         var semanticGeometryCursor = 0
         var accessibilityGeometryCursor = 0
+        var measuredRectangleCount = 0
         let codeTopInset = (block.nodeType == "codeBlock" ? theme.codePaddingVertical : 0) + box.inset.top
         let firstLineHeight = max(paint.font.lineHeight, paint.lineHeight ?? 0)
         let markerTopProtection = marker.map {
@@ -1261,16 +1325,33 @@ final class CoreTextProseLayoutEngine {
                 rangeCursor: &semanticGeometryCursor,
                 to: &interactionRects
             )
-            appendShapedRects(
-                ranges: accessibilityGeometryRanges,
-                line: line,
-                lineRange: lineRange,
-                lineBounds: lineBounds,
-                textX: lineTextX,
-                displayScale: displayScale,
-                rangeCursor: &accessibilityGeometryCursor,
-                to: &accessibilityRects
-            )
+            if measureOnly {
+                guard attributed.semanticRanges.isEmpty, attributed.atoms.isEmpty,
+                      attributed.accessibilityRanges.count <= 1 else { return .unsupportedMeasurement }
+                if let range = accessibilityGeometryRanges.first?.range {
+                    let glyphRuns = CTLineGetGlyphRuns(line) as? [CTRun] ?? []
+                    var intersections = 0
+                    for run in glyphRuns {
+                        let stringRange = CTRunGetStringRange(run)
+                        let overlap = NSIntersectionRange(NSIntersectionRange(range, lineRange),
+                            NSRange(location: stringRange.location, length: stringRange.length))
+                        if overlap.length > 0 { intersections += 1 }
+                    }
+                    guard intersections <= 1 else { return .unsupportedMeasurement }
+                    measuredRectangleCount += intersections
+                }
+            } else {
+                appendShapedRects(
+                    ranges: accessibilityGeometryRanges,
+                    line: line,
+                    lineRange: lineRange,
+                    lineBounds: lineBounds,
+                    textX: lineTextX,
+                    displayScale: displayScale,
+                    rangeCursor: &accessibilityGeometryCursor,
+                    to: &accessibilityRects
+                )
+            }
             if firstLineBounds == nil { firstLineBounds = lineBounds }
             for atom in attributed.atoms where NSIntersectionRange(atom.range, lineRange).length > 0 {
                 let offset = CGFloat(CTLineGetOffsetForStringIndex(line, atom.range.location, nil))
@@ -1343,6 +1424,20 @@ final class CoreTextProseLayoutEngine {
         }
         let seedBounds = CGRect(x: contentX, y: cursorY, width: contentWidth, height: max(0, totalEnd - cursorY))
         let bounds = fragments.reduce(seedBounds) { $0.union($1.bounds) }
+        if measureOnly {
+            var summary: [TableCellAccessibilitySummary] = []
+            if measuredRectangleCount > 0, let range = attributed.accessibilityRanges.first {
+                let label = range.label.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !label.isEmpty {
+                    let role: PreparedProseAccessibilityNode.Role =
+                        block.nodeType == "heading" || theme.headings[block.nodeType] != nil ? .heading : .text
+                    summary.append(TableCellAccessibilitySummary(interactionIndex: nil, role: role,
+                        label: label, rectangleCount: measuredRectangleCount, sourceBlockIndex: 0))
+                }
+            }
+            return .measured(BlockMeasurement(bounds: bounds, nextY: totalEnd + itemSpacing,
+                accessibilitySummary: summary))
+        }
         let prepared = PreparedProseBlock(fragments: fragments, bounds: bounds)
         var interactions: [PreparedProseInteraction] = []
         var interactionIndexBySemanticIndex: [Int: Int] = [:]
@@ -1399,14 +1494,14 @@ final class CoreTextProseLayoutEngine {
                 rects: rects
             )
         }
-        return BlockPreparation(
+        return .full(BlockPreparation(
             block: prepared,
             interactions: interactions,
             accessibilityNodes: accessibilityNodes,
             attachment: nil,
             nextY: totalEnd + itemSpacing,
             retainedBytes: 256 + attributed.retainedBytes + prepared.estimatedRetainedBytes
-        )
+        ))
     }
 
     private func appendShapedRects(
@@ -1436,7 +1531,9 @@ final class CoreTextProseLayoutEngine {
                 let runRange = NSRange(location: stringRange.location, length: stringRange.length)
                 let overlap = NSIntersectionRange(NSIntersectionRange(range, lineRange), runRange)
                 guard overlap.length > 0 else { continue }
+                accessibilityEndpointReadObserverForTesting?()
                 let start = CGFloat(CTLineGetOffsetForStringIndex(line, overlap.location, nil))
+                accessibilityEndpointReadObserverForTesting?()
                 let end = CGFloat(CTLineGetOffsetForStringIndex(line, overlap.location + overlap.length, nil))
                 visualPieces.append((
                     CGRect(

@@ -261,19 +261,19 @@ enum TableAccessibility {
         return items
     }
 
-    static func contentNodes(of layout: PreparedProseLayout) -> [PreparedProseAccessibilityNode] {
+    static func contentSummary(of layout: PreparedProseLayout) -> [TableCellAccessibilitySummary] {
         let byBlock = Dictionary(grouping: layout.accessibilityNodes.indices.compactMap { index in
             layout.accessibilityNodes[index].sourceBlockIndex.map { ($0, index) }
         }, by: { $0.0 })
         var emitted = Set<Int>()
-        var nodes: [PreparedProseAccessibilityNode] = []
+        var nodes: [TableCellAccessibilitySummary] = []
         func append(_ index: Int) {
             guard emitted.insert(index).inserted else { return }
-            nodes.append(layout.accessibilityNodes[index])
+            nodes.append(TableCellAccessibilitySummary(layout.accessibilityNodes[index]))
         }
         for (blockIndex, block) in layout.blocks.enumerated() {
             for (_, index) in byBlock[blockIndex] ?? [] { append(index) }
-            block.tableSurface?.cells.forEach { nodes.append(contentsOf: $0.accessibilityNodes) }
+            block.tableSurface?.cells.forEach { nodes.append(contentsOf: $0.accessibilitySummary) }
         }
         layout.accessibilityNodes.indices.forEach(append)
         return nodes
@@ -285,7 +285,7 @@ enum TableAccessibility {
             let index = cell.sourceIndex
             guard let sourceCell = source?.cells[index]
             else { return nil }
-            let nodes = cell.accessibilityNodes
+            let nodes = cell.accessibilitySummary
             return TableAccessibilityCell(
                 surface: surface,
                 cell: cell,
@@ -536,7 +536,7 @@ final class TableAccessibilityCellElement: TableAccessibilityGeneratedElement, U
 
     override var accessibilityFrame: CGRect {
         get {
-            guard isCurrent, let presented = drawingView?.presentedAccessibilityCell(cell) else { return .zero }
+            guard isCurrent, let presented = drawingView?.accessibilityCellGeometry(cell) else { return .zero }
             let visible = screenFrame(presented.bounds, clip: presented.clip)
             return visible.isEmpty ? screenFrame(presented.bounds, clip: .infinite) : visible
         }

@@ -34,6 +34,7 @@ final class ViewerTableTests: XCTestCase {
         var heights: [String: CGFloat] = [:]
         var glyphBounds: [String: [CGRect]] = [:]
         var accessibilityNodes: [String: [PreparedProseAccessibilityNode]] = [:]
+        var accessibilitySummary: [String: [TableCellAccessibilitySummary]] = [:]
         var backgroundPreparations = 0
         var preparationsByKey: [String: Int] = [:]
         weak var lastLayout: PreparedProseLayout?
@@ -48,7 +49,8 @@ final class ViewerTableTests: XCTestCase {
             preparationsByKey[layout.key.semanticKey, default: 0] += 1
             heights[layout.key.semanticKey] = layout.size.height
             glyphBounds[layout.key.semanticKey] = glyphs
-            accessibilityNodes[layout.key.semanticKey] = TableAccessibility.contentNodes(of: layout)
+            accessibilityNodes[layout.key.semanticKey] = layout.accessibilityNodes
+            accessibilitySummary[layout.key.semanticKey] = TableAccessibility.contentSummary(of: layout)
             lastLayout = layout
             if Thread.current !== caller { backgroundPreparations += 1 }
         }
@@ -209,18 +211,196 @@ final class ViewerTableTests: XCTestCase {
         XCTAssertEqual(actual.size, expected.size)
         XCTAssertEqual(actual.blocks.first?.tableSurface?.cells.map(\.contentSize),
             expected.blocks.first?.tableSurface?.cells.map(\.contentSize))
-        XCTAssertEqual(actual.blocks.first?.tableSurface?.cells.map(\.accessibilityNodes),
-            expected.blocks.first?.tableSurface?.cells.map(\.accessibilityNodes))
+        XCTAssertEqual(actual.blocks.first?.tableSurface?.cells.map(\.accessibilitySummary),
+            expected.blocks.first?.tableSurface?.cells.map(\.accessibilitySummary))
+    }
+
+    private func coordinateTableSource(rows: Int, columns: Int, hasHeader: Bool = false) throws -> String {
+        try jsonSource(["type": "doc", "content": [["type": "table", "content": (0..<rows).map { row in
+            ["type": "table_row", "content": (0..<columns).map { column in
+                let text = String(format: "R%04dC%04dXY", row, column)
+                return hasHeader && row == 0 ? header(text) : cell(text)
+            }]
+        }]]])
+    }
+
+    func testTransientCellsDeferAccessibilityEndpointsUntilFullPreparation() throws {
+        let rows = 1_000
+        let columns = 20
+        let source = try coordinateTableSource(rows: rows, columns: columns)
+        let compiled = viewerCompile(request: FfiViewerCompileRequest(sourceKind: .json, source: source,
+            configJson: Self.config, imagesEnabled: true, mentionPrefix: nil))
+        let document = try ViewerDocument(compiled: XCTUnwrap(compiled.value))
+        let expected = try prepare(document, widthPoints: 390)
+        let expectedSurface = try XCTUnwrap(expected.blocks.first?.tableSurface)
+        for workers in [1, CoreTextProseLayoutEngine.maxTablePreparationWorkers] {
+            let engine = CoreTextProseLayoutEngine()
+            engine.tablePreparationWorkerLimit = workers
+            engine.allowsTransientCellMeasurement = true
+            var endpointReads = 0
+            engine.accessibilityEndpointReadObserverForTesting = { endpointReads += 1 }
+            let layout = try prepare(document, engine: engine, widthPoints: 390)
+            let surface = try XCTUnwrap(layout.blocks.first?.tableSurface)
+            XCTAssertEqual(surface.cells.count, rows * columns)
+            XCTAssertEqual(layout.size, expected.size)
+            XCTAssertEqual(layout.retainedBytes, expected.retainedBytes)
+            XCTAssertEqual(surface.layout.rowOffsets, expectedSurface.layout.rowOffsets)
+            XCTAssertEqual(surface.layout.rectangles, expectedSurface.layout.rectangles)
+            XCTAssertEqual(surface.cells.map(\.contentSize), expectedSurface.cells.map(\.contentSize))
+            XCTAssertEqual(surface.cells.map(\.accessibilitySummary), expectedSurface.cells.map(\.accessibilitySummary))
+            XCTAssertEqual(surface.cells.map(\.metadataRetainedBytes), expectedSurface.cells.map(\.metadataRetainedBytes))
+            XCTAssertEqual(endpointReads, 0,
+                "Unique transient cells must retain exact accessibility summaries without querying glyph endpoints; workers=\(workers)")
+            let indices = [0, surface.cells.count / 2, surface.cells.count - 1]
+            for index in indices {
+                let cell = surface.cells[index]
+                let previousReads = endpointReads
+                let content = cell.content
+                XCTAssertGreaterThan(endpointReads, previousReads,
+                    "Full preparation must still obtain real glyph endpoints for cell \(index)")
+                XCTAssertEqual(content.size, cell.contentSize)
+                XCTAssertFalse(content.accessibilityNodes.isEmpty)
+                XCTAssertEqual(TableAccessibility.contentSummary(of: content), cell.accessibilitySummary)
+            }
+        }
+    }
+
+    func testMeasuredHeaderAndBodyRebuildAfterParentAndShapeContextRelease() throws {
+        let source = try coordinateTableSource(rows: 200, columns: 20, hasHeader: true)
+        let compiled = viewerCompile(request: FfiViewerCompileRequest(sourceKind: .json, source: source,
+            configJson: Self.config, imagesEnabled: true, mentionPrefix: nil))
+        let document = try ViewerDocument(compiled: XCTUnwrap(compiled.value))
+        let baseline = try prepare(document)
+        let baselineSurface = try XCTUnwrap(baseline.blocks.first?.tableSurface)
+        let indices = [0, baselineSurface.cells.count / 2]
+        let expected = indices.map { baselineSurface.cells[$0].content }
+        weak var parent: PreparedProseLayout?
+        let cells: [PreparedViewerTableCell] = try autoreleasepool {
+            let engine = CoreTextProseLayoutEngine()
+            engine.allowsTransientCellMeasurement = true
+            let catalog = PreparedCellShapeCatalog()
+            let context = catalog.newBuildContext()
+            engine.tableCellShapeContextProvider = { _ in context }
+            defer { context.close(); engine.tableCellShapeContextProvider = nil }
+            let layout = try prepare(document, engine: engine)
+            parent = layout
+            let surface = try XCTUnwrap(layout.blocks.first?.tableSurface)
+            XCTAssertEqual(surface.layout.rowOffsets, baselineSurface.layout.rowOffsets)
+            XCTAssertEqual(surface.cells.map(\.metadataRetainedBytes), baselineSurface.cells.map(\.metadataRetainedBytes))
+            return indices.map { surface.cells[$0] }
+        }
+        XCTAssertNil(parent, "Deferred preparation must not retain the enclosing prepared table")
+        func pixels(_ layout: PreparedProseLayout) throws -> Data {
+            let drawing = PreparedProseDrawingView(frame: CGRect(origin: .zero, size: layout.size))
+            drawing.install(layout: layout)
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = CGFloat(Double(bitPattern: layout.key.displayScaleBits))
+            let image = UIGraphicsImageRenderer(size: layout.size, format: format).image { _ in
+                drawing.draw(drawing.bounds)
+            }
+            return try XCTUnwrap(image.pngData())
+        }
+        for (offset, cell) in cells.enumerated() {
+            XCTAssertNil(cell.cachedContent, "The retained cell must rebuild after its context closes")
+            let full = cell.content
+            XCTAssertEqual(full.size, expected[offset].size)
+            XCTAssertEqual(full.accessibilityNodes, expected[offset].accessibilityNodes)
+            XCTAssertEqual(cell.accessibilitySummary, TableAccessibility.contentSummary(of: expected[offset]))
+            XCTAssertEqual(try pixels(full), try pixels(expected[offset]), "Header/body glyphs and colors must match exactly")
+        }
+    }
+
+    func testMeasuredCellViewportMutationsPrepareBeforeDrawingAndGeometryQueries() throws {
+        let rows = 200
+        let columns = 20
+        let source = try coordinateTableSource(rows: rows, columns: columns)
+        let compiled = viewerCompile(request: FfiViewerCompileRequest(sourceKind: .json, source: source,
+            configJson: Self.config, imagesEnabled: true, mentionPrefix: nil))
+        let document = try ViewerDocument(compiled: XCTUnwrap(compiled.value))
+        let engine = CoreTextProseLayoutEngine()
+        engine.allowsTransientCellMeasurement = true
+        var endpointReads = 0
+        engine.accessibilityEndpointReadObserverForTesting = { endpointReads += 1 }
+        let viewport = CGRect(x: 0, y: 0, width: 180, height: 120)
+        let window = makeTestWindow(frame: viewport)
+        let container = UIView(frame: viewport)
+        container.clipsToBounds = true
+        let scroll = UIScrollView(frame: viewport)
+        let drawing = PreparedProseDrawingView(frame: viewport)
+        drawing.preparesTableCellsOnViewportChange = true
+        window.addSubview(container)
+        container.addSubview(scroll)
+        scroll.addSubview(drawing)
+        window.isHidden = false
+        defer { window.isHidden = true; drawing.removeFromSuperview() }
+        let layout = try prepare(document, engine: engine, widthPoints: viewport.width)
+        let surface = try XCTUnwrap(layout.blocks.first?.tableSurface)
+        scroll.contentSize = layout.size
+        drawing.frame.size = layout.size
+        drawing.install(layout: layout)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        func verifyResident(_ mutation: String, file: StaticString = #filePath, line: UInt = #line) {
+            let before = endpointReads
+            _ = drawing.mountedTablePresentation()
+            _ = drawing.atomLayoutsJSON(origin: .zero)
+            _ = UIGraphicsImageRenderer(size: viewport.size, format: format).image { _ in
+                drawing.draw(drawing.bounds)
+            }
+            XCTAssertEqual(endpointReads, before,
+                "Drawing and geometry queries must use resident cells after \(mutation)", file: file, line: line)
+        }
+        verifyResident("initial layout publication")
+        let table = try tableElement(in: drawing)
+        let last = try XCTUnwrap(table.allCellElements.last)
+        let beforeOffscreenQuery = endpointReads
+        XCTAssertFalse(last.accessibilityLabel?.isEmpty ?? true)
+        XCTAssertGreaterThan(last.accessibilityFrame.height, 0)
+        _ = last.accessibilityCustomActions
+        XCTAssertEqual(endpointReads, beforeOffscreenQuery, "Offscreen plain-cell accessibility needs metadata only")
+        scroll.contentOffset.y = layout.size.height / 2
+        verifyResident("immediate vertical jump")
+        drawing.setTableLogicalOffset(surface.bounds.width, sourceIdentity: surface.identity)
+        verifyResident("immediate horizontal jump")
+        container.bounds.size.height /= 2
+        verifyResident("ancestor clipping bounds")
+        container.isHidden = true
+        verifyResident("ancestor hidden")
+        scroll.contentOffset.y = 0
+        container.isHidden = false
+        verifyResident("ancestor visible at a different row")
+        container.alpha = 0
+        scroll.contentOffset.y = layout.size.height / 3
+        container.alpha = 1
+        verifyResident("ancestor alpha restored")
+        container.clipsToBounds = false
+        container.frame.origin.y = -viewport.height / 2
+        verifyResident("ancestor clipping and frame change")
+        drawing.bounds.origin.y += viewport.height
+        verifyResident("drawing bounds change")
+        let replacement = try prepare(document, engine: engine, widthPoints: viewport.width)
+        drawing.install(layout: replacement)
+        verifyResident("same-bounds layout replacement")
+        let replacementSurface = try XCTUnwrap(replacement.blocks.first?.tableSurface)
+        let beforeDetach = endpointReads
+        let residentBeforeDetach = replacementSurface.layoutStore.count
+        drawing.removeFromSuperview()
+        XCTAssertEqual(endpointReads, beforeDetach, "Detachment must not prepare the entire table")
+        XCTAssertLessThanOrEqual(replacementSurface.layoutStore.count, residentBeforeDetach)
+        XCTAssertTrue(try XCTUnwrap(drawing.mountedTablePresentation()).cells.isEmpty,
+            "Detached native presentation has no visible window")
+        replacementSurface.layoutStore.insert(PreparedProseLayout(key: replacement.key, size: .zero, blocks: [],
+            retainedBytes: PreparedProseLayoutCache.preparedLayoutUnmountedByteBudget))
+        XCTAssertEqual(replacementSurface.layoutStore.count, 0, "Detachment releases every visible-owner pin")
+        scroll.addSubview(drawing)
+        XCTAssertGreaterThan(endpointReads, beforeDetach, "Reattachment prepares the visible window synchronously")
+        verifyResident("reattachment")
     }
 
     func testParallelMeasurementEqualsSequentialMeasurement() throws {
         let rows = 1_000
         let columns = 20
-        let plain = try jsonSource(["type": "doc", "content": [["type": "table", "content": (0..<rows).map { row in
-            ["type": "table_row", "content": (0..<columns).map { column in
-                cell(String(format: "R%04dC%04dXY", row, column))
-            }]
-        }]]])
+        let plain = try coordinateTableSource(rows: rows, columns: columns)
         let bold: [String: Any] = ["type": "paragraph", "content": [["type": "text",
             "text": "Bold café العربية 👩🏽‍💻", "marks": [["type": "bold"]]]]]
         let merged: [String: Any] = ["type": "table_cell", "attrs": ["rowspan": 2],
@@ -262,15 +442,17 @@ final class ViewerTableTests: XCTestCase {
                 "\(name): each cell must prepare once, including nested cells on the caller thread")
             XCTAssertEqual(actualGeometry.heights, expectedGeometry.heights, "\(name): every measured cell height")
             XCTAssertEqual(actualGeometry.glyphBounds, expectedGeometry.glyphBounds, "\(name): every prepared glyph bound")
+            XCTAssertEqual(actualGeometry.accessibilityNodes, expectedGeometry.accessibilityNodes,
+                "\(name): every exact accessibility rectangle, including rich and nested cells")
             for (left, right) in zip(expected.blocks, actual.blocks) {
                 guard let lhs = left.tableSurface, let rhs = right.tableSurface else { continue }
                 XCTAssertEqual(lhs.layout.sourceOrder, rhs.layout.sourceOrder, name)
                 XCTAssertEqual(lhs.layout.rowOffsets, rhs.layout.rowOffsets, name)
                 XCTAssertEqual(lhs.layout.rectangles, rhs.layout.rectangles, name)
                 XCTAssertEqual(lhs.cells.map(\.contentSize), rhs.cells.map(\.contentSize), name)
-                XCTAssertEqual(lhs.cells.map(\.accessibilityNodes), rhs.cells.map(\.accessibilityNodes), name)
+                XCTAssertEqual(lhs.cells.map(\.accessibilitySummary), rhs.cells.map(\.accessibilitySummary), name)
                 for cell in rhs.cells {
-                    XCTAssertEqual(cell.accessibilityNodes, actualGeometry.accessibilityNodes[cell.contentKey.semanticKey],
+                    XCTAssertEqual(cell.accessibilitySummary, actualGeometry.accessibilitySummary[cell.contentKey.semanticKey],
                         "\(name): measured accessibility must remain complete after releasing transient layouts")
                 }
                 if name == "plain-1000x20" {
@@ -355,16 +537,16 @@ final class ViewerTableTests: XCTestCase {
         let seededSurface = try XCTUnwrap(seededLayout.blocks.first?.tableSurface)
         XCTAssertEqual(shapeBuilds, cellCount - 1,
             "A locally unique transient cell must still reuse a live shape from another parent")
-        XCTAssertEqual(seededSurface.cells[0].accessibilityNodes, surface.cells[0].accessibilityNodes)
+        XCTAssertEqual(seededSurface.cells[0].accessibilitySummary, surface.cells[0].accessibilitySummary)
         XCTAssertEqual(seededSurface.layoutStore.count, 0)
         context.close()
         let seededRebuilt = seededSurface.cells[0].content
         XCTAssertEqual(seededRebuilt.size, seededSurface.cells[0].contentSize)
-        XCTAssertEqual(TableAccessibility.contentNodes(of: seededRebuilt), seededSurface.cells[0].accessibilityNodes)
+        XCTAssertEqual(TableAccessibility.contentSummary(of: seededRebuilt), seededSurface.cells[0].accessibilitySummary)
         let rebuilt = try XCTUnwrap(surface.cells.last).content
         XCTAssertNil(rebuilt.error, "A closed build context must still permit exact lazy rebuilding")
         XCTAssertEqual(rebuilt.size, surface.cells.last?.contentSize)
-        XCTAssertEqual(TableAccessibility.contentNodes(of: rebuilt), surface.cells.last?.accessibilityNodes)
+        XCTAssertEqual(TableAccessibility.contentSummary(of: rebuilt), surface.cells.last?.accessibilitySummary)
     }
 
     func testCellsWithAtomsAreMeasuredOnTheCallingThread() throws {
