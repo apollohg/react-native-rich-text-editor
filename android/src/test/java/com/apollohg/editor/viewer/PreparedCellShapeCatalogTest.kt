@@ -85,6 +85,10 @@ internal class PreparedCellShapeCatalogTest {
         assertSame("A later synchronization traverses the store's new resident", replacementShape,
             catalog.acquireForBuild(replacementShape.key))
         catalog.releaseBuildPins(listOf(replacementShape))
+        catalog.synchronizeOwners(surface.cellShapeOwnerLayouts)
+        assertSame("Displaced but resident entries remain valid source-neutral shape owners", replacementShape,
+            catalog.acquireForBuild(replacementShape.key))
+        catalog.releaseBuildPins(listOf(replacementShape))
         catalog.synchronizeOwners(emptyList())
         assertEquals(0, catalog.countForTesting)
     }

@@ -156,6 +156,10 @@ internal class ViewerTableSurface private constructor(
         layoutStore.peekAll(cells.asSequence().map { it.contentKey })
     } else cells.mapNotNull { it.cachedContent }
 
+    val cellShapeOwnerLayouts: List<PreparedProseLayout> get() = if (hasSingleLayoutStore) {
+        layoutStore.residentLayouts
+    } else cachedContents
+
     private data class Preparation(
         val layout: TableLayoutResult,
         val cells: List<PreparedViewerTableCell>,

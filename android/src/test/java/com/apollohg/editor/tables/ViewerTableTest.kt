@@ -15,6 +15,7 @@ import com.apollohg.editor.viewer.PreparedProseBlock
 import com.apollohg.editor.viewer.PreparedProseAccessibilityNode
 import com.apollohg.editor.viewer.PreparedProseInteraction
 import com.apollohg.editor.viewer.PreparedProseLayoutRegistry
+import com.apollohg.editor.viewer.PreparedCellShapeCatalog
 import com.apollohg.editor.viewer.StaticLayoutAndroidProseLayoutEngine
 import com.apollohg.editor.viewer.ViewerInline
 import com.apollohg.editor.viewer.ViewerDocument
@@ -344,6 +345,10 @@ class ViewerTableTest {
             reads = 0
             assertEquals(stage, surface.metadataRetainedBytes + bytes, surface.retainedBytes)
             assertEquals("Repeated accounting must not revisit cells: $stage", 0, reads)
+            reads = 0
+            assertEquals("Shape owners follow resident store ownership: $stage",
+                store.residentLayouts, surface.cellShapeOwnerLayouts)
+            assertEquals("Shape-owner synchronization must not scan cell keys: $stage", 0, reads)
         }
         assertCharge("Shared keys preserve the per-cell charge", cellBytes * 2)
         val key = prepared.cells.first().contentKey
@@ -368,6 +373,8 @@ class ViewerTableTest {
         otherStore.insert(content("same", cellBytes * 3))
         assertEquals("Mixed-store owner lookup keeps both layouts in cell order",
             mixed.cells.mapNotNull { it.cachedContent }, mixed.cachedContents)
+        assertEquals("Mixed-store shape ownership preserves the mapped fallback",
+            mixed.cachedContents, mixed.cellShapeOwnerLayouts)
         assertEquals("Mixed-store surfaces must observe mutations in their second store",
             mixed.metadataRetainedBytes + cellBytes * 4, mixed.retainedBytes)
         store.insert(content("unmapped"))
@@ -1182,6 +1189,75 @@ class ViewerTableTest {
         ).interactions.filter { it.interaction.href == "https://same.example/link" }
         assertEquals(2, links.size)
         assertTrue(links[0].sourceIdentity != links[1].sourceIdentity)
+    }
+
+    @Test
+    fun `resident shape winner order preserves shifted source bindings after eviction`() {
+        val configuration = ProseViewerConfiguration(interactionConfig(), imagesEnabled = true)
+        fun shaped(before: String, catalog: PreparedCellShapeCatalog = PreparedCellShapeCatalog()): PreparedProseLayout {
+            val source = JSONObject(identicalLinkCellsSource())
+            val table = source.getJSONArray("content").getJSONObject(0)
+            val paragraph = JSONObject().put("type", "paragraph").put("content", org.json.JSONArray().put(
+                JSONObject().put("type", "text").put("text", before)))
+            source.put("content", org.json.JSONArray().put(paragraph).put(table))
+            val document = compileWithRust(ProseViewerRequest(ProseViewerSource.Json(source.toString()), configuration))
+            val width = 390
+            val key = ProseLayoutKey(document.semanticKey, width, "shape-owners", 0, 0, 1L, 0, "shape-owners")
+            val context = catalog.newBuildContext()
+            return try {
+                StaticLayoutAndroidProseLayoutEngine().prepare(document, key, PreparedProseTheme.resolve(null, 1f),
+                    width, 1f, false, key.semanticGenerationIdentity, context)
+            } finally { context.close() }
+        }
+        fun table(layout: PreparedProseLayout) = requireNotNull(layout.blocks.single { it.tableSurface != null }.tableSurface)
+        val firstTable = table(shaped("first source"))
+        val secondTable = table(shaped("a different source position"))
+        val first = firstTable.cells.first().content
+        val second = secondTable.cells.first().content
+        val firstShape = requireNotNull(first.cellShape)
+        val secondShape = requireNotNull(second.cellShape)
+        assertNotSame(firstShape, secondShape)
+        assertEquals(firstShape.key, secondShape.key)
+        val store = TableCellLayoutStore(capacity = 2)
+        val cells = listOf(
+            firstTable.cells.first().relocated(TableGridCell(0, 0, 0, contentKey = "first"), store),
+            secondTable.cells.first().relocated(TableGridCell(1, 0, 1, contentKey = "second"), store)
+        )
+        val surface = ViewerTableSurface("resident-owners", firstTable.hostViewportWidth, firstTable.style,
+            false, firstTable.layout, cells, null)
+        store.value(first.key) { error("The first shape must already be resident") }
+        val catalog = PreparedCellShapeCatalog()
+        val currentText = "current document prefix moves both link cells".repeat(3)
+        val fresh = shaped(currentText)
+        fun verifyWinner(expected: com.apollohg.editor.viewer.PreparedCellShape) {
+            catalog.synchronizeOwners(surface.cellShapeOwnerLayouts)
+            assertEquals(1, catalog.countForTesting)
+            assertSame(expected, catalog.acquireForBuild(expected.key))
+            catalog.releaseBuildPins(listOf(expected))
+            val rebound = shaped(currentText, catalog)
+            assertTrue(table(rebound).cells.all { it.content.cellShape === expected })
+            assertEquals(fresh.widthPx to fresh.heightPx, rebound.widthPx to rebound.heightPx)
+            table(fresh).cells.zip(table(rebound).cells).forEach { (left, right) ->
+                assertEquals(left.content.interactions, right.content.interactions)
+                assertEquals(left.content.accessibilityNodes, right.content.accessibilityNodes)
+                assertEquals(left.content.blocks.flatMap { it.fragments }.map { it.bounds },
+                    right.content.blocks.flatMap { it.fragments }.map { it.bounds })
+            }
+            fun project(layout: PreparedProseLayout) = ViewerTablePresentation.project(layout,
+                ViewerTablePresentationOwner(), ViewerTablePresentationViewport.Unknown)
+            val before = project(fresh)
+            val after = project(rebound)
+            assertEquals(before.interactions.map { Triple(it.sourceIdentity, it.interaction, it.rects) },
+                after.interactions.map { Triple(it.sourceIdentity, it.interaction, it.rects) })
+            assertEquals(before.accessibilityNodes.map { listOf(it.sourceIdentity, it.interactionSourceIdentity, it.node, it.bounds) },
+                after.accessibilityNodes.map { listOf(it.sourceIdentity, it.interactionSourceIdentity, it.node, it.bounds) })
+        }
+        verifyWinner(secondShape)
+        store.insert(first.copy(key = first.key.copy(semanticKey = "replacement")))
+        assertNull(store.peek(second.key))
+        verifyWinner(firstShape)
+        catalog.synchronizeOwners(emptyList())
+        assertEquals(0, catalog.countForTesting)
     }
 
     @Test
