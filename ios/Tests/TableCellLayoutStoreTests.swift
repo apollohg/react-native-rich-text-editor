@@ -190,9 +190,11 @@ final class TableCellLayoutStoreTests: XCTestCase {
         let record = TableGridRecord(documentOwner: "memory", columns: 1, rows: 1, columnWidths: [100],
             cells: [TableGridCell(sourceIndex: 0, row: 0, column: 0, contentKey: "cell")])
         let surface = ViewerTableSurface(identity: "memory", record: record, viewportWidth: 100,
-            style: TableStyle(), direction: .leftToRight, displayScale: 1, layoutStore: store) { _, _ in
+            style: TableStyle(), direction: .leftToRight, displayScale: 1, layoutStore: store,
+            transientCellIndices: [0]) { _, _ in
                 self.layout("cell", bytes: cellBytes)
             }
+        XCTAssertEqual(store.count, 1, "A generic callback cannot certify independent rebuilding; keep its content charged")
         let parent = PreparedProseLayout(key: layout("parent").key, size: surface.bounds.size,
             blocks: [PreparedProseBlock(fragments: [], bounds: surface.bounds, tableSurface: surface,
                                        tableBounds: surface.bounds)], retainedBytes: parentBytes + surface.retainedBytes)

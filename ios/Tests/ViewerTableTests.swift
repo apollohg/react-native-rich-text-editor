@@ -28,8 +28,10 @@ final class ViewerTableTests: XCTestCase {
         private let caller = Thread.current
         var heights: [String: CGFloat] = [:]
         var glyphBounds: [String: [CGRect]] = [:]
+        var accessibilityNodes: [String: [PreparedProseAccessibilityNode]] = [:]
         var backgroundPreparations = 0
         var preparationsByKey: [String: Int] = [:]
+        weak var lastLayout: PreparedProseLayout?
 
         func record(_ index: Int, _ layout: PreparedProseLayout) {
             let glyphs = layout.blocks.flatMap(\.fragments).flatMap { fragment -> [CGRect] in
@@ -41,6 +43,8 @@ final class ViewerTableTests: XCTestCase {
             preparationsByKey[layout.key.semanticKey, default: 0] += 1
             heights[layout.key.semanticKey] = layout.size.height
             glyphBounds[layout.key.semanticKey] = glyphs
+            accessibilityNodes[layout.key.semanticKey] = TableAccessibility.contentNodes(of: layout)
+            lastLayout = layout
             if Thread.current !== caller { backgroundPreparations += 1 }
         }
     }
@@ -157,11 +161,79 @@ final class ViewerTableTests: XCTestCase {
                 XCTAssertEqual(lhs.layout.rowOffsets, rhs.layout.rowOffsets, name)
                 XCTAssertEqual(lhs.layout.rectangles, rhs.layout.rectangles, name)
                 XCTAssertEqual(lhs.cells.map(\.contentSize), rhs.cells.map(\.contentSize), name)
+                XCTAssertEqual(lhs.cells.map(\.accessibilityNodes), rhs.cells.map(\.accessibilityNodes), name)
+                for cell in rhs.cells {
+                    XCTAssertEqual(cell.accessibilityNodes, actualGeometry.accessibilityNodes[cell.contentKey.semanticKey],
+                        "\(name): measured accessibility must remain complete after releasing transient layouts")
+                }
+                if name == "plain-1000x20" {
+                    XCTAssertEqual(rhs.layoutStore.count, 0,
+                        "Unique cells beyond resident capacity must not churn the resident cache during measurement")
+                    XCTAssertNil(actualGeometry.lastLayout,
+                        "The rebuild closure must not retain the discarded Core Text layout")
+                    parallel.tableCellLayoutObserverForTesting = nil
+                    let owner = ViewerTablePresentationOwner()
+                    let viewportSize = CGSize(width: 320, height: 100)
+                    for originY in [CGFloat.zero, max(0, actual.size.height - viewportSize.height)] {
+                        let snapshot = ViewerTablePresentation.project(layout: actual, owner: owner,
+                            viewport: .known(CGRect(origin: CGPoint(x: 0, y: originY), size: viewportSize)))
+                        XCTAssertFalse(snapshot.mountedCells.isEmpty)
+                        let rebuilt = CellGeometryProbe()
+                        for presented in snapshot.mountedCells {
+                            rebuilt.record(presented.sourceIndex, presented.content)
+                            let semanticKey = presented.content.key.semanticKey
+                            XCTAssertEqual(rebuilt.heights[semanticKey], actualGeometry.heights[semanticKey])
+                            XCTAssertEqual(rebuilt.glyphBounds[semanticKey], actualGeometry.glyphBounds[semanticKey])
+                            XCTAssertEqual(rebuilt.accessibilityNodes[semanticKey], actualGeometry.accessibilityNodes[semanticKey])
+                        }
+                    }
+                    let detached = ViewerTablePresentation.project(layout: actual, owner: owner,
+                        viewport: .known(.zero))
+                    XCTAssertTrue(detached.mountedCells.isEmpty)
+                    let reattached = ViewerTablePresentation.project(layout: actual, owner: owner,
+                        viewport: .known(CGRect(origin: .zero, size: viewportSize)))
+                    XCTAssertFalse(reattached.mountedCells.isEmpty)
+                }
             }
             if name == "plain-1000x20", ProcessInfo.processInfo.activeProcessorCount > 2 {
                 XCTAssertGreaterThan(actualGeometry.backgroundPreparations, 0, "The equivalence check must exercise worker preparation")
             }
         }
+    }
+
+    func testLargeColdTableRetainsDuplicateShapesWhileDiscardingUniqueLayouts() throws {
+        let cellCount = TableCellLayoutStore.maximumResidentLayouts + 1
+        let repeatedText = "shared café العربية 👩🏽‍💻"
+        let source = try jsonSource(["type": "doc", "content": [["type": "table", "content":
+            (0..<cellCount).map { index in
+                ["type": "table_row", "content": [cell(index < 2 ? repeatedText : "unique \(index)")]]
+            }
+        ]]])
+        let compiled = viewerCompile(request: FfiViewerCompileRequest(sourceKind: .json, source: source,
+            configJson: Self.config, imagesEnabled: true, mentionPrefix: nil))
+        let document = try ViewerDocument(compiled: XCTUnwrap(compiled.value))
+        let catalog = PreparedCellShapeCatalog()
+        let context = catalog.newBuildContext()
+        defer { context.close() }
+        let engine = CoreTextProseLayoutEngine()
+        engine.tablePreparationWorkerLimit = 1
+        engine.tableCellShapeContextProvider = { _ in context }
+        var shapeBuilds = 0
+        engine.tableCellShapeBuildObserver = { _ in shapeBuilds += 1 }
+        let layout = try prepare(document, engine: engine)
+        let surface = try XCTUnwrap(layout.blocks.first?.tableSurface)
+        XCTAssertEqual(shapeBuilds, cellCount - 1, "Equal content must still shape only once")
+        XCTAssertEqual(surface.layoutStore.count, 2, "Only duplicate cells keep initial strong shape ownership")
+        let first = try XCTUnwrap(surface.cells[0].cachedContent)
+        let second = try XCTUnwrap(surface.cells[1].cachedContent)
+        XCTAssertNotNil(first.cellShape)
+        XCTAssertTrue(first.cellShape === second.cellShape)
+        XCTAssertTrue(surface.cells.dropFirst(2).allSatisfy { $0.cachedContent == nil })
+        context.close()
+        let rebuilt = try XCTUnwrap(surface.cells.last).content
+        XCTAssertNil(rebuilt.error, "A closed build context must still permit exact lazy rebuilding")
+        XCTAssertEqual(rebuilt.size, surface.cells.last?.contentSize)
+        XCTAssertEqual(TableAccessibility.contentNodes(of: rebuilt), surface.cells.last?.accessibilityNodes)
     }
 
     func testCellsWithAtomsAreMeasuredOnTheCallingThread() throws {

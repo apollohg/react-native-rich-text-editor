@@ -34,6 +34,7 @@ final class PreparedViewerTableCell {
     init(sourceIndex: Int, row: Int, column: Int, rowspan: Int, colspan: Int,
          contentOrigin: CGPoint, content: PreparedProseLayout, isHeader: Bool, attributesKey: String?,
          layoutStore: TableCellLayoutStore = TableCellLayoutStore(),
+         retainContent: Bool = true,
          prepareContent: (() -> PreparedProseLayout)? = nil) {
         self.sourceIndex = sourceIndex
         self.row = row
@@ -58,7 +59,7 @@ final class PreparedViewerTableCell {
             && content.interactions.allSatisfy { $0.docPos == nil }
         self.layoutStore = layoutStore
         self.prepareContent = content.cellPreparation ?? prepareContent ?? { content }
-        layoutStore.insert(content, for: storeKey)
+        if retainContent || content.cellPreparation == nil { layoutStore.insert(content, for: storeKey) }
     }
 
     convenience init(reusing cell: PreparedViewerTableCell, at position: TableGridCell, layoutStore: TableCellLayoutStore) {
@@ -157,6 +158,7 @@ final class ViewerTableSurface {
         reuseCell: ((TableGridCell, CGFloat) -> PreparedViewerTableCell?)? = nil,
         prepareCellWorkers: [(TableGridCell, CGFloat) -> PreparedProseLayout] = [],
         parallelCellIndices: Set<Int> = [],
+        transientCellIndices: Set<Int> = [],
         prepareCell: @escaping (TableGridCell, CGFloat) -> PreparedProseLayout
     ) {
         self.layoutStore = layoutStore
@@ -177,7 +179,9 @@ final class ViewerTableSurface {
         var prepared: [Int: PreparedViewerTableCell] = [:]
         func capture(_ cell: TableGridCell, width: CGFloat, content: PreparedProseLayout) -> PreparedViewerTableCell {
             Self.captureCell(cell, content: content, sourceTable: sourceTable,
-                style: style, layoutStore: layoutStore, prepareContent: { prepareCell(cell, width) })
+                style: style, layoutStore: layoutStore,
+                retainContent: !transientCellIndices.contains(cell.sourceIndex),
+                prepareContent: { prepareCell(cell, width) })
         }
         func reused(_ cell: TableGridCell, width: CGFloat) -> PreparedViewerTableCell? {
             guard let previous = reuseCell?(cell, width) else { return nil }
@@ -291,6 +295,7 @@ final class ViewerTableSurface {
     static func captureCell(
         _ cell: TableGridCell, content: PreparedProseLayout,
         sourceTable: TableSurfaceSource?, style: TableStyle, layoutStore: TableCellLayoutStore,
+        retainContent: Bool = true,
         prepareContent: @escaping () -> PreparedProseLayout
     ) -> PreparedViewerTableCell {
         let sourceCell = sourceTable?.cells[cell.sourceIndex]
@@ -298,7 +303,7 @@ final class ViewerTableSurface {
         return PreparedViewerTableCell(sourceIndex: cell.sourceIndex, row: cell.row, column: cell.column,
             rowspan: cell.rowspan, colspan: cell.colspan, contentOrigin: CGPoint(x: inset, y: inset),
             content: content, isHeader: sourceCell?.header ?? false, attributesKey: sourceCell?.attrsKey,
-            layoutStore: layoutStore, prepareContent: prepareContent)
+            layoutStore: layoutStore, retainContent: retainContent, prepareContent: prepareContent)
     }
 
     private static func prepareParallelCells(

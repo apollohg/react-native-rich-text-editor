@@ -21,26 +21,30 @@ final class CoreTextProseLayoutEngine {
     var reusableTableCell: ((TableSurfaceCell, Int) -> PreparedViewerTableCell?)?
     var reusableTableCellStore: TableCellLayoutStore?
 
-    private struct TablePreparationWorkers {
+    private struct TablePreparationPlan {
         var indices = Set<Int>()
+        var transientIndices = Set<Int>()
         var contexts: [PreparedCellShapeBuildContext] = []
         var prepare: [(TableGridCell, CGFloat) -> PreparedProseLayout] = []
     }
 
-    private func tablePreparationWorkers(
+    private func tablePreparationPlan(
         document: ViewerDocument, table: TableSurfaceSource, tableKey: String,
         theme: PreparedProseTheme, cellMode: Bool, context: PreparedCellShapeBuildContext?,
         prepare: @escaping (TableGridCell, CGFloat, CoreTextProseLayoutEngine, PreparedCellShapeBuildContext?) -> PreparedProseLayout
-    ) -> TablePreparationWorkers {
-        var result = TablePreparationWorkers()
+    ) -> TablePreparationPlan {
+        var result = TablePreparationPlan()
         let count = min(Self.maxTablePreparationWorkers, max(1, tablePreparationWorkerLimit),
                         max(1, ProcessInfo.processInfo.activeProcessorCount - 1))
-        guard !cellMode, count > 1, theme.codeHighlighting == nil, reusableTableCell == nil else { return result }
+        guard !cellMode, theme.codeHighlighting == nil, reusableTableCell == nil else { return result }
         let frequencies = Dictionary(table.cells.map { ($0.contentKey, 1) }, uniquingKeysWith: +)
+        let exceedsResidentCapacity = table.cells.count > TableCellLayoutStore.maximumResidentLayouts
         for source in table.cells {
-            guard context == nil || frequencies[source.contentKey] == 1,
+            let unique = frequencies[source.contentKey] == 1
+            guard context == nil || unique,
                   document.cellSupportsBackgroundPreparation(source, in: tableKey) else { continue }
-            result.indices.insert(source.sourceIndex)
+            if exceedsResidentCapacity && unique { result.transientIndices.insert(source.sourceIndex) }
+            if count > 1 { result.indices.insert(source.sourceIndex) }
         }
         guard !result.indices.isEmpty else { return result }
         let observerLock = NSRecursiveLock()
@@ -485,7 +489,7 @@ final class CoreTextProseLayoutEngine {
                                     prepareCell: { prepareCell($0, width: $1) })
                                 self.tableIncrementalRelayoutObserver?()
                             } else if let record {
-                                let workers = self.tablePreparationWorkers(document: document, table: surfaceSource, tableKey: tableKey,
+                                let workers = self.tablePreparationPlan(document: document, table: surfaceSource, tableKey: tableKey,
                                     theme: theme, cellMode: cellMode, context: tableShapes) { cell, width, worker, context in
                                         prepareCell(cell, width: width, worker: worker, workerContext: context)
                                     }
@@ -507,6 +511,7 @@ final class CoreTextProseLayoutEngine {
                                     reuseCell: { cell, width in nested[cell.sourceIndex] ?? reuse?(cell, width) },
                                     prepareCellWorkers: workers.prepare,
                                     parallelCellIndices: workers.indices,
+                                    transientCellIndices: workers.transientIndices,
                                     prepareCell: { prepareCell($0, width: $1) })
                             } else {
                                 preconditionFailure("Full table preparation requires a grid record.")
