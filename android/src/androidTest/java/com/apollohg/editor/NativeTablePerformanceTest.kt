@@ -818,15 +818,18 @@ class NativeTablePerformanceTest {
                 val counters = PreparedProseInstrumentation.TablePerformanceCounters()
                 var inspections = 0
                 var metadataReads = 0
+                var highlightedKeyReads = 0
                 onMain {
                     PreparedViewerTableCell.positionFreeObserverForTesting = { inspections++ }
                     PreparedViewerTableCell.metadataReadObserverForTesting = { metadataReads++ }
+                    PreparedViewerTableCell.highlightedCodeKeyReadObserverForTesting = { highlightedKeyReads++ }
                 }
                 try {
                     edit(host, input, counters, text)
                 } finally { onMain {
                     PreparedViewerTableCell.positionFreeObserverForTesting = null
                     PreparedViewerTableCell.metadataReadObserverForTesting = null
+                    PreparedViewerTableCell.highlightedCodeKeyReadObserverForTesting = null
                 } }
                 assertEquals("Each edit prepares its changed cell", 1, counters.changedCellRemeasurements)
                 assertEquals("Unchanged cells keep their prepared content", 0, counters.unchangedCellRemeasurements)
@@ -835,11 +838,14 @@ class NativeTablePerformanceTest {
                     inspections <= allowance)
                 assertTrue("Editing one of ${rows * columns} cells read $metadataReads metadata charges; old/new changed-wrapper allowance is $allowance",
                     metadataReads <= allowance)
+                assertTrue("Editing one of ${rows * columns} cells read $highlightedKeyReads code-key sets; changed-wrapper allowance is $allowance",
+                    highlightedKeyReads <= allowance)
             }
         } finally {
             onMain {
                 PreparedViewerTableCell.positionFreeObserverForTesting = null
                 PreparedViewerTableCell.metadataReadObserverForTesting = null
+                PreparedViewerTableCell.highlightedCodeKeyReadObserverForTesting = null
                 host.close()
             }
         }

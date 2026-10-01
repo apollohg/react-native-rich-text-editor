@@ -268,6 +268,80 @@ class ViewerTableTest {
         verify(copied, true)
     }
 
+    @Test fun highlightedKeyCertificatePreservesSnapshotsAndRootPromotion() {
+        val source = """{"type":"doc","content":[{"type":"table","content":[
+            {"type":"table_row","content":[${tableCell("first")},${tableCell("second")}]}
+        ]}]}"""
+        val document = compileWithRust(ProseViewerRequest(ProseViewerSource.Json(source), ProseViewerConfiguration(CONFIG)))
+        val key = ProseLayoutKey(document.semanticKey, 320, "highlight-certificate", 0, 0, 1L, 0, "highlight-certificate")
+        val theme = PreparedProseTheme.resolve(null, 1f)
+        val original = requireNotNull(StaticLayoutAndroidProseLayoutEngine().prepare(document, key, theme, 320, 1f, false)
+            .blocks.single().tableSurface)
+        val table = requireNotNull(original.sourceTable)
+        val contents = original.cells.map { it.content.copy(cellPreparation = null) }
+        fun generic(base: ViewerTableSurface, cells: List<PreparedViewerTableCell> = base.cells) = ViewerTableSurface(
+            base.identity, base.hostViewportWidth, base.style, base.isRightToLeft,
+            base.layout, cells, null, table, base.sourceAttributes, displayScale = base.displayScale)
+        fun rootKeys(base: ViewerTableSurface, configured: Boolean): Set<String> {
+            val engine = StaticLayoutAndroidProseLayoutEngine().also {
+                it.incrementalTableSurface = { base to emptySet() }
+            }
+            val configuredTheme = if (configured) theme.copy(codeHighlighting = NativeCodeHighlightingConfig("table-test", "one")) else theme
+            return engine.prepare(document, key, configuredTheme, 320, 1f, false).highlightedCodeKeys
+        }
+        fun check(base: ViewerTableSurface, expected: Set<String>) {
+            val oracle = generic(base)
+            assertEquals("Certificate cannot change the established metadata charge", oracle.metadataRetainedBytes, base.metadataRetainedBytes)
+            assertEquals("Certificate cannot change resident ownership", oracle.retainedBytes, base.retainedBytes)
+            assertEquals(expected, base.cells.flatMap { it.highlightedCodeKeys }.toSet())
+            if (!base.mayHaveHighlightedCodeKeys) assertTrue("A false certificate must prove an empty union", expected.isEmpty())
+            for (configured in listOf(false, true)) {
+                assertEquals("Root must preserve all cell keys even when highlighting configuration changes", expected, rootKeys(base, configured))
+            }
+        }
+        fun replace(base: ViewerTableSurface, changes: Map<Int, PreparedProseLayout>): ViewerTableSurface =
+            base.replacingCells(changes, { TableGridRecord.from(table, base.identity) }, table, base.sourceAttributes) { cell, _ ->
+                changes[cell.sourceIndex] ?: requireNotNull(base.cell(cell.sourceIndex)).content
+            }
+        fun keyed(index: Int, keys: Set<String>) = contents[index].copy(
+            key = contents[index].key.copy(semanticKey = "highlight-$index-${keys.joinToString()}"), highlightedCodeKeys = keys)
+
+        assertFalse(original.mayHaveHighlightedCodeKeys)
+        check(original, emptySet())
+        val input = mutableSetOf("first-key")
+        val first = replace(original, mapOf(0 to keyed(0, input)))
+        input.clear()
+        input += "mutated-input"
+        check(first, setOf("first-key"))
+        val both = replace(first, mapOf(1 to keyed(1, setOf("second-key", "first-key"))))
+        check(both, setOf("first-key", "second-key"))
+        val sibling = replace(both, mapOf(0 to contents[0]))
+        check(sibling, setOf("first-key", "second-key"))
+        check(replace(sibling, mapOf(1 to contents[1])), emptySet())
+
+        val emptyInput = mutableSetOf<String>()
+        val empty = replace(original, mapOf(0 to keyed(0, emptyInput)))
+        emptyInput += "later-input-mutation"
+        assertFalse(empty.mayHaveHighlightedCodeKeys)
+        check(empty, emptySet())
+        val nestedContent = contents[0].copy(key = contents[0].key.copy(semanticKey = "nested-highlight"),
+            blocks = listOf(PreparedProseBlock(emptyList(), Rect(0, 0, contents[0].widthPx, contents[0].heightPx), tableSurface = both)))
+        val nested = replace(original, mapOf(0 to nestedContent))
+        check(nested, setOf("first-key", "second-key"))
+        val relocated = nested.cells[0].relocated(TableGridCell.from(table.cells[0]), TableCellLayoutStore())
+        check(generic(original, listOf(relocated, original.cells[1])), setOf("first-key", "second-key"))
+
+        val mutableCells = original.cells.toMutableList()
+        val callerOwned = generic(original, mutableCells)
+        assertTrue("Caller-owned lists cannot certify future membership", callerOwned.mayHaveHighlightedCodeKeys)
+        mutableCells[1] = both.cells[1]
+        assertEquals(setOf("first-key", "second-key"), rootKeys(callerOwned, false))
+        val copied = replace(callerOwned, emptyMap())
+        mutableCells[1] = original.cells[1]
+        check(copied, setOf("first-key", "second-key"))
+        assertEquals(emptySet<String>(), rootKeys(callerOwned, false))
+    }
+
     @Test fun replacementAggregatesPreserveFeesErrorsImagesAndCallerOwnership() {
         val source = """{"type":"doc","content":[{"type":"table","content":[
             {"type":"table_row","content":[${tableCell("first")},${tableCell("second")}]}

@@ -29,7 +29,11 @@ internal class PreparedViewerTableCell : TableGridCellPosition {
     val contentHeightPx: Int
     val contentError: ProseViewerError?
     val codeHighlightBlocks: List<com.apollohg.editor.CodeHighlightBlock>
-    val highlightedCodeKeys: Set<String>
+    private val codeKeys: Set<String>
+    val highlightedCodeKeys: Set<String> get() {
+        highlightedCodeKeyReadObserverForTesting?.invoke()
+        return codeKeys
+    }
     val accessibilityText: String
     val hasNestedTables: Boolean
     val hasAtoms: Boolean
@@ -75,7 +79,7 @@ internal class PreparedViewerTableCell : TableGridCellPosition {
         contentHeightPx = content.heightPx
         contentError = content.error
         codeHighlightBlocks = promotedCodeHighlightBlocks(content.blocks, content.codeHighlightBlocks)
-        highlightedCodeKeys = content.highlightedCodeKeys + content.blocks.flatMap { block ->
+        codeKeys = content.highlightedCodeKeys + content.blocks.flatMap { block ->
             block.tableSurface?.cells.orEmpty().flatMap { it.highlightedCodeKeys }
         }
         accessibilityText = TableAccessibility.text(content).joinToString(TableAccessibility.LABEL_SEPARATOR)
@@ -108,7 +112,7 @@ internal class PreparedViewerTableCell : TableGridCellPosition {
         contentHeightPx = cell.contentHeightPx
         contentError = cell.contentError
         codeHighlightBlocks = cell.codeHighlightBlocks
-        highlightedCodeKeys = cell.highlightedCodeKeys
+        codeKeys = cell.highlightedCodeKeys
         accessibilityText = cell.accessibilityText
         hasNestedTables = cell.hasNestedTables
         hasAtoms = cell.hasAtoms
@@ -131,6 +135,7 @@ internal class PreparedViewerTableCell : TableGridCellPosition {
     companion object {
         @Volatile var positionFreeObserverForTesting: (() -> Unit)? = null
         @Volatile var metadataReadObserverForTesting: (() -> Unit)? = null
+        @Volatile var highlightedCodeKeyReadObserverForTesting: (() -> Unit)? = null
         private const val METADATA_RETAINED_BYTES = 384L
         private const val CODE_DESCRIPTOR_RETAINED_BYTES = 64L
     }
@@ -156,7 +161,8 @@ internal class ViewerTableSurface private constructor(
     private data class CellMetadata(
         val retainedBytes: Long,
         val positionDependentCount: Int,
-        val hasSingleLayoutStore: Boolean
+        val hasSingleLayoutStore: Boolean,
+        val mayHaveHighlightedCodeKeys: Boolean
     )
     constructor(
         identity: String, hostViewportWidth: Float, style: TableStyle, isRightToLeft: Boolean,
@@ -169,6 +175,7 @@ internal class ViewerTableSurface private constructor(
 
     val layoutStore = cells.firstOrNull()?.layoutStore ?: TableCellLayoutStore()
     private val hasSingleLayoutStore = cellMetadata?.hasSingleLayoutStore == true || cells.all { it.layoutStore === layoutStore }
+    val mayHaveHighlightedCodeKeys = cellMetadata?.mayHaveHighlightedCodeKeys ?: true
     private val positionDependentCellCount = cellMetadata?.positionDependentCount ?: UNKNOWN_CELL_COUNT
     private val cellMetadataRetainedBytes = cellMetadata?.retainedBytes ?: cells.sumOf { it.metadataRetainedBytes }
     private var retainedBytesRevision = -1L
@@ -231,6 +238,7 @@ internal class ViewerTableSurface private constructor(
         val ownsCells = positionDependentCellCount != UNKNOWN_CELL_COUNT
         var metadataBytes = cellMetadataRetainedBytes
         var positionDependentCount = positionDependentCellCount
+        var mayHaveCodeKeys = mayHaveHighlightedCodeKeys
         fun replacing(cell: PreparedViewerTableCell): PreparedViewerTableCell {
             val content = contents[cell.sourceIndex] ?: return cell
             val source = sourceTable.cells[cell.sourceIndex]
@@ -240,6 +248,7 @@ internal class ViewerTableSurface private constructor(
             return PreparedViewerTableCell(cell.sourceIndex, cell.row, cell.column, cell.rowspan, cell.colspan,
                 cell.contentOrigin, content, source.header, source.attrsKey, layoutStore) { prepareCell(gridCell, width) }.also {
                 if (ownsCells) {
+                    mayHaveCodeKeys = mayHaveCodeKeys || it.highlightedCodeKeys.isNotEmpty()
                     metadataBytes += it.metadataRetainedBytes - cell.metadataRetainedBytes
                     if (!cell.isPositionFree) positionDependentCount--
                     if (!it.isPositionFree) positionDependentCount++
@@ -281,7 +290,7 @@ internal class ViewerTableSurface private constructor(
         } else {
             relayoutFromRecord()
         }
-        val metadata = if (ownsCells) CellMetadata(metadataBytes, positionDependentCount, hasSingleLayoutStore)
+        val metadata = if (ownsCells) CellMetadata(metadataBytes, positionDependentCount, hasSingleLayoutStore, mayHaveCodeKeys)
             else collectCellMetadata(updated)
         return ViewerTableSurface(identity, hostViewportWidth, style, isRightToLeft, next, updated,
             if (metadata.positionDependentCount == 0) null else updated.firstNotNullOfOrNull { it.contentError },
@@ -323,7 +332,7 @@ internal class ViewerTableSurface private constructor(
         columnEdgeHandleRows.size * 16L
 
     companion object {
-        // Three Longs, the dependency count, and certificate flags fit within this allowance.
+        // Three Longs, one Int, and three flags fit within this allowance.
         private const val ACCOUNTING_CACHE_RETAINED_BYTES = 32L
         private const val UNKNOWN_CELL_COUNT = -1
 
@@ -332,12 +341,14 @@ internal class ViewerTableSurface private constructor(
             var bytes = 0L
             var dependent = 0
             var singleStore = true
+            var mayHaveCodeKeys = false
             cells.forEach { cell ->
                 bytes += cell.metadataRetainedBytes
                 if (!cell.isPositionFree) dependent++
                 singleStore = singleStore && cell.layoutStore === store
+                mayHaveCodeKeys = mayHaveCodeKeys || cell.highlightedCodeKeys.isNotEmpty()
             }
-            return CellMetadata(bytes, dependent, singleStore)
+            return CellMetadata(bytes, dependent, singleStore, mayHaveCodeKeys)
         }
 
         private fun certifiesCellKey(cell: PreparedViewerTableCell, source: TableSurfaceSource?): Boolean {
