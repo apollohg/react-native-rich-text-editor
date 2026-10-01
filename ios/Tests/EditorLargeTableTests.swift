@@ -298,7 +298,11 @@ final class EditorLargeTableTests: XCTestCase {
         let view = RichTextEditorView(frame: window.bounds)
         window.addSubview(view)
         window.makeKeyAndVisible()
-        defer { window.isHidden = true }
+        defer {
+            view.activeTextInput.resignFirstResponder()
+            view.bindEditor(id: 0, initialUpdateJSON: nil)
+            window.isHidden = true
+        }
         view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
         let document = try plainTableDocument(rows: EditedTable.rows, columns: EditedTable.columns)
         XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
