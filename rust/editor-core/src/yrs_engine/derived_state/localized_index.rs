@@ -1,3 +1,4 @@
+use super::history_snapshot::arc_allocation_bound;
 use super::insert_admission::LocalizedTextblockEditAdmission;
 #[cfg(test)]
 use super::observability::{
@@ -15,6 +16,11 @@ use crate::schema::Schema;
 use crate::yrs_engine::canonical::CanonicalArtifact;
 use sha2::Digest;
 use std::sync::Arc;
+
+#[cfg(test)]
+thread_local! {
+    static CARRIED_LEAF_COPIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 pub(super) const LEAVES_MEETING_AT_A_POSITION: usize = 2;
 
@@ -59,16 +65,84 @@ impl LocalizedTextLeafCertificate {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct LeafOffsets {
+    document: u32,
+    scalar: u32,
+    utf16: u32,
+}
+
+impl LeafOffsets {
+    fn checked_add(self, other: Self) -> Option<Self> {
+        Some(Self {
+            document: self.document.checked_add(other.document)?,
+            scalar: self.scalar.checked_add(other.scalar)?,
+            utf16: self.utf16.checked_add(other.utf16)?,
+        })
+    }
+
+    fn include(&mut self, leaf: &LocalizedTextLeafCertificate) {
+        self.document = self.document.max(leaf.doc_start).max(leaf.doc_end);
+        self.scalar = self.scalar.max(leaf.scalar_start).max(leaf.scalar_end);
+        self.utf16 = self.utf16.max(leaf.utf16_start).max(leaf.utf16_end);
+    }
+
+    fn apply(self, mut leaf: LocalizedTextLeafCertificate) -> Option<LocalizedTextLeafCertificate> {
+        leaf.doc_start = leaf.doc_start.checked_add(self.document)?;
+        leaf.doc_end = leaf.doc_end.checked_add(self.document)?;
+        leaf.scalar_start = leaf.scalar_start.checked_add(self.scalar)?;
+        leaf.scalar_end = leaf.scalar_end.checked_add(self.scalar)?;
+        leaf.utf16_start = leaf.utf16_start.checked_add(self.utf16)?;
+        leaf.utf16_end = leaf.utf16_end.checked_add(self.utf16)?;
+        Some(leaf)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LocalizedLeafOverlay {
+    // The shared allocation omits the inline target and owns no prior index or artifact.
+    base: Arc<Vec<LocalizedTextLeafCertificate>>,
+    target: usize,
+    leaf: LocalizedTextLeafCertificate,
+    offsets: LeafOffsets,
+    suffix_maxima: Option<LeafOffsets>,
+}
+
+impl LocalizedLeafOverlay {
+    fn heap_bytes(&self) -> Option<usize> {
+        self.base
+            .capacity()
+            .checked_mul(std::mem::size_of::<LocalizedTextLeafCertificate>())?
+            .checked_add(arc_allocation_bound(std::mem::size_of::<
+                Vec<LocalizedTextLeafCertificate>,
+            >())?)
+    }
+}
+
+#[derive(Debug, Eq)]
 #[cfg_attr(test, derive(Clone))]
 pub(crate) struct LocalizedTextLeafIndex {
     pub(super) leaves: Vec<LocalizedTextLeafCertificate>,
+    overlay: Option<LocalizedLeafOverlay>,
     pub(super) schema_fingerprint: Arc<str>,
     pub(super) canonical_artifact: CanonicalArtifact,
     pub(super) canonical_fingerprint: [u8; 32],
     pub(super) canonical_fingerprint_materialized: bool,
     pub(super) document_revision: u64,
     pub(super) retained_bytes: usize,
+}
+
+impl PartialEq for LocalizedTextLeafIndex {
+    fn eq(&self, other: &Self) -> bool {
+        self.schema_fingerprint == other.schema_fingerprint
+            && self.canonical_artifact == other.canonical_artifact
+            && self.canonical_fingerprint == other.canonical_fingerprint
+            && self.canonical_fingerprint_materialized == other.canonical_fingerprint_materialized
+            && self.document_revision == other.document_revision
+            && self.retained_bytes == other.retained_bytes
+            && self.leaf_count() == other.leaf_count()
+            && (0..self.leaf_count()).all(|index| self.leaf(index) == other.leaf(index))
+    }
 }
 
 #[allow(dead_code)]
@@ -147,6 +221,7 @@ impl LocalizedTextLeafIndex {
         }
         Some(Self {
             leaves,
+            overlay: None,
             schema_fingerprint: Arc::clone(&validation.schema_fingerprint),
             canonical_artifact: validation.canonical_artifact.clone(),
             canonical_fingerprint: validation.canonical_fingerprint,
@@ -156,12 +231,57 @@ impl LocalizedTextLeafIndex {
         })
     }
 
-    pub(crate) fn leaves(&self) -> &[LocalizedTextLeafCertificate] {
-        &self.leaves
+    #[cfg(test)]
+    pub(crate) fn take_carried_leaf_copies_for_test() -> usize {
+        CARRIED_LEAF_COPIES.replace(0)
     }
 
-    pub(super) fn leaf_slot(&self, document_position: u32) -> usize {
-        self.leaves.partition_point(|leaf| {
+    pub(crate) fn leaf_count(&self) -> usize {
+        self.overlay
+            .as_ref()
+            .map_or(self.leaves.len(), |overlay| overlay.base.len() + 1)
+    }
+
+    pub(crate) fn leaf(&self, index: usize) -> Option<LocalizedTextLeafCertificate> {
+        let Some(overlay) = &self.overlay else {
+            return self.leaves.get(index).copied();
+        };
+        if index == overlay.target {
+            return Some(overlay.leaf);
+        }
+        if index < overlay.target {
+            return overlay.base.get(index).copied();
+        }
+        overlay
+            .offsets
+            .apply(*overlay.base.get(index.checked_sub(1)?)?)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn leaves(&self) -> Vec<LocalizedTextLeafCertificate> {
+        (0..self.leaf_count())
+            .map(|index| self.leaf(index).unwrap())
+            .collect()
+    }
+
+    fn partition_point(
+        &self,
+        predicate: impl Fn(LocalizedTextLeafCertificate) -> bool,
+    ) -> Option<usize> {
+        let (mut left, mut right) = (0, self.leaf_count());
+        while left < right {
+            let middle = left + (right - left) / 2;
+            if predicate(self.leaf(middle)?) {
+                left = middle + 1;
+            } else {
+                right = middle;
+            }
+        }
+        Some(left)
+    }
+
+    pub(super) fn leaf_slot(&self, document_position: u32) -> Option<usize> {
+        self.partition_point(|leaf| {
             #[cfg(test)]
             LOCALIZED_INDEX_LOOKUP_COMPARISONS
                 .set(LOCALIZED_INDEX_LOOKUP_COMPARISONS.get().saturating_add(1));
@@ -175,16 +295,35 @@ impl LocalizedTextLeafIndex {
         document_position: u32,
         marks_sha256: [u8; 32],
     ) -> Option<usize> {
-        let slot = self.leaf_slot(document_position);
-        (slot..self.leaves.len())
-            .take(LEAVES_MEETING_AT_A_POSITION)
-            .find(|&index| {
-                let leaf = &self.leaves[index];
-                leaf.block_index == block_index
-                    && leaf.doc_start <= document_position
-                    && document_position <= leaf.doc_end
-                    && leaf.marks_sha256 == marks_sha256
-            })
+        let slot = self.leaf_slot(document_position)?;
+        for index in (slot..self.leaf_count()).take(LEAVES_MEETING_AT_A_POSITION) {
+            let leaf = self.leaf(index)?;
+            if leaf.block_index == block_index
+                && leaf.doc_start <= document_position
+                && document_position <= leaf.doc_end
+                && leaf.marks_sha256 == marks_sha256
+            {
+                return Some(index);
+            }
+        }
+        None
+    }
+
+    fn copy_leaves(
+        &self,
+        range: std::ops::Range<usize>,
+        destination: &mut Vec<LocalizedTextLeafCertificate>,
+    ) -> Option<()> {
+        #[cfg(test)]
+        CARRIED_LEAF_COPIES.set(CARRIED_LEAF_COPIES.get().saturating_add(range.len()));
+        if self.overlay.is_none() {
+            destination.extend_from_slice(self.leaves.get(range)?);
+        } else {
+            for index in range {
+                destination.push(self.leaf(index)?);
+            }
+        }
+        Some(())
     }
 
     pub(super) fn matches(&self, validation: &DocumentValidationCertificate) -> bool {
@@ -259,7 +398,7 @@ impl LocalizedTextLeafIndex {
     #[cfg(test)]
     pub(crate) fn promotion_transient_budget_for_test(&self) -> Option<usize> {
         let mut promoted = Vec::<LocalizedTextLeafCertificate>::new();
-        promoted.try_reserve_exact(self.leaves.len()).ok()?;
+        promoted.try_reserve_exact(self.leaf_count()).ok()?;
         let promoted_bytes = promoted
             .capacity()
             .checked_mul(std::mem::size_of::<LocalizedTextLeafCertificate>())?;
@@ -271,8 +410,7 @@ impl LocalizedTextLeafIndex {
             return None;
         }
         let required_bytes = self
-            .leaves
-            .len()
+            .leaf_count()
             .checked_mul(std::mem::size_of::<LocalizedTextLeafCertificate>())?;
         let available_bytes = cache_budget.checked_sub(self.retained_bytes)?;
         if required_bytes > available_bytes {
@@ -285,16 +423,27 @@ impl LocalizedTextLeafIndex {
             return None;
         }
         let mut leaves = Vec::new();
-        leaves.try_reserve_exact(self.leaves.len()).ok()?;
+        leaves.try_reserve_exact(self.leaf_count()).ok()?;
         let retained_bytes = leaves
             .capacity()
             .checked_mul(std::mem::size_of::<LocalizedTextLeafCertificate>())?;
         if retained_bytes > available_bytes {
             return None;
         }
-        leaves.extend_from_slice(&self.leaves);
+        let overlay = if let Some(overlay) = &self.overlay {
+            if overlay.heap_bytes()? > retained_bytes {
+                return None;
+            }
+            drop(leaves);
+            leaves = Vec::new();
+            Some(overlay.clone())
+        } else {
+            self.copy_leaves(0..self.leaf_count(), &mut leaves)?;
+            None
+        };
         Some(Self {
             leaves,
+            overlay,
             schema_fingerprint: Arc::clone(&self.schema_fingerprint),
             canonical_artifact: self.canonical_artifact.clone(),
             canonical_fingerprint: self.canonical_fingerprint,
@@ -327,20 +476,14 @@ impl LocalizedTextLeafIndex {
         if forced_localized_index_allocation_stage(LocalizedIndexAllocationStage::PromotionClone) {
             return None;
         }
-        let range_slots = self
-            .leaves
-            .partition_point(|leaf| leaf.block_index < plan.leaf.block_index)
-            ..self
-                .leaves
-                .partition_point(|leaf| leaf.block_index <= plan.leaf.block_index);
+        let range_slots = self.partition_point(|leaf| leaf.block_index < plan.leaf.block_index)?
+            ..self.partition_point(|leaf| leaf.block_index <= plan.leaf.block_index)?;
         let promoted_len = if plan.removed_scalars > 0 {
-            self.leaves
-                .len()
+            self.leaf_count()
                 .checked_sub(range_slots.len())?
                 .checked_add(preview.node_at(block_path)?.child_count())?
         } else {
-            self.leaves
-                .len()
+            self.leaf_count()
                 .checked_add(usize::from(plan.creates_leaf))?
         };
         let required_bytes =
@@ -361,8 +504,97 @@ impl LocalizedTextLeafIndex {
         if forced_localized_index_allocation_stage(LocalizedIndexAllocationStage::PromotionGrowth) {
             return None;
         }
-        if plan.removed_scalars > 0 {
-            leaves.extend_from_slice(&self.leaves[..range_slots.start]);
+        let mut overlay = None;
+        let overlay_eligible = plan.removed_scalars == 0
+            && !plan.creates_leaf
+            && plan.rendered_scalar_delta >= 0
+            && plan.rendered_utf16_delta >= 0;
+        let target = if overlay_eligible {
+            self.joined_leaf(
+                plan.leaf.block_index,
+                admission.inserted_document_position,
+                plan.leaf.marks_sha256,
+            )
+        } else {
+            None
+        };
+        let use_overlay = target.is_some_and(|target| {
+            self.overlay
+                .as_ref()
+                .is_none_or(|overlay| overlay.target == target)
+        });
+        if use_overlay {
+            let target = target?;
+            let mut leaf = self.leaf(target)?;
+            if leaf != plan.leaf {
+                return None;
+            }
+            #[cfg(test)]
+            if forced_localized_index_allocation_stage(
+                LocalizedIndexAllocationStage::PromotionUpdate,
+            ) {
+                return None;
+            }
+            update_leaf(&mut leaf, admission, preview, block_path)?;
+            let offsets = LeafOffsets {
+                document: plan.inserted_scalars,
+                scalar: u32::try_from(plan.rendered_scalar_delta).ok()?,
+                utf16: u32::try_from(plan.rendered_utf16_delta).ok()?,
+            };
+            // Admission still reserves and charges the full legacy destination capacity.
+            drop(leaves);
+            leaves = Vec::new();
+            overlay = Some(if let Some(previous) = &self.overlay {
+                if previous.heap_bytes()? > retained_bytes {
+                    return None;
+                }
+                let offsets = previous.offsets.checked_add(offsets)?;
+                if let Some(maxima) = previous.suffix_maxima {
+                    maxima.checked_add(offsets)?;
+                }
+                LocalizedLeafOverlay {
+                    leaf,
+                    offsets,
+                    ..previous.clone()
+                }
+            } else {
+                let mut base = Vec::new();
+                base.try_reserve_exact(promoted_len.checked_sub(1)?).ok()?;
+                let base_bytes = base
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<LocalizedTextLeafCertificate>())?;
+                let arc_bytes =
+                    arc_allocation_bound(std::mem::size_of::<Vec<LocalizedTextLeafCertificate>>())?;
+                if base_bytes.checked_add(arc_bytes)? > retained_bytes {
+                    return None;
+                }
+                self.copy_leaves(0..target, &mut base)?;
+                self.copy_leaves(target + 1..self.leaf_count(), &mut base)?;
+                let mut suffix_maxima = None;
+                for leaf in &base[target..] {
+                    suffix_maxima
+                        .get_or_insert_with(LeafOffsets::default)
+                        .include(leaf);
+                }
+                if let Some(maxima) = suffix_maxima {
+                    maxima.checked_add(offsets)?;
+                }
+                let mut publication_probe = Vec::<u8>::new();
+                publication_probe.try_reserve_exact(arc_bytes).ok()?;
+                if base_bytes.checked_add(publication_probe.capacity())? > retained_bytes {
+                    return None;
+                }
+                drop(publication_probe);
+                LocalizedLeafOverlay {
+                    base: Arc::new(base),
+                    target,
+                    leaf,
+                    offsets,
+                    suffix_maxima,
+                }
+            });
+        } else if plan.removed_scalars > 0 {
+            self.copy_leaves(0..range_slots.start, &mut leaves)?;
             let block = position_map.block(plan.leaf.block_index)?;
             let mut cursor = RenderedCursor::new(rendered_text);
             let mut range_retained_bytes = retained_bytes;
@@ -379,7 +611,7 @@ impl LocalizedTextLeafIndex {
                 0,
             )?;
             let suffix = leaves.len();
-            leaves.extend_from_slice(&self.leaves[range_slots.end..]);
+            self.copy_leaves(range_slots.end..self.leaf_count(), &mut leaves)?;
             let doc_delta = i32::try_from(plan.inserted_scalars)
                 .ok()?
                 .checked_sub(i32::try_from(plan.removed_scalars).ok()?)?;
@@ -401,13 +633,13 @@ impl LocalizedTextLeafIndex {
             }
         } else {
             let target = if plan.creates_leaf {
-                let slot = self.leaf_slot(admission.inserted_document_position);
-                leaves.extend_from_slice(&self.leaves[..slot]);
+                let slot = self.leaf_slot(admission.inserted_document_position)?;
+                self.copy_leaves(0..slot, &mut leaves)?;
                 leaves.push(plan.leaf);
-                leaves.extend_from_slice(&self.leaves[slot..]);
+                self.copy_leaves(slot..self.leaf_count(), &mut leaves)?;
                 slot
             } else {
-                leaves.extend_from_slice(&self.leaves);
+                self.copy_leaves(0..self.leaf_count(), &mut leaves)?;
                 let target = self.joined_leaf(
                     plan.leaf.block_index,
                     admission.inserted_document_position,
@@ -424,24 +656,8 @@ impl LocalizedTextLeafIndex {
             ) {
                 return None;
             }
-            let block = preview.node_at(block_path)?;
-            let next_leaf = block
-                .content()?
-                .child(usize::try_from(plan.leaf.child_ordinal).ok()?)?;
-            let next_text = next_leaf.text_str()?;
             let inserted_scalars = plan.inserted_scalars;
-            let inserted_utf16 = plan.inserted_utf16;
-            let target_leaf = leaves.get_mut(target)?;
-            target_leaf.doc_end = target_leaf.doc_end.checked_add(inserted_scalars)?;
-            target_leaf.scalar_end = target_leaf.scalar_end.checked_add(inserted_scalars)?;
-            target_leaf.utf16_end = target_leaf.utf16_end.checked_add(inserted_utf16)?;
-            target_leaf.text_scalars = target_leaf.text_scalars.checked_add(inserted_scalars)?;
-            target_leaf.text_utf16 = target_leaf.text_utf16.checked_add(inserted_utf16)?;
-            target_leaf.text_utf8_bytes = target_leaf
-                .text_utf8_bytes
-                .checked_add(plan.inserted_utf8_bytes)?;
-            target_leaf.text_sha256 = leaf_text_sha256(next_text);
-            target_leaf.marks_sha256 = canonical_marks_sha256(next_leaf.marks())?;
+            update_leaf(leaves.get_mut(target)?, admission, preview, block_path)?;
             for leaf in leaves.iter_mut().skip(target + 1) {
                 leaf.doc_start = leaf.doc_start.checked_add(inserted_scalars)?;
                 leaf.doc_end = leaf.doc_end.checked_add(inserted_scalars)?;
@@ -461,6 +677,7 @@ impl LocalizedTextLeafIndex {
         }
         Some(Self {
             leaves,
+            overlay,
             schema_fingerprint: Arc::clone(&validation.schema_fingerprint),
             canonical_artifact: canonical_artifact.clone(),
             canonical_fingerprint: [0; 32],
@@ -469,6 +686,34 @@ impl LocalizedTextLeafIndex {
             retained_bytes,
         })
     }
+}
+
+fn update_leaf(
+    target_leaf: &mut LocalizedTextLeafCertificate,
+    admission: &LocalizedTextblockEditAdmission,
+    preview: &Document,
+    block_path: &[u32],
+) -> Option<()> {
+    let plan = &admission.plan;
+    let block = preview.node_at(block_path)?;
+    let next_leaf = block
+        .content()?
+        .child(usize::try_from(plan.leaf.child_ordinal).ok()?)?;
+    let next_text = next_leaf.text_str()?;
+    let inserted_scalars = plan.inserted_scalars;
+    let inserted_utf16 = plan.inserted_utf16;
+
+    target_leaf.doc_end = target_leaf.doc_end.checked_add(inserted_scalars)?;
+    target_leaf.scalar_end = target_leaf.scalar_end.checked_add(inserted_scalars)?;
+    target_leaf.utf16_end = target_leaf.utf16_end.checked_add(inserted_utf16)?;
+    target_leaf.text_scalars = target_leaf.text_scalars.checked_add(inserted_scalars)?;
+    target_leaf.text_utf16 = target_leaf.text_utf16.checked_add(inserted_utf16)?;
+    target_leaf.text_utf8_bytes = target_leaf
+        .text_utf8_bytes
+        .checked_add(plan.inserted_utf8_bytes)?;
+    target_leaf.text_sha256 = leaf_text_sha256(next_text);
+    target_leaf.marks_sha256 = canonical_marks_sha256(next_leaf.marks())?;
+    Some(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -740,3 +985,7 @@ fn leaf_text_sha256(text: &str) -> [u8; 32] {
         .with(|count| count.set(count.get().saturating_add(1)));
     sha2::Sha256::digest(text.as_bytes()).into()
 }
+
+#[cfg(test)]
+#[path = "localized_index_tests.rs"]
+mod tests;

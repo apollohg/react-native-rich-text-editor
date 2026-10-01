@@ -83,7 +83,7 @@ impl YrsDocumentEngine {
             let target_capacity_hint = state
                 .localized_text_index
                 .as_ref()
-                .map_or(0, |index| index.leaves().len());
+                .map_or(0, |index| index.leaf_count());
             let hydrated = state
                 .mutation_lookup_seed
                 .hydrate_with_target_capacity_hint(

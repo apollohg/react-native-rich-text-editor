@@ -1435,6 +1435,8 @@ fn large_table_native_input_reuses_materialization_costs() {
             "ownerId": OWNER.to_string(), "positionEpoch": epoch.to_string(),
             "intent": {"type": "insertText", "anchor": caret + edit, "head": caret + edit, "text": "x"},
         }).to_string();
+        crate::yrs_engine::derived_state::LocalizedTextLeafIndex::take_carried_leaf_copies_for_test(
+        );
         crate::tables::render::CELL_OUTPUT_METER_VISITS.set(0);
         crate::yrs_engine::observability::reset_full_pass_counts_for_test();
         NativeTransactionBridge::new(&mut session)
@@ -1442,7 +1444,12 @@ fn large_table_native_input_reuses_materialization_costs() {
             .unwrap();
         let passes = crate::yrs_engine::observability::take_full_pass_counts_for_test();
         let cell_visits = crate::tables::render::CELL_OUTPUT_METER_VISITS.replace(0);
+        let copied_leaves = crate::yrs_engine::derived_state::LocalizedTextLeafIndex::take_carried_leaf_copies_for_test();
         if edit > 0 {
+            assert_eq!(
+                copied_leaves, 0,
+                "native edit {edit} copied unchanged leaf certificates"
+            );
             assert_eq!(
                 cell_visits, CHANGED_CELL_METER_VISITS,
                 "native edit {edit} must meter only the old and new changed cell"

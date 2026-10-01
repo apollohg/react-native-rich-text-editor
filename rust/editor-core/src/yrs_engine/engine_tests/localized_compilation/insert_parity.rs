@@ -827,3 +827,144 @@ fn localized_index_promotion_obeys_exact_transient_budget_boundary() {
         (0, 1, 0, 1)
     );
 }
+
+#[test]
+fn localized_leaf_overlay_fallbacks_and_history_match_generic_compilation() {
+    const FIRST_REQUEST: u64 = 700_180;
+    let fixture = || {
+        let mut engine = transaction_engine();
+        engine.import_json(r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"alpha🙂"}]},{"type":"paragraph","content":[{"type":"text","text":"beta"}]},{"type":"paragraph"}]}"#, TransactionOrigin::DocumentImport).unwrap();
+        hydrate_import_for_compile_test(&mut engine);
+        engine
+    };
+    let mut localized = fixture();
+    let mut generic = fixture();
+    let point = |offset| RevisionedPosition {
+        offset,
+        kind: EditorOffsetKind::Scalar,
+        affinity: Affinity::After,
+    };
+    for (step, (block_index, inserted, deleted)) in [
+        (0, "x", 0),
+        (0, "🙂", 0),
+        (1, "e\u{301}", 0),
+        (1, "漢", 0),
+        (1, "", 1),
+        (1, "y", 0),
+        (1, "", u32::MAX),
+        (1, "z", 0),
+        (1, "🙂", 0),
+        (2, "empty", 0),
+        (2, "!", 0),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let state = localized.derived_state.as_ref().unwrap();
+        let block = state.position_map.block(block_index).unwrap();
+        let start = block.scalar_start + block.scalar_prefix_len;
+        let length = block.doc_end - block.doc_start;
+        let operation = if deleted > 0 {
+            TypedOperation::DeleteRange {
+                range: RevisionedRange {
+                    from: point(start),
+                    to: point(start + deleted.min(length)),
+                },
+            }
+        } else {
+            TypedOperation::InsertText {
+                at: point(start + length),
+                text: inserted.into(),
+                marks: Vec::new(),
+            }
+        };
+        let transaction = TypedTransaction {
+            request_id: FIRST_REQUEST + step as u64,
+            base_document_revision: localized.revision(),
+            origin: TransactionOrigin::LocalInput,
+            operations: vec![operation],
+            selection_intent: SelectionIntent::UseOperationResult,
+            history_policy: HistoryPolicy::Boundary,
+        };
+        let original = state.localized_text_index.clone();
+        let compiled = localized
+            .compile_typed_transaction(transaction.clone())
+            .unwrap();
+        assert!(
+            compiled.localized_textblock_edit_admission.is_some(),
+            "step {step} must exercise localized admission"
+        );
+        assert_eq!(
+            localized
+                .derived_state
+                .as_ref()
+                .unwrap()
+                .localized_text_index,
+            original,
+            "compile mutated source at {step}"
+        );
+        generic.derived_state.as_mut().unwrap().localized_text_index = None;
+        let generic_result = generic
+            .apply_typed_transaction_with_result(transaction)
+            .unwrap();
+        let localized_result = localized
+            .apply_compiled_transaction(compiled, true)
+            .unwrap()
+            .1
+            .unwrap();
+        assert_eq!(localized_result, generic_result, "result at {step}");
+        assert_eq!(
+            localized.document_json(),
+            generic.document_json(),
+            "document at {step}"
+        );
+        let localized_identity = localized
+            .derived_state
+            .as_ref()
+            .unwrap()
+            .materialized_identity_for_test();
+        let generic_identity = generic
+            .derived_state
+            .as_ref()
+            .unwrap()
+            .materialized_identity_for_test();
+        assert_eq!(
+            localized_identity.0, generic_identity.0,
+            "validation at {step}"
+        );
+        assert_eq!(
+            localized_identity.1.unwrap().leaves(),
+            generic_identity.1.unwrap().leaves(),
+            "leaf certificates at {step}"
+        );
+        assert_eq!(
+            localized.history.retained_units(0).unwrap(),
+            generic.history.retained_units(0).unwrap(),
+            "history charge at {step}"
+        );
+    }
+    let mut request = FIRST_REQUEST + 100;
+    for redo in [false, true] {
+        while if redo {
+            localized.can_redo()
+        } else {
+            localized.can_undo()
+        } {
+            if redo {
+                localized.redo(request).unwrap();
+                generic.redo(request).unwrap();
+            } else {
+                localized.undo(request).unwrap();
+                generic.undo(request).unwrap();
+            }
+            assert_eq!(
+                localized.document_json(),
+                generic.document_json(),
+                "history replay {request}"
+            );
+            assert_eq!(localized.can_undo(), generic.can_undo());
+            assert_eq!(localized.can_redo(), generic.can_redo());
+            request += 1;
+        }
+    }
+}

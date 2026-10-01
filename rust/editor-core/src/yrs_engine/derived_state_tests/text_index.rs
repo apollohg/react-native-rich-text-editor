@@ -21,8 +21,7 @@ fn localized_text_index_proves_same_marked_leaf_edges_and_refuses_mark_changes()
         .localized_text_index
         .as_ref()
         .unwrap()
-        .leaves()
-        .first()
+        .leaf(0)
         .expect("first marked leaf");
     let at = leaf.doc_start() + 1;
     let marks = state.localized_text_index.as_ref().unwrap().leaves()[0]
@@ -136,7 +135,7 @@ fn localized_text_index_proves_same_marked_leaf_edges_and_refuses_mark_changes()
         let edge_proof = state
             .localized_insert_admission_for_test(edge, "x", &marks, &schema, &limits, Some(64), 0)
             .expect("a same-marked leaf edge joins the existing leaf");
-        assert_eq!(edge_proof.plan.leaf, *leaf, "edge {edge}");
+        assert_eq!(edge_proof.plan.leaf, leaf, "edge {edge}");
         assert!(!edge_proof.plan.creates_leaf, "edge {edge}");
     }
     assert!(state
@@ -260,7 +259,7 @@ fn localized_text_index_build_is_linear_and_lookup_is_logarithmic() {
     assert_eq!(path_copy_elements, 0);
 
     let index = state.localized_text_index.as_ref().unwrap();
-    let last = index.leaves().last().unwrap();
+    let last = index.leaf(index.leaf_count() - 1).unwrap();
     reset_localized_index_metrics_for_test();
     assert!(index
         .joined_leaf(last.block_index, last.doc_start + 1, last.marks_sha256)

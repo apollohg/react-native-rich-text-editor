@@ -464,7 +464,7 @@ impl DerivedStateCache {
             );
         }
         if let Some(leaf_index) = index.joined_leaf(block_index, document_position, marks_sha256) {
-            let leaf = *index.leaves().get(leaf_index)?;
+            let leaf = index.leaf(leaf_index)?;
             let live_leaf = leaf.resolve(&self.document, &self.position_map)?;
             let live_text = live_leaf.text_str()?;
             let live_matches = <[u8; 32]>::from(sha2::Sha256::digest(live_text.as_bytes()))
@@ -625,16 +625,20 @@ impl DerivedStateCache {
         let empty_after = new.content()?.child_count() == 0;
         let removed_utf16 = u32::try_from(removed.encode_utf16().count()).ok()?;
         let index = self.localized_text_index.as_ref()?;
-        let leaf = *index
-            .leaves()
-            .iter()
-            .skip(index.leaf_slot(edit.replaced.start))
+        let mut matched = None;
+        for slot in (index.leaf_slot(edit.replaced.start)?..index.leaf_count())
             .take(LEAVES_MEETING_AT_A_POSITION)
-            .find(|leaf| {
-                leaf.block_index == block_index
-                    && leaf.doc_start <= edit.replaced.start
-                    && edit.replaced.start < leaf.doc_end
-            })?;
+        {
+            let leaf = index.leaf(slot)?;
+            if leaf.block_index == block_index
+                && leaf.doc_start <= edit.replaced.start
+                && edit.replaced.start < leaf.doc_end
+            {
+                matched = Some(leaf);
+                break;
+            }
+        }
+        let leaf = matched?;
         Some(TextblockEditTarget {
             leaf,
             scalar_at,

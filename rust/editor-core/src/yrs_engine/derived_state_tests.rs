@@ -7,7 +7,7 @@ use crate::schema::presets::tiptap_schema;
 use crate::serialize::{from_prosemirror_json, UnknownTypeMode};
 use crate::yrs_engine::codec::YrsDocumentCodec;
 
-fn initialize_test_document(
+pub(super) fn initialize_test_document(
     schema: &Schema,
     source: serde_json::Value,
 ) -> Option<DerivedStateCache> {
