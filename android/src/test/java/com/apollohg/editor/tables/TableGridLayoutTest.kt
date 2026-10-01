@@ -63,6 +63,88 @@ class TableGridLayoutTest {
         assertEquals(listOf("same", "same"), preparedContentKeys)
     }
 
+    @Test fun preparedRectanglesPreserveSnapshotsAndRejectMutableOffsetAliases() {
+        val count = 12
+        val grid = TableGridLayout(1.25f)
+        val style = TableStyle(cellPadding = 3.25f, borderWidth = 0.65f)
+        val source = record(columns = 2, rows = count / 2, cells = List(count) {
+            TableGridCell(it, it / 2, it % 2, contentKey = "cell-$it")
+        })
+        fun prepared(cells: List<TableGridCell>, height: Int) = cells.map { cell ->
+            PreparedViewerTableCell(cell.sourceIndex, cell.row, cell.column, cell.rowspan, cell.colspan,
+                0 to 0, artifact(80, height, cell.contentKey), false, null)
+        }
+        fun expected(cells: List<TableGridCell>, height: Int) = grid.relayout(source.copy(cells = cells),
+            240f, style, true, cells.associate { it.sourceIndex to height.toFloat() })
+        fun update(previous: TableLayoutResult, cells: List<TableGridCell>, height: Int) =
+            grid.relayoutPrepared(previous, source.rows, source.columns, style, true, prepared(cells, height), null) {
+                throw AssertionError("Unexpected failure: $it")
+            }
+        val first = update(expected(source.cells, 20), source.cells, 40)
+        val frozen = first.rectangles.toMap()
+        val moved = source.cells.map { it.copy(column = 1 - it.column) }
+        val second = update(first, moved, 60)
+        assertEquals("Changed coordinates cannot reuse stale descriptors", expected(moved, 60), second)
+        assertEquals("New rows cannot mutate previous offsets", frozen, first.rectangles)
+        assertEquals(first.rectangles, frozen)
+        assertTrue("Owned offsets cannot be mutated through Kotlin casts", first.columnOffsets !is MutableList<*>)
+        assertTrue(first.rowOffsets !is MutableList<*>)
+        assertTrue(first.sourceOrder !is MutableList<*>)
+        val entry = first.rectangles.entries.first()
+        org.junit.Assert.assertThrows(UnsupportedOperationException::class.java) {
+            @Suppress("UNCHECKED_CAST")
+            (entry as java.util.Map.Entry<Int, TableCellRect>).setValue(TableCellRect(0f, 0f, 0f, 0f))
+        }
+        val mutableColumns = first.columnOffsets.toMutableList()
+        val mutableOrder = first.sourceOrder.toMutableList()
+        val untrusted = update(first.copy(columnOffsets = mutableColumns, sourceOrder = mutableOrder), source.cells, 60)
+        val untrustedFrozen = untrusted.rectangles.toMap()
+        mutableColumns[1] += 11f
+        mutableOrder[0] = -1
+        assertEquals("Untrusted offset storage must use eager snapshots", untrustedFrozen, untrusted.rectangles)
+        assertEquals((0 until count).toList(), untrusted.sourceOrder)
+        val sparse = source.copy(rows = 10_000)
+        val sparseCells = prepared(source.cells, 20)
+        val sparseBase = grid.relayout(sparse, 240f, style, false, source.cells.associate { it.sourceIndex to 20f })
+        val sparseResult = grid.relayoutPrepared(sparseBase, sparse.rows, sparse.columns, style, false, sparseCells, null) {
+            throw AssertionError("Unexpected sparse failure: $it")
+        }
+        assertEquals("Sparse layouts preserve exact prefix sums without copying prior offsets", sparseBase, sparseResult)
+        org.junit.Assert.assertSame(sparseBase.columnOffsets, sparseResult.columnOffsets)
+    }
+
+    @Test fun compactRectanglesReleasePreparedCellsAndPriorLayouts() {
+        val references = mutableListOf<java.lang.ref.WeakReference<Any>>()
+        fun build(): TableLayoutResult {
+            val columns = 20
+            val rows = 10
+            val cells = List(rows * columns) { TableGridCell(it, it / columns, it % columns, contentKey = "cell-$it") }
+            val source = record(columns, rows, cells = cells)
+            val grid = TableGridLayout()
+            var layout = grid.relayout(source, 390f, TableStyle(), false, cells.associate { it.sourceIndex to 20f })
+            repeat(4) { revision ->
+                references += java.lang.ref.WeakReference(layout)
+                val prepared = cells.map { cell ->
+                    val content = artifact(80, 40 + revision, "${cell.contentKey}-$revision")
+                    references += java.lang.ref.WeakReference(content)
+                    PreparedViewerTableCell(cell.sourceIndex, cell.row, cell.column, cell.rowspan, cell.colspan,
+                        0 to 0, content, false, null).also { references += java.lang.ref.WeakReference(it) }
+                }
+                layout = grid.relayoutPrepared(layout, rows, columns, TableStyle(), false, prepared, null) {
+                    throw AssertionError("Unexpected failure: $it")
+                }
+            }
+            return layout
+        }
+        val retained = build()
+        val gcAttempts = 8
+        repeat(gcAttempts) { System.gc(); System.runFinalization() }
+        assertEquals("Compact maps must release cells, content closures and all previous layouts", 0,
+            references.count { it.get() != null })
+        assertEquals("Retained primitive geometry remains usable", 200, retained.rectangles.size)
+        assertTrue(retained.rectangles.values.all { it.height > 0f })
+    }
+
     private fun record(columns: Int = 2, rows: Int = 1, widths: List<Float?> = listOf(null, null), cells: List<TableGridCell> = emptyList()) =
         TableGridRecord("test-document", columns, rows, widths, cells)
 

@@ -266,7 +266,7 @@ internal class ViewerTableSurface private constructor(
     }
     val metadataRetainedBytes: Long = 256L + ACCOUNTING_CACHE_RETAINED_BYTES + cells.sumOf { it.metadataRetainedBytes } +
         (sourceTable?.cells?.size ?: 0) * 16L + layout.columnWidths.size * 16L +
-        layout.columnOffsets.size * 16L + layout.rowOffsets.size * 16L + layout.rectangles.size * 48L + layout.sourceOrder.size * 16L +
+        layout.columnOffsets.size * 16L + layout.rowOffsets.size * 16L + layout.rectangles.size * TABLE_RECTANGLE_RETAINED_BYTES + layout.sourceOrder.size * TABLE_SOURCE_ORDER_RETAINED_BYTES +
         columnEdgeHandleRows.size * 16L
 
     companion object {
@@ -375,13 +375,9 @@ internal class ViewerTableSurface private constructor(
 
     fun frameOfCell(sourceIndex: Int): TableCellRect? = cell(sourceIndex)?.let(::frameOfCell)
 
-    fun frameOfCell(cell: PreparedViewerTableCell): TableCellRect {
-        val x = layout.columnOffsets[cell.column]
-        val width = layout.columnOffsets[cell.column + cell.colspan] - x
-        val y = layout.rowOffsets[cell.row]
-        return TableCellRect(tablePhysicalX(x, width, layout.contentWidth, isRightToLeft), y,
-            width, layout.rowOffsets[cell.row + cell.rowspan] - y)
-    }
+    fun frameOfCell(cell: PreparedViewerTableCell): TableCellRect = tableCellRect(
+        cell.row, cell.column, cell.rowspan, cell.colspan, layout.columnOffsets, layout.rowOffsets,
+        layout.contentWidth, isRightToLeft)
 
     fun cellsIntersecting(left: Float, top: Float, right: Float, bottom: Float): List<PreparedViewerTableCell> =
         cellIndex.indexesIntersecting(left, top, right, bottom, this).map { cells[it] }

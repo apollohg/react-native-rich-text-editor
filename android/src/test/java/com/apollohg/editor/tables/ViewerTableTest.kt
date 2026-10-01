@@ -241,6 +241,11 @@ class ViewerTableTest {
                         .put("content", JSONArray().put(first).put(adjacent)))
                     if (merged) rows.put(JSONObject().put("type", "table_row")
                         .put("content", JSONArray().put(JSONObject(tableCell("below"))).put(JSONObject(tableCell("last")))))
+                    repeat(5) {
+                        val cells = JSONArray()
+                        repeat(if (merged) 3 else 2) { column -> cells.put(JSONObject(tableCell("tail $column"))) }
+                        rows.put(JSONObject().put("type", "table_row").put("content", cells))
+                    }
                     val json = JSONObject().put("type", "doc").put("content", JSONArray().put(
                         JSONObject().put("type", "table").put("content", rows)))
                     return compileWithRust(ProseViewerRequest(ProseViewerSource.Json(json.toString()), ProseViewerConfiguration(CONFIG)))
@@ -285,6 +290,51 @@ class ViewerTableTest {
                 }
                 assertEquals("Exercise both growing and shrinking rows: density=$density direction=$direction merged=$merged", 2, heightChanges)
             }
+        }
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun wrappedLargeTableDoesNotRetainPerCellRectangles() {
+        val rows = 1_000
+        val columns = 20
+        fun document(text: String) = compileWithRust(ProseViewerRequest(ProseViewerSource.Json(
+            PlainTableFixture.document(rows, columns) { row, column ->
+                if (row == 0 && column == 0) text else PlainTableFixture.coordinateText(row, column)
+            }), ProseViewerConfiguration(CONFIG)))
+        val engine = StaticLayoutAndroidProseLayoutEngine()
+        var previous = requireNotNull(prepare(document("before"), engine = engine).blocks.single().tableSurface)
+        val snapshots = mutableListOf<Pair<Map<Int, TableCellRect>, Map<Int, TableCellRect>>>()
+        for (text in listOf("wrapped words ".repeat(30), "short", "more wrapped words ".repeat(40))) {
+            val nextDocument = document(text)
+            val fresh = requireNotNull(prepare(nextDocument).blocks.single().tableSurface)
+            val retained = previous
+            engine.incrementalTableSurface = { retained to setOf(0) }
+            engine.reusableTableCellStore = retained.layoutStore
+            val updated = try { requireNotNull(prepare(nextDocument, engine = engine).blocks.single().tableSurface) }
+                finally { engine.incrementalTableSurface = null; engine.reusableTableCellStore = null }
+            assertTrue("The edit must change row height", retained.layout.contentHeight != updated.layout.contentHeight)
+            assertEquals("All 20,000 exact rectangles and offsets", fresh.layout, updated.layout)
+            assertEquals("Full metadata charges remain unchanged", fresh.metadataRetainedBytes, updated.metadataRetainedBytes)
+            val rectangles = updated.layout.rectangles
+            assertEquals(rows * columns, rectangles.size)
+            assertNotSame("Wrapped edits must not retain a materialized rectangle for every cell",
+                rectangles.getValue(0), rectangles.getValue(0))
+            assertEquals(fresh.layout.rectangles, rectangles)
+            assertEquals(rectangles, fresh.layout.rectangles)
+            assertEquals(fresh.layout.rectangles.hashCode(), rectangles.hashCode())
+            assertEquals(fresh.layout.rectangles.entries.toList(), rectangles.entries.toList())
+            assertEquals(fresh.layout.rectangles.keys.toList(), rectangles.keys.toList())
+            assertEquals(fresh.layout.rectangles.values.toList(), rectangles.values.toList())
+            assertNull(rectangles[-1])
+            assertNull(rectangles[rows * columns])
+            val iterator = rectangles.entries.iterator()
+            repeat(rectangles.size) { iterator.next() }
+            assertFalse(iterator.hasNext())
+            org.junit.Assert.assertThrows(NoSuchElementException::class.java) { iterator.next() }
+            snapshots += rectangles to rectangles.toMap()
+            snapshots.forEach { (old, expected) -> assertEquals("Later wraps must not mutate an old map", expected, old) }
+            previous = updated
         }
     }
 
