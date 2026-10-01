@@ -799,6 +799,25 @@ class NativeTablePerformanceTest {
         saveExport(COLD_OUTPUT_FILE)
     }
 
+    @Test fun largeTableTypingPreservesIncrementalPreparation() = withActivity {
+        val (rows, columns) = PlainTableFixture.TWENTY_THOUSAND_SLOT_SHAPES.first()
+        for (rich in listOf(false, true)) {
+            val fixture = Fixture(rows, columns, rich)
+            val source = fixture.source()
+            repeat(if (rich) 1 else TYPING_RUNS) { run ->
+                typing(fixture, source, run + 1)
+                val sample = samples.getJSONObject(samples.length() - 1)
+                val counters = sample.getJSONObject("counters")
+                assertEquals(fixture.name, TYPING_SAMPLES, sample.getJSONArray("samplesMs").length())
+                assertEquals(fixture.name, 0, counters.getInt("unchangedCellRemeasurements"))
+                assertEquals(fixture.name, TYPING_SAMPLES, counters.getInt("changedCellRemeasurements"))
+                assertTrue(fixture.name, sample.getInt("wrapCount") > 0)
+                assertTrue(fixture.name, sample.getInt("nonWrapCount") > 0)
+                saveExport()
+            }
+        }
+    }
+
     @Test fun exportTablePerformance() = withActivity {
         val fixtures = listOf(false, true).flatMap { rich ->
             (listOf(SMALL_ROWS to SMALL_COLUMNS) + PlainTableFixture.TWENTY_THOUSAND_SLOT_SHAPES)
