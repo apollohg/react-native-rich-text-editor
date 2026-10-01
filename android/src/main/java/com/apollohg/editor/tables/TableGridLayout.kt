@@ -121,13 +121,18 @@ private class PreparedTableRectangles(
         }
     }
 
-    private fun matches(cells: List<TableGridCellPosition>): Boolean = size == cells.size &&
-        cells.withIndex().all { (index, cell) ->
+    private fun matches(cells: List<TableGridCellPosition>): Boolean {
+        if (size != cells.size) return false
+        var index = 0
+        for (cell in cells) {
             val offset = index * POSITION_FIELDS
-            cell.sourceIndex == index && positions[offset + ROW] == cell.row &&
-                positions[offset + COLUMN] == cell.column && positions[offset + ROWSPAN] == cell.rowspan &&
-                positions[offset + COLSPAN] == cell.colspan
+            if (cell.sourceIndex != index || positions[offset + ROW] != cell.row ||
+                positions[offset + COLUMN] != cell.column || positions[offset + ROWSPAN] != cell.rowspan ||
+                positions[offset + COLSPAN] != cell.colspan) return false
+            index++
         }
+        return true
+    }
 
     companion object {
         private const val ROW = 0
@@ -143,8 +148,12 @@ private class PreparedTableRectangles(
                    xOffsets: List<Float>, yOffsets: TableOffsets, rtl: Boolean): PreparedTableRectangles? {
             if (xOffsets !is TableOffsets || cells.size > Int.MAX_VALUE / POSITION_FIELDS ||
                 cells.size.toLong() * (TABLE_RECTANGLE_RETAINED_BYTES + TABLE_SOURCE_ORDER_RETAINED_BYTES -
-                    POSITION_RETAINED_BYTES) < FIXED_RETAINED_BYTES ||
-                cells.withIndex().any { (index, cell) -> cell.sourceIndex != index }) return null
+                    POSITION_RETAINED_BYTES) < FIXED_RETAINED_BYTES) return null
+            var index = 0
+            for (cell in cells) {
+                if (cell.sourceIndex != index) return null
+                index++
+            }
             val old = previous.rectangles as? PreparedTableRectangles
             val positions = if (old != null && old.matches(cells)) old.positions else {
                 IntArray(cells.size * POSITION_FIELDS).also { result ->

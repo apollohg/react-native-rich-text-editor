@@ -788,7 +788,9 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
         }
         val rootHighlightedCodeKeys = if (cellMode) highlightedCodeKeys.toSet() else buildSet {
             addAll(highlightedCodeKeys)
-            blocks.forEach { block -> block.tableSurface?.cells?.forEach { addAll(it.highlightedCodeKeys) } }
+            blocks.forEach { block -> block.tableSurface?.cells?.forEach {
+                if (it.highlightedCodeKeys.isNotEmpty()) addAll(it.highlightedCodeKeys)
+            } }
         }
         retained += rootHighlightBlocks.sumOf { 64L + it.text.length * 2L }
         val rootAttachments = if (cellMode) {

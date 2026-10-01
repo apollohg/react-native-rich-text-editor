@@ -792,6 +792,103 @@ class NativeTablePerformanceTest {
         }
     }
 
+    @Suppress("DEPRECATION")
+    private fun <T> measureThreadAllocation(action: () -> T): Pair<T, Long> {
+        android.os.Debug.startAllocCounting()
+        try {
+            val calibrationStart = android.os.Debug.getThreadAllocSize()
+            val calibration = ByteArray(ALLOCATION_CALIBRATION_BYTES)
+            assertTrue(System.identityHashCode(calibration) != 0)
+            assertTrue("Thread allocation counter must observe the calibration array",
+                android.os.Debug.getThreadAllocSize() - calibrationStart >= calibration.size)
+            val before = android.os.Debug.getThreadAllocSize()
+            val result = action()
+            val allocated = (android.os.Debug.getThreadAllocSize().toLong() - before.toLong()) and UInt.MAX_VALUE.toLong()
+            return result to allocated
+        } finally { android.os.Debug.stopAllocCounting() }
+    }
+
+    @Test fun largeTableDeltaAdoptionKeepsAllocationsBounded() = withActivity {
+        val (rows, columns) = PlainTableFixture.TWENTY_THOUSAND_SLOT_SHAPES.first()
+        val fixture = Fixture(rows, columns, false)
+        val host = onMain { EditorHost().also { it.load(fixture.source()) } }
+        try {
+            val input = onMain { host.bind(0) }
+            val prior = onMain { host.adapter.tableIndex.copy() }
+            val priorRevision = onMain { requireNotNull(host.adapter.installedFrameRevision) }
+            val tableKey = prior.tableKeys.single()
+            val priorRecord = requireNotNull(prior.record(tableKey))
+            val lastCell = priorRecord.cells.lastIndex
+            val priorDocStart = prior.docStart(tableKey, lastCell)
+            val priorScalarStart = prior.scalarStart(tableKey, lastCell)
+            edit(host, input, PreparedProseInstrumentation.TablePerformanceCounters())
+            onMain {
+                val expected = host.adapter.tableIndex
+                val nextRevision = requireNotNull(host.adapter.installedFrameRevision)
+                val nextRecord = requireNotNull(expected.record(tableKey))
+                val delta = uniffi.editor_core.FfiTableFrame(
+                    uniffi.editor_core.FfiTableFrameKind.DELTA, priorRevision.toString(),
+                    expected.attributeObjects.map { (key, value) -> uniffi.editor_core.FfiTableAttribute(key, value.toString()) },
+                    emptyList(), emptyList(), emptyList(),
+                    listOf(uniffi.editor_core.FfiTableCellUpdate(tableKey, 0u, nextRecord.cells.first())),
+                    expected.rootExtents.values.toList())
+                repeat(ALLOCATION_WARMUP_RUNS) {
+                    assertTrue(prior.copy().adopt(delta, priorRevision, nextRevision) is
+                        com.apollohg.editor.tables.TableFrameAdoption.Adopted)
+                }
+                val actual = prior.copy()
+                val (result, allocated) = measureThreadAllocation { actual.adopt(delta, priorRevision, nextRevision) }
+                assertTrue("Real native delta must be accepted: $result", result is
+                    com.apollohg.editor.tables.TableFrameAdoption.Adopted)
+                assertEquals(nextRecord, actual.record(tableKey))
+                for (index in nextRecord.cells.indices) {
+                    assertEquals("Document prefix at cell $index", expected.docStart(tableKey, index), actual.docStart(tableKey, index))
+                    assertEquals("Scalar prefix at cell $index", expected.scalarStart(tableKey, index), actual.scalarStart(tableKey, index))
+                }
+                assertEquals("Prior document prefixes stay immutable", priorDocStart, prior.docStart(tableKey, lastCell))
+                assertEquals("Prior scalar prefixes stay immutable", priorScalarStart, prior.scalarStart(tableKey, lastCell))
+                assertTrue("Native edit must move following cell positions", priorDocStart != actual.docStart(tableKey, lastCell))
+                val allowance = priorRecord.cells.size.toLong() * ADOPTION_ALLOCATION_BYTES_PER_CELL + ALLOCATION_FIXED_BYTES
+                assertTrue("Adopting ${priorRecord.cells.size} cells allocated $allocated bytes; primitive storage allowance is $allowance bytes",
+                    allocated <= allowance)
+            }
+        } finally { onMain { host.close() } }
+    }
+
+    @Test fun largeTableRowHeightChangeKeepsAllocationsBounded() = withActivity {
+        val (rows, columns) = PlainTableFixture.TWENTY_THOUSAND_SLOT_SHAPES.first()
+        val host = onMain { EditorHost().also { it.load(Fixture(rows, columns, false).source()) } }
+        try {
+            val input = onMain { host.bind(0) }
+            val original = onMain { host.table }
+            val originalContent = onMain { requireNotNull(original.cell(0)).content }
+            val (_, wrapped) = edit(host, input, PreparedProseInstrumentation.TablePerformanceCounters(), LINE_BREAK_TEXT)
+            assertTrue("A real newline must grow the edited row", wrapped)
+            onMain {
+                val grown = host.table
+                assertTrue("Row geometry must grow", grown.layout.contentHeight > original.layout.contentHeight)
+                val changes = mapOf(0 to originalContent)
+                val source = requireNotNull(original.sourceTable)
+                fun shrink() = grown.replacingCells(changes,
+                    { error("A text-only edit must reuse prepared grid geometry") }, source, original.sourceAttributes,
+                    reusePreparedGeometry = true) { _, _ -> error("Unchanged cells must not be prepared") }
+                repeat(ALLOCATION_WARMUP_RUNS) { shrink() }
+                val (actual, allocated) = measureThreadAllocation(::shrink)
+                assertEquals("Shrinking restores all row offsets", original.layout.rowOffsets, actual.layout.rowOffsets)
+                assertEquals(original.layout.columnOffsets, actual.layout.columnOffsets)
+                assertEquals(original.layout.sourceOrder, actual.layout.sourceOrder)
+                for (cell in original.cells) {
+                    assertEquals("Restored bounds at cell ${cell.sourceIndex}",
+                        original.frameOfCell(cell.sourceIndex), actual.frameOfCell(cell.sourceIndex))
+                }
+                assertTrue("The previous surface stays immutable", grown.layout.contentHeight > actual.layout.contentHeight)
+                val allowance = original.cells.size.toLong() * ROW_LAYOUT_ALLOCATION_BYTES_PER_CELL + ALLOCATION_FIXED_BYTES
+                assertTrue("Changing row height allocated $allocated bytes; allocation allowance is $allowance bytes",
+                    allocated <= allowance)
+            }
+        } finally { onMain { host.close() } }
+    }
+
     @Test fun largeTableColdLayout() = withActivity {
         val (rows, columns) = PlainTableFixture.TWENTY_THOUSAND_SLOT_SHAPES.first()
         val fixture = Fixture(rows, columns, false)
@@ -864,6 +961,12 @@ class NativeTablePerformanceTest {
         const val SMALL_COLUMNS = 3
         const val MERGE_WIDTH = 2
         const val RICH_PARAGRAPH_STRIDE = 2
+        const val ALLOCATION_WARMUP_RUNS = 3
+        const val ALLOCATION_CALIBRATION_BYTES = 16 * 1024
+        const val ALLOCATION_FIXED_BYTES = 64 * 1024L
+        // Two Long prefix arrays and one cell-reference array (allowing 64-bit references).
+        const val ADOPTION_ALLOCATION_BYTES_PER_CELL = 3L * Long.SIZE_BYTES
+        const val ROW_LAYOUT_ALLOCATION_BYTES_PER_CELL = 48L
         const val TYPING_RUNS = 5
         const val TYPING_SAMPLES = 500
         const val WARMUP_SAMPLES = 20

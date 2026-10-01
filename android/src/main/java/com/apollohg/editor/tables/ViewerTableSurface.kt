@@ -233,11 +233,13 @@ internal class ViewerTableSurface private constructor(
             val heights = updated.associate { it.sourceIndex to it.contentHeightPx.toFloat() }
             return TableGridLayout(displayScale).relayout(gridRecord(), hostViewportWidth, style, isRightToLeft, heights)
         }
+        var sourceIndex = 0
         val next = if (heightsUnchanged && structureUnchanged) {
             layout
         } else if (reusePreparedGeometry && structureUnchanged &&
             previousSource?.cells?.size == sourceTable.cells.size && updated.size == sourceTable.cells.size &&
-            updated.withIndex().all { (index, cell) ->
+            updated.all { cell ->
+                val index = sourceIndex++
                 val source = sourceTable.cells[index]
                 cell.sourceIndex == index && source.sourceIndex == index &&
                     cell.row == source.row && cell.column == source.column &&

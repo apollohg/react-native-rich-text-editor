@@ -339,7 +339,8 @@ internal class EditorTableIndex {
     private companion object {
         const val NODE_BOUNDARY_SIZE = 2L
 
-        fun checkedUInt(value: Long): UInt? = value.takeIf { it in 0..UInt.MAX_VALUE.toLong() }?.toUInt()
+        fun fitsUInt(value: Long): Boolean = value in 0..UInt.MAX_VALUE.toLong()
+        fun checkedUInt(value: Long): UInt? = if (fitsUInt(value)) value.toUInt() else null
         fun checkedInt(value: Long): Int? = value.takeIf { it in 0..Int.MAX_VALUE.toLong() }?.toInt()
 
         fun entry(record: FfiTableRecord, pool: Map<String, String>): Entry {
@@ -384,12 +385,16 @@ internal class EditorTableIndex {
         fun rebuildPrefixes(entry: Entry, first: Int) {
             for (index in first until entry.record.cells.size) {
                 val cell = entry.record.cells[index]
-                val doc = checkedUInt(entry.docPrefix[index] + cell.docSize.toLong())
-                    ?: throw TableFrameRejection.DocSizeMismatch(entry.record.tableKey, entry.record.docSize, cell.docSize)
-                val scalar = checkedUInt(entry.scalarPrefix[index] + cell.scalarStride.toLong())
-                    ?: throw TableFrameRejection.ScalarSizeMismatch(entry.record.tableKey, entry.scalarPrefix[index].toUInt(), cell.scalarStride)
-                entry.docPrefix[index + 1] = doc.toLong()
-                entry.scalarPrefix[index + 1] = scalar.toLong()
+                val doc = entry.docPrefix[index] + cell.docSize.toLong()
+                if (!fitsUInt(doc)) {
+                    throw TableFrameRejection.DocSizeMismatch(entry.record.tableKey, entry.record.docSize, cell.docSize)
+                }
+                val scalar = entry.scalarPrefix[index] + cell.scalarStride.toLong()
+                if (!fitsUInt(scalar)) {
+                    throw TableFrameRejection.ScalarSizeMismatch(entry.record.tableKey, entry.scalarPrefix[index].toUInt(), cell.scalarStride)
+                }
+                entry.docPrefix[index + 1] = doc
+                entry.scalarPrefix[index + 1] = scalar
             }
         }
 

@@ -73,6 +73,33 @@ internal class EditorTableIndexTest {
         return (result as TableFrameAdoption.Adopted).changes
     }
 
+    @Test fun `prefix bounds accept UInt maximum and reject overflow atomically`() {
+        val original = frame()
+        val max = UInt.MAX_VALUE
+        val table = original.tables.single().copy(docSize = max, cells = listOf(
+            cell(0u, max - 1u).copy(docSize = max - 9u), cell(1u, 1u)))
+        val boundary = original.copy(tables = listOf(table), extents = listOf(
+            FfiTableExtent(ROOT_KEY, 0u, max, 0u, max)))
+        val index = EditorTableIndex()
+        adopt(index, boundary)
+        assertEquals(max - 7u, index.docStart(ROOT_KEY, 1))
+        assertEquals(max - 1u, index.scalarStart(ROOT_KEY, 1))
+        val nextRevision = REVISION + 1u
+        val scalarOverflow = delta().copy(extents = boundary.extents, cellUpdates = listOf(
+            FfiTableCellUpdate(ROOT_KEY, 1u, table.cells[1].copy(scalarStride = 2u))))
+        assertEquals(TableFrameAdoption.Rejected(TableFrameRejection.ScalarSizeMismatch(ROOT_KEY, max - 1u, 2u)),
+            index.adopt(scalarOverflow, REVISION, nextRevision))
+        assertEquals(table, index.record(ROOT_KEY))
+        assertEquals(max - 1u, index.scalarStart(ROOT_KEY, 1))
+        val docOverflow = boundary.copy(tables = listOf(table.copy(cells = listOf(
+            table.cells[0].copy(docSize = max), table.cells[1]))))
+        assertEquals(TableFrameAdoption.Rejected(TableFrameRejection.DocSizeMismatch(ROOT_KEY, max, 5u)),
+            index.adopt(docOverflow, REVISION, nextRevision))
+        assertEquals(table, index.record(ROOT_KEY))
+        assertEquals(max - 7u, index.docStart(ROOT_KEY, 1))
+        assertEquals(max - 1u, index.scalarStart(ROOT_KEY, 1))
+    }
+
     @Test
     fun `incremental cells release historical indexes and rebuild after eviction`() {
         val cellCount = 128
