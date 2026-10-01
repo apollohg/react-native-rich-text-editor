@@ -201,6 +201,7 @@ internal class ResolvedTextStyleSpan(internal val typeface: Typeface, internal v
 internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
     companion object {
         const val MAX_TABLE_PREPARATION_WORKERS = 2
+        private const val PHYSICAL_PIXEL_LAYOUT_SCALE = 1f
     }
     internal var tablePreparationWorkerLimit = MAX_TABLE_PREPARATION_WORKERS
     internal var tableCellLayoutObserverForTesting: ((Int, PreparedProseLayout) -> Unit)? = null
@@ -252,6 +253,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
     internal var tableCellPreparationObserver: ((Int, String) -> Unit)? = null
     internal var incrementalTableSurface: ((String) -> Pair<ViewerTableSurface, Set<Int>>?)? = null
     internal var tableIncrementalRelayoutObserver: (() -> Unit)? = null
+    internal var tableGridConversionObserverForTesting: (() -> Unit)? = null
     internal var reusableTableCell: ((TableSurfaceCell, Int) -> com.apollohg.editor.tables.PreparedViewerTableCell?)? = null
     internal var reusableTableCellStore: com.apollohg.editor.tables.TableCellLayoutStore? = null
 
@@ -518,7 +520,10 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                     }
                     return prepared.copy(cellPreparation = build)
                 }
-                val record by lazy { TableGridRecord.from(surfaceSource, document.semanticKey).physical(density) }
+                val record by lazy {
+                    tableGridConversionObserverForTesting?.invoke()
+                    TableGridRecord.from(surfaceSource, document.semanticKey).physical(density)
+                }
                 val tableStyle = theme.tableStyle.physical(density)
                 val rtl = TableLayoutDirection.isRightToLeft(surfaceSource.direction, theme.tableDirection)
                 val retainedSurface = incremental?.takeIf { (surface, _) ->
@@ -534,14 +539,15 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                     }
                     tableIncrementalRelayoutObserver?.invoke()
                     previous.replacingCells(contents,
-                        { record }, surfaceSource, document.tableAttributes) { cell, width -> prepareCell(cell, width) }
+                        { record }, surfaceSource, document.tableAttributes,
+                        reusePreparedGeometry = previous.displayScale == PHYSICAL_PIXEL_LAYOUT_SCALE) { cell, width -> prepareCell(cell, width) }
                 } else {
                     val workers = tablePreparationPlan(document, surfaceSource, tableKey, theme, cellMode, cellShapeContext) { cell, width, worker, context, retainShape ->
                         prepareCell(cell, width, worker, context, retainShape)
                     }
                     try {
                         ViewerTableSurface(document.tablePresentationIdentity(tableKey), record, tableWidth.toFloat(),
-                            tableStyle, rtl, displayScale = 1f, sourceTable = surfaceSource,
+                            tableStyle, rtl, displayScale = PHYSICAL_PIXEL_LAYOUT_SCALE, sourceTable = surfaceSource,
                             editorTableId = tableKey, sourceAttributes = document.tableAttributes,
                             layoutStore = tableLayoutStore,
                             reuseCell = if (cellMode) null else reusableTableCell?.let { reuse ->
@@ -883,7 +889,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                     tableBounds.width().toFloat(),
                     theme.tableStyle.physical(density),
                     TableLayoutDirection.isRightToLeft(surfaceSource.direction, theme.tableDirection),
-                    displayScale = 1f,
+                    displayScale = PHYSICAL_PIXEL_LAYOUT_SCALE,
                     sourceTable = surfaceSource,
                     editorTableId = tableKey,
                     sourceAttributes = document.tableAttributes

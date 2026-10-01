@@ -12,12 +12,12 @@ import com.apollohg.editor.viewer.PreparedProseAccessibilityNode
 import com.apollohg.editor.viewer.PreparedViewerAtom
 import com.apollohg.editor.viewer.ViewerImageAttachment
 
-internal class PreparedViewerTableCell {
-    val sourceIndex: Int
-    val row: Int
-    val column: Int
-    val rowspan: Int
-    val colspan: Int
+internal class PreparedViewerTableCell : TableGridCellPosition {
+    override val sourceIndex: Int
+    override val row: Int
+    override val column: Int
+    override val rowspan: Int
+    override val colspan: Int
     val contentOrigin: Pair<Int, Int>
     val isHeader: Boolean
     val attributesKey: String?
@@ -193,9 +193,11 @@ internal class ViewerTableSurface private constructor(
             parallelCellIndices, transientCellIndices, prepareCell),
         sourceTable, sourceAttributes, editorTableId, displayScale)
 
+    // Geometry reuse requires the engine's certified physical-pixel layout and unchanged column inputs.
     fun replacingCells(contents: Map<Int, PreparedProseLayout>,
                        gridRecord: () -> TableGridRecord, sourceTable: TableSurfaceSource,
                        sourceAttributes: Map<String, org.json.JSONObject>,
+                       reusePreparedGeometry: Boolean = false,
                        prepareCell: (TableGridCell, Float) -> PreparedProseLayout): ViewerTableSurface {
         var heightsUnchanged = true
         var membershipUnchanged = true
@@ -222,11 +224,24 @@ internal class ViewerTableSurface private constructor(
             layout.typedFailure == null && previousSource.failure == null && sourceTable.failure == null &&
             previousSource.rows == sourceTable.rows && previousSource.columns == sourceTable.columns &&
             previousSource.columnWidths == sourceTable.columnWidths
+        fun relayoutFromRecord(): TableLayoutResult {
+            val heights = updated.associate { it.sourceIndex to it.contentHeightPx.toFloat() }
+            return TableGridLayout(displayScale).relayout(gridRecord(), hostViewportWidth, style, isRightToLeft, heights)
+        }
         val next = if (heightsUnchanged && structureUnchanged) {
             layout
+        } else if (reusePreparedGeometry && structureUnchanged &&
+            previousSource?.cells?.size == sourceTable.cells.size && updated.size == sourceTable.cells.size &&
+            updated.withIndex().all { (index, cell) ->
+                val source = sourceTable.cells[index]
+                cell.sourceIndex == index && source.sourceIndex == index &&
+                    cell.row == source.row && cell.column == source.column &&
+                    cell.rowspan == source.rowspan && cell.colspan == source.colspan
+            }) {
+            TableGridLayout(displayScale).relayoutPrepared(layout, sourceTable.rows, sourceTable.columns, style, isRightToLeft,
+                updated, sourceTable.compatibilityDiagnostic) { relayoutFromRecord() }
         } else {
-            val heights = updated.associate { it.sourceIndex to it.contentHeightPx.toFloat() }
-            TableGridLayout(displayScale).relayout(gridRecord(), hostViewportWidth, style, isRightToLeft, heights)
+            relayoutFromRecord()
         }
         return ViewerTableSurface(identity, hostViewportWidth, style, isRightToLeft, next, updated,
             updated.firstNotNullOfOrNull { it.contentError }, sourceTable, sourceAttributes, editorTableId, displayScale,

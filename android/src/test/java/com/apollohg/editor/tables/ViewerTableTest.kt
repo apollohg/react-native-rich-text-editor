@@ -49,6 +49,7 @@ import android.widget.EditText
 import android.os.Looper
 import android.text.Spanned
 import org.json.JSONObject
+import org.json.JSONArray
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -227,39 +228,115 @@ class ViewerTableTest {
     @Test
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
     fun incrementalEnginePreservesScaledGridGeometry() {
-        val density = 2f
         val width = 640
-        fun document(text: String) = compileWithRust(ProseViewerRequest(ProseViewerSource.Json(
-            """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[
-                {"type":"table_cell","attrs":{"colwidth":[160]},"content":[{"type":"paragraph","content":[{"type":"text","text":"$text"}]}]},
-                ${tableCell("adjacent")}
-            ]}]}]}"""), ProseViewerConfiguration(CONFIG)))
-        val engine = StaticLayoutAndroidProseLayoutEngine()
-        fun surface(document: ViewerDocument, incremental: Boolean): ViewerTableSurface {
-            val key = ProseLayoutKey(document.semanticKey, width, "scaled-grid", 0, 0,
-                density.toBits().toLong(), 0, "scaled-grid")
-            val selected = if (incremental) engine else StaticLayoutAndroidProseLayoutEngine()
-            return requireNotNull(selected.prepare(document, key, PreparedProseTheme.resolve(null, density),
-                width, density, false).blocks.single().tableSurface)
-        }
-        var previous = surface(document("before"), false)
-        for (text in listOf("after", "a long wrapped row with several words ".repeat(20), "short")) {
-            val next = document(text)
-            val fresh = surface(next, false)
-            val retained = previous
-            engine.incrementalTableSurface = { retained to setOf(0) }
-            engine.reusableTableCellStore = retained.layoutStore
-            val updated = try { surface(next, true) } finally {
-                engine.incrementalTableSurface = null
-                engine.reusableTableCellStore = null
+        for (density in listOf(1.25f, 2f, 2.75f)) for (direction in TableLayoutDirection.entries) {
+            for (merged in listOf(false, true)) {
+                fun document(text: String): ViewerDocument {
+                    val attrs = JSONObject().put("colwidth", JSONArray().put(160))
+                    if (merged) attrs.put("rowspan", 2)
+                    val first = JSONObject(tableCell(text)).put("attrs", attrs)
+                    val adjacent = JSONObject(tableCell("adjacent"))
+                    if (merged) adjacent.put("attrs", JSONObject().put("colspan", 2))
+                    val rows = JSONArray().put(JSONObject().put("type", "table_row")
+                        .put("content", JSONArray().put(first).put(adjacent)))
+                    if (merged) rows.put(JSONObject().put("type", "table_row")
+                        .put("content", JSONArray().put(JSONObject(tableCell("below"))).put(JSONObject(tableCell("last")))))
+                    val json = JSONObject().put("type", "doc").put("content", JSONArray().put(
+                        JSONObject().put("type", "table").put("content", rows)))
+                    return compileWithRust(ProseViewerRequest(ProseViewerSource.Json(json.toString()), ProseViewerConfiguration(CONFIG)))
+                }
+                val engine = StaticLayoutAndroidProseLayoutEngine()
+                val theme = PreparedProseTheme.resolve(null, density).let {
+                    it.copy(tableDirection = direction, sourceTheme = com.apollohg.editor.EditorTheme(
+                        table = it.tableStyle.copy(cellPadding = 3.25f, borderWidth = 0.65f)))
+                }
+                fun surface(document: ViewerDocument, incremental: Boolean): ViewerTableSurface {
+                    val key = ProseLayoutKey(document.semanticKey, width, "scaled-grid", 0, 0,
+                        density.toBits().toLong(), 0, "scaled-grid", tableDirection = direction)
+                    val selected = if (incremental) engine else StaticLayoutAndroidProseLayoutEngine()
+                    return requireNotNull(selected.prepare(document, key, theme,
+                        width, density, false).blocks.single().tableSurface)
+                }
+                var gridConversions = 0
+                engine.tableGridConversionObserverForTesting = { gridConversions++ }
+                var previous = surface(document("before"), false)
+                var heightChanges = 0
+                for (text in listOf("after", "a long wrapped row with several words ".repeat(20), "short")) {
+                    val next = document(text)
+                    val fresh = surface(next, false)
+                    val retained = previous
+                    engine.incrementalTableSurface = { retained to setOf(0) }
+                    engine.reusableTableCellStore = retained.layoutStore
+                    val updated = try { surface(next, true) } finally {
+                        engine.incrementalTableSurface = null
+                        engine.reusableTableCellStore = null
+                    }
+                    val context = "density=$density direction=$direction merged=$merged textLength=${text.length}"
+                    assertEquals("Exact widths, prefix sums and all rectangles: $context", fresh.layout, updated.layout)
+                    assertEquals("Certified wrapping/shrinking must avoid full grid conversion: $context", 0, gridConversions)
+                    assertEquals("Metadata fees are unchanged: $context", fresh.metadataRetainedBytes, updated.metadataRetainedBytes)
+                    assertSame("Only the edited cell is replaced: $context", retained.cell(1), updated.cell(1))
+                    if (requireNotNull(retained.cell(0)).contentHeightPx == requireNotNull(updated.cell(0)).contentHeightPx) {
+                        assertSame("Same-height edits keep the prepared geometry: $context", retained.layout, updated.layout)
+                    } else {
+                        heightChanges++
+                    }
+                    previous = updated
+                }
+                assertEquals("Exercise both growing and shrinking rows: density=$density direction=$direction merged=$merged", 2, heightChanges)
             }
-            assertEquals("$text: incremental engine must preserve physical widths and all row rectangles", fresh.layout, updated.layout)
-            assertSame("Only the edited cell is replaced", retained.cell(1), updated.cell(1))
-            if (requireNotNull(retained.cell(0)).contentHeightPx == requireNotNull(updated.cell(0)).contentHeightPx) {
-                assertSame("Same-height edits keep the prepared geometry", retained.layout, updated.layout)
-            }
-            previous = updated
         }
+    }
+
+    @Test fun certifiedHeightRelayoutPreservesGenericFallbackSemantics() {
+        val json = """{"type":"doc","content":[{"type":"table","content":[
+            {"type":"table_row","content":[${tableCell("first")},${tableCell("second")}]},
+            {"type":"table_row","content":[${tableCell("third")},${tableCell("fourth")}]}
+        ]}]}"""
+        val original = requireNotNull(prepare(json).blocks.single().tableSurface)
+        val source = requireNotNull(original.sourceTable)
+        fun surface(cells: List<PreparedViewerTableCell>) = ViewerTableSurface(original.identity,
+            original.hostViewportWidth, original.style, original.isRightToLeft, original.layout,
+            cells, null, source, original.sourceAttributes, displayScale = original.displayScale)
+        fun check(label: String, base: ViewerTableSurface = original, nextSource: TableSurfaceSource = source,
+                  invalidHeight: Boolean = false, expectedConversions: Int = 1) {
+            val cell = base.cells.first()
+            val changed = cell.content.copy(heightPx = if (invalidHeight) -1 else cell.contentHeightPx + 17)
+            fun replace(certified: Boolean): Pair<ViewerTableSurface, Int> {
+                var conversions = 0
+                val result = base.replacingCells(mapOf(cell.sourceIndex to changed),
+                    { conversions++; TableGridRecord.from(nextSource, base.identity) },
+                    nextSource, base.sourceAttributes, reusePreparedGeometry = certified) { _, _ -> changed }
+                return result to conversions
+            }
+            val (generic, genericConversions) = replace(false)
+            val (certified, certifiedConversions) = replace(true)
+            assertEquals("Generic wrapping calls its provider: $label", 1, genericConversions)
+            assertEquals("Certified conversion/fallback count: $label", expectedConversions, certifiedConversions)
+            assertEquals("Every geometry field and diagnostic matches: $label", generic.layout, certified.layout)
+            assertEquals("Metadata fees match: $label", generic.metadataRetainedBytes, certified.metadataRetainedBytes)
+        }
+        check("dense prepared positions", expectedConversions = 0)
+        check("reordered source indices", base = surface(original.cells.reversed()))
+        check("duplicate source indices", base = surface(original.cells + original.cells.first()))
+        check("source cell count changed", nextSource = source.copy(cells = source.cells.dropLast(1)))
+        check("source positions changed", nextSource = source.copy(cells = source.cells.mapIndexed { index, cell ->
+            if (index == 1) cell.copy(row = -1) else cell
+        }))
+        check("column widths changed", nextSource = source.copy(columnWidths = listOf(130f, 190f)))
+        check("invalid measured height", invalidHeight = true)
+        check("current compatibility diagnostic", nextSource = source.copy(
+            compatibilityDiagnostic = uniffi.editor_core.TableCompatibilityDiagnostic.AMBIGUOUS_SOURCE_MAP), expectedConversions = 0)
+        TableRenderFailure.entries.forEach { failure -> check("typed failure $failure", nextSource = source.copy(failure = failure)) }
+
+        val changed = original.cells.first().content.copy(heightPx = original.cells.first().contentHeightPx + 17)
+        val arbitrary = TableGridRecord.from(source, original.identity).copy(columnWidths = listOf(135f, 185f))
+        val heights = original.cells.associate { it.sourceIndex to if (it.sourceIndex == 0) changed.heightPx.toFloat() else it.contentHeightPx.toFloat() }
+        val expected = TableGridLayout(original.displayScale).relayout(arbitrary, original.hostViewportWidth,
+            original.style, original.isRightToLeft, heights)
+        val generic = original.replacingCells(mapOf(0 to changed), { arbitrary }, source,
+            original.sourceAttributes) { _, _ -> changed }
+        assertEquals("The default route must honor an arbitrary grid provider", expected, generic.layout)
     }
 
     @Test fun contentMembershipChangesRebuildTheCellLookupIndex() {
