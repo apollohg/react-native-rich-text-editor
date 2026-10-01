@@ -984,7 +984,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
                             key?.adapter === adapter && key?.documentGeneration == adapter.tablePresentationDocumentGeneration &&
                             key?.revision == presentation?.baseDocumentRevision &&
                             changes != null && !changes.fullReset && tableKey !in changes.replacedTables &&
-                            previous.surface.cells.all { it.isPositionFree }) {
+                            previous.surface.hasOnlyPositionFreeCells) {
                             previous.surface to changes.changedCells[tableKey].orEmpty()
                         } else null
                     }

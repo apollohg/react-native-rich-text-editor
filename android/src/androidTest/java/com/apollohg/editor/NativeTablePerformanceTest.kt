@@ -18,6 +18,7 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.LargeTest
 import androidx.test.platform.app.InstrumentationRegistry
+import com.apollohg.editor.tables.PreparedViewerTableCell
 import com.apollohg.editor.tables.PlainTableFixture
 import com.apollohg.editor.tables.TableAccessibilityAction
 import com.apollohg.editor.tables.TableAccessibilityItem
@@ -808,6 +809,32 @@ class NativeTablePerformanceTest {
         } finally { android.os.Debug.stopAllocCounting() }
     }
 
+    @Test fun largeTableEditsInspectOnlyChangedCellPositionFlags() = withActivity {
+        val (rows, columns) = PlainTableFixture.TWENTY_THOUSAND_SLOT_SHAPES.first()
+        val host = onMain { EditorHost().also { it.load(Fixture(rows, columns, false).source()) } }
+        try {
+            val input = onMain { host.bind(0) }
+            for (text in listOf(TYPING_TEXT, LINE_BREAK_TEXT)) {
+                val counters = PreparedProseInstrumentation.TablePerformanceCounters()
+                var inspections = 0
+                onMain { PreparedViewerTableCell.positionFreeObserverForTesting = { inspections++ } }
+                try {
+                    edit(host, input, counters, text)
+                } finally { onMain { PreparedViewerTableCell.positionFreeObserverForTesting = null } }
+                assertEquals("Each edit prepares its changed cell", 1, counters.changedCellRemeasurements)
+                assertEquals("Unchanged cells keep their prepared content", 0, counters.unchangedCellRemeasurements)
+                val allowance = counters.changedCellRemeasurements * POSITION_FLAGS_PER_REPLACED_CELL
+                assertTrue("Editing one of ${rows * columns} cells inspected $inspections position flags; old/new changed-wrapper allowance is $allowance",
+                    inspections <= allowance)
+            }
+        } finally {
+            onMain {
+                PreparedViewerTableCell.positionFreeObserverForTesting = null
+                host.close()
+            }
+        }
+    }
+
     @Test fun largeTableDeltaAdoptionKeepsAllocationsBounded() = withActivity {
         val (rows, columns) = PlainTableFixture.TWENTY_THOUSAND_SLOT_SHAPES.first()
         val fixture = Fixture(rows, columns, false)
@@ -961,6 +988,7 @@ class NativeTablePerformanceTest {
         const val SMALL_COLUMNS = 3
         const val MERGE_WIDTH = 2
         const val RICH_PARAGRAPH_STRIDE = 2
+        const val POSITION_FLAGS_PER_REPLACED_CELL = 2
         const val ALLOCATION_WARMUP_RUNS = 3
         const val ALLOCATION_CALIBRATION_BYTES = 16 * 1024
         const val ALLOCATION_FIXED_BYTES = 64 * 1024L

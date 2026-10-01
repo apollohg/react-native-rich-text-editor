@@ -34,7 +34,11 @@ internal class PreparedViewerTableCell : TableGridCellPosition {
     val hasNestedTables: Boolean
     val hasAtoms: Boolean
     val hasImages: Boolean
-    val isPositionFree: Boolean
+    private val positionFree: Boolean
+    val isPositionFree: Boolean get() {
+        positionFreeObserverForTesting?.invoke()
+        return positionFree
+    }
     val metadataRetainedBytes: Long
     private val prepareContent: () -> PreparedProseLayout
 
@@ -76,7 +80,7 @@ internal class PreparedViewerTableCell : TableGridCellPosition {
         hasImages = content.imageAttachments.isNotEmpty() || content.blocks.any {
             it.imageAttachment != null || it.tableSurface?.cells?.any { cell -> cell.hasImages } == true
         }
-        isPositionFree = content.error == null && !hasNestedTables && !hasAtoms && !hasImages &&
+        positionFree = content.error == null && !hasNestedTables && !hasAtoms && !hasImages &&
             content.interactions.all { it.docPos == null }
         metadataRetainedBytes = METADATA_RETAINED_BYTES +
             accessibilityText.length * 2L + codeHighlightBlocks.sumOf { CODE_DESCRIPTOR_RETAINED_BYTES + it.text.length * 2L } +
@@ -105,7 +109,7 @@ internal class PreparedViewerTableCell : TableGridCellPosition {
         hasNestedTables = cell.hasNestedTables
         hasAtoms = cell.hasAtoms
         hasImages = cell.hasImages
-        isPositionFree = cell.isPositionFree
+        positionFree = cell.positionFree
         metadataRetainedBytes = cell.metadataRetainedBytes
         prepareContent = cell.prepareContent
         if (store !== cell.layoutStore) cell.cachedContent?.let { store.insert(it) }
@@ -120,9 +124,10 @@ internal class PreparedViewerTableCell : TableGridCellPosition {
     val cachedContent: PreparedProseLayout? get() = layoutStore.peek(contentKey)
     val retainedBytes: Long get() = metadataRetainedBytes + (cachedContent?.retainedBytes ?: 0L)
 
-    private companion object {
-        const val METADATA_RETAINED_BYTES = 384L
-        const val CODE_DESCRIPTOR_RETAINED_BYTES = 64L
+    companion object {
+        @Volatile var positionFreeObserverForTesting: (() -> Unit)? = null
+        private const val METADATA_RETAINED_BYTES = 384L
+        private const val CODE_DESCRIPTOR_RETAINED_BYTES = 64L
     }
 }
 
@@ -140,7 +145,8 @@ internal class ViewerTableSurface private constructor(
     val displayScale: Float,
     reusableCellIndex: ViewerTableCellIndex?,
     reusableColumnEdgeHandleRows: Map<Int, Int>?,
-    reusableCellKeyCertificate: Boolean?
+    reusableCellKeyCertificate: Boolean?,
+    private val positionDependentCellCount: Int
 ) {
     constructor(
         identity: String, hostViewportWidth: Float, style: TableStyle, isRightToLeft: Boolean,
@@ -149,12 +155,16 @@ internal class ViewerTableSurface private constructor(
         sourceAttributes: Map<String, org.json.JSONObject> = emptyMap(),
         editorTableId: String? = null, displayScale: Float = 1f
     ) : this(identity, hostViewportWidth, style, isRightToLeft, layout, cells, preparationError,
-        sourceTable, sourceAttributes, editorTableId, displayScale, null, null, false)
+        sourceTable, sourceAttributes, editorTableId, displayScale, null, null, false, UNKNOWN_POSITION_DEPENDENT_CELL_COUNT)
 
     val layoutStore = cells.firstOrNull()?.layoutStore ?: TableCellLayoutStore()
     private val hasSingleLayoutStore = cells.all { it.layoutStore === layoutStore }
     private var retainedBytesRevision = -1L
     private var cellRetainedBytes = 0L
+
+    val hasOnlyPositionFreeCells: Boolean get() = if (positionDependentCellCount == UNKNOWN_POSITION_DEPENDENT_CELL_COUNT) {
+        cells.all { it.isPositionFree }
+    } else positionDependentCellCount == 0
 
     val cachedContents: List<PreparedProseLayout> get() = if (hasSingleLayoutStore) {
         layoutStore.peekAll(cells.asSequence().map { it.contentKey })
@@ -175,7 +185,8 @@ internal class ViewerTableSurface private constructor(
         prepared: Preparation, sourceTable: TableSurfaceSource?,
         sourceAttributes: Map<String, org.json.JSONObject>, editorTableId: String?, displayScale: Float
     ) : this(identity, hostViewportWidth, style, isRightToLeft, prepared.layout, prepared.cells,
-        prepared.error, sourceTable, sourceAttributes, editorTableId, displayScale, null, null, null)
+        prepared.error, sourceTable, sourceAttributes, editorTableId, displayScale, null, null, null,
+        prepared.cells.count { !it.isPositionFree })
 
     constructor(
         identity: String, record: TableGridRecord, hostViewportWidth: Float, style: TableStyle,
@@ -205,6 +216,9 @@ internal class ViewerTableSurface private constructor(
         var heightsUnchanged = true
         var membershipUnchanged = true
         var cellKeysCertified = hasCertifiedCellKeys
+        var positionDependentCount = if (positionDependentCellCount == UNKNOWN_POSITION_DEPENDENT_CELL_COUNT) {
+            cells.count { !it.isPositionFree }
+        } else positionDependentCellCount
         fun replacing(cell: PreparedViewerTableCell): PreparedViewerTableCell {
             val content = contents[cell.sourceIndex] ?: return cell
             val source = sourceTable.cells[cell.sourceIndex]
@@ -213,6 +227,8 @@ internal class ViewerTableSurface private constructor(
             val gridCell = TableGridCell.from(source)
             return PreparedViewerTableCell(cell.sourceIndex, cell.row, cell.column, cell.rowspan, cell.colspan,
                 cell.contentOrigin, content, source.header, source.attrsKey, layoutStore) { prepareCell(gridCell, width) }.also {
+                if (!cell.isPositionFree) positionDependentCount--
+                if (!it.isPositionFree) positionDependentCount++
                 membershipUnchanged = membershipUnchanged && cell.hasNestedTables == it.hasNestedTables && cell.hasAtoms == it.hasAtoms
                 cellKeysCertified = cellKeysCertified && certifiesCellKey(it, sourceTable)
             }
@@ -253,7 +269,7 @@ internal class ViewerTableSurface private constructor(
         return ViewerTableSurface(identity, hostViewportWidth, style, isRightToLeft, next, updated,
             updated.firstNotNullOfOrNull { it.contentError }, sourceTable, sourceAttributes, editorTableId, displayScale,
             if (structureUnchanged && membershipUnchanged) cellIndex else null,
-            if (structureUnchanged) columnEdgeHandleRows else null, cellKeysCertified)
+            if (structureUnchanged) columnEdgeHandleRows else null, cellKeysCertified, positionDependentCount)
     }
 
     val bounds: RectF get() = RectF(0f, 0f, layout.contentWidth, layout.contentHeight)
@@ -287,8 +303,9 @@ internal class ViewerTableSurface private constructor(
         columnEdgeHandleRows.size * 16L
 
     companion object {
-        // Two Longs and the key certificate fit within the existing fixed allowance.
+        // Two Longs, the key certificate, and the dependency count fit within this allowance.
         private const val ACCOUNTING_CACHE_RETAINED_BYTES = 32L
+        private const val UNKNOWN_POSITION_DEPENDENT_CELL_COUNT = -1
 
         private fun certifiesCellKey(cell: PreparedViewerTableCell, source: TableSurfaceSource?): Boolean {
             val key = cell.contentKey.semanticKey

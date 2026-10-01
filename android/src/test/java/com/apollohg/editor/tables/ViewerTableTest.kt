@@ -201,6 +201,73 @@ class ViewerTableTest {
         }
     }
 
+    @Test fun positionFreeEligibilityTracksOwnedWrappersAndLiveCallerLists() {
+        val source = """{"type":"doc","content":[{"type":"table","content":[
+            {"type":"table_row","content":[${tableCell("first")},${tableCell("second")}]}
+        ]}]}"""
+        val original = requireNotNull(prepare(source).blocks.single().tableSurface)
+        val table = requireNotNull(original.sourceTable)
+        val contents = original.cells.map { it.content }
+        fun dependent(index: Int) = contents[index].copy(
+            key = contents[index].key.copy(semanticKey = "position-dependent-$index"),
+            interactions = listOf(PreparedProseInteraction(PreparedProseInteraction.Kind.MENTION,
+                emptyList(), visibleText = "positioned mention", docPos = index.toLong(), label = "mention")))
+        fun replace(base: ViewerTableSurface, changes: Map<Int, PreparedProseLayout>) =
+            base.replacingCells(changes, { error("Equal-height replacement must retain geometry") },
+                table, original.sourceAttributes) { _, _ -> error("Unchanged content must not be prepared") }
+        fun generic(cells: List<PreparedViewerTableCell>) = ViewerTableSurface(
+            original.identity, original.hostViewportWidth, original.style, original.isRightToLeft,
+            original.layout, cells, null, table, original.sourceAttributes, displayScale = original.displayScale)
+        fun verify(surface: ViewerTableSurface, expected: Boolean) {
+            assertEquals("Eligibility must match every immutable wrapper flag", expected, surface.hasOnlyPositionFreeCells)
+            assertEquals(expected, surface.cells.all { it.isPositionFree })
+            assertEquals("Cache metadata must not change published fees", generic(surface.cells).metadataRetainedBytes,
+                surface.metadataRetainedBytes)
+            assertEquals("Store accounting remains exact", generic(surface.cells).retainedBytes, surface.retainedBytes)
+        }
+
+        verify(original, true)
+        val both = replace(original, mapOf(0 to dependent(0), 1 to dependent(1)))
+        verify(both, false)
+        val rebuilt = ViewerTableSurface(original.identity, TableGridRecord.from(table, original.identity),
+            original.hostViewportWidth, original.style, original.isRightToLeft, original.displayScale,
+            sourceTable = table, sourceAttributes = original.sourceAttributes,
+            reuseCell = { cell, _ -> both.cell(cell.sourceIndex) }) { _, _ ->
+            error("Structural relocation must retain existing content")
+        }
+        verify(rebuilt, false)
+        verify(replace(rebuilt, mapOf(0 to contents[0])), false)
+        verify(replace(rebuilt, mapOf(0 to contents[0], 1 to contents[1])), true)
+        val one = replace(both, mapOf(0 to contents[0]))
+        verify(one, false)
+        val neither = replace(one, mapOf(1 to contents[1]))
+        verify(neither, true)
+        verify(original, true)
+        verify(both, false)
+        verify(one, false)
+        assertSame(original.layout, neither.layout)
+
+        val relocated = requireNotNull(both.cell(1)).relocated(TableGridCell.from(table.cells[0]), TableCellLayoutStore())
+        assertFalse("Relocation preserves position dependency", relocated.isPositionFree)
+        val aliases = generic(listOf(requireNotNull(both.cell(0)), relocated))
+        verify(aliases, false)
+        val clearedAliases = replace(aliases, mapOf(0 to contents[0]))
+        verify(clearedAliases, true)
+        verify(replace(clearedAliases, mapOf(0 to dependent(0))), false)
+        verify(clearedAliases, true)
+
+        val mutableCells = original.cells.toMutableList()
+        val callerOwned = generic(mutableCells)
+        verify(callerOwned, true)
+        mutableCells[0] = requireNotNull(both.cell(0))
+        assertFalse("Caller mutations must be checked live", callerOwned.hasOnlyPositionFreeCells)
+        val copied = replace(callerOwned, mapOf(0 to contents[0]))
+        verify(copied, true)
+        mutableCells[1] = requireNotNull(both.cell(1))
+        assertFalse(callerOwned.hasOnlyPositionFreeCells)
+        verify(copied, true)
+    }
+
     @Test fun deferredCellRefillDoesNotRetainTheGridProvider() {
         val source = """{"type":"doc","content":[{"type":"table","content":[
             {"type":"table_row","content":[${tableCell("before")},${tableCell("adjacent")}]}
