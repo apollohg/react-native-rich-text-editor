@@ -206,12 +206,15 @@ extension EditorV2Adapter {
         if includeBaseRevision {
             parts.append("\"baseDocumentRevision\":\"\(baseDocumentRevision)\"")
         }
+        var envelope = Data(("{" + parts.joined(separator: ",")).utf8)
+        let objectDelimitersByteCount = "{}".utf8.count
         if let data = try? JSONSerialization.data(withJSONObject: payload),
-           let payloadJson = String(data: data, encoding: .utf8),
-           payloadJson.count > 2 {
-            parts.append(String(payloadJson.dropFirst().dropLast()))
+           data.count > objectDelimitersByteCount {
+            envelope.append(contentsOf: ",".utf8)
+            envelope.append(data.dropFirst().dropLast())
         }
-        return .success("{\(parts.joined(separator: ","))}")
+        envelope.append(contentsOf: "}".utf8)
+        return .success(String(decoding: envelope, as: UTF8.self))
     }
 
     func callWithEnvelope(

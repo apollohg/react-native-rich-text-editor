@@ -28,6 +28,39 @@ extension EditorV2AdapterTests {
         XCTAssertEqual(documentText(adapter), "max")
     }
 
+    func testEnvelopePreservesUnicodeEmptyPayloadAndReservedKeyRejection() throws {
+        let adapter = makeAdapter()
+        let text = "café العربية 👩🏽‍💻 e\u{301} \"\\\n\u{0}"
+        for includeBaseRevision in [false, true] {
+            for payload in [[:], ["text": text]] {
+                adapter.setNextRequestIdForTesting(UInt64.max - 1)
+                let result = adapter.callWithEnvelope(payload, includeBaseRevision: includeBaseRevision) {
+                    FfiJsonResult(value: $0, error: nil)
+                }
+                XCTAssertNil(result.error)
+                let object = parseObject(try XCTUnwrap(result.value))
+                XCTAssertEqual(object["version"] as? Int, 1)
+                XCTAssertEqual(object["requestId"] as? String, String(UInt64.max))
+                XCTAssertEqual(object["baseDocumentRevision"] as? String,
+                               includeBaseRevision ? String(adapter.baseDocumentRevision) : nil)
+                XCTAssertEqual(object["text"] as? String, payload["text"])
+                XCTAssertEqual(Set(object.keys), Set(payload.keys).union(includeBaseRevision
+                    ? ["version", "requestId", "baseDocumentRevision"] : ["version", "requestId"]))
+            }
+        }
+        adapter.setNextRequestIdForTesting(0)
+        let before = documentText(adapter)
+        let rejected = adapter.callWithEnvelope([
+            "requestId": "1", "setHtml": "<p>must not replace</p>", "history": "resetAndClear"
+        ], includeBaseRevision: false) {
+            editorV2ReplaceDocument(editorId: adapter.editorId, requestJson: $0)
+        }
+        XCTAssertNil(rejected.value)
+        XCTAssertEqual(rejected.error?.code, "CONFIG_INVALID")
+        XCTAssertTrue(rejected.error?.message.contains("duplicate field") == true)
+        XCTAssertEqual(documentText(adapter), before)
+    }
+
     func testTask15AutonomousErrorOwnerTokensProtectNewerOwnersFromStaleClears() {
         let adapter = makeAdapter()
         let firstOwner = UUID()
