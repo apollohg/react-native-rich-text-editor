@@ -208,6 +208,8 @@ xcodebuild_args=(
   -workspace "$workspace"
   -scheme "$scheme"
   -destination "$destination"
+  -parallel-testing-enabled NO
+  ONLY_ACTIVE_ARCH=YES
 )
 
 if [[ -n "${NATIVE_EDITOR_IOS_DERIVED_DATA:-}" ]]; then
