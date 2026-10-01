@@ -141,11 +141,19 @@ final class ViewerTableTests: XCTestCase {
             let document = try ViewerDocument(compiled: try XCTUnwrap(compiled.value, name))
             let sequential = CoreTextProseLayoutEngine()
             sequential.tablePreparationWorkerLimit = 1
+            let sequentialCatalog = PreparedCellShapeCatalog()
+            let sequentialContext = sequentialCatalog.newBuildContext()
+            defer { sequentialContext.close() }
+            sequential.tableCellShapeContextProvider = { _ in sequentialContext }
             let expectedGeometry = CellGeometryProbe()
             sequential.tableCellLayoutObserverForTesting = expectedGeometry.record
             let expected = try prepare(document, engine: sequential)
             let parallel = CoreTextProseLayoutEngine()
             parallel.tablePreparationWorkerLimit = CoreTextProseLayoutEngine.maxTablePreparationWorkers
+            let parallelCatalog = PreparedCellShapeCatalog()
+            let parallelContext = parallelCatalog.newBuildContext()
+            defer { parallelContext.close() }
+            parallel.tableCellShapeContextProvider = { _ in parallelContext }
             let actualGeometry = CellGeometryProbe()
             parallel.tableCellLayoutObserverForTesting = actualGeometry.record
             let actual = try prepare(document, engine: parallel)
@@ -167,6 +175,11 @@ final class ViewerTableTests: XCTestCase {
                         "\(name): measured accessibility must remain complete after releasing transient layouts")
                 }
                 if name == "plain-1000x20" {
+                    XCTAssertEqual(sequentialCatalog.prunePassesForTesting, 0,
+                        "Transient misses must not fill and prune the reusable shape catalog")
+                    XCTAssertLessThanOrEqual(parallelCatalog.prunePassesForTesting,
+                        CoreTextProseLayoutEngine.maxTablePreparationWorkers,
+                        "Only worker context closure may prune; transient misses must not stage shapes")
                     XCTAssertEqual(rhs.layoutStore.count, 0,
                         "Unique cells beyond resident capacity must not churn the resident cache during measurement")
                     XCTAssertNil(actualGeometry.lastLayout,
@@ -229,7 +242,26 @@ final class ViewerTableTests: XCTestCase {
         XCTAssertNotNil(first.cellShape)
         XCTAssertTrue(first.cellShape === second.cellShape)
         XCTAssertTrue(surface.cells.dropFirst(2).allSatisfy { $0.cachedContent == nil })
+        XCTAssertEqual(catalog.prunePassesForTesting, 0,
+            "Unique discarded measurements must not cause shape catalog churn")
+        let seededSource = try jsonSource(["type": "doc", "content": [["type": "table", "content":
+            (0..<cellCount).map { index in
+                ["type": "table_row", "content": [cell(index == 0 ? repeatedText : "next unique \(index)")]]
+            }
+        ]]])
+        let seededCompile = viewerCompile(request: FfiViewerCompileRequest(sourceKind: .json, source: seededSource,
+            configJson: Self.config, imagesEnabled: true, mentionPrefix: nil))
+        shapeBuilds = 0
+        let seededLayout = try prepare(ViewerDocument(compiled: XCTUnwrap(seededCompile.value)), engine: engine)
+        let seededSurface = try XCTUnwrap(seededLayout.blocks.first?.tableSurface)
+        XCTAssertEqual(shapeBuilds, cellCount - 1,
+            "A locally unique transient cell must still reuse a live shape from another parent")
+        XCTAssertEqual(seededSurface.cells[0].accessibilityNodes, surface.cells[0].accessibilityNodes)
+        XCTAssertEqual(seededSurface.layoutStore.count, 0)
         context.close()
+        let seededRebuilt = seededSurface.cells[0].content
+        XCTAssertEqual(seededRebuilt.size, seededSurface.cells[0].contentSize)
+        XCTAssertEqual(TableAccessibility.contentNodes(of: seededRebuilt), seededSurface.cells[0].accessibilityNodes)
         let rebuilt = try XCTUnwrap(surface.cells.last).content
         XCTAssertNil(rebuilt.error, "A closed build context must still permit exact lazy rebuilding")
         XCTAssertEqual(rebuilt.size, surface.cells.last?.contentSize)

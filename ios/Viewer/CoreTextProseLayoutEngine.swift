@@ -31,7 +31,7 @@ final class CoreTextProseLayoutEngine {
     private func tablePreparationPlan(
         document: ViewerDocument, table: TableSurfaceSource, tableKey: String,
         theme: PreparedProseTheme, cellMode: Bool, context: PreparedCellShapeBuildContext?,
-        prepare: @escaping (TableGridCell, CGFloat, CoreTextProseLayoutEngine, PreparedCellShapeBuildContext?) -> PreparedProseLayout
+        prepare: @escaping (TableGridCell, CGFloat, CoreTextProseLayoutEngine, PreparedCellShapeBuildContext?, Bool) -> PreparedProseLayout
     ) -> TablePreparationPlan {
         var result = TablePreparationPlan()
         let count = min(Self.maxTablePreparationWorkers, max(1, tablePreparationWorkerLimit),
@@ -47,6 +47,7 @@ final class CoreTextProseLayoutEngine {
             if count > 1 { result.indices.insert(source.sourceIndex) }
         }
         guard !result.indices.isEmpty else { return result }
+        let transientIndices = result.transientIndices
         let observerLock = NSRecursiveLock()
         for _ in 0..<count {
             let worker = CoreTextProseLayoutEngine()
@@ -69,7 +70,9 @@ final class CoreTextProseLayoutEngine {
             }
             let workerContext = context?.fork()
             if let workerContext { result.contexts.append(workerContext) }
-            result.prepare.append { prepare($0, $1, worker, workerContext) }
+            result.prepare.append { cell, width in
+                prepare(cell, width, worker, workerContext, !transientIndices.contains(cell.sourceIndex))
+            }
         }
         return result
     }
@@ -207,7 +210,7 @@ final class CoreTextProseLayoutEngine {
         source: TableSurfaceCell, tableKey: String, document: ViewerDocument,
         key: ProseLayoutKey, cellWidth: CGFloat, displayScale: CGFloat,
         cellTheme: PreparedProseTheme, warningSemanticGeneration: String,
-        scope: HighlightingScope?, context: PreparedCellShapeBuildContext?
+        scope: HighlightingScope?, context: PreparedCellShapeBuildContext?, retainShape: Bool = true
     ) -> CellPreparation {
         guard let child = try? document.cellDocument(for: source, in: tableKey).withPreparedTheme(cellTheme) else {
             let failure = PreparedProseLayout.error(key: key, width: cellWidth, error: .layout(message: "Invalid table cell."))
@@ -279,6 +282,7 @@ final class CoreTextProseLayoutEngine {
                     else { build(finish) }
                 }
             case .fresh:
+                guard retainShape else { build(finish); return }
                 build { fresh in
                     let (candidate, selected) = context.stage(fresh, for: shapeKey)
                     if selected === candidate { finish(fresh.withCellShape(selected)) }
@@ -442,7 +446,8 @@ final class CoreTextProseLayoutEngine {
                     let tableShapes = (cellMode ? nil : tableCellShapeContextProvider?(incremental != nil)) ?? cellShapeContext
                     func cellRequest(_ cell: TableGridCell, width cellWidth: CGFloat,
                                      worker: CoreTextProseLayoutEngine? = nil,
-                                     workerContext: PreparedCellShapeBuildContext? = nil) -> CellPreparation {
+                                     workerContext: PreparedCellShapeBuildContext? = nil,
+                                     retainShape: Bool = true) -> CellPreparation {
                         let engine = worker ?? self
                         let context = worker == nil ? tableShapes : workerContext
                         guard surfaceSource.cells.indices.contains(cell.sourceIndex) else {
@@ -452,14 +457,16 @@ final class CoreTextProseLayoutEngine {
                         return engine.makeCellPreparation(source: surfaceSource.cells[cell.sourceIndex], tableKey: tableKey,
                             document: document, key: key, cellWidth: cellWidth, displayScale: displayScale,
                             cellTheme: cellTheme, warningSemanticGeneration: warningSemanticGeneration,
-                            scope: scope, context: context)
+                            scope: scope, context: context, retainShape: retainShape)
                     }
                     func prepareCell(_ cell: TableGridCell, width: CGFloat,
                                      worker: CoreTextProseLayoutEngine? = nil,
-                                     workerContext: PreparedCellShapeBuildContext? = nil) -> PreparedProseLayout {
+                                     workerContext: PreparedCellShapeBuildContext? = nil,
+                                     retainShape: Bool = true) -> PreparedProseLayout {
                         let queue = PreparationQueue()
                         var prepared: PreparedProseLayout!
-                        cellRequest(cell, width: width, worker: worker, workerContext: workerContext).prepare(queue) { prepared = $0 }
+                        cellRequest(cell, width: width, worker: worker, workerContext: workerContext,
+                            retainShape: retainShape).prepare(queue) { prepared = $0 }
                         queue.run()
                         return prepared
                     }
@@ -490,8 +497,8 @@ final class CoreTextProseLayoutEngine {
                                 self.tableIncrementalRelayoutObserver?()
                             } else if let record {
                                 let workers = self.tablePreparationPlan(document: document, table: surfaceSource, tableKey: tableKey,
-                                    theme: theme, cellMode: cellMode, context: tableShapes) { cell, width, worker, context in
-                                        prepareCell(cell, width: width, worker: worker, workerContext: context)
+                                    theme: theme, cellMode: cellMode, context: tableShapes) { cell, width, worker, context, retainShape in
+                                        prepareCell(cell, width: width, worker: worker, workerContext: context, retainShape: retainShape)
                                     }
                                 defer { workers.contexts.forEach { $0.close() } }
                                 surface = ViewerTableSurface(
@@ -512,7 +519,8 @@ final class CoreTextProseLayoutEngine {
                                     prepareCellWorkers: workers.prepare,
                                     parallelCellIndices: workers.indices,
                                     transientCellIndices: workers.transientIndices,
-                                    prepareCell: { prepareCell($0, width: $1) })
+                                    prepareCell: { prepareCell($0, width: $1,
+                                        retainShape: !workers.transientIndices.contains($0.sourceIndex)) })
                             } else {
                                 preconditionFailure("Full table preparation requires a grid record.")
                             }
