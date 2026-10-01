@@ -186,7 +186,7 @@ final class TablePerformanceTests: XCTestCase {
             let minimum = -scroll.adjustedContentInset.top
             let maximum = max(minimum, scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)
             scroll.contentOffset.y = min(max(frame.midY - scroll.bounds.height / 2, minimum), maximum)
-            let horizontal = max(0, frame.midX - Benchmark.viewport.width / 2)
+            let horizontal = max(0, frame.midX - view.bounds.width / 2)
             _ = drawing.scrollTables(in: [table.scrollIdentity], by: -horizontal)
             view.layoutIfNeeded()
             let contentRect = try XCTUnwrap(surface.cellFrame(tableID: table.identity, cellIndex: UInt32(cellIndex)))
@@ -359,8 +359,7 @@ final class TablePerformanceTests: XCTestCase {
         clock = TableTestFrameClock()
         defer { clock.close(); clock = nil }
         let fixture = Fixture(rows: 1_000, columns: 20, rich: false)
-        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
-        let viewport = scene.screen.bounds.size
+        let viewport = try sceneViewport()
         print("TABLE_HORIZONTAL_VISUAL_PROBE_STARTED viewport=\(viewport)")
         try scroll(fixture, source: fixture.source(), horizontal: true, viewport: viewport)
         XCTAssertFalse(samples.isEmpty)
@@ -369,7 +368,6 @@ final class TablePerformanceTests: XCTestCase {
 
     func testDefaultHeaderKeepsTypedTextReadableAcrossAppearances() throws {
         let minimumTextContrast: CGFloat = 4.5
-        let proMaxViewport = CGSize(width: 440, height: 956)
         func luminance(_ color: UIColor, traits: UITraitCollection) -> CGFloat {
             var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
             XCTAssertTrue(color.resolvedColor(with: traits).getRed(&red, green: &green, blue: &blue, alpha: &alpha))
@@ -378,7 +376,7 @@ final class TablePerformanceTests: XCTestCase {
             }
             return 0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue)
         }
-        let host = try EditorHost(viewport: proMaxViewport, appearance: .light)
+        let host = try EditorHost(viewport: sceneViewport(), appearance: .light)
         defer { host.close() }
         try host.load(Fixture(rows: 3, columns: 3, rich: false).source())
         let input = try host.bind(0)
@@ -591,7 +589,7 @@ final class TablePerformanceTests: XCTestCase {
                                autoGrow: Bool = false, keyboard: Bool = false, theme: EditorTheme? = nil) throws {
         clock = TableTestFrameClock()
         defer { clock.close(); clock = nil }
-        let host = try EditorHost()
+        let host = try EditorHost(viewport: sceneViewport())
         defer { host.close() }
         if let theme { XCTAssertTrue(host.view.applyTheme(theme)) }
         let scroll: UIScrollView
@@ -757,7 +755,7 @@ final class TablePerformanceTests: XCTestCase {
     func testLargeTableStyleBackgroundHasViewportSizedBacking() throws {
         clock = TableTestFrameClock()
         defer { clock.close(); clock = nil }
-        let host = try EditorHost()
+        let host = try EditorHost(viewport: sceneViewport())
         defer { host.close() }
         try host.load(Fixture(rows: 1_000, columns: 20, rich: true).source())
         let background = host.view.textView.styleContentView
@@ -768,6 +766,11 @@ final class TablePerformanceTests: XCTestCase {
         XCTAssertLessThanOrEqual(background.bounds.height, host.window.bounds.height,
                                  "The stylesheet background must not allocate a document-height bitmap")
         XCTAssertLessThanOrEqual(background.bounds.width, host.window.bounds.width)
+    }
+
+    private func sceneViewport() throws -> CGSize {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        return scene.coordinateSpace.bounds.size
     }
 
     func testLargeTableColdLayout() throws {
