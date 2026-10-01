@@ -247,18 +247,20 @@ class TableGridLayout(private val displayScale: Float = 1f, private val cache: T
         val minimumRow = style.cellPadding * 2f + style.borderWidth * 2f
         val fallbackHeight = if (minimumRow.isFinite() && minimumRow >= 1f) minimumRow else 1f
         val (widths, xOffsets) = geometry
-        val heights = MutableList(rowsCount) { minimumRow }
+        val heights = FloatArray(rowsCount) { minimumRow }
         if (!ordered.all { valid(it, rowsCount, columnsCount) }) {
             return failed(TableLayoutFailure.INVALID_STRUCTURE)
         }
         fun contentHeight(cell: T): Float? = measuredHeight(cell)?.takeIf { it.isFinite() && it >= 0f }
-        ordered.filter { it.rowspan == 1 }.forEach { cell ->
+        for (cell in ordered) {
+            if (cell.rowspan != 1) continue
             val content = contentHeight(cell) ?: return failed(TableLayoutFailure.INVALID_ATTRIBUTES)
             val wanted = maxOf(fallbackHeight, content + 2 * (style.cellPadding + style.borderWidth))
             if (!wanted.isFinite()) return failed(TableLayoutFailure.INVALID_ATTRIBUTES)
             heights[cell.row] = maxOf(heights[cell.row], wanted)
         }
-        ordered.filter { it.rowspan > 1 }.forEach { cell ->
+        for (cell in ordered) {
+            if (cell.rowspan <= 1) continue
             val content = contentHeight(cell) ?: return failed(TableLayoutFailure.INVALID_ATTRIBUTES)
             val wanted = maxOf(fallbackHeight, content + 2 * (style.cellPadding + style.borderWidth))
             if (!wanted.isFinite()) return failed(TableLayoutFailure.INVALID_ATTRIBUTES)
@@ -271,8 +273,8 @@ class TableGridLayout(private val displayScale: Float = 1f, private val cache: T
             }
         }
         val rowValues = FloatArray(rowsCount + 1)
-        for ((index, height) in heights.withIndex()) {
-            val offset = rowValues[index] + snapOutward(height)
+        for (index in heights.indices) {
+            val offset = rowValues[index] + snapOutward(heights[index])
             if (!offset.isFinite()) return failed(TableLayoutFailure.INVALID_ATTRIBUTES)
             rowValues[index + 1] = offset
         }
