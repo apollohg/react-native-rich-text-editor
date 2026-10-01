@@ -81,6 +81,20 @@ impl EditorSession {
             )
         })?;
         self.position_epochs.admit_boundary_count(count)?;
+        if let Some(previous) = self.latest_epoch_snapshot.as_mut() {
+            if previous.document_revision != document_revision
+                || previous.yrs_state_epoch != self.engine.yrs_state_epoch()
+            {
+                if let Some(update) = self.engine.prepare_position_epoch_update(previous) {
+                    return self.position_epochs.install_update(
+                        owner_id,
+                        self.engine.client_id(),
+                        previous,
+                        update,
+                    );
+                }
+            }
+        }
         let snapshot = self
             .latest_epoch_snapshot
             .as_ref()
@@ -89,12 +103,6 @@ impl EditorSession {
                     && snapshot.yrs_state_epoch == self.engine.yrs_state_epoch()
             })
             .cloned()
-            .or_else(|| {
-                self.latest_epoch_snapshot
-                    .as_ref()
-                    .and_then(|previous| self.engine.update_position_epoch_snapshot(previous))
-                    .map(std::sync::Arc::new)
-            })
             .or_else(|| {
                 self.engine
                     .build_position_epoch_snapshot()

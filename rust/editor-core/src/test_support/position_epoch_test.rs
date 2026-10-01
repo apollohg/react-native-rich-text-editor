@@ -476,6 +476,174 @@ fn a_keystroke_pin_rebuilds_only_its_cell() {
 }
 
 #[test]
+fn a_single_owners_keystroke_reuses_obsolete_epoch_arrays() {
+    const ROWS: usize = 1000;
+    const COLUMNS: usize = 20;
+    let mut session = session_with_document(&plain_table_document(ROWS, COLUMNS));
+    let epoch = session
+        .pin_position_epoch(INCREMENTAL_EPOCH_OWNER, session.engine.revision())
+        .unwrap();
+    let previous = session.latest_epoch_snapshot_for_test().unwrap();
+    let chunks = previous.chunks.as_ptr();
+    let cells = previous.cells.as_ptr();
+    drop(previous);
+    submit_epoch_edit(&mut session, epoch, INCREMENTAL_EPOCH_REQUEST, 0, 0, "x").unwrap();
+    let replacement = session
+        .pin_position_epoch(INCREMENTAL_EPOCH_OWNER, session.engine.revision())
+        .unwrap();
+    let current = session.latest_epoch_snapshot_for_test().unwrap();
+    assert_eq!(
+        current.chunks.as_ptr(),
+        chunks,
+        "The replaced owner's chunk array must not clone every unchanged Arc"
+    );
+    assert_eq!(
+        current.cells.as_ptr(),
+        cells,
+        "The replaced owner's cell array must not clone every unchanged Arc"
+    );
+    assert_ne!(epoch, replacement);
+    assert_eq!(
+        session
+            .resolve_epoch_range(INCREMENTAL_EPOCH_OWNER, epoch, 0, 0)
+            .unwrap_err()
+            .code,
+        "POSITION_EPOCH_INVALID"
+    );
+    drop(current);
+    assert_epoch_matches_fresh(&mut session, "reused 20,000-cell epoch arrays");
+}
+
+#[test]
+fn epoch_array_reuse_preserves_external_references() {
+    use crate::position_epoch::{EpochBlockChunk, EpochSnapshot, PinnedCellSpan};
+    use std::sync::{Arc, Weak};
+    const OTHER_OWNER: u64 = INCREMENTAL_EPOCH_OWNER + 1;
+    enum Held {
+        Snapshot(Arc<EpochSnapshot>),
+        SnapshotWeak(Weak<EpochSnapshot>),
+        Chunks(Arc<[Arc<EpochBlockChunk>]>),
+        ChunksWeak(Weak<[Arc<EpochBlockChunk>]>),
+        Cells(Arc<[Arc<PinnedCellSpan>]>),
+        CellsWeak(Weak<[Arc<PinnedCellSpan>]>),
+        Starts(Arc<[u32]>),
+        Owner(u64),
+    }
+    const CASES: usize = 8;
+    for case in 0..CASES {
+        let mut session = session_with_document(&plain_table_document(2, 2));
+        let epoch = session
+            .pin_position_epoch(INCREMENTAL_EPOCH_OWNER, session.engine.revision())
+            .unwrap();
+        let previous = session.latest_epoch_snapshot_for_test().unwrap();
+        let chunks = previous.chunks.as_ptr();
+        let cells = previous.cells.as_ptr();
+        let old_revision = previous.document_revision;
+        let old_anchors = previous.chunks[0].anchors.clone();
+        let old_cell = previous.cells[0].as_ref().clone();
+        let old_starts = previous.scalar_starts.to_vec();
+        let held = match case {
+            0 => Held::Snapshot(previous.clone()),
+            1 => Held::SnapshotWeak(Arc::downgrade(&previous)),
+            2 => Held::Chunks(previous.chunks.clone()),
+            3 => Held::ChunksWeak(Arc::downgrade(&previous.chunks)),
+            4 => Held::Cells(previous.cells.clone()),
+            5 => Held::CellsWeak(Arc::downgrade(&previous.cells)),
+            6 => Held::Starts(previous.scalar_starts.clone()),
+            _ => Held::Owner(
+                session
+                    .pin_position_epoch(OTHER_OWNER, session.engine.revision())
+                    .unwrap(),
+            ),
+        };
+        drop(previous);
+        submit_epoch_edit(&mut session, epoch, INCREMENTAL_EPOCH_REQUEST, 0, 0, "x").unwrap();
+        session
+            .pin_position_epoch(INCREMENTAL_EPOCH_OWNER, session.engine.revision())
+            .unwrap();
+        let current = session.latest_epoch_snapshot_for_test().unwrap();
+        let reusable = matches!(held, Held::Starts(_));
+        assert_eq!(
+            current.chunks.as_ptr() == chunks,
+            reusable,
+            "chunk storage, held reference case {case}"
+        );
+        assert_eq!(
+            current.cells.as_ptr() == cells,
+            reusable,
+            "cell storage, held reference case {case}"
+        );
+        match held {
+            Held::Snapshot(old) => {
+                assert_eq!(old.document_revision, old_revision);
+                assert_eq!(old.chunks[0].anchors, old_anchors);
+                assert_eq!(old.cells[0].as_ref(), &old_cell);
+                assert_eq!(old.scalar_starts.as_ref(), old_starts);
+            }
+            Held::SnapshotWeak(old) => assert!(old.upgrade().is_none()),
+            Held::Chunks(old) => assert_eq!(old[0].anchors, old_anchors),
+            Held::ChunksWeak(old) => assert!(old.upgrade().is_none()),
+            Held::Cells(old) => assert_eq!(old[0].as_ref(), &old_cell),
+            Held::CellsWeak(old) => assert!(old.upgrade().is_none()),
+            Held::Starts(old) => assert_eq!(old.as_ref(), old_starts),
+            Held::Owner(old) => {
+                assert!(session.resolve_epoch_range(OTHER_OWNER, old, 0, 0).is_ok())
+            }
+        }
+        drop(current);
+        assert_epoch_matches_fresh(&mut session, &format!("held reference case {case}"));
+    }
+}
+
+#[test]
+fn exclusive_epoch_arrays_reuse_while_another_owner_keeps_an_older_snapshot() {
+    const OLDER_OWNER: u64 = INCREMENTAL_EPOCH_OWNER + 1;
+    let mut session = session_with_document(&plain_table_document(2, 2));
+    let older_epoch = session
+        .pin_position_epoch(OLDER_OWNER, session.engine.revision())
+        .unwrap();
+    let older = session.latest_epoch_snapshot_for_test().unwrap();
+    let older_revision = older.document_revision;
+    let older_anchors = older.chunks[0].anchors.clone();
+    let older_cells = older.cells.to_vec();
+    native_epoch_edit(&mut session, INCREMENTAL_EPOCH_REQUEST, 0, 0, "x").unwrap();
+    let first_epoch = session
+        .pin_position_epoch(INCREMENTAL_EPOCH_OWNER, session.engine.revision())
+        .unwrap();
+    let first = session.latest_epoch_snapshot_for_test().unwrap();
+    assert!(!std::sync::Arc::ptr_eq(&older, &first));
+    let chunks = first.chunks.as_ptr();
+    let cells = first.cells.as_ptr();
+    drop(first);
+    submit_epoch_edit(
+        &mut session,
+        first_epoch,
+        INCREMENTAL_EPOCH_REQUEST + 1,
+        0,
+        0,
+        "y",
+    )
+    .unwrap();
+    session
+        .pin_position_epoch(INCREMENTAL_EPOCH_OWNER, session.engine.revision())
+        .unwrap();
+    let current = session.latest_epoch_snapshot_for_test().unwrap();
+    assert_eq!(current.chunks.as_ptr(), chunks);
+    assert_eq!(current.cells.as_ptr(), cells);
+    assert_eq!(older.document_revision, older_revision);
+    assert_eq!(older.chunks[0].anchors, older_anchors);
+    assert_eq!(older.cells.as_ref(), older_cells);
+    assert!(session
+        .resolve_epoch_range(OLDER_OWNER, older_epoch, 0, 0)
+        .is_ok());
+    drop(current);
+    assert_epoch_matches_fresh(
+        &mut session,
+        "another owner retains a different older snapshot",
+    );
+}
+
+#[test]
 fn restoring_a_snapshot_clears_the_latest_epoch() {
     let mut session = session_with_text("snapshot epoch");
     let saved = session.export_snapshot(INCREMENTAL_EPOCH_REQUEST).unwrap();

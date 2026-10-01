@@ -84,6 +84,18 @@ pub(crate) struct EpochSnapshot {
     pub(crate) retained_bytes: usize,
 }
 
+pub(crate) struct EpochSnapshotUpdate {
+    yrs_state_epoch: u64,
+    document_revision: u64,
+    chunks: Vec<Arc<EpochBlockChunk>>,
+    chunk_indexes: Vec<usize>,
+    cells: Vec<Arc<PinnedCellSpan>>,
+    cell_indexes: Vec<usize>,
+    scalar_starts: Arc<[u32]>,
+    retained_bytes: usize,
+    boundary_count: usize,
+}
+
 impl BoundaryAnchors {
     pub(crate) fn ancestor_chain(&self) -> impl Iterator<Item = &AncestorAnchors> + Clone {
         std::iter::successors(self.ancestor.as_deref(), |node| node.parent.as_deref())
@@ -210,6 +222,15 @@ impl EpochSnapshot {
         starts: &[u32],
         cells: impl Iterator<Item = (usize, &'a Arc<PinnedCellSpan>)>,
     ) -> Option<()> {
+        Self::attach_cells_to_chunks(chunks, starts, cells, Some)
+    }
+
+    fn attach_cells_to_chunks<'a>(
+        chunks: &mut [Arc<EpochBlockChunk>],
+        starts: &[u32],
+        cells: impl Iterator<Item = (usize, &'a Arc<PinnedCellSpan>)>,
+        chunk_index: impl Fn(usize) -> Option<usize>,
+    ) -> Option<()> {
         for (cell, span) in cells {
             if span.points.is_empty() {
                 continue;
@@ -222,7 +243,7 @@ impl EpochSnapshot {
                     .partition_point(|start| *start <= scalar)
                     .checked_sub(1)?;
                 let end = starts.get(block + 1).copied().unwrap_or(u32::MAX);
-                let chunk = Arc::get_mut(&mut chunks[block])?;
+                let chunk = Arc::get_mut(chunks.get_mut(chunk_index(block)?)?)?;
                 while points.peek().is_some_and(|(relative, _)| {
                     relative
                         .checked_add(origin)
@@ -243,59 +264,6 @@ impl EpochSnapshot {
             }
         }
         Some(())
-    }
-
-    pub(crate) fn with_rebuilt_chunks(
-        &self,
-        yrs_state_epoch: u64,
-        document_revision: u64,
-        mut chunks: Vec<Arc<EpochBlockChunk>>,
-        cells: Vec<Arc<PinnedCellSpan>>,
-        replaced_chunks: &[usize],
-        replaced_cells: &[usize],
-    ) -> Option<Self> {
-        if chunks.len() != self.chunks.len() || cells.len() != self.cells.len() {
-            return None;
-        }
-        let mut starts = self.scalar_starts.to_vec();
-        let mut delta = 0i64;
-        for (replacement, &index) in replaced_chunks.iter().enumerate() {
-            delta = delta
-                .checked_add(i64::try_from(chunks[index].anchors.len()).ok()?)?
-                .checked_sub(i64::try_from(self.chunks[index].anchors.len()).ok()?)?;
-            let end = replaced_chunks
-                .get(replacement + 1)
-                .map_or(starts.len(), |next| next + 1);
-            if delta != 0 {
-                for start in &mut starts[index + 1..end] {
-                    *start = u32::try_from(i64::from(*start).checked_add(delta)?).ok()?;
-                }
-            }
-        }
-        Self::attach_cells(
-            &mut chunks,
-            &starts,
-            replaced_cells.iter().map(|index| (*index, &cells[*index])),
-        )?;
-        let mut retained_bytes = self.retained_bytes;
-        for &index in replaced_chunks {
-            retained_bytes = retained_bytes
-                .checked_sub(self.chunks.get(index)?.retained_bytes)?
-                .checked_add(chunks.get(index)?.retained_bytes)?;
-        }
-        for &index in replaced_cells {
-            retained_bytes = retained_bytes
-                .checked_sub(self.cells.get(index)?.retained_bytes()?)?
-                .checked_add(cells.get(index)?.retained_bytes()?)?;
-        }
-        Some(Self {
-            yrs_state_epoch,
-            document_revision,
-            chunks: chunks.into(),
-            scalar_starts: starts.into(),
-            cells: cells.into(),
-            retained_bytes,
-        })
     }
 
     pub(crate) fn boundary_count(&self) -> usize {
@@ -340,6 +308,125 @@ impl EpochSnapshot {
             }
         }
         ancestors.len()
+    }
+}
+
+impl EpochSnapshotUpdate {
+    pub(crate) fn new(
+        previous: &EpochSnapshot,
+        yrs_state_epoch: u64,
+        document_revision: u64,
+        mut chunks: Vec<Arc<EpochBlockChunk>>,
+        cells: Vec<Arc<PinnedCellSpan>>,
+        chunk_indexes: Vec<usize>,
+        cell_indexes: Vec<usize>,
+    ) -> Option<Self> {
+        if chunks.len() != chunk_indexes.len() || cells.len() != cell_indexes.len() {
+            return None;
+        }
+        let mut starts = previous.scalar_starts.to_vec();
+        let mut delta = 0i64;
+        for (replacement, (&index, chunk)) in chunk_indexes.iter().zip(&chunks).enumerate() {
+            delta = delta
+                .checked_add(i64::try_from(chunk.anchors.len()).ok()?)?
+                .checked_sub(i64::try_from(previous.chunks.get(index)?.anchors.len()).ok()?)?;
+            let end = chunk_indexes
+                .get(replacement + 1)
+                .map_or(starts.len(), |next| next + 1);
+            if delta != 0 {
+                for start in starts.get_mut(index + 1..end)? {
+                    *start = u32::try_from(i64::from(*start).checked_add(delta)?).ok()?;
+                }
+            }
+        }
+        EpochSnapshot::attach_cells_to_chunks(
+            &mut chunks,
+            &starts,
+            cell_indexes.iter().copied().zip(&cells),
+            |block| chunk_indexes.binary_search(&block).ok(),
+        )?;
+        let mut retained_bytes = previous.retained_bytes;
+        for (&index, chunk) in chunk_indexes.iter().zip(&chunks) {
+            retained_bytes = retained_bytes
+                .checked_sub(previous.chunks.get(index)?.retained_bytes)?
+                .checked_add(chunk.retained_bytes)?;
+        }
+        for (&index, cell) in cell_indexes.iter().zip(&cells) {
+            retained_bytes = retained_bytes
+                .checked_sub(previous.cells.get(index)?.retained_bytes()?)?
+                .checked_add(cell.retained_bytes()?)?;
+        }
+        let boundary_count = if let Some(last) = starts.len().checked_sub(1) {
+            let chunk = chunk_indexes
+                .binary_search(&last)
+                .ok()
+                .map(|index| &chunks[index])
+                .or_else(|| previous.chunks.get(last))?;
+            (starts[last] as usize).checked_add(chunk.anchors.len())?
+        } else {
+            0
+        };
+        Some(Self {
+            yrs_state_epoch,
+            document_revision,
+            chunks,
+            chunk_indexes,
+            cells,
+            cell_indexes,
+            scalar_starts: starts.into(),
+            retained_bytes,
+            boundary_count,
+        })
+    }
+
+    fn into_snapshot(mut self, previous: &EpochSnapshot) -> EpochSnapshot {
+        let mut chunks = previous.chunks.to_vec();
+        let mut cells = previous.cells.to_vec();
+        self.replace_arrays(&mut chunks, &mut cells);
+        EpochSnapshot {
+            yrs_state_epoch: self.yrs_state_epoch,
+            document_revision: self.document_revision,
+            chunks: chunks.into(),
+            scalar_starts: self.scalar_starts,
+            cells: cells.into(),
+            retained_bytes: self.retained_bytes,
+        }
+    }
+
+    fn replace_arrays(
+        &mut self,
+        chunks: &mut [Arc<EpochBlockChunk>],
+        cells: &mut [Arc<PinnedCellSpan>],
+    ) {
+        for (index, chunk) in self
+            .chunk_indexes
+            .iter()
+            .copied()
+            .zip(self.chunks.drain(..))
+        {
+            chunks[index] = chunk;
+        }
+        for (index, cell) in self.cell_indexes.iter().copied().zip(self.cells.drain(..)) {
+            cells[index] = cell;
+        }
+    }
+
+    fn try_apply_exclusive(mut self, previous: &mut Arc<EpochSnapshot>) -> Result<(), Self> {
+        let Some(previous) = Arc::get_mut(previous) else {
+            return Err(self);
+        };
+        let Some(chunks) = Arc::get_mut(&mut previous.chunks) else {
+            return Err(self);
+        };
+        let Some(cells) = Arc::get_mut(&mut previous.cells) else {
+            return Err(self);
+        };
+        self.replace_arrays(chunks, cells);
+        previous.yrs_state_epoch = self.yrs_state_epoch;
+        previous.document_revision = self.document_revision;
+        previous.scalar_starts = self.scalar_starts;
+        previous.retained_bytes = self.retained_bytes;
+        Ok(())
     }
 }
 
@@ -411,6 +498,13 @@ pub(crate) struct PositionEpochStore {
     limits: PositionEpochLimits,
 }
 
+struct PositionEpochInstallation {
+    replacing: Option<u64>,
+    epoch_id: u64,
+    next_epoch_id: u64,
+    next_retained: usize,
+}
+
 impl PositionEpochStore {
     pub(crate) fn new(limits: PositionEpochLimits) -> Self {
         Self {
@@ -439,7 +533,45 @@ impl PositionEpochStore {
         editor_lineage: u64,
         snapshot: Arc<EpochSnapshot>,
     ) -> Result<u64, SessionError> {
-        self.admit_boundary_count(snapshot.boundary_count())?;
+        let installation =
+            self.prepare_install(owner_id, snapshot.boundary_count(), snapshot.retained_bytes)?;
+        Ok(self.commit_install(owner_id, editor_lineage, snapshot, installation))
+    }
+
+    pub(crate) fn install_update(
+        &mut self,
+        owner_id: u64,
+        editor_lineage: u64,
+        latest: &mut Arc<EpochSnapshot>,
+        update: EpochSnapshotUpdate,
+    ) -> Result<u64, SessionError> {
+        let replacing_latest = self
+            .owner_pins
+            .get(&owner_id)
+            .and_then(|epoch| self.epochs.get(epoch))
+            .is_some_and(|epoch| Arc::ptr_eq(&epoch.snapshot, latest));
+        let installation =
+            self.prepare_install(owner_id, update.boundary_count, update.retained_bytes)?;
+        let update = if replacing_latest {
+            self.epochs
+                .remove(&installation.replacing.expect("replaced owner epoch"));
+            update.try_apply_exclusive(latest).err()
+        } else {
+            Some(update)
+        };
+        if let Some(update) = update {
+            *latest = Arc::new(update.into_snapshot(latest));
+        }
+        Ok(self.commit_install(owner_id, editor_lineage, latest.clone(), installation))
+    }
+
+    fn prepare_install(
+        &self,
+        owner_id: u64,
+        boundary_count: usize,
+        retained_bytes: usize,
+    ) -> Result<PositionEpochInstallation, SessionError> {
+        self.admit_boundary_count(boundary_count)?;
         let replacing = self.owner_pins.get(&owner_id).copied();
         if replacing.is_none() && self.owner_pins.len() >= self.limits.max_owners {
             return Err(limit_error(
@@ -449,7 +581,6 @@ impl PositionEpochStore {
             ));
         }
 
-        let retained_bytes = snapshot.retained_bytes;
         let replaced_bytes = replacing
             .and_then(|epoch_id| self.epochs.get(&epoch_id))
             .map_or(0, |epoch| epoch.retained_bytes);
@@ -473,7 +604,7 @@ impl PositionEpochStore {
         }
 
         let epoch_id = self.next_epoch_id;
-        self.next_epoch_id = self.next_epoch_id.checked_add(1).ok_or_else(|| {
+        let next_epoch_id = self.next_epoch_id.checked_add(1).ok_or_else(|| {
             SessionError::new(
                 ErrorDomain::Boundary,
                 "POSITION_EPOCH_EXHAUSTED",
@@ -481,6 +612,29 @@ impl PositionEpochStore {
             )
         })?;
 
+        Ok(PositionEpochInstallation {
+            replacing,
+            epoch_id,
+            next_epoch_id,
+            next_retained,
+        })
+    }
+
+    fn commit_install(
+        &mut self,
+        owner_id: u64,
+        editor_lineage: u64,
+        snapshot: Arc<EpochSnapshot>,
+        installation: PositionEpochInstallation,
+    ) -> u64 {
+        let PositionEpochInstallation {
+            replacing,
+            epoch_id,
+            next_epoch_id,
+            next_retained,
+        } = installation;
+        let retained_bytes = snapshot.retained_bytes;
+        self.next_epoch_id = next_epoch_id;
         if let Some(replaced) = replacing {
             self.epochs.remove(&replaced);
         }
@@ -494,7 +648,7 @@ impl PositionEpochStore {
             },
         );
         self.retained_bytes = next_retained;
-        Ok(epoch_id)
+        epoch_id
     }
 
     pub(crate) fn boundary(
@@ -578,3 +732,7 @@ fn limit_error(field: &'static str, limit: usize, actual: usize) -> SessionError
     error.details = Some(serde_json::json!({"field": field}));
     error
 }
+
+#[cfg(test)]
+#[path = "position_epoch_tests.rs"]
+mod tests;

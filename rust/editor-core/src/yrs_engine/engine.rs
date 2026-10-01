@@ -631,10 +631,10 @@ impl YrsDocumentEngine {
         )
     }
 
-    pub(crate) fn update_position_epoch_snapshot(
+    pub(crate) fn prepare_position_epoch_update(
         &self,
         previous: &crate::position_epoch::EpochSnapshot,
-    ) -> Option<crate::position_epoch::EpochSnapshot> {
+    ) -> Option<crate::position_epoch::EpochSnapshotUpdate> {
         use std::collections::BTreeSet;
         use yrs::types::xml::XmlElementRef;
         let scopes = self.change_scopes_since(previous.document_revision)?;
@@ -700,11 +700,7 @@ impl YrsDocumentEngine {
                 .collect::<Vec<_>>(),
             &positions,
         )?;
-        let mut cells = previous.cells.to_vec();
-        for (&index, span) in cell_indexes.iter().zip(updated_cells) {
-            cells[index] = span;
-        }
-        let mut chunks = previous.chunks.to_vec();
+        let mut chunks = Vec::with_capacity(blocks.len());
         let txn = self.doc.transact();
         let branches = state.block_branch_index.as_ref()?;
         for (index, positions) in positions {
@@ -713,31 +709,34 @@ impl YrsDocumentEngine {
                 for boundary in &mut anchors {
                     boundary.pinned_cell = None;
                 }
-                chunks[index] = Arc::new(crate::position_epoch::EpochBlockChunk::new(anchors)?);
+                chunks.push(Arc::new(crate::position_epoch::EpochBlockChunk::new(
+                    anchors,
+                )?));
                 #[cfg(test)]
                 super::observability::record_epoch_block_rebuild();
                 continue;
             }
             let block = branches.block_branches(index)?;
             let element = XmlElementRef::from(block.element.get_branch(&txn)?);
-            chunks[index] = super::position::boundary_chunk_for_block(
+            chunks.push(super::position::boundary_chunk_for_block(
                 &txn,
                 &element,
                 state.position_map.effective_doc_start(index),
                 positions,
                 &self.schema,
                 previous.chunks[index].ancestor.clone(),
-            )?;
+            )?);
             #[cfg(test)]
             super::observability::record_epoch_block_rebuild();
         }
-        previous.with_rebuilt_chunks(
+        crate::position_epoch::EpochSnapshotUpdate::new(
+            previous,
             self.yrs_state_epoch,
             self.revision,
             chunks,
-            cells,
-            &blocks,
-            &cell_indexes,
+            updated_cells,
+            blocks,
+            cell_indexes,
         )
     }
 
