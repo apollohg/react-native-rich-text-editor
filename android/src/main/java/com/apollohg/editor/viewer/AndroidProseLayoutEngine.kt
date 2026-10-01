@@ -205,26 +205,31 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
     internal var tablePreparationWorkerLimit = MAX_TABLE_PREPARATION_WORKERS
     internal var tableCellLayoutObserverForTesting: ((Int, PreparedProseLayout) -> Unit)? = null
 
-    private data class TablePreparationWorkers(
+    private data class TablePreparationPlan(
         val indices: Set<Int> = emptySet(),
+        val transientIndices: Set<Int> = emptySet(),
         val engines: List<StaticLayoutAndroidProseLayoutEngine> = emptyList(),
         val contexts: List<PreparedCellShapeBuildContext> = emptyList(),
         val prepare: List<(com.apollohg.editor.tables.TableGridCell, Float) -> PreparedProseLayout> = emptyList()
     )
 
-    private fun tablePreparationWorkers(
+    private fun tablePreparationPlan(
         document: ViewerDocument, table: com.apollohg.editor.tables.TableSurfaceSource, tableKey: String,
         theme: PreparedProseTheme, cellMode: Boolean, context: PreparedCellShapeBuildContext?,
-        prepare: (com.apollohg.editor.tables.TableGridCell, Float, StaticLayoutAndroidProseLayoutEngine, PreparedCellShapeBuildContext?) -> PreparedProseLayout
-    ): TablePreparationWorkers {
+        prepare: (com.apollohg.editor.tables.TableGridCell, Float, StaticLayoutAndroidProseLayoutEngine, PreparedCellShapeBuildContext?, Boolean) -> PreparedProseLayout
+    ): TablePreparationPlan {
         val count = minOf(MAX_TABLE_PREPARATION_WORKERS, tablePreparationWorkerLimit.coerceAtLeast(1),
             (Runtime.getRuntime().availableProcessors() - 1).coerceAtLeast(1))
-        if (cellMode || count <= 1 || theme.codeHighlighting != null || reusableTableCell != null) return TablePreparationWorkers()
+        if (cellMode || theme.codeHighlighting != null || reusableTableCell != null) return TablePreparationPlan()
         val frequencies = table.cells.groupingBy { it.contentKey }.eachCount()
-        val indices = table.cells.filter { source ->
+        val eligible = table.cells.filter { source ->
             (context == null || frequencies[source.contentKey] == 1) && document.cellSupportsBackgroundPreparation(source, tableKey)
-        }.mapTo(mutableSetOf()) { it.sourceIndex }
-        if (indices.isEmpty()) return TablePreparationWorkers()
+        }
+        val transientIndices = if (table.cells.size > com.apollohg.editor.tables.TableCellLayoutStore.MAXIMUM_RESIDENT_LAYOUTS) {
+            eligible.filter { frequencies[it.contentKey] == 1 }.mapTo(mutableSetOf()) { it.sourceIndex }
+        } else emptySet()
+        val indices = if (count > 1) eligible.mapTo(mutableSetOf()) { it.sourceIndex } else emptySet()
+        if (indices.isEmpty()) return TablePreparationPlan(transientIndices = transientIndices)
         val observerLock = Any()
         val engines = List(count) {
             StaticLayoutAndroidProseLayoutEngine().also { worker ->
@@ -236,8 +241,8 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
             }
         }
         val contexts = List(count) { context?.fork() }
-        return TablePreparationWorkers(indices, engines, contexts.filterNotNull(), engines.mapIndexed { index, worker ->
-            { cell, width -> prepare(cell, width, worker, contexts[index]) }
+        return TablePreparationPlan(indices, transientIndices, engines, contexts.filterNotNull(), engines.mapIndexed { index, worker ->
+            { cell, width -> prepare(cell, width, worker, contexts[index], cell.sourceIndex !in transientIndices) }
         })
     }
 
@@ -482,7 +487,8 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                 }
                 fun prepareCell(cell: com.apollohg.editor.tables.TableGridCell, cellWidth: Float,
                                 worker: StaticLayoutAndroidProseLayoutEngine? = null,
-                                workerContext: PreparedCellShapeBuildContext? = null): PreparedProseLayout {
+                                workerContext: PreparedCellShapeBuildContext? = null,
+                                retainShape: Boolean = true): PreparedProseLayout {
                     val engine = worker ?: this
                     val context = if (worker == null) cellShapeContext else workerContext
                     val source = surfaceSource.cells.getOrNull(cell.sourceIndex)
@@ -503,7 +509,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                         build()
                     } else {
                         val shapeKey = cellShapeKey(cell.contentKey, child, childWidth, childTheme, density, shapeStyleDigest)
-                        context.resolve(shapeKey, build) { shape ->
+                        context.resolve(shapeKey, build, retainShape = retainShape) { shape ->
                             engine.bindCellShape(
                                 shape, child, childKey, childTheme, childWidth, density,
                                 warningSemanticGeneration, context
@@ -530,8 +536,8 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                     previous.replacingCells(contents,
                         { record }, surfaceSource, document.tableAttributes) { cell, width -> prepareCell(cell, width) }
                 } else {
-                    val workers = tablePreparationWorkers(document, surfaceSource, tableKey, theme, cellMode, cellShapeContext) { cell, width, worker, context ->
-                        prepareCell(cell, width, worker, context)
+                    val workers = tablePreparationPlan(document, surfaceSource, tableKey, theme, cellMode, cellShapeContext) { cell, width, worker, context, retainShape ->
+                        prepareCell(cell, width, worker, context, retainShape)
                     }
                     try {
                         ViewerTableSurface(document.tablePresentationIdentity(tableKey), record, tableWidth.toFloat(),
@@ -544,8 +550,9 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                                 } }
                             },
                             prepareCellWorkers = workers.prepare,
-                            parallelCellIndices = workers.indices) { cell, width ->
-                            prepareCell(cell, width)
+                            parallelCellIndices = workers.indices,
+                            transientCellIndices = workers.transientIndices) { cell, width ->
+                            prepareCell(cell, width, retainShape = cell.sourceIndex !in workers.transientIndices)
                         }
                     } finally {
                         workers.contexts.forEach { it.close() }

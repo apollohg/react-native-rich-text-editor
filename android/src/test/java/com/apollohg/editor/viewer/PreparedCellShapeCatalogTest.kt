@@ -20,6 +20,32 @@ import kotlin.concurrent.thread
 @Config(sdk = [34])
 internal class PreparedCellShapeCatalogTest {
     @Test
+    fun `transient misses skip shape ownership while live hits remain reusable`() {
+        val catalog = PreparedCellShapeCatalog()
+        val context = catalog.newBuildContext()
+        val existing = shape("existing")
+        val fresh = bareLayout()
+        catalog.synchronizeOwners(listOf(owner(existing)))
+        try {
+            val miss = context.resolve(shape("missing").key, { fresh }, retainShape = false) {
+                error("Missing content must not bind")
+            }
+            assertSame(fresh, miss)
+            assertNull(miss.cellShape)
+            val hit = context.resolve(existing.key, { error("Live shape must not rebuild") }, retainShape = false) {
+                it.localLayout
+            }
+            assertSame(existing, hit.cellShape)
+            val rejectedBinding = context.resolve(existing.key, { fresh }, retainShape = false) { null }
+            assertSame(fresh, rejectedBinding)
+            assertNull(rejectedBinding.cellShape)
+        } finally { context.close() }
+        assertSame(fresh, context.resolve(existing.key, { fresh }, retainShape = false) {
+            error("Closed contexts must rebuild independently")
+        })
+    }
+
+    @Test
     fun `owner synchronization traverses aliased roots once and preserves first shape`() {
         val catalog = PreparedCellShapeCatalog()
         val first = shape("shared-key")
@@ -109,7 +135,7 @@ internal class PreparedCellShapeCatalogTest {
                     for (index in worker until uniqueCells step workerCount) {
                         val key = shape("parallel-$index").key
                         val prepared = context.resolve(key,
-                            { bareLayout().copy(key = bareLayout().key.copy(semanticKey = key.contentKey)) }, { null })
+                            { bareLayout().copy(key = bareLayout().key.copy(semanticKey = key.contentKey)) }, bind = { null })
                         references.add(WeakReference(requireNotNull(prepared.cellShape)))
                         store.insert(prepared)
                     }
@@ -136,7 +162,7 @@ internal class PreparedCellShapeCatalogTest {
         fun prepare(index: Int): WeakReference<PreparedCellShape> {
             val key = shape("cold-$index").key
             val prepared = (if (index % 2 == 0) context else worker).resolve(key,
-                { bareLayout() }, { null })
+                { bareLayout() }, bind = { null })
             return WeakReference(requireNotNull(prepared.cellShape))
         }
         val references = (0 until uniqueCells).map(::prepare)

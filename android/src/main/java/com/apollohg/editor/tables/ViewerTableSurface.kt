@@ -47,6 +47,7 @@ internal class PreparedViewerTableCell {
         isHeader: Boolean,
         attributesKey: String?,
         layoutStore: TableCellLayoutStore = TableCellLayoutStore(),
+        retainContent: Boolean = true,
         prepareContent: () -> PreparedProseLayout = { content }
     ) {
         this.sourceIndex = sourceIndex
@@ -78,7 +79,7 @@ internal class PreparedViewerTableCell {
         metadataRetainedBytes = METADATA_RETAINED_BYTES +
             accessibilityText.length * 2L + codeHighlightBlocks.sumOf { CODE_DESCRIPTOR_RETAINED_BYTES + it.text.length * 2L } +
             highlightedCodeKeys.sumOf { it.length * 2L }
-        layoutStore.insert(content)
+        if (retainContent || content.cellPreparation == null) layoutStore.insert(content)
     }
 
 
@@ -184,10 +185,12 @@ internal class ViewerTableSurface private constructor(
         reuseCell: ((TableGridCell, Float) -> PreparedViewerTableCell?)? = null,
         prepareCellWorkers: List<(TableGridCell, Float) -> PreparedProseLayout> = emptyList(),
         parallelCellIndices: Set<Int> = emptySet(),
+        transientCellIndices: Set<Int> = emptySet(),
         prepareCell: (TableGridCell, Float) -> PreparedProseLayout
     ) : this(identity, hostViewportWidth, style, isRightToLeft,
         prepare(record, hostViewportWidth, style, isRightToLeft, displayScale, themeDigest,
-            fontEnvironmentRevision, textScale, sourceTable, layoutStore, reuseCell, prepareCellWorkers, parallelCellIndices, prepareCell),
+            fontEnvironmentRevision, textScale, sourceTable, layoutStore, reuseCell, prepareCellWorkers,
+            parallelCellIndices, transientCellIndices, prepareCell),
         sourceTable, sourceAttributes, editorTableId, displayScale)
 
     fun replacingCells(contents: Map<Int, PreparedProseLayout>,
@@ -293,6 +296,7 @@ internal class ViewerTableSurface private constructor(
             reuseCell: ((TableGridCell, Float) -> PreparedViewerTableCell?)?,
             prepareCellWorkers: List<(TableGridCell, Float) -> PreparedProseLayout>,
             parallelCellIndices: Set<Int>,
+            transientCellIndices: Set<Int>,
             prepareCell: (TableGridCell, Float) -> PreparedProseLayout
         ): Preparation {
             val scale = displayScale.takeIf { it.isFinite() && it > 0f } ?: 1f
@@ -301,7 +305,8 @@ internal class ViewerTableSurface private constructor(
             fun capture(cell: TableGridCell, width: Float, content: PreparedProseLayout): PreparedViewerTableCell {
                 val source = sourceTable?.cells?.getOrNull(cell.sourceIndex)
                 return PreparedViewerTableCell(cell.sourceIndex, cell.row, cell.column, cell.rowspan, cell.colspan,
-                    inset to inset, content, source?.header ?: false, source?.attrsKey, layoutStore) { prepareCell(cell, width) }
+                    inset to inset, content, source?.header ?: false, source?.attrsKey, layoutStore,
+                    retainContent = cell.sourceIndex !in transientCellIndices) { prepareCell(cell, width) }
             }
             fun prepare(cell: TableGridCell, width: Float): PreparedViewerTableCell =
                 reuseCell?.invoke(cell, width)?.relocated(cell, layoutStore)

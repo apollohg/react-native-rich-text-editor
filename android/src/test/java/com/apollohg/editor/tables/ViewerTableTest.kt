@@ -16,6 +16,7 @@ import com.apollohg.editor.viewer.PreparedProseAccessibilityNode
 import com.apollohg.editor.viewer.PreparedProseInteraction
 import com.apollohg.editor.viewer.PreparedProseLayoutRegistry
 import com.apollohg.editor.viewer.PreparedCellShapeCatalog
+import com.apollohg.editor.viewer.PreparedCellShapeBuildContext
 import com.apollohg.editor.viewer.StaticLayoutAndroidProseLayoutEngine
 import com.apollohg.editor.viewer.ViewerInline
 import com.apollohg.editor.viewer.ViewerDocument
@@ -462,10 +463,14 @@ class ViewerTableTest {
         val heights = mutableMapOf<String, Int>()
         val glyphBounds = mutableMapOf<String, List<Rect>>()
         val lineMetrics = mutableMapOf<String, List<Float>>()
+        val accessibilityNodes = mutableMapOf<String, List<PreparedProseAccessibilityNode>>()
+        val interactions = mutableMapOf<String, List<PreparedProseInteraction>>()
         var backgroundPreparations = 0
 
         @Synchronized fun record(index: Int, layout: PreparedProseLayout) {
             heights[layout.key.semanticKey] = layout.heightPx
+            accessibilityNodes[layout.key.semanticKey] = layout.accessibilityNodes
+            interactions[layout.key.semanticKey] = layout.interactions
             glyphBounds[layout.key.semanticKey] = layout.blocks.flatMap { it.fragments }.flatMap { fragment ->
                 val text = fragment.layout ?: return@flatMap listOf(Rect(fragment.bounds))
                 listOf(Rect(fragment.bounds)) + (0 until text.lineCount).map { line ->
@@ -545,28 +550,168 @@ class ViewerTableTest {
                 tablePreparationWorkerLimit = 1
                 tableCellLayoutObserverForTesting = expectedGeometry::record
             }
-            val expected = prepare(document, engine = sequential)
+            val sequentialContext = PreparedCellShapeCatalog().newBuildContext()
+            val expected = try { prepare(document, engine = sequential, context = sequentialContext) }
+                finally { sequentialContext.close() }
             val actualGeometry = CellGeometryProbe()
             val parallel = StaticLayoutAndroidProseLayoutEngine().apply {
                 tablePreparationWorkerLimit = StaticLayoutAndroidProseLayoutEngine.MAX_TABLE_PREPARATION_WORKERS
                 tableCellLayoutObserverForTesting = actualGeometry::record
             }
-            val actual = prepare(document, engine = parallel)
+            val parallelContext = PreparedCellShapeCatalog().newBuildContext()
+            val actual = try { prepare(document, engine = parallel, context = parallelContext) }
+                finally { parallelContext.close() }
             assertNull(name, actual.error)
             assertEquals(name, expected.heightPx, actual.heightPx)
             assertEquals("$name: every measured height", expectedGeometry.heights, actualGeometry.heights)
             assertEquals("$name: glyph bounds", expectedGeometry.glyphBounds, actualGeometry.glyphBounds)
             assertEquals("$name: line metrics", expectedGeometry.lineMetrics, actualGeometry.lineMetrics)
+            assertEquals("$name: accessibility", expectedGeometry.accessibilityNodes, actualGeometry.accessibilityNodes)
+            assertEquals("$name: interactions", expectedGeometry.interactions, actualGeometry.interactions)
             assertEquals("$name: engine work counters", sequential.staticLayoutsBuilt, parallel.staticLayoutsBuilt)
             expected.blocks.zip(actual.blocks).forEach { (left, right) ->
                 val lhs = left.tableSurface ?: return@forEach
                 val rhs = requireNotNull(right.tableSurface)
                 assertEquals(name, lhs.layout, rhs.layout)
                 assertEquals(name, lhs.cells.map { it.contentHeightPx }, rhs.cells.map { it.contentHeightPx })
+                assertEquals(name, lhs.cells.map { it.accessibilityText }, rhs.cells.map { it.accessibilityText })
+                if (name == "plain-1000x20") {
+                    for (surface in listOf(lhs, rhs)) {
+                        assertEquals("Unique cold measurements must not populate the resident store", 0, surface.layoutStore.count)
+                        assertEquals("Unique cold measurements must not churn resident accounting", 0L, surface.layoutStore.revision)
+                    }
+                    parallel.tableCellLayoutObserverForTesting = null
+                    val rebuilt = CellGeometryProbe()
+                    for (cell in listOf(rhs.cells.first(), rhs.cells.last())) {
+                        val content = cell.content
+                        rebuilt.record(cell.sourceIndex, content)
+                        val semanticKey = content.key.semanticKey
+                        assertEquals(actualGeometry.heights[semanticKey], rebuilt.heights[semanticKey])
+                        assertEquals(actualGeometry.glyphBounds[semanticKey], rebuilt.glyphBounds[semanticKey])
+                        assertEquals(actualGeometry.lineMetrics[semanticKey], rebuilt.lineMetrics[semanticKey])
+                        assertEquals(actualGeometry.accessibilityNodes[semanticKey], rebuilt.accessibilityNodes[semanticKey])
+                        assertEquals(actualGeometry.interactions[semanticKey], rebuilt.interactions[semanticKey])
+                    }
+                }
             }
             if (name == "plain-1000x20" && Runtime.getRuntime().availableProcessors() > 2) {
                 assertTrue("The equivalence test must exercise worker preparation", actualGeometry.backgroundPreparations > 0)
             }
+        }
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun largeColdTableRetainsDuplicateShapesAndReusesAnotherParentsShape() {
+        val cellCount = TableCellLayoutStore.MAXIMUM_RESIDENT_LAYOUTS + 1
+        val repeated = "shared café العربية 👩🏽‍💻"
+        fun document(seedOnly: Boolean) = compileWithRust(ProseViewerRequest(
+            ProseViewerSource.Json(PlainTableFixture.document(cellCount, 1) { row, _ ->
+                if (row == 0 || (!seedOnly && row == 1)) repeated else "unique $seedOnly $row"
+            }), ProseViewerConfiguration(CONFIG, imagesEnabled = true)))
+        val catalog = PreparedCellShapeCatalog()
+        val context = catalog.newBuildContext()
+        var builds = 0
+        val engine = StaticLayoutAndroidProseLayoutEngine().apply {
+            tablePreparationWorkerLimit = 1
+            tableCellPreparationObserver = { _, _ -> builds++ }
+        }
+        val donor = try { prepare(document(false), engine = engine, context = context) }
+            finally { context.close() }
+        val donorTable = requireNotNull(donor.blocks.single().tableSurface)
+        assertEquals("Duplicate text must shape once", cellCount - 1, builds)
+        assertEquals("Only duplicate cells retain initial content", 2, donorTable.layoutStore.count)
+        val first = requireNotNull(donorTable.cells[0].cachedContent)
+        val second = requireNotNull(donorTable.cells[1].cachedContent)
+        assertNotNull(first.cellShape)
+        assertSame(first.cellShape, second.cellShape)
+        assertTrue(first.key.semanticKey != second.key.semanticKey)
+        assertTrue(donorTable.cells.drop(2).all { it.cachedContent == null })
+        catalog.synchronizeOwners(donorTable.cellShapeOwnerLayouts)
+        val seededContext = catalog.newBuildContext()
+        builds = 0
+        val seeded = try { prepare(document(true), engine = engine, context = seededContext) }
+            finally { seededContext.close() }
+        val seededTable = requireNotNull(seeded.blocks.single().tableSurface)
+        assertEquals("Locally unique cells must still reuse live donor shapes", cellCount - 1, builds)
+        assertEquals(0, seededTable.layoutStore.count)
+        assertEquals(0L, seededTable.layoutStore.revision)
+        val rebuilt = seededTable.cells.first().content
+        assertNull(rebuilt.error)
+        assertEquals(seededTable.cells.first().contentHeightPx, rebuilt.heightPx)
+        assertEquals(first.accessibilityNodes, rebuilt.accessibilityNodes)
+        assertEquals(first.interactions, rebuilt.interactions)
+        assertTrue(first.key.semanticKey != rebuilt.key.semanticKey)
+        val last = seededTable.cells.last()
+        assertEquals(last.contentHeightPx, last.content.heightPx)
+        assertEquals(last.accessibilityText, TableAccessibility.text(last.content).joinToString(TableAccessibility.LABEL_SEPARATOR))
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun largeColdTableDrawingRebuildsOnlyMountedWindowsAfterContextCloses() {
+        val document = compileWithRust(ProseViewerRequest(
+            ProseViewerSource.Json(PlainTableFixture.document(1_000, 20, PlainTableFixture::coordinateText)),
+            ProseViewerConfiguration(CONFIG, imagesEnabled = true)))
+        val engine = StaticLayoutAndroidProseLayoutEngine()
+        val context = PreparedCellShapeCatalog().newBuildContext()
+        val layout = try { prepare(document, engine = engine, context = context) }
+            finally { context.close() }
+        val surface = requireNotNull(layout.blocks.single().tableSurface)
+        assertEquals(0, surface.layoutStore.count)
+        val rebuilt = mutableListOf<Int>()
+        engine.tableCellPreparationObserver = { index, _ -> rebuilt += index }
+        var mountedCount = 0
+        val width = 120
+        val height = 80
+        withMountedDrawing(layout, width, height, contentOriginXPx = 0, contentOriginYPx = 0,
+            viewFactory = { activity -> PreparedProseDrawingView(activity).also { view ->
+                view.onMountedTableCellsDrawnForTesting = { mountedCount = it }
+            } }) { drawing ->
+            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            try {
+                fun draw() = drawing.draw(Canvas(bitmap))
+                draw()
+                assertTrue("The mounted window must rebuild evicted cells", rebuilt.isNotEmpty())
+                assertTrue("Mount and first draw must prepare only their window", rebuilt.size <= mountedCount)
+                assertEquals("No cell may be built twice for the first frame", rebuilt.size, rebuilt.toSet().size)
+                val firstWindow = rebuilt.toSet()
+                rebuilt.clear()
+                draw()
+                assertTrue("A repeated frame must reuse prepared cells", rebuilt.isEmpty())
+                drawing.install(layout, contentOriginYPx = -(layout.heightPx - height))
+                draw()
+                assertTrue("The far window must rebuild its own content", rebuilt.isNotEmpty())
+                assertTrue(rebuilt.size <= mountedCount)
+                assertTrue(rebuilt.none { it in firstWindow })
+                rebuilt.clear()
+                draw()
+                assertTrue(rebuilt.isEmpty())
+                drawing.alpha = 0f
+                draw()
+                assertEquals(0, mountedCount)
+                assertTrue("An empty viewport must not rebuild cells", rebuilt.isEmpty())
+                drawing.alpha = 1f
+                drawing.install(layout, contentOriginYPx = 0)
+                draw()
+                assertTrue(mountedCount > 0)
+                assertTrue(rebuilt.size <= mountedCount)
+                rebuilt.clear()
+                val parent = drawing.parent as ViewGroup
+                val parameters = drawing.layoutParams
+                parent.removeView(drawing)
+                assertFalse(drawing.isAttachedToWindow)
+                assertTrue("Detaching must not prepare cells", rebuilt.isEmpty())
+                parent.addView(drawing, parameters)
+                drawing.layout(0, 0, width, height)
+                assertTrue(drawing.isAttachedToWindow)
+                draw()
+                assertTrue(mountedCount > 0)
+                assertTrue("Reattachment must remain bounded to the window", rebuilt.size <= mountedCount)
+                rebuilt.clear()
+                draw()
+                assertTrue(rebuilt.isEmpty())
+            } finally { bitmap.recycle() }
         }
     }
 
@@ -2983,7 +3128,8 @@ class ViewerTableTest {
         document: ViewerDocument,
         theme: String? = null,
         engine: StaticLayoutAndroidProseLayoutEngine = StaticLayoutAndroidProseLayoutEngine(),
-        direction: TableLayoutDirection = TableLayoutDirection.LEFT_TO_RIGHT
+        direction: TableLayoutDirection = TableLayoutDirection.LEFT_TO_RIGHT,
+        context: PreparedCellShapeBuildContext? = null
     ): PreparedProseLayout {
         val key = ProseLayoutKey(document.semanticKey, 320, "table", 0, 0, 1L, 0, "table", tableDirection = direction)
         return engine.prepare(
@@ -2993,7 +3139,8 @@ class ViewerTableTest {
             320,
             1f,
             false,
-            key.semanticGenerationIdentity
+            key.semanticGenerationIdentity,
+            context
         )
     }
 
