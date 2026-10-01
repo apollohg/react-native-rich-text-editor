@@ -268,6 +268,99 @@ class ViewerTableTest {
         verify(copied, true)
     }
 
+    @Test fun replacementAggregatesPreserveFeesErrorsImagesAndCallerOwnership() {
+        val source = """{"type":"doc","content":[{"type":"table","content":[
+            {"type":"table_row","content":[${tableCell("first")},${tableCell("second")}]}
+        ]}]}"""
+        val original = requireNotNull(prepare(source).blocks.single().tableSurface)
+        val table = requireNotNull(original.sourceTable)
+        val contents = original.cells.map { it.content.copy(cellPreparation = null) }
+        fun generic(base: ViewerTableSurface, cells: List<PreparedViewerTableCell> = base.cells) = ViewerTableSurface(
+            base.identity, base.hostViewportWidth, base.style, base.isRightToLeft,
+            base.layout, cells, null, table, base.sourceAttributes, displayScale = base.displayScale)
+        fun replace(base: ViewerTableSurface, changes: Map<Int, PreparedProseLayout>): ViewerTableSurface {
+            val result = base.replacingCells(changes, { TableGridRecord.from(table, base.identity) },
+                table, base.sourceAttributes) { cell, _ ->
+                changes[cell.sourceIndex] ?: requireNotNull(base.cell(cell.sourceIndex)).content
+            }
+            val oracle = generic(result)
+            assertEquals("Metadata subtotal must match an independent full scan", oracle.metadataRetainedBytes, result.metadataRetainedBytes)
+            assertEquals("Store membership must preserve resident accounting", oracle.retainedBytes, result.retainedBytes)
+            assertEquals("First error follows actual wrapper order", result.cells.firstNotNullOfOrNull { it.contentError }, result.preparationError)
+            assertEquals("Image geometry and ordinals must match full traversal",
+                oracle.parentImageAttachments(7, Rect(13, 17, 403, 861)),
+                result.parentImageAttachments(7, Rect(13, 17, 403, 861)))
+            return result
+        }
+        val firstError = ProseViewerError.layout("first cell failure")
+        val secondError = ProseViewerError.layout("second cell failure")
+        fun failure(index: Int, error: ProseViewerError) = contents[index].copy(
+            key = contents[index].key.copy(semanticKey = "error-$index"), error = error)
+        val failures = replace(original, linkedMapOf(1 to failure(1, secondError), 0 to failure(0, firstError)))
+        assertEquals(firstError, failures.preparationError)
+        val remaining = replace(failures, mapOf(0 to contents[0]))
+        assertEquals(secondError, remaining.preparationError)
+        assertNull(replace(remaining, mapOf(1 to contents[1])).preparationError)
+
+        val attachment = ViewerImageAttachment("aggregate-image", "test://aggregate-image", Rect(2, 3, 12, 13), 10 to 10)
+        val image = contents[1].copy(key = contents[1].key.copy(semanticKey = "image-cell"),
+            imageAttachments = listOf(attachment),
+            blocks = contents[1].blocks.map { it.copy(imageAttachment = attachment) })
+        val images = replace(original, mapOf(1 to image))
+        assertEquals(1, images.parentImageAttachments(0, Rect()).size)
+        val nested = contents[0].copy(key = contents[0].key.copy(semanticKey = "nested-image-cell"),
+            blocks = listOf(PreparedProseBlock(emptyList(), Rect(0, 0, contents[0].widthPx, contents[0].heightPx), tableSurface = images)))
+        val nestedImages = replace(original, mapOf(0 to nested))
+        assertEquals(1, nestedImages.parentImageAttachments(0, Rect()).size)
+        nestedImages.layoutStore.insert(contents[0].copy(
+            key = contents[0].key.copy(semanticKey = "eviction-pressure"),
+            retainedBytes = com.apollohg.editor.viewer.PREPARED_LAYOUT_UNMOUNTED_BYTE_BUDGET + 1))
+        assertNull(nestedImages.cell(0)!!.cachedContent)
+        assertEquals("Eviction cannot hide immutable image membership", 1,
+            nestedImages.parentImageAttachments(0, Rect()).size)
+        assertTrue(replace(nestedImages, mapOf(0 to contents[0])).parentImageAttachments(0, Rect()).isEmpty())
+
+        val mutableCells = original.cells.toMutableList()
+        val callerOwned = generic(original, mutableCells)
+        mutableCells[0] = failures.cells[0]
+        mutableCells[1] = images.cells[1]
+        val copied = replace(callerOwned, emptyMap())
+        assertEquals("A caller's null preparationError cannot certify its actual cells", firstError, copied.preparationError)
+        mutableCells[0] = original.cells[0]
+        mutableCells[1] = original.cells[1]
+        assertEquals(firstError, copied.preparationError)
+        assertEquals(1, copied.parentImageAttachments(0, Rect()).size)
+        replace(copied, mapOf(0 to contents[0], 1 to contents[1]))
+
+        val mutableSourceCells = table.cells.toMutableList()
+        val callerSource = table.copy(cells = mutableSourceCells)
+        val ownedCells = ViewerTableSurface(original.identity, TableGridRecord.from(table, original.identity),
+            original.hostViewportWidth, original.style, original.isRightToLeft, original.displayScale,
+            sourceTable = callerSource) { cell, _ -> contents[cell.sourceIndex] }
+        mutableSourceCells += table.cells.last()
+        val sourceUpdated = ownedCells.replacingCells(emptyMap(),
+            { TableGridRecord.from(callerSource, original.identity) }, callerSource, original.sourceAttributes) { cell, _ -> contents[cell.sourceIndex] }
+        val sourceOracle = ViewerTableSurface(original.identity, sourceUpdated.hostViewportWidth, sourceUpdated.style,
+            sourceUpdated.isRightToLeft, sourceUpdated.layout, sourceUpdated.cells, sourceUpdated.preparationError,
+            callerSource, sourceUpdated.sourceAttributes, displayScale = sourceUpdated.displayScale)
+        assertEquals("Caller source-list growth cannot corrupt the captured cell subtotal",
+            sourceOracle.metadataRetainedBytes, sourceUpdated.metadataRetainedBytes)
+
+        val otherStore = TableCellLayoutStore()
+        val duplicate = failures.cells[1].relocated(TableGridCell.from(table.cells[0]), otherStore)
+        val duplicates = generic(original, listOf(failures.cells[0], duplicate))
+        val cleared = replace(duplicates, mapOf(0 to contents[0]))
+        assertNull(cleared.preparationError)
+        assertTrue(cleared.cells.all { it.layoutStore === cleared.layoutStore })
+        val mixed = generic(original, listOf(original.cells[0], original.cells[1].relocated(TableGridCell.from(table.cells[1]), otherStore)))
+        replace(mixed, mapOf(0 to contents[0]))
+        replace(mixed, mapOf(1 to contents[1]))
+        val wrapped = contents[0].copy(heightPx = contents[0].heightPx * 3)
+        val taller = replace(original, mapOf(0 to wrapped))
+        assertTrue(taller.layout.contentHeight > original.layout.contentHeight)
+        assertEquals(original.layout, replace(taller, mapOf(0 to contents[0])).layout)
+    }
+
     @Test fun deferredCellRefillDoesNotRetainTheGridProvider() {
         val source = """{"type":"doc","content":[{"type":"table","content":[
             {"type":"table_row","content":[${tableCell("before")},${tableCell("adjacent")}]}

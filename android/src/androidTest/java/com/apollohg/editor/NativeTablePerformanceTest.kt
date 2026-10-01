@@ -809,7 +809,7 @@ class NativeTablePerformanceTest {
         } finally { android.os.Debug.stopAllocCounting() }
     }
 
-    @Test fun largeTableEditsInspectOnlyChangedCellPositionFlags() = withActivity {
+    @Test fun largeTableEditsInspectOnlyChangedCellMetadata() = withActivity {
         val (rows, columns) = PlainTableFixture.TWENTY_THOUSAND_SLOT_SHAPES.first()
         val host = onMain { EditorHost().also { it.load(Fixture(rows, columns, false).source()) } }
         try {
@@ -817,19 +817,29 @@ class NativeTablePerformanceTest {
             for (text in listOf(TYPING_TEXT, LINE_BREAK_TEXT)) {
                 val counters = PreparedProseInstrumentation.TablePerformanceCounters()
                 var inspections = 0
-                onMain { PreparedViewerTableCell.positionFreeObserverForTesting = { inspections++ } }
+                var metadataReads = 0
+                onMain {
+                    PreparedViewerTableCell.positionFreeObserverForTesting = { inspections++ }
+                    PreparedViewerTableCell.metadataReadObserverForTesting = { metadataReads++ }
+                }
                 try {
                     edit(host, input, counters, text)
-                } finally { onMain { PreparedViewerTableCell.positionFreeObserverForTesting = null } }
+                } finally { onMain {
+                    PreparedViewerTableCell.positionFreeObserverForTesting = null
+                    PreparedViewerTableCell.metadataReadObserverForTesting = null
+                } }
                 assertEquals("Each edit prepares its changed cell", 1, counters.changedCellRemeasurements)
                 assertEquals("Unchanged cells keep their prepared content", 0, counters.unchangedCellRemeasurements)
                 val allowance = counters.changedCellRemeasurements * POSITION_FLAGS_PER_REPLACED_CELL
                 assertTrue("Editing one of ${rows * columns} cells inspected $inspections position flags; old/new changed-wrapper allowance is $allowance",
                     inspections <= allowance)
+                assertTrue("Editing one of ${rows * columns} cells read $metadataReads metadata charges; old/new changed-wrapper allowance is $allowance",
+                    metadataReads <= allowance)
             }
         } finally {
             onMain {
                 PreparedViewerTableCell.positionFreeObserverForTesting = null
+                PreparedViewerTableCell.metadataReadObserverForTesting = null
                 host.close()
             }
         }

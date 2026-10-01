@@ -39,7 +39,11 @@ internal class PreparedViewerTableCell : TableGridCellPosition {
         positionFreeObserverForTesting?.invoke()
         return positionFree
     }
-    val metadataRetainedBytes: Long
+    private val metadataBytes: Long
+    val metadataRetainedBytes: Long get() {
+        metadataReadObserverForTesting?.invoke()
+        return metadataBytes
+    }
     private val prepareContent: () -> PreparedProseLayout
 
     constructor(
@@ -82,7 +86,7 @@ internal class PreparedViewerTableCell : TableGridCellPosition {
         }
         positionFree = content.error == null && !hasNestedTables && !hasAtoms && !hasImages &&
             content.interactions.all { it.docPos == null }
-        metadataRetainedBytes = METADATA_RETAINED_BYTES +
+        metadataBytes = METADATA_RETAINED_BYTES +
             accessibilityText.length * 2L + codeHighlightBlocks.sumOf { CODE_DESCRIPTOR_RETAINED_BYTES + it.text.length * 2L } +
             highlightedCodeKeys.sumOf { it.length * 2L }
         if (retainContent || content.cellPreparation == null) layoutStore.insert(content)
@@ -110,7 +114,7 @@ internal class PreparedViewerTableCell : TableGridCellPosition {
         hasAtoms = cell.hasAtoms
         hasImages = cell.hasImages
         positionFree = cell.positionFree
-        metadataRetainedBytes = cell.metadataRetainedBytes
+        metadataBytes = cell.metadataRetainedBytes
         prepareContent = cell.prepareContent
         if (store !== cell.layoutStore) cell.cachedContent?.let { store.insert(it) }
     }
@@ -126,6 +130,7 @@ internal class PreparedViewerTableCell : TableGridCellPosition {
 
     companion object {
         @Volatile var positionFreeObserverForTesting: (() -> Unit)? = null
+        @Volatile var metadataReadObserverForTesting: (() -> Unit)? = null
         private const val METADATA_RETAINED_BYTES = 384L
         private const val CODE_DESCRIPTOR_RETAINED_BYTES = 64L
     }
@@ -146,8 +151,13 @@ internal class ViewerTableSurface private constructor(
     reusableCellIndex: ViewerTableCellIndex?,
     reusableColumnEdgeHandleRows: Map<Int, Int>?,
     reusableCellKeyCertificate: Boolean?,
-    private val positionDependentCellCount: Int
+    cellMetadata: CellMetadata?
 ) {
+    private data class CellMetadata(
+        val retainedBytes: Long,
+        val positionDependentCount: Int,
+        val hasSingleLayoutStore: Boolean
+    )
     constructor(
         identity: String, hostViewportWidth: Float, style: TableStyle, isRightToLeft: Boolean,
         layout: TableLayoutResult, cells: List<PreparedViewerTableCell>, preparationError: ProseViewerError?,
@@ -155,14 +165,16 @@ internal class ViewerTableSurface private constructor(
         sourceAttributes: Map<String, org.json.JSONObject> = emptyMap(),
         editorTableId: String? = null, displayScale: Float = 1f
     ) : this(identity, hostViewportWidth, style, isRightToLeft, layout, cells, preparationError,
-        sourceTable, sourceAttributes, editorTableId, displayScale, null, null, false, UNKNOWN_POSITION_DEPENDENT_CELL_COUNT)
+        sourceTable, sourceAttributes, editorTableId, displayScale, null, null, false, null)
 
     val layoutStore = cells.firstOrNull()?.layoutStore ?: TableCellLayoutStore()
-    private val hasSingleLayoutStore = cells.all { it.layoutStore === layoutStore }
+    private val hasSingleLayoutStore = cellMetadata?.hasSingleLayoutStore == true || cells.all { it.layoutStore === layoutStore }
+    private val positionDependentCellCount = cellMetadata?.positionDependentCount ?: UNKNOWN_CELL_COUNT
+    private val cellMetadataRetainedBytes = cellMetadata?.retainedBytes ?: cells.sumOf { it.metadataRetainedBytes }
     private var retainedBytesRevision = -1L
     private var cellRetainedBytes = 0L
 
-    val hasOnlyPositionFreeCells: Boolean get() = if (positionDependentCellCount == UNKNOWN_POSITION_DEPENDENT_CELL_COUNT) {
+    val hasOnlyPositionFreeCells: Boolean get() = if (positionDependentCellCount == UNKNOWN_CELL_COUNT) {
         cells.all { it.isPositionFree }
     } else positionDependentCellCount == 0
 
@@ -186,7 +198,7 @@ internal class ViewerTableSurface private constructor(
         sourceAttributes: Map<String, org.json.JSONObject>, editorTableId: String?, displayScale: Float
     ) : this(identity, hostViewportWidth, style, isRightToLeft, prepared.layout, prepared.cells,
         prepared.error, sourceTable, sourceAttributes, editorTableId, displayScale, null, null, null,
-        prepared.cells.count { !it.isPositionFree })
+        collectCellMetadata(prepared.cells))
 
     constructor(
         identity: String, record: TableGridRecord, hostViewportWidth: Float, style: TableStyle,
@@ -216,9 +228,9 @@ internal class ViewerTableSurface private constructor(
         var heightsUnchanged = true
         var membershipUnchanged = true
         var cellKeysCertified = hasCertifiedCellKeys
-        var positionDependentCount = if (positionDependentCellCount == UNKNOWN_POSITION_DEPENDENT_CELL_COUNT) {
-            cells.count { !it.isPositionFree }
-        } else positionDependentCellCount
+        val ownsCells = positionDependentCellCount != UNKNOWN_CELL_COUNT
+        var metadataBytes = cellMetadataRetainedBytes
+        var positionDependentCount = positionDependentCellCount
         fun replacing(cell: PreparedViewerTableCell): PreparedViewerTableCell {
             val content = contents[cell.sourceIndex] ?: return cell
             val source = sourceTable.cells[cell.sourceIndex]
@@ -227,8 +239,11 @@ internal class ViewerTableSurface private constructor(
             val gridCell = TableGridCell.from(source)
             return PreparedViewerTableCell(cell.sourceIndex, cell.row, cell.column, cell.rowspan, cell.colspan,
                 cell.contentOrigin, content, source.header, source.attrsKey, layoutStore) { prepareCell(gridCell, width) }.also {
-                if (!cell.isPositionFree) positionDependentCount--
-                if (!it.isPositionFree) positionDependentCount++
+                if (ownsCells) {
+                    metadataBytes += it.metadataRetainedBytes - cell.metadataRetainedBytes
+                    if (!cell.isPositionFree) positionDependentCount--
+                    if (!it.isPositionFree) positionDependentCount++
+                }
                 membershipUnchanged = membershipUnchanged && cell.hasNestedTables == it.hasNestedTables && cell.hasAtoms == it.hasAtoms
                 cellKeysCertified = cellKeysCertified && certifiesCellKey(it, sourceTable)
             }
@@ -266,10 +281,13 @@ internal class ViewerTableSurface private constructor(
         } else {
             relayoutFromRecord()
         }
+        val metadata = if (ownsCells) CellMetadata(metadataBytes, positionDependentCount, hasSingleLayoutStore)
+            else collectCellMetadata(updated)
         return ViewerTableSurface(identity, hostViewportWidth, style, isRightToLeft, next, updated,
-            updated.firstNotNullOfOrNull { it.contentError }, sourceTable, sourceAttributes, editorTableId, displayScale,
+            if (metadata.positionDependentCount == 0) null else updated.firstNotNullOfOrNull { it.contentError },
+            sourceTable, sourceAttributes, editorTableId, displayScale,
             if (structureUnchanged && membershipUnchanged) cellIndex else null,
-            if (structureUnchanged) columnEdgeHandleRows else null, cellKeysCertified, positionDependentCount)
+            if (structureUnchanged) columnEdgeHandleRows else null, cellKeysCertified, metadata)
     }
 
     val bounds: RectF get() = RectF(0f, 0f, layout.contentWidth, layout.contentHeight)
@@ -297,15 +315,30 @@ internal class ViewerTableSurface private constructor(
             metadataRetainedBytes + cellRetainedBytes
         }
     }
-    val metadataRetainedBytes: Long = 256L + ACCOUNTING_CACHE_RETAINED_BYTES + cells.sumOf { it.metadataRetainedBytes } +
+    val metadataRetainedBytes: Long = cellMetadataRetainedBytes + metadataOverheadBytes()
+
+    private fun metadataOverheadBytes(): Long = 256L + ACCOUNTING_CACHE_RETAINED_BYTES +
         (sourceTable?.cells?.size ?: 0) * 16L + layout.columnWidths.size * 16L +
         layout.columnOffsets.size * 16L + layout.rowOffsets.size * 16L + layout.rectangles.size * TABLE_RECTANGLE_RETAINED_BYTES + layout.sourceOrder.size * TABLE_SOURCE_ORDER_RETAINED_BYTES +
         columnEdgeHandleRows.size * 16L
 
     companion object {
-        // Two Longs, the key certificate, and the dependency count fit within this allowance.
+        // Three Longs, the dependency count, and certificate flags fit within this allowance.
         private const val ACCOUNTING_CACHE_RETAINED_BYTES = 32L
-        private const val UNKNOWN_POSITION_DEPENDENT_CELL_COUNT = -1
+        private const val UNKNOWN_CELL_COUNT = -1
+
+        private fun collectCellMetadata(cells: List<PreparedViewerTableCell>): CellMetadata {
+            val store = cells.firstOrNull()?.layoutStore
+            var bytes = 0L
+            var dependent = 0
+            var singleStore = true
+            cells.forEach { cell ->
+                bytes += cell.metadataRetainedBytes
+                if (!cell.isPositionFree) dependent++
+                singleStore = singleStore && cell.layoutStore === store
+            }
+            return CellMetadata(bytes, dependent, singleStore)
+        }
 
         private fun certifiesCellKey(cell: PreparedViewerTableCell, source: TableSurfaceSource?): Boolean {
             val key = cell.contentKey.semanticKey
@@ -435,6 +468,7 @@ internal class ViewerTableSurface private constructor(
             .map { cells[it] }
 
     fun parentImageAttachments(offset: Int, tableOrigin: Rect): List<ViewerImageAttachment> {
+        if (positionDependentCellCount == 0) return emptyList()
         var ordinal = offset
         val result = mutableListOf<ViewerImageAttachment>()
         lateinit var appendSurface: (ViewerTableSurface, Int, Int) -> Unit
