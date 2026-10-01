@@ -24,6 +24,8 @@ import com.apollohg.editor.viewer.ViewerImageAttachment
 import com.apollohg.editor.viewer.ViewerImagePipeline
 import com.apollohg.editor.viewer.ViewerImageIntrinsicStore
 import com.apollohg.editor.viewer.cellSupportsBackgroundPreparation
+import com.apollohg.editor.viewer.INVALID_CELL_SOURCE_INDEX
+import com.apollohg.editor.viewer.cellSemanticSourceIndex
 import com.apollohg.editor.viewer.cellDocument
 import com.apollohg.editor.viewer.compileWithRust
 import com.apollohg.editor.viewer.PreparedProseFragmentKind
@@ -444,6 +446,183 @@ class ViewerTableTest {
         assertEquals("The store still owns entries without a mapped current cell", initial, parent.currentRetainedBytes)
         surface.cells.first().content
         assertEquals(initial, parent.currentRetainedBytes)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun largeTableAccountingVisitsResidentEntriesInsteadOfEveryCell() {
+        val rows = 1_000
+        val columns = 20
+        val document = compileWithRust(ProseViewerRequest(ProseViewerSource.Json(
+            PlainTableFixture.document(rows, columns, PlainTableFixture::coordinateText)),
+            ProseViewerConfiguration(CONFIG)))
+        val surface = requireNotNull(prepare(document).blocks.single().tableSurface)
+        val store = surface.layoutStore
+        val resident = requireNotNull(surface.cell(0)).content
+        val foreign = PreparedProseLayout(
+            resident.key.copy(semanticKey = "unmapped-accounting-entry"),
+            resident.widthPx, resident.heightPx, emptyList(), retainedBytes = resident.retainedBytes)
+        store.insert(foreign)
+        val expected = surface.metadataRetainedBytes + surface.cells.sumOf { it.cachedContent?.retainedBytes ?: 0L }
+        var visits = 0
+        store.retainedByteLookupObserverForTesting = { visits++ }
+        try {
+            assertEquals("Resident accounting must preserve exact mapped charges", expected, surface.retainedBytes)
+            assertTrue("The fixture must include a charged resident cell", expected > surface.metadataRetainedBytes)
+            assertTrue("The fixture must distinguish resident entries from all cells", store.count < surface.cells.size)
+            assertEquals("A changed store must inspect its resident entries, not all 20,000 cell keys",
+                store.count, visits)
+            visits = 0
+            assertEquals(expected, surface.retainedBytes)
+            assertEquals("An unchanged revision must reuse its charge", 0, visits)
+        } finally { store.retainedByteLookupObserverForTesting = null }
+    }
+
+    @Test fun cellKeyDecoderRejectsAmbiguousAndOverflowingIndices() {
+        val hash = "a".repeat(64)
+        for (index in listOf(0, 1, Int.MAX_VALUE)) {
+            assertEquals("Canonical source index $index", index,
+                cellSemanticSourceIndex("parent:table:$index:$hash"))
+        }
+        for (suffix in listOf("", "-1", "+1", "01", "2147483648", "99999999999999999999", "1x")) {
+            assertEquals("Invalid source index '$suffix'", INVALID_CELL_SOURCE_INDEX, cellSemanticSourceIndex("parent:table:$suffix:$hash"))
+        }
+        for (key in listOf("0:$hash", "parent:0:${hash.dropLast(1)}", "parent:0:${hash}a",
+            "parent:0:${hash.uppercase()}", "parent:0:${hash.dropLast(1)}:")) {
+            assertEquals("Invalid cell key '$key'", INVALID_CELL_SOURCE_INDEX, cellSemanticSourceIndex(key))
+        }
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun certifiedAccountingPreservesAliasesReplacementsRelocationAndEviction() {
+        val template = requireNotNull(prepare(PlainTableFixture.document(2, 2,
+            PlainTableFixture::coordinateText)).blocks.single().tableSurface)
+        val source = requireNotNull(template.sourceTable)
+        val record = TableGridRecord.from(source, template.identity)
+        val cellBytes = 100L
+        val residentLimit = 2
+        val store = TableCellLayoutStore(byteBudget = residentLimit * cellBytes, capacity = residentLimit)
+        val contents = template.cells.associate { cell -> cell.sourceIndex to PreparedProseLayout(
+            cell.contentKey, cell.contentWidthPx, cell.contentHeightPx, emptyList(), retainedBytes = cellBytes) }
+        fun surface(reuse: ((TableGridCell, Float) -> PreparedViewerTableCell?)? = null,
+                    key: (Int) -> ProseLayoutKey = { contents.getValue(it).key }): ViewerTableSurface =
+            ViewerTableSurface(template.identity, record, template.hostViewportWidth, template.style, false,
+                sourceTable = source, layoutStore = store, reuseCell = reuse) { cell, _ ->
+                contents.getValue(cell.sourceIndex).copy(key = key(cell.sourceIndex))
+            }
+        val original = surface()
+        val observed = mutableListOf(original)
+        fun assertCharges(stage: String, expectedVisits: (ViewerTableSurface) -> Int = { store.count }) {
+            for ((index, item) in observed.withIndex()) {
+                val expected = item.metadataRetainedBytes + item.cells.sumOf { it.cachedContent?.retainedBytes ?: 0L }
+                var visits = 0
+                store.retainedByteLookupObserverForTesting = { visits++ }
+                try {
+                    assertEquals("Exact mapped charge at $stage, surface $index", expected, item.retainedBytes)
+                    assertEquals("Accounting traversal at $stage, surface $index", expectedVisits(item), visits)
+                    visits = 0
+                    assertEquals(expected, item.retainedBytes)
+                    assertEquals("Unchanged revision at $stage", 0, visits)
+                } finally { store.retainedByteLookupObserverForTesting = null }
+            }
+        }
+        assertCharges("initial eviction")
+        val originalKey = contents.getValue(0).key
+        store.pin(originalKey)
+        store.insert(contents.getValue(0).copy(key = originalKey.copy(semanticKey = "alias-value"),
+            retainedBytes = cellBytes * 3), originalKey)
+        assertCharges("aliased value and pinned oversized layout")
+        store.insert(contents.getValue(0).copy(key = originalKey.copy(themeDigest = "foreign-theme")))
+        assertCharges("same semantic key with a different full key")
+        store.insert(contents.getValue(0), originalKey.copy(semanticKey = originalKey.semanticKey.dropLast(1) + "!"))
+        assertCharges("malformed resident hash with an otherwise matching key and value")
+        store.unpin(originalKey)
+        assertCharges("unpin eviction")
+        requireNotNull(original.cell(0)).content
+        assertCharges("refill")
+        val changedHash = "b".repeat(64)
+        val changedSource = source.copy(cells = source.cells.map { if (it.sourceIndex == 0) it.copy(contentKey = changedHash) else it })
+        val changedKey = originalKey.copy(semanticKey = originalKey.semanticKey.substringBeforeLast(':') + ":" + changedHash)
+        val changed = contents.getValue(0).copy(key = changedKey, retainedBytes = cellBytes * 2)
+        val replacement = original.replacingCells(mapOf(0 to changed),
+            { TableGridRecord.from(changedSource, original.identity) }, changedSource, emptyMap()) { cell, _ ->
+            if (cell.sourceIndex == 0) changed else contents.getValue(cell.sourceIndex)
+        }
+        observed += replacement
+        assertCharges("old and new surfaces share one store")
+        val relocated = surface(reuse = { cell, _ -> original.cells[(cell.sourceIndex + 1) % original.cells.size] })
+        observed += relocated
+        store.insert(contents.getValue(0))
+        assertCharges("relocated source indices fall back", { if (it === relocated) it.cells.size else store.count })
+        val duplicate = surface(key = { originalKey })
+        observed += duplicate
+        store.insert(contents.getValue(0))
+        assertCharges("duplicate keys preserve multiplicity", {
+            if (it === relocated || it === duplicate) it.cells.size else store.count
+        })
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun certifiedAccountingFindsSparseIndicesAfterSourceOrderNormalization() {
+        val template = requireNotNull(prepare(PlainTableFixture.document(2, 2,
+            PlainTableFixture::coordinateText)).blocks.single().tableSurface)
+        val source = requireNotNull(template.sourceTable)
+        val record = TableGridRecord.from(source, template.identity)
+        val byteCharge = 100L
+        for (indices in listOf(listOf(1, 0), listOf(3, 1))) {
+            val selected = indices.mapIndexed { column, index ->
+                record.cells[index].copy(row = 0, column = column)
+            }
+            val sparseRecord = record.copy(rows = 1, columns = selected.size, cells = selected)
+            val contents = indices.associateWith { index ->
+                val cell = requireNotNull(template.cell(index))
+                PreparedProseLayout(cell.contentKey, cell.contentWidthPx, cell.contentHeightPx,
+                    emptyList(), retainedBytes = byteCharge)
+            }
+            val store = TableCellLayoutStore(capacity = 1)
+            val surface = ViewerTableSurface(template.identity, sparseRecord, template.hostViewportWidth,
+                template.style, false, sourceTable = source, layoutStore = store) { cell, _ ->
+                contents.getValue(cell.sourceIndex)
+            }
+            assertEquals("Preparation normalizes source order for $indices", indices.sorted(),
+                surface.cells.map { it.sourceIndex })
+            val foreign = requireNotNull(template.cell(2)).content
+            var visits = 0
+            store.retainedByteLookupObserverForTesting = { visits++ }
+            try {
+                for (content in contents.values + foreign) {
+                    store.insert(content)
+                    visits = 0
+                    val expected = if (content === foreign) 0L else byteCharge
+                    assertEquals("Exact sparse charges for $indices with ${content.key.semanticKey}",
+                        surface.metadataRetainedBytes + expected, surface.retainedBytes)
+                    assertEquals("Sparse membership uses the index map for $indices", store.count, visits)
+                }
+            } finally { store.retainedByteLookupObserverForTesting = null }
+        }
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun certifiedAccountingUsesCellKeysWhenResidentsOutnumberCells() {
+        val surface = requireNotNull(prepare(PlainTableFixture.document(2, 2,
+            PlainTableFixture::coordinateText)).blocks.single().tableSurface)
+        val store = surface.layoutStore
+        val resident = requireNotNull(surface.cell(0)).content
+        repeat(surface.cells.size + 1) { index ->
+            store.insert(PreparedProseLayout(resident.key.copy(semanticKey = "foreign-$index"),
+                resident.widthPx, resident.heightPx, emptyList(), retainedBytes = resident.retainedBytes))
+        }
+        assertTrue(store.count > surface.cells.size)
+        var visits = 0
+        store.retainedByteLookupObserverForTesting = { visits++ }
+        try {
+            assertEquals(surface.metadataRetainedBytes + surface.cells.sumOf { it.cachedContent?.retainedBytes ?: 0L },
+                surface.retainedBytes)
+            assertEquals("Small tables must not scan a larger resident history", surface.cells.size, visits)
+        } finally { store.retainedByteLookupObserverForTesting = null }
     }
 
     @Test fun repeatedSurfaceAccountingReusesOnlyAnUnchangedStore() {

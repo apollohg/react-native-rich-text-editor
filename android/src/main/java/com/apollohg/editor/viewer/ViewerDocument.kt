@@ -546,6 +546,35 @@ internal fun ViewerDocument.cellSupportsBackgroundPreparation(cell: TableSurface
     }
 }
 
+internal const val INVALID_CELL_SOURCE_INDEX = -1
+private const val CELL_CONTENT_HASH_LENGTH = 64
+
+private fun cellSemanticKey(parent: String, tableId: String, cell: TableSurfaceCell): String =
+    "$parent:$tableId:${cell.sourceIndex}:${cell.contentKey}"
+
+internal fun cellSemanticSourceIndex(semanticKey: String, validateContentHash: Boolean = true): Int {
+    val hashSeparator = semanticKey.length - CELL_CONTENT_HASH_LENGTH - 1
+    if (hashSeparator <= 0 || semanticKey[hashSeparator] != ':') return INVALID_CELL_SOURCE_INDEX
+    if (validateContentHash) {
+        for (index in hashSeparator + 1 until semanticKey.length) {
+            val char = semanticKey[index]
+            if (char !in '0'..'9' && char !in 'a'..'f') return INVALID_CELL_SOURCE_INDEX
+        }
+    }
+    val indexStart = semanticKey.lastIndexOf(':', hashSeparator - 1) + 1
+    if (indexStart <= 0 || indexStart == hashSeparator) return INVALID_CELL_SOURCE_INDEX
+    if (semanticKey[indexStart] == '0' && indexStart + 1 != hashSeparator) return INVALID_CELL_SOURCE_INDEX
+    var sourceIndex = 0
+    for (index in indexStart until hashSeparator) {
+        val char = semanticKey[index]
+        if (char !in '0'..'9') return INVALID_CELL_SOURCE_INDEX
+        val digit = char - '0'
+        if (sourceIndex > (Int.MAX_VALUE - digit) / 10) return INVALID_CELL_SOURCE_INDEX
+        sourceIndex = sourceIndex * 10 + digit
+    }
+    return sourceIndex
+}
+
 internal fun ViewerDocument.cellDocument(cell: TableSurfaceCell, tableId: String): ViewerDocument {
     val elements = if (frameIndex == null) cell.elements else cell.elements.map { element ->
         fun absolute(relative: UInt): UInt = requireNotNull(frameIndex.absoluteDocPos(tableId, cell.sourceIndex, relative))
@@ -571,7 +600,7 @@ internal fun ViewerDocument.cellDocument(cell: TableSurfaceCell, tableId: String
     } + nestedIndex?.attributeObjects.orEmpty().keys
     val identities = records.keys + nestedIndex?.tableKeys.orEmpty()
     return copy(
-        semanticKey = "$semanticKey:$tableId:${cell.sourceIndex}:${cell.contentKey}",
+        semanticKey = cellSemanticKey(semanticKey, tableId, cell),
         blocks = lowerElements(elements, preferredTextBlockName, tableRecords, elements.isEmpty(), frameIndex),
         isEmpty = cell.elements.isEmpty(),
         retainedBytes = 0,

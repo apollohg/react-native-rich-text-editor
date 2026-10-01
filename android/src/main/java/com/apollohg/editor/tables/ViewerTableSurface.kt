@@ -3,6 +3,8 @@ package com.apollohg.editor.tables
 import android.graphics.Rect
 import android.graphics.RectF
 import com.apollohg.editor.ProseViewerError
+import com.apollohg.editor.viewer.INVALID_CELL_SOURCE_INDEX
+import com.apollohg.editor.viewer.cellSemanticSourceIndex
 import com.apollohg.editor.viewer.ProseLayoutKey
 import com.apollohg.editor.viewer.promotedCodeHighlightBlocks
 import com.apollohg.editor.viewer.PreparedProseLayout
@@ -137,7 +139,8 @@ internal class ViewerTableSurface private constructor(
     val editorTableId: String? = null,
     val displayScale: Float,
     reusableCellIndex: ViewerTableCellIndex?,
-    reusableColumnEdgeHandleRows: Map<Int, Int>?
+    reusableColumnEdgeHandleRows: Map<Int, Int>?,
+    reusableCellKeyCertificate: Boolean?
 ) {
     constructor(
         identity: String, hostViewportWidth: Float, style: TableStyle, isRightToLeft: Boolean,
@@ -146,7 +149,7 @@ internal class ViewerTableSurface private constructor(
         sourceAttributes: Map<String, org.json.JSONObject> = emptyMap(),
         editorTableId: String? = null, displayScale: Float = 1f
     ) : this(identity, hostViewportWidth, style, isRightToLeft, layout, cells, preparationError,
-        sourceTable, sourceAttributes, editorTableId, displayScale, null, null)
+        sourceTable, sourceAttributes, editorTableId, displayScale, null, null, false)
 
     val layoutStore = cells.firstOrNull()?.layoutStore ?: TableCellLayoutStore()
     private val hasSingleLayoutStore = cells.all { it.layoutStore === layoutStore }
@@ -172,7 +175,7 @@ internal class ViewerTableSurface private constructor(
         prepared: Preparation, sourceTable: TableSurfaceSource?,
         sourceAttributes: Map<String, org.json.JSONObject>, editorTableId: String?, displayScale: Float
     ) : this(identity, hostViewportWidth, style, isRightToLeft, prepared.layout, prepared.cells,
-        prepared.error, sourceTable, sourceAttributes, editorTableId, displayScale)
+        prepared.error, sourceTable, sourceAttributes, editorTableId, displayScale, null, null, null)
 
     constructor(
         identity: String, record: TableGridRecord, hostViewportWidth: Float, style: TableStyle,
@@ -201,6 +204,7 @@ internal class ViewerTableSurface private constructor(
                        prepareCell: (TableGridCell, Float) -> PreparedProseLayout): ViewerTableSurface {
         var heightsUnchanged = true
         var membershipUnchanged = true
+        var cellKeysCertified = hasCertifiedCellKeys
         fun replacing(cell: PreparedViewerTableCell): PreparedViewerTableCell {
             val content = contents[cell.sourceIndex] ?: return cell
             val source = sourceTable.cells[cell.sourceIndex]
@@ -210,6 +214,7 @@ internal class ViewerTableSurface private constructor(
             return PreparedViewerTableCell(cell.sourceIndex, cell.row, cell.column, cell.rowspan, cell.colspan,
                 cell.contentOrigin, content, source.header, source.attrsKey, layoutStore) { prepareCell(gridCell, width) }.also {
                 membershipUnchanged = membershipUnchanged && cell.hasNestedTables == it.hasNestedTables && cell.hasAtoms == it.hasAtoms
+                cellKeysCertified = cellKeysCertified && certifiesCellKey(it, sourceTable)
             }
         }
         val updated = if (cellIndex.bySourceIndex.size == cells.size) {
@@ -246,7 +251,7 @@ internal class ViewerTableSurface private constructor(
         return ViewerTableSurface(identity, hostViewportWidth, style, isRightToLeft, next, updated,
             updated.firstNotNullOfOrNull { it.contentError }, sourceTable, sourceAttributes, editorTableId, displayScale,
             if (structureUnchanged && membershipUnchanged) cellIndex else null,
-            if (structureUnchanged) columnEdgeHandleRows else null)
+            if (structureUnchanged) columnEdgeHandleRows else null, cellKeysCertified)
     }
 
     val bounds: RectF get() = RectF(0f, 0f, layout.contentWidth, layout.contentHeight)
@@ -258,7 +263,17 @@ internal class ViewerTableSurface private constructor(
         return synchronized(layoutStore) {
             val revision = layoutStore.revision
             if (revision != retainedBytesRevision) {
-                cellRetainedBytes = layoutStore.retainedBytes(cells.asSequence().map { it.contentKey })
+                cellRetainedBytes = if (hasCertifiedCellKeys && layoutStore.count < cells.size) {
+                    layoutStore.retainedBytesMatching { key ->
+                        // Full equality checks the suffix against an already certified member key.
+                        val sourceIndex = cellSemanticSourceIndex(key.semanticKey, validateContentHash = false)
+                        if (sourceIndex == INVALID_CELL_SOURCE_INDEX) false else {
+                            val member = cells.getOrNull(sourceIndex)?.takeIf { it.sourceIndex == sourceIndex }
+                                ?: cell(sourceIndex)
+                            member?.contentKey == key
+                        }
+                    }
+                } else layoutStore.retainedBytes(cells.asSequence().map { it.contentKey })
                 retainedBytesRevision = revision
             }
             metadataRetainedBytes + cellRetainedBytes
@@ -270,7 +285,15 @@ internal class ViewerTableSurface private constructor(
         columnEdgeHandleRows.size * 16L
 
     companion object {
+        // Two Longs and the key certificate fit within the existing fixed allowance.
         private const val ACCOUNTING_CACHE_RETAINED_BYTES = 32L
+
+        private fun certifiesCellKey(cell: PreparedViewerTableCell, source: TableSurfaceSource?): Boolean {
+            val key = cell.contentKey.semanticKey
+            val sourceCell = source?.cells?.getOrNull(cell.sourceIndex) ?: return false
+            return sourceCell.sourceIndex == cell.sourceIndex &&
+                cellSemanticSourceIndex(key) == cell.sourceIndex && key.endsWith(":" + sourceCell.contentKey)
+        }
 
         private fun prepareParallelCells(
             inputs: List<Pair<TableGridCell, Int>>, scale: Float, indices: Set<Int>,
@@ -366,6 +389,9 @@ internal class ViewerTableSurface private constructor(
     }
 
     private val cellIndex = reusableCellIndex ?: ViewerTableCellIndex(cells, isRightToLeft)
+    private val hasCertifiedCellKeys = reusableCellKeyCertificate ?: (
+        hasSingleLayoutStore && cellIndex.bySourceIndex.size == cells.size &&
+            cells.all { certifiesCellKey(it, sourceTable) })
 
     val nestedTableCells: List<PreparedViewerTableCell>
         get() = cellIndex.nestedTableCells.map { cells[it] }

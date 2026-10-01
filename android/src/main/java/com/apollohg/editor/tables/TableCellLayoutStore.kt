@@ -13,6 +13,8 @@ internal class TableCellLayoutStore(
         val bytes = layout.retainedBytes + layout.cellShapeCatalogBytes()
     }
 
+    internal var retainedByteLookupObserverForTesting: ((ProseLayoutKey) -> Unit)? = null
+
     private val entries = linkedMapOf<ProseLayoutKey, Entry>()
     private val pins = mutableMapOf<ProseLayoutKey, Int>()
     private var bytes = 0L
@@ -31,7 +33,16 @@ internal class TableCellLayoutStore(
         keys.mapNotNull { entries[it]?.layout }.toList()
 
     @Synchronized fun retainedBytes(keys: Sequence<ProseLayoutKey>): Long =
-        keys.sumOf { entries[it]?.layout?.retainedBytes ?: 0L }
+        keys.sumOf {
+            retainedByteLookupObserverForTesting?.invoke(it)
+            entries[it]?.layout?.retainedBytes ?: 0L
+        }
+
+    @Synchronized fun retainedBytesMatching(containsKey: (ProseLayoutKey) -> Boolean): Long =
+        entries.entries.sumOf { (key, entry) ->
+            retainedByteLookupObserverForTesting?.invoke(key)
+            if (containsKey(key)) entry.layout.retainedBytes else 0L
+        }
 
     @Synchronized fun value(key: ProseLayoutKey, build: () -> PreparedProseLayout): PreparedProseLayout {
         entries.remove(key)?.let { entry ->
