@@ -709,6 +709,46 @@ final class EditorLargeTableTests: XCTestCase {
         }
     }
 
+    func testHorizontalScrollingDoesNotPaintClippedCellContentInTrailingGutter() throws {
+        let channels = 4
+        let enteringColumn = 5
+        for layered in [false, true] {
+            try withMountedTable(rows: 3, columns: 20) { view, _, drawing in
+                drawing.usesEditAnchoredLayers = layered
+                let initial = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first)
+                let visible = try XCTUnwrap(drawing.editorVisibleRectInWindow)
+                let gutter = CGRect(x: initial.clip.maxX, y: initial.bounds.minY,
+                    width: visible.maxX - initial.clip.maxX, height: initial.bounds.height)
+                XCTAssertGreaterThan(gutter.width, 0, "The fixture must expose the trailing text-container inset")
+                let cell = try XCTUnwrap(initial.surface.cell(sourceIndex: enteringColumn))
+                let contentStart = initial.bounds.minX + initial.surface.frame(ofCell: cell).minX + cell.contentOrigin.x
+                let offset = contentStart - gutter.midX
+                drawing.scrollTables(in: [initial.surface.scrollIdentity], by: -offset)
+                view.layoutIfNeeded()
+                let snapshot = try XCTUnwrap(drawing.mountedTablePresentation())
+                let entering = try XCTUnwrap(snapshot.mountedCells.first { $0.sourceIndex == enteringColumn })
+                XCTAssertTrue(entering.contentBounds.intersects(gutter))
+                XCTAssertTrue(entering.contentBounds.intersection(entering.clip).isNull,
+                              "The entering content must be entirely beyond the table host clip")
+                let scale = drawing.contentScaleFactor
+                let width = Int((gutter.width * scale).rounded())
+                let height = Int((gutter.height * scale).rounded())
+                var pixels = [UInt8](repeating: 0, count: width * height * channels)
+                let context = try XCTUnwrap(CGContext(data: &pixels, width: width, height: height,
+                    bitsPerComponent: 8, bytesPerRow: width * channels,
+                    space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
+                context.scaleBy(x: scale, y: scale)
+                context.translateBy(x: -gutter.minX, y: -gutter.minY)
+                drawing.layer.displayIfNeeded()
+                drawing.layer.render(in: context)
+                let painted = stride(from: channels - 1, to: pixels.count, by: channels).filter { pixels[$0] != 0 }
+                XCTAssertTrue(painted.isEmpty,
+                    "layered=\(layered), offset=\(offset), gutter=\(gutter): \(painted.count) pixels leaked from fully clipped cells")
+            }
+        }
+    }
+
     private func assertLayeredMatchesSinglePass(_ drawing: PreparedProseDrawingView,
                                                file: StaticString = #filePath, line: UInt = #line) throws {
         let format = UIGraphicsImageRendererFormat()

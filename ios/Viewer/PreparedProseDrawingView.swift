@@ -1484,6 +1484,7 @@ public final class PreparedProseDrawingView: UIView {
     }
 
     private func fillTableCell(_ cell: ViewerTablePresentedCell, color: UIColor, context: CGContext) {
+        guard !cell.clip.isNull, !cell.clip.isEmpty else { return }
         context.saveGState()
         context.clip(to: cell.clip)
         context.setFillColor(color.cgColor)
@@ -1492,7 +1493,8 @@ public final class PreparedProseDrawingView: UIView {
     }
 
     private func drawTableFailure(_ presented: ViewerTablePresentedBlock, context: CGContext) {
-        guard let tableBounds = presented.block.tableBounds else { return }
+        guard !presented.clip.isNull, !presented.clip.isEmpty,
+              let tableBounds = presented.block.tableBounds else { return }
         context.saveGState()
         context.clip(to: flipped(presented.clip))
         context.translateBy(x: presented.origin.x, y: -presented.origin.y)
@@ -1518,6 +1520,7 @@ public final class PreparedProseDrawingView: UIView {
         let cells = Dictionary(grouping: visibleCells, by: { ObjectIdentifier($0.surface) })
 
         func drawLayout(_ presented: ViewerTablePresentedLayout) {
+            guard !presented.clip.isNull, !presented.clip.isEmpty else { return }
             if ObjectIdentifier(presented.layout) != excludedLayoutID {
                 context.saveGState()
                 context.clip(to: presented.clip)
@@ -1556,6 +1559,7 @@ public final class PreparedProseDrawingView: UIView {
     }
 
     private func drawTableChromeBorder(_ cell: ViewerTablePresentedCell, context: CGContext) {
+        guard !cell.clip.isNull, !cell.clip.isEmpty else { return }
         onTableChromeDrawnForTesting?(cell.sourceIndex)
         context.saveGState()
         context.clip(to: flipped(cell.clip))
@@ -1575,6 +1579,7 @@ public final class PreparedProseDrawingView: UIView {
         context: CGContext,
         draw: (PreparedProseFragment) -> Void
     ) {
+        guard !presented.clip.isNull, !presented.clip.isEmpty else { return }
         context.saveGState()
         context.clip(to: flipped(presented.clip))
         context.translateBy(x: presented.origin.x, y: -presented.origin.y)

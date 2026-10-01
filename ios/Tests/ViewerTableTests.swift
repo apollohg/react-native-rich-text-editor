@@ -801,6 +801,61 @@ final class ViewerTableTests: XCTestCase {
         }
     }
 
+    func testFullyClippedStyledNestedCellDoesNotPaintOutsideTableHost() throws {
+        let gutterWidth: CGFloat = 120
+        let nested: [String: Any] = ["type": "table", "content": [["type": "table_row", "content": [
+            ["type": "table_header", "content": [paragraph("nested ink")]]
+        ]]]]
+        let quote: [String: Any] = ["type": "blockquote", "content": [paragraph("styled ink"), nested]]
+        let source = try jsonSource(["type": "doc", "content": [["type": "table", "content": [
+            ["type": "table_row", "content": [
+                ["type": "table_cell", "attrs": ["colwidth": [400]], "content": [paragraph("visible")]],
+                ["type": "table_cell", "attrs": ["colwidth": [300]], "content": [quote]]
+            ]]
+        ]]]])
+        let layout = try prepare(source, themeJSON: ##"{"version":1,"styles":{"blockquote":{"backgroundColor":"#00ff00ff"}}}"##)
+        let surface = try XCTUnwrap(layout.blocks.first?.tableSurface)
+        let rootTable = try XCTUnwrap(ViewerTablePresentation.rootTables(in: layout).first)
+        let entering = try XCTUnwrap(surface.cell(sourceIndex: 1))
+        let gutter = CGRect(x: rootTable.clip.maxX, y: rootTable.bounds.minY,
+                            width: gutterWidth, height: rootTable.bounds.height)
+        let drawing = PreparedProseDrawingView(frame: CGRect(x: 0, y: 0, width: gutter.maxX, height: gutter.maxY))
+        // EditorTableSurface installs table blocks without the viewer's outer content box.
+        let tableBounds = try XCTUnwrap(layout.blocks.first?.tableBounds)
+        let tableBlock = PreparedProseBlock(fragments: [], bounds: tableBounds,
+            tableSurface: surface, tableBounds: tableBounds)
+        let editorLayout = PreparedProseLayout(key: layout.key, size: drawing.bounds.size,
+            blocks: [tableBlock], retainedBytes: layout.retainedBytes)
+        drawing.install(layout: editorLayout)
+        let offset = rootTable.bounds.minX + surface.frame(ofCell: entering).minX + entering.contentOrigin.x
+            - (gutter.minX + surface.style.cellPadding)
+        drawing.setTableLogicalOffset(offset, sourceIdentity: surface.identity)
+        let snapshot = try XCTUnwrap(drawing.mountedTablePresentation())
+        let child = try XCTUnwrap(snapshot.layouts.first { $0.layout === entering.content })
+        XCTAssertTrue(child.clip.isNull)
+        let nestedTable = try XCTUnwrap(snapshot.tables.first { $0.surface !== surface })
+        XCTAssertTrue(nestedTable.clip.isNull)
+        XCTAssertTrue(nestedTable.bounds.intersects(gutter), "Nested chrome must reach the exposed gutter")
+        drawing.selectedTableCellSourceIndices = [nestedTable.surface.identity: [0]]
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = false
+        let image = try XCTUnwrap(UIGraphicsImageRenderer(bounds: gutter, format: format).image { context in
+            context.cgContext.clip(to: gutter)
+            drawing.draw(drawing.bounds)
+        }.cgImage)
+        let channels = 4
+        var pixels = [UInt8](repeating: 0, count: image.width * image.height * channels)
+        let context = try XCTUnwrap(CGContext(data: &pixels, width: image.width, height: image.height,
+            bitsPerComponent: 8, bytesPerRow: image.width * channels,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        let painted = stride(from: channels - 1, to: pixels.count, by: channels).filter { pixels[$0] != 0 }
+        XCTAssertTrue(painted.isEmpty,
+            "A fully clipped quote, nested header, selection, and border leaked \(painted.count) pixels into \(gutter)")
+    }
+
     func testActiveOuterCellExclusionPaintsNestedHeaderBackground() throws {
         let layout = try prepare(try nestedHeaderImageSource(outerHeader: false))
         let root = try XCTUnwrap(layout.blocks.first { $0.tableSurface != nil })
