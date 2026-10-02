@@ -36,12 +36,13 @@ internal sealed class TableFrameAdoption {
     data class Rejected(val rejection: TableFrameRejection) : TableFrameAdoption()
 }
 
+@OptIn(ExperimentalUnsignedTypes::class)
 internal class EditorTableIndex {
     private data class Entry(
-        val record: FfiTableRecord, val docPrefix: LongArray, val scalarPrefix: LongArray,
+        val record: FfiTableRecord, val docPrefix: UIntArray, val scalarPrefix: UIntArray,
         val attributeCounts: Map<String, Int>, val nestedCells: Map<String, Int>
     ) {
-        val scalarSize: UInt get() = scalarPrefix.last().toUInt()
+        val scalarSize: UInt get() = scalarPrefix.last()
     }
 
     private data class Origin(val doc: UInt, val scalar: UInt?)
@@ -127,8 +128,8 @@ internal class EditorTableIndex {
             // Exposed FFI lists can be resized independently of their installed prefixes.
             val rebuildsEntireSuffix = prior.docPrefix.size == cells.size + 1 && prior.scalarPrefix.size == cells.size + 1
             val updated = Entry(prior.record.copy(docSize = docSize, cells = cells),
-                if (rebuildsEntireSuffix) LongArray(prior.docPrefix.size) else prior.docPrefix.copyOf(),
-                if (rebuildsEntireSuffix) LongArray(prior.scalarPrefix.size) else prior.scalarPrefix.copyOf(), counts, nestedCells)
+                if (rebuildsEntireSuffix) UIntArray(prior.docPrefix.size) else prior.docPrefix.copyOf(),
+                if (rebuildsEntireSuffix) UIntArray(prior.scalarPrefix.size) else prior.scalarPrefix.copyOf(), counts, nestedCells)
             if (rebuildsEntireSuffix) {
                 prior.docPrefix.copyInto(updated.docPrefix, endIndex = first + 1)
                 prior.scalarPrefix.copyInto(updated.scalarPrefix, endIndex = first + 1)
@@ -213,7 +214,7 @@ internal class EditorTableIndex {
                 val doc = origin.doc.toLong() + relativeDocStart(parent, index) + nested.docOffset.toLong()
                 val docStart = checkedUInt(doc) ?: throw TableFrameRejection.HostMissing(childKey)
                 val scalar = origin.scalar?.let { start -> nested.scalarStart?.let {
-                    checkedUInt(start.toLong() + parent.scalarPrefix[index] + it.toLong())
+                    checkedUInt(start.toLong() + parent.scalarPrefix[index].toLong() + it.toLong())
                 } }
                 nextOrigins[childKey] = Origin(docStart, scalar)
             }
@@ -272,7 +273,7 @@ internal class EditorTableIndex {
         val entry = entries[tableKey] ?: return null
         if (cellIndex !in entry.record.cells.indices) return null
         val start = origins[tableKey]?.scalar ?: return null
-        return checkedUInt(start.toLong() + entry.scalarPrefix[cellIndex])
+        return checkedUInt(start.toLong() + entry.scalarPrefix[cellIndex].toLong())
     }
 
     fun cellIndexContainingDoc(tableKey: String, position: UInt): Int? {
@@ -289,9 +290,9 @@ internal class EditorTableIndex {
         val start = origins[tableKey]?.scalar ?: return null
         if (position < start) return null
         val relative = position.toLong() - start.toLong()
-        val index = precedingIndex(entry.record.cells.size) { entry.scalarPrefix[it] <= relative } ?: return null
-        return index.takeIf { relative < entry.scalarPrefix[it + 1] ||
-            (it == entry.record.cells.lastIndex && relative == entry.scalarPrefix[it + 1]) }
+        val index = precedingIndex(entry.record.cells.size) { entry.scalarPrefix[it].toLong() <= relative } ?: return null
+        return index.takeIf { relative < entry.scalarPrefix[it + 1].toLong() ||
+            (it == entry.record.cells.lastIndex && relative == entry.scalarPrefix[it + 1].toLong()) }
     }
 
     fun tableKeyContainingDoc(position: UInt): String? = containingTable(position, false)
@@ -381,9 +382,9 @@ internal class EditorTableIndex {
             if (record.failure == null && record.sourceRows.sumOf { it.cellCount.toLong() } != record.cells.size.toLong()) {
                 throw TableFrameRejection.CellIndexOutOfRange(key, record.cells.size)
             }
-            val entry = Entry(record, LongArray(record.cells.size + 1), LongArray(record.cells.size + 1), counts, nestedCells)
+            val entry = Entry(record, UIntArray(record.cells.size + 1), UIntArray(record.cells.size + 1), counts, nestedCells)
             rebuildPrefixes(entry, 0)
-            val expected = NODE_BOUNDARY_SIZE * (record.sourceRows.size.toLong() + 1) + entry.docPrefix.last()
+            val expected = NODE_BOUNDARY_SIZE * (record.sourceRows.size.toLong() + 1) + entry.docPrefix.last().toLong()
             if ((record.failure == null && expected != record.docSize.toLong()) || (record.failure != null && record.cells.isNotEmpty())) {
                 throw TableFrameRejection.DocSizeMismatch(key, expected.coerceAtMost(UInt.MAX_VALUE.toLong()).toUInt(), record.docSize)
             }
@@ -391,8 +392,8 @@ internal class EditorTableIndex {
         }
 
         fun rebuildPrefixes(entry: Entry, first: Int) {
-            var doc = entry.docPrefix[first]
-            var scalar = entry.scalarPrefix[first]
+            var doc = entry.docPrefix[first].toLong()
+            var scalar = entry.scalarPrefix[first].toLong()
             for (index in first until entry.record.cells.size) {
                 val cell = entry.record.cells[index]
                 val nextDoc = doc + cell.docSize.toLong()
@@ -403,8 +404,8 @@ internal class EditorTableIndex {
                 if (!fitsUInt(nextScalar)) {
                     throw TableFrameRejection.ScalarSizeMismatch(entry.record.tableKey, scalar.toUInt(), cell.scalarStride)
                 }
-                entry.docPrefix[index + 1] = nextDoc
-                entry.scalarPrefix[index + 1] = nextScalar
+                entry.docPrefix[index + 1] = nextDoc.toUInt()
+                entry.scalarPrefix[index + 1] = nextScalar.toUInt()
                 doc = nextDoc
                 scalar = nextScalar
             }
@@ -456,7 +457,7 @@ internal class EditorTableIndex {
         }
 
         fun relativeDocStart(entry: Entry, index: Int): Long =
-            NODE_BOUNDARY_SIZE * (entry.record.cells[index].sourceRow.toLong() + 1) + entry.docPrefix[index]
+            NODE_BOUNDARY_SIZE * (entry.record.cells[index].sourceRow.toLong() + 1) + entry.docPrefix[index].toLong()
 
         fun precedingIndex(count: Int, before: (Int) -> Boolean): Int? {
             var low = 0
