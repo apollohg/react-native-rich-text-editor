@@ -383,18 +383,22 @@ internal class EditorTableIndex {
         }
 
         fun rebuildPrefixes(entry: Entry, first: Int) {
+            var doc = entry.docPrefix[first]
+            var scalar = entry.scalarPrefix[first]
             for (index in first until entry.record.cells.size) {
                 val cell = entry.record.cells[index]
-                val doc = entry.docPrefix[index] + cell.docSize.toLong()
-                if (!fitsUInt(doc)) {
+                val nextDoc = doc + cell.docSize.toLong()
+                if (!fitsUInt(nextDoc)) {
                     throw TableFrameRejection.DocSizeMismatch(entry.record.tableKey, entry.record.docSize, cell.docSize)
                 }
-                val scalar = entry.scalarPrefix[index] + cell.scalarStride.toLong()
-                if (!fitsUInt(scalar)) {
-                    throw TableFrameRejection.ScalarSizeMismatch(entry.record.tableKey, entry.scalarPrefix[index].toUInt(), cell.scalarStride)
+                val nextScalar = scalar + cell.scalarStride.toLong()
+                if (!fitsUInt(nextScalar)) {
+                    throw TableFrameRejection.ScalarSizeMismatch(entry.record.tableKey, scalar.toUInt(), cell.scalarStride)
                 }
-                entry.docPrefix[index + 1] = doc
-                entry.scalarPrefix[index + 1] = scalar
+                entry.docPrefix[index + 1] = nextDoc
+                entry.scalarPrefix[index + 1] = nextScalar
+                doc = nextDoc
+                scalar = nextScalar
             }
         }
 
