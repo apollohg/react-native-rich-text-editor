@@ -343,9 +343,8 @@ impl YrsHistory {
                 #[cfg(test)]
                 super::observability::HISTORY_STACK_METADATA_VISITS
                     .set(super::observability::HISTORY_STACK_METADATA_VISITS.get() + 1);
-                let slots = item.meta().slots();
-                for slot in [slots.before, slots.after].into_iter().flatten() {
-                    slot_ids.insert(slot.identity());
+                for identity in item.meta().slot_identities().into_iter().flatten() {
+                    slot_ids.insert(identity);
                 }
             }
         }
@@ -357,12 +356,11 @@ impl YrsHistory {
                 #[cfg(test)]
                 super::observability::HISTORY_REPLAY_METADATA_VISITS
                     .set(super::observability::HISTORY_REPLAY_METADATA_VISITS.get() + 1);
-                let slots = metadata.slots();
-                for slot in [slots.before, slots.after].into_iter().flatten() {
+                for identity in metadata.slot_identities().into_iter().flatten() {
                     if subtract_mirrored {
-                        slot_ids.remove(&slot.identity());
+                        slot_ids.remove(&identity);
                     } else {
-                        slot_ids.insert(slot.identity());
+                        slot_ids.insert(identity);
                     }
                 }
             }

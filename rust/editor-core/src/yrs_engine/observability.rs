@@ -63,6 +63,7 @@ macro_rules! recorder {
 }
 
 std::thread_local! {
+    pub(crate) static HISTORY_OWNED_SLOT_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(crate) static HISTORY_STACK_METADATA_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(crate) static HISTORY_REPLAY_METADATA_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(crate) static PREFLIGHT_CHILDREN_ENUMERATED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };

@@ -1157,3 +1157,28 @@ fn history_membership_preserves_slot_identity_and_original_error_order() {
         "ENGINE_INVARIANT_FAILED"
     );
 }
+
+#[test]
+fn history_membership_only_clones_slots_for_the_fee_pass() {
+    use crate::yrs_engine::observability::HISTORY_OWNED_SLOT_READS;
+    const EDITS: usize = 256;
+    for policy in [HistoryPolicy::Auto, HistoryPolicy::Boundary] {
+        let (_doc, history) = recorded_text_history(EDITS, policy);
+        let expected_bytes = original_unmirrored_metadata_bytes(&history, 0).unwrap();
+        let expected_reads = if policy == HistoryPolicy::Auto {
+            0
+        } else {
+            EDITS
+        };
+        HISTORY_OWNED_SLOT_READS.set(0);
+        assert_eq!(
+            history.unmirrored_stack_metadata_bytes(0).unwrap(),
+            expected_bytes
+        );
+        assert_eq!(
+            HISTORY_OWNED_SLOT_READS.get(),
+            expected_reads,
+            "{policy:?}: identity-only membership scans must not clone snapshot ownership"
+        );
+    }
+}

@@ -285,10 +285,19 @@ impl HistoryMetadata {
     }
 
     fn slots(&self) -> HistoryMetadataSlots {
+        #[cfg(test)]
+        super::observability::HISTORY_OWNED_SLOT_READS
+            .set(super::observability::HISTORY_OWNED_SLOT_READS.get() + 1);
         self.0
             .lock()
             .expect("history metadata lock poisoned")
             .clone()
+    }
+
+    fn slot_identities(&self) -> [Option<usize>; 2] {
+        let slots = self.0.lock().expect("history metadata lock poisoned");
+        [slots.before.as_ref(), slots.after.as_ref()]
+            .map(|slot| slot.map(HistorySnapshotSlot::identity))
     }
 
     fn replace_slots(&self, slots: HistoryMetadataSlots) {
