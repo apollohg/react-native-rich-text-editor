@@ -307,13 +307,12 @@ pub(super) fn derive_preview_document(
     yrs_engine::derived_state::record_preview_position_map_derivation();
     #[cfg(test)]
     yrs_engine::observability::record_position_map_clone();
-    let mut position_map = base_position_map.clone();
     let update_mode = if affected_top_level_blocks.is_empty() && preview != context.document {
         UpdateMode::Rebuild
     } else {
         position_update_mode
     };
-    position_map.update(
+    let position_map = base_position_map.clone_updated_and_compacted(
         composed_map,
         context.document,
         preview,
@@ -322,7 +321,6 @@ pub(super) fn derive_preview_document(
     );
     #[cfg(test)]
     yrs_engine::observability::record_position_map_compaction();
-    position_map.compact();
     yrs_engine::derived_state::record_preview_rendered_text_derivation();
     let rendered_text = crate::render::rendered_text(preview, context.schema);
     let rendered_scalars = u32::try_from(rendered_text.chars().count()).map_err(|_| {
@@ -373,13 +371,12 @@ pub(super) fn derive_localized_preview_document(
     yrs_engine::derived_state::record_preview_position_map_derivation();
     #[cfg(test)]
     yrs_engine::observability::record_position_map_clone();
-    let mut position_map = base_position_map.clone();
     let update_mode = if affected_top_level_blocks.is_empty() && preview != context.document {
         UpdateMode::Rebuild
     } else {
         position_update_mode
     };
-    position_map.update(
+    let position_map = base_position_map.clone_updated_and_compacted(
         composed_map,
         context.document,
         preview,
@@ -388,7 +385,6 @@ pub(super) fn derive_localized_preview_document(
     );
     #[cfg(test)]
     yrs_engine::observability::record_position_map_compaction();
-    position_map.compact();
     if localized.rendered_scalars != position_map.total_scalars() {
         return Err(OperationError::engine_invariant_failed(
             request_id,

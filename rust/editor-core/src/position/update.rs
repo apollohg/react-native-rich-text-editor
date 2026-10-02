@@ -3,13 +3,20 @@ use crate::schema::Schema;
 use crate::transform::StepMap;
 
 use super::build::{build_position_map, rebuild_existing_block_mapping};
-use super::PositionMap;
+use super::{BlockMapping, PositionMap};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpdateMode {
     Rebuild,
     MarksOnly,
     InlineTextOnly,
+}
+
+struct IncrementalUpdate {
+    block_index: usize,
+    block: BlockMapping,
+    doc_delta: i32,
+    scalar_delta: i32,
 }
 
 impl PositionMap {
@@ -39,7 +46,17 @@ impl PositionMap {
 
         if mode == UpdateMode::InlineTextOnly {
             if let Some(range) = step_map.single_range() {
-                if self.try_incremental_update(range, old_doc, new_doc, schema) {
+                if let Some(update) =
+                    self.prepare_incremental_update(range, old_doc, new_doc, schema)
+                {
+                    self.blocks[update.block_index] = update.block;
+                    if update.block_index + 1 < self.blocks.len() {
+                        self.prefix_deltas.insert(
+                            update.block_index + 1,
+                            update.doc_delta,
+                            update.scalar_delta,
+                        );
+                    }
                     return;
                 }
             }
@@ -48,20 +65,63 @@ impl PositionMap {
         *self = build_position_map(new_doc, schema);
     }
 
-    /// Attempt an incremental update for a single (pos, deleted, inserted) change.
-    ///
-    /// Returns `true` if the incremental update succeeded, `false` if we need
-    /// a full rebuild.
-    fn try_incremental_update(
-        &mut self,
+    pub(crate) fn clone_updated_and_compacted(
+        &self,
+        step_map: &StepMap,
+        old_doc: &Document,
+        new_doc: &Document,
+        mode: UpdateMode,
+        schema: &Schema,
+    ) -> Self {
+        if self.prefix_deltas.is_empty() && mode == UpdateMode::InlineTextOnly {
+            if let Some(update) = step_map
+                .single_range()
+                .and_then(|range| self.prepare_incremental_update(range, old_doc, new_doc, schema))
+            {
+                let mut blocks = Vec::with_capacity(self.blocks.len());
+                blocks.extend(self.blocks[..update.block_index].iter().cloned());
+                blocks.push(update.block);
+                blocks.extend(self.blocks[update.block_index + 1..].iter().map(|block| {
+                    let mut block = block.clone();
+                    block.doc_start = (block.doc_start as i64 + update.doc_delta as i64) as u32;
+                    block.doc_end = (block.doc_end as i64 + update.doc_delta as i64) as u32;
+                    block.scalar_start =
+                        (block.scalar_start as i64 + update.scalar_delta as i64) as u32;
+                    block
+                }));
+                // Preserve the allocation retained by the ordinary update and compaction.
+                let mut prefix_deltas = self.prefix_deltas.clone();
+                if update.block_index + 1 < self.blocks.len() {
+                    prefix_deltas.insert(
+                        update.block_index + 1,
+                        update.doc_delta,
+                        update.scalar_delta,
+                    );
+                }
+                prefix_deltas.clear();
+                return Self {
+                    blocks,
+                    prefix_deltas,
+                    hard_break_node_types: self.hard_break_node_types.clone(),
+                };
+            }
+        }
+        let mut result = self.clone();
+        result.update(step_map, old_doc, new_doc, mode, schema);
+        result.compact();
+        result
+    }
+
+    fn prepare_incremental_update(
+        &self,
         (pos, deleted, inserted): (u32, u32, u32),
         old_doc: &Document,
         new_doc: &Document,
         schema: &Schema,
-    ) -> bool {
+    ) -> Option<IncrementalUpdate> {
         let block_idx = match self.find_block_for_doc_pos(pos) {
             Some(idx) => idx,
-            None => return false,
+            None => return None,
         };
 
         let old_doc_end = self.effective_doc_end(block_idx);
@@ -69,7 +129,7 @@ impl PositionMap {
 
         let edit_end = pos + deleted;
         if edit_end > old_doc_end {
-            return false;
+            return None;
         }
 
         let doc_delta = inserted as i32 - deleted as i32;
@@ -83,7 +143,7 @@ impl PositionMap {
             let old_previous = old_doc.node_at(&previous.node_path);
             let new_previous = new_doc.node_at(&previous.node_path);
             if old_previous != new_previous {
-                return false;
+                return None;
             }
         }
         if block_idx + 1 < self.blocks.len() {
@@ -91,33 +151,31 @@ impl PositionMap {
             let old_next = old_doc.node_at(&next.node_path);
             let new_next = new_doc.node_at(&next.node_path);
             if old_next != new_next {
-                return false;
+                return None;
             }
         }
 
         let new_node = match new_doc.node_at(&old_block.node_path) {
             Some(node) => node,
-            None => return false,
+            None => return None,
         };
         let rebuilt_block = match rebuild_existing_block_mapping(new_node, &old_block, schema) {
             Some(block) => block,
-            None => return false,
+            None => return None,
         };
         let rebuilt_doc_delta = rebuilt_block.doc_end as i32 - old_block.doc_end as i32;
         if rebuilt_doc_delta != doc_delta {
-            return false;
+            return None;
         }
 
         let scalar_delta = rebuilt_block.scalar_len as i32 - old_scalar_len as i32;
 
-        self.blocks[block_idx] = rebuilt_block;
-
-        if block_idx + 1 < self.blocks.len() {
-            self.prefix_deltas
-                .insert(block_idx + 1, doc_delta, scalar_delta);
-        }
-
-        true
+        Some(IncrementalUpdate {
+            block_index: block_idx,
+            block: rebuilt_block,
+            doc_delta,
+            scalar_delta,
+        })
     }
 
     /// Fold all pending deltas from the `DeltaTree` into the `BlockMapping`
@@ -212,3 +270,6 @@ mod compaction_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
