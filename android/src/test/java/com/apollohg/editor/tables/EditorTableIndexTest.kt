@@ -371,6 +371,26 @@ internal class EditorTableIndexTest {
         assertEquals(original, full.tables.single().cells[0])
     }
 
+    @Test fun deltaPreservesTrailingPrefixesWhenTheExposedCellListShrinks() {
+        val full = frame()
+        val cells = full.tables.single().cells.toMutableList()
+        full.tables = listOf(full.tables.single().copy(cells = cells))
+        val index = EditorTableIndex()
+        adopt(index, full)
+        cells.removeAt(cells.lastIndex)
+        val original = cells.single()
+        val replacement = original.copy(contentKey = "changed")
+        val update = delta().copy(cellUpdates = listOf(FfiTableCellUpdate(ROOT_KEY, 0u, replacement)))
+
+        val changes = adopt(index, update, REVISION, REVISION + 1uL)
+
+        assertEquals(setOf(0), changes.changedCells[ROOT_KEY])
+        assertEquals(listOf(replacement), requireNotNull(index.record(ROOT_KEY)).cells)
+        assertEquals(ROOT_DOC_START + 2u, index.docStart(ROOT_KEY, 0))
+        assertEquals(ROOT_SCALAR_START, index.scalarStart(ROOT_KEY, 0))
+        assertEquals("Staged replacement must not mutate the exposed input list", listOf(original), cells)
+    }
+
     @Test fun everyRejectionLeavesInstalledRecordsAndPositionsUnchanged() {
         val full = frame()
         val first = full.tables.single().cells.first()

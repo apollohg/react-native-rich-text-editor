@@ -123,9 +123,17 @@ internal class EditorTableIndex {
                 if (oldCount == 0) counts.remove(old.attrsKey) else counts[old.attrsKey] = oldCount
                 counts[update.cell.attrsKey] = (counts[update.cell.attrsKey] ?: 0) + 1
             }
-            val updated = Entry(prior.record.copy(docSize = docSize, cells = cells), prior.docPrefix.copyOf(),
-                prior.scalarPrefix.copyOf(), counts, nestedCells)
-            indexes.firstOrNull()?.let { rebuildPrefixes(updated, it) }
+            val first = indexes.first()
+            // Exposed FFI lists can be resized independently of their installed prefixes.
+            val rebuildsEntireSuffix = prior.docPrefix.size == cells.size + 1 && prior.scalarPrefix.size == cells.size + 1
+            val updated = Entry(prior.record.copy(docSize = docSize, cells = cells),
+                if (rebuildsEntireSuffix) LongArray(prior.docPrefix.size) else prior.docPrefix.copyOf(),
+                if (rebuildsEntireSuffix) LongArray(prior.scalarPrefix.size) else prior.scalarPrefix.copyOf(), counts, nestedCells)
+            if (rebuildsEntireSuffix) {
+                prior.docPrefix.copyInto(updated.docPrefix, endIndex = first + 1)
+                prior.scalarPrefix.copyInto(updated.scalarPrefix, endIndex = first + 1)
+            }
+            rebuildPrefixes(updated, first)
             next[key] = updated
             changed[key] = indexes
         }
