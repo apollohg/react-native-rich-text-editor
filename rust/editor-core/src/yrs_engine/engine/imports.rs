@@ -224,6 +224,14 @@ impl YrsDocumentEngine {
             &self.resource_limits,
         )
         .map_err(map_json_import_error)?;
+        self.admit_parsed_json_document(document, input_len)
+    }
+
+    fn admit_parsed_json_document(
+        &self,
+        document: Document,
+        input_len: usize,
+    ) -> YrsEngineResult<ValidatedImportDocument> {
         #[cfg(test)]
         yrs_engine::observability::record_import_model_parse();
         let source = ValidatedImportDocument::new(
@@ -315,11 +323,33 @@ impl YrsDocumentEngine {
         use yrs_engine::RootReplacementError;
         let input = BoundedInput::new(input, InputKind::DocumentJson, &self.resource_limits)
             .map_err(|error| RootReplacementError::Admission(error.into()))?;
-        let value = self
-            .parse_document_json(input.as_str())
-            .map_err(RootReplacementError::Admission)?;
-        self.admit_validated_json_document(value.as_value(), input.as_str().len())
-            .map_err(RootReplacementError::Admission)
+        let admitted = crate::boundary::DepthCheckedJson::new(
+            input.as_str(),
+            document_json_container_depth_limit(self.resource_limits.max_document_depth)
+                .map_err(|error| RootReplacementError::Admission(error.into()))?,
+            self.resource_limits.max_document_depth,
+            "DOCUMENT_LIMIT_EXCEEDED",
+        )
+        .map_err(|error| RootReplacementError::Admission(error.into()))?;
+        with_document_stack_for_json_container_depth(admitted.container_depth(), || {
+            if let Some(document) = crate::serialize::json_in::try_from_plain_json(
+                admitted.as_str(),
+                &self.schema,
+                &self.resource_limits,
+            ) {
+                let document = document
+                    .map_err(map_json_import_error)
+                    .map_err(RootReplacementError::Admission)?;
+                self.admit_parsed_json_document(document, input.as_str().len())
+                    .map_err(RootReplacementError::Admission)
+            } else {
+                let value = admitted
+                    .parse_value("DOCUMENT_INVALID")
+                    .map_err(|error| RootReplacementError::Admission(error.into()))?;
+                self.admit_validated_json_document(value.as_value(), input.as_str().len())
+                    .map_err(RootReplacementError::Admission)
+            }
+        })
     }
 
     /// The sealed whole-root `ReplaceStructure` transaction for an admitted

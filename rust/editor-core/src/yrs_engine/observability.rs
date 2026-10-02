@@ -3,6 +3,7 @@
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FullPassCounts {
     pub import_model_parses: usize,
+    pub json_value_deserializations: usize,
     pub validated_evidence_constructions: usize,
     pub validation_certificate_constructions: usize,
     pub planner_simulations: usize,
@@ -70,6 +71,7 @@ std::thread_local! {
     static FULL_PASS_COUNTS: std::cell::Cell<FullPassCounts> = const {
         std::cell::Cell::new(FullPassCounts {
             import_model_parses: 0,
+            json_value_deserializations: 0,
             validated_evidence_constructions: 0,
             validation_certificate_constructions: 0,
             planner_simulations: 0,
@@ -209,6 +211,10 @@ recorder!(
     table_command_availability_plans
 );
 recorder!(record_yrs_tree_walk, yrs_tree_walks);
+recorder!(
+    record_json_value_deserialization,
+    json_value_deserializations
+);
 recorder!(record_whole_state_encoding, whole_state_encodings);
 recorder!(record_cell_content_key, cell_content_keys);
 recorder!(record_attribute_serialization, attribute_serializations);

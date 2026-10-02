@@ -603,18 +603,55 @@ pub(crate) fn parse_json_value_stack_safe(
     limit_code: &'static str,
     parse_code: &'static str,
 ) -> BoundaryResult<StackSafeJsonValue> {
-    let container_depth = admit_json_container_depth(input, max_container_depth)
-        .map_err(|actual| BoundaryError::limit(limit_code, reported_limit, actual))?;
+    DepthCheckedJson::new(input, max_container_depth, reported_limit, limit_code)?
+        .parse_value(parse_code)
+}
 
-    let mut deserializer = serde_json::Deserializer::from_str(input);
-    deserializer.disable_recursion_limit();
-    let value = serde_json::Value::deserialize(serde_stacker::Deserializer::new(&mut deserializer))
-        .map(|value| StackSafeJsonValue::with_container_depth(value, container_depth))
-        .map_err(|error| BoundaryError::parse(parse_code, error))?;
-    deserializer
-        .end()
-        .map_err(|error| BoundaryError::parse(parse_code, error))?;
-    Ok(value)
+pub(crate) struct DepthCheckedJson<'input> {
+    input: &'input str,
+    container_depth: usize,
+}
+
+impl<'input> DepthCheckedJson<'input> {
+    pub(crate) fn new(
+        input: &'input str,
+        max_container_depth: usize,
+        reported_limit: usize,
+        limit_code: &'static str,
+    ) -> BoundaryResult<Self> {
+        let container_depth = admit_json_container_depth(input, max_container_depth)
+            .map_err(|actual| BoundaryError::limit(limit_code, reported_limit, actual))?;
+        Ok(Self {
+            input,
+            container_depth,
+        })
+    }
+
+    pub(crate) fn as_str(&self) -> &'input str {
+        self.input
+    }
+
+    pub(crate) fn container_depth(&self) -> usize {
+        self.container_depth
+    }
+
+    pub(crate) fn parse_value(
+        &self,
+        parse_code: &'static str,
+    ) -> BoundaryResult<StackSafeJsonValue> {
+        let mut deserializer = serde_json::Deserializer::from_str(self.input);
+        deserializer.disable_recursion_limit();
+        #[cfg(test)]
+        crate::yrs_engine::observability::record_json_value_deserialization();
+        let value =
+            serde_json::Value::deserialize(serde_stacker::Deserializer::new(&mut deserializer))
+                .map(|value| StackSafeJsonValue::with_container_depth(value, self.container_depth))
+                .map_err(|error| BoundaryError::parse(parse_code, error))?;
+        deserializer
+            .end()
+            .map_err(|error| BoundaryError::parse(parse_code, error))?;
+        Ok(value)
+    }
 }
 
 fn admit_json_container_depth(input: &str, limit: usize) -> Result<usize, usize> {

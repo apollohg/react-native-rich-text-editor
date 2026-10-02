@@ -511,6 +511,7 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
     let expected_commit = (
         FullPassCounts {
             import_model_parses: 0,
+            json_value_deserializations: 0,
             validated_evidence_constructions: 0,
             validation_certificate_constructions: 0,
             planner_simulations: 0,
@@ -554,6 +555,7 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
     let expected_result = (
         FullPassCounts {
             import_model_parses: 0,
+            json_value_deserializations: 0,
             validated_evidence_constructions: 0,
             validation_certificate_constructions: 0,
             planner_simulations: 0,
@@ -597,6 +599,7 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
     let expected_command = (
         FullPassCounts {
             import_model_parses: 0,
+            json_value_deserializations: 0,
             validated_evidence_constructions: 0,
             validation_certificate_constructions: 0,
             planner_simulations: 1,

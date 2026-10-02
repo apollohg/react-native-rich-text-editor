@@ -548,6 +548,7 @@ fn existing_text_command_skips_every_proved_document_wide_compiler_pass() {
         take_full_pass_counts_for_test(),
         FullPassCounts {
             import_model_parses: 0,
+            json_value_deserializations: 0,
             validated_evidence_constructions: 0,
             validation_certificate_constructions: 0,
             planner_simulations: 1,
