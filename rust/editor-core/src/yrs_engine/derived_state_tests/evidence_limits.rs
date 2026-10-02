@@ -209,10 +209,14 @@ fn generic_structural_evidence_uses_current_loosened_limits_and_reuses() {
                 1,
                 1,
                 1,
-                None,
+                Some(None),
             )
             .expect("current-limit evidence must install")
     };
+    assert!(
+        next_state.block_branch_index.is_none(),
+        "an unavailable prepared index must keep the exact selection fallback without rebuilding"
+    );
     assert_eq!(
         next_state.validation_certificate.resource_limits,
         current_limits

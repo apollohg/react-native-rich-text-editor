@@ -977,6 +977,7 @@ fn a_table_import_performs_each_document_wide_pass_once() {
     reset_full_pass_counts_for_test();
     reset_cached_render_counts_for_test();
     crate::yrs_engine::observability::take_node_json_projections_for_test();
+    crate::yrs_engine::position::reset_relative_position_traversal_counts_for_test();
     engine
         .prepare_root_replacement_json(
             REQUEST,
@@ -986,7 +987,28 @@ fn a_table_import_performs_each_document_wide_pass_once() {
         .unwrap();
     let counts = take_full_pass_counts_for_test();
     let renders = take_cached_render_counts_for_test();
+    let relative_walks =
+        crate::yrs_engine::position::take_relative_position_traversal_counts_for_test();
     eprintln!("table import: {counts:#?}; cached renders: {renders:?}");
+    assert_eq!(
+        relative_walks,
+        (0, 0, 0),
+        "the imported table's initial cursor must use the candidate branch index"
+    );
+    let state = engine.derived_state.as_ref().unwrap();
+    let txn = engine.doc.transact();
+    let fragment = txn.get_xml_fragment(engine.fragment_name.as_str()).unwrap();
+    assert_eq!(
+        state.relative_selection,
+        crate::yrs_engine::derived_state::operation_result_to_relative(
+            &txn,
+            &fragment,
+            &state.legacy_selection,
+            &engine.schema,
+            None,
+        ),
+        "the committed cursor must preserve the exact root-walk anchor and association"
+    );
     assert_eq!(
         crate::yrs_engine::observability::take_node_json_projections_for_test(),
         0,

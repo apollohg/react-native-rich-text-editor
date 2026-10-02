@@ -96,6 +96,16 @@ fn index_conversions_equal_root_walks_at_every_position() {
                                 indexed, walked,
                                 "{name}: content {position}, {assoc:?} must be indexed"
                             );
+                            let selection = crate::selection::Selection::cursor(position);
+                            assert_eq!(
+                                super::derived_state::operation_result_to_relative(
+                                    txn, fragment, &selection, schema, Some((&index, map, document)),
+                                ),
+                                super::derived_state::operation_result_to_relative(
+                                    txn, fragment, &selection, schema, None,
+                                ),
+                                "{name}: cursor {position} must retain its exact anchor and association"
+                            );
                         }
                         if let Some(sticky) = walked {
                             let offset = sticky.get_offset(txn).unwrap();

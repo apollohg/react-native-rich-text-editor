@@ -647,7 +647,7 @@ impl DerivedStateCache {
         document_revision: u64,
         state_revision: u64,
         yrs_state_epoch: u64,
-        prepared_block_branch_index: Option<Arc<super::block_branch_index::BlockBranchIndex>>,
+        prepared_block_branch_index: Option<Option<Arc<super::block_branch_index::BlockBranchIndex>>>,
     ) -> Option<Self> {
         if canonical_artifact.schema_fingerprint() != schema_fingerprint
             || canonical_artifact.format_version()
@@ -699,7 +699,8 @@ impl DerivedStateCache {
             return None;
         }
 
-        let block_branch_index = prepared_block_branch_index.or_else(|| {
+        // An attempted but unavailable index must not trigger another full walk.
+        let block_branch_index = prepared_block_branch_index.unwrap_or_else(|| {
             super::block_branch_index::BlockBranchIndex::build(txn, fragment, schema, &position_map)
                 .map(Arc::new)
         });

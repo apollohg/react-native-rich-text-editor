@@ -891,13 +891,27 @@ impl YrsDocumentEngine {
                 request_id,
                 CompiledCommitPreparationStage::DerivedStateBuild,
             )?;
-            let next_block_branch_index = localized_block_index.and_then(|block_index| {
-                self.derived_state
-                    .as_ref()?
-                    .block_branch_index
-                    .as_ref()?
-                    .with_block_replaced(&txn, block_index, &self.schema)
-            });
+            let next_block_branch_index = localized_block_index
+                .and_then(|block_index| {
+                    self.derived_state
+                        .as_ref()?
+                        .block_branch_index
+                        .as_ref()?
+                        .with_block_replaced(&txn, block_index, &self.schema)
+                })
+                .map(Some)
+                .or_else(|| {
+                    let derivations = preview_derivations.as_ref()?;
+                    Some(
+                        yrs_engine::block_branch_index::BlockBranchIndex::build(
+                            &txn,
+                            &fragment,
+                            &self.schema,
+                            &derivations.position_map,
+                        )
+                        .map(Arc::new),
+                    )
+                });
             let explicit_relative_selection = match (&selection_plan, &prepared_selection_state) {
                 (SelectionPlan::Explicit(_), Some(prepared)) => Some(prepared.relative().clone()),
                 (SelectionPlan::Explicit(_), None)
@@ -919,7 +933,8 @@ impl YrsDocumentEngine {
                     selection,
                     &self.schema,
                     next_block_branch_index
-                        .as_deref()
+                        .as_ref()
+                        .and_then(|index| index.as_deref())
                         .zip(preview_derivations.as_ref())
                         .map(|(index, derivations)| (index, &derivations.position_map, &preview)),
                 )),
