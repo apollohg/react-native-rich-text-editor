@@ -558,6 +558,46 @@ private const val CELL_CONTENT_HASH_LENGTH = 64
 private fun cellSemanticKey(parent: String, tableId: String, cell: TableSurfaceCell): String =
     "$parent:$tableId:${cell.sourceIndex}:${cell.contentKey}"
 
+internal class PlainTableCellDocument private constructor(
+    val semanticKey: String,
+    private val originalText: String?,
+    private val depth: UShort,
+    private val language: String?,
+    private val preferredTextBlockName: String
+) {
+    val text: String get() = originalText.orEmpty()
+
+    fun materialize(): ViewerDocument {
+        val elements = buildList {
+            add(FfiViewerElement.BlockStart("paragraph", language, depth, null))
+            originalText?.let { add(FfiViewerElement.TextRun(it, emptyList())) }
+            add(FfiViewerElement.BlockEnd)
+        }
+        return ViewerDocument(semanticKey,
+            lowerElements(elements, preferredTextBlockName, emptyMap(), false),
+            false, 0, preferredTextBlockName = preferredTextBlockName)
+    }
+
+    companion object {
+        private const val EMPTY_PARAGRAPH_ELEMENTS = 2
+        private const val TEXT_PARAGRAPH_ELEMENTS = 3
+
+        fun capture(parent: ViewerDocument, cell: TableSurfaceCell, tableId: String): PlainTableCellDocument? {
+            val elements = cell.elements
+            if (elements.size != EMPTY_PARAGRAPH_ELEMENTS && elements.size != TEXT_PARAGRAPH_ELEMENTS) return null
+            val start = elements.first() as? FfiViewerElement.BlockStart ?: return null
+            if (start.nodeType != "paragraph" || start.listContextJson != null || elements.last() != FfiViewerElement.BlockEnd) return null
+            val text = if (elements.size == TEXT_PARAGRAPH_ELEMENTS) {
+                val run = elements[1] as? FfiViewerElement.TextRun ?: return null
+                if (run.marks.isNotEmpty()) return null
+                run.text
+            } else null
+            return PlainTableCellDocument(cellSemanticKey(parent.semanticKey, tableId, cell),
+                text, start.depth, start.language, parent.preferredTextBlockName)
+        }
+    }
+}
+
 internal fun cellSemanticSourceIndex(semanticKey: String, validateContentHash: Boolean = true): Int {
     val hashSeparator = semanticKey.length - CELL_CONTENT_HASH_LENGTH - 1
     if (hashSeparator <= 0 || semanticKey[hashSeparator] != ':') return INVALID_CELL_SOURCE_INDEX

@@ -319,10 +319,13 @@ class ViewerTableTest {
         val eager = prepare(document, engine = StaticLayoutAndroidProseLayoutEngine().apply {
             tableCellMeasurementEnabled = true
         }).blocks.single().tableSurface!!
-        val progressive = prepare(document, engine = StaticLayoutAndroidProseLayoutEngine().apply {
+        val progressiveEngine = StaticLayoutAndroidProseLayoutEngine().apply {
             tableCellMeasurementEnabled = true
             tableMeasurementViewportHeightPx = viewportHeight
-        }).blocks.single().tableSurface!!
+        }
+        val context = PreparedCellShapeCatalog().newBuildContext()
+        val progressive = try { prepare(document, engine = progressiveEngine, context = context).blocks.single().tableSurface!! }
+            finally { context.close() }
         assertTrue("Cold publication must leave offscreen shaping pending", progressive.hasPendingMeasurements)
         val visibleRows = progressive.cells.filter {
             progressive.frameOfCell(it.sourceIndex)!!.top < viewportHeight
@@ -360,6 +363,17 @@ class ViewerTableTest {
         assertEquals(eager.cells.map { it.accessibilityText }, settled.cells.map { it.accessibilityText })
         assertEquals("Pending text and closures must be released on completion", eager.metadataRetainedBytes, settled.metadataRetainedBytes)
         assertTrue("Only explicitly edited cells may retain their shaped layouts", settled.layoutStore.count in 1..pending.size)
+        var refills = 0
+        progressiveEngine.tableCellPreparationObserver = { _, _ -> refills++ }
+        val measuredCell = settled.cells.first { it.row > visibleRows.max() && it.sourceIndex !in pending }
+        val expectedContent = eager.cell(measuredCell.sourceIndex)!!.content
+        val actualContent = measuredCell.content
+        assertEquals("A measured cell can refill after all build contexts close", 1, refills)
+        assertEquals(expectedContent.key, actualContent.key)
+        assertEquals(expectedContent.heightPx, actualContent.heightPx)
+        assertEquals(expectedContent.accessibilityNodes, actualContent.accessibilityNodes)
+        assertEquals(expectedContent.blocks.flatMap { it.fragments }.map { it.layout?.text.toString() },
+            actualContent.blocks.flatMap { it.fragments }.map { it.layout?.text.toString() })
     }
 
     @Test

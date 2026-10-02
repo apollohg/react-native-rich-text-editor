@@ -493,12 +493,12 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                     cellShapeStyleDigest(childTheme, key.nativeFontRevision, key.fontEnvironmentRevision)
                 }
                 fun cellBuilder(
-                    cell: com.apollohg.editor.tables.TableGridCell, child: ViewerDocument,
+                    cell: com.apollohg.editor.tables.TableGridCell, child: () -> ViewerDocument,
                     childKey: ProseLayoutKey, engine: StaticLayoutAndroidProseLayoutEngine,
                     context: PreparedCellShapeBuildContext?
                 ): () -> PreparedProseLayout = {
                     engine.tableCellPreparationObserver?.invoke(cell.sourceIndex, cell.contentKey)
-                    engine.prepare(child, childKey, childTheme, childKey.widthPx, density, false,
+                    engine.prepare(child(), childKey, childTheme, childKey.widthPx, density, false,
                         warningSemanticGeneration, true, context)
                         .also { engine.tableCellLayoutObserverForTesting?.invoke(cell.sourceIndex, it) }
                 }
@@ -515,7 +515,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                         key, cellWidth.toInt(), ProseViewerError.layout("Invalid table cell.")
                     )
                     val childKey = key.copy(semanticKey = child.semanticKey, widthPx = childWidth)
-                    val build = cellBuilder(cell, child, childKey, engine, context)
+                    val build = cellBuilder(cell, { child }, childKey, engine, context)
                     val prepared = if (context == null || theme.codeHighlighting != null) {
                         build()
                     } else {
@@ -527,7 +527,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                             )
                         }
                     }
-                    return prepared.copy(cellPreparation = cellBuilder(cell, child, childKey, this, null))
+                    return prepared.copy(cellPreparation = cellBuilder(cell, { child }, childKey, this, null))
                 }
                 val record by lazy {
                     tableGridConversionObserverForTesting?.invoke()
@@ -556,6 +556,21 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                         inputs.chunked(PlainTableCellMeasurer.MAXIMUM_BATCH_CELLS).forEach { batch ->
                             val pending = mutableListOf<Pair<Int, PlainTableCellMeasurement>>()
                             batch.forEachIndexed { index, (cell, width) ->
+                                if (tableCellMeasurementEnabled && cell.sourceIndex in transient &&
+                                    !cellMode && tableViewportHeight > 0 && childTheme.supportsPlainCellMeasurement) {
+                                    val detached = surfaceSource.cells.getOrNull(cell.sourceIndex)?.let {
+                                        PlainTableCellDocument.capture(document, it, tableKey)
+                                    }
+                                    val text = detached?.text?.plainCellMeasurementText()
+                                    if (text != null) {
+                                        val childKey = key.copy(semanticKey = detached.semanticKey,
+                                            widthPx = width.toInt().coerceAtLeast(1))
+                                        val build = cellBuilder(cell, detached::materialize, childKey, this, null)
+                                        capture(cell, width, PreparedTableCellContent.EstimatedPlain(
+                                            PendingPlainTableCellMeasurement(PlainTableCellMeasurement(childKey, text, build), measurePlain)))
+                                        return@forEachIndexed
+                                    }
+                                }
                                 val child = if (tableCellMeasurementEnabled && cell.sourceIndex in transient) {
                                     surfaceSource.cells.getOrNull(cell.sourceIndex)?.let { document.cellDocument(it, tableKey) }
                                 } else null
@@ -565,7 +580,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                                 } else {
                                     val childWidth = width.toInt().coerceAtLeast(1)
                                     val childKey = key.copy(semanticKey = child.semanticKey, widthPx = childWidth)
-                                    val build = cellBuilder(cell, child, childKey, this, null)
+                                    val build = cellBuilder(cell, { child }, childKey, this, null)
                                     if (!cellMode && tableViewportHeight > 0) {
                                         capture(cell, width, PreparedTableCellContent.EstimatedPlain(
                                             PendingPlainTableCellMeasurement(PlainTableCellMeasurement(childKey, text, build), measurePlain)))
@@ -2068,7 +2083,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
     }
 
     private fun ViewerDocument.plainCellMeasurementText(theme: PreparedProseTheme): String? {
-        if (theme.sourceTheme?.styleSheet != null || !theme.paragraph.canUsePlainTextLayout) return null
+        if (!theme.supportsPlainCellMeasurement) return null
         val block = blocks.singleOrNull() ?: return null
         if (block.nodeType != "paragraph" || block.inBlockquote || block.listContext != null ||
             block.listItemBoundary != null || block.listItemAncestors.isNotEmpty() || block.containers.isNotEmpty() ||
@@ -2078,8 +2093,14 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
             if (inline.marks.isNotEmpty()) return null
             inline.text
         }
-        return text.ifEmpty { PlainTableCellMeasurer.EMPTY_TEXT }.takeIf(PlainTableCellMeasurer::supports)
+        return text.plainCellMeasurementText()
     }
+
+    private val PreparedProseTheme.supportsPlainCellMeasurement: Boolean
+        get() = sourceTheme?.styleSheet == null && paragraph.canUsePlainTextLayout
+
+    private fun String.plainCellMeasurementText(): String? =
+        ifEmpty { PlainTableCellMeasurer.EMPTY_TEXT }.takeIf(PlainTableCellMeasurer::supports)
 
     private fun deferredPlainCellMeasurer(paint: PreparedTextPaint):
         (List<PlainTableCellMeasurement>) -> List<PreparedTableCellContent.MeasuredPlain> {
