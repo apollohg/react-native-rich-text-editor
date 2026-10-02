@@ -324,21 +324,52 @@ impl YrsHistory {
     }
 
     fn unmirrored_stack_metadata_bytes(&self, request_id: u64) -> OperationResult<usize> {
-        let mut seen = self
-            .replay_events
-            .iter()
-            .flat_map(|event| match event {
-                ReplayEvent::Recorded { metadata, .. } => {
-                    let slots = metadata.slots();
-                    [slots.before, slots.after]
+        const SNAPSHOT_SLOTS_PER_ITEM: usize = 2;
+        let stack_items = self
+            .manager
+            .undo_stack()
+            .len()
+            .saturating_add(self.manager.redo_stack().len());
+        // Coalesced typing has many replay records sharing very few stack slots.
+        let subtract_mirrored = stack_items < self.replay_events.len() / SNAPSHOT_SLOTS_PER_ITEM;
+        let mut slot_ids = HashSet::new();
+        if subtract_mirrored {
+            for item in self
+                .manager
+                .undo_stack()
+                .iter()
+                .chain(self.manager.redo_stack())
+            {
+                #[cfg(test)]
+                super::observability::HISTORY_STACK_METADATA_VISITS
+                    .set(super::observability::HISTORY_STACK_METADATA_VISITS.get() + 1);
+                let slots = item.meta().slots();
+                for slot in [slots.before, slots.after].into_iter().flatten() {
+                    slot_ids.insert(slot.identity());
                 }
-                ReplayEvent::Excluded { .. } | ReplayEvent::Action(_) | ReplayEvent::Boundary => {
-                    [None, None]
+            }
+        }
+        for event in self.replay_events.iter().rev() {
+            if subtract_mirrored && slot_ids.is_empty() {
+                return Ok(0);
+            }
+            if let ReplayEvent::Recorded { metadata, .. } = event {
+                #[cfg(test)]
+                super::observability::HISTORY_REPLAY_METADATA_VISITS
+                    .set(super::observability::HISTORY_REPLAY_METADATA_VISITS.get() + 1);
+                let slots = metadata.slots();
+                for slot in [slots.before, slots.after].into_iter().flatten() {
+                    if subtract_mirrored {
+                        slot_ids.remove(&slot.identity());
+                    } else {
+                        slot_ids.insert(slot.identity());
+                    }
                 }
-            })
-            .flatten()
-            .map(|slot| slot.identity())
-            .collect::<HashSet<_>>();
+            }
+        }
+        if subtract_mirrored && slot_ids.is_empty() {
+            return Ok(0);
+        }
         let mut total = 0usize;
         for item in self
             .manager
@@ -346,9 +377,17 @@ impl YrsHistory {
             .iter()
             .chain(self.manager.redo_stack())
         {
+            #[cfg(test)]
+            super::observability::HISTORY_STACK_METADATA_VISITS
+                .set(super::observability::HISTORY_STACK_METADATA_VISITS.get() + 1);
             let slots = item.meta().slots();
             for slot in [slots.before, slots.after].into_iter().flatten() {
-                if seen.insert(slot.identity()) {
+                let count_slot = if subtract_mirrored {
+                    slot_ids.remove(&slot.identity())
+                } else {
+                    slot_ids.insert(slot.identity())
+                };
+                if count_slot {
                     let snapshot = slot.get().ok_or_else(|| {
                         OperationError::engine_invariant_failed(
                             request_id,

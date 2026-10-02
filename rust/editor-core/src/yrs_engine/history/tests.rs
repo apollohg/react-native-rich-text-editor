@@ -860,3 +860,300 @@ fn reserve_induced_compatible_roll_accepts_exact_standalone_metadata_boundary() 
         })
     ));
 }
+
+fn recorded_text_history(edits: usize, policy: HistoryPolicy) -> (Doc, YrsHistory) {
+    const CLOCK_MILLIS: u64 = 10_000;
+    const UPDATE_RESERVATION_BYTES: usize = 1024;
+    let doc = Doc::new();
+    let fragment = doc.get_or_insert_xml_fragment("history-test");
+    let text = fragment.push_back(&mut doc.transact_mut(), XmlTextPrelim::new("seed"));
+    let mut history = YrsHistory::new(
+        &doc,
+        &fragment,
+        EditingLimits::default(),
+        usize::MAX,
+        Arc::new(|| CLOCK_MILLIS),
+    );
+    for index in 0..edits {
+        let baseline = super::encode_full_state(&doc);
+        let origin = history
+            .prepare_capture(
+                index as u64,
+                TransactionOrigin::LocalInput,
+                policy,
+                HistoryClass::Insert,
+                1,
+                Some(history_snapshot(index + 1)),
+                index + 2,
+                &baseline,
+                UPDATE_RESERVATION_BYTES,
+            )
+            .unwrap();
+        let update = {
+            let mut txn = doc.transact_mut_with(origin);
+            let end = text.len(&txn);
+            text.insert(&mut txn, end, "x");
+            txn.encode_update_v1()
+        };
+        history.finish_capture(history_snapshot(index + 2), update);
+    }
+    assert_eq!(
+        text.get_string(&doc.transact()),
+        format!("seed{}", "x".repeat(edits))
+    );
+    (doc, history)
+}
+
+#[test]
+fn coalesced_history_accounting_stops_when_the_newest_record_covers_the_stack() {
+    use crate::yrs_engine::observability::HISTORY_REPLAY_METADATA_VISITS;
+    const EDITS: usize = 256;
+    let (doc, history) = recorded_text_history(EDITS, HistoryPolicy::Auto);
+    assert_eq!(history.manager.undo_stack().len(), 1);
+    assert_eq!(history.replay_events.len(), EDITS);
+    let retained = history.replay_metadata_bytes;
+    HISTORY_REPLAY_METADATA_VISITS.set(0);
+    assert_eq!(
+        history.retained_metadata_bytes(EDITS as u64).unwrap(),
+        retained
+    );
+    assert_eq!(
+        HISTORY_REPLAY_METADATA_VISITS.get(),
+        1,
+        "one coalesced undo item shares both immutable snapshot slots with the latest actual edit"
+    );
+    let fragment = doc.get_or_insert_xml_fragment("history-test");
+    let candidate_doc = Doc::new();
+    let candidate_fragment = candidate_doc.get_or_insert_xml_fragment("history-test");
+    candidate_doc
+        .transact_mut()
+        .apply_update(Update::decode_v1(&history.epoch_baseline).unwrap())
+        .unwrap();
+    let candidate = history
+        .replay_into(EDITS as u64, &candidate_doc, &candidate_fragment)
+        .unwrap();
+    assert_eq!(
+        candidate_fragment.get_string(&candidate_doc.transact()),
+        fragment.get_string(&doc.transact())
+    );
+    assert_eq!(
+        candidate.retained_metadata_bytes(EDITS as u64).unwrap(),
+        retained
+    );
+}
+
+#[test]
+fn history_accounting_avoids_a_second_stack_pass_without_a_replay_ledger() {
+    use crate::yrs_engine::observability::HISTORY_STACK_METADATA_VISITS;
+    const EDITS: usize = 256;
+    for policy in [HistoryPolicy::Auto, HistoryPolicy::Boundary] {
+        let (_doc, mut history) = recorded_text_history(EDITS, policy);
+        history.replay_events.clear();
+        history.replay_metadata_bytes = 0;
+        let expected = original_unmirrored_metadata_bytes(&history, 0).unwrap();
+        assert!(
+            expected > 0,
+            "{policy:?}: the live stack still owns snapshots"
+        );
+        HISTORY_STACK_METADATA_VISITS.set(0);
+        assert_eq!(history.retained_metadata_bytes(0).unwrap(), expected);
+        assert_eq!(
+            HISTORY_STACK_METADATA_VISITS.get(),
+            history.manager.undo_stack().len(),
+            "{policy:?}: empty ledgers must retain the original single stack traversal"
+        );
+    }
+}
+
+fn original_unmirrored_metadata_bytes(
+    history: &YrsHistory,
+    request_id: u64,
+) -> super::OperationResult<usize> {
+    let mut mirrored = std::collections::HashSet::new();
+    for event in &history.replay_events {
+        if let ReplayEvent::Recorded { metadata, .. } = event {
+            let slots = metadata.slots();
+            for slot in [slots.before, slots.after].into_iter().flatten() {
+                mirrored.insert(slot.identity());
+            }
+        }
+    }
+    let mut total = 0usize;
+    for item in history
+        .manager
+        .undo_stack()
+        .iter()
+        .chain(history.manager.redo_stack())
+    {
+        let slots = item.meta().slots();
+        for slot in [slots.before, slots.after].into_iter().flatten() {
+            if mirrored.insert(slot.identity()) {
+                let snapshot = slot.get().ok_or_else(|| {
+                    super::OperationError::engine_invariant_failed(
+                        request_id,
+                        None,
+                        "retained history contains an unsealed snapshot slot",
+                    )
+                })?;
+                total = total.checked_add(snapshot.metadata_bytes).ok_or_else(|| {
+                    super::metadata_limit_error(request_id, &history.limits, usize::MAX)
+                })?;
+            }
+        }
+    }
+    Ok(total)
+}
+
+fn assert_history_membership_matches_original(history: &mut YrsHistory, label: &str) {
+    const BOUNDARIES_PER_STACK_ITEM: usize = 4;
+    let original_events = history.replay_events.len();
+    assert_history_membership_lookup_matches_original(history, label);
+    let stack_items = history.manager.undo_stack().len() + history.manager.redo_stack().len();
+    history.replay_events.extend(
+        std::iter::repeat_with(|| ReplayEvent::Boundary)
+            .take((stack_items + 1) * BOUNDARIES_PER_STACK_ITEM),
+    );
+    assert_history_membership_lookup_matches_original(
+        history,
+        &format!("{label}: boundary-heavy ledger"),
+    );
+    history.replay_events.truncate(original_events);
+}
+
+fn assert_history_membership_lookup_matches_original(history: &YrsHistory, label: &str) {
+    const REQUEST: u64 = 80_000;
+    let expected = original_unmirrored_metadata_bytes(history, REQUEST);
+    assert_eq!(
+        history.unmirrored_stack_metadata_bytes(REQUEST),
+        expected,
+        "{label}"
+    );
+    if let Ok(bytes) = expected {
+        let retained = history.replay_metadata_bytes.saturating_add(bytes);
+        assert_eq!(
+            history.retained_metadata_bytes(REQUEST).unwrap(),
+            retained,
+            "{label}: total fee"
+        );
+        let available = history
+            .limits
+            .max_derived_output_bytes
+            .saturating_sub(retained);
+        for pending in [0, available, available.saturating_add(1)] {
+            assert_eq!(
+                history.cache_metadata_headroom(REQUEST, pending),
+                retained
+                    .checked_add(pending)
+                    .and_then(|used| history.limits.max_derived_output_bytes.checked_sub(used)),
+                "{label}: pending={pending}"
+            );
+        }
+    }
+}
+
+#[test]
+fn history_membership_preserves_charges_through_undo_redo_and_rebase() {
+    const EDITS: usize = 12;
+    let (doc, mut history) = recorded_text_history(EDITS, HistoryPolicy::Boundary);
+    let fragment = doc.get_or_insert_xml_fragment("history-test");
+    assert_eq!(history.manager.undo_stack().len(), EDITS);
+    assert_history_membership_matches_original(&mut history, "separate undo groups");
+    for index in 0..EDITS {
+        assert!(history.undo(index as u64, &doc, &fragment).unwrap().changed);
+        assert_history_membership_matches_original(&mut history, &format!("undo {index}"));
+    }
+    assert_eq!(fragment.get_string(&doc.transact()), "seed");
+    for index in 0..EDITS {
+        assert!(history.redo(index as u64, &doc, &fragment).unwrap().changed);
+        assert_history_membership_matches_original(&mut history, &format!("redo {index}"));
+    }
+    assert_eq!(
+        fragment.get_string(&doc.transact()),
+        format!("seed{}", "x".repeat(EDITS))
+    );
+    history.replay_events.push(ReplayEvent::Boundary);
+    history
+        .replay_events
+        .push(ReplayEvent::Action(HistoryAction::Undo));
+    history.replay_events.push(ReplayEvent::Excluded {
+        update: Vec::new(),
+        origin: TransactionOrigin::RemoteSync,
+        work_units: 0,
+    });
+    assert_history_membership_matches_original(&mut history, "intervening non-metadata events");
+    history.replay_events.clear();
+    history.replay_metadata_bytes = 0;
+    assert_history_membership_matches_original(&mut history, "empty ledger with retained stacks");
+    assert!(history.unmirrored_stack_metadata_bytes(0).unwrap() > 0);
+    history.roll_epoch(super::encode_full_state(&doc));
+    assert_history_membership_matches_original(&mut history, "rebased empty history");
+}
+
+#[test]
+fn history_membership_preserves_slot_identity_and_original_error_order() {
+    const SNAPSHOT_BYTES: usize = 9;
+    let (_doc, mut history) = recorded_text_history(2, HistoryPolicy::Boundary);
+    for event in &mut history.replay_events {
+        if let ReplayEvent::Recorded { metadata, .. } = event {
+            *metadata = metadata.shared_wrapper();
+        }
+    }
+    let stack: Vec<_> = history
+        .manager
+        .undo_stack()
+        .iter()
+        .map(|item| item.meta().clone())
+        .collect();
+    let unsealed = HistorySnapshotSlot::empty();
+    let shared = HistorySnapshotSlot::initialized(history_snapshot(SNAPSHOT_BYTES));
+    stack[0].replace_slots(HistoryMetadataSlots {
+        before: Some(unsealed.clone()),
+        after: Some(shared.clone()),
+    });
+    stack[1].replace_slots(HistoryMetadataSlots {
+        before: Some(shared),
+        after: Some(HistorySnapshotSlot::initialized(history_snapshot(
+            SNAPSHOT_BYTES,
+        ))),
+    });
+    let ReplayEvent::Recorded { metadata, .. } = history.replay_events.last().unwrap() else {
+        panic!("latest real edit must carry history metadata");
+    };
+    metadata.replace_slots(HistoryMetadataSlots {
+        before: Some(unsealed),
+        after: None,
+    });
+    assert_eq!(history.unmirrored_stack_metadata_bytes(0).unwrap(), SNAPSHOT_BYTES * 2,
+        "a mirrored unsealed slot is ignored; aliases count once and distinct equal values count separately");
+    assert_history_membership_matches_original(&mut history, "partial overlap and aliases");
+    history.replay_events.clear();
+    assert_history_membership_matches_original(&mut history, "unmirrored unsealed slot");
+    assert!(history.unmirrored_stack_metadata_bytes(0).is_err());
+    stack[0].replace_slots(HistoryMetadataSlots {
+        before: Some(HistorySnapshotSlot::initialized(history_snapshot(
+            usize::MAX,
+        ))),
+        after: Some(HistorySnapshotSlot::initialized(history_snapshot(1))),
+    });
+    stack[1].replace_slots(HistoryMetadataSlots {
+        before: Some(HistorySnapshotSlot::empty()),
+        after: None,
+    });
+    assert_history_membership_matches_original(
+        &mut history,
+        "overflow before a later unsealed slot",
+    );
+    assert_eq!(
+        history.unmirrored_stack_metadata_bytes(0).unwrap_err().code,
+        "DOCUMENT_LIMIT_EXCEEDED"
+    );
+    stack[0].replace_slots(HistoryMetadataSlots {
+        before: Some(HistorySnapshotSlot::empty()),
+        after: None,
+    });
+    assert_history_membership_matches_original(&mut history, "unsealed before later values");
+    assert_eq!(
+        history.unmirrored_stack_metadata_bytes(0).unwrap_err().code,
+        "ENGINE_INVARIANT_FAILED"
+    );
+}
