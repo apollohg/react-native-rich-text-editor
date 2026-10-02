@@ -4,8 +4,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 CRATE_NAME="yrs"
-CRATE_VERSION="0.27.4"
-CRATE_SHA256="3987db9bdbe6f0f49c58ec3d0daf4750a70b40019c190f6c6708abfcdfe6bea0"
+CRATE_VERSION="0.28.0"
+CRATE_SHA256="52c70dc8beca8666c77612a96889106ca3cd65318609721f464624ff79685da9"
 CRATE_URL="https://static.crates.io/crates/$CRATE_NAME/$CRATE_NAME-$CRATE_VERSION.crate"
 VENDOR_DIR="$SCRIPT_DIR/$CRATE_NAME"
 PATCH_DIR="$SCRIPT_DIR/patches"
@@ -31,7 +31,7 @@ tar -xzf "$WORK_DIR/crate.tar.gz" -C "$WORK_DIR"
 echo "==> Applying patches..."
 for patch in "$PATCH_DIR"/*.patch; do
     echo "  -> $(basename "$patch")"
-    patch -p1 -d "$WORK_DIR/$CRATE_NAME-$CRATE_VERSION" < "$patch"
+    patch --no-backup-if-mismatch -p1 -d "$WORK_DIR/$CRATE_NAME-$CRATE_VERSION" < "$patch"
 done
 
 echo "==> Replacing $VENDOR_DIR..."

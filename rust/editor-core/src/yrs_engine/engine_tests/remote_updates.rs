@@ -7,6 +7,71 @@ mod remote_publication;
 mod noop_after_history;
 
 #[test]
+fn malformed_utf8_updates_are_rejected_without_changing_history_or_document() {
+    const TEXT: &str = "utf8-validation-probe";
+    const INVALID_UTF8: u8 = 0xff;
+    const INSERT_REQUEST: u64 = 230;
+    const PREFLIGHT_REQUEST: u64 = 231;
+    const APPLY_REQUEST: u64 = 232;
+    const RECOVERY_REQUEST: u64 = 233;
+    let mut source = transaction_engine();
+    source
+        .apply_command(
+            INSERT_REQUEST,
+            TypedCommand::InsertText { text: TEXT.into() },
+        )
+        .unwrap();
+    let valid = source.encoded_state().unwrap();
+    let mut malformed = valid.clone();
+    let text_offset = malformed
+        .windows(TEXT.len())
+        .position(|bytes| bytes == TEXT.as_bytes())
+        .expect("the v1 update contains the inserted text");
+    malformed[text_offset] = INVALID_UTF8;
+
+    let mut target = transaction_engine();
+    target
+        .apply_command(
+            INSERT_REQUEST,
+            TypedCommand::InsertText {
+                text: "local history".into(),
+            },
+        )
+        .unwrap();
+    let before = atomic_audit(&target);
+    let error = target
+        .preflight_remote_update_v1(PREFLIGHT_REQUEST, &malformed)
+        .unwrap_err();
+    assert_eq!(error.code, "DOCUMENT_INVALID");
+    assert_eq!(error.request_id, PREFLIGHT_REQUEST);
+    let error = target
+        .apply_remote_update_v1(APPLY_REQUEST, &malformed)
+        .unwrap_err();
+    assert_eq!(error.code, "DOCUMENT_INVALID");
+    assert_eq!(error.request_id, APPLY_REQUEST);
+    assert_eq!(atomic_audit(&target), before);
+    target
+        .preflight_remote_update_v1(RECOVERY_REQUEST, &valid)
+        .unwrap();
+
+    let valid_v2 = source
+        .doc
+        .transact()
+        .encode_state_as_update_v2(&StateVector::default());
+    Update::decode_v2(&valid_v2).unwrap();
+    let mut malformed_v2 = valid_v2;
+    let text_offset = malformed_v2
+        .windows(TEXT.len())
+        .position(|bytes| bytes == TEXT.as_bytes())
+        .expect("the v2 string table contains the inserted text");
+    malformed_v2[text_offset] = INVALID_UTF8;
+    assert!(
+        Update::decode_v2(&malformed_v2).is_err(),
+        "v2 string-table decoding must validate UTF-8"
+    );
+}
+
+#[test]
 fn remote_history_admission_failure_retains_dependency_quarantine_for_retry() {
     use crate::yrs_engine::compiler::{set_atomic_failpoint_for_test, AtomicFailpoint};
     use yrs::{diff_updates_v1, encode_state_vector_from_update_v1};

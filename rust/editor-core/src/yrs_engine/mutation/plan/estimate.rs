@@ -606,7 +606,7 @@ pub(crate) fn direct_xml_replacement_growth(
 
 fn any_growth(value: &Any) -> Option<usize> {
     match value {
-        Any::Null | Any::Undefined | Any::Bool(_) | Any::Number(_) | Any::BigInt(_) => Some(16),
+        Any::Null | Any::Undefined | Any::Bool(_) | Any::Number(_) => Some(16),
         Any::String(value) => value.len().checked_mul(2)?.checked_add(16),
         Any::Buffer(value) => value.len().checked_mul(2)?.checked_add(16),
         Any::Array(values) => values.iter().try_fold(24usize, |total, value| {

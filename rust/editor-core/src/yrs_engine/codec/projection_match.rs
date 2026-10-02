@@ -124,9 +124,7 @@ fn any_projection_equal(left: &Any, right: &Any) -> bool {
     if any_projects_null(left) && any_projects_null(right) {
         return true;
     }
-    if matches!(left, Any::Number(_) | Any::BigInt(_))
-        || matches!(right, Any::Number(_) | Any::BigInt(_))
-    {
+    if matches!(left, Any::Number(_)) || matches!(right, Any::Number(_)) {
         return projected_number(left)
             .is_some_and(|left| projected_number(right).is_some_and(|right| left == right));
     }
@@ -162,15 +160,15 @@ fn any_projection_equal(left: &Any, right: &Any) -> bool {
 
 fn projected_number(value: &Any) -> Option<serde_json::Number> {
     match value {
-        Any::Number(value) => serde_json::Number::from_f64(*value),
-        Any::BigInt(value) => Some((*value).into()),
+        Any::Number(yrs::Number::Float(value)) => serde_json::Number::from_f64(*value),
+        Any::Number(yrs::Number::Int(value)) => Some((*value).into()),
         _ => None,
     }
 }
 
 fn any_projects_null(value: &Any) -> bool {
     matches!(value, Any::Null | Any::Undefined)
-        || matches!(value, Any::Number(number) if !number.is_finite())
+        || matches!(value, Any::Number(yrs::Number::Float(number)) if !number.is_finite())
 }
 
 pub(crate) fn is_attributeless_mark_value(value: &Any) -> bool {
@@ -216,13 +214,12 @@ fn validate_any_projection(
     match value {
         Any::Null | Any::Undefined => budget.charge_output(4),
         Any::Bool(value) => budget.charge_output(if *value { 4 } else { 5 }),
-        Any::Number(value) => {
-            let number = serde_json::Number::from_f64(*value);
+        Any::Number(_) => {
+            let number = projected_number(value);
             budget.charge_computed_output(|| {
                 number.as_ref().map_or(4, |number| number.to_string().len())
             })
         }
-        Any::BigInt(value) => budget.charge_computed_output(|| value.to_string().len()),
         Any::String(value) => budget.charge_computed_output(|| json_string_len(value)),
         Any::Buffer(value) => {
             budget.admit_any(depth, value.len())?;
@@ -254,7 +251,7 @@ fn any_matches_json(value: &Any, expected: Option<&Value>) -> bool {
     match value {
         Any::Null | Any::Undefined => expected.is_some_and(Value::is_null),
         Any::Bool(value) => expected.and_then(Value::as_bool) == Some(*value),
-        Any::Number(value) => serde_json::Number::from_f64(*value).map_or_else(
+        Any::Number(_) => projected_number(value).map_or_else(
             || expected.is_some_and(Value::is_null),
             |number| {
                 expected.is_some_and(|expected| {
@@ -262,9 +259,6 @@ fn any_matches_json(value: &Any, expected: Option<&Value>) -> bool {
                 })
             },
         ),
-        Any::BigInt(value) => expected.is_some_and(|expected| {
-            json_projection_values_equal(&Value::Number((*value).into()), expected)
-        }),
         Any::String(value) => expected.and_then(Value::as_str) == Some(value.as_ref()),
         Any::Buffer(value) => expected.and_then(Value::as_array).is_some_and(|expected| {
             expected.len() == value.len()
@@ -414,10 +408,7 @@ fn heading_level<T: ReadTxn>(element: &XmlElementRef, txn: &T) -> Option<u8> {
 
 fn heading_level_from_any(value: &Any) -> Option<u8> {
     match value {
-        Any::BigInt(value) => u8::try_from(*value).ok(),
-        Any::Number(value) => (value.is_finite() && value.fract() == 0.0)
-            .then(|| u8::try_from(*value as i64).ok())
-            .flatten(),
+        Any::Number(value) => value.as_i64().and_then(|value| u8::try_from(value).ok()),
         Any::String(value) => crate::serialize::parse_wire_heading_level_str(value),
         _ => None,
     }

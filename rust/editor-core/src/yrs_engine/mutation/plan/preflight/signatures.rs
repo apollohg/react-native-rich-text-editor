@@ -145,7 +145,7 @@ pub(super) fn any_preflight_work(root: &Any) -> Option<usize> {
                     stack.push(value);
                 }
             }
-            Any::Null | Any::Undefined | Any::Bool(_) | Any::Number(_) | Any::BigInt(_) => {}
+            Any::Null | Any::Undefined | Any::Bool(_) | Any::Number(_) => {}
         }
     }
     Some(work)

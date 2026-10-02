@@ -108,7 +108,7 @@ fn fifo_and_reversed_suffix_publish_all_structs_at_each_committed_boundary() {
                     .get_map("independent")
                     .unwrap()
                     .get(&engine.doc.transact(), "x"),
-                Some(yrs::Out::Any(yrs::Any::Number(1.0)))
+                Some(yrs::Out::Any(yrs::Any::from(1.0)))
             );
         }
     }

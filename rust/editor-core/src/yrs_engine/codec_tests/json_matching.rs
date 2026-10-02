@@ -162,7 +162,7 @@ fn validated_json_matcher_coalesces_text_across_diffs_nodes_and_fragments() {
             &mut txn,
             0,
             "b",
-            mark_attrs_value("custom", Any::Number(f64::NAN)),
+            mark_attrs_value("custom", Any::from(f64::NAN)),
         );
     }
     let expected = json!({
@@ -201,7 +201,7 @@ fn validated_json_matcher_coalesces_text_across_diffs_nodes_and_fragments() {
             "b",
             mark_attrs_value(
                 "custom",
-                Any::Array(vec![Any::BigInt(1), Any::BigInt(2)].into()),
+                Any::Array(vec![Any::from(1_i64), Any::from(2_i64)].into()),
             ),
         );
     }

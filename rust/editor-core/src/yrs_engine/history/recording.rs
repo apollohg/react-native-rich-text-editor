@@ -448,7 +448,7 @@ fn build_undo_manager(
 
     let added_capture = pending_capture.clone();
     let added_pop = pending_pop.clone();
-    manager.observe_item_added_with(ADDED_OBSERVER, move |_, event| {
+    manager.observe_item_added(ADDED_OBSERVER, move |_, event| {
         if let Some(metadata) = added_capture
             .lock()
             .expect("pending history capture lock poisoned")
@@ -465,7 +465,7 @@ fn build_undo_manager(
     });
 
     let updated_capture = pending_capture.clone();
-    manager.observe_item_updated_with(UPDATED_OBSERVER, move |_, event| {
+    manager.observe_item_updated(UPDATED_OBSERVER, move |_, event| {
         let pending = updated_capture
             .lock()
             .expect("pending history capture lock poisoned")
@@ -478,7 +478,7 @@ fn build_undo_manager(
 
     let popped_target = pending_pop.clone();
     let popped_result = popped.clone();
-    manager.observe_item_popped_with(POPPED_OBSERVER, move |_, event| {
+    manager.observe_item_popped(POPPED_OBSERVER, move |_, event| {
         let slots = event.meta().slots();
         if let Some(target) = popped_target
             .lock()

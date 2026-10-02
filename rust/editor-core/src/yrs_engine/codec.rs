@@ -401,19 +401,7 @@ pub(crate) fn normalized_wire_element_node_type<T: ReadTxn>(
     if tag != "heading" {
         return tag.to_string();
     }
-    let level = match element.get_attribute(txn, "level") {
-        Some(yrs::Out::Any(Any::BigInt(value))) => u8::try_from(value).ok(),
-        Some(yrs::Out::Any(Any::Number(value))) => (value.is_finite() && value.fract() == 0.0)
-            .then(|| u8::try_from(value as i64).ok())
-            .flatten(),
-        Some(yrs::Out::Any(Any::String(value))) => {
-            crate::serialize::parse_wire_heading_level_str(&value)
-        }
-        _ => None,
-    };
-    level
-        .filter(|level| (1..=6).contains(level))
-        .map_or_else(|| tag.to_string(), |level| format!("h{level}"))
+    heading_level(element, txn).map_or_else(|| tag.to_string(), |level| format!("h{level}"))
 }
 
 pub(crate) struct WireAttributeJsonBudget<'a> {
@@ -549,16 +537,12 @@ fn any_to_json_inner(
             budget.charge_output(if *value { 4 } else { 5 })?;
             Ok(Value::Bool(*value))
         }
-        Any::Number(value) => {
-            let number = serde_json::Number::from_f64(*value);
+        Any::Number(_) => {
+            let number = projected_number(value);
             budget.charge_computed_output(|| {
                 number.as_ref().map_or(4, |number| number.to_string().len())
             })?;
             Ok(number.map(Value::Number).unwrap_or(Value::Null))
-        }
-        Any::BigInt(value) => {
-            budget.charge_computed_output(|| value.to_string().len())?;
-            Ok(Value::Number((*value).into()))
         }
         Any::String(value) => {
             budget.charge_computed_output(|| json_string_len(value))?;

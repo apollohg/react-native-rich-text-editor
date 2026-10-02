@@ -7,8 +7,8 @@ use crate::types::{
     Entries, Event, Events, Path, PathSegment, RootRef, SharedRef, TypePtr, TypeRef,
 };
 use crate::{
-    ArrayRef, Doc, MapRef, Observer, Origin, Out, ReadTxn, Subscription, TextRef, TransactionMut,
-    WriteTxn, XmlElementRef, XmlFragmentRef, XmlTextRef, ID,
+    ArrayRef, Doc, MapRef, Observer, Origin, Out, ReadTxn, TextRef, TransactionMut, WriteTxn,
+    XmlElementRef, XmlFragmentRef, XmlTextRef, ID,
 };
 use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
@@ -24,7 +24,7 @@ use std::sync::Arc;
 /// A wrapper around [Branch] cell, supplied with a bunch of convenience methods to operate on both
 /// map-like and array-like contents of a [Branch].
 #[repr(transparent)]
-#[derive(Clone, Copy, Hash)]
+#[derive(Clone, Copy, Hash, PartialEq, Eq)]
 pub struct BranchPtr(NonNull<Branch>);
 
 unsafe impl Send for BranchPtr {}
@@ -141,28 +141,6 @@ impl Into<Out> for BranchPtr {
     }
 }
 
-impl Eq for BranchPtr {}
-
-#[cfg(not(test))]
-impl PartialEq for BranchPtr {
-    fn eq(&self, other: &Self) -> bool {
-        std::ptr::eq(self.0.as_ptr(), other.0.as_ptr())
-    }
-}
-
-#[cfg(test)]
-impl PartialEq for BranchPtr {
-    fn eq(&self, other: &Self) -> bool {
-        if NonNull::eq(&self.0, &other.0) {
-            true
-        } else {
-            let a: &Branch = self.deref();
-            let b: &Branch = other.deref();
-            a.eq(b)
-        }
-    }
-}
-
 impl std::fmt::Debug for BranchPtr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", self.id())
@@ -235,12 +213,9 @@ impl std::fmt::Debug for Branch {
 impl Eq for Branch {}
 
 impl PartialEq for Branch {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
-        self.item == other.item
-            && self.start == other.start
-            && self.map == other.map
-            && self.block_len == other.block_len
-            && self.type_ref == other.type_ref
+        std::ptr::addr_eq(self, other)
     }
 }
 
@@ -524,35 +499,19 @@ impl Branch {
     }
 
     #[cfg(feature = "sync")]
-    pub fn observe<F>(&mut self, f: F) -> Subscription
+    pub fn observe<F>(&mut self, key: Origin, f: F)
     where
         F: FnMut(&TransactionMut, &Event) + Send + Sync + 'static,
     {
-        self.observers.subscribe(Box::new(f))
+        self.observers.subscribe(key, Box::new(f))
     }
 
     #[cfg(not(feature = "sync"))]
-    pub fn observe<F>(&mut self, f: F) -> Subscription
+    pub fn observe<F>(&mut self, key: Origin, f: F)
     where
         F: FnMut(&TransactionMut, &Event) + 'static,
     {
-        self.observers.subscribe(Box::new(f))
-    }
-
-    #[cfg(feature = "sync")]
-    pub fn observe_with<F>(&mut self, key: Origin, f: F)
-    where
-        F: FnMut(&TransactionMut, &Event) + Send + Sync + 'static,
-    {
-        self.observers.subscribe_with(key, Box::new(f))
-    }
-
-    #[cfg(not(feature = "sync"))]
-    pub fn observe_with<F>(&mut self, key: Origin, f: F)
-    where
-        F: FnMut(&TransactionMut, &Event) + 'static,
-    {
-        self.observers.subscribe_with(key, Box::new(f))
+        self.observers.subscribe(key, Box::new(f))
     }
 
     pub fn unobserve(&mut self, key: &Origin) -> bool {
@@ -560,35 +519,23 @@ impl Branch {
     }
 
     #[cfg(feature = "sync")]
-    pub fn observe_deep<F>(&mut self, f: F) -> Subscription
+    pub fn observe_deep<F>(&mut self, key: Origin, f: F)
     where
         F: FnMut(&TransactionMut, &Events) + Send + Sync + 'static,
     {
-        self.deep_observers.subscribe(Box::new(f))
+        self.deep_observers.subscribe(key, Box::new(f))
     }
 
     #[cfg(not(feature = "sync"))]
-    pub fn observe_deep<F>(&mut self, f: F) -> Subscription
+    pub fn observe_deep<F>(&mut self, key: Origin, f: F)
     where
         F: FnMut(&TransactionMut, &Events) + 'static,
     {
-        self.deep_observers.subscribe(Box::new(f))
+        self.deep_observers.subscribe(key, Box::new(f))
     }
 
-    #[cfg(feature = "sync")]
-    pub fn observe_deep_with<F>(&mut self, key: Origin, f: F)
-    where
-        F: FnMut(&TransactionMut, &Events) + Send + Sync + 'static,
-    {
-        self.deep_observers.subscribe_with(key, Box::new(f))
-    }
-
-    #[cfg(not(feature = "sync"))]
-    pub fn observe_deep_with<F>(&mut self, key: Origin, f: F)
-    where
-        F: FnMut(&TransactionMut, &Events) + 'static,
-    {
-        self.deep_observers.subscribe_with(key, Box::new(f))
+    pub fn unobserve_deep(&mut self, key: &Origin) -> bool {
+        self.deep_observers.unsubscribe(key)
     }
 
     pub(crate) fn is_parent_of(&self, mut ptr: Option<ItemPtr>) -> bool {

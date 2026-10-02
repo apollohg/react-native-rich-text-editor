@@ -176,7 +176,7 @@ fn real_remote_changes_after_history_are_not_hidden_by_equal_json_or_sv() {
                         cell.insert_attribute(
                             &mut txn,
                             "colwidth",
-                            yrs::Any::Array(vec![yrs::Any::Number(120.0)].into()),
+                            yrs::Any::Array(vec![yrs::Any::from(120.0)].into()),
                         );
                     }
                     "delete" => text.remove_range(&mut txn, 0, 1),

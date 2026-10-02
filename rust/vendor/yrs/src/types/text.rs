@@ -1865,7 +1865,7 @@ mod test {
         let txt = doc.get_or_insert_text("text");
         let delta = Arc::new(ArcSwapOption::default());
         let delta_c = delta.clone();
-        let sub = txt.observe(move |txn, e| {
+        txt.observe("sub", move |txn, e| {
             delta_c.store(Some(Arc::new(e.delta(txn).to_vec())));
         });
 
@@ -1906,7 +1906,7 @@ mod test {
         );
 
         // free the observer and make sure that callback is no longer called
-        drop(sub);
+        txt.unobserve("sub");
         txt.insert(&mut doc.transact_mut(), 1, "fgh"); // => 'afghed'
         assert_eq!(delta.swap(None), None);
     }
@@ -1917,7 +1917,9 @@ mod test {
         let txt = d1.get_or_insert_text("text");
         let delta = Arc::new(ArcSwapOption::default());
         let delta_c = delta.clone();
-        let _sub = txt.observe(move |txn, e| delta_c.store(Some(Arc::new(e.delta(txn).to_vec()))));
+        txt.observe("sub", move |txn, e| {
+            delta_c.store(Some(Arc::new(e.delta(txn).to_vec())))
+        });
 
         // insert initial string
         {
@@ -1956,7 +1958,9 @@ mod test {
         let d2 = Doc::with_client_id(2);
         let txt = d2.get_or_insert_text("text");
         let delta_c = delta.clone();
-        let _sub = txt.observe(move |txn, e| delta_c.store(Some(Arc::new(e.delta(txn).to_vec()))));
+        txt.observe("sub", move |txn, e| {
+            delta_c.store(Some(Arc::new(e.delta(txn).to_vec())))
+        });
 
         {
             let t1 = d1.transact_mut();
@@ -2014,16 +2018,19 @@ mod test {
 
         let delta1 = Arc::new(ArcSwapOption::default());
         let delta_clone = delta1.clone();
-        let _sub1 =
-            txt1.observe(move |txn, e| delta_clone.store(Some(Arc::new(e.delta(txn).to_vec()))));
+        txt1.observe("sub", move |txn, e| {
+            delta_clone.store(Some(Arc::new(e.delta(txn).to_vec())))
+        });
 
         let d2 = Doc::with_client_id(2);
         let txt2 = d2.get_or_insert_text("text");
 
         let delta2 = Arc::new(ArcSwapOption::default());
         let delta_clone = delta2.clone();
-        let _sub2 =
-            txt2.observe(move |txn, e| delta_clone.store(Some(Arc::new(e.delta(txn).to_vec()))));
+
+        txt2.observe("sub", move |txn, e| {
+            delta_clone.store(Some(Arc::new(e.delta(txn).to_vec())))
+        });
 
         let a: Attrs = HashMap::from([("bold".into(), Any::Bool(true))]);
 
@@ -2201,7 +2208,7 @@ mod test {
 
         let delta1 = Arc::new(ArcSwapOption::default());
         let delta_clone = delta1.clone();
-        let _sub1 = txt1.observe(move |txn, e| {
+        txt1.observe("sub", move |txn, e| {
             let delta = e.delta(txn).to_vec();
             delta_clone.store(Some(Arc::new(delta)));
         });
@@ -2215,7 +2222,7 @@ mod test {
             let mut txn = d1.transact_mut();
             txt1.insert_with_attributes(&mut txn, 0, "ab", a1.clone());
 
-            let a2: Attrs = HashMap::from([("width".into(), Any::Number(100.0))]);
+            let a2: Attrs = HashMap::from([("width".into(), Any::from(100))]);
 
             txt1.insert_embed_with_attributes(&mut txn, 1, embed.clone(), a2.clone());
             drop(txn);
@@ -2244,10 +2251,7 @@ mod test {
         };
 
         let a1 = Some(Box::new(a1));
-        let a2 = Some(Box::new(HashMap::from([(
-            "width".into(),
-            Any::Number(100.0),
-        )])));
+        let a2 = Some(Box::new(HashMap::from([("width".into(), Any::from(100))])));
 
         let expected = vec![
             Diff::new("a".into(), a1.clone()),
@@ -2286,7 +2290,7 @@ mod test {
 
         txt1.insert(&mut d1.transact_mut(), 0, "abcd");
 
-        let _sub = txt1.observe(move |txn, e| {
+        txt1.observe("sub", move |txn, e| {
             delta_copy.store(Some(e.delta(txn).to_vec().into()));
         });
         txt1.format(&mut d1.transact_mut(), 1, 2, attrs.clone());
@@ -2336,8 +2340,9 @@ mod test {
             let c2 = text2.chars().count();
             let count = c1 as u32 + c2 as u32;
 
-            let _observer = text
-                .observe(move |txn, edit| assert_eq!(edit.delta(txn)[0], Delta::Deleted(count)));
+            text.observe("sub", move |txn, edit| {
+                assert_eq!(edit.delta(txn)[0], Delta::Deleted(count))
+            });
 
             text.remove_range(&mut txn, 0, count);
             txn.commit();
@@ -2697,9 +2702,9 @@ mod test {
         assert_eq!(d.get(&txn1, "key").unwrap(), Out::Any("val".into()));
 
         let triggered = Arc::new(AtomicBool::new(false));
-        let _sub = {
+        {
             let triggered = triggered.clone();
-            txt1.observe(move |txn, e| {
+            txt1.observe("sub", move |txn, e| {
                 let delta = e.delta(txn).to_vec();
                 let d: MapRef = match &delta[0] {
                     Delta::Inserted(insert, _) => insert.clone().cast().unwrap(),

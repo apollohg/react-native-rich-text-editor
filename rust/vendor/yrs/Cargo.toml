@@ -12,7 +12,7 @@
 [package]
 edition = "2018"
 name = "yrs"
-version = "0.27.4"
+version = "0.28.0"
 authors = [
     "Kevin Jahns <kevin.jahns@pm.me>",
     "Bartosz Sypytkowski <b.sypytkowski@gmail.com>",
@@ -62,7 +62,7 @@ name = "serialization"
 path = "benches/serialization.rs"
 
 [dependencies.arc-swap]
-version = "1.7"
+version = "1.9"
 
 [dependencies.async-lock]
 version = "3.4"
@@ -71,7 +71,7 @@ version = "3.4"
 version = "0.1"
 
 [dependencies.dashmap]
-version = "6.0"
+version = "6.2"
 
 [dependencies.fastrand]
 version = "2"
@@ -112,7 +112,7 @@ version = "0.8"
 version = "1"
 
 [dev-dependencies.proptest]
-version = "1.2"
+version = "1.11"
 
 [dev-dependencies.proptest-derive]
 version = "0.8.0"
@@ -121,4 +121,4 @@ version = "0.8.0"
 version = "1.6.0"
 
 [dev-dependencies.uuid]
-version = "1.16.0"
+version = "1.26"

@@ -984,7 +984,7 @@ mod test {
 
         let entries = Arc::new(ArcSwapOption::default());
         let entries_c = entries.clone();
-        let _sub = m1.observe(move |txn, e| {
+        m1.observe("sub", move |txn, e| {
             let keys = e.keys(txn);
             entries_c.store(Some(Arc::new(keys.clone())));
         });
@@ -999,7 +999,7 @@ mod test {
             entries.swap(None),
             Some(Arc::new(HashMap::from([(
                 "a".into(),
-                EntryChange::Inserted(Any::Number(1.0).into())
+                EntryChange::Inserted(Any::from(1).into())
             )])))
         );
 
@@ -1012,7 +1012,7 @@ mod test {
             entries.swap(None),
             Some(Arc::new(HashMap::from([(
                 "a".into(),
-                EntryChange::Updated(Any::Number(1.0).into(), Any::Number(2.0).into())
+                EntryChange::Updated(Any::from(1).into(), Any::from(2).into())
             )])))
         );
 
@@ -1026,7 +1026,7 @@ mod test {
             entries.swap(None),
             Some(Arc::new(HashMap::from([(
                 "a".into(),
-                EntryChange::Updated(Any::Number(2.0).into(), Any::Number(4.0).into())
+                EntryChange::Updated(Any::from(2).into(), Any::from(4).into())
             )])))
         );
 
@@ -1039,7 +1039,7 @@ mod test {
             entries.swap(None),
             Some(Arc::new(HashMap::from([(
                 "a".into(),
-                EntryChange::Removed(Any::Number(4.0).into())
+                EntryChange::Removed(Any::from(4).into())
             )])))
         );
 
@@ -1053,7 +1053,7 @@ mod test {
             entries.swap(None),
             Some(Arc::new(HashMap::from([(
                 "b".into(),
-                EntryChange::Inserted(Any::Number(2.0).into())
+                EntryChange::Inserted(Any::from(2).into())
             )])))
         );
 
@@ -1071,7 +1071,7 @@ mod test {
 
         let entries = Arc::new(ArcSwapOption::default());
         let entries_c = entries.clone();
-        let _sub = m2.observe(move |txn, e| {
+        m2.observe("sub", move |txn, e| {
             let keys = e.keys(txn);
             entries_c.store(Some(Arc::new(keys.clone())));
         });
@@ -1090,7 +1090,7 @@ mod test {
             entries.swap(None),
             Some(Arc::new(HashMap::from([(
                 "b".into(),
-                EntryChange::Inserted(Any::Number(2.0).into())
+                EntryChange::Inserted(Any::from(2).into())
             )])))
         );
     }
@@ -1152,7 +1152,7 @@ mod test {
         let calls = Arc::new(AtomicU32::new(0));
         let paths_copy = paths.clone();
         let calls_copy = calls.clone();
-        let _sub = map.observe_deep(move |_txn, e| {
+        map.observe_deep("sub", move |_txn, e| {
             let path: Vec<Path> = e.iter().map(Event::path).collect();
             paths_copy.lock().unwrap().push(path);
             calls_copy.fetch_add(1, std::sync::atomic::Ordering::Relaxed);

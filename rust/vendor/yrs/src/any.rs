@@ -1,8 +1,11 @@
 use crate::encoding::read::{Error, Read};
 use crate::encoding::write::Write;
+use serde::de::Visitor;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::cmp::PartialEq;
 use std::collections::HashMap;
 use std::convert::TryFrom;
+use std::fmt::Formatter;
 use std::sync::Arc;
 
 pub const F64_MAX_SAFE_INTEGER: f64 = (i64::pow(2, 53) - 1) as f64;
@@ -15,8 +18,7 @@ pub enum Any {
     Null,
     Undefined,
     Bool(bool),
-    Number(f64),
-    BigInt(i64),
+    Number(Number),
     String(Arc<str>),
     Buffer(Arc<[u8]>),
     Array(Arc<[Any]>),
@@ -41,13 +43,13 @@ impl Any {
             // CASE 126: null
             126 => Any::Null,
             // CASE 125: integer
-            125 => Any::Number(decoder.read_var::<i64>()? as f64),
+            125 => Any::Number(Number::Int(decoder.read_var::<i64>()?)),
             // CASE 124: float32
-            124 => Any::Number(decoder.read_f32()? as f64),
+            124 => Any::Number(Number::Float(decoder.read_f32()? as f64)),
             // CASE 123: float64
-            123 => Any::Number(decoder.read_f64()?),
+            123 => Any::Number(Number::Float(decoder.read_f64()?)),
             // CASE 122: bigint
-            122 => Any::BigInt(decoder.read_i64()?),
+            122 => Any::Number(Number::Int(decoder.read_i64()?)),
             // CASE 121: boolean (false)
             121 => Any::Bool(false),
             // CASE 120: boolean (true)
@@ -140,28 +142,39 @@ impl Any {
                 encoder.write_string(&str)
             }
             Any::Number(num) => {
-                let num_truncated = num.trunc();
-                if num_truncated == *num
-                    && num_truncated <= F64_MAX_SAFE_INTEGER
-                    && num_truncated >= F64_MIN_SAFE_INTEGER
-                {
-                    // TYPE 125: INTEGER
-                    encoder.write_u8(125);
-                    encoder.write_var(num_truncated as i64)
-                } else if ((*num as f32) as f64) == *num {
-                    // TYPE 124: FLOAT32
-                    encoder.write_u8(124);
-                    encoder.write_f32(*num as f32)
-                } else {
-                    // TYPE 123: FLOAT64
-                    encoder.write_u8(123);
-                    encoder.write_f64(*num)
+                match *num {
+                    Number::Int(n) => {
+                        // ensure max compatibility with yjs lib0 number encoding
+                        if n >= -0x7FFFFFFF && n <= 0x7FFFFFFF {
+                            // TYPE 125: INTEGER
+                            encoder.write_u8(125);
+                            encoder.write_var(n)
+                        } else if (n as f32) as i128 == i128::from(n) {
+                            // TYPE 124: FLOAT32
+                            encoder.write_u8(124);
+                            encoder.write_f32(n as f32)
+                        } else if (n as f64) as i128 == i128::from(n) {
+                            // TYPE 123: FLOAT64
+                            encoder.write_u8(123);
+                            encoder.write_f64(n as f64)
+                        } else {
+                            // TYPE 122: BigInt
+                            encoder.write_u8(122);
+                            encoder.write_i64(n)
+                        }
+                    }
+                    Number::Float(n) => {
+                        if (n as f32) as f64 == n {
+                            // TYPE 124: FLOAT32
+                            encoder.write_u8(124);
+                            encoder.write_f32(n as f32)
+                        } else {
+                            // TYPE 123: FLOAT64
+                            encoder.write_u8(123);
+                            encoder.write_f64(n)
+                        }
+                    }
                 }
-            }
-            Any::BigInt(num) => {
-                // TYPE 122: BigInt
-                encoder.write_u8(122);
-                encoder.write_i64(*num)
             }
             Any::Array(arr) => {
                 // TYPE 117: Array
@@ -228,7 +241,6 @@ impl std::fmt::Display for Any {
             Any::Undefined => f.write_str("undefined"),
             Any::Bool(value) => write!(f, "{}", value),
             Any::Number(value) => write!(f, "{}", value),
-            Any::BigInt(value) => write!(f, "{}", value),
             Any::String(value) => f.write_str(value.as_ref()),
             Any::Array(values) => {
                 write!(f, "[")?;
@@ -260,6 +272,169 @@ impl std::fmt::Display for Any {
                 }
                 Ok(())
             }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Number {
+    Int(i64),
+    Float(f64),
+}
+
+impl Number {
+    pub const I64_MAX_SAFE_INTEGER: i64 = i64::pow(2, 53) - 1;
+    pub const I64_MIN_SAFE_INTEGER: i64 = -Self::I64_MAX_SAFE_INTEGER;
+    pub const F64_MAX_SAFE_INTEGER: f64 = Self::I64_MAX_SAFE_INTEGER as f64;
+    pub const F64_MIN_SAFE_INTEGER: f64 = -Self::F64_MAX_SAFE_INTEGER;
+
+    pub fn try_i64(value: f64) -> Self {
+        if value.trunc() == value
+            && value >= Self::F64_MIN_SAFE_INTEGER
+            && value <= Self::F64_MAX_SAFE_INTEGER
+        {
+            Number::Int(value as i64)
+        } else {
+            Number::Float(value)
+        }
+    }
+
+    pub fn as_i64(self) -> Option<i64> {
+        match self {
+            Number::Int(value) => Some(value),
+            Number::Float(value) => {
+                // check if conversion is lossless
+                let converted = value as i64;
+                if converted as f64 == value && i128::from(converted) == value as i128 {
+                    Some(converted)
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    pub fn as_f64(self) -> Option<f64> {
+        match self {
+            Number::Int(value) => {
+                let n = value as f64;
+                if n as i128 == i128::from(value) {
+                    Some(n)
+                } else {
+                    None
+                }
+            }
+            Number::Float(value) => Some(value),
+        }
+    }
+}
+
+impl PartialEq for Number {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Number::Int(a), Number::Int(b)) => a == b,
+            (Number::Float(a), Number::Float(b)) => a == b,
+            _ => match (self.as_f64(), other.as_f64()) {
+                (Some(a), Some(b)) => a == b,
+                _ => false,
+            },
+        }
+    }
+}
+
+impl From<f64> for Number {
+    #[inline]
+    fn from(value: f64) -> Self {
+        Number::Float(value)
+    }
+}
+
+impl From<i64> for Number {
+    #[inline]
+    fn from(value: i64) -> Self {
+        Number::Int(value)
+    }
+}
+
+impl TryFrom<u64> for Number {
+    type Error = u64;
+
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        if value <= i64::MAX as u64 {
+            Ok(Number::Int(value as i64))
+        } else {
+            Err(value)
+        }
+    }
+}
+
+impl Serialize for Number {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::Error;
+        match self.as_f64() {
+            Some(v) => serializer.serialize_f64(v),
+            None => match self.as_i64() {
+                Some(v) => serializer.serialize_i64(v),
+                None => Err(S::Error::custom("cannot serialize number")),
+            },
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Number {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct NumberVisitor;
+        impl<'de> Visitor<'de> for NumberVisitor {
+            type Value = Number;
+
+            fn expecting(&self, formatter: &mut Formatter) -> std::fmt::Result {
+                write!(formatter, "number")
+            }
+
+            fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                if v > (i64::MAX as u64) {
+                    return Err(E::custom("integer outside of bounds of i64"));
+                }
+                Ok(Number::Int(v as i64))
+            }
+
+            fn visit_i64<E>(self, value: i64) -> Result<Number, E> {
+                Ok(Number::Int(value))
+            }
+
+            fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                if v <= Number::F64_MAX_SAFE_INTEGER
+                    && v > Number::F64_MIN_SAFE_INTEGER
+                    && v.trunc() == v
+                {
+                    Ok(Number::Int(v as i64))
+                } else {
+                    Ok(Number::Float(v))
+                }
+            }
+        }
+
+        deserializer.deserialize_any(NumberVisitor)
+    }
+}
+
+impl std::fmt::Display for Number {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Number::Int(value) => write!(f, "{}", value),
+            Number::Float(value) => write!(f, "{}", value),
         }
     }
 }
@@ -347,12 +522,12 @@ impl Iterator for AnyIntoIter {
     }
 }
 
-macro_rules! impl_from_num {
+macro_rules! impl_from_float {
     ($t:ty) => {
         impl From<$t> for Any {
             #[inline]
             fn from(v: $t) -> Self {
-                Self::Number(v as f64)
+                Self::Number(Number::Float(v as f64))
             }
         }
 
@@ -361,24 +536,21 @@ macro_rules! impl_from_num {
 
             fn try_from(v: Any) -> Result<Self, Self::Error> {
                 match v {
-                    Any::Number(num) => Ok(num as Self),
-                    Any::BigInt(num) => Ok(num as Self),
+                    Any::Number(num) => match num.as_f64() {
+                        Some(n) => Ok(n as Self),
+                        None => Err(v),
+                    },
                     other => Err(other),
                 }
             }
         }
     };
 }
-macro_rules! impl_from_bigint {
+macro_rules! impl_from_int {
     ($t:ty) => {
         impl From<$t> for Any {
             fn from(value: $t) -> Self {
-                let v = value as f64;
-                if v <= F64_MAX_SAFE_INTEGER && v >= F64_MIN_SAFE_INTEGER {
-                    Self::Number(v)
-                } else {
-                    Self::BigInt(value as i64)
-                }
+                Any::Number(Number::from(value as i64))
             }
         }
 
@@ -387,8 +559,10 @@ macro_rules! impl_from_bigint {
 
             fn try_from(v: Any) -> Result<Self, Self::Error> {
                 match v {
-                    Any::Number(num) => Ok(num as Self),
-                    Any::BigInt(num) => Ok(num as Self),
+                    Any::Number(num) => match num.as_i64() {
+                        Some(n) => Ok(n as Self),
+                        None => Err(v),
+                    },
                     other => Err(other),
                 }
             }
@@ -396,29 +570,20 @@ macro_rules! impl_from_bigint {
     };
 }
 
-impl_from_num!(f32);
-impl_from_num!(f64);
-impl_from_num!(i16);
-impl_from_num!(i32);
-impl_from_num!(u16);
-impl_from_num!(u32);
-impl_from_bigint!(i64);
-impl_from_bigint!(isize);
+impl_from_float!(f32);
+impl_from_float!(f64);
+impl_from_int!(i16);
+impl_from_int!(i32);
+impl_from_int!(u16);
+impl_from_int!(u32);
+impl_from_int!(i64);
+impl_from_int!(isize);
 
 impl TryFrom<u64> for Any {
     type Error = u64;
 
     fn try_from(value: u64) -> Result<Self, Self::Error> {
-        if value > i64::MAX.abs() as u64 {
-            Err(value)
-        } else {
-            let v = value as f64;
-            if v <= F64_MAX_SAFE_INTEGER && v >= F64_MIN_SAFE_INTEGER {
-                Ok(Any::Number(v))
-            } else {
-                Ok(Any::BigInt(v as i64))
-            }
-        }
+        Ok(Any::Number(Number::try_from(value)?))
     }
 }
 
@@ -427,8 +592,10 @@ impl TryFrom<Any> for u64 {
 
     fn try_from(v: Any) -> Result<Self, Self::Error> {
         match v {
-            Any::Number(num) => Ok(num as Self),
-            Any::BigInt(num) => Ok(num as Self),
+            Any::Number(num) => match num.as_i64() {
+                Some(n) if n >= 0 => Ok(n as u64),
+                _ => Err(Any::Number(num)),
+            },
             other => Err(other),
         }
     }
@@ -442,7 +609,7 @@ impl TryFrom<usize> for Any {
         // for 32-bit architectures we know that usize will always fit,
         // so there's no need to check for length, but we stick to TryInto
         // trait to keep API compatibility
-        Ok(Any::Number(value as f64))
+        Ok(Any::Number(Number::Int(value as i64)))
     }
 
     #[cfg(target_pointer_width = "64")]
@@ -461,8 +628,10 @@ impl TryFrom<Any> for usize {
 
     fn try_from(v: Any) -> Result<Self, Self::Error> {
         match v {
-            Any::Number(num) => Ok(num as Self),
-            Any::BigInt(num) => Ok(num as Self),
+            Any::Number(num) => match num.as_i64() {
+                Some(n) if n >= 0 => Ok(n as usize),
+                _ => Err(v),
+            },
             other => Err(other),
         }
     }
@@ -860,6 +1029,7 @@ macro_rules! any_expect_expr_comma {
 mod test {
     use crate::any::Any;
     use crate::encoding::read::Cursor;
+    use crate::Number;
 
     #[test]
     fn decode_map_rejects_length_amplification() {
@@ -883,6 +1053,76 @@ mod test {
         assert!(
             Any::decode(&mut cursor).is_err(),
             "an oversized Any::Array length must be rejected, not eagerly allocated"
+        );
+    }
+
+    fn hex(n: Number) -> String {
+        let mut buf = Vec::new();
+        Any::Number(n).encode(&mut buf);
+        buf.iter().map(|b| format!("{:02x}", b)).collect()
+    }
+
+    #[test]
+    fn number_encoding_yjs_compat() {
+        assert_eq!(hex(Number::Int(0)), "7d00");
+        assert_eq!(hex(Number::Int(42)), "7d2a");
+        assert_eq!(hex(Number::Int(-42)), "7d6a");
+        assert_eq!(hex(Number::Int(2147483647)), "7dbfffffff0f");
+        // above 2^31 lib0 stops using the var int tag, even for whole numbers
+        assert_eq!(hex(Number::Int(2147483648)), "7c4f000000");
+        assert_eq!(hex(Number::Int(-2147483648)), "7ccf000000");
+        assert_eq!(hex(Number::Int(4294967295)), "7b41efffffffe00000");
+        assert_eq!(hex(Number::Int(9007199254740991)), "7b433fffffffffffff");
+        assert_eq!(hex(Number::Float(1.5)), "7c3fc00000");
+        assert_eq!(hex(Number::Float(1.1)), "7b3ff199999999999a");
+        assert_eq!(hex(Number::Float(2147483648.0)), "7c4f000000");
+        assert_eq!(hex(Number::Float(5e9)), "7c4f9502f9");
+        assert_eq!(hex(Number::Float(1e30)), "7b46293e5939a08cea");
+        assert_eq!(hex(Number::Float(f64::NAN)), "7b7ff8000000000000");
+        assert_eq!(hex(Number::Float(f64::INFINITY)), "7c7f800000");
+        assert_eq!(hex(Number::Float(f64::NEG_INFINITY)), "7cff800000");
+    }
+
+    #[test]
+    fn integer_wire_roundtrip_preserves_precision_at_i64_boundaries() {
+        const FIRST_INEXACT_INTEGER: i64 = (1_i64 << 53) + 1;
+        for value in [
+            i64::MIN,
+            i64::MIN + 1,
+            -FIRST_INEXACT_INTEGER,
+            FIRST_INEXACT_INTEGER,
+            i64::MAX - 1,
+            i64::MAX,
+        ] {
+            let mut bytes = Vec::new();
+            Any::Number(Number::Int(value)).encode(&mut bytes);
+            let decoded = Any::decode(&mut Cursor::new(&bytes)).unwrap();
+            let actual = match decoded {
+                Any::Number(Number::Int(n)) => i128::from(n),
+                Any::Number(Number::Float(n)) => n as i128,
+                other => panic!("integer {value} decoded as {other:?}"),
+            };
+            assert_eq!(
+                actual,
+                i128::from(value),
+                "wire roundtrip for {value}: {bytes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn number_lossless_conversions_reject_saturating_i64_roundtrips() {
+        const I64_UPPER_EXCLUSIVE: f64 = -(i64::MIN as f64);
+        assert_eq!(Number::Int(i64::MAX).as_f64(), None);
+        assert_eq!(Number::Float(I64_UPPER_EXCLUSIVE).as_i64(), None);
+        assert_ne!(Number::Int(i64::MAX), Number::Float(I64_UPPER_EXCLUSIVE));
+        assert_eq!(Number::Int(i64::MIN).as_f64(), Some(i64::MIN as f64));
+        assert_eq!(Number::Float(i64::MIN as f64).as_i64(), Some(i64::MIN));
+        assert_eq!(Number::Float(1.5).as_i64(), None);
+        assert_eq!(Number::Float(f64::NAN).as_i64(), None);
+        assert_eq!(
+            serde_json::to_value(Number::Int(i64::MAX)).unwrap(),
+            serde_json::json!(i64::MAX)
         );
     }
 }

@@ -1610,13 +1610,13 @@ mod test {
         let f = doc.get_or_insert_xml_fragment("test");
         let mut txn = doc.transact_mut();
         let txt = f.push_back(&mut txn, XmlTextPrelim::new(""));
-        txt.insert_attribute(&mut txn, "test", Any::BigInt(42));
+        txt.insert_attribute(&mut txn, "test", Any::from(42));
         txt.insert_attribute(&mut txn, "test_true", true);
         txt.insert_attribute(&mut txn, "test_null", Any::Null);
 
         assert_eq!(
             txt.get_attribute(&txn, "test"),
-            Some(Out::Any(Any::BigInt(42)))
+            Some(Out::Any(Any::from(42)))
         );
         assert_eq!(
             txt.get_attribute(&txn, "test_true"),
@@ -1734,7 +1734,7 @@ mod test {
         let nodes = Arc::new(ArcSwapOption::default());
         let attributes_c = attributes.clone();
         let nodes_c = nodes.clone();
-        let _sub = xml.observe(move |txn, e| {
+        xml.observe("sub", move |txn, e| {
             attributes_c.store(Some(Arc::new(e.keys(txn).clone())));
             nodes_c.store(Some(Arc::new(e.delta(txn).to_vec())));
         });
@@ -1821,7 +1821,7 @@ mod test {
         let nodes = Arc::new(ArcSwapOption::default());
         let attributes_c = attributes.clone();
         let nodes_c = nodes.clone();
-        let _sub = xml2.observe(move |txn, e| {
+        xml2.observe("sub", move |txn, e| {
             attributes_c.store(Some(Arc::new(e.keys(txn).clone())));
             nodes_c.store(Some(Arc::new(e.delta(txn).to_vec())));
         });
