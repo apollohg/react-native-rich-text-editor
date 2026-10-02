@@ -22,6 +22,7 @@ std::thread_local! {
     static RELATIVE_FORWARD_TRAVERSALS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static RELATIVE_REVERSE_TRAVERSALS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static BOUNDARY_WALK_NODE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static BOUNDARY_SORT_TARGETS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]
@@ -467,6 +468,81 @@ pub(crate) fn boundary_chunk_for_block<T: ReadTxn>(
     .next()
 }
 
+enum BoundaryTargets<'positions> {
+    Ordered {
+        positions: &'positions [Vec<u32>],
+        block: usize,
+        offset: usize,
+    },
+    Sorted {
+        targets: Vec<(u32, usize, usize)>,
+        index: usize,
+    },
+}
+
+impl<'positions> BoundaryTargets<'positions> {
+    fn new(positions: &'positions [Vec<u32>]) -> Option<Self> {
+        let count = positions
+            .iter()
+            .try_fold(0usize, |total, block| total.checked_add(block.len()))?;
+        if positions.iter().flatten().is_sorted() {
+            return Some(Self::Ordered {
+                positions,
+                block: positions
+                    .iter()
+                    .position(|block| !block.is_empty())
+                    .unwrap_or(positions.len()),
+                offset: 0,
+            });
+        }
+        let mut targets = Vec::new();
+        targets.try_reserve_exact(count).ok()?;
+        for (block, positions) in positions.iter().enumerate() {
+            targets.extend(
+                positions
+                    .iter()
+                    .enumerate()
+                    .map(|(offset, position)| (*position, block, offset)),
+            );
+        }
+        targets.sort_unstable();
+        #[cfg(test)]
+        BOUNDARY_SORT_TARGETS.set(BOUNDARY_SORT_TARGETS.get().saturating_add(targets.len()));
+        Some(Self::Sorted { targets, index: 0 })
+    }
+
+    fn peek(&self) -> Option<(u32, usize, usize)> {
+        match self {
+            Self::Ordered {
+                positions,
+                block,
+                offset,
+            } => positions
+                .get(*block)?
+                .get(*offset)
+                .map(|position| (*position, *block, *offset)),
+            Self::Sorted { targets, index } => targets.get(*index).copied(),
+        }
+    }
+
+    fn advance(&mut self) {
+        match self {
+            Self::Ordered {
+                positions,
+                block,
+                offset,
+            } => {
+                *offset += 1;
+                while *block < positions.len() && *offset >= positions[*block].len() {
+                    *block += 1;
+                    *offset = 0;
+                }
+            }
+            Self::Sorted { index, .. } => *index += 1,
+        }
+    }
+}
+
 fn boundary_chunks_in_sequence<T: ReadTxn>(
     txn: &T,
     children: impl Iterator<Item = XmlOut>,
@@ -476,25 +552,10 @@ fn boundary_chunks_in_sequence<T: ReadTxn>(
     schema: &Schema,
     ancestor: Option<Arc<AncestorNode>>,
 ) -> Option<Vec<Arc<EpochBlockChunk>>> {
-    let mut targets = Vec::new();
-    let count = doc_positions.iter().try_fold(0usize, |total, positions| {
-        total.checked_add(positions.len())
-    })?;
-    targets.try_reserve_exact(count).ok()?;
-    for (block, positions) in doc_positions.iter().enumerate() {
-        targets.extend(
-            positions
-                .iter()
-                .enumerate()
-                .map(|(offset, position)| (*position, block, offset)),
-        );
-    }
-    targets.sort_unstable();
     let mut walk = BoundaryAnchorWalk {
         txn,
         schema,
-        targets: &targets,
-        resolved: 0,
+        targets: BoundaryTargets::new(doc_positions)?,
         chunks: doc_positions
             .iter()
             .map(|positions| vec![None; positions.len()])
@@ -502,7 +563,7 @@ fn boundary_chunks_in_sequence<T: ReadTxn>(
         open: ancestor.into_iter().collect(),
     };
     walk.walk_sequence(children, branch, start, None)?;
-    if walk.resolved != targets.len() {
+    if walk.targets.peek().is_some() {
         return None;
     }
     walk.chunks
@@ -517,8 +578,7 @@ fn boundary_chunks_in_sequence<T: ReadTxn>(
 struct BoundaryAnchorWalk<'walk, T> {
     txn: &'walk T,
     schema: &'walk Schema,
-    targets: &'walk [(u32, usize, usize)],
-    resolved: usize,
+    targets: BoundaryTargets<'walk>,
     chunks: Vec<Vec<Option<BoundaryAnchors>>>,
     open: Vec<Arc<AncestorNode>>,
 }
@@ -526,26 +586,28 @@ struct BoundaryAnchorWalk<'walk, T> {
 impl<T: ReadTxn> BoundaryAnchorWalk<'_, T> {
     fn pending(&self, sequence_end: Option<u32>) -> Option<u32> {
         self.targets
-            .get(self.resolved)
+            .peek()
             .map(|target| target.0)
             .filter(|target| sequence_end.is_none_or(|end| *target < end))
     }
 
     fn resolve(&mut self, mut leaf: BoundaryAnchors) {
         leaf.ancestor = self.open.last().cloned();
-        let position = self.targets[self.resolved].0;
-        while self
-            .targets
-            .get(self.resolved + 1)
-            .is_some_and(|target| target.0 == position)
-        {
-            let (_, block, offset) = self.targets[self.resolved];
-            self.chunks[block][offset] = Some(leaf.clone());
-            self.resolved += 1;
+        let position = self.targets.peek().expect("pending boundary target").0;
+        loop {
+            let (_, block, offset) = self.targets.peek().expect("pending boundary target");
+            self.targets.advance();
+            if self
+                .targets
+                .peek()
+                .is_some_and(|target| target.0 == position)
+            {
+                self.chunks[block][offset] = Some(leaf.clone());
+            } else {
+                self.chunks[block][offset] = Some(leaf);
+                break;
+            }
         }
-        let (_, block, offset) = self.targets[self.resolved];
-        self.chunks[block][offset] = Some(leaf);
-        self.resolved += 1;
     }
 
     fn resolve_at_child(

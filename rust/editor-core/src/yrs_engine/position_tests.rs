@@ -8,7 +8,7 @@ use yrs::{Assoc, ReadTxn, StickyIndex};
 use super::{
     boundary_anchors_at, boundary_chunks_at_doc_positions, is_table_cell_element, scalar_len,
     scalar_offset_to_utf16, sticky_at, xml_out_pm_size, xml_text_plain_string,
-    BOUNDARY_WALK_NODE_VISITS,
+    BOUNDARY_SORT_TARGETS, BOUNDARY_WALK_NODE_VISITS,
 };
 use crate::model::Node;
 use crate::position_epoch::BoundaryAnchors;
@@ -651,6 +651,134 @@ fn assert_batch_matches_descent(
 }
 
 #[test]
+fn ordered_boundary_chunks_borrow_targets_without_changing_anchors_or_fees() {
+    const BOUNDARIES_PER_CHUNK: usize = 3;
+    const CHUNKS_PER_GROUP: usize = 4;
+    for (label, engine) in corpus() {
+        let positions = scalar_doc_positions(&engine);
+        let chunks: Vec<_> = positions
+            .chunks(BOUNDARIES_PER_CHUNK)
+            .flat_map(|chunk| {
+                [
+                    Vec::new(),
+                    chunk.to_vec(),
+                    Vec::new(),
+                    vec![*chunk.last().unwrap()],
+                ]
+            })
+            .collect();
+        engine
+            .read_fragment_for_test(|txn, fragment| {
+                BOUNDARY_SORT_TARGETS.set(0);
+                let actual =
+                    boundary_chunks_at_doc_positions(txn, fragment, &chunks, engine.schema())
+                        .unwrap_or_else(|| panic!("{label}: ordered chunks failed"));
+                assert_eq!(
+                    BOUNDARY_SORT_TARGETS.get(),
+                    0,
+                    "{label}: ordered targets need no sorting buffer"
+                );
+                assert_eq!(
+                    actual.len(),
+                    chunks.len(),
+                    "{label}: empty chunks must survive"
+                );
+                for group in actual.chunks_exact(CHUNKS_PER_GROUP) {
+                    let source = group[1].anchors.last().unwrap();
+                    let repeated = &group[3].anchors[0];
+                    assert_eq!(source, repeated, "{label}: duplicate across an empty chunk");
+                    match (&source.ancestor, &repeated.ancestor) {
+                        (Some(source), Some(repeated)) => assert!(
+                            std::sync::Arc::ptr_eq(source, repeated),
+                            "{label}: duplicate boundaries share the same ancestor chain"
+                        ),
+                        (None, None) => {}
+                        _ => panic!("{label}: duplicate ancestor ownership differs"),
+                    }
+                }
+                let reversed: Vec<_> = chunks
+                    .iter()
+                    .rev()
+                    .map(|chunk| chunk.iter().rev().copied().collect())
+                    .collect();
+                let fallback =
+                    boundary_chunks_at_doc_positions(txn, fragment, &reversed, engine.schema())
+                        .expect("the sorted fallback must resolve the same boundaries");
+                for (index, ((chunk, positions), reversed_chunk)) in actual
+                    .iter()
+                    .zip(&chunks)
+                    .zip(fallback.iter().rev())
+                    .enumerate()
+                {
+                    assert_eq!(
+                        chunk.anchors.len(),
+                        positions.len(),
+                        "{label}: chunk {index}"
+                    );
+                    assert_eq!(
+                        chunk.anchors.capacity(),
+                        reversed_chunk.anchors.capacity(),
+                        "{label}: chunk {index} capacity"
+                    );
+                    assert_eq!(
+                        chunk.retained_bytes, reversed_chunk.retained_bytes,
+                        "{label}: chunk {index} charge"
+                    );
+                    assert!(
+                        chunk.anchors.iter().eq(reversed_chunk.anchors.iter().rev()),
+                        "{label}: chunk {index} sorted fallback anchors"
+                    );
+                    for (anchor, position) in chunk.anchors.iter().zip(positions) {
+                        let expected =
+                            anchors_by_descent(txn, fragment, *position, engine.schema())
+                                .expect("scalar boundary must be resolvable");
+                        assert_eq!(
+                            DescentAnchors::batched(anchor),
+                            expected,
+                            "{label}: chunk {index} position {position}"
+                        );
+                    }
+                }
+            })
+            .expect("the engine fragment exists");
+    }
+}
+
+#[test]
+fn boundary_target_cursor_preserves_duplicate_and_unordered_input_indices() {
+    let cases = [
+        vec![],
+        vec![vec![], vec![]],
+        vec![vec![], vec![0, 0], vec![], vec![0, 1], vec![]],
+        vec![vec![1, 3], vec![], vec![0, 3]],
+        vec![vec![3, 1, 0], vec![], vec![u32::MAX, u32::MAX]],
+    ];
+    for positions in cases {
+        let mut expected: Vec<_> = positions
+            .iter()
+            .enumerate()
+            .flat_map(|(block, positions)| {
+                positions
+                    .iter()
+                    .enumerate()
+                    .map(move |(offset, position)| (*position, block, offset))
+            })
+            .collect();
+        expected.sort_unstable();
+        let mut cursor = super::BoundaryTargets::new(&positions).expect("small cursor fits");
+        for target in expected {
+            assert_eq!(cursor.peek(), Some(target), "input {positions:?}");
+            cursor.advance();
+        }
+        assert_eq!(
+            cursor.peek(),
+            None,
+            "input {positions:?}: cursor must be exhausted"
+        );
+    }
+}
+
+#[test]
 fn batched_boundary_anchors_match_per_position_descent_at_every_scalar() {
     for (label, engine) in corpus() {
         let doc_positions = scalar_doc_positions(&engine);
@@ -736,5 +864,36 @@ fn pinning_visits_every_yrs_node_once_however_many_boundaries_it_anchors() {
             visits, node_count,
             "{label}: pinning walks the document once instead of descending per boundary"
         );
+        engine
+            .read_fragment_for_test(|txn, fragment| {
+                for positions in [
+                    vec![],
+                    vec![vec![]],
+                    vec![vec![0]],
+                    vec![vec![u32::MAX], vec![0]],
+                ] {
+                    BOUNDARY_WALK_NODE_VISITS.set(0);
+                    let chunks = boundary_chunks_at_doc_positions(
+                        txn,
+                        fragment,
+                        &positions,
+                        engine.schema(),
+                    );
+                    assert_eq!(
+                        chunks.is_some(),
+                        !positions
+                            .iter()
+                            .flatten()
+                            .any(|position| *position == u32::MAX),
+                        "{label}: invalid targets must fail, empty targets remain valid"
+                    );
+                    assert_eq!(
+                        BOUNDARY_WALK_NODE_VISITS.get(),
+                        node_count,
+                        "{label}: exhausted targets must not stop XML validation for {positions:?}"
+                    );
+                }
+            })
+            .expect("the engine fragment exists");
     }
 }
