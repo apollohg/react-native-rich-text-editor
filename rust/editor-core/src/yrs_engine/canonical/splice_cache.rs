@@ -24,7 +24,7 @@ pub(crate) enum CacheAllocation {
 pub(crate) struct CanonicalSpliceCache {
     bytes: Vec<u8>,
     path: Vec<u32>,
-    range: Range<usize>,
+    suffix_range: Range<usize>,
     revision: u64,
     artifact: Weak<CanonicalArtifactInner>,
     hash_prefix: Sha256Prefix,
@@ -130,8 +130,7 @@ impl CanonicalSpliceCache {
             if !schema.is_text_block(node.node_type()) {
                 return None;
             }
-            let replaced_len =
-                expected_len.checked_sub(prior.bytes.len().checked_sub(prior.range.len())?)?;
+            let replaced_len = expected_len.checked_sub(prior.suffix_range.end)?;
             Some((prior, node, replaced_len))
         });
         if let Some((prior, node, _)) = replacement {
@@ -171,20 +170,18 @@ impl CanonicalSpliceCache {
         if retained > byte_budget {
             return None;
         }
-        let range = if let Some((prior, node, replaced_len)) = replacement {
-            bytes.extend_from_slice(prior.bytes.get(..prior.range.start)?);
+        let suffix_range = if let Some((prior, node, replaced_len)) = replacement {
+            bytes.extend_from_slice(prior.bytes.get(..prior.suffix_range.end)?);
             crate::serialize::json_out::write_node_json(
                 &mut bytes,
                 node,
                 &after.0.schema_context.0.schema,
             )
             .ok()?;
-            if bytes.len().checked_sub(prior.range.start)? != replaced_len {
+            if bytes.len().checked_sub(prior.suffix_range.end)? != replaced_len {
                 return None;
             }
-            let end = bytes.len();
-            bytes.extend_from_slice(prior.bytes.get(prior.range.end..)?);
-            prior.range.start..end
+            prior.suffix_range.clone()
         } else {
             #[cfg(test)]
             {
@@ -192,7 +189,11 @@ impl CanonicalSpliceCache {
                 super::SERIALIZATION_COUNT.set(super::SERIALIZATION_COUNT.get().saturating_add(1));
             }
             after.write_canonical_json(&mut bytes).ok()?;
-            emitted_range(&bytes, path)?
+            let selected = emitted_range(&bytes, path)?;
+            let suffix_end = bytes.len().checked_sub(selected.len())?;
+            // Keep immutable bytes before the editable tail so growth never shifts the suffix.
+            bytes.get_mut(selected.start..)?.rotate_left(selected.len());
+            selected.start..suffix_end
         };
         if bytes.len() != expected_len {
             return None;
@@ -200,12 +201,12 @@ impl CanonicalSpliceCache {
         let hash_prefix = if let Some((prior, _, _)) = replacement {
             prior.hash_prefix.clone()
         } else {
-            Sha256Prefix::new(bytes.get(..range.start)?)?
+            Sha256Prefix::new(bytes.get(..suffix_range.start)?)?
         };
         let candidate = Self {
             bytes,
             path: owned_path,
-            range,
+            suffix_range,
             revision: next_revision,
             artifact: Arc::downgrade(&after.0),
             hash_prefix,
@@ -222,11 +223,9 @@ impl CanonicalSpliceCache {
         previous_bytes: usize,
         byte_budget: usize,
     ) -> Option<Self> {
-        self.bytes.get(self.range.clone())?;
+        self.bytes.get(self.suffix_range.clone())?;
         let old_len = self.bytes.len();
-        let suffix_len = old_len.checked_sub(self.range.end)?;
-        let end = expected_len.checked_sub(suffix_len)?;
-        if end < self.range.start {
+        if expected_len < self.suffix_range.end {
             return None;
         }
         if expected_len > self.bytes.capacity() {
@@ -243,11 +242,8 @@ impl CanonicalSpliceCache {
         if expected_len > old_len {
             self.bytes.resize(expected_len, 0);
         }
-        if end != self.range.end {
-            self.bytes.copy_within(self.range.end..old_len, end);
-        }
         self.bytes.truncate(expected_len);
-        let mut output = self.bytes.get_mut(self.range.start..end)?;
+        let mut output = self.bytes.get_mut(self.suffix_range.end..)?;
         crate::serialize::json_out::write_node_json(
             &mut output,
             node,
@@ -257,7 +253,6 @@ impl CanonicalSpliceCache {
         if !output.is_empty() {
             return None;
         }
-        self.range.end = end;
         self.revision = next_revision;
         self.artifact = Arc::downgrade(&after.0);
         self.finish(after, previous_bytes, byte_budget)
@@ -274,9 +269,10 @@ impl CanonicalSpliceCache {
         {
             return None;
         }
-        let digest = self
-            .hash_prefix
-            .finish(self.bytes.get(self.range.start..)?)?;
+        let digest = self.hash_prefix.finish(
+            self.bytes.get(self.suffix_range.end..)?,
+            self.bytes.get(self.suffix_range.clone())?,
+        )?;
         #[cfg(test)]
         super::super::observability::record_canonical_hash();
         let _ = after.0.sha256.set(digest);
@@ -401,7 +397,7 @@ impl<'de> Visitor<'de> for ArrayChild {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Document, Mark};
+    use crate::model::{Document, Fragment, Mark};
     use crate::schema::Schema;
     use crate::transform::{apply_step, Step};
     use crate::yrs_engine::canonical::{
@@ -409,6 +405,15 @@ mod tests {
         CanonicalSchemaContext,
     };
     use std::collections::HashMap;
+
+    fn canonical_bytes(cache: &CanonicalSpliceCache) -> Vec<u8> {
+        [
+            &cache.bytes[..cache.suffix_range.start],
+            &cache.bytes[cache.suffix_range.end..],
+            &cache.bytes[cache.suffix_range.clone()],
+        ]
+        .concat()
+    }
 
     fn initial(schema: &Schema) -> Document {
         crate::serialize::from_prosemirror_json(
@@ -498,13 +503,21 @@ mod tests {
                     &crate::serialize::to_prosemirror_json(&next, &schema),
                     0,
                 );
-                assert_eq!(cached.bytes, expected, "target={target}, edit={index}");
+                assert_eq!(
+                    canonical_bytes(&cached),
+                    expected,
+                    "target={target}, edit={index}"
+                );
                 assert_eq!(
                     after.sha256(),
                     canonical_sha256(&expected),
                     "target={target}, edit={index}"
                 );
-                assert_eq!(cached.range, emitted_range(&expected, &path).unwrap());
+                let selected = emitted_range(&expected, &path).unwrap();
+                assert_eq!(
+                    cached.suffix_range,
+                    selected.start..expected.len() - selected.len()
+                );
                 if fits_buffer {
                     assert_eq!(cached.bytes.as_ptr(), prior_buffer,
                         "target={target}, edit={index}: a certified splice that fits must reuse its owned buffer");
@@ -574,7 +587,7 @@ mod tests {
             );
             let mut expected = Vec::new();
             after.write_canonical_json(&mut expected).unwrap();
-            assert_eq!(cached.bytes, expected, "{reason}");
+            assert_eq!(canonical_bytes(&cached), expected, "{reason}");
             assert_eq!(after.sha256(), canonical_sha256(&expected));
         }
     }
@@ -742,9 +755,9 @@ mod tests {
             &crate::serialize::to_prosemirror_json(&document, &schema),
             0,
         );
-        assert_eq!(cache.bytes, expected);
+        assert_eq!(canonical_bytes(&cache), expected);
         assert_eq!(
-            &cache.bytes[cache.range.clone()],
+            &cache.bytes[cache.suffix_range.end..],
             br#"{"content":[{"text":"same","type":"text"}],"type":"paragraph"}"#
         );
         let (next, _) = apply_step(
@@ -769,7 +782,154 @@ mod tests {
         );
         let mut expected = Vec::new();
         after.write_canonical_json(&mut expected).unwrap();
-        assert_eq!(replacement.bytes, expected);
+        assert_eq!(canonical_bytes(&replacement), expected);
         assert_eq!(after.sha256(), canonical_sha256(&expected));
+    }
+
+    fn paragraph(text: &str, depth: usize) -> Node {
+        let mut node = Node::element(
+            "paragraph".into(),
+            Default::default(),
+            Fragment::from(if text.is_empty() {
+                Vec::new()
+            } else {
+                vec![Node::text(text.into(), Vec::new())]
+            }),
+        );
+        for _ in 0..depth {
+            node = Node::element(
+                "blockquote".into(),
+                Default::default(),
+                Fragment::from(vec![node]),
+            );
+        }
+        node
+    }
+
+    fn document(children: &[Node]) -> Document {
+        Document::new(Node::element(
+            "doc".into(),
+            Default::default(),
+            Fragment::from(children.to_vec()),
+        ))
+    }
+
+    fn assert_canonical(cache: &CanonicalSpliceCache, artifact: &CanonicalArtifact, path: &[u32]) {
+        let mut expected = Vec::new();
+        artifact.write_canonical_json(&mut expected).unwrap();
+        let selected = emitted_range(&expected, path).unwrap();
+        let immutable_end = expected.len() - selected.len();
+        assert_eq!(
+            &cache.bytes[..selected.start],
+            &expected[..selected.start],
+            "prefix changed for {path:?}"
+        );
+        assert_eq!(
+            &cache.bytes[selected.start..immutable_end],
+            &expected[selected.end..],
+            "immutable suffix must precede the editable tail for {path:?}"
+        );
+        assert_eq!(
+            &cache.bytes[immutable_end..],
+            &expected[selected.clone()],
+            "editable node must occupy the tail for {path:?}"
+        );
+        assert_eq!(cache.bytes.len(), expected.len());
+        assert_eq!(
+            artifact.0.sha256.get(),
+            Some(&canonical_sha256(&expected)),
+            "canonical hash for {path:?}"
+        );
+    }
+
+    #[test]
+    fn editable_tail_preserves_canonical_bytes_hashes_and_immutable_suffix() {
+        const SIBLING_BYTES: usize = 512;
+        let schema = crate::prosemirror_schema();
+        let context = CanonicalSchemaContext::new(&schema);
+        for depth in [0, 3] {
+            for target in 0..3 {
+                let mut children: Vec<_> = (0..3)
+                    .map(|index| {
+                        paragraph(
+                            &format!("sibling {index} {}", "x".repeat(SIBLING_BYTES)),
+                            depth,
+                        )
+                    })
+                    .collect();
+                let mut path = vec![target as u32];
+                path.extend(std::iter::repeat_n(0, depth));
+                let mut before = context.derive(&document(&children)).unwrap();
+                let mut cache =
+                    CanonicalSpliceCache::prepare(None, &before, &before, &path, 0, 1, usize::MAX)
+                        .unwrap();
+                assert_canonical(&cache, &before, &path);
+                let fixed_end = cache.suffix_range.end;
+                let unchanged = cache.bytes[..fixed_end].to_vec();
+                for (index, text) in [
+                    "a",
+                    "é🙂\"\\\n\u{0000}",
+                    "",
+                    &"g".repeat(SIBLING_BYTES * 2),
+                    "shrink",
+                ]
+                .iter()
+                .enumerate()
+                {
+                    children[target] = paragraph(text, depth);
+                    let after = context.derive(&document(&children)).unwrap();
+                    cache = CanonicalSpliceCache::prepare(
+                        Some(cache),
+                        &before,
+                        &after,
+                        &path,
+                        index as u64 + 1,
+                        index as u64 + 2,
+                        usize::MAX,
+                    )
+                    .unwrap();
+                    assert_canonical(&cache, &after, &path);
+                    assert_eq!(
+                        &cache.bytes[..fixed_end],
+                        unchanged,
+                        "immutable suffix moved for target={target}, depth={depth}, edit={index}"
+                    );
+                    before = after;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn editable_tail_fresh_replacement_and_retarget_preserve_exact_budget() {
+        const SPARE_BYTES: usize = 4096;
+        let schema = crate::prosemirror_schema();
+        let context = CanonicalSchemaContext::new(&schema);
+        let mut children = vec![paragraph("initial", 0), paragraph("other", 0)];
+        let before = context.derive(&document(&children)).unwrap();
+        let mut cache =
+            CanonicalSpliceCache::prepare(None, &before, &before, &[0], 0, 1, usize::MAX).unwrap();
+        cache.bytes.reserve_exact(SPARE_BYTES);
+        let previous_bytes = cache.retained_bytes().unwrap();
+        children[0] = paragraph("é🙂\"\\", 0);
+        let after = context.derive(&document(&children)).unwrap();
+        let budget = previous_bytes
+            + CanonicalSpliceCache::fixed_bytes().unwrap()
+            + after.serialized_len()
+            + std::mem::size_of::<u32>();
+        assert!(
+            previous_bytes * 2 > budget,
+            "must exercise fresh allocation rather than reused spare capacity"
+        );
+        let cache = CanonicalSpliceCache::prepare(Some(cache), &before, &after, &[0], 1, 2, budget)
+            .unwrap();
+        assert_canonical(&cache, &after, &[0]);
+        assert_eq!(previous_bytes + cache.retained_bytes().unwrap(), budget);
+        children[1] = paragraph("new target", 0);
+        let retargeted = context.derive(&document(&children)).unwrap();
+        let cache =
+            CanonicalSpliceCache::prepare(Some(cache), &after, &retargeted, &[1], 2, 3, usize::MAX)
+                .unwrap();
+        assert_canonical(&cache, &retargeted, &[1]);
     }
 }

@@ -28,9 +28,10 @@ impl Sha256Prefix {
         Some(prefix)
     }
 
-    pub(super) fn finish(&self, suffix: &[u8]) -> Option<[u8; SHA256_DIGEST_BYTES]> {
+    pub(super) fn finish(&self, first: &[u8], second: &[u8]) -> Option<[u8; SHA256_DIGEST_BYTES]> {
         let mut combined = self.clone();
-        combined.update(suffix)?;
+        combined.update(first)?;
+        combined.update(second)?;
         #[cfg(target_vendor = "apple")]
         {
             let mut digest = [0; SHA256_DIGEST_BYTES];
@@ -104,14 +105,31 @@ mod tests {
             let prefix = Sha256Prefix::new(&bytes[..split]).unwrap();
             for end in [split, (split + bytes.len()) / 2, bytes.len()] {
                 let expected: [u8; 32] = Sha256::digest(&bytes[..end]).into();
-                assert_eq!(
-                    prefix.finish(&bytes[split..end]),
-                    Some(expected),
-                    "split={split}, end={end}"
-                );
+                for boundary in [
+                    split,
+                    (split + end) / 2,
+                    end,
+                    55,
+                    56,
+                    63,
+                    64,
+                    65,
+                    127,
+                    128,
+                    129,
+                ]
+                .into_iter()
+                .filter(|boundary| (split..=end).contains(boundary))
+                {
+                    assert_eq!(
+                        prefix.finish(&bytes[split..boundary], &bytes[boundary..end]),
+                        Some(expected),
+                        "split={split}, boundary={boundary}, end={end}"
+                    );
+                }
             }
             assert_eq!(
-                prefix.finish(&bytes[split..]),
+                prefix.finish(&bytes[split..], &[]),
                 Some(super::super::canonical_sha256(&bytes)),
                 "finalizing a clone must not mutate the retained prefix at {split}"
             );
