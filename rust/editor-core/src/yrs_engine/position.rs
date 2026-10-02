@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use super::{Affinity, EditorOffsetKind, RevisionedPosition};
 
-const VOID_NODE_SIZE: u32 = 1;
+pub(super) const VOID_NODE_SIZE: u32 = 1;
 
 #[cfg(test)]
 std::thread_local! {
@@ -24,6 +24,7 @@ std::thread_local! {
     static BOUNDARY_WALK_NODE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static BOUNDARY_SORT_TARGETS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static PLAIN_TEXT_DIFF_FALLBACKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static XML_SIZE_NODE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]
@@ -746,7 +747,10 @@ impl<T: ReadTxn> BoundaryAnchorWalk<'_, T> {
         sequence_end: Option<u32>,
         followed_by_text: bool,
     ) -> Option<u32> {
-        let value = xml_text_plain_string(text, self.txn)?;
+        let (single_item, value) = match text.try_single_text_item(self.txn) {
+            Some((id, value)) => (Some(id), value),
+            None => (None, xml_text_plain_string(text, self.txn)?),
+        };
         let text_end = start.checked_add(scalar_len(&value))?;
         let text_branch = BranchPtr::from(<XmlTextRef as AsRef<Branch>>::as_ref(text));
         let mut characters = value.chars();
@@ -762,9 +766,25 @@ impl<T: ReadTxn> BoundaryAnchorWalk<'_, T> {
                 utf16_offset = utf16_offset.checked_add(width)?;
                 scalar_offset += 1;
             }
-            let before = sticky_at(self.txn, text_branch, utf16_offset, Assoc::Before)
+            let before = single_item
+                .filter(|_| utf16_offset > 0)
+                .and_then(|id| {
+                    Some(StickyIndex::from_id(
+                        yrs::ID::new(id.client, id.clock.checked_add(utf16_offset - 1)?),
+                        Assoc::Before,
+                    ))
+                })
+                .or_else(|| sticky_at(self.txn, text_branch, utf16_offset, Assoc::Before))
                 .or_else(|| sticky_at(self.txn, branch, index, Assoc::Before));
-            let after = sticky_at(self.txn, text_branch, utf16_offset, Assoc::After)
+            let after = single_item
+                .filter(|_| target < text_end)
+                .and_then(|id| {
+                    Some(StickyIndex::from_id(
+                        yrs::ID::new(id.client, id.clock.checked_add(utf16_offset)?),
+                        Assoc::After,
+                    ))
+                })
+                .or_else(|| sticky_at(self.txn, text_branch, utf16_offset, Assoc::After))
                 .or_else(|| sticky_at(self.txn, branch, index.checked_add(1)?, Assoc::After));
             match before.zip(after) {
                 Some((before, after)) => self.resolve(BoundaryAnchors {
@@ -935,7 +955,11 @@ fn is_table_cell_element<T: ReadTxn>(element: &XmlElementRef, txn: &T, schema: &
     })
 }
 
-fn is_void_element<T: ReadTxn>(element: &XmlElementRef, txn: &T, schema: &Schema) -> bool {
+pub(super) fn is_void_element<T: ReadTxn>(
+    element: &XmlElementRef,
+    txn: &T,
+    schema: &Schema,
+) -> bool {
     if matches!(
         element.tag().as_ref(),
         "__opaque" | "__opaque_json" | "__skip"
@@ -949,6 +973,8 @@ fn is_void_element<T: ReadTxn>(element: &XmlElementRef, txn: &T, schema: &Schema
 }
 
 pub(super) fn xml_out_pm_size<T: ReadTxn>(txn: &T, node: &XmlOut, schema: &Schema) -> Option<u32> {
+    #[cfg(test)]
+    XML_SIZE_NODE_VISITS.set(XML_SIZE_NODE_VISITS.get().saturating_add(1));
     match node {
         XmlOut::Text(text) => Some(scalar_len(&xml_text_plain_string(text, txn)?)),
         XmlOut::Element(element) => {

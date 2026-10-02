@@ -936,6 +936,113 @@ fn plain_read_test_doc(client_id: u64) -> yrs::Doc {
 }
 
 #[test]
+fn single_text_item_certificate_matches_real_sticky_ids_and_rejects_fragmentation() {
+    use yrs::{Any, Text, Transact, XmlTextPrelim};
+    const CLIENT: u64 = 94;
+    const FRAGMENT: &str = "single-item-certificate";
+    for value in ["", "plain text", "a😀e\u{301} עברית"] {
+        let doc = plain_read_test_doc(CLIENT);
+        let fragment = doc.get_or_insert_xml_fragment(FRAGMENT);
+        let mut txn = doc.transact_mut();
+        let text = fragment.push_back(&mut txn, XmlTextPrelim::new(value));
+        let certified = text.try_single_text_item(&txn);
+        if value.is_empty() {
+            assert!(certified.is_none(), "empty text has no item identity");
+            continue;
+        }
+        let (id, copied) = certified.expect("one inserted text item is certifiable");
+        assert_eq!(copied, value);
+        let branch = BranchPtr::from(<XmlTextRef as AsRef<Branch>>::as_ref(&text));
+        let length = text.len(&txn);
+        for offset in 1..length {
+            for assoc in [Assoc::Before, Assoc::After] {
+                let clock = id.clock + offset - u32::from(assoc == Assoc::Before);
+                assert_eq!(
+                    StickyIndex::from_id(yrs::ID::new(id.client, clock), assoc),
+                    StickyIndex::at(&txn, branch, offset, assoc).unwrap(),
+                    "{value:?}, UTF-16 offset={offset}, association={assoc:?}"
+                );
+            }
+        }
+        text.format(
+            &mut txn,
+            0,
+            length,
+            yrs::types::Attrs::from([("bold".into(), Any::Bool(true))]),
+        );
+        assert!(
+            text.try_single_text_item(&txn).is_none(),
+            "format items invalidate the certificate"
+        );
+    }
+    let doc = plain_read_test_doc(CLIENT);
+    let fragment = doc.get_or_insert_xml_fragment(FRAGMENT);
+    let mut txn = doc.transact_mut();
+    let text = fragment.push_back(&mut txn, XmlTextPrelim::new("abc"));
+    text.remove_range(&mut txn, 1, 1);
+    text.insert(&mut txn, 1, "b");
+    assert_eq!(text.try_plain_string(&txn).as_deref(), Some("abc"));
+    assert!(
+        text.try_single_text_item(&txn).is_none(),
+        "equal visible text cannot certify contiguous IDs after delete/reinsert"
+    );
+}
+
+#[test]
+fn single_text_item_certificate_rejects_byte_offsets_and_merged_clients() {
+    use yrs::{updates::decoder::Decode, StateVector, Text, Transact, Update, XmlTextPrelim};
+    const LEFT_CLIENT: u64 = 95;
+    const RIGHT_CLIENT: u64 = 96;
+    const FRAGMENT: &str = "single-item-merged";
+    let byte_doc = yrs::Doc::with_client_id(LEFT_CLIENT);
+    let byte_root = byte_doc.get_or_insert_xml_fragment(FRAGMENT);
+    let mut txn = byte_doc.transact_mut();
+    let byte_text = byte_root.push_back(&mut txn, XmlTextPrelim::new("a😀"));
+    assert!(
+        byte_text.try_single_text_item(&txn).is_none(),
+        "byte offsets cannot certify UTF-16 IDs"
+    );
+    drop(txn);
+
+    let left = plain_read_test_doc(LEFT_CLIENT);
+    let right = plain_read_test_doc(RIGHT_CLIENT);
+    let left_root = left.get_or_insert_xml_fragment(FRAGMENT);
+    let left_text = left_root.push_back(&mut left.transact_mut(), XmlTextPrelim::new("a😀b"));
+    let base = left
+        .transact()
+        .encode_state_as_update_v1(&StateVector::default());
+    right
+        .transact_mut()
+        .apply_update(Update::decode_v1(&base).unwrap())
+        .unwrap();
+    let right_root = right.get_or_insert_xml_fragment(FRAGMENT);
+    let XmlOut::Text(right_text) = right_root.get(&right.transact(), 0).unwrap() else {
+        panic!("replicated text child");
+    };
+    assert!(
+        right_text.try_single_text_item(&right.transact()).is_some(),
+        "a replicated single item retains its identity"
+    );
+    right_text.insert(&mut right.transact_mut(), 3, "右");
+    let update = right
+        .transact()
+        .encode_state_as_update_v1(&left.transact().state_vector());
+    left.transact_mut()
+        .apply_update(Update::decode_v1(&update).unwrap())
+        .unwrap();
+    for (doc, text) in [(&left, &left_text), (&right, &right_text)] {
+        assert_eq!(
+            text.try_plain_string(&doc.transact()).as_deref(),
+            Some("a😀右b")
+        );
+        assert!(
+            text.try_single_text_item(&doc.transact()).is_none(),
+            "merged client IDs must use the general anchor walk"
+        );
+    }
+}
+
+#[test]
 fn plain_text_reads_preserve_embed_and_raw_branch_fallbacks() {
     use yrs::{Any, Array, Text, Transact, XmlTextPrelim};
     const CLIENT: u64 = 91;

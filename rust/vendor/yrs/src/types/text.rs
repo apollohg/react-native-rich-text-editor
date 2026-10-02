@@ -378,6 +378,28 @@ pub trait Text: AsRef<Branch> + Sized {
         }
     }
 
+    /// Copies a single live text item's identity and content in a UTF-16 document.
+    /// Deleted, formatted, fragmented, and non-text sequences are not certified.
+    fn try_single_text_item<T: ReadTxn>(&self, txn: &T) -> Option<(ID, String)> {
+        if txn.store().offset_kind != OffsetKind::Utf16 {
+            return None;
+        }
+        let branch = self.as_ref();
+        let item = branch.start.as_deref()?;
+        if item.right.is_some() || item.is_deleted() || !item.is_countable() {
+            return None;
+        }
+        let ItemContent::String(value) = &item.content else {
+            return None;
+        };
+        if value.len(OffsetKind::Utf16) != item.len() as usize
+            || branch.content_len != item.len()
+        {
+            return None;
+        }
+        Some((item.id, value.as_str().to_owned()))
+    }
+
     /// Reads text without formatting. Returns `None` if any visible item is
     /// neither text nor formatting; callers can use [Text::diff] for those items.
     fn try_plain_string<T: ReadTxn>(&self, _txn: &T) -> Option<String> {

@@ -1,11 +1,11 @@
 use super::position::{
-    doc_pos_to_sticky_index_in_sequence, sequence_branch_index_to_doc_pos, utf16_offset_to_scalar,
-    xml_out_pm_size, xml_text_plain_string,
+    doc_pos_to_sticky_index_in_sequence, is_void_element, sequence_branch_index_to_doc_pos,
+    utf16_offset_to_scalar, xml_out_pm_size, xml_text_plain_string, VOID_NODE_SIZE,
 };
 use crate::model::Document;
 use crate::position::PositionMap;
 use crate::schema::Schema;
-use crate::tables::commands::NODE_OPENING_TOKENS;
+use crate::tables::commands::{NODE_CLOSING_TOKENS, NODE_OPENING_TOKENS};
 use smallvec::SmallVec;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -77,22 +77,53 @@ impl BlockBranchIndex {
                 )
             })
             .collect();
+        enum Frame {
+            Visit { path: Vec<u32>, node: XmlOut },
+            FinishElement { void_end: Option<u32> },
+        }
+        fn push_children(
+            pending: &mut Vec<Frame>,
+            children: impl Iterator<Item = XmlOut>,
+            path: &[u32],
+            flatten: bool,
+        ) -> Option<()> {
+            let first = pending.len();
+            for (index, node) in children.enumerate() {
+                let index = u32::try_from(index).ok()?;
+                let mut path = path.to_vec();
+                if flatten {
+                    let last = path.last_mut()?;
+                    *last = last.checked_add(index)?;
+                } else {
+                    path.push(index);
+                }
+                pending.push(Frame::Visit { path, node });
+            }
+            pending[first..].reverse();
+            Some(())
+        }
         let mut blocks = vec![None; position_map.block_count()];
         let mut pending = Vec::new();
+        push_children(&mut pending, fragment.children(txn), &[], false)?;
         let mut position = 0u32;
-        for (child_index, child) in fragment.children(txn).enumerate() {
-            let size = xml_out_pm_size(txn, &child, schema)?;
-            pending.push((position, vec![u32::try_from(child_index).ok()?], child));
-            position = position.checked_add(size)?;
-        }
         let mut table_keys = BTreeMap::new();
         let mut atom_ids = BTreeMap::new();
         let mut unique_table_keys = HashSet::new();
-        while let Some((position, path, node)) = pending.pop() {
-            match node {
+        while let Some(frame) = pending.pop() {
+            let (path, node) = match frame {
+                Frame::FinishElement { void_end } => {
+                    position = match void_end {
+                        Some(end) => end,
+                        None => position.checked_add(NODE_CLOSING_TOKENS)?,
+                    };
+                    continue;
+                }
+                Frame::Visit { path, node } => (path, node),
+            };
+            match &node {
                 XmlOut::Element(element) => {
-                    let spec = super::codec::wire_element_node_spec(&element, txn, schema);
-                    if let BranchID::Nested(id) = AsRef::<Branch>::as_ref(&element).id() {
+                    let spec = super::codec::wire_element_node_spec(element, txn, schema);
+                    if let BranchID::Nested(id) = AsRef::<Branch>::as_ref(element).id() {
                         if spec.is_some_and(|spec| {
                             spec.table_role == Some(crate::tables::TableRole::Table)
                         }) {
@@ -100,41 +131,40 @@ impl BlockBranchIndex {
                             if !unique_table_keys.insert(key.clone()) {
                                 return None;
                             }
-                            table_keys.insert(path.clone(), key);
+                            table_keys.entry(path.clone()).or_insert(key);
                         }
                         if spec.is_some_and(|spec| {
                             spec.is_void && matches!(spec.role, crate::schema::NodeRole::Block)
                         }) {
-                            atom_ids.insert(path.clone(), format!("y{}-{}", id.client, id.clock));
+                            atom_ids
+                                .entry(path.clone())
+                                .or_insert_with(|| format!("y{}-{}", id.client, id.clock));
                         }
                     }
                     if let Some(index) = starts.get(&position) {
-                        blocks[*index] = Some(BlockBranches {
-                            element: AsRef::<Branch>::as_ref(&element).id(),
-                            texts: text_branches(txn, &element),
+                        blocks[*index].get_or_insert_with(|| BlockBranches {
+                            element: AsRef::<Branch>::as_ref(element).id(),
+                            texts: text_branches(txn, element),
                         });
+                        position = position.checked_add(xml_out_pm_size(txn, &node, schema)?)?;
                         continue;
                     }
-                    let mut child_pos = position.checked_add(NODE_OPENING_TOKENS)?;
-                    for (child_index, child) in element.children(txn).enumerate() {
-                        let size = xml_out_pm_size(txn, &child, schema)?;
-                        let mut child_path = path.clone();
-                        child_path.push(u32::try_from(child_index).ok()?);
-                        pending.push((child_pos, child_path, child));
-                        child_pos = child_pos.checked_add(size)?;
-                    }
+                    // Void children are still inspected, but do not contribute to their parent's size.
+                    let void_end = if is_void_element(element, txn, schema) {
+                        Some(position.checked_add(VOID_NODE_SIZE)?)
+                    } else {
+                        None
+                    };
+                    position = position.checked_add(NODE_OPENING_TOKENS)?;
+                    pending.push(Frame::FinishElement { void_end });
+                    push_children(&mut pending, element.children(txn), &path, false)?;
                 }
                 XmlOut::Fragment(fragment) => {
-                    let mut child_pos = position;
-                    for (child_index, child) in fragment.children(txn).enumerate() {
-                        let size = xml_out_pm_size(txn, &child, schema)?;
-                        let mut child_path = path.clone();
-                        *child_path.last_mut()? += u32::try_from(child_index).ok()?;
-                        pending.push((child_pos, child_path, child));
-                        child_pos = child_pos.checked_add(size)?;
-                    }
+                    push_children(&mut pending, fragment.children(txn), &path, true)?;
                 }
-                XmlOut::Text(_) => {}
+                XmlOut::Text(_) => {
+                    position = position.checked_add(xml_out_pm_size(txn, &node, schema)?)?;
+                }
             }
         }
         let blocks: Vec<_> = blocks.into_iter().collect::<Option<_>>()?;
