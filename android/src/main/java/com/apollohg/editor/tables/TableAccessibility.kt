@@ -204,13 +204,15 @@ internal object TableAccessibility {
         )
     }
 
+    fun plainText(text: String): String = text.replace(LayoutConstants.OBJECT_REPLACEMENT_CHARACTER, "").trim()
+
     fun text(layout: PreparedProseLayout): List<String> = layout.blocks.flatMap { block ->
         block.fragments.mapNotNull { fragment ->
             when (fragment.kind) {
                 PreparedProseFragmentKind.TEXT -> fragment.layout?.text?.toString()
                 PreparedProseFragmentKind.ATOM -> fragment.labelLayout?.text?.toString() ?: fragment.label
                 else -> null
-            }?.replace(LayoutConstants.OBJECT_REPLACEMENT_CHARACTER, "")?.trim()?.takeIf { it.isNotEmpty() }
+            }?.let(::plainText)?.takeIf { it.isNotEmpty() }
         } + block.tableSurface?.cells.orEmpty().map { it.accessibilityText }.filter { it.isNotEmpty() }
     }
 

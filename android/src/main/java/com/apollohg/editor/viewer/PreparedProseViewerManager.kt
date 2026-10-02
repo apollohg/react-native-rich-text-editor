@@ -62,6 +62,7 @@ internal class PreparedProseViewerManager(
 
     override fun createViewInstance(context: ThemedReactContext): PreparedProseDrawingView =
         PreparedProseDrawingView(context).also { view ->
+            view.preparesTableCellsBeforeDrawing = true
             val state = ViewState(imagePipeline = imagePipelineFactory())
             states[view] = state
             view.onCodeHighlightsReady = { state.publishFontRevision(1) }

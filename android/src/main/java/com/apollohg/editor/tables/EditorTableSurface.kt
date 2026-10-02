@@ -171,6 +171,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
     var onSelectionGeometryMayChange: (() -> Unit)? = null
 
     val drawingView = PreparedProseDrawingView(host.context).apply {
+        preparesTableCellsBeforeDrawing = true
         usesEditAnchoredNodes = true
         isFocusable = false
         linkInteractionsEnabled = false
@@ -942,6 +943,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
                 .copy(insetTopPx = 0, insetRightPx = 0, insetBottomPx = 0, insetLeftPx = 0,
                     tableDirection = tableDirection)
             val engine = StaticLayoutAndroidProseLayoutEngine().apply {
+                tableCellMeasurementEnabled = true
                 tableCellPreparationObserver = { index, contentKey -> onTableCellPreparedForTesting?.invoke(index, contentKey) }
                 tableIncrementalRelayoutObserver = { incrementalRelayoutsForTesting += 1 }
             }
@@ -1555,9 +1557,15 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         val cell = presented.cell
         val input = coordinator?.cellInput ?: return false
         if (pinnedInputCell !== cell) {
-            pinnedInputCell?.let { it.layoutStore.unpin(it.contentKey) }
             cell.layoutStore.pin(cell.contentKey)
-            cell.layoutStore.insert(presented.content, cell.contentKey)
+            var prepared = false
+            try {
+                cell.content
+                prepared = true
+            } finally {
+                if (!prepared) cell.layoutStore.unpin(cell.contentKey)
+            }
+            pinnedInputCell?.let { it.layoutStore.unpin(it.contentKey) }
             pinnedInputCell = cell
         }
         val inset = cell.contentOrigin

@@ -74,6 +74,16 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     var preparedLayout: PreparedProseLayout? = null
         private set
     internal var usesEditAnchoredNodes = false
+    internal var preparesTableCellsBeforeDrawing = false
+    private val prepareTableCellsListener = ViewTreeObserver.OnPreDrawListener {
+        preparePresentedTableCells()
+        true
+    }
+
+    private fun preparePresentedTableCells() {
+        if (preparesTableCellsBeforeDrawing) presentationSnapshot()
+    }
+
     internal var tableNodeRevision: ULong? = null
     internal var tableNodeChanges: com.apollohg.editor.tables.TableFrameChanges? = null
     internal var tableNodeAppearance = ""
@@ -214,6 +224,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     private var contentOriginYPx = 0
     private var drawnPresentationWindow: Rect? = null
     private val scrollChangedListener = ViewTreeObserver.OnScrollChangedListener {
+        preparePresentedTableCells()
         reconcileVirtualAccessibilityFocus()
         redrawIfVisibleRectLeftDrawnWindow()
         onTableGeometryChanged?.invoke()
@@ -364,6 +375,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         codeHighlighting.update()
         this.contentOriginXPx = contentOriginXPx
         this.contentOriginYPx = contentOriginYPx
+        preparePresentedTableCells()
         reportRetainedTablePresentation()
         if (announceAccessibilitySubtree) announceAccessibilitySubtreeChanged()
         invalidate()
@@ -388,6 +400,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     }
 
     private fun tableOffsetChanged() {
+        preparePresentedTableCells()
         tableNodeState = null
         reportRetainedTablePresentation()
         clearVirtualAccessibilityFocus()
@@ -648,7 +661,9 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     }
 
     private fun presentationViewport(): ViewerTablePresentationViewport {
-        if (windowToken == null) return ViewerTablePresentationViewport.Unknown
+        if (windowToken == null) return if (preparesTableCellsBeforeDrawing) {
+            ViewerTablePresentationViewport.Known(Rect())
+        } else ViewerTablePresentationViewport.Unknown
         if (!isShown || alpha <= 0f) return ViewerTablePresentationViewport.Known(Rect())
         val visible = Rect()
         if (!getLocalVisibleRect(visible)) return ViewerTablePresentationViewport.Known(Rect())
@@ -1134,14 +1149,22 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
 
     override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
         super.onSizeChanged(width, height, oldWidth, oldHeight)
+        preparePresentedTableCells()
         reconcileVirtualAccessibilityFocus()
         if (width > 0) onUsableMetricsChanged?.invoke()
+    }
+
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        super.onLayout(changed, left, top, right, bottom)
+        preparePresentedTableCells()
     }
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         codeHighlighting.update()
         viewTreeObserver.addOnScrollChangedListener(scrollChangedListener)
+        viewTreeObserver.addOnPreDrawListener(prepareTableCellsListener)
+        preparePresentedTableCells()
         reconcileVirtualAccessibilityFocus()
         if (width > 0) onUsableMetricsChanged?.invoke()
     }
@@ -1156,6 +1179,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         codeHighlighting.cancel()
         if (viewTreeObserver.isAlive) {
             viewTreeObserver.removeOnScrollChangedListener(scrollChangedListener)
+            viewTreeObserver.removeOnPreDrawListener(prepareTableCellsListener)
         }
         clearVirtualAccessibilityFocus()
         super.onDetachedFromWindow()
@@ -1163,6 +1187,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
 
     override fun onVisibilityChanged(changedView: View, visibility: Int) {
         super.onVisibilityChanged(changedView, visibility)
+        preparePresentedTableCells()
         reconcileVirtualAccessibilityFocus()
     }
 

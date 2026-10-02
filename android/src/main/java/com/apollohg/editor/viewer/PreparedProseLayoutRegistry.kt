@@ -20,7 +20,7 @@ internal data class PreparedMountTicket(
 /** Shared, thread-safe compiler and prepared-layout registry for View and Fabric hosts. */
 internal class PreparedProseLayoutRegistry(
     private val compiler: DocumentCompiler = ::compileWithRust,
-    private val layoutEngine: AndroidProseLayoutEngine = StaticLayoutAndroidProseLayoutEngine(),
+    private val layoutEngine: AndroidProseLayoutEngine = StaticLayoutAndroidProseLayoutEngine().apply { tableCellMeasurementEnabled = true },
     byteBudget: Long = com.apollohg.editor.viewer.PREPARED_LAYOUT_UNMOUNTED_BYTE_BUDGET,
     private val compiledByteBudget: Long = 8L * 1024L * 1024L,
     private val compilationFailureBudget: Int = 128,

@@ -116,14 +116,22 @@ internal class PreparedCellShapeBuildContext internal constructor(
         bind: (PreparedCellShape) -> PreparedProseLayout?
     ): PreparedProseLayout {
         if (closed) return build()
-        val acquired = resolved[key]?.get() ?: catalog.acquireForBuild(key)?.also(::remember)
-        acquired?.let { shape -> bind(shape)?.let { return it.copy(cellShape = shape) } }
+        resolveCached(key, bind)?.let { return it }
         val fresh = build()
         if (!retainShape) return fresh
         val shape = PreparedCellShape.fromBound(key, fresh)
         catalog.stageForBuild(shape)
         remember(shape)
         return fresh.copy(cellShape = shape)
+    }
+
+    fun resolveCached(
+        key: PreparedCellShapeKey,
+        bind: (PreparedCellShape) -> PreparedProseLayout?
+    ): PreparedProseLayout? {
+        if (closed) return null
+        val shape = resolved[key]?.get() ?: catalog.acquireForBuild(key)?.also(::remember) ?: return null
+        return bind(shape)?.copy(cellShape = shape)
     }
 
     private fun remember(shape: PreparedCellShape) {

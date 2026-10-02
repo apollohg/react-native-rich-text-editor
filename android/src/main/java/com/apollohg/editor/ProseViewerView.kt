@@ -131,7 +131,7 @@ class ProseViewerView @JvmOverloads constructor(
         }
 
     private var layoutRegistry = PreparedProseLayoutRegistry.shared
-    private val preparedDrawingView = PreparedProseDrawingView(context)
+    private val preparedDrawingView = PreparedProseDrawingView(context).apply { preparesTableCellsBeforeDrawing = true }
     private var preparedRequest: ProseViewerRequest? = null
     private var retainedDocument: ViewerDocument? = null
     private var preparedArtifact: PreparedProseLayout? = null

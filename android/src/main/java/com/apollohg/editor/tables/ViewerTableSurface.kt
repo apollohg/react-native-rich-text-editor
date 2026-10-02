@@ -14,6 +14,22 @@ import com.apollohg.editor.viewer.PreparedProseAccessibilityNode
 import com.apollohg.editor.viewer.PreparedViewerAtom
 import com.apollohg.editor.viewer.ViewerImageAttachment
 
+internal typealias TableCellPreparationWorker = (
+    List<Pair<TableGridCell, Float>>,
+    (TableGridCell, Float, PreparedTableCellContent) -> Unit
+) -> Unit
+
+internal sealed interface PreparedTableCellContent {
+    data class Full(val layout: PreparedProseLayout) : PreparedTableCellContent
+    data class MeasuredPlain(
+        val key: ProseLayoutKey,
+        val widthPx: Int,
+        val heightPx: Int,
+        val accessibilityText: String,
+        val prepare: () -> PreparedProseLayout
+    ) : PreparedTableCellContent
+}
+
 internal class PreparedViewerTableCell : TableGridCellPosition {
     override val sourceIndex: Int
     override val row: Int
@@ -38,6 +54,7 @@ internal class PreparedViewerTableCell : TableGridCellPosition {
     val hasNestedTables: Boolean
     val hasAtoms: Boolean
     val hasImages: Boolean
+    val isMeasuredPlain: Boolean
     private val positionFree: Boolean
     val isPositionFree: Boolean get() {
         positionFreeObserverForTesting?.invoke()
@@ -63,6 +80,22 @@ internal class PreparedViewerTableCell : TableGridCellPosition {
         layoutStore: TableCellLayoutStore = TableCellLayoutStore(),
         retainContent: Boolean = true,
         prepareContent: () -> PreparedProseLayout = { content }
+    ) : this(sourceIndex, row, column, rowspan, colspan, contentOrigin,
+        PreparedTableCellContent.Full(content), isHeader, attributesKey, layoutStore, retainContent, prepareContent)
+
+    constructor(
+        sourceIndex: Int,
+        row: Int,
+        column: Int,
+        rowspan: Int,
+        colspan: Int,
+        contentOrigin: Pair<Int, Int>,
+        prepared: PreparedTableCellContent,
+        isHeader: Boolean,
+        attributesKey: String?,
+        layoutStore: TableCellLayoutStore = TableCellLayoutStore(),
+        retainContent: Boolean = true,
+        prepareContent: () -> PreparedProseLayout
     ) {
         this.sourceIndex = sourceIndex
         this.row = row
@@ -73,27 +106,31 @@ internal class PreparedViewerTableCell : TableGridCellPosition {
         this.isHeader = isHeader
         this.attributesKey = attributesKey
         this.layoutStore = layoutStore
-        this.prepareContent = content.cellPreparation ?: prepareContent
-        contentKey = content.key
-        contentWidthPx = content.widthPx
-        contentHeightPx = content.heightPx
-        contentError = content.error
-        codeHighlightBlocks = promotedCodeHighlightBlocks(content.blocks, content.codeHighlightBlocks)
-        codeKeys = content.highlightedCodeKeys + content.blocks.flatMap { block ->
-            block.tableSurface?.cells.orEmpty().flatMap { it.highlightedCodeKeys }
-        }
-        accessibilityText = TableAccessibility.text(content).joinToString(TableAccessibility.LABEL_SEPARATOR)
-        hasNestedTables = content.blocks.any { it.tableSurface != null }
-        hasAtoms = content.viewerAtoms.isNotEmpty() || content.blocks.any { it.tableSurface?.hasAtoms == true }
-        hasImages = content.imageAttachments.isNotEmpty() || content.blocks.any {
+        val content = (prepared as? PreparedTableCellContent.Full)?.layout
+        val measured = prepared as? PreparedTableCellContent.MeasuredPlain
+        isMeasuredPlain = measured != null
+        this.prepareContent = content?.cellPreparation ?: measured?.prepare ?: prepareContent
+        contentKey = content?.key ?: requireNotNull(measured).key
+        contentWidthPx = content?.widthPx ?: requireNotNull(measured).widthPx
+        contentHeightPx = content?.heightPx ?: requireNotNull(measured).heightPx
+        contentError = content?.error
+        codeHighlightBlocks = content?.let { promotedCodeHighlightBlocks(it.blocks, it.codeHighlightBlocks) }.orEmpty()
+        codeKeys = content?.let { it.highlightedCodeKeys + it.blocks.flatMap { block ->
+            block.tableSurface?.cells.orEmpty().flatMap { cell -> cell.highlightedCodeKeys }
+        } } ?: emptySet()
+        accessibilityText = content?.let { TableAccessibility.text(it).joinToString(TableAccessibility.LABEL_SEPARATOR) }
+            ?: requireNotNull(measured).accessibilityText
+        hasNestedTables = content?.blocks?.any { it.tableSurface != null } == true
+        hasAtoms = content != null && (content.viewerAtoms.isNotEmpty() || content.blocks.any { it.tableSurface?.hasAtoms == true })
+        hasImages = content != null && (content.imageAttachments.isNotEmpty() || content.blocks.any {
             it.imageAttachment != null || it.tableSurface?.cells?.any { cell -> cell.hasImages } == true
-        }
-        positionFree = content.error == null && !hasNestedTables && !hasAtoms && !hasImages &&
-            content.interactions.all { it.docPos == null }
+        })
+        positionFree = contentError == null && !hasNestedTables && !hasAtoms && !hasImages &&
+            content?.interactions.orEmpty().all { it.docPos == null }
         metadataBytes = METADATA_RETAINED_BYTES +
             accessibilityText.length * 2L + codeHighlightBlocks.sumOf { CODE_DESCRIPTOR_RETAINED_BYTES + it.text.length * 2L } +
             highlightedCodeKeys.sumOf { it.length * 2L }
-        if (retainContent || content.cellPreparation == null) layoutStore.insert(content)
+        if (content != null && (retainContent || content.cellPreparation == null)) layoutStore.insert(content)
     }
 
 
@@ -118,6 +155,7 @@ internal class PreparedViewerTableCell : TableGridCellPosition {
         hasAtoms = cell.hasAtoms
         hasImages = cell.hasImages
         positionFree = cell.positionFree
+        isMeasuredPlain = cell.isMeasuredPlain
         metadataBytes = cell.metadataRetainedBytes
         prepareContent = cell.prepareContent
         if (store !== cell.layoutStore) cell.cachedContent?.let { store.insert(it) }
@@ -216,7 +254,7 @@ internal class ViewerTableSurface private constructor(
         editorTableId: String? = null,
         layoutStore: TableCellLayoutStore = TableCellLayoutStore(),
         reuseCell: ((TableGridCell, Float) -> PreparedViewerTableCell?)? = null,
-        prepareCellWorkers: List<(TableGridCell, Float) -> PreparedProseLayout> = emptyList(),
+        prepareCellWorkers: List<TableCellPreparationWorker> = emptyList(),
         parallelCellIndices: Set<Int> = emptySet(),
         transientCellIndices: Set<Int> = emptySet(),
         prepareCell: (TableGridCell, Float) -> PreparedProseLayout
@@ -361,15 +399,15 @@ internal class ViewerTableSurface private constructor(
 
         private fun prepareParallelCells(
             inputs: List<Pair<TableGridCell, Int>>, scale: Float, indices: Set<Int>,
-            workers: List<(TableGridCell, Float) -> PreparedProseLayout>,
+            workers: List<TableCellPreparationWorker>,
             prepare: (TableGridCell, Float) -> PreparedProseLayout,
-            capture: (TableGridCell, Float, PreparedProseLayout) -> PreparedViewerTableCell
+            capture: (TableGridCell, Float, PreparedTableCellContent) -> PreparedViewerTableCell
         ): Map<Int, PreparedViewerTableCell> {
             val prepared = java.util.concurrent.ConcurrentHashMap<Int, PreparedViewerTableCell>()
             fun measure(input: Pair<TableGridCell, Int>, prepare: (TableGridCell, Float) -> PreparedProseLayout) {
                 val (cell, pixels) = input
                 val width = pixels / scale
-                prepared[cell.sourceIndex] = capture(cell, width, prepare(cell, width))
+                prepared[cell.sourceIndex] = capture(cell, width, PreparedTableCellContent.Full(prepare(cell, width)))
             }
             inputs.filter { it.first.sourceIndex !in indices }.forEach { measure(it, prepare) }
             val next = java.util.concurrent.atomic.AtomicInteger()
@@ -378,10 +416,16 @@ internal class ViewerTableSurface private constructor(
                     val start = next.getAndAdd(PREPARATION_BATCH_CELLS)
                     if (start >= inputs.size) return
                     val end = minOf(start + PREPARATION_BATCH_CELLS, inputs.size)
-                    for (index in start until end) {
-                        if (inputs[index].first.sourceIndex in indices) measure(inputs[index], workers[worker])
+                    val batch = inputs.subList(start, end).filter { it.first.sourceIndex in indices }
+                        .map { (cell, pixels) -> cell to pixels / scale }
+                    workers[worker](batch) { cell, width, content ->
+                        prepared[cell.sourceIndex] = capture(cell, width, content)
                     }
                 }
+            }
+            if (workers.size == 1) {
+                prepareWorker(0)
+                return prepared
             }
             val executor = java.util.concurrent.Executors.newFixedThreadPool(workers.size - 1)
             try {
@@ -404,7 +448,7 @@ internal class ViewerTableSurface private constructor(
             fontEnvironmentRevision: Long, textScale: Float, sourceTable: TableSurfaceSource?,
             layoutStore: TableCellLayoutStore,
             reuseCell: ((TableGridCell, Float) -> PreparedViewerTableCell?)?,
-            prepareCellWorkers: List<(TableGridCell, Float) -> PreparedProseLayout>,
+            prepareCellWorkers: List<TableCellPreparationWorker>,
             parallelCellIndices: Set<Int>,
             transientCellIndices: Set<Int>,
             prepareCell: (TableGridCell, Float) -> PreparedProseLayout
@@ -412,7 +456,7 @@ internal class ViewerTableSurface private constructor(
             val scale = displayScale.takeIf { it.isFinite() && it > 0f } ?: 1f
             val prepared = mutableMapOf<Int, PreparedViewerTableCell>()
             val inset = (style.cellPadding + style.borderWidth).toInt()
-            fun capture(cell: TableGridCell, width: Float, content: PreparedProseLayout): PreparedViewerTableCell {
+            fun capture(cell: TableGridCell, width: Float, content: PreparedTableCellContent): PreparedViewerTableCell {
                 val source = sourceTable?.cells?.getOrNull(cell.sourceIndex)
                 return PreparedViewerTableCell(cell.sourceIndex, cell.row, cell.column, cell.rowspan, cell.colspan,
                     inset to inset, content, source?.header ?: false, source?.attrsKey, layoutStore,
@@ -420,10 +464,10 @@ internal class ViewerTableSurface private constructor(
             }
             fun prepare(cell: TableGridCell, width: Float): PreparedViewerTableCell =
                 reuseCell?.invoke(cell, width)?.relocated(cell, layoutStore)
-                    ?: capture(cell, width, prepareCell(cell, width))
+                    ?: capture(cell, width, PreparedTableCellContent.Full(prepareCell(cell, width)))
             var error: ProseViewerError? = null
             val grid = TableGridLayout(scale)
-            val layout = if (prepareCellWorkers.size > 1 && parallelCellIndices.isNotEmpty()) {
+            val layout = if (prepareCellWorkers.isNotEmpty() && parallelCellIndices.isNotEmpty()) {
                 prepared.putAll(prepareParallelCells(grid.measurementInputs(record, hostViewportWidth, style),
                     scale, parallelCellIndices, prepareCellWorkers, prepareCell, ::capture))
                 error = record.cells.sortedBy { it.sourceIndex }.firstNotNullOfOrNull { prepared[it.sourceIndex]?.contentError }
@@ -583,12 +627,26 @@ internal class ViewerTablePresentationOwner {
     private val logicalOffsets = mutableMapOf<String, OffsetState>()
     private var pinnedStores = emptyMap<TableCellLayoutStore, Set<ProseLayoutKey>>()
 
-    fun retainCells(cells: List<ViewerTablePresentedCell>) {
-        val next = cells.groupBy { it.cell.layoutStore }.mapValues { (_, cells) -> cells.map { it.cell.contentKey }.toSet() }
-        pinnedStores.forEach { (store, keys) -> (keys - next[store].orEmpty()).forEach(store::unpin) }
-        next.forEach { (store, keys) -> (keys - pinnedStores[store].orEmpty()).forEach(store::pin) }
-        cells.filter { it.cell.cachedContent == null }.forEach { it.cell.layoutStore.insert(it.content, it.cell.contentKey) }
-        pinnedStores = next
+    fun <T> prepareCells(build: ((PreparedViewerTableCell) -> PreparedProseLayout) -> T): T {
+        val next = mutableMapOf<TableCellLayoutStore, MutableSet<ProseLayoutKey>>()
+        var committed = false
+        try {
+            val snapshot = build { cell ->
+                val keys = next.getOrPut(cell.layoutStore) { mutableSetOf() }
+                if (keys.add(cell.contentKey) && cell.contentKey !in pinnedStores[cell.layoutStore].orEmpty()) {
+                    cell.layoutStore.pin(cell.contentKey)
+                }
+                cell.content
+            }
+            pinnedStores.forEach { (store, keys) -> (keys - next[store].orEmpty()).forEach(store::unpin) }
+            pinnedStores = next
+            committed = true
+            return snapshot
+        } finally {
+            if (!committed) next.forEach { (store, keys) ->
+                (keys - pinnedStores[store].orEmpty()).forEach(store::unpin)
+            }
+        }
     }
 
     fun clearPreparedCells() {
@@ -686,11 +744,12 @@ internal data class ViewerTablePresentedCell(
     val surface: ViewerTableSurface,
     val cell: PreparedViewerTableCell,
     val sourceIndex: Int,
-    val content: PreparedProseLayout,
     val bounds: RectF,
     val contentBounds: RectF,
     val clip: RectF
-)
+) {
+    val content: PreparedProseLayout get() = cell.content
+}
 
 internal data class ViewerTablePresentedSurface(
     val surface: ViewerTableSurface,
@@ -772,7 +831,7 @@ internal object ViewerTablePresentation {
         val childX = cellBounds.left + cell.contentOrigin.first
         val childY = cellBounds.top + cell.contentOrigin.second
         val contentBounds = RectF(childX, childY, childX + cell.contentWidthPx, childY + cell.contentHeightPx)
-        return ViewerTablePresentedCell(surface, cell, cell.sourceIndex, cell.content, cellBounds, contentBounds, clip)
+        return ViewerTablePresentedCell(surface, cell, cell.sourceIndex, cellBounds, contentBounds, clip)
     }
 
     fun surfaces(root: PreparedProseLayout): List<ViewerTableSurface> {
@@ -826,17 +885,17 @@ internal object ViewerTablePresentation {
         if (tables.any { it.surface.nestedTableCells.isNotEmpty() }) {
             return project(root, owner, viewport).tables.firstOrNull { it.surface.editorTableId == tableId }
         }
-        val window = presentationWindow(viewport)
-        val cells = mutableListOf<ViewerTablePresentedCell>()
-        tables.forEach { table -> forEachPresentedCell(table, owner, window) { cells += it } }
-        owner.retainCells(cells)
-        return tables.firstOrNull { it.surface.editorTableId == tableId }
+        return owner.prepareCells { content ->
+            val window = presentationWindow(viewport)
+            tables.forEach { table -> forEachPresentedCell(table, owner, window) { content(it.cell) } }
+            tables.firstOrNull { it.surface.editorTableId == tableId }
+        }
     }
 
     fun contentAccessibilityNodes(
         cell: ViewerTablePresentedCell,
         owner: ViewerTablePresentationOwner
-    ): List<ViewerTablePresentedAccessibilityNode> = project(
+    ): List<ViewerTablePresentedAccessibilityNode> = if (cell.cell.isMeasuredPlain) emptyList() else project(
         cell.content, owner, null, cell.contentBounds.left, cell.contentBounds.top,
         intersect(cell.clip, cell.contentBounds)
     ).accessibilityNodes
@@ -846,8 +905,9 @@ internal object ViewerTablePresentation {
         owner: ViewerTablePresentationOwner,
         viewport: ViewerTablePresentationViewport
     ): ViewerTablePresentationSnapshot {
-        return project(root, owner, presentationWindow(viewport), 0f, 0f, UNBOUNDED)
-            .also { owner.retainCells(it.cells) }
+        return owner.prepareCells { content ->
+            project(root, owner, presentationWindow(viewport), 0f, 0f, UNBOUNDED, content)
+        }
     }
 
     private fun presentationWindow(viewport: ViewerTablePresentationViewport): Rect? = when (viewport) {
@@ -876,7 +936,8 @@ internal object ViewerTablePresentation {
         window: Rect?,
         rootX: Float,
         rootY: Float,
-        rootClip: RectF
+        rootClip: RectF,
+        content: (PreparedViewerTableCell) -> PreparedProseLayout = { it.content }
     ): ViewerTablePresentationSnapshot {
         val layouts = mutableListOf<ViewerTablePresentedLayout>()
         val blocks = mutableListOf<ViewerTablePresentedBlock>()
@@ -968,7 +1029,7 @@ internal object ViewerTablePresentation {
                 tables += table
                 forEachPresentedCell(table, owner, window) { presented ->
                     cells += presented
-                    appendLayout(presented.cell.content, presented.contentBounds.left, presented.contentBounds.top,
+                    appendLayout(content(presented.cell), presented.contentBounds.left, presented.contentBounds.top,
                         intersect(table.clip, presented.contentBounds))
                 }
             }

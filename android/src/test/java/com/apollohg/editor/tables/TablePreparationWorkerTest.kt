@@ -1,5 +1,6 @@
 package com.apollohg.editor.tables
 
+import com.apollohg.editor.viewer.PlainTableCellMeasurer
 import com.apollohg.editor.viewer.PreparedProseLayout
 import com.apollohg.editor.viewer.ProseLayoutKey
 import java.util.concurrent.CompletableFuture
@@ -17,7 +18,7 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class TablePreparationWorkerTest {
-    private val cellCount = 1_000
+    private val cellCount = PlainTableCellMeasurer.MAXIMUM_BATCH_CELLS * 3 + 7
     private val width = 120f
     private val record = TableGridRecord("workers", 1, cellCount, listOf(width),
         List(cellCount) { TableGridCell(it, it, 0, contentKey = "cell-$it") })
@@ -27,7 +28,7 @@ class TablePreparationWorkerTest {
         ProseLayoutKey(cell.contentKey, width.toInt(), "workers", 0, 0, 1, 0, "workers"),
         width.toInt(), cell.sourceIndex + 1, emptyList(), retainedBytes = 100L)
 
-    private fun prepare(workers: List<(TableGridCell, Float) -> PreparedProseLayout>) = ViewerTableSurface(
+    private fun prepare(workers: List<TableCellPreparationWorker>) = ViewerTableSurface(
         "workers", record, width, TableStyle(), false,
         prepareCellWorkers = workers, parallelCellIndices = indices,
         transientCellIndices = indices, prepareCell = ::content)
@@ -38,7 +39,7 @@ class TablePreparationWorkerTest {
         val workerThreads = arrayOfNulls<Thread>(2)
         val started = CountDownLatch(2)
         val surface = prepare(List(2) { worker ->
-            { cell, width ->
+            { cells, capture ->
                 val thread = Thread.currentThread()
                 workerThreads[worker]?.let { assertSame("A worker owns one engine on one thread", it, thread) }
                 if (workerThreads[worker] == null) {
@@ -46,8 +47,10 @@ class TablePreparationWorkerTest {
                     assertTrue(started.await(TIMEOUT_SECONDS, TimeUnit.SECONDS))
                 }
                 workerThreads[worker] = thread
-                visits.incrementAndGet(cell.sourceIndex)
-                content(cell, width)
+                cells.forEach { (cell, width) ->
+                    visits.incrementAndGet(cell.sourceIndex)
+                    capture(cell, width, PreparedTableCellContent.Full(content(cell, width)))
+                }
             }
         })
         assertSame("The synchronous caller must perform one worker's share", caller, workerThreads[0])
@@ -57,7 +60,9 @@ class TablePreparationWorkerTest {
             assertEquals("cell ${cell.sourceIndex} must be prepared exactly once", 1, visits[cell.sourceIndex])
             assertEquals(cell.sourceIndex + 1, cell.contentHeightPx)
         }
-        val sequential = prepare(emptyList())
+        val sequential = prepare(listOf({ cells, capture ->
+            cells.forEach { (cell, width) -> capture(cell, width, PreparedTableCellContent.Full(content(cell, width))) }
+        }))
         assertEquals(sequential.layout, surface.layout)
         assertEquals(sequential.retainedBytes, surface.retainedBytes)
         assertEquals(sequential.layoutStore.count, surface.layoutStore.count)
@@ -80,12 +85,11 @@ class TablePreparationWorkerTest {
                             callerFailed.countDown()
                             throw failure
                         },
-                        { cell, width ->
+                        { _, _ ->
                             backgroundStarted.countDown()
                             assertTrue(releaseBackground.await(TIMEOUT_SECONDS, TimeUnit.SECONDS))
                             assertFalse("Worker contexts must remain open during outstanding work", contextsClosed.get())
                             backgroundFinished.set(true)
-                            content(cell, width)
                         }
                     ))
                 } finally { contextsClosed.set(true) }

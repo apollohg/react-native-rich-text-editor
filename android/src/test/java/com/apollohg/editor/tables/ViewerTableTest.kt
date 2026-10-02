@@ -1286,6 +1286,34 @@ class ViewerTableTest {
 
     @Test
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun largeColdPlainTableMeasuresWithoutBuildingDiscardedCellLayouts() {
+        val cellCount = TableCellLayoutStore.MAXIMUM_RESIDENT_LAYOUTS + 1
+        val document = compileWithRust(ProseViewerRequest(
+            ProseViewerSource.Json(PlainTableFixture.document(cellCount, 1) { row, _ ->
+                "unique $row café العربية 👩🏽‍💻\n"
+            }), ProseViewerConfiguration(CONFIG, imagesEnabled = true)))
+        var fullPreparations = 0
+        val engine = StaticLayoutAndroidProseLayoutEngine().apply {
+            tableCellMeasurementEnabled = true
+            tableCellPreparationObserver = { _, _ -> fullPreparations++ }
+        }
+        val layout = prepare(document, engine = engine)
+        val surface = requireNotNull(layout.blocks.single().tableSurface)
+        assertEquals("Cold measurement must not build full layouts that it immediately discards", 0, fullPreparations)
+        assertEquals(0, surface.layoutStore.count)
+        val cells = listOf(surface.cells.first(), surface.cells[cellCount / 2], surface.cells.last())
+        for (cell in cells) {
+            val full = cell.content
+            assertEquals("Refilling a measured cell must preserve its exact row geometry", cell.contentHeightPx, full.heightPx)
+            assertEquals(cell.contentWidthPx, full.widthPx)
+            assertEquals(cell.contentKey, full.key)
+            assertEquals(cell.accessibilityText, TableAccessibility.text(full).joinToString(TableAccessibility.LABEL_SEPARATOR))
+        }
+        assertEquals("Only requested cells may acquire full layouts", cells.size, fullPreparations)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
     fun largeColdTableRetainsDuplicateShapesAndReusesAnotherParentsShape() {
         val cellCount = TableCellLayoutStore.MAXIMUM_RESIDENT_LAYOUTS + 1
         val repeated = "shared café العربية 👩🏽‍💻"
@@ -1397,6 +1425,144 @@ class ViewerTableTest {
                 assertTrue(rebuilt.isEmpty())
             } finally { bitmap.recycle() }
         }
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun measuredCellsPrepareBeforeDrawingAndGeometryQueriesStayUnshaped() {
+        val rows = 200
+        val columns = 12
+        val width = 120
+        val height = 80
+        val document = compileWithRust(ProseViewerRequest(
+            ProseViewerSource.Json(PlainTableFixture.document(rows, columns, PlainTableFixture::coordinateText)),
+            ProseViewerConfiguration(CONFIG, imagesEnabled = true)))
+        val rebuilt = mutableListOf<Int>()
+        val engine = StaticLayoutAndroidProseLayoutEngine().apply {
+            tableCellMeasurementEnabled = true
+            tableCellPreparationObserver = { index, _ -> rebuilt += index }
+        }
+        val context = PreparedCellShapeCatalog().newBuildContext()
+        val layout = try { prepare(document, engine = engine, context = context) } finally { context.close() }
+        val surface = requireNotNull(layout.blocks.single().tableSurface)
+        assertTrue(rebuilt.isEmpty())
+        assertTrue(surface.cells.all { it.isMeasuredPlain })
+        withMountedDrawing(layout, width, height, contentOriginXPx = 0, contentOriginYPx = 0,
+            viewFactory = { activity -> PreparedProseDrawingView(activity).apply {
+                preparesTableCellsBeforeDrawing = true
+            } }) { drawing ->
+            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            try {
+                fun drawWithoutPreparation(label: String) {
+                    rebuilt.clear()
+                    drawing.draw(Canvas(bitmap))
+                    assertTrue("$label must never shape during drawing: $rebuilt", rebuilt.isEmpty())
+                }
+                assertTrue("Installation/layout prepares the visible window", rebuilt.isNotEmpty())
+                assertTrue(rebuilt.size < columns * 10)
+                drawWithoutPreparation("first frame")
+                val last = surface.cells.last()
+                val table = requireNotNull(drawing.presentedRootTable(surface))
+                val presented = ViewerTablePresentation.present(last, table, drawing.tablePresentationOwnerForAccessibility)
+                assertEquals(last.contentHeightPx.toFloat(), presented.contentBounds.height())
+                assertTrue(drawing.presentedCellAccessibilityNodes(presented).isEmpty())
+                requireNotNull(drawing.accessibilityNodeProvider.createAccessibilityNodeInfo(
+                    TableAccessibilityNodes.FIRST_TABLE_NODE_ID + rows * columns))
+                assertTrue("Offscreen geometry and plain accessibility queries must not shape", rebuilt.isEmpty())
+                drawing.setTableLogicalOffset(surface.identity, surface.bounds.width())
+                assertTrue("Horizontal scrolling prepares incoming columns", rebuilt.isNotEmpty())
+                drawWithoutPreparation("horizontal scroll")
+                drawing.install(layout, contentOriginYPx = -(layout.heightPx - height))
+                assertTrue("Vertical window changes prepare incoming rows", rebuilt.isNotEmpty())
+                drawWithoutPreparation("vertical window")
+                val parent = drawing.parent as ViewGroup
+                val params = drawing.layoutParams
+                parent.removeView(drawing)
+                assertTrue("Detach does not shape", rebuilt.isEmpty())
+                repeat(TableCellLayoutStore.MAXIMUM_RESIDENT_LAYOUTS + 1) { index ->
+                    surface.layoutStore.insert(PreparedProseLayout(layout.key.copy(semanticKey = "pressure-$index"),
+                        width, height, emptyList(), retainedBytes = 1L))
+                }
+                assertTrue("Detached viewport pins are released", surface.cells.all { it.cachedContent == null })
+                drawWithoutPreparation("detached managed view")
+                parent.addView(drawing, params)
+                drawing.layout(0, 0, width, height)
+                assertTrue("Reattachment prepares cells before drawing", rebuilt.isNotEmpty())
+                drawWithoutPreparation("reattachment")
+                drawing.alpha = 0f
+                drawing.viewTreeObserver.dispatchOnPreDraw()
+                drawing.alpha = 1f
+                drawing.viewTreeObserver.dispatchOnPreDraw()
+                drawWithoutPreparation("ancestor presentation refresh")
+            } finally { bitmap.recycle() }
+        }
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun fabricManagerPreparesMeasuredViewportWithoutRemeasuringTheDocument() {
+        val width = 120
+        val height = 80
+        val source = PlainTableFixture.document(200, 12, PlainTableFixture::coordinateText)
+        val request = ProseViewerRequest(ProseViewerSource.Json(source), ProseViewerConfiguration(CONFIG))
+        val registry = PreparedProseLayoutRegistry.shared
+        val token = FabricSurfaceToken(79, 31)
+        val lease = 93L
+        registry.registerFabricLease(token, lease)
+        val layout = registry.prepareFinalLayout(request, width, 1f, 0, 0, token, lease)
+        val surface = requireNotNull(layout.blocks.single().tableSurface)
+        assertTrue(surface.cells.all { it.isMeasuredPlain })
+        assertEquals(0, surface.layoutStore.count)
+        val preparations = registry.layoutPreparationCount
+        val manager = PreparedProseViewerManager()
+        try {
+            withMountedDrawing(layout, width, height, contentOriginXPx = 0, contentOriginYPx = 0,
+                viewFactory = { activity ->
+                    val context = ThemedReactContext(BridgeReactContext(activity), activity, "tables", token.surfaceId)
+                    PreparedProseViewerManager::class.java.getDeclaredMethod("createViewInstance", ThemedReactContext::class.java)
+                        .apply { isAccessible = true }.invoke(manager, context) as PreparedProseDrawingView
+                }) { view ->
+                @Suppress("UNCHECKED_CAST")
+                val states = PreparedProseViewerManager::class.java.getDeclaredField("states")
+                    .apply { isAccessible = true }.get(manager) as Map<PreparedProseDrawingView, PreparedProseViewerManager.ViewState>
+                val state = requireNotNull(states[view])
+                state.source = source
+                state.configJson = CONFIG
+                state.revisions = PreparedProseViewerManager.FabricStateRevisions(0, 0, lease)
+                val generation = state.adopt(token, requireNotNull(state.requestOrNull()))
+                registry.activateFabricGeneration(generation)
+                val ticket = requireNotNull(registry.acquirePreparedMountTicket(generation))
+                val install = PreparedProseViewerManager::class.java.getDeclaredMethod(
+                    "installPreparedTicket", PreparedProseDrawingView::class.java,
+                    PreparedProseViewerManager.ViewState::class.java, PreparedMountTicket::class.java
+                ).apply { isAccessible = true }
+                install.invoke(manager, view, state, ticket)
+                assertSame(layout, view.preparedLayout)
+                assertEquals("Mount only acquires the Yoga artifact", preparations, registry.layoutPreparationCount)
+                assertTrue("The manager opts into bounded pre-draw preparation", surface.layoutStore.count in 1 until 120)
+                val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                try {
+                    fun drawWithoutRefill(label: String) {
+                        val revision = surface.layoutStore.revision
+                        view.draw(Canvas(bitmap))
+                        assertEquals(label, revision, surface.layoutStore.revision)
+                    }
+                    drawWithoutRefill("Fabric first draw must not shape")
+                    view.setTableLogicalOffset(surface.identity, surface.bounds.width())
+                    drawWithoutRefill("Fabric scrolled draw must not shape")
+                    val parent = view.parent as ViewGroup
+                    val params = view.layoutParams
+                    parent.removeView(view)
+                    drawWithoutRefill("Detached Fabric must not refill all cells")
+                    parent.addView(view, params)
+                    view.layout(0, 0, width, height)
+                    drawWithoutRefill("Fabric reattachment must prepare before drawing")
+                } finally {
+                    bitmap.recycle()
+                    manager.onDropViewInstance(view)
+                }
+            }
+        } finally { registry.deactivateFabricLease(token, lease) }
     }
 
     @Test
@@ -3281,7 +3447,7 @@ class ViewerTableTest {
                 assertAtoms(listOf(false, true))
                 (view.parent as FrameLayout).removeView(view)
                 paint()
-                assertAtoms(listOf(true, true))
+                assertAtoms(listOf(false, false))
                 assertEquals(2, preparations)
                 assertSame(layout, view.preparedLayout)
                 val callback = requireNotNull(view.onTableGeometryChanged)
