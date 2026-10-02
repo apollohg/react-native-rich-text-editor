@@ -208,7 +208,8 @@ internal class ViewerTableSurface private constructor(
         val retainedBytes: Long,
         val positionDependentCount: Int,
         val hasSingleLayoutStore: Boolean,
-        val mayHaveHighlightedCodeKeys: Boolean
+        val mayHaveHighlightedCodeKeys: Boolean,
+        val hasPendingMeasurements: Boolean
     )
     constructor(
         identity: String, hostViewportWidth: Float, style: TableStyle, isRightToLeft: Boolean,
@@ -336,7 +337,8 @@ internal class ViewerTableSurface private constructor(
         } else {
             relayoutFromRecord()
         }
-        val metadata = if (ownsCells) CellMetadata(metadataBytes, positionDependentCount, hasSingleLayoutStore, mayHaveCodeKeys)
+        val metadata = if (ownsCells) CellMetadata(metadataBytes, positionDependentCount, hasSingleLayoutStore, mayHaveCodeKeys,
+            hasPendingMeasurements && updated.any { it.pendingMeasurement != null })
             else collectCellMetadata(updated)
         return ViewerTableSurface(identity, hostViewportWidth, style, isRightToLeft, next, updated,
             if (metadata.positionDependentCount == 0) null else updated.firstNotNullOfOrNull { it.contentError },
@@ -345,7 +347,7 @@ internal class ViewerTableSurface private constructor(
             if (structureUnchanged) columnEdgeHandleRows else null, cellKeysCertified, metadata)
     }
 
-    val hasPendingMeasurements: Boolean = cells.any { it.pendingMeasurement != null }
+    val hasPendingMeasurements: Boolean = cellMetadata?.hasPendingMeasurements ?: cells.any { it.pendingMeasurement != null }
 
     fun measuringNextBatch(): ViewerTableSurface = measuringCells(
         cells.asSequence().filter { it.pendingMeasurement != null }
@@ -476,7 +478,7 @@ internal class ViewerTableSurface private constructor(
         columnEdgeHandleRows.size * 16L
 
     companion object {
-        // Three Longs, one Int, and three flags fit within this allowance.
+        // Three Longs, one Int, and four flags fit within this allowance.
         private const val ACCOUNTING_CACHE_RETAINED_BYTES = 32L
         private const val UNKNOWN_CELL_COUNT = -1
         private const val PREPARATION_BATCH_CELLS = 256
@@ -487,13 +489,15 @@ internal class ViewerTableSurface private constructor(
             var dependent = 0
             var singleStore = true
             var mayHaveCodeKeys = false
+            var pending = false
             cells.forEach { cell ->
                 bytes += cell.metadataRetainedBytes
                 if (!cell.isPositionFree) dependent++
                 singleStore = singleStore && cell.layoutStore === store
                 mayHaveCodeKeys = mayHaveCodeKeys || cell.highlightedCodeKeys.isNotEmpty()
+                pending = pending || cell.pendingMeasurement != null
             }
-            return CellMetadata(bytes, dependent, singleStore, mayHaveCodeKeys)
+            return CellMetadata(bytes, dependent, singleStore, mayHaveCodeKeys, pending)
         }
 
         private fun certifiesCellKey(cell: PreparedViewerTableCell, source: TableSurfaceSource?): Boolean {

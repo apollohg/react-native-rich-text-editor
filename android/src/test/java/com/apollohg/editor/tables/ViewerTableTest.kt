@@ -1,5 +1,7 @@
 package com.apollohg.editor.tables
 
+import com.apollohg.editor.viewer.PlainTableCellMeasurer
+
 import com.apollohg.editor.ProseViewerView
 import com.apollohg.editor.ProseViewerConfiguration
 import java.util.Locale
@@ -335,13 +337,29 @@ class ViewerTableTest {
         val jumped = progressive.measuringViewport(farFrame.top, farFrame.top + farFrame.height)
         assertNull("Far jump must prepare its complete destination row", jumped.cell(farCell.sourceIndex)!!.pendingMeasurement)
         var settled = jumped
-        while (settled.hasPendingMeasurements) settled = settled.measuringNextBatch()
+        while (settled.cells.count { it.pendingMeasurement != null } > PlainTableCellMeasurer.MAXIMUM_BATCH_CELLS) {
+            settled = settled.measuringNextBatch()
+        }
+        fun replacePending(surface: ViewerTableSurface, indices: List<Int>): ViewerTableSurface {
+            val source = requireNotNull(surface.sourceTable)
+            return surface.replacingCells(indices.associateWith { surface.cell(it)!!.content },
+                { TableGridRecord.from(source, surface.identity) }, source, surface.sourceAttributes) { cell, _ ->
+                surface.cell(cell.sourceIndex)!!.content
+            }
+        }
+        val pending = settled.cells.filter { it.pendingMeasurement != null }.map { it.sourceIndex }
+        assertTrue("The fixture leaves multiple pending cells for edit adoption", pending.size > 1)
+        val partlyEdited = replacePending(settled, pending.take(1))
+        assertTrue("Replacing one pending cell cannot hide the remaining measurements", partlyEdited.hasPendingMeasurements)
+        settled = replacePending(partlyEdited, pending.drop(1))
+        assertFalse("Replacing the last pending cells clears their measurement metadata", settled.hasPendingMeasurements)
+        assertTrue("Published pending state stays immutable", partlyEdited.hasPendingMeasurements)
         assertEquals("Published source geometry remains immutable", oldOffsets, progressive.layout.rowOffsets)
         assertEquals(eager.layout.rowOffsets, settled.layout.rowOffsets)
         assertEquals(eager.layout.rectangles, settled.layout.rectangles)
         assertEquals(eager.cells.map { it.accessibilityText }, settled.cells.map { it.accessibilityText })
         assertEquals("Pending text and closures must be released on completion", eager.metadataRetainedBytes, settled.metadataRetainedBytes)
-        assertEquals(0, settled.layoutStore.count)
+        assertTrue("Only explicitly edited cells may retain their shaped layouts", settled.layoutStore.count in 1..pending.size)
     }
 
     @Test
