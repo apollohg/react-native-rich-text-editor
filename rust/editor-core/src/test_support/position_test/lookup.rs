@@ -32,7 +32,7 @@ fn assert_block_lookup_parity(map: &PositionMap, document: &Document, stage: &st
             map.find_block_for_doc_pos(position),
             linear_block_lookup(map, position),
             "{stage}: position={position}, blocks={:?}",
-            map.blocks()
+            map.blocks().collect::<Vec<_>>()
         );
     }
 }

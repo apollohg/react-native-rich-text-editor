@@ -162,7 +162,7 @@ fn seeded_localized_insert_treats_stale_schema_epoch_revision_and_store_as_cache
     let block = PositionMap::build(&document, &schema)
         .block(0)
         .unwrap()
-        .clone();
+        .into_owned();
     let doc = seeded_document(&source, &schema, &limits);
     let txn = doc.transact();
     let fragment = txn.get_xml_fragment("prosemirror").unwrap();

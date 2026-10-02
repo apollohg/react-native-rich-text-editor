@@ -221,7 +221,7 @@ fn test_compact_folds_deltas() {
 
     // Before compact, the second block should have stale doc_start but correct
     // effective positions via delta tree.
-    let b1_before = map.block(1).unwrap().clone();
+    let b1_before = map.block(1).unwrap().into_owned();
 
     map.compact();
 

@@ -651,7 +651,7 @@ impl YrsDocumentEngine {
             let DocumentChangeScope::Textblock { block_index } = scope else {
                 return None;
             };
-            let path = state.position_map.block(block_index)?.node_path.as_slice();
+            let path = state.position_map.block_path(block_index)?;
             let outer = (1..path.len()).find_map(|depth| {
                 let prefix = &path[..depth];
                 let node = state.document.node_at(prefix)?;

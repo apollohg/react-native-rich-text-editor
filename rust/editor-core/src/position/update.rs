@@ -49,7 +49,7 @@ impl PositionMap {
                 if let Some(update) =
                     self.prepare_incremental_update(range, old_doc, new_doc, schema)
                 {
-                    self.blocks[update.block_index] = update.block;
+                    self.blocks.set(update.block_index, update.block);
                     if update.block_index + 1 < self.blocks.len() {
                         self.prefix_deltas.insert(
                             update.block_index + 1,
@@ -78,17 +78,12 @@ impl PositionMap {
                 .single_range()
                 .and_then(|range| self.prepare_incremental_update(range, old_doc, new_doc, schema))
             {
-                let mut blocks = Vec::with_capacity(self.blocks.len());
-                blocks.extend(self.blocks[..update.block_index].iter().cloned());
-                blocks.push(update.block);
-                blocks.extend(self.blocks[update.block_index + 1..].iter().map(|block| {
-                    let mut block = block.clone();
-                    block.doc_start = (block.doc_start as i64 + update.doc_delta as i64) as u32;
-                    block.doc_end = (block.doc_end as i64 + update.doc_delta as i64) as u32;
-                    block.scalar_start =
-                        (block.scalar_start as i64 + update.scalar_delta as i64) as u32;
-                    block
-                }));
+                let blocks = self.blocks.clone_updated(
+                    update.block_index,
+                    update.block,
+                    update.doc_delta,
+                    update.scalar_delta,
+                );
                 // Preserve the allocation retained by the ordinary update and compaction.
                 let mut prefix_deltas = self.prefix_deltas.clone();
                 if update.block_index + 1 < self.blocks.len() {
@@ -125,7 +120,7 @@ impl PositionMap {
         };
 
         let old_doc_end = self.effective_doc_end(block_idx);
-        let old_scalar_len = self.blocks[block_idx].scalar_len;
+        let old_scalar_len = self.blocks.get(block_idx).unwrap().scalar_len;
 
         let edit_end = pos + deleted;
         if edit_end > old_doc_end {
@@ -133,13 +128,13 @@ impl PositionMap {
         }
 
         let doc_delta = inserted as i32 - deleted as i32;
-        let old_block = self.blocks[block_idx].clone();
+        let old_block = self.blocks.get(block_idx).unwrap().into_owned();
 
         // Structural edits like split/join shift adjacent block paths. Require
         // the neighboring blocks to remain identical at the same paths before
         // we trust an inline-only update.
         if block_idx > 0 {
-            let previous = &self.blocks[block_idx - 1];
+            let previous = self.blocks.get(block_idx - 1).unwrap();
             let old_previous = old_doc.node_at(&previous.node_path);
             let new_previous = new_doc.node_at(&previous.node_path);
             if old_previous != new_previous {
@@ -147,7 +142,7 @@ impl PositionMap {
             }
         }
         if block_idx + 1 < self.blocks.len() {
-            let next = &self.blocks[block_idx + 1];
+            let next = self.blocks.get(block_idx + 1).unwrap();
             let old_next = old_doc.node_at(&next.node_path);
             let new_next = new_doc.node_at(&next.node_path);
             if old_next != new_next {
@@ -189,11 +184,7 @@ impl PositionMap {
 
         for (range, dd, sd) in self.prefix_deltas.ranges(self.blocks.len()) {
             if dd != 0 || sd != 0 {
-                for block in &mut self.blocks[range] {
-                    block.doc_start = (block.doc_start as i64 + dd as i64) as u32;
-                    block.doc_end = (block.doc_end as i64 + dd as i64) as u32;
-                    block.scalar_start = (block.scalar_start as i64 + sd as i64) as u32;
-                }
+                self.blocks.shift(range, dd, sd);
             }
         }
 
@@ -219,7 +210,6 @@ impl StepMapExt for StepMap {
 
 #[cfg(test)]
 mod compaction_tests {
-    use super::*;
     use crate::test_support::large_table_fixture::{plain_table_document, session_with_document};
 
     #[test]
@@ -239,18 +229,22 @@ mod compaction_tests {
         for block_count in [0, 1, BLOCKS] {
             for deltas in cases {
                 let mut map = original.clone();
-                map.blocks.truncate(block_count);
+                map.blocks.dense_mut().truncate(block_count);
                 for &(index, doc, scalar) in *deltas {
                     map.prefix_deltas.insert(index, doc, scalar);
                 }
-                let mut expected = map.blocks.clone();
+                let mut expected = map
+                    .blocks
+                    .iter()
+                    .map(|block| block.into_owned())
+                    .collect::<Vec<_>>();
                 for (index, block) in expected.iter_mut().enumerate() {
                     let (doc, scalar) = map.prefix_deltas.accumulated_delta(index);
                     block.doc_start = (block.doc_start as i64 + doc as i64) as u32;
                     block.doc_end = (block.doc_end as i64 + doc as i64) as u32;
                     block.scalar_start = (block.scalar_start as i64 + scalar as i64) as u32;
                 }
-                let block_storage = map.blocks.as_ptr();
+                let block_storage = map.blocks.dense_mut().as_ptr();
                 let block_capacity = map.blocks.capacity();
                 let delta_charge = map.prefix_deltas.history_snapshot_clone_retained_bytes();
                 map.compact();
@@ -259,7 +253,7 @@ mod compaction_tests {
                     format!("{expected:?}"),
                     "blocks={block_count}, deltas={deltas:?}"
                 );
-                assert_eq!(map.blocks.as_ptr(), block_storage);
+                assert_eq!(map.blocks.dense_mut().as_ptr(), block_storage);
                 assert_eq!(map.blocks.capacity(), block_capacity);
                 assert!(map.prefix_deltas.is_empty());
                 assert_eq!(

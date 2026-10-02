@@ -58,7 +58,7 @@ fn localized_format_add_remove_four_leaf_unicode_fragmented_parity() {
     let block = PositionMap::build(&document, &schema)
         .block(0)
         .unwrap()
-        .clone();
+        .into_owned();
     let seed = MutationLookupSeed::build(
         716,
         &txn,
@@ -181,7 +181,7 @@ fn localized_format_four_leaf_unicode_exact_action_and_scan_limits_match_eager()
     let block = PositionMap::build(&document, &schema)
         .block(0)
         .unwrap()
-        .clone();
+        .into_owned();
     let seed = MutationLookupSeed::build(
         719,
         &txn,
@@ -283,7 +283,7 @@ fn localized_format_rejects_foreign_semantic_root_with_identical_selected_block(
     let block = PositionMap::build(&source_document, &schema)
         .block(0)
         .unwrap()
-        .clone();
+        .into_owned();
     let doc = seeded_document(&source, &schema, &limits);
     let txn = doc.transact();
     let fragment = txn.get_xml_fragment("prosemirror").unwrap();
@@ -337,7 +337,7 @@ fn localized_format_seal_rejects_stale_storage_schema_epoch_and_revision() {
     let block = PositionMap::build(&document, &schema)
         .block(0)
         .unwrap()
-        .clone();
+        .into_owned();
     let doc = seeded_document(&source, &schema, &limits);
     {
         let mut txn = doc.transact_mut();

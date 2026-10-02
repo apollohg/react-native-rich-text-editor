@@ -133,7 +133,7 @@ impl DerivedStateCache {
 
     pub(crate) fn localized_textblock_path(&self, document_position: u32) -> Option<&[u32]> {
         let block_index = self.textblock_index_at(document_position)?;
-        Some(self.position_map.block(block_index)?.node_path.as_slice())
+        self.position_map.block_path(block_index)
     }
 
     pub(crate) fn admits_localized_textblock_edit(
@@ -428,11 +428,11 @@ impl DerivedStateCache {
         if !self.position_map.has_effective_stored_bounds() {
             return None;
         }
-        let blocks = self.position_map.blocks();
-        let block_index = blocks
-            .partition_point(|block| block.doc_start <= document_position)
+        let block_index = self
+            .position_map
+            .block_partition_point(|block| block.doc_start <= document_position)
             .checked_sub(1)?;
-        let block = blocks.get(block_index)?;
+        let block = self.position_map.block(block_index)?;
         (!block.is_void_block && document_position <= block.doc_end).then_some(block_index)
     }
 

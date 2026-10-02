@@ -1,10 +1,13 @@
 pub mod build;
 pub mod delta_tree;
 mod fuzz_tests;
+mod storage;
 pub mod update;
 
 use smallvec::SmallVec;
+use std::borrow::Cow;
 use std::collections::HashSet;
+use storage::Blocks;
 
 use crate::model::node::Node;
 use crate::model::resolved_pos::ResolvedPos;
@@ -13,6 +16,8 @@ use crate::render;
 use crate::schema::Schema;
 
 use delta_tree::DeltaTree;
+
+const BLOCK_PATH_INLINE_CAPACITY: usize = 8;
 
 #[cfg(test)]
 std::thread_local! {
@@ -42,13 +47,20 @@ pub struct BlockMapping {
     /// Number of scalars for the separator after this block (0 for terminal).
     pub rendered_break_after: u32,
     /// Path from doc root to this block's node (child indices at each level).
-    pub node_path: SmallVec<[u32; 8]>,
+    pub node_path: SmallVec<[u32; BLOCK_PATH_INLINE_CAPACITY]>,
     /// Whether this block maps a block-level void node instead of text content.
     pub is_void_block: bool,
 }
 
+#[cfg(test)]
+std::thread_local! {
+    static BLOCK_MAPPING_CLONES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl Clone for BlockMapping {
     fn clone(&self) -> Self {
+        #[cfg(test)]
+        BLOCK_MAPPING_CLONES.set(BLOCK_MAPPING_CLONES.get() + 1);
         Self {
             doc_start: self.doc_start,
             doc_end: self.doc_end,
@@ -74,7 +86,7 @@ impl Clone for BlockMapping {
 /// shown in the native text view.
 #[derive(Debug, Clone)]
 pub struct PositionMap {
-    blocks: Vec<BlockMapping>,
+    blocks: Blocks,
     prefix_deltas: DeltaTree,
     hard_break_node_types: HashSet<String>,
 }
@@ -88,7 +100,7 @@ impl PositionMap {
     /// Create from pre-built block mappings (used by the build module).
     pub(crate) fn from_blocks(blocks: Vec<BlockMapping>, schema: &Schema) -> Self {
         Self {
-            blocks,
+            blocks: Blocks::Dense(blocks),
             prefix_deltas: DeltaTree::empty(),
             hard_break_node_types: schema.hard_break_node_types().map(str::to_owned).collect(),
         }
@@ -100,7 +112,7 @@ impl PositionMap {
     }
 
     /// Access a block mapping by index.
-    pub fn block(&self, index: usize) -> Option<&BlockMapping> {
+    pub fn block(&self, index: usize) -> Option<Cow<'_, BlockMapping>> {
         self.blocks.get(index)
     }
 
@@ -109,7 +121,7 @@ impl PositionMap {
         if self.blocks.is_empty() {
             return 0;
         }
-        let last = &self.blocks[self.blocks.len() - 1];
+        let last = self.blocks.get(self.blocks.len() - 1).unwrap();
         let (_, sd) = self.prefix_deltas.accumulated_delta(self.blocks.len() - 1);
         let last_scalar_start = (last.scalar_start as i64 + sd as i64) as u32;
         last_scalar_start + last.scalar_prefix_len + last.scalar_len + last.rendered_break_after
@@ -117,23 +129,23 @@ impl PositionMap {
 
     /// Get the effective doc_start for a block, accounting for pending deltas.
     pub(crate) fn effective_doc_start(&self, block_idx: usize) -> u32 {
-        let block = &self.blocks[block_idx];
+        let (doc_start, _, _) = self.blocks.offsets(block_idx).unwrap();
         let (dd, _) = self.prefix_deltas.accumulated_delta(block_idx);
-        (block.doc_start as i64 + dd as i64) as u32
+        (doc_start as i64 + dd as i64) as u32
     }
 
     /// Get the effective doc_end for a block, accounting for pending deltas.
     pub(crate) fn effective_doc_end(&self, block_idx: usize) -> u32 {
-        let block = &self.blocks[block_idx];
+        let (_, doc_end, _) = self.blocks.offsets(block_idx).unwrap();
         let (dd, _) = self.prefix_deltas.accumulated_delta(block_idx);
-        (block.doc_end as i64 + dd as i64) as u32
+        (doc_end as i64 + dd as i64) as u32
     }
 
     /// Get the effective scalar_start for a block, accounting for pending deltas.
     pub(crate) fn effective_scalar_start(&self, block_idx: usize) -> u32 {
-        let block = &self.blocks[block_idx];
+        let (_, _, scalar_start) = self.blocks.offsets(block_idx).unwrap();
         let (_, sd) = self.prefix_deltas.accumulated_delta(block_idx);
-        (block.scalar_start as i64 + sd as i64) as u32
+        (scalar_start as i64 + sd as i64) as u32
     }
 
     /// Convert a rendered-text scalar offset to a doc position.
@@ -221,7 +233,7 @@ impl PositionMap {
             }
         }
         let block_idx = lo.saturating_sub(1);
-        let block = &self.blocks[block_idx];
+        let block = self.blocks.get(block_idx).unwrap();
         let eff_scalar_start = self.effective_scalar_start(block_idx);
         let eff_doc_start = self.effective_doc_start(block_idx);
 
@@ -280,7 +292,7 @@ impl PositionMap {
                 let eff_doc_start = self.effective_doc_start(block_idx);
                 let eff_doc_end = self.effective_doc_end(block_idx);
                 let eff_scalar_start = self.effective_scalar_start(block_idx);
-                let block = &self.blocks[block_idx];
+                let block = self.blocks.get(block_idx).unwrap();
 
                 if block.is_void_block {
                     if doc_pos <= eff_doc_start {
@@ -315,9 +327,7 @@ impl PositionMap {
 
                 eff_scalar_start + block.scalar_prefix_len + intra_scalar
             }
-            None => {
-                self.total_scalars()
-            }
+            None => self.total_scalars(),
         }
     }
 
@@ -345,7 +355,7 @@ impl PositionMap {
         if let Some(block_idx) = self.find_block_for_doc_pos(doc_pos) {
             let eff_doc_start = self.effective_doc_start(block_idx);
             let eff_doc_end = self.effective_doc_end(block_idx);
-            let block = &self.blocks[block_idx];
+            let block = self.blocks.get(block_idx).unwrap();
 
             if block.doc_start == block.doc_end {
                 return eff_doc_start;
@@ -432,10 +442,22 @@ impl PositionMap {
         Some(lo)
     }
 
-    /// Access the internal blocks slice (for testing / debugging).
-    #[allow(dead_code)]
-    pub fn blocks(&self) -> &[BlockMapping] {
-        &self.blocks
+    #[cfg(test)]
+    pub fn blocks(
+        &self,
+    ) -> impl ExactSizeIterator<Item = Cow<'_, BlockMapping>> + DoubleEndedIterator {
+        self.blocks.iter()
+    }
+
+    pub(crate) fn block_path(&self, index: usize) -> Option<&[u32]> {
+        self.blocks.path(index)
+    }
+
+    pub(crate) fn block_partition_point(
+        &self,
+        predicate: impl FnMut(&BlockMapping) -> bool,
+    ) -> usize {
+        self.blocks.partition_point(predicate)
     }
 
     /// Rendered scalar width of an inline void in this map's schema domain.
@@ -457,17 +479,7 @@ impl PositionMap {
             .blocks
             .capacity()
             .checked_mul(std::mem::size_of::<BlockMapping>())?;
-        let spilled_path_bytes = self.blocks.iter().try_fold(0usize, |total, block| {
-            let path_bytes = if block.node_path.spilled() {
-                block
-                    .node_path
-                    .capacity()
-                    .checked_mul(std::mem::size_of::<u32>())?
-            } else {
-                0
-            };
-            total.checked_add(path_bytes)
-        })?;
+        let spilled_path_bytes = self.blocks.spilled_path_bytes()?;
         let hard_break_capacity = self.hard_break_node_types.capacity();
         let hard_break_bucket_count_bound = if hard_break_capacity == 0 {
             0
@@ -495,7 +507,6 @@ impl PositionMap {
             .checked_add(hard_break_string_bytes)
     }
 }
-
 
 /// Walk a text block node's content and convert a scalar offset to a doc
 /// token offset within the block.
@@ -631,10 +642,10 @@ fn inline_void_visible_scalar_len(node: &Node, hard_break_node_types: &HashSet<S
 mod retained_size_tests {
     use smallvec::smallvec;
 
-    use super::{BlockMapping, PositionMap};
+    use super::{BlockMapping, PositionMap, BLOCK_PATH_INLINE_CAPACITY};
     use crate::schema::presets::tiptap_schema;
 
-    fn block(path: smallvec::SmallVec<[u32; 8]>) -> BlockMapping {
+    fn block(path: smallvec::SmallVec<[u32; BLOCK_PATH_INLINE_CAPACITY]>) -> BlockMapping {
         BlockMapping {
             doc_start: 0,
             doc_end: 0,

@@ -605,10 +605,8 @@ impl ValidatedLocalizedTextblockEditAdmission<'_> {
     pub(crate) fn block_path(&self) -> &[u32] {
         self.state
             .position_map
-            .block(self.admission.plan.leaf.block_index)
+            .block_path(self.admission.plan.leaf.block_index)
             .expect("validated admission retains its position block")
-            .node_path
-            .as_slice()
     }
 
     pub(crate) fn affected_top_level_index(&self) -> usize {

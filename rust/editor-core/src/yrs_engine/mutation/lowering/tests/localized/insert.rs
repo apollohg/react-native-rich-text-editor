@@ -464,7 +464,7 @@ fn seeded_marked_non_bmp_insert_preserves_exact_action_and_input_ceilings() {
     let block = PositionMap::build(&document, &schema)
         .block(0)
         .unwrap()
-        .clone();
+        .into_owned();
     let position = block.doc_start + 2;
     let marks = vec![Mark::new("bold".into(), HashMap::new())];
     let doc = seeded_document(&source, &schema, &limits);

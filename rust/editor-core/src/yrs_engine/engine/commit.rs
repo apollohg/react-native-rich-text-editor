@@ -532,8 +532,7 @@ impl YrsDocumentEngine {
                     let path = compiled
                         .localized_textblock_edit_admission
                         .as_ref()
-                        .and_then(|admission| before.position_map.block(admission.block_index()))
-                        .map(|block| block.node_path.as_slice());
+                        .and_then(|admission| before.position_map.block_path(admission.block_index()));
                     if let (Some(budget), Some(path)) = (
                         pending.and_then(|pending| {
                             self.history

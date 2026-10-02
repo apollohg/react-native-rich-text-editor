@@ -184,7 +184,6 @@ mod tests {
 
     fn expected_total_scalars(pmap: &PositionMap) -> u32 {
         pmap.blocks()
-            .iter()
             .map(|block| block.scalar_prefix_len + block.scalar_len + block.rendered_break_after)
             .sum()
     }

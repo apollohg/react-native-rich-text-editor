@@ -29,7 +29,7 @@ fn cell_input_blocks(
             let element_index = find_block_element_index(
                 document,
                 cell,
-                block,
+                &block,
                 doc_start - cell_start,
                 &mut next_element,
             )?;

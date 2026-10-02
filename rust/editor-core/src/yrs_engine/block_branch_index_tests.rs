@@ -203,7 +203,7 @@ fn void_descendant_collision_keeps_first_source_branch_and_restores_sibling_posi
             .unwrap()
             .block(0)
             .unwrap()
-            .clone();
+            .into_owned();
         block.doc_start = COLLIDING_CONTENT_START;
         let map = crate::position::PositionMap::from_blocks(vec![block], schema);
         let index = BlockBranchIndex::build(&txn, &root, schema, &map).unwrap();
