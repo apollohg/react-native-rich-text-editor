@@ -1,3 +1,6 @@
+mod row_key;
+pub use row_key::TableRowAttributeKey;
+
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -13,6 +16,10 @@ use crate::tables::admission::TableProjectionIndex;
 use crate::tables::commands::{NODE_CLOSING_TOKENS, NODE_OPENING_TOKENS};
 use crate::tables::types::TableError;
 use crate::tables::TableRole;
+
+const ATTRIBUTE_DIGEST_BYTES: usize = 32;
+const ATTRIBUTE_KEY_BYTES: usize = ATTRIBUTE_DIGEST_BYTES * 2;
+const ATTRIBUTE_HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
 
 const RENDER_STACK_RED_ZONE: usize = 64 * 1024;
 const RENDER_STACK_SEGMENT: usize = 1024 * 1024;
@@ -107,9 +114,14 @@ pub struct TableRenderSyntheticRegion {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TableSourceRow {
-    pub attrs_key: String,
+    pub attrs_key: TableRowAttributeKey,
     pub cell_count: u32,
 }
+
+const _: () = {
+    assert!(std::mem::size_of::<TableSourceRow>() == std::mem::size_of::<(String, u32)>());
+    assert!(std::mem::align_of::<TableSourceRow>() == std::mem::align_of::<(String, u32)>());
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TableRenderStructure {
@@ -321,7 +333,7 @@ impl TableRenderRecord {
             for row in &self.structure.source_rows {
                 bytes = bytes
                     .saturating_add(std::mem::size_of::<TableSourceRow>())
-                    .saturating_add(row.attrs_key.capacity());
+                    .saturating_add(row.attrs_key.retained_string_capacity());
             }
             for region in &self.structure.synthetic_regions {
                 bytes = bytes
@@ -439,7 +451,7 @@ impl TableRenderContext {
                                 .structure
                                 .source_rows
                                 .iter()
-                                .map(|row| row.attrs_key.clone()),
+                                .map(|row| row.attrs_key.to_owned_string()),
                         );
                         keys.extend(
                             table
@@ -618,8 +630,13 @@ impl TableRenderContext {
     }
 }
 
-fn attribute_key(digest: &[u8; 32]) -> String {
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+fn attribute_key(digest: &[u8; ATTRIBUTE_DIGEST_BYTES]) -> String {
+    let mut key = String::with_capacity(ATTRIBUTE_KEY_BYTES);
+    for byte in digest {
+        key.push(ATTRIBUTE_HEX_DIGITS[usize::from(byte >> 4)] as char);
+        key.push(ATTRIBUTE_HEX_DIGITS[usize::from(byte & 0x0f)] as char);
+    }
+    key
 }
 
 fn increment_attribute_key(digest: &mut [u8; 32]) {
@@ -809,7 +826,7 @@ pub(crate) fn generate_table(
         structure.source_rows.push(TableSourceRow {
             cell_count: u32::try_from(row.child_count())
                 .map_err(|_| CachedRenderError::PositionOverflow)?,
-            attrs_key: context.intern_attributes(row, false),
+            attrs_key: context.intern_attributes(row, false).into(),
         });
         let mut cell_pos = row_pos + NODE_OPENING_TOKENS;
         for cell_index in 0..row.child_count() {
@@ -933,7 +950,7 @@ pub(crate) fn absolute_source_rows(
             TableRenderRow {
                 source_pos,
                 source_end: position,
-                attrs_key: row.attrs_key.clone(),
+                attrs_key: row.attrs_key.to_owned_string(),
             }
         })
         .collect()
@@ -1034,6 +1051,47 @@ mod output_meter_tests {
             "snapshots remain valid after the source cache is released"
         );
         assert_eq!(snapshot.cells.len(), ROWS * COLUMNS);
+    }
+
+    #[test]
+    fn editable_table_structure_clones_share_row_key_payloads() {
+        use crate::test_support::large_table_fixture::{
+            plain_table_document, session_with_document,
+        };
+        const ROWS: usize = 17;
+        const COLUMNS: usize = 3;
+        let session = session_with_document(&plain_table_document(ROWS, COLUMNS));
+        let cache = crate::render::incremental::CachedRenderBlocks::build(
+            session.engine.document().unwrap(),
+            session.engine.schema(),
+            &crate::boundary::ResourceLimits::default(),
+        )
+        .unwrap();
+        let mut records = Vec::new();
+        cache.visit_table_records(&mut records);
+        let source = records[0].1;
+        let cloned = source.structure.clone();
+        assert_eq!(source.structure, cloned);
+        for (index, (before, after)) in source
+            .structure
+            .source_rows
+            .iter()
+            .zip(&cloned.source_rows)
+            .enumerate()
+        {
+            assert_eq!(
+                before.attrs_key.as_ptr(),
+                after.attrs_key.as_ptr(),
+                "row={index}: localized table copies must share canonical attribute keys"
+            );
+        }
+        drop(records);
+        drop(cache);
+        assert_eq!(cloned.source_rows.len(), ROWS);
+        assert!(cloned
+            .source_rows
+            .iter()
+            .all(|row| row.cell_count == COLUMNS as u32));
     }
 
     #[test]

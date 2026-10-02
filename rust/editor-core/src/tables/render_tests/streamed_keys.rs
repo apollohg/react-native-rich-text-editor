@@ -188,7 +188,7 @@ fn the_attribute_pool_holds_exactly_the_referenced_keys() {
                     .structure
                     .source_rows
                     .iter()
-                    .map(|row| row.attrs_key.clone()),
+                    .map(|row| row.attrs_key.to_owned_string()),
             );
             referenced.extend(
                 table

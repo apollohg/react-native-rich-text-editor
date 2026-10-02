@@ -230,7 +230,7 @@ pub(super) fn table_record(
             .source_rows
             .iter()
             .map(|row| FfiTableSourceRow {
-                attrs_key: row.attrs_key.clone(),
+                attrs_key: row.attrs_key.to_owned_string(),
                 cell_count: row.cell_count,
             })
             .collect(),
