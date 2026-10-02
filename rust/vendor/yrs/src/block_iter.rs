@@ -1,8 +1,10 @@
 use crate::block::{Block, Item, ItemContent, ItemPtr, Prelim};
 use crate::branch::BranchPtr;
 use crate::transaction::{ReadTxn, TransactionMut};
+use crate::types::xml::XmlOut;
 use crate::types::TypePtr;
 use crate::{Out, ID};
+use std::convert::TryFrom;
 
 /// Struct used for iterating over the sequence of item's values with respect to a potential
 /// [Move] markers that may change their order.
@@ -310,6 +312,28 @@ impl BlockIter {
         }
     }
 
+    pub(crate) fn read_xml<T: ReadTxn>(&mut self, txn: &T) -> Option<XmlOut> {
+        if !self.reached_end && self.rel == 0 && self.index < self.branch.content_len() {
+            if let Some(item) = self.next_item {
+                if item.is_countable() && !item.is_deleted() {
+                    if let ItemContent::Type(branch) = &item.content {
+                        if let Ok(value) = XmlOut::try_from(BranchPtr::from(branch)) {
+                            self.index += 1;
+                            if item.right.is_some() {
+                                self.next_item = item.right;
+                            } else {
+                                self.reached_end = true;
+                            }
+                            return Some(value);
+                        }
+                    }
+                }
+            }
+        }
+        self.read_value(txn)
+            .and_then(|value| XmlOut::try_from(value).ok())
+    }
+
     pub(crate) fn read_value<T: ReadTxn>(&mut self, txn: &T) -> Option<Out> {
         let mut buf = [Out::default()];
         if self.slice(txn, &mut buf) != 0 {
@@ -399,5 +423,104 @@ impl<'a, 'txn> Iterator for Values<'a, 'txn> {
                 None
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::exchange_updates;
+    use crate::{
+        Array, ArrayPrelim, ArrayRef, Doc, MapPrelim, Transact, XmlElementPrelim,
+        XmlFragmentPrelim, XmlTextPrelim,
+    };
+
+    fn assert_xml_cursor_equivalence(doc: &Doc, label: &str) {
+        let fragment = doc.get_or_insert_xml_fragment("xml");
+        let branch = BranchPtr::from(AsRef::<crate::branch::Branch>::as_ref(&fragment));
+        let txn = doc.transact();
+        let len = branch.content_len();
+        const END_PROBES: u32 = 3;
+        for offset in 0..=len {
+            let mut oracle = BlockIter::new(branch);
+            if offset != 0 {
+                oracle.forward(&txn, offset);
+            }
+            let mut candidate = oracle.clone();
+            for call in 0..len + END_PROBES {
+                let expected = oracle
+                    .read_value(&txn)
+                    .and_then(|v| XmlOut::try_from(v).ok());
+                let actual = candidate.read_xml(&txn);
+                let identity = |node: &XmlOut| (std::mem::discriminant(node), node.id());
+                let context = format!("{label}, offset={offset}, call={call}");
+                assert_eq!(
+                    actual.as_ref().map(identity),
+                    expected.as_ref().map(identity),
+                    "{context}"
+                );
+                assert_eq!(candidate.branch, oracle.branch, "{context}: branch");
+                assert_eq!(candidate.index, oracle.index, "{context}: index");
+                assert_eq!(candidate.rel, oracle.rel, "{context}: relative offset");
+                assert_eq!(
+                    candidate.next_item, oracle.next_item,
+                    "{context}: next item"
+                );
+                assert_eq!(candidate.reached_end, oracle.reached_end, "{context}: end");
+            }
+        }
+    }
+
+    #[test]
+    fn xml_reads_preserve_values_and_cursor_across_mixed_and_merged_items() {
+        let doc = Doc::with_client_id(1);
+        let fragment = doc.get_or_insert_xml_fragment("xml");
+        let array = ArrayRef::from(BranchPtr::from(AsRef::<crate::branch::Branch>::as_ref(
+            &fragment,
+        )));
+        assert_xml_cursor_equivalence(&doc, "empty");
+        array.push_back(&mut doc.transact_mut(), XmlElementPrelim::empty("head"));
+        assert_xml_cursor_equivalence(&doc, "single element");
+        {
+            let mut txn = doc.transact_mut();
+            array.push_back(&mut txn, XmlTextPrelim::new("text😀"));
+            array.push_back(
+                &mut txn,
+                XmlFragmentPrelim::new::<_, ()>([XmlElementPrelim::empty("nested").into()]),
+            );
+            array.push_back(&mut txn, XmlElementPrelim::empty("tail"));
+        }
+        assert_xml_cursor_equivalence(&doc, "all XML kinds");
+        {
+            let mut txn = doc.transact_mut();
+            array.insert_range(&mut txn, 1, [10, 20, 30]);
+            array.insert(&mut txn, 2, MapPrelim::default());
+            array.insert(&mut txn, 3, ArrayPrelim::default());
+        }
+        assert_xml_cursor_equivalence(&doc, "primitives and non-XML shared types");
+        {
+            let mut txn = doc.transact_mut();
+            array.remove(&mut txn, 0);
+            array.remove(&mut txn, 2);
+            let last = array.len(&txn) - 1;
+            array.remove(&mut txn, last);
+        }
+        assert_xml_cursor_equivalence(&doc, "deleted head middle tail");
+        let peer = Doc::with_client_id(2);
+        let peer_fragment = peer.get_or_insert_xml_fragment("xml");
+        let peer_array = ArrayRef::from(BranchPtr::from(AsRef::<crate::branch::Branch>::as_ref(
+            &peer_fragment,
+        )));
+        exchange_updates(&[&doc, &peer]);
+        assert_xml_cursor_equivalence(&peer, "decoded update");
+        array.insert(&mut doc.transact_mut(), 0, XmlTextPrelim::new("local"));
+        peer_array.insert(
+            &mut peer.transact_mut(),
+            0,
+            XmlElementPrelim::empty("remote"),
+        );
+        exchange_updates(&[&doc, &peer]);
+        assert_xml_cursor_equivalence(&doc, "merged local");
+        assert_xml_cursor_equivalence(&peer, "merged peer");
     }
 }

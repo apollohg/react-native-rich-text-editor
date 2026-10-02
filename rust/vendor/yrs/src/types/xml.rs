@@ -1226,8 +1226,7 @@ impl<'a, T: ReadTxn> Iterator for XmlNodes<'a, T> {
     type Item = XmlOut;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let value = self.iter.read_value(self.txn)?;
-        XmlOut::try_from(value).ok()
+        self.iter.read_xml(self.txn)
     }
 }
 
