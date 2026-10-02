@@ -129,13 +129,13 @@ impl PositionMap {
             return;
         }
 
-        for i in 0..self.blocks.len() {
-            let (dd, sd) = self.prefix_deltas.accumulated_delta(i);
+        for (range, dd, sd) in self.prefix_deltas.ranges(self.blocks.len()) {
             if dd != 0 || sd != 0 {
-                self.blocks[i].doc_start = (self.blocks[i].doc_start as i64 + dd as i64) as u32;
-                self.blocks[i].doc_end = (self.blocks[i].doc_end as i64 + dd as i64) as u32;
-                self.blocks[i].scalar_start =
-                    (self.blocks[i].scalar_start as i64 + sd as i64) as u32;
+                for block in &mut self.blocks[range] {
+                    block.doc_start = (block.doc_start as i64 + dd as i64) as u32;
+                    block.doc_end = (block.doc_end as i64 + dd as i64) as u32;
+                    block.scalar_start = (block.scalar_start as i64 + sd as i64) as u32;
+                }
             }
         }
 
@@ -155,6 +155,60 @@ impl StepMapExt for StepMap {
             Some(ranges[0])
         } else {
             None
+        }
+    }
+}
+
+#[cfg(test)]
+mod compaction_tests {
+    use super::*;
+    use crate::test_support::large_table_fixture::{plain_table_document, session_with_document};
+
+    #[test]
+    fn compact_preserves_effective_offsets_and_storage_across_delta_ranges() {
+        const BLOCKS: usize = 8;
+        let session = session_with_document(&plain_table_document(1, BLOCKS));
+        let original = session.engine.position_map().unwrap();
+        assert_eq!(original.block_count(), BLOCKS);
+        let cases: &[&[(usize, i32, i32)]] = &[
+            &[],
+            &[(0, 3, 2)],
+            &[(1, 3, 2), (3, -3, -2), (4, 1, 0), (5, -1, 0)],
+            &[(2, 5, 7), (2, -2, -3), (6, -1, -2)],
+            &[(BLOCKS - 1, -2, -1)],
+            &[(0, i32::MAX, i32::MAX), (BLOCKS, 1, 1), (usize::MAX, 1, 1)],
+        ];
+        for block_count in [0, 1, BLOCKS] {
+            for deltas in cases {
+                let mut map = original.clone();
+                map.blocks.truncate(block_count);
+                for &(index, doc, scalar) in *deltas {
+                    map.prefix_deltas.insert(index, doc, scalar);
+                }
+                let mut expected = map.blocks.clone();
+                for (index, block) in expected.iter_mut().enumerate() {
+                    let (doc, scalar) = map.prefix_deltas.accumulated_delta(index);
+                    block.doc_start = (block.doc_start as i64 + doc as i64) as u32;
+                    block.doc_end = (block.doc_end as i64 + doc as i64) as u32;
+                    block.scalar_start = (block.scalar_start as i64 + scalar as i64) as u32;
+                }
+                let block_storage = map.blocks.as_ptr();
+                let block_capacity = map.blocks.capacity();
+                let delta_charge = map.prefix_deltas.history_snapshot_clone_retained_bytes();
+                map.compact();
+                assert_eq!(
+                    format!("{:?}", map.blocks),
+                    format!("{expected:?}"),
+                    "blocks={block_count}, deltas={deltas:?}"
+                );
+                assert_eq!(map.blocks.as_ptr(), block_storage);
+                assert_eq!(map.blocks.capacity(), block_capacity);
+                assert!(map.prefix_deltas.is_empty());
+                assert_eq!(
+                    map.prefix_deltas.history_snapshot_clone_retained_bytes(),
+                    delta_charge
+                );
+            }
         }
     }
 }
