@@ -75,9 +75,17 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         private set
     internal var usesEditAnchoredNodes = false
     internal var preparesTableCellsBeforeDrawing = false
+    internal var onPrepareTableGeometry: ((Rect) -> Boolean)? = null
+    internal var onPrepareTableCellGeometry: ((String, Int) -> Boolean)? = null
     private val prepareTableCellsListener = ViewTreeObserver.OnPreDrawListener {
-        preparePresentedTableCells()
-        true
+        val viewport = (presentationViewport() as? ViewerTablePresentationViewport.Known)?.rect
+        if (viewport != null && onPrepareTableGeometry?.invoke(viewport) == true) {
+            invalidate()
+            false
+        } else {
+            preparePresentedTableCells()
+            true
+        }
     }
 
     private fun preparePresentedTableCells() {
@@ -1393,12 +1401,15 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     internal fun tableAccessibilityLocation(surface: ViewerTableSurface, sourceIndex: Int): TableAccessibilityLocation? =
         tableAccessibility.locate(surface, sourceIndex)
 
-    internal fun revealTableAccessibilityCell(cell: TableAccessibilityCell) {
+    internal fun revealTableAccessibilityCell(target: TableAccessibilityCell) {
+        if (onPrepareTableCellGeometry?.invoke(target.surface.identity, target.sourceIndex) == false) return
+        val root = preparedLayout ?: return
+        val surface = ViewerTablePresentation.surfaces(root).firstOrNull { it.identity == target.surface.identity } ?: return
+        val cell = tableAccessibility.locate(surface, target.sourceIndex)?.cell ?: return
         val presented = tableAccessibility.presentedCell(cell) ?: return
         val visible = RectF(presented.bounds)
         val fullyVisible = visible.intersect(presented.clip) &&
             visible.width() >= minOf(presented.bounds.width(), presented.clip.width())
-        val surface = cell.surface
         val logical = surface.layout.columnWidths.take(cell.column).sum()
         if (!fullyVisible && tablePresentationOwner.logicalOffset(surface) != logical) {
             tablePresentationOwner.setLogicalOffset(logical, surface)

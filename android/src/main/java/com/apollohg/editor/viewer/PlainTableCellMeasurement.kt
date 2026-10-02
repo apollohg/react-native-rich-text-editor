@@ -10,6 +10,18 @@ internal data class PlainTableCellMeasurement(
     val prepare: () -> PreparedProseLayout
 )
 
+internal class PendingPlainTableCellMeasurement(
+    val input: PlainTableCellMeasurement,
+    val measure: (List<PlainTableCellMeasurement>) -> List<PreparedTableCellContent.MeasuredPlain>
+) {
+    val retainedBytes: Long get() = METADATA_BYTES + input.text.length * 2L
+
+    companion object {
+        // Charge the shared plain paint and shaper to every remaining owner.
+        private const val METADATA_BYTES = 256L
+    }
+}
+
 internal object PlainTableCellMeasurer {
     const val MAXIMUM_BATCH_CELLS = 256
     private const val MAXIMUM_BATCH_UTF16_UNITS = 64 * 1024

@@ -84,6 +84,268 @@ import uniffi.editor_core.TableRenderFailure
 class ViewerTableTest {
     @Test
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun progressiveAccessibilityRevealUsesTheNewlyMeasuredCell() {
+        val document = compileWithRust(ProseViewerRequest(ProseViewerSource.Json(
+            PlainTableFixture.document(130, 20, PlainTableFixture::coordinateText)), ProseViewerConfiguration(CONFIG)))
+        val initial = prepare(document, engine = StaticLayoutAndroidProseLayoutEngine().apply {
+            tableCellMeasurementEnabled = true
+            tableMeasurementViewportHeightPx = 1
+        })
+        var requested: Rect? = null
+        withMountedDrawing(initial, width = 327, height = 100, contentOriginXPx = 0, contentOriginYPx = 0,
+            hostFactory = { activity -> object : FrameLayout(activity) {
+                override fun requestChildRectangleOnScreen(child: View, rectangle: Rect, immediate: Boolean): Boolean {
+                    requested = Rect(rectangle)
+                    return true
+                }
+            } }) { drawing ->
+            val surface = initial.blocks.first().tableSurface!!
+            val target = surface.cells.last()
+            val location = requireNotNull(drawing.tableAccessibilityLocation(surface, target.sourceIndex))
+            assertNotNull(target.pendingMeasurement)
+            drawing.onPrepareTableCellGeometry = { identity, index ->
+                val frame = surface.frameOfCell(index)!!
+                drawing.install(initial.replacingTableSurfaces(mapOf(identity to
+                    surface.measuringViewport(frame.top, frame.top + frame.height))))
+                true
+            }
+            drawing.revealTableAccessibilityCell(location.cell)
+            val replacement = drawing.preparedLayout!!.blocks.first().tableSurface!!
+            assertNull(replacement.cells.last().pendingMeasurement)
+            assertNotNull("Reveal must request the new immutable cell bounds after measurement", requested)
+            val presented = ViewerTablePresentation.present(replacement.cells.last(),
+                requireNotNull(drawing.presentedRootTable(replacement)), drawing.tablePresentationOwnerForAccessibility)
+            assertEquals(presented.bounds.top.toInt(), requested!!.top)
+            assertEquals(presented.bounds.bottom.toInt(), requested!!.bottom)
+        }
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun progressiveGeometryKeysCannotAliasDifferentOwnersWindows() {
+        val document = compileWithRust(ProseViewerRequest(ProseViewerSource.Json(
+            PlainTableFixture.document(130, 20, PlainTableFixture::coordinateText)), ProseViewerConfiguration(CONFIG)))
+        val initial = prepare(document, engine = StaticLayoutAndroidProseLayoutEngine().apply {
+            tableCellMeasurementEnabled = true
+            tableMeasurementViewportHeightPx = 1
+        })
+        val surface = initial.blocks.first().tableSurface!!
+        fun window(row: Int): PreparedProseLayout = initial.replacingTableSurfaces(mapOf(surface.identity to
+            surface.measuringViewport(surface.layout.rowOffsets[row], surface.layout.rowOffsets[row + 1])))
+        val first = window(90)
+        val second = window(110)
+        org.junit.Assert.assertNotEquals(first.blocks.first().tableSurface!!.layout.rowOffsets,
+            second.blocks.first().tableSurface!!.layout.rowOffsets)
+        org.junit.Assert.assertNotEquals("Two owners may not publish different geometry under one shared cache key", first.key, second.key)
+        assertEquals(initial.key.semanticGenerationIdentity, first.key.semanticGenerationIdentity)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun progressiveViewportMeasuresTransitiveSpansAboveAndBelowItsRows() {
+        val value = JSONObject(PlainTableFixture.document(130, 20, PlainTableFixture::coordinateText))
+        val rows = value.getJSONArray("content").getJSONObject(0).getJSONArray("content")
+        rows.getJSONObject(20).getJSONArray("content").getJSONObject(0).put("attrs", JSONObject().put("rowspan", 4))
+        rows.getJSONObject(22).getJSONArray("content").getJSONObject(1).put("attrs", JSONObject().put("rowspan", 4))
+        for (row in 21..25) {
+            val cells = rows.getJSONObject(row).getJSONArray("content")
+            if (row in 23..25) cells.remove(1)
+            if (row in 21..23) cells.remove(0)
+        }
+        val document = compileWithRust(ProseViewerRequest(ProseViewerSource.Json(value.toString()), ProseViewerConfiguration(CONFIG)))
+        val initial = prepare(document, engine = StaticLayoutAndroidProseLayoutEngine().apply {
+            tableCellMeasurementEnabled = true
+            tableMeasurementViewportHeightPx = 1
+        }).blocks.first().tableSurface!!
+        val row = 24
+        val measured = initial.measuringViewport(initial.layout.rowOffsets[row], initial.layout.rowOffsets[row + 1])
+        assertTrue("Closure includes every column of both overlapping spans", measured.cells.filter { it.row in 20..25 }
+            .all { it.pendingMeasurement == null })
+        assertNotNull("Unrelated rows remain deferred", measured.cells.first { it.row == 19 }.pendingMeasurement)
+        val eager = prepare(document, engine = StaticLayoutAndroidProseLayoutEngine().apply { tableCellMeasurementEnabled = true })
+            .blocks.first().tableSurface!!
+        assertEquals(eager.layout.rectangles, measured.measuringRemaining { false }!!.layout.rectangles)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun directViewerPublishesExactViewportBeforeProgressiveBackgroundWork() {
+        val activityController = Robolectric.buildActivity(Activity::class.java).create()
+        val activity = activityController.get()
+        val scroll = android.widget.ScrollView(activity)
+        val viewer = ProseViewerView(activity, PreparedProseLayoutRegistry(compiler = ::compileWithRust))
+        scroll.addView(viewer, ViewGroup.LayoutParams(320, ViewGroup.LayoutParams.WRAP_CONTENT))
+        activity.setContentView(scroll)
+        activityController.start().resume().visible()
+        try {
+            assertTrue(viewer.apply(ProseViewerSource.Json(PlainTableFixture.document(300, 20, PlainTableFixture::coordinateText)),
+                ProseViewerConfiguration(CONFIG)))
+            val width = View.MeasureSpec.makeMeasureSpec(320, View.MeasureSpec.EXACTLY)
+            val height = View.MeasureSpec.makeMeasureSpec(240, View.MeasureSpec.EXACTLY)
+            scroll.measure(width, height)
+            scroll.layout(0, 0, 320, 240)
+            val initial = viewer.preparedLayoutForTesting!!
+            assertTrue("The production viewer must defer offscreen rows", initial.blocks.first().tableSurface!!.hasPendingMeasurements)
+            val drawing = viewer.getChildAt(0) as PreparedProseDrawingView
+            drawing.viewTreeObserver.dispatchOnPreDraw()
+            val visible = Rect()
+            assertTrue(drawing.getLocalVisibleRect(visible))
+            val artifact = viewer.preparedLayoutForTesting!!
+            val block = artifact.blocks.first()
+            val surface = block.tableSurface!!
+            val localTop = visible.top - block.tableBounds!!.top
+            val localBottom = visible.bottom - block.tableBounds!!.top
+            assertTrue(surface.cells.filter { cell ->
+                val frame = surface.frameOfCell(cell.sourceIndex)!!
+                frame.top < localBottom && frame.top + frame.height > localTop
+            }.all { it.pendingMeasurement == null })
+            scroll.scrollTo(0, (surface.layout.contentHeight / 2).toInt())
+            drawing.viewTreeObserver.dispatchOnPreDraw()
+            val jumped = viewer.preparedLayoutForTesting!!.blocks.first().tableSurface!!
+            assertTrue("Far viewport readiness must publish a new immutable surface", jumped !== surface)
+        } finally {
+            activityController.pause().stop().destroy()
+        }
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun progressiveMeasurementRejectsAmbiguousOwnershipAndObservesDeferredShaping() {
+        val document = compileWithRust(ProseViewerRequest(ProseViewerSource.Json(
+            PlainTableFixture.document(130, 20, PlainTableFixture::coordinateText)), ProseViewerConfiguration(CONFIG)))
+        val engine = StaticLayoutAndroidProseLayoutEngine().apply {
+            tableCellMeasurementEnabled = true
+            tableMeasurementViewportHeightPx = 120
+        }
+        val surface = prepare(document, engine = engine).blocks.first().tableSurface!!
+        val pending = surface.cells.last()
+        assertNotNull(pending.pendingMeasurement)
+        val builds = engine.staticLayoutsBuilt
+        val completed = surface.measuringRemaining { false }!!
+        assertTrue("Deferred batches must remain visible to no-draw-shaping instrumentation", engine.staticLayoutsBuilt > builds)
+        val measured = completed.cell(pending.sourceIndex)!!
+        val stale = PreparedTableCellContent.MeasuredPlain(measured.contentKey.copy(widthPx = measured.contentWidthPx + 1),
+            measured.contentWidthPx + 1, measured.contentHeightPx, measured.accessibilityText) { measured.content }
+        val rejected = surface.replacingMeasurements(mapOf(pending.sourceIndex to stale))
+        assertNotNull(rejected.cell(pending.sourceIndex)!!.pendingMeasurement)
+        assertEquals(surface.layout.rowOffsets, rejected.layout.rowOffsets)
+        val duplicate = runCatching {
+            ViewerTableSurface(surface.identity, surface.hostViewportWidth, surface.style, surface.isRightToLeft,
+                surface.layout, surface.cells + pending, null, surface.sourceTable)
+        }.exceptionOrNull()
+        assertTrue("Progressive surfaces require unambiguous source-index ownership", duplicate is ProseViewerError)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun progressiveControllerDropsReplacedAndDetachedWork() {
+        fun artifact(seed: String): PreparedProseLayout {
+            val document = compileWithRust(ProseViewerRequest(ProseViewerSource.Json(
+                PlainTableFixture.document(130, 20) { row, column -> "$seed $row $column text wraps" }),
+                ProseViewerConfiguration(CONFIG)))
+            return prepare(document, engine = StaticLayoutAndroidProseLayoutEngine().apply {
+                tableCellMeasurementEnabled = true
+                tableMeasurementViewportHeightPx = 120
+            })
+        }
+        val tasks = java.util.ArrayDeque<Runnable>()
+        val deliveries = java.util.ArrayDeque<() -> Unit>()
+        val published = mutableListOf<PreparedProseLayout>()
+        val controller = com.apollohg.editor.viewer.ProgressiveTableMeasurementController(
+            java.util.concurrent.Executor { tasks.add(it) }, { deliveries.add(it) }, published::add)
+        val old = artifact("old")
+        val latest = artifact("latest")
+        controller.install(old)
+        controller.start()
+        controller.install(latest)
+        controller.start()
+        while (tasks.isNotEmpty()) tasks.removeFirst().run()
+        while (deliveries.isNotEmpty()) deliveries.removeFirst().invoke()
+        assertEquals(1, published.size)
+        assertEquals(latest.key.semanticKey, published.single().key.semanticKey)
+        assertFalse(published.single().blocks.first().tableSurface!!.hasPendingMeasurements)
+        assertTrue(latest.blocks.first().tableSurface!!.hasPendingMeasurements)
+        controller.install(old)
+        controller.start()
+        controller.cancel()
+        while (tasks.isNotEmpty()) tasks.removeFirst().run()
+        while (deliveries.isNotEmpty()) deliveries.removeFirst().invoke()
+        assertEquals("Detachment cannot publish cancelled geometry", 1, published.size)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun progressiveReflowMovesProseInteractionsAndAnchorsWithoutMutatingPublishedGeometry() {
+        val value = JSONObject(PlainTableFixture.document(150, 20, PlainTableFixture::coordinateText))
+        val content = value.getJSONArray("content")
+        content.put(JSONObject("""{"type":"paragraph","content":[{"type":"text","text":"after link","marks":[{"type":"link","attrs":{"href":"https://after.example"}}]}]}"""))
+        val document = compileWithRust(ProseViewerRequest(ProseViewerSource.Json(value.toString()),
+            ProseViewerConfiguration(interactionConfig())))
+        val eager = prepare(document, engine = StaticLayoutAndroidProseLayoutEngine().apply { tableCellMeasurementEnabled = true })
+        val initial = prepare(document, engine = StaticLayoutAndroidProseLayoutEngine().apply {
+            tableCellMeasurementEnabled = true
+            tableMeasurementViewportHeightPx = 240
+        })
+        val surface = initial.blocks.first().tableSurface!!
+        val anchorCell = surface.cells[surface.cells.size / 2]
+        val anchorTop = surface.frameOfCell(anchorCell.sourceIndex)!!.top.toInt() + initial.blocks.first().tableBounds!!.top
+        val anchor = com.apollohg.editor.viewer.ProgressiveTableAnchor.capture(initial, anchorTop)
+        val oldBounds = initial.blocks.last().bounds.toShortString()
+        val complete = surface.measuringRemaining { false }!!
+        val settled = initial.replacingTableSurfaces(mapOf(surface.identity to complete))
+        assertEquals(eager.heightPx, settled.heightPx)
+        assertEquals(eager.blocks.map { it.bounds }, settled.blocks.map { it.bounds })
+        assertEquals(eager.interactions, settled.interactions)
+        assertEquals(eager.accessibilityNodes, settled.accessibilityNodes)
+        assertEquals(oldBounds, initial.blocks.last().bounds.toShortString())
+        val expectedTop = eager.blocks.first().tableBounds!!.top + eager.blocks.first().tableSurface!!
+            .frameOfCell(anchorCell.sourceIndex)!!.top.toInt()
+        assertEquals("Anchor follows the same cell after offscreen rows grow", expectedTop, anchor.resolve(settled))
+        var cancellationChecks = 0
+        assertNull("Cancelled work cannot publish a partly completed artifact", surface.measuringRemaining { ++cancellationChecks > 1 })
+        assertTrue(surface.hasPendingMeasurements)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun progressiveRowsKeepTheViewportExactAndSettleToEagerGeometry() {
+        val viewportHeight = 240
+        val document = compileWithRust(ProseViewerRequest(ProseViewerSource.Json(
+            PlainTableFixture.document(300, 20) { row, column ->
+                "unique $row $column café العربية 👩🏽‍💻 " + "wrap ".repeat(column % 7)
+            }), ProseViewerConfiguration(CONFIG)))
+        val eager = prepare(document, engine = StaticLayoutAndroidProseLayoutEngine().apply {
+            tableCellMeasurementEnabled = true
+        }).blocks.single().tableSurface!!
+        val progressive = prepare(document, engine = StaticLayoutAndroidProseLayoutEngine().apply {
+            tableCellMeasurementEnabled = true
+            tableMeasurementViewportHeightPx = viewportHeight
+        }).blocks.single().tableSurface!!
+        assertTrue("Cold publication must leave offscreen shaping pending", progressive.hasPendingMeasurements)
+        val visibleRows = progressive.cells.filter {
+            progressive.frameOfCell(it.sourceIndex)!!.top < viewportHeight
+        }.map { it.row }.toSet()
+        for (cell in progressive.cells.filter { it.row in visibleRows }) {
+            assertNull("Every column of visible row ${cell.row} must be exact", cell.pendingMeasurement)
+            assertEquals(eager.cell(cell.sourceIndex)!!.contentHeightPx, cell.contentHeightPx)
+        }
+        val oldOffsets = progressive.layout.rowOffsets.toList()
+        val farCell = progressive.cells.last()
+        val farFrame = progressive.frameOfCell(farCell.sourceIndex)!!
+        val jumped = progressive.measuringViewport(farFrame.top, farFrame.top + farFrame.height)
+        assertNull("Far jump must prepare its complete destination row", jumped.cell(farCell.sourceIndex)!!.pendingMeasurement)
+        var settled = jumped
+        while (settled.hasPendingMeasurements) settled = settled.measuringNextBatch()
+        assertEquals("Published source geometry remains immutable", oldOffsets, progressive.layout.rowOffsets)
+        assertEquals(eager.layout.rowOffsets, settled.layout.rowOffsets)
+        assertEquals(eager.layout.rectangles, settled.layout.rectangles)
+        assertEquals(eager.cells.map { it.accessibilityText }, settled.cells.map { it.accessibilityText })
+        assertEquals("Pending text and closures must be released on completion", eager.metadataRetainedBytes, settled.metadataRetainedBytes)
+        assertEquals(0, settled.layoutStore.count)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
     fun activeCellTableLookupKeepsWindowPinsWithoutProjectingAccessibility() {
         val rows = 6
         val columns = 12
@@ -3872,13 +4134,14 @@ class ViewerTableTest {
         contentOriginXPx: Int = 7,
         contentOriginYPx: Int = 11,
         viewFactory: (Activity) -> PreparedProseDrawingView = { PreparedProseDrawingView(it) },
+        hostFactory: (Activity) -> FrameLayout = { FrameLayout(it) },
         block: (PreparedProseDrawingView) -> Unit
     ) {
         val controller = Robolectric.buildActivity(Activity::class.java)
         try {
             val activity = controller.create().get()
             shadowOf(activity.getSystemService(AccessibilityManager::class.java)).setEnabled(true)
-            val host = FrameLayout(activity)
+            val host = hostFactory(activity)
             activity.setContentView(host)
             val view = viewFactory(activity)
             view.install(

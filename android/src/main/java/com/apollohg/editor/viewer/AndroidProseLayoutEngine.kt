@@ -207,6 +207,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
     }
     internal var tablePreparationWorkerLimit = MAX_TABLE_PREPARATION_WORKERS
     internal var tableCellMeasurementEnabled = false
+    internal var tableMeasurementViewportHeightPx = 0
     internal var tableCellLayoutObserverForTesting: ((Int, PreparedProseLayout) -> Unit)? = null
 
     private data class TablePreparationPlan(
@@ -251,8 +252,8 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
     }
 
     /** Test seam: drawing must never increment this prepared-layout counter. */
-    internal var staticLayoutsBuilt: Int = 0
-        private set
+    private val staticLayoutCount = java.util.concurrent.atomic.AtomicInteger()
+    internal val staticLayoutsBuilt: Int get() = staticLayoutCount.get()
     internal var tableCellPreparationObserver: ((Int, String) -> Unit)? = null
     internal var incrementalTableSurface: ((String) -> Pair<ViewerTableSurface, Set<Int>>?)? = null
     internal var tableIncrementalRelayoutObserver: (() -> Unit)? = null
@@ -321,6 +322,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
         cellMode: Boolean,
         cellShapeContext: PreparedCellShapeBuildContext? = null
     ): PreparedProseLayout {
+        val tableViewportHeight = key.tableMeasurementViewportHeightPx.takeIf { it > 0 } ?: tableMeasurementViewportHeightPx
         val reusableStore = if (cellMode) null else reusableTableCellStore
         val tableLayoutStore by lazy { reusableStore ?: com.apollohg.editor.tables.TableCellLayoutStore() }
         val warningSemanticGeneration = semanticGenerationIdentity
@@ -537,7 +539,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                     surface.hostViewportWidth == tableWidth.toFloat() && surface.style == tableStyle &&
                         surface.isRightToLeft == rtl
                 }
-                val surface = if (retainedSurface != null) {
+                val preparedSurface = if (retainedSurface != null) {
                     val (previous, changed) = retainedSurface
                     val contents = changed.associateWith { index ->
                         val cell = com.apollohg.editor.tables.TableGridCell.from(surfaceSource.cells[index])
@@ -549,6 +551,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                         { record }, surfaceSource, document.tableAttributes,
                         reusePreparedGeometry = previous.displayScale == PHYSICAL_PIXEL_LAYOUT_SCALE) { cell, width -> prepareCell(cell, width) }
                 } else {
+                    val measurePlain = deferredPlainCellMeasurer(childTheme.paragraph)
                     val workers = tablePreparationPlan(document, surfaceSource, tableKey, theme, cellMode, cellShapeContext) { inputs, worker, context, transient, capture ->
                         inputs.chunked(PlainTableCellMeasurer.MAXIMUM_BATCH_CELLS).forEach { batch ->
                             val pending = mutableListOf<Pair<Int, PlainTableCellMeasurement>>()
@@ -563,11 +566,16 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                                     val childWidth = width.toInt().coerceAtLeast(1)
                                     val childKey = key.copy(semanticKey = child.semanticKey, widthPx = childWidth)
                                     val build = cellBuilder(cell, child, childKey, this, null)
-                                    val cached = context?.resolveCached(cellShapeKey(cell.contentKey, child, childWidth, childTheme, density, shapeStyleDigest)) { shape ->
-                                        worker.bindCellShape(shape, child, childKey, childTheme, childWidth, density, warningSemanticGeneration, context)
+                                    if (!cellMode && tableViewportHeight > 0) {
+                                        capture(cell, width, PreparedTableCellContent.EstimatedPlain(
+                                            PendingPlainTableCellMeasurement(PlainTableCellMeasurement(childKey, text, build), measurePlain)))
+                                    } else {
+                                        val cached = context?.resolveCached(cellShapeKey(cell.contentKey, child, childWidth, childTheme, density, shapeStyleDigest)) { shape ->
+                                            worker.bindCellShape(shape, child, childKey, childTheme, childWidth, density, warningSemanticGeneration, context)
+                                        }
+                                        if (cached != null) capture(cell, width, PreparedTableCellContent.Full(cached.copy(cellPreparation = build)))
+                                        else pending += index to PlainTableCellMeasurement(childKey, text, build)
                                     }
-                                    if (cached != null) capture(cell, width, PreparedTableCellContent.Full(cached.copy(cellPreparation = build)))
-                                    else pending += index to PlainTableCellMeasurement(childKey, text, build)
                                 }
                             }
                             val measured = PlainTableCellMeasurer.measure(pending.map { it.second }) { text, width ->
@@ -596,9 +604,12 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                         }
                     } finally {
                         workers.contexts.forEach { it.close() }
-                        staticLayoutsBuilt += workers.engines.sumOf { it.staticLayoutsBuilt }
+                        staticLayoutCount.addAndGet(workers.engines.sumOf { it.staticLayoutsBuilt })
                     }
                 }
+                val surface = if (!cellMode && tableViewportHeight > 0) {
+                    preparedSurface.measuringViewport(-blockCursorY.toFloat(), (tableViewportHeight - blockCursorY).toFloat())
+                } else preparedSurface
                 if (surface.preparationError != null) return PreparedProseLayout.error(key, widthPx, surface.preparationError!!)
                 val tableBounds = Rect(
                     tableX,
@@ -2070,6 +2081,18 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
         return text.ifEmpty { PlainTableCellMeasurer.EMPTY_TEXT }.takeIf(PlainTableCellMeasurer::supports)
     }
 
+    private fun deferredPlainCellMeasurer(paint: PreparedTextPaint):
+        (List<PlainTableCellMeasurement>) -> List<PreparedTableCellContent.MeasuredPlain> {
+        val plainPaint = paint.copy(resolvedStyle = null)
+        val count = staticLayoutCount
+        return { cells ->
+            val engine = StaticLayoutAndroidProseLayoutEngine()
+            PlainTableCellMeasurer.measure(cells) { text, width ->
+                engine.staticLayout(text, plainPaint, width, usePlainText = true)
+            }.also { count.addAndGet(engine.staticLayoutsBuilt) }
+        }
+    }
+
     // Android's span and plain-text caret paths differ with letter spacing.
     private val PreparedTextPaint.canUsePlainTextLayout: Boolean
         get() = letterSpacing == 0f && lineHeightPx == null && textAlign == null
@@ -2080,7 +2103,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
         width: Int,
         usePlainText: Boolean = false
     ): StaticLayout {
-        staticLayoutsBuilt += 1
+        staticLayoutCount.incrementAndGet()
         val resolved = paint.newTextPaint()
         val preparedText = if (usePlainText &&
             (text !is Spanned || text.getSpans(0, text.length, Any::class.java).isEmpty())) {

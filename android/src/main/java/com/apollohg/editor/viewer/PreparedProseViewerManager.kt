@@ -2,6 +2,7 @@ package com.apollohg.editor.viewer
 
 import android.content.Context
 import android.graphics.Rect
+import android.view.View
 import com.apollohg.editor.ImageLoadingPolicy
 import com.apollohg.editor.ProseViewerConfiguration
 import com.apollohg.editor.ProseViewerError
@@ -63,8 +64,59 @@ internal class PreparedProseViewerManager(
     override fun createViewInstance(context: ThemedReactContext): PreparedProseDrawingView =
         PreparedProseDrawingView(context).also { view ->
             view.preparesTableCellsBeforeDrawing = true
-            val state = ViewState(imagePipeline = imagePipelineFactory())
+            val state = ViewState(imagePipeline = imagePipelineFactory(),
+                viewportHeight = { context.resources.displayMetrics.heightPixels })
             states[view] = state
+            state.tableMeasurements = ProgressiveTableMeasurementController(
+                deliver = { completion -> view.post { if (view.isAttachedToWindow) completion() } },
+                publish = { artifact -> publishTableGeometry(view, state, artifact) })
+            view.onPrepareTableGeometry = { viewport ->
+                val artifact = view.preparedLayout
+                val current = state.requestOrNull()
+                if (state.pendingTableGeneration != null) true
+                else if (artifact == null || artifact.key.generationIdentity != current?.generationIdentity) false
+                else if (state.tableMeasurements?.hasPendingMeasurements == true && progressiveTableViewportHeight(view) == 0) {
+                    requestEagerTableGeometry(view, state)
+                    true
+                } else if (state.pendingTableReveal != null) {
+                    val (identity, index) = requireNotNull(state.pendingTableReveal)
+                    state.tableAnchor = null
+                    state.pendingTableReveal = null
+                    val surface = com.apollohg.editor.tables.ViewerTablePresentation.surfaces(artifact)
+                        .firstOrNull { it.identity == identity }
+                    surface?.let { view.tableAccessibilityLocation(it, index)?.cell }?.let(view::revealTableAccessibilityCell)
+                    true
+                } else {
+                    state.tableAnchor?.restore(artifact)
+                    state.tableAnchor = null
+                    val changed = state.tableMeasurements?.prepareViewport(viewport) == true
+                    if (!changed) view.post {
+                        if (view.isAttachedToWindow && state.pendingTableGeneration == null &&
+                            view.preparedLayout?.key?.generationIdentity == state.requestOrNull()?.generationIdentity)
+                            state.tableMeasurements?.start()
+                    }
+                    changed
+                }
+            }
+            view.onPrepareTableCellGeometry = { identity, index ->
+                val currentGeometry = view.preparedLayout?.key?.generationIdentity == state.requestOrNull()?.generationIdentity
+                if (currentGeometry && state.pendingTableGeneration == null)
+                    state.tableMeasurements?.prepareCell(identity, index)
+                if (!currentGeometry || state.pendingTableGeneration != null) {
+                    state.pendingTableReveal = identity to index
+                    false
+                } else true
+            }
+            view.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+                override fun onViewAttachedToWindow(attached: View) {
+                    installCachedLayout(view)
+                }
+                override fun onViewDetachedFromWindow(detached: View) {
+                    state.tableMeasurements?.cancel()
+                    state.tableAnchor = null
+                    state.pendingTableReveal = null
+                }
+            })
             view.onCodeHighlightsReady = { state.publishFontRevision(1) }
             view.onUsableMetricsChanged = { installCachedLayout(view) }
             view.onVisibleRectChanged = { dispatchAtomLayout(view, state) }
@@ -101,6 +153,8 @@ internal class PreparedProseViewerManager(
             state.finishWithoutMountedReplacement(view)
             state.release()
         }
+        view.onPrepareTableGeometry = null
+        view.onPrepareTableCellGeometry = null
         view.onCodeHighlightsReady = null
         view.onUsableMetricsChanged = null
         view.onVisibleRectChanged = null
@@ -212,7 +266,7 @@ internal class PreparedProseViewerManager(
             }
             return YogaMeasureOutput.make(0f, 0f)
         }
-        val request = requestFrom(props, state, leaseHandle)
+        val request = requestFrom(props, state, leaseHandle, context.resources.displayMetrics.heightPixels)
         if (request == null) {
             // An incomplete/stale Yoga callback has not named an exact
             // generation. It must never tear down a newer incarnation on the
@@ -225,7 +279,7 @@ internal class PreparedProseViewerManager(
         val widthPx = fabricConstraintPixels(width)
         // The registry begins and scopes this exact surface/component sidecar
         // around preparation, so an LRU miss cannot borrow another surface.
-        val artifact = if (finalLayout != null && surface != null && widthPx != null) {
+        val artifact = try { if (finalLayout != null && surface != null && widthPx != null) {
             PreparedProseLayoutRegistry.shared.prepareFinalLayout(
                 request,
                 widthPx,
@@ -258,8 +312,16 @@ internal class PreparedProseViewerManager(
                 fontScale = fontScale
             )
         }
-        val measuredWidth = fabricPixelsToDp(artifact.widthPx.toFloat(), density) ?: 0f
-        val intrinsicHeight = fabricPixelsToDp(artifact.heightPx.toFloat(), density) ?: 0f
+        } catch (required: TableGeometryRevisionRequired) {
+            return measuredSize(required.widthPx, required.heightPx, density, height, heightMode)
+        }
+        return measuredSize(artifact.widthPx, artifact.heightPx, density, height, heightMode)
+    }
+
+    private fun measuredSize(widthPx: Int, heightPx: Int, density: Float,
+        height: Float, heightMode: YogaMeasureMode): Long {
+        val measuredWidth = fabricPixelsToDp(widthPx.toFloat(), density) ?: 0f
+        val intrinsicHeight = fabricPixelsToDp(heightPx.toFloat(), density) ?: 0f
         val constrainedHeight = fabricPixelsToDp(height, density)
         val measuredHeight = when (heightMode) {
             YogaMeasureMode.EXACTLY -> constrainedHeight ?: 0f
@@ -268,11 +330,6 @@ internal class PreparedProseViewerManager(
                 ?: intrinsicHeight
 
             else -> intrinsicHeight
-        }
-        PreparedProseInstrumentation.trace("measure") {
-            "surface=$surface handle=$leaseHandle $widthMode widthPx=$widthPx " +
-                "$heightMode heightPx=$height " +
-                "-> artifact ${artifact.widthPx}x${artifact.heightPx}px, yoga ${measuredWidth}x${measuredHeight}dp"
         }
         return YogaMeasureOutput.make(measuredWidth, measuredHeight)
     }
@@ -314,19 +371,7 @@ internal class PreparedProseViewerManager(
             PreparedProseInstrumentation.trace("mount") {
                 "miss: no final layout ticket for $generation"
             }
-            PreparedProseLayoutRegistry.shared.prepareForFabricMount(generation) {
-                view.post {
-                    val current = states[view] ?: return@post
-                    if (current.generation != generation) return@post
-                    val currentRequest = current.requestOrNull() ?: return@post
-                    val prepared = PreparedProseLayoutRegistry.shared.acquirePreparedMountTicket(
-                        generation,
-                        currentRequest.nativeFontRevision
-                    )
-                        ?: return@post
-                    installPreparedTicket(view, current, prepared)
-                }
-            }
+            prepareCurrentTicket(view, state)
             return
         }
         installPreparedTicket(view, state, ticket)
@@ -345,7 +390,10 @@ internal class PreparedProseViewerManager(
         PreparedProseInstrumentation.trace("mount") {
             "installed: ${ticket.generation} widthPx=${ticket.contentWidthPx} heightPx=${ticket.artifact.heightPx}"
         }
+        if (ticket.generation.generationIdentity != currentRequest.generationIdentity) return
         state.installMountedReplacement(view, ticket)
+        state.tableMeasurements?.install(ticket.artifact)
+        state.pendingTableGeneration = null
         state.beginImages(view, ticket.artifact, currentRequest)
         state.installAtomArtifact(ticket.generation, ticket.artifact)
         dispatchAtomLayout(view, state, ticket)
@@ -392,22 +440,61 @@ internal class PreparedProseViewerManager(
         state.recordAtomProjection(projection)
     }
 
+    private fun publishTableGeometry(view: PreparedProseDrawingView, state: ViewState, artifact: PreparedProseLayout) {
+        val generation = state.generation ?: return
+        val current = state.requestOrNull() ?: return
+        if (!view.isAttachedToWindow || current.generationIdentity != artifact.key.generationIdentity ||
+            generation.generationIdentity != current.generationIdentity || state.pendingTableGeneration != null) return
+        val revision = if (artifact.key.tableGeometryRevision == current.tableGeometryRevision)
+            nextTableGeometryRevision() else artifact.key.tableGeometryRevision
+        val next = current.copy(tableGeometryRevision = revision, tableGeometryPolicy = TableGeometryPolicy.STAGED)
+        val prepared = PreparedProseLayoutRegistry.shared.stageTableGeometry(generation, next,
+            artifact.copy(key = artifact.key.copy(tableGeometryRevision = revision))) {
+                state.generation == generation && state.requestOrNull()?.generationIdentity == current.generationIdentity
+            } ?: return
+        state.tableAnchor = view.preparedLayout?.let { ProgressiveTableScrollAnchor.capture(view, it) }
+        state.pendingTableGeneration = prepared.key.generationIdentity
+        state.publishTableGeometryRevision(revision, TableGeometryPolicy.STAGED)
+    }
+
+    private fun requestEagerTableGeometry(view: PreparedProseDrawingView, state: ViewState) {
+        val current = state.requestOrNull() ?: return
+        if (current.tableGeometryPolicy == TableGeometryPolicy.EAGER) return
+        state.tableAnchor = state.tableAnchor ?: view.preparedLayout?.let { ProgressiveTableScrollAnchor.capture(view, it) }
+        val revision = nextTableGeometryRevision()
+        state.pendingTableGeneration = current.copy(tableGeometryRevision = revision,
+            tableGeometryPolicy = TableGeometryPolicy.EAGER, tableMeasurementViewportHeightPx = 0).generationIdentity
+        state.publishTableGeometryRevision(revision, TableGeometryPolicy.EAGER)
+    }
+
     private fun prepareCurrentTicket(view: PreparedProseDrawingView, state: ViewState) {
         val generation = state.generation ?: return
-        PreparedProseLayoutRegistry.shared.prepareForFabricMount(generation) { prepared ->
-            if (!prepared) return@prepareForFabricMount
+        if (PreparedProseLayoutRegistry.shared.requiresTableGeometryRevision(generation)) {
+            requestEagerTableGeometry(view, state)
+            return
+        }
+        val started = PreparedProseLayoutRegistry.shared.prepareForFabricMount(generation) { prepared ->
             view.post {
                 val current = states[view] ?: return@post
                 if (current.generation != generation) return@post
+                if (PreparedProseLayoutRegistry.shared.requiresTableGeometryRevision(generation)) {
+                    requestEagerTableGeometry(view, current)
+                    return@post
+                }
+                if (!prepared) {
+                    if (current.requestOrNull()?.tableGeometryPolicy == TableGeometryPolicy.STAGED)
+                        requestEagerTableGeometry(view, current)
+                    return@post
+                }
                 val request = current.requestOrNull() ?: return@post
-                val ticket = PreparedProseLayoutRegistry.shared.acquirePreparedMountTicket(
-                    generation,
-                    request.nativeFontRevision
-                )
-                    ?: return@post
-                installPreparedTicket(view, current, ticket)
+                val ticket = PreparedProseLayoutRegistry.shared.acquirePreparedMountTicket(generation, request.nativeFontRevision)
+                if (ticket != null) installPreparedTicket(view, current, ticket)
+                else if (PreparedProseLayoutRegistry.shared.requiresTableGeometryRevision(generation))
+                    requestEagerTableGeometry(view, current)
             }
         }
+        if (!started && state.requestOrNull()?.tableGeometryPolicy == TableGeometryPolicy.STAGED)
+            requestEagerTableGeometry(view, state)
     }
 
     private fun dispatchError(
@@ -486,15 +573,17 @@ internal class PreparedProseViewerManager(
     private fun requestFrom(
         props: ReadableMap?,
         state: ReadableMap?,
-        nativeLeaseHandle: Long = 0
+        nativeLeaseHandle: Long = 0,
+        viewportHeight: Int = 0
     ): ProseViewerRequest? {
         val revisions = state?.fabricRevisionsOrNull(nativeLeaseHandle) ?: return null
-        return requestFrom(props, revisions)
+        return requestFrom(props, revisions, viewportHeight)
     }
 
     private fun requestFrom(
         props: ReadableMap?,
-        revisions: FabricStateRevisions
+        revisions: FabricStateRevisions,
+        viewportHeight: Int
     ): ProseViewerRequest {
         val sourceKind = props?.stringOrNull("sourceKind") ?: "json"
         val source = if (sourceKind == "html") {
@@ -513,7 +602,10 @@ internal class PreparedProseViewerManager(
             ),
             attachmentRevision = revisions.attachmentRevision,
             nativeFontRevision = revisions.nativeFontRevision,
-            fontEnvironmentRevision = props?.longOrZero("fontEnvironmentRevision") ?: 0
+            fontEnvironmentRevision = props?.longOrZero("fontEnvironmentRevision") ?: 0,
+            tableGeometryRevision = revisions.tableGeometryRevision,
+            tableGeometryPolicy = revisions.tableGeometryPolicy,
+            tableMeasurementViewportHeightPx = if (revisions.tableGeometryPolicy == TableGeometryPolicy.EAGER) 0 else viewportHeight
         )
     }
 
@@ -562,7 +654,10 @@ internal class PreparedProseViewerManager(
         ) {
             return null
         }
-        return FabricStateRevisions(attachmentRevision, nativeFontRevision, handle)
+        return FabricStateRevisions(attachmentRevision, nativeFontRevision, handle,
+            longOrZero("tableGeometryRevision"),
+            TableGeometryPolicy.entries.firstOrNull { it.stateValue.toLong() == longOrNull("tableGeometryPolicy") }
+                ?: TableGeometryPolicy.EAGER)
     }
 
     private fun ReadableMap.longOrNull(key: String): Long? =
@@ -571,7 +666,9 @@ internal class PreparedProseViewerManager(
     internal data class FabricStateRevisions(
         val attachmentRevision: Long,
         val nativeFontRevision: Long,
-        val leaseHandle: Long
+        val leaseHandle: Long,
+        val tableGeometryRevision: Long = 0,
+        val tableGeometryPolicy: TableGeometryPolicy = TableGeometryPolicy.EAGER
     )
 
     internal class ViewState(
@@ -594,8 +691,14 @@ internal class PreparedProseViewerManager(
         private val replacementAccessibilityTransaction: FabricReplacementAccessibilityTransaction =
             FabricReplacementAccessibilityTransaction(),
         private val createStateMap: () -> WritableMap = { Arguments.createMap() },
-        val imagePipeline: ViewerImagePipeline = ViewerImagePipeline()
+        val imagePipeline: ViewerImagePipeline = ViewerImagePipeline(),
+        private val viewportHeight: () -> Int = { 0 }
+
     ) {
+        var tableMeasurements: ProgressiveTableMeasurementController? = null
+        var tableAnchor: ProgressiveTableScrollAnchor? = null
+        var pendingTableGeneration: String? = null
+        var pendingTableReveal: Pair<String, Int>? = null
         private var pendingFontRevision = 0L
         private var atomArtifact: PreparedProseLayout? = null
         private var atomArtifactGeneration: FabricGenerationToken? = null
@@ -618,7 +721,10 @@ internal class PreparedProseViewerManager(
                 ),
                 attachmentRevision = revisions.attachmentRevision,
                 nativeFontRevision = revisions.nativeFontRevision,
-                fontEnvironmentRevision = fontEnvironmentRevision
+                fontEnvironmentRevision = fontEnvironmentRevision,
+                tableGeometryRevision = revisions.tableGeometryRevision,
+                tableGeometryPolicy = revisions.tableGeometryPolicy,
+                tableMeasurementViewportHeightPx = if (revisions.tableGeometryPolicy == TableGeometryPolicy.EAGER) 0 else viewportHeight()
             )
         }
 
@@ -640,7 +746,10 @@ internal class PreparedProseViewerManager(
                             incoming.nativeFontRevision,
                             prior.nativeFontRevision
                         ),
-                        leaseHandle = leaseHandle
+                        leaseHandle = leaseHandle,
+                        tableGeometryRevision = maxOf(incoming.tableGeometryRevision, prior.tableGeometryRevision),
+                        tableGeometryPolicy = if (incoming.tableGeometryRevision > prior.tableGeometryRevision)
+                            incoming.tableGeometryPolicy else prior.tableGeometryPolicy
                     )
                 } else {
                     incoming.copy(leaseHandle = leaseHandle)
@@ -650,11 +759,8 @@ internal class PreparedProseViewerManager(
                 pendingFontRevision = 0
                 val current = requireNotNull(revisions)
                 publishRevisions(
-                    FabricStateRevisions(
-                        current.attachmentRevision,
-                        current.nativeFontRevision + 1,
-                        current.leaseHandle
-                    )
+                    current.copy(nativeFontRevision = current.nativeFontRevision + 1,
+                        tableGeometryPolicy = TableGeometryPolicy.EAGER)
                 )
             }
         }
@@ -690,6 +796,7 @@ internal class PreparedProseViewerManager(
             ) {
                 return
             }
+            clearTableMeasurements()
             imagePipeline.cancel()
             view.clearImageLeases()
         }
@@ -741,11 +848,8 @@ internal class PreparedProseViewerManager(
         fun publishAttachmentRevision() {
             val current = revisions ?: return
             publishRevisions(
-                FabricStateRevisions(
-                    current.attachmentRevision + 1,
-                    current.nativeFontRevision,
-                    current.leaseHandle
-                )
+                current.copy(attachmentRevision = current.attachmentRevision + 1,
+                    tableGeometryPolicy = TableGeometryPolicy.EAGER)
             )
         }
 
@@ -757,27 +861,40 @@ internal class PreparedProseViewerManager(
                 return
             }
             publishRevisions(
-                FabricStateRevisions(
-                    current.attachmentRevision,
-                    current.nativeFontRevision + 1,
-                    current.leaseHandle
-                )
+                current.copy(nativeFontRevision = current.nativeFontRevision + 1,
+                    tableGeometryPolicy = TableGeometryPolicy.EAGER)
             )
+        }
+
+        fun publishTableGeometryRevision(revision: Long, policy: TableGeometryPolicy) {
+            val current = revisions ?: return
+            publishRevisions(current.copy(tableGeometryRevision = revision, tableGeometryPolicy = policy))
         }
 
         private fun publishRevisions(next: FabricStateRevisions) {
             val current = revisions
             if (current == next) return
+            tableMeasurements?.cancel()
             revisions = next
             stateWrapper?.updateState(
                 createStateMap().apply {
                     putDouble("attachmentRevision", next.attachmentRevision.toDouble())
                     putDouble("nativeFontRevision", next.nativeFontRevision.toDouble())
+                    putDouble("tableGeometryRevision", next.tableGeometryRevision.toDouble())
+                    putInt("tableGeometryPolicy", next.tableGeometryPolicy.stateValue)
                 }
             )
         }
 
+        private fun clearTableMeasurements() {
+            tableMeasurements?.install(null)
+            tableAnchor = null
+            pendingTableGeneration = null
+            pendingTableReveal = null
+        }
+
         fun releaseGeneration(view: PreparedProseDrawingView) {
+            clearTableMeasurements()
             generation?.let(PreparedProseLayoutRegistry.shared::releaseFabricGeneration)
             generation = null
             atomArtifact = null
@@ -841,6 +958,7 @@ internal class PreparedProseViewerManager(
         }
 
         fun release() {
+            clearTableMeasurements()
             // A replacement keeps mounted G1 alive while G2 is pending or
             // failed. Recycling is terminal for the exact state-family
             // handle, so sweep every owner lease after marking it inactive

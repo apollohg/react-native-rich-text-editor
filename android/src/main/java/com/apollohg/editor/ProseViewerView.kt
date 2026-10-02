@@ -135,6 +135,26 @@ class ProseViewerView @JvmOverloads constructor(
     private var preparedRequest: ProseViewerRequest? = null
     private var retainedDocument: ViewerDocument? = null
     private var preparedArtifact: PreparedProseLayout? = null
+    private var pendingTableScrollAnchor: com.apollohg.editor.viewer.ProgressiveTableScrollAnchor? = null
+    private var tableMeasurementStartPosted = false
+    private val tableMeasurementStarter = Runnable {
+        tableMeasurementStartPosted = false
+        if (isAttachedToWindow) tableMeasurements.start()
+    }
+    private val tableMeasurements = com.apollohg.editor.viewer.ProgressiveTableMeasurementController(
+        deliver = { action -> post { action() }; Unit },
+        publish = { artifact ->
+            preparedArtifact?.let { previous ->
+                if (pendingTableScrollAnchor == null) pendingTableScrollAnchor =
+                    com.apollohg.editor.viewer.ProgressiveTableScrollAnchor.capture(preparedDrawingView, previous)
+            }
+            preparedArtifact = artifact
+            registerDirectMountedArtifactIfAttached(artifact)
+            preparedDrawingView.install(artifact)
+            preparedRequest?.let { reportDirectErrorIfNeeded(it, artifact.error) }
+            requestLayout()
+            invalidate()
+        })
 
     // Detach drops the direct registration but deliberately retains the
     // immutable artifact for exact, no-recompile reattachment.
@@ -197,6 +217,22 @@ class ProseViewerView @JvmOverloads constructor(
 
     init {
         DecodedBitmapBudget.shared(context)
+        preparedDrawingView.onPrepareTableGeometry = { viewport ->
+            pendingTableScrollAnchor?.let { anchor ->
+                pendingTableScrollAnchor = null
+                preparedArtifact?.let(anchor::restore)
+            }
+            val changed = tableMeasurements.prepareViewport(viewport)
+            if (!changed && tableMeasurements.hasPendingMeasurements && !tableMeasurementStartPosted) {
+                tableMeasurementStartPosted = true
+                post(tableMeasurementStarter)
+            }
+            changed
+        }
+        preparedDrawingView.onPrepareTableCellGeometry = { identity, index ->
+            tableMeasurements.prepareCell(identity, index)
+            true
+        }
         importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
 
         // The public facade owns virtual accessibility. The drawing child is
@@ -271,6 +307,8 @@ class ProseViewerView @JvmOverloads constructor(
         clearVirtualAccessibilityFocus()
         preparedRequest = next
         retainedDocument = null
+        tableMeasurements.install(null)
+        pendingTableScrollAnchor = null
         preparedArtifact = null
         accessibilityNodeRegistry.clear()
         releaseDirectMountedArtifact()
@@ -331,7 +369,8 @@ class ProseViewerView @JvmOverloads constructor(
                 density = density,
                 compiledDocument = retainedDocument,
                 fontScale = resources.configuration.fontScale,
-                measurementImageState = attachmentRevisions
+                measurementImageState = attachmentRevisions,
+                tableMeasurementViewportHeightPx = com.apollohg.editor.viewer.progressiveTableViewportHeight(this)
             )
             val artifactChanged = preparedArtifact !== artifact
             val accessibilityChanged =
@@ -342,6 +381,7 @@ class ProseViewerView @JvmOverloads constructor(
                 accessibilityNodeRegistry.clear()
             }
             preparedArtifact = artifact
+            tableMeasurements.install(artifact)
             registerDirectMountedArtifactIfAttached(artifact)
             preparedDrawingView.install(artifact)
             if (accessibilityChanged) {
@@ -387,6 +427,10 @@ class ProseViewerView @JvmOverloads constructor(
     }
 
     override fun onDetachedFromWindow() {
+        tableMeasurements.cancel()
+        removeCallbacks(tableMeasurementStarter)
+        tableMeasurementStartPosted = false
+        pendingTableScrollAnchor = null
         if (viewTreeObserver.isAlive) {
             viewTreeObserver.removeOnScrollChangedListener(scrollChangedListener)
         }
@@ -464,6 +508,8 @@ class ProseViewerView @JvmOverloads constructor(
         clearVirtualAccessibilityFocus()
         preparedRequest = null
         retainedDocument = null
+        tableMeasurements.install(null)
+        pendingTableScrollAnchor = null
         preparedArtifact = null
         accessibilityNodeRegistry.clear()
         releaseDirectMountedArtifact()

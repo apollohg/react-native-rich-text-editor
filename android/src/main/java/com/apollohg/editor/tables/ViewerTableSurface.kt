@@ -1,6 +1,8 @@
 package com.apollohg.editor.tables
 
 import android.graphics.Rect
+import com.apollohg.editor.viewer.PendingPlainTableCellMeasurement
+import com.apollohg.editor.viewer.PlainTableCellMeasurer
 import android.graphics.RectF
 import com.apollohg.editor.ProseViewerError
 import com.apollohg.editor.viewer.INVALID_CELL_SOURCE_INDEX
@@ -21,6 +23,7 @@ internal typealias TableCellPreparationWorker = (
 
 internal sealed interface PreparedTableCellContent {
     data class Full(val layout: PreparedProseLayout) : PreparedTableCellContent
+    data class EstimatedPlain(val pending: PendingPlainTableCellMeasurement) : PreparedTableCellContent
     data class MeasuredPlain(
         val key: ProseLayoutKey,
         val widthPx: Int,
@@ -55,6 +58,8 @@ internal class PreparedViewerTableCell : TableGridCellPosition {
     val hasAtoms: Boolean
     val hasImages: Boolean
     val isMeasuredPlain: Boolean
+    val pendingMeasurement: PendingPlainTableCellMeasurement?
+    val hasPlainTextContent: Boolean get() = isMeasuredPlain || pendingMeasurement != null
     private val positionFree: Boolean
     val isPositionFree: Boolean get() {
         positionFreeObserverForTesting?.invoke()
@@ -108,18 +113,20 @@ internal class PreparedViewerTableCell : TableGridCellPosition {
         this.layoutStore = layoutStore
         val content = (prepared as? PreparedTableCellContent.Full)?.layout
         val measured = prepared as? PreparedTableCellContent.MeasuredPlain
+        pendingMeasurement = (prepared as? PreparedTableCellContent.EstimatedPlain)?.pending
+        val pending = pendingMeasurement?.input
         isMeasuredPlain = measured != null
-        this.prepareContent = content?.cellPreparation ?: measured?.prepare ?: prepareContent
-        contentKey = content?.key ?: requireNotNull(measured).key
-        contentWidthPx = content?.widthPx ?: requireNotNull(measured).widthPx
-        contentHeightPx = content?.heightPx ?: requireNotNull(measured).heightPx
+        this.prepareContent = content?.cellPreparation ?: measured?.prepare ?: pending?.prepare ?: prepareContent
+        contentKey = content?.key ?: measured?.key ?: requireNotNull(pending).key
+        contentWidthPx = content?.widthPx ?: measured?.widthPx ?: requireNotNull(pending).key.widthPx
+        contentHeightPx = content?.heightPx ?: measured?.heightPx ?: 0
         contentError = content?.error
         codeHighlightBlocks = content?.let { promotedCodeHighlightBlocks(it.blocks, it.codeHighlightBlocks) }.orEmpty()
         codeKeys = content?.let { it.highlightedCodeKeys + it.blocks.flatMap { block ->
             block.tableSurface?.cells.orEmpty().flatMap { cell -> cell.highlightedCodeKeys }
         } } ?: emptySet()
         accessibilityText = content?.let { TableAccessibility.text(it).joinToString(TableAccessibility.LABEL_SEPARATOR) }
-            ?: requireNotNull(measured).accessibilityText
+            ?: measured?.accessibilityText ?: TableAccessibility.plainText(requireNotNull(pending).text)
         hasNestedTables = content?.blocks?.any { it.tableSurface != null } == true
         hasAtoms = content != null && (content.viewerAtoms.isNotEmpty() || content.blocks.any { it.tableSurface?.hasAtoms == true })
         hasImages = content != null && (content.imageAttachments.isNotEmpty() || content.blocks.any {
@@ -127,7 +134,7 @@ internal class PreparedViewerTableCell : TableGridCellPosition {
         })
         positionFree = contentError == null && !hasNestedTables && !hasAtoms && !hasImages &&
             content?.interactions.orEmpty().all { it.docPos == null }
-        metadataBytes = METADATA_RETAINED_BYTES +
+        metadataBytes = METADATA_RETAINED_BYTES + (pendingMeasurement?.retainedBytes ?: 0L) +
             accessibilityText.length * 2L + codeHighlightBlocks.sumOf { CODE_DESCRIPTOR_RETAINED_BYTES + it.text.length * 2L } +
             highlightedCodeKeys.sumOf { it.length * 2L }
         if (content != null && (retainContent || content.cellPreparation == null)) layoutStore.insert(content)
@@ -156,6 +163,7 @@ internal class PreparedViewerTableCell : TableGridCellPosition {
         hasImages = cell.hasImages
         positionFree = cell.positionFree
         isMeasuredPlain = cell.isMeasuredPlain
+        pendingMeasurement = cell.pendingMeasurement
         metadataBytes = cell.metadataRetainedBytes
         prepareContent = cell.prepareContent
         if (store !== cell.layoutStore) cell.cachedContent?.let { store.insert(it) }
@@ -337,6 +345,104 @@ internal class ViewerTableSurface private constructor(
             if (structureUnchanged) columnEdgeHandleRows else null, cellKeysCertified, metadata)
     }
 
+    val hasPendingMeasurements: Boolean = cells.any { it.pendingMeasurement != null }
+
+    fun measuringNextBatch(): ViewerTableSurface = measuringCells(
+        cells.asSequence().filter { it.pendingMeasurement != null }
+            .take(PlainTableCellMeasurer.MAXIMUM_BATCH_CELLS).toList()
+    )
+
+    fun measuringViewport(top: Float, bottom: Float): ViewerTableSurface {
+        if (!hasPendingMeasurements || bottom <= top) return this
+        var current = this
+        while (current.hasPendingMeasurements) {
+            val offsets = current.layout.rowOffsets
+            var first = (0 until offsets.lastIndex).firstOrNull { offsets[it + 1] > top } ?: return current
+            var end = (first until offsets.lastIndex).firstOrNull { offsets[it] >= bottom } ?: offsets.lastIndex
+            var expanded: Boolean
+            do {
+                expanded = false
+                for (cell in current.cells) {
+                    if (cell.row >= end || cell.row + cell.rowspan <= first) continue
+                    val nextFirst = minOf(first, cell.row)
+                    val nextEnd = maxOf(end, cell.row + cell.rowspan)
+                    expanded = expanded || nextFirst != first || nextEnd != end
+                    first = nextFirst
+                    end = nextEnd
+                }
+            } while (expanded)
+            val pending = current.cells.filter {
+                it.pendingMeasurement != null && it.row < end && it.row + it.rowspan > first
+            }
+            if (pending.isEmpty()) return current
+            current = current.measuringCells(pending)
+        }
+        return current
+    }
+
+    fun measuringRemaining(cancelled: () -> Boolean): ViewerTableSurface? {
+        if (!hasPendingMeasurements) return this
+        val updated = cells.toMutableList()
+        val pending = cells.asSequence().filter { it.pendingMeasurement != null }
+        for (batch in pending.chunked(PlainTableCellMeasurer.MAXIMUM_BATCH_CELLS)) {
+            if (cancelled()) return null
+            val contents = measuredContents(batch)
+            for (cell in batch) {
+                val position = cellIndex.bySourceIndex.getValue(cell.sourceIndex)
+                updated[position] = measuredCell(cell, contents.getValue(cell.sourceIndex))
+            }
+        }
+        if (cancelled()) return null
+        return withMeasuredCells(updated)
+    }
+
+    private fun measuredContents(pending: List<PreparedViewerTableCell>): Map<Int, PreparedTableCellContent.MeasuredPlain> {
+        val contents = mutableMapOf<Int, PreparedTableCellContent.MeasuredPlain>()
+        pending.groupBy { requireNotNull(it.pendingMeasurement).measure }.forEach { (measure, group) ->
+            group.chunked(PlainTableCellMeasurer.MAXIMUM_BATCH_CELLS).forEach { batch ->
+                val results = measure(batch.map { requireNotNull(it.pendingMeasurement).input })
+                check(results.size == batch.size)
+                batch.zip(results).forEach { (cell, result) ->
+                    check(result.key == cell.contentKey && result.widthPx == cell.contentWidthPx)
+                    contents[cell.sourceIndex] = result
+                }
+            }
+        }
+        return contents
+    }
+
+    private fun measuringCells(pending: List<PreparedViewerTableCell>): ViewerTableSurface =
+        if (pending.isEmpty()) this else replacingMeasurements(measuredContents(pending))
+
+    private fun measuredCell(cell: PreparedViewerTableCell, content: PreparedTableCellContent.MeasuredPlain) =
+        PreparedViewerTableCell(cell.sourceIndex, cell.row, cell.column, cell.rowspan, cell.colspan,
+            cell.contentOrigin, content, cell.isHeader, cell.attributesKey, layoutStore, false, content.prepare)
+
+    fun replacingMeasurements(contents: Map<Int, PreparedTableCellContent.MeasuredPlain>): ViewerTableSurface {
+        if (contents.isEmpty()) return this
+        val updated = cells.map { cell ->
+            val content = contents[cell.sourceIndex]?.takeIf {
+                cell.pendingMeasurement != null && it.key == cell.contentKey && it.widthPx == cell.contentWidthPx
+            } ?: return@map cell
+            measuredCell(cell, content)
+        }
+        return withMeasuredCells(updated)
+    }
+
+    private fun withMeasuredCells(updated: List<PreparedViewerTableCell>): ViewerTableSurface {
+        val source = requireNotNull(sourceTable)
+        val next = TableGridLayout(displayScale).relayoutPrepared(layout, source.rows, source.columns,
+            style, isRightToLeft, updated, source.compatibilityDiagnostic) {
+            throw ProseViewerError.layout("Deferred table measurement produced invalid geometry: $it")
+        }
+        if (!next.contentHeight.isFinite() || next.contentHeight > android.view.View.MEASURED_SIZE_MASK) {
+            throw ProseViewerError.layout("Deferred table height exceeds Android layout bounds.")
+        }
+        return ViewerTableSurface(identity, hostViewportWidth, style, isRightToLeft, next, updated,
+            preparationError, source, sourceAttributes, editorTableId, displayScale,
+            cellIndex, columnEdgeHandleRows, hasCertifiedCellKeys, collectCellMetadata(updated))
+    }
+
     val bounds: RectF get() = RectF(0f, 0f, layout.contentWidth, layout.contentHeight)
     val columnEdgeHandleRows: Map<Int, Int> = reusableColumnEdgeHandleRows ?: sourceTable?.cells.orEmpty()
         .groupBy { (it.column + it.colspan).toInt() - 1 }
@@ -505,6 +611,11 @@ internal class ViewerTableSurface private constructor(
     }
 
     private val cellIndex = reusableCellIndex ?: ViewerTableCellIndex(cells, isRightToLeft)
+    init {
+        if (hasPendingMeasurements && cellIndex.bySourceIndex.size != cells.size) {
+            throw ProseViewerError.layout("Progressive table cells require unique source indices.")
+        }
+    }
     private val hasCertifiedCellKeys = reusableCellKeyCertificate ?: (
         hasSingleLayoutStore && cellIndex.bySourceIndex.size == cells.size &&
             cells.all { certifiesCellKey(it, sourceTable) })
@@ -895,7 +1006,7 @@ internal object ViewerTablePresentation {
     fun contentAccessibilityNodes(
         cell: ViewerTablePresentedCell,
         owner: ViewerTablePresentationOwner
-    ): List<ViewerTablePresentedAccessibilityNode> = if (cell.cell.isMeasuredPlain) emptyList() else project(
+    ): List<ViewerTablePresentedAccessibilityNode> = if (cell.cell.hasPlainTextContent) emptyList() else project(
         cell.content, owner, null, cell.contentBounds.left, cell.contentBounds.top,
         intersect(cell.clip, cell.contentBounds)
     ).accessibilityNodes

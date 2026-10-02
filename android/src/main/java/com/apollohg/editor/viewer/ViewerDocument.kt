@@ -111,7 +111,10 @@ internal data class ProseViewerRequest(
     val configuration: ProseViewerConfiguration,
     val nativeFontRevision: Long = 0,
     val fontEnvironmentRevision: Long = 0,
-    val attachmentRevision: Long = 0
+    val attachmentRevision: Long = 0,
+    val tableGeometryRevision: Long = 0,
+    val tableGeometryPolicy: TableGeometryPolicy = TableGeometryPolicy.EAGER,
+    val tableMeasurementViewportHeightPx: Int = 0
 ) {
     val compiledCacheKey: String by lazy {
         sha256(
@@ -150,7 +153,10 @@ internal data class ProseViewerRequest(
                 semanticGenerationIdentity,
                 attachmentRevision.toString(),
                 nativeFontRevision.toString(),
-                fontEnvironmentRevision.toString()
+                fontEnvironmentRevision.toString(),
+                tableGeometryRevision.toString(),
+                tableGeometryPolicy.stateValue.toString(),
+                tableMeasurementViewportHeightPx.toString()
             ).joinToString("\u001f")
         )
     }

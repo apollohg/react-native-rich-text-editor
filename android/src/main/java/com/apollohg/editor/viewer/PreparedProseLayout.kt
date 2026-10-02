@@ -20,7 +20,9 @@ internal data class ProseLayoutKey(
     val generationIdentity: String,
     /** Immutable semantic diagnostic context; excludes replacement revisions. */
     val semanticGenerationIdentity: String = semanticKey,
-    val tableDirection: TableLayoutDirection = TableLayoutDirection.LEFT_TO_RIGHT
+    val tableDirection: TableLayoutDirection = TableLayoutDirection.LEFT_TO_RIGHT,
+    val tableGeometryRevision: Long = 0,
+    val tableMeasurementViewportHeightPx: Int = 0
 )
 
 internal data class FabricSurfaceToken(val surfaceId: Int, val componentTag: Int)
@@ -183,6 +185,8 @@ internal data class PreparedProseLayout(
     internal val cellPreparation: (() -> PreparedProseLayout)? = null,
     private val tableRetainedBytesAtPreparation: Long = blocks.sumOf { it.tableSurface?.retainedBytes ?: 0L }
 ) {
+    internal val nonTableRetainedBytes: Long get() = retainedBytes - tableRetainedBytesAtPreparation
+
     internal val currentRetainedBytes: Long
         get() {
             var bytes = 0L
@@ -195,6 +199,9 @@ internal data class PreparedProseLayout(
                                       table: (ViewerTableSurface) -> Unit = {}) {
         listOf(this).forEachRetainedLayout(visit, table)
     }
+
+    internal fun replacingTableSurfaces(surfaces: Map<String, ViewerTableSurface>): PreparedProseLayout =
+        reflowTableSurfaces(this, surfaces)
 
     val hasMonotonicBlockBounds = (1 until blocks.size).all {
         blocks[it - 1].topPx <= blocks[it].topPx && blocks[it - 1].bottomPx <= blocks[it].bottomPx

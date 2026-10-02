@@ -170,7 +170,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
     var hostTableDirection: TableLayoutDirection? = null
     var onSelectionGeometryMayChange: (() -> Unit)? = null
 
-    val drawingView = PreparedProseDrawingView(host.context).apply {
+    val drawingView: PreparedProseDrawingView = PreparedProseDrawingView(host.context).apply {
         preparesTableCellsBeforeDrawing = true
         usesEditAnchoredNodes = true
         isFocusable = false
@@ -182,6 +182,22 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             (host.editorEditText.v2Driver as? EditorV2Adapter)?.tableIndex?.tableDocStart(tableId)?.toInt()
         }
         setBackgroundColor(android.graphics.Color.TRANSPARENT)
+        onPrepareTableGeometry = { viewport ->
+            pendingMeasurementAnchor?.let { restore ->
+                pendingMeasurementAnchor = null
+                restore()
+            }
+            val changed = tableMeasurements.prepareViewport(viewport)
+            if (!changed && tableMeasurements.hasPendingMeasurements && !measurementStartPosted) {
+                measurementStartPosted = true
+                post(measurementStarter)
+            }
+            changed
+        }
+        onPrepareTableCellGeometry = { identity, sourceIndex ->
+            tableMeasurements.prepareCell(identity, sourceIndex)
+            true
+        }
         onTableGeometryChanged = {
             positionActiveInput()
             selectionGeometryMayChange()
@@ -221,6 +237,67 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
     fun nativeTextSelectionActive(): Boolean = activeInput?.let {
         it.selectionStart != it.selectionEnd
     } == true
+    private var tableGeometryRevision = 0L
+    private var pendingMeasurementAnchor: (() -> Unit)? = null
+    private var measurementStartPosted = false
+    private val measurementStarter = Runnable {
+        measurementStartPosted = false
+        if (drawingView.isAttachedToWindow) tableMeasurements.start()
+    }
+    private val tableMeasurements: com.apollohg.editor.viewer.ProgressiveTableMeasurementController by lazy {
+        com.apollohg.editor.viewer.ProgressiveTableMeasurementController(
+            deliver = { action -> drawingView.post { action() }; Unit },
+            publish = ::publishMeasuredTables)
+    }
+
+    private fun captureMeasurementAnchor() {
+        if (pendingMeasurementAnchor != null || !drawingView.isAttachedToWindow) return
+        val scroll = host.editorScrollView
+        val scrollY = scroll.scrollY
+        val before = drawingView.preparedLayout ?: return
+        val top = scrollY - host.editorContentFrame.top
+        if (before.blocks.any { it.tableBounds?.let { bounds -> top >= bounds.top && top < bounds.bottom } == true }) {
+            val anchor = com.apollohg.editor.viewer.ProgressiveTableAnchor.capture(before, top)
+            pendingMeasurementAnchor = {
+                drawingView.preparedLayout?.let { next -> scroll.scrollTo(scroll.scrollX, scrollY + anchor.resolve(next) - top) }
+            }
+        } else {
+            val input = host.editorEditText
+            val layout = input.layout
+            val line = layout.getLineForVertical((scrollY - input.top - input.totalPaddingTop).coerceAtLeast(0))
+            val offset = layout.getLineStart(line)
+            val lineTop = layout.getLineTop(line)
+            pendingMeasurementAnchor = {
+                val next = input.layout
+                val nextLine = next.getLineForOffset(offset.coerceAtMost(input.text.length))
+                scroll.scrollTo(scroll.scrollX, scrollY + next.getLineTop(nextLine) - lineTop)
+            }
+        }
+    }
+
+    private fun publishMeasuredTables(artifact: PreparedProseLayout) {
+        val error = artifact.error
+        if (error != null) {
+            val adapter = host.editorEditText.v2Driver as? EditorV2Adapter
+            clear()
+            adapter?.emit(com.apollohg.editor.EditorV2Error(error.domain, error.code.value, error.message.orEmpty()))
+            return
+        }
+        captureMeasurementAnchor()
+        val surfaces = artifact.blocks.mapNotNull { it.tableSurface }.associateBy { it.identity }
+        tableGeometryRevision = artifact.key.tableGeometryRevision
+        entries = entries.mapValues { (_, entry) ->
+            val surface = surfaces[entry.surface.identity] ?: return@mapValues entry
+            val delta = surface.layout.contentHeight.toInt() - entry.surface.layout.contentHeight.toInt()
+            entry.copy(surface = surface, occupiedHeight = entry.occupiedHeight + delta,
+                localBounds = Rect(entry.localBounds).apply { bottom += delta })
+        }
+        reserve(entries.mapValues { it.value.occupiedHeight })
+        updateGeometry()
+        host.requestLayout()
+        drawingView.invalidate()
+    }
+
     private var entries: Map<String, Entry> = emptyMap()
     val presentedDocumentRevision: ULong? get() = key?.revision
     private var key: PreparationKey? = null
@@ -759,6 +836,10 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
     }
 
     fun clear() {
+        tableMeasurements.install(null)
+        drawingView.removeCallbacks(measurementStarter)
+        measurementStartPosted = false
+        pendingMeasurementAnchor = null
         cancelPendingCellEditMenuToggle()
         cancelPendingCellDrag()
         drawingView.tableCellDropTarget = null
@@ -944,6 +1025,8 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
                     tableDirection = tableDirection)
             val engine = StaticLayoutAndroidProseLayoutEngine().apply {
                 tableCellMeasurementEnabled = true
+                tableMeasurementViewportHeightPx = host.editorScrollView.height.takeIf { it > 0 }
+                    ?: host.height.takeIf { it > 0 } ?: input.resources.displayMetrics.heightPixels
                 tableCellPreparationObserver = { index, contentKey -> onTableCellPreparedForTesting?.invoke(index, contentKey) }
                 tableIncrementalRelayoutObserver = { incrementalRelayoutsForTesting += 1 }
             }
@@ -1062,11 +1145,14 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         }
         positionedBlocks = blocks
         val key = ProseLayoutKey("editor-table-canvas", width, "editor-table-canvas", 0, 0,
-            input.resources.displayMetrics.density.toBits().toLong(), 0, "editor-table-canvas")
+            input.resources.displayMetrics.density.toBits().toLong(), 0, "editor-table-canvas",
+            tableGeometryRevision = tableGeometryRevision)
         val tableRetainedBytes = blocks.sumOf { it.tableSurface?.retainedBytes ?: 0L }
-        drawingView.install(PreparedProseLayout(key, width, height, blocks,
+        val artifact = PreparedProseLayout(key, width, height, blocks,
             retainedBytes = blocks.sumOf { it.nonTableRetainedBytes } + tableRetainedBytes,
-            tableRetainedBytesAtPreparation = tableRetainedBytes))
+            tableRetainedBytesAtPreparation = tableRetainedBytes)
+        tableMeasurements.install(artifact)
+        drawingView.install(artifact)
         host.layoutEditorContentChild(drawingView)
         positionActiveInput()
         selectionGeometryMayChange()
@@ -1142,6 +1228,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
     }
 
     private fun activateCell(tableId: String, cellIndex: Int, x: Float, y: Float): Boolean {
+        entries[tableId]?.surface?.let { tableMeasurements.prepareCell(it.identity, cellIndex) }
         val root = host.editorEditText
         val current = activeCell
         if (current != null && (current.tableId != tableId || current.cellIndex != cellIndex) &&

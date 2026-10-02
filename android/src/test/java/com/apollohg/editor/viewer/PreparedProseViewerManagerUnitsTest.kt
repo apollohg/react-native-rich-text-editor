@@ -26,6 +26,33 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 class PreparedProseViewerManagerUnitsTest {
     @Test
+    fun `geometry revisions retain their policy through stale state and invalidate on font changes`() {
+        val state = PreparedProseViewerManager.ViewState(createStateMap = { JavaOnlyMap() })
+        val publications = mutableListOf<com.facebook.react.bridge.WritableMap>()
+        val wrapper = Proxy.newProxyInstance(StateWrapper::class.java.classLoader,
+            arrayOf(StateWrapper::class.java)) { _, method, arguments ->
+            if (method.name == "updateState") publications += arguments!!.single() as com.facebook.react.bridge.WritableMap
+            null
+        } as StateWrapper
+        val initial = PreparedProseViewerManager.FabricStateRevisions(0, 0, 4,
+            tableGeometryPolicy = TableGeometryPolicy.INITIAL)
+        state.replaceStateWrapper(wrapper, initial)
+        val revision = nextTableGeometryRevision()
+        state.publishTableGeometryRevision(revision, TableGeometryPolicy.STAGED)
+        state.replaceStateWrapper(wrapper, initial)
+        assertEquals(revision, state.requestOrNull()!!.tableGeometryRevision)
+        assertEquals(TableGeometryPolicy.STAGED, state.requestOrNull()!!.tableGeometryPolicy)
+        state.publishFontRevision(1)
+        assertEquals(revision, state.requestOrNull()!!.tableGeometryRevision)
+        assertEquals(TableGeometryPolicy.EAGER, state.requestOrNull()!!.tableGeometryPolicy)
+        state.replaceStateWrapper(wrapper, initial.copy(tableGeometryRevision = revision,
+            tableGeometryPolicy = TableGeometryPolicy.STAGED))
+        assertEquals("A stale same-revision policy cannot restore obsolete staged geometry",
+            TableGeometryPolicy.EAGER, state.requestOrNull()!!.tableGeometryPolicy)
+        assertEquals(TableGeometryPolicy.EAGER.stateValue.toDouble(), publications.last().getDouble("tableGeometryPolicy"), 0.0)
+    }
+
+    @Test
     fun `Fabric viewer observes font registration before its first state mount`() {
         ViewerFontEnvironment.resetFamilyRegistryForTesting()
         val context = RuntimeEnvironment.getApplication()

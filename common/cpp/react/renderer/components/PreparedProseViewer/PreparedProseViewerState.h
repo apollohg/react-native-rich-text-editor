@@ -58,6 +58,9 @@ class PreparedProseViewerLeaseLifecycle final {
 struct PreparedProseViewerState final {
   uint64_t attachmentRevision{0};
   uint64_t nativeFontRevision{0};
+  uint64_t tableGeometryRevision{0};
+  // Android: initial viewport, staged exact artifact, or eager recovery.
+  int32_t tableGeometryPolicy{0};
   // A native Dynamic Type invalidation carries the scale that caused it.
   // The JS revision can remain unchanged, so it cannot select this snapshot.
   double nativeFontScale{1.0};
@@ -80,6 +83,8 @@ struct PreparedProseViewerState final {
       const folly::dynamic& data)
       : attachmentRevision(revisionValue(data, "attachmentRevision")),
         nativeFontRevision(revisionValue(data, "nativeFontRevision")),
+        tableGeometryRevision(data.count("tableGeometryRevision") ? revisionValue(data, "tableGeometryRevision") : previousState.tableGeometryRevision),
+        tableGeometryPolicy(data.count("tableGeometryPolicy") ? static_cast<int32_t>(revisionValue(data, "tableGeometryPolicy")) : previousState.tableGeometryPolicy),
         nativeFontScale(scaleValue(data, "nativeFontScale")),
         userInterfaceStyle(previousState.userInterfaceStyle),
         accessibilityContrast(previousState.accessibilityContrast),
@@ -91,6 +96,8 @@ struct PreparedProseViewerState final {
   folly::dynamic getDynamic() const {
     return folly::dynamic::object("attachmentRevision", attachmentRevision)(
         "nativeFontRevision", nativeFontRevision)(
+        "tableGeometryRevision", tableGeometryRevision)(
+        "tableGeometryPolicy", tableGeometryPolicy)(
         "nativeFontScale", nativeFontScale)(
         // ReadableMap exposes numeric values as doubles on Android. Preserve
         // this opaque Int64 identity as decimal text at the state boundary;

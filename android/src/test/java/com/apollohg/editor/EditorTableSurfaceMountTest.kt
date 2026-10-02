@@ -134,6 +134,35 @@ internal class EditorTableSurfaceMountTest {
     }
 
     @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun progressiveEditorUpdatesTheWholeRowWithoutReplacingActiveComposition() {
+        withMountedView(PlainTableFixture.document(300, 20, PlainTableFixture::coordinateText)) { view, _, _ ->
+            val canvas = requireNotNull(drawing(view))
+            val initial = canvas.preparedLayout!!.blocks.first().tableSurface!!
+            assertTrue("Editor cold layout must defer offscreen rows", initial.hasPendingMeasurements)
+            tapFirstCell(view)
+            val input = view.activeTextInput
+            assertNotSame(view.editorEditText, input)
+            input.setSelection(input.text.length)
+            val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            assertTrue(connection.setComposingText("composing", 1))
+            val before = canvas.preparedLayout!!.blocks.first().tableSurface!!
+            val spans = (view.editorEditText.text as Spanned).getSpans(0, view.editorEditText.text.length, RootTableHeightSpan::class.java)
+            val oldHeight = spans.single().heightPx
+            canvas.onPrepareTableCellGeometry!!.invoke(before.identity, before.cells.last().sourceIndex)
+            measure(view, TABLE_HOST_WIDTH)
+            val after = canvas.preparedLayout!!.blocks.first().tableSurface!!
+            assertNull(after.cells.last().pendingMeasurement)
+            assertSame("Height publication cannot replace the composing input", input, view.activeTextInput)
+            assertTrue(input.text.toString().endsWith("composing"))
+            assertTrue(android.view.inputmethod.BaseInputConnection.getComposingSpanStart(input.text) >= 0)
+            val updated = (view.editorEditText.text as Spanned).getSpans(0, view.editorEditText.text.length, RootTableHeightSpan::class.java).single()
+            assertEquals(oldHeight + (after.layout.contentHeight - before.layout.contentHeight).toInt(), updated.heightPx)
+            assertTrue(connection.finishComposingText())
+        }
+    }
+
+    @Test
     fun rejectedCellCommitLeavesTheConnectionReadyForTheNextEdit() {
         val initial = "ab"
         val singleCell = 1
@@ -604,7 +633,10 @@ internal class EditorTableSurfaceMountTest {
             com.apollohg.editor.tables.TableCellLayoutStore.MAXIMUM_RESIDENT_LAYOUTS)
         assertTrue(table.layoutStore.unmountedRetainedBytes <=
             com.apollohg.editor.viewer.PREPARED_LAYOUT_UNMOUNTED_BYTE_BUDGET)
-        assertTrue("All exact heights remain available", table.cells.all { it.contentHeightPx > 0 })
+        assertTrue("Cold layout keeps offscreen measurement pending", table.hasPendingMeasurements)
+        val settled = requireNotNull(table.measuringRemaining { false })
+        assertTrue("Completing background measurement supplies every exact height", settled.cells.all { it.contentHeightPx > 0 })
+        assertEquals("Height measurement must not populate the full-layout cache", table.layoutStore.count, settled.layoutStore.count)
     }
 
     @Test
@@ -632,6 +664,9 @@ internal class EditorTableSurfaceMountTest {
     fun testStructuralRowInsertionReusesEvictedCellGeometry() = withAttachedMountedView(uniqueLargeTable()) { view, adapter ->
         tapFirstCell(view)
         val canvas = requireNotNull(drawing(view))
+        val initial = requireNotNull(canvas.preparedLayout?.blocks?.single()?.tableSurface)
+        canvas.onPrepareTableCellGeometry!!.invoke(initial.identity, initial.cells[initial.cells.size / 2].sourceIndex)
+        measure(view, TABLE_HOST_WIDTH)
         val before = requireNotNull(canvas.preparedLayout?.blocks?.single()?.tableSurface)
         val oldKeys = requireNotNull(before.sourceTable).cells.map { it.contentKey }.toSet()
         val middleIndex = before.cells.size / 2
@@ -812,7 +847,7 @@ internal class EditorTableSurfaceMountTest {
 
     @Test
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
-    fun `non wrapping typing records only the bound cell node`() = withMountedView(gridDocument) { view, _, _ ->
+    fun `non wrapping typing records only the bound cell node`() = withAttachedMountedView(gridDocument) { view, _ ->
         tapFirstCell(view)
         val input = view.activeTextInput
         input.setSelection(input.text.length)
@@ -832,7 +867,7 @@ internal class EditorTableSurfaceMountTest {
 
     @Test
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
-    fun `wrapping typing records the bound row and translates the below node`() = withMountedView(gridDocument) { view, _, _ ->
+    fun `wrapping typing records the bound row and translates the below node`() = withAttachedMountedView(gridDocument) { view, _ ->
         tapFirstCell(view)
         val input = view.activeTextInput
         input.setSelection(input.text.length)
@@ -849,7 +884,7 @@ internal class EditorTableSurfaceMountTest {
 
     @Test
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
-    fun `unbound table window records one node and releases it on clear`() = withMountedView(gridDocument) { view, _, _ ->
+    fun `unbound table window records one node and releases it on clear`() = withAttachedMountedView(gridDocument) { view, _ ->
         val drawing = recordTableDrawing(view)
         val nodes = listOf(drawing.aboveNode, drawing.boundRowNode, drawing.boundCellNode, drawing.belowNode)
         assertEquals(1, nodes.count { it?.hasDisplayList() == true })
