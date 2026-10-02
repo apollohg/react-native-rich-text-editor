@@ -485,8 +485,13 @@ fn changing_one_cell_reuses_unchanged_content_and_rebases_source_positions() {
         new_table.cells[1].content_key
     );
     assert_eq!(
-        crate::tables::render::absolute_cell_starts(old_table, 0)[1] + 7,
-        crate::tables::render::absolute_cell_starts(new_table, 0)[1]
+        crate::tables::render::absolute_cell_starts(old_table, 0)
+            .nth(1)
+            .unwrap()
+            + 7,
+        crate::tables::render::absolute_cell_starts(new_table, 0)
+            .nth(1)
+            .unwrap()
     );
     assert_eq!(new_blocks, render_blocks(&new, &schema));
     assert_eq!(
@@ -529,8 +534,12 @@ fn unchanged_cell_at_the_same_position_reuses_its_render_arc() {
         new_table.cells[0].content_key
     );
     assert_eq!(
-        crate::tables::render::absolute_cell_starts(old_table, 0)[0],
-        crate::tables::render::absolute_cell_starts(new_table, 0)[0]
+        crate::tables::render::absolute_cell_starts(old_table, 0)
+            .nth(0)
+            .unwrap(),
+        crate::tables::render::absolute_cell_starts(new_table, 0)
+            .nth(0)
+            .unwrap()
     );
     assert!(std::sync::Arc::ptr_eq(
         &old_table.cells[0].elements,
@@ -572,7 +581,10 @@ fn source_anchoring_and_nested_records_survive_rich_cell_content() {
     );
     assert_eq!(table.cells.len(), 2);
     assert!(
-        crate::tables::render::absolute_cell_starts(table, 0)[1] + table.cells[1].doc_size
+        crate::tables::render::absolute_cell_starts(table, 0)
+            .nth(1)
+            .unwrap()
+            + table.cells[1].doc_size
             < table.structure.doc_size - 2
     );
     let (nested_offset, nested) = table.cells[0]
@@ -847,3 +859,47 @@ fn table_is_one_outer_semantic_element() {
 mod position_free;
 
 mod streamed_keys;
+
+#[test]
+fn table_final_owners_release_deep_atom_payloads_on_a_small_stack() {
+    const PAYLOAD_DEPTH: usize = 4096;
+    const DROP_THREAD_STACK_BYTES: usize = 128 * 1024;
+    const PAYLOAD_KEY: &str = "deepPayload";
+    let schema = tabled_schema(PROSEMIRROR_TABLE_NAMES);
+    let document = fixture("payload owner");
+    let cache = CachedRenderBlocks::build(&document, &schema, &ResourceLimits::default()).unwrap();
+    let mut tables = Vec::new();
+    cache.visit_table_records(&mut tables);
+    let template = tables[0].1;
+    for fallback in [false, true] {
+        let mut payload = serde_json::Value::Null;
+        for _ in 0..PAYLOAD_DEPTH {
+            payload = serde_json::Value::Array(vec![payload]);
+        }
+        let elements = Arc::new(vec![RenderElement::VoidInline {
+            node_type: "deep_atom".into(),
+            doc_pos: 0,
+            attrs: std::collections::HashMap::from([(PAYLOAD_KEY.into(), payload)]),
+        }]);
+        let table = if fallback {
+            let mut structure = template.structure.clone();
+            structure.failure = Some(crate::tables::render::TableRenderFailure::InvalidStructure);
+            crate::tables::render::TableRenderRecord::new(structure, Vec::new(), Some(elements))
+        } else {
+            let mut cell = (*template.cells[0]).clone();
+            cell.elements = elements;
+            crate::tables::render::TableRenderRecord::new(
+                template.structure.clone(),
+                vec![Arc::new(cell)],
+                None,
+            )
+        };
+        std::thread::Builder::new()
+            .name(format!("table-deep-atom-drop-fallback-{fallback}"))
+            .stack_size(DROP_THREAD_STACK_BYTES)
+            .spawn(move || drop(table))
+            .unwrap()
+            .join()
+            .expect("the final table owner must drain deeply nested JSON without overflowing");
+    }
+}

@@ -15,7 +15,7 @@ thread_local! {
 fn cell_starts(record: &TableRenderRecord, position: u32) -> Vec<u32> {
     #[cfg(test)]
     CELL_START_BUILDS.with(|count| count.set(count.get() + 1));
-    crate::tables::render::absolute_cell_starts(record, position)
+    crate::tables::render::absolute_cell_starts(record, position).collect()
 }
 
 fn invariant(message: &'static str) -> SessionError {

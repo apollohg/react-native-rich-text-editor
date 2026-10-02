@@ -189,21 +189,8 @@ impl Clone for RenderElement {
 impl RenderElement {
     pub(crate) fn drain_json_payloads(&mut self) {
         match self {
-            Self::Table { table, .. } => {
-                let Some(cells) = table.unique_cells_mut() else {
-                    return;
-                };
-                for cell in cells {
-                    let Some(cell) = std::sync::Arc::get_mut(cell) else {
-                        continue;
-                    };
-                    if let Some(elements) = std::sync::Arc::get_mut(&mut cell.elements) {
-                        for element in elements {
-                            element.drain_json_payloads();
-                        }
-                    }
-                }
-            }
+            // The final cell owner drains its payloads on the guarded drop stack.
+            Self::Table { .. } => {}
             Self::TextRun { marks, .. } => marks.clear(),
             Self::VoidInline { attrs, .. } | Self::VoidBlock { attrs, .. } => {
                 crate::boundary::drop_json_object_values_stack_safe(attrs);

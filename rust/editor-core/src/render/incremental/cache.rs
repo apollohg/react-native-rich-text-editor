@@ -20,7 +20,8 @@ impl CachedRenderBlocks {
                     {
                         continue;
                     }
-                    let starts = crate::tables::render::absolute_cell_starts(table, table_pos);
+                    let starts = crate::tables::render::absolute_cell_starts(table, table_pos)
+                        .collect::<Vec<_>>();
                     pending.extend(
                         starts
                             .into_iter()

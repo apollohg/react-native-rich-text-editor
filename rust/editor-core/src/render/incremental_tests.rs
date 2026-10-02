@@ -1044,7 +1044,8 @@ fn localized_table_edits_preserve_source_correspondence_and_fresh_render_parity(
         let mut records = Vec::new();
         cache.visit_table_records(&mut records);
         let (table_pos, table) = records[0];
-        let starts = crate::tables::render::absolute_cell_starts(table, table_pos);
+        let starts =
+            crate::tables::render::absolute_cell_starts(table, table_pos).collect::<Vec<_>>();
         for index in [0, starts.len() / 2, starts.len() - 1] {
             let step = crate::transform::Step::InsertText {
                 pos: starts[index] + CELL_TEXT_OFFSET,
@@ -1052,6 +1053,7 @@ fn localized_table_edits_preserve_source_correspondence_and_fresh_render_parity(
                 marks: Vec::new(),
             };
             let (new, _) = crate::transform::apply_step(&old, &step, &schema).unwrap();
+            crate::tables::render::CELL_START_VALUE_VISITS.set(0);
             let transition = cache
                 .transition_localized_textblock(
                     &old,
@@ -1062,6 +1064,12 @@ fn localized_table_edits_preserve_source_correspondence_and_fresh_render_parity(
                     &limits,
                 )
                 .unwrap();
+            const NEXT_CELL_BOUNDARY: usize = 2;
+            assert_eq!(
+                crate::tables::render::CELL_START_VALUE_VISITS.replace(0),
+                (index + NEXT_CELL_BOUNDARY).min(starts.len()),
+                "irregular={irregular}, edit={index}: locate the edited cell without visiting the unused suffix"
+            );
             let fresh = CachedRenderBlocks::build(&new, &schema, &limits).unwrap();
             assert_eq!(
                 transition.cache.materialize(),
@@ -1163,7 +1171,7 @@ fn localized_table_element_counts_follow_split_merge_and_resource_boundaries() {
     let mut records = Vec::new();
     cache.visit_table_records(&mut records);
     let (table_pos, table) = records[0];
-    let starts = crate::tables::render::absolute_cell_starts(table, table_pos);
+    let starts = crate::tables::render::absolute_cell_starts(table, table_pos).collect::<Vec<_>>();
     let position = starts[starts.len() / 2] + INLINE_OFFSET;
     for iteration in 0..4 {
         let inserting = iteration % 2 == 0;
@@ -1327,7 +1335,10 @@ fn table_output_meter_tracks_localized_edits_rebases_and_saturation() {
     let mut records = Vec::new();
     cache.visit_table_records(&mut records);
     let (table_pos, table) = records[0];
-    let position = crate::tables::render::absolute_cell_starts(table, table_pos)[0] + INLINE_OFFSET;
+    let position = crate::tables::render::absolute_cell_starts(table, table_pos)
+        .nth(0)
+        .unwrap()
+        + INLINE_OFFSET;
     let original = cache.table_cell_output_bytes(TABLE_INDEX, table).unwrap();
     for iteration in 0..4 {
         let inserting = iteration % 2 == 0;
@@ -1421,4 +1432,120 @@ fn table_output_meter_tracks_localized_edits_rebases_and_saturation() {
         transition.cache.table_cell_output_bytes(TABLE_INDEX, table),
         Some(expected)
     );
+}
+
+#[test]
+fn retiring_a_table_frame_only_cleans_cells_without_another_owner() {
+    use crate::tables::render::CELL_PAYLOAD_CLEANUP_VISITS;
+    const ROWS: usize = 1000;
+    const COLUMNS: usize = 20;
+    const CELL_TEXT_OFFSET: u32 = 2;
+    const INSERTION: &str = "x";
+    let schema = crate::schema::presets::prosemirror_table_schema();
+    let limits = ResourceLimits::default();
+    let document = crate::serialize::from_prosemirror_json(
+        &crate::test_support::large_table_fixture::plain_table_document(ROWS, COLUMNS),
+        &schema,
+        crate::serialize::UnknownTypeMode::Error,
+    )
+    .unwrap();
+    let cache = CachedRenderBlocks::build(&document, &schema, &limits).unwrap();
+    let edited = crate::test_support::large_table_fixture::keystroke_cell(ROWS, COLUMNS);
+    let (position, old_cells) = {
+        let mut records = Vec::new();
+        cache.visit_table_records(&mut records);
+        let (position, table) = records[0];
+        let starts =
+            crate::tables::render::absolute_cell_starts(table, position).collect::<Vec<_>>();
+        (
+            starts[edited] + CELL_TEXT_OFFSET,
+            table.cells.iter().map(Arc::downgrade).collect::<Vec<_>>(),
+        )
+    };
+    let step = crate::transform::Step::InsertText {
+        pos: position,
+        text: INSERTION.into(),
+        marks: Vec::new(),
+    };
+    let (updated, _) = crate::transform::apply_step(&document, &step, &schema).unwrap();
+    let transition = cache
+        .transition_localized_textblock(
+            &document,
+            &updated,
+            &schema,
+            0,
+            INSERTION.chars().count() as i32,
+            &limits,
+        )
+        .unwrap();
+    let new_cell = {
+        let mut records = Vec::new();
+        transition.cache.visit_table_records(&mut records);
+        Arc::downgrade(&records[0].1.cells[edited])
+    };
+    CELL_PAYLOAD_CLEANUP_VISITS.set(0);
+    drop(cache);
+    assert_eq!(CELL_PAYLOAD_CLEANUP_VISITS.replace(0), 1,
+        "retiring an edited frame must only inspect its replaced cell; all unchanged cells belong to the next frame");
+    for (index, cell) in old_cells.iter().enumerate() {
+        assert_eq!(
+            cell.upgrade().is_some(),
+            index != edited,
+            "old cell {index}: only the replaced allocation should be released"
+        );
+    }
+    assert!(new_cell.upgrade().is_some());
+    drop(transition);
+    assert_eq!(
+        CELL_PAYLOAD_CLEANUP_VISITS.replace(0),
+        ROWS * COLUMNS,
+        "final ownership must clean every remaining cell exactly once"
+    );
+    assert!(old_cells.iter().all(|cell| cell.upgrade().is_none()));
+    assert!(new_cell.upgrade().is_none());
+}
+
+#[test]
+fn localized_table_cell_lookup_rejects_boundaries_and_row_gaps() {
+    const ROWS: usize = 2;
+    const COLUMNS: usize = 2;
+    const CELL_INTERIOR_OFFSET: u32 = 1;
+    let schema = crate::schema::presets::prosemirror_table_schema();
+    let limits = ResourceLimits::default();
+    let document = crate::serialize::from_prosemirror_json(
+        &crate::test_support::large_table_fixture::plain_table_document(ROWS, COLUMNS),
+        &schema,
+        crate::serialize::UnknownTypeMode::Error,
+    )
+    .unwrap();
+    let cache = CachedRenderBlocks::build(&document, &schema, &limits).unwrap();
+    let block = &cache.blocks[0];
+    let [RenderElement::Table { table, doc_offset }] = block.elements.as_slice() else {
+        panic!("table fixture");
+    };
+    let starts =
+        crate::tables::render::absolute_cell_starts(table, *doc_offset).collect::<Vec<_>>();
+    for position in block.start_pos..=block.start_pos + block.node_size {
+        let expected = starts.iter().zip(table.cells.iter()).any(|(start, cell)| {
+            position >= start + CELL_INTERIOR_OFFSET && position < start + cell.doc_size
+        });
+        let mut context = crate::tables::render::TableRenderContext::new(
+            Arc::clone(&cache.table_projection_index),
+            &cache.schema_fingerprint,
+        );
+        let actual = super::render_localized_table_block(
+            block,
+            document.root().child(0).unwrap(),
+            &schema,
+            position,
+            0,
+            &mut context,
+        )
+        .unwrap();
+        assert_eq!(
+            actual.is_some(),
+            expected,
+            "position {position}: only cell interiors permit localized rendering"
+        );
+    }
 }

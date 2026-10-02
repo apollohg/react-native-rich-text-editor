@@ -236,12 +236,11 @@ fn render_localized_table_block(
         {
             return None;
         }
-        let starts = crate::tables::render::absolute_cell_starts(table, old.start_pos);
-        let index = starts
-            .partition_point(|start| *start < changed_position)
-            .checked_sub(1)?;
+        let (index, start) = crate::tables::render::absolute_cell_starts(table, old.start_pos)
+            .enumerate()
+            .take_while(|(_, start)| *start < changed_position)
+            .last()?;
         let prior = table.cells.get(index)?;
-        let start = starts[index];
         if changed_position >= start.checked_add(prior.doc_size)? {
             return None;
         }

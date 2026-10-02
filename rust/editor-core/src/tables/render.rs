@@ -177,6 +177,8 @@ impl Drop for TableRenderRecord {
 
 impl Drop for TableRenderCell {
     fn drop(&mut self) {
+        #[cfg(test)]
+        CELL_PAYLOAD_CLEANUP_VISITS.set(CELL_PAYLOAD_CLEANUP_VISITS.get() + 1);
         stacker::maybe_grow(RENDER_STACK_RED_ZONE, RENDER_STACK_SEGMENT, || {
             if let Some(elements) = Arc::get_mut(&mut self.elements) {
                 for element in elements.iter_mut() {
@@ -190,6 +192,8 @@ impl Drop for TableRenderCell {
 
 #[cfg(test)]
 std::thread_local! {
+    pub(crate) static CELL_START_VALUE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(crate) static CELL_PAYLOAD_CLEANUP_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(crate) static CELL_OUTPUT_METER_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
@@ -237,10 +241,6 @@ impl TableRenderRecord {
 
     pub(crate) fn shares_data_with(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.data, &other.data)
-    }
-
-    pub(crate) fn unique_cells_mut(&mut self) -> Option<&mut [Arc<TableRenderCell>]> {
-        Arc::get_mut(&mut self.data).map(|data| data.cells.as_mut())
     }
 
     #[cfg(test)]
@@ -845,21 +845,44 @@ pub(crate) fn generate_table(
     Ok(TableRenderRecord::new(structure, cells, None))
 }
 
-pub(crate) fn absolute_cell_starts(table: &TableRenderRecord, table_pos: u32) -> Vec<u32> {
-    let mut preceding_size = 0;
-    table
-        .cells
-        .iter()
-        .map(|cell| {
-            let position = table_pos
-                + NODE_OPENING_TOKENS
-                + NODE_OPENING_TOKENS
-                + (NODE_OPENING_TOKENS + NODE_CLOSING_TOKENS) * cell.source_row
-                + preceding_size;
-            preceding_size += cell.doc_size;
-            position
-        })
-        .collect()
+struct AbsoluteCellStarts<'a> {
+    cells: std::slice::Iter<'a, Arc<TableRenderCell>>,
+    table_pos: u32,
+    preceding_size: u32,
+}
+
+impl Iterator for AbsoluteCellStarts<'_> {
+    type Item = u32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let cell = self.cells.next()?;
+        #[cfg(test)]
+        CELL_START_VALUE_VISITS.set(CELL_START_VALUE_VISITS.get() + 1);
+        let position = self.table_pos
+            + NODE_OPENING_TOKENS
+            + NODE_OPENING_TOKENS
+            + (NODE_OPENING_TOKENS + NODE_CLOSING_TOKENS) * cell.source_row
+            + self.preceding_size;
+        self.preceding_size += cell.doc_size;
+        Some(position)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.cells.size_hint()
+    }
+}
+
+impl ExactSizeIterator for AbsoluteCellStarts<'_> {}
+
+pub(crate) fn absolute_cell_starts(
+    table: &TableRenderRecord,
+    table_pos: u32,
+) -> impl ExactSizeIterator<Item = u32> + '_ {
+    AbsoluteCellStarts {
+        cells: table.cells.iter(),
+        table_pos,
+        preceding_size: 0,
+    }
 }
 
 pub(crate) fn absolute_source_rows(

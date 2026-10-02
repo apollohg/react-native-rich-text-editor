@@ -141,7 +141,40 @@ fn absolute_cell_starts_follow_the_source_row_formula() {
                     table.structure.doc_size, *size,
                     "{name} size at {pos}, limit {grid_limit}"
                 );
-                let actual = absolute_cell_starts(table, pos);
+                let actual = absolute_cell_starts(table, pos).collect::<Vec<_>>();
+                for index in 0..=actual.len() {
+                    assert_eq!(
+                        absolute_cell_starts(table, pos).into_iter().nth(index),
+                        actual.get(index).copied(),
+                        "{name}: nth({index}) must include every preceding cell size"
+                    );
+                }
+                assert_eq!(
+                    absolute_cell_starts(table, pos).into_iter().last(),
+                    actual.last().copied(),
+                    "{name}: last must include all preceding sizes"
+                );
+                let mut remaining = absolute_cell_starts(table, pos).into_iter();
+                assert_eq!(remaining.next(), actual.first().copied());
+                assert_eq!(remaining.len(), actual.len().saturating_sub(1));
+                let mut mixed = absolute_cell_starts(table, pos);
+                assert_eq!(mixed.next(), actual.first().copied());
+                assert_eq!(mixed.nth(1), actual.get(2).copied());
+                assert_eq!(mixed.len(), actual.len().saturating_sub(3));
+                assert_eq!(
+                    mixed.collect::<Vec<_>>(),
+                    actual.iter().skip(3).copied().collect::<Vec<_>>()
+                );
+                let mut exhausted = absolute_cell_starts(table, pos);
+                assert_eq!(exhausted.nth(actual.len()), None);
+                assert_eq!(exhausted.len(), 0);
+                assert_eq!(exhausted.next(), None);
+
+                assert_eq!(
+                    remaining.collect::<Vec<_>>(),
+                    actual.iter().skip(1).copied().collect::<Vec<_>>()
+                );
+
                 if table.structure.failure.is_some() {
                     assert!(
                         actual.is_empty(),
