@@ -1,5 +1,7 @@
 mod row_key;
+mod source_rows;
 pub use row_key::TableRowAttributeKey;
+pub use source_rows::TableSourceRows;
 
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
@@ -133,7 +135,7 @@ pub struct TableRenderStructure {
     pub read_only_descendants: bool,
     pub attrs_key: String,
     pub doc_size: u32,
-    pub source_rows: Vec<TableSourceRow>,
+    pub source_rows: TableSourceRows,
     pub synthetic_regions: Vec<TableRenderSyntheticRegion>,
     pub failure: Option<TableRenderFailure>,
     pub compatibility_diagnostic: Option<TableCompatibilityDiagnostic>,
@@ -246,11 +248,12 @@ unsafe fn extend_cell_references_lse(
 
 impl TableRenderRecord {
     pub(crate) fn new(
-        structure: TableRenderStructure,
+        mut structure: TableRenderStructure,
         cells: Vec<Arc<TableRenderCell>>,
         source_fallback: Option<Arc<Vec<RenderElement>>>,
     ) -> Self {
         let cell_capacity = cells.capacity();
+        structure.source_rows = structure.source_rows.into_shared();
         Self {
             data: Arc::new(TableRenderData {
                 structure,
@@ -765,7 +768,7 @@ pub(crate) fn generate_table(
         irregular: true,
         read_only_descendants: nested,
         attrs_key: context.intern_attributes(node, false),
-        source_rows: Vec::new(),
+        source_rows: TableSourceRows::default(),
         synthetic_regions: Vec::new(),
         failure: projection.exact_failure().map(TableRenderFailure::from),
         compatibility_diagnostic: None,
@@ -821,9 +824,10 @@ pub(crate) fn generate_table(
         .transpose()?;
     let mut real_cells = HashMap::new();
     let mut row_pos = table_pos + NODE_OPENING_TOKENS;
+    let mut source_rows = Vec::new();
     for row_index in 0..node.child_count() {
         let row = node.child(row_index).unwrap();
-        structure.source_rows.push(TableSourceRow {
+        source_rows.push(TableSourceRow {
             cell_count: u32::try_from(row.child_count())
                 .map_err(|_| CachedRenderError::PositionOverflow)?,
             attrs_key: context.intern_attributes(row, false).into(),
@@ -836,6 +840,7 @@ pub(crate) fn generate_table(
         }
         row_pos += row.node_size();
     }
+    structure.source_rows = source_rows.into();
     let mut cells = Vec::new();
     for projected_cell in &projected.cells {
         let (source_row, cell) = real_cells
@@ -1051,6 +1056,54 @@ mod output_meter_tests {
             "snapshots remain valid after the source cache is released"
         );
         assert_eq!(snapshot.cells.len(), ROWS * COLUMNS);
+    }
+
+    #[test]
+    fn editable_table_structure_clones_share_funded_source_rows() {
+        use crate::test_support::large_table_fixture::{
+            plain_table_document, session_with_document,
+        };
+        const ROWS: usize = 1000;
+        const COLUMNS: usize = 3;
+        let session = session_with_document(&plain_table_document(ROWS, COLUMNS));
+        let cache = crate::render::incremental::CachedRenderBlocks::build(
+            session.engine.document().unwrap(),
+            session.engine.schema(),
+            &crate::boundary::ResourceLimits::default(),
+        )
+        .unwrap();
+        let mut records = Vec::new();
+        cache.visit_table_records(&mut records);
+        let source = records[0].1;
+        let next = TableRenderRecord::new(
+            source.structure.clone(),
+            source.try_clone_cells().unwrap(),
+            None,
+        );
+        assert_ne!(
+            source.structure.source_rows.as_ptr(),
+            next.structure.source_rows.as_ptr(),
+            "the first localized clone must normalize the initial spare row capacity"
+        );
+        assert_eq!(
+            source.retained_bytes(crate::render::output_bytes::render_element_bytes),
+            next.retained_bytes(crate::render::output_bytes::render_element_bytes)
+        );
+        let cloned = next.structure.clone();
+        assert_eq!(next.structure, cloned);
+        assert_eq!(
+            next.structure.source_rows.as_ptr(),
+            cloned.source_rows.as_ptr(),
+            "text edits must retain funded immutable rows without copying their array"
+        );
+        drop(records);
+        drop(cache);
+        drop(next);
+        assert_eq!(cloned.source_rows.len(), ROWS);
+        assert!(cloned
+            .source_rows
+            .iter()
+            .all(|row| row.cell_count == COLUMNS as u32));
     }
 
     #[test]
