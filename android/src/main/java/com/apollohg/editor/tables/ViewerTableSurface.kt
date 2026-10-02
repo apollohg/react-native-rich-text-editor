@@ -335,6 +335,7 @@ internal class ViewerTableSurface private constructor(
         // Three Longs, one Int, and three flags fit within this allowance.
         private const val ACCOUNTING_CACHE_RETAINED_BYTES = 32L
         private const val UNKNOWN_CELL_COUNT = -1
+        private const val PREPARATION_BATCH_CELLS = 256
 
         private fun collectCellMetadata(cells: List<PreparedViewerTableCell>): CellMetadata {
             val store = cells.firstOrNull()?.layoutStore
@@ -371,17 +372,25 @@ internal class ViewerTableSurface private constructor(
                 prepared[cell.sourceIndex] = capture(cell, width, prepare(cell, width))
             }
             inputs.filter { it.first.sourceIndex !in indices }.forEach { measure(it, prepare) }
-            val executor = java.util.concurrent.Executors.newFixedThreadPool(workers.size)
-            try {
-                val tasks = workers.mapIndexed { worker, prepareWorker ->
-                    java.util.concurrent.CompletableFuture.runAsync({
-                        val start = inputs.size * worker / workers.size
-                        val end = inputs.size * (worker + 1) / workers.size
-                        for (index in start until end) {
-                            if (inputs[index].first.sourceIndex in indices) measure(inputs[index], prepareWorker)
-                        }
-                    }, executor)
+            val next = java.util.concurrent.atomic.AtomicInteger()
+            fun prepareWorker(worker: Int) {
+                while (true) {
+                    val start = next.getAndAdd(PREPARATION_BATCH_CELLS)
+                    if (start >= inputs.size) return
+                    val end = minOf(start + PREPARATION_BATCH_CELLS, inputs.size)
+                    for (index in start until end) {
+                        if (inputs[index].first.sourceIndex in indices) measure(inputs[index], workers[worker])
+                    }
                 }
+            }
+            val executor = java.util.concurrent.Executors.newFixedThreadPool(workers.size - 1)
+            try {
+                val tasks = workers.indices.drop(1).map { worker ->
+                    java.util.concurrent.CompletableFuture.runAsync({ prepareWorker(worker) }, executor)
+                }.toMutableList()
+                // Capture caller failure and join all tasks before their build contexts close.
+                tasks.add(java.util.concurrent.CompletableFuture.runAsync(
+                    { prepareWorker(0) }, java.util.concurrent.Executor { it.run() }))
                 java.util.concurrent.CompletableFuture.allOf(*tasks.toTypedArray()).join()
             } finally {
                 executor.shutdown()
