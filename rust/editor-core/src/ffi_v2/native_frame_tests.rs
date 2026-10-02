@@ -920,3 +920,25 @@ fn native_frame_single_cell_offsets_stop_at_the_next_boundary_and_bulk_offsets_s
     mirror.apply(&delta).unwrap();
     assert_mirror(&mut session, &mut mirror, "bulk update");
 }
+
+#[test]
+fn replacement_keeps_canonical_json_deferred_through_first_native_frame() {
+    use crate::yrs_engine::observability::{reset_full_pass_counts_for_test, take_full_pass_counts_for_test};
+    use crate::test_support::large_table_fixture::plain_table_document;
+    let mut session = session_with_document(&two_table_document());
+    let source = plain_table_document(1000, 20);
+    reset_full_pass_counts_for_test();
+    session.replace_document_json(REQUEST, &source.to_string(),
+        crate::yrs_engine::ReplacementHistory::ResetAndClear).unwrap();
+    let first = frame(&mut session, Some(OWNER));
+    assert_eq!(first.tables.kind, FfiTableFrameKind::Full);
+    assert_eq!(first.tables.tables.len(), 1);
+    let counts = take_full_pass_counts_for_test();
+    assert_eq!(counts.canonical_projections, 0,
+        "replacement and its first frame must leave the canonical tree deferred: {counts:?}");
+    assert_eq!(counts.canonical_hashes, 1,
+        "the existing over-budget history fallback still hashes eagerly");
+    assert_eq!(session.get_json().unwrap(), source);
+    assert_eq!(take_full_pass_counts_for_test().canonical_projections, 1,
+        "explicit export materializes the canonical JSON");
+}

@@ -365,12 +365,12 @@ fn an_authored_replacement_normalizes_its_outer_tables_and_a_restore_keeps_them_
         ),
     ] {
         let mut engine = replacement_engine();
-        crate::yrs_engine::observability::take_replacement_json_projections_for_test();
+        crate::yrs_engine::observability::take_node_json_projections_for_test();
         engine
             .prepare_root_replacement_json(REPLACEMENT_REQUEST_ID, &irregular, history)
             .expect("the replacement commits");
         assert_eq!(
-            crate::yrs_engine::observability::take_replacement_json_projections_for_test(),
+            crate::yrs_engine::observability::take_node_json_projections_for_test(),
             usize::from(history == ReplacementHistory::UndoableBoundary),
             "normalized replacement content must fall back to its own JSON projection",
         );

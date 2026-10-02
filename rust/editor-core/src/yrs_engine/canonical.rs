@@ -20,6 +20,22 @@ const SMALL_CANONICAL_JSON_INITIAL_CAPACITY: usize = 64 * 1024;
 const LARGE_CANONICAL_JSON_THRESHOLD: usize = 128 * 1024;
 const LARGE_CANONICAL_JSON_INITIAL_CAPACITY: usize = 96 * 1024;
 
+struct CanonicalJsonLength(usize);
+
+impl std::io::Write for CanonicalJsonLength {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0 = self
+            .0
+            .checked_add(bytes.len())
+            .ok_or_else(|| std::io::Error::other("canonical JSON length overflow"))?;
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 fn bounded_canonical_json_initial_capacity(admitted_upper_bound: usize) -> usize {
     if admitted_upper_bound == usize::MAX {
         return MIN_CANONICAL_JSON_INITIAL_CAPACITY;
@@ -416,7 +432,10 @@ impl CanonicalArtifact {
         *self.0.serialized_len.get_or_init(|| {
             #[cfg(test)]
             super::observability::record_canonical_serialization();
-            let len = serialize_json_value_stack_safe(self.value(), 0).len();
+            let mut counter = CanonicalJsonLength(0);
+            self.write_canonical_json(&mut counter)
+                .expect("canonical JSON length fits in memory");
+            let len = counter.0;
             #[cfg(test)]
             SERIALIZATION_COUNT.set(SERIALIZATION_COUNT.get().saturating_add(1));
             len
@@ -543,7 +562,14 @@ impl CanonicalArtifact {
                     CanonicalArtifactInner,
                 >())?
                 .checked_add(source_document_retained_bytes)?
-                .checked_add(crate::model::json_value_retained_bytes(self.value())?)?;
+                .checked_add(if let Some(value) = self.0.value.get() {
+                    crate::model::json_value_retained_bytes(value.as_value())?
+                } else {
+                    crate::serialize::json_out::projected_node_retained_bytes(
+                        self.0.source_document.root(),
+                        &self.0.schema_context.0.schema,
+                    )?
+                })?;
             Some(CanonicalHistorySnapshotRetainedCharge {
                 canonical_retained_bytes,
                 source_document_retained_bytes,
@@ -855,7 +881,7 @@ mod tests {
     }
 
     #[test]
-    fn deferred_hash_matches_canonical_bytes_without_materializing_the_json_tree() {
+    fn deferred_history_charge_and_hash_match_materialized_canonical_output() {
         let schema = tiptap_schema();
         let context = CanonicalSchemaContext::new(&schema);
         let source = serde_json::json!({
@@ -869,12 +895,33 @@ mod tests {
             ]
         });
         let document = from_prosemirror_json(&source, &schema, UnknownTypeMode::Preserve).unwrap();
-        let expected = serde_json::to_vec(&to_prosemirror_json(&document, &schema)).unwrap();
+        let projected =
+            crate::boundary::StackSafeJsonValue::new(to_prosemirror_json(&document, &schema));
+        let expected = serde_json::to_vec(projected.as_value()).unwrap();
+        let document_bytes = document.history_snapshot_retained_bytes().unwrap();
+        let canonical_bytes = crate::model::arc_allocation_retained_bytes(std::mem::size_of::<
+            CanonicalArtifactInner,
+        >())
+        .unwrap()
+            + document_bytes
+            + crate::model::json_value_retained_bytes(projected.as_value()).unwrap();
         let artifact = context
             .derive_validated_json(&document, expected.len(), 0)
             .unwrap();
         assert!(artifact.0.value.get().is_none(), "fixture starts deferred");
 
+        let charge = artifact.history_snapshot_retained_charge().unwrap();
+        assert_eq!(charge.source_document_retained_bytes, document_bytes);
+        assert_eq!(charge.canonical_retained_bytes, canonical_bytes);
+        assert!(
+            artifact.0.value.get().is_none(),
+            "history accounting must not materialize canonical JSON"
+        );
+        assert_eq!(artifact.serialized_len(), expected.len());
+        assert!(
+            artifact.0.value.get().is_none(),
+            "length must leave the canonical tree deferred"
+        );
         assert_eq!(artifact.sha256(), canonical_sha256(&expected));
         assert_eq!(artifact.serialized_len(), expected.len());
         assert!(

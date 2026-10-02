@@ -161,15 +161,15 @@ recorder!(
 );
 recorder!(record_canonical_projection, canonical_projections);
 std::thread_local! {
-    static REPLACEMENT_JSON_PROJECTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static NODE_JSON_PROJECTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-pub(crate) fn record_replacement_json_projection() {
-    REPLACEMENT_JSON_PROJECTIONS.set(REPLACEMENT_JSON_PROJECTIONS.get().saturating_add(1));
+pub(crate) fn record_node_json_projection() {
+    NODE_JSON_PROJECTIONS.set(NODE_JSON_PROJECTIONS.get().saturating_add(1));
 }
 
-pub(crate) fn take_replacement_json_projections_for_test() -> usize {
-    REPLACEMENT_JSON_PROJECTIONS.replace(0)
+pub(crate) fn take_node_json_projections_for_test() -> usize {
+    NODE_JSON_PROJECTIONS.replace(0)
 }
 recorder!(record_canonical_serialization, canonical_serializations);
 recorder!(record_canonical_hash, canonical_hashes);

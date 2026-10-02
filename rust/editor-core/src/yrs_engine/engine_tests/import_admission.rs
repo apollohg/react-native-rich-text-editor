@@ -953,7 +953,6 @@ include!("import_admission/staged_authority.rs");
 
 #[test]
 fn a_table_import_performs_each_document_wide_pass_once() {
-    crate::yrs_engine::observability::take_replacement_json_projections_for_test();
     use crate::render::incremental::{
         reset_cached_render_counts_for_test, take_cached_render_counts_for_test,
     };
@@ -977,6 +976,7 @@ fn a_table_import_performs_each_document_wide_pass_once() {
     .unwrap();
     reset_full_pass_counts_for_test();
     reset_cached_render_counts_for_test();
+    crate::yrs_engine::observability::take_node_json_projections_for_test();
     engine
         .prepare_root_replacement_json(
             REQUEST,
@@ -988,10 +988,12 @@ fn a_table_import_performs_each_document_wide_pass_once() {
     let renders = take_cached_render_counts_for_test();
     eprintln!("table import: {counts:#?}; cached renders: {renders:?}");
     assert_eq!(
-        crate::yrs_engine::observability::take_replacement_json_projections_for_test(),
+        crate::yrs_engine::observability::take_node_json_projections_for_test(),
         0,
-        "root import must reuse the admitted canonical children during Yrs lowering"
+        "root import must lower admitted nodes without projecting JSON"
     );
+    assert_eq!(counts.canonical_projections, 0,
+        "root replacement must not build an intermediate canonical JSON tree");
     assert_eq!(counts.document_validations, 1);
     assert_eq!(counts.rendered_text_derivations, 0);
     assert_eq!(renders.0, 1);
@@ -1005,7 +1007,7 @@ fn a_table_import_performs_each_document_wide_pass_once() {
 
 #[test]
 fn canonical_child_reuse_preserves_reset_and_undoable_root_replacements() {
-    use crate::yrs_engine::observability::take_replacement_json_projections_for_test;
+    use crate::yrs_engine::observability::take_node_json_projections_for_test;
     use crate::yrs_engine::ReplacementHistory;
     const REQUEST: u64 = 65_300;
     let source = serde_json::json!({"type":"doc","content":[
@@ -1027,14 +1029,14 @@ fn canonical_child_reuse_preserves_reset_and_undoable_root_replacements() {
     ] {
         let mut engine = transaction_engine();
         let before = engine.document_json().unwrap();
-        take_replacement_json_projections_for_test();
+        take_node_json_projections_for_test();
         engine
             .prepare_root_replacement_json(REQUEST, &source.to_string(), history)
             .unwrap();
         assert_eq!(
-            take_replacement_json_projections_for_test(),
+            take_node_json_projections_for_test(),
             0,
-            "an exact admitted replacement must borrow canonical children"
+            "an exact admitted replacement must lower nodes without projecting JSON"
         );
         assert_eq!(engine.document_json().unwrap(), expected);
         let undone = engine.undo(REQUEST + 1).unwrap();

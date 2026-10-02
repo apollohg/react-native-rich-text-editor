@@ -271,3 +271,5 @@ fn legacy_heading_alias_drops_synthetic_level_before_unrelated_projection() {
 include!("codec_tests/json_matching.rs");
 
 include!("codec_tests/roundtrip_limits.rs");
+
+include!("codec_tests/model_preparation.rs");

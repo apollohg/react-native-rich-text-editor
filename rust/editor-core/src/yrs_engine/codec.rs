@@ -158,7 +158,7 @@ impl<'a> YrsDocumentCodec<'a> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum PreparedXmlNode {
     Text {
         runs: Vec<PreparedTextRun>,
@@ -177,7 +177,7 @@ pub(crate) struct PreparedTextRun {
     pub(crate) attrs: Attrs,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PreparedXmlChild {
     pub(crate) index: u32,
     pub(crate) node: PreparedXmlNode,
@@ -195,18 +195,27 @@ pub(crate) fn prepare_xml_nodes(
     depth: usize,
 ) -> YrsEngineResult<PreparedXmlBatch> {
     let mut budget = ConversionBudget::new(limits);
-    let mut prepared = Vec::with_capacity(nodes.len());
-    for (index, node) in nodes.iter().enumerate() {
-        prepared.push(PreparedXmlChild {
-            index: u32::try_from(index).map_err(|_| {
-                YrsEngineError::new(
-                    "DOCUMENT_LIMIT_EXCEEDED",
-                    "prepared XML child index exceeds u32",
-                )
-            })?,
-            node: prepare_json_node(node, depth, &mut budget)?,
-        });
-    }
+    let prepared = prepare_xml_children(nodes, depth, &mut budget, prepare_json_node)?;
+    finish_prepared_batch(prepared, budget)
+}
+
+pub(crate) fn prepare_model_nodes(
+    nodes: &[crate::model::Node],
+    schema: &Schema,
+    limits: &ResourceLimits,
+    depth: usize,
+) -> YrsEngineResult<PreparedXmlBatch> {
+    let mut budget = ConversionBudget::new(limits);
+    let prepared = prepare_xml_children(nodes, depth, &mut budget, |node, depth, budget| {
+        prepare_model_node(node, schema, depth, budget)
+    })?;
+    finish_prepared_batch(prepared, budget)
+}
+
+fn finish_prepared_batch(
+    prepared: Vec<PreparedXmlChild>,
+    budget: ConversionBudget<'_>,
+) -> YrsEngineResult<PreparedXmlBatch> {
     let work = budget
         .nodes
         .checked_add(budget.any_work)

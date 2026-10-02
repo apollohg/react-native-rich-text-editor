@@ -618,18 +618,13 @@ impl MutationCompiler {
             });
         }
 
-        let json = if let Some(canonical_content) = replacement.canonical_content {
-            std::borrow::Cow::Borrowed(canonical_content)
+        let depth = path.len().saturating_add(2);
+        let mut batch = if let Some(canonical_content) = replacement.canonical_content {
+            prepare_xml_nodes(canonical_content, limits, depth)
         } else {
-            #[cfg(test)]
-            crate::yrs_engine::observability::record_replacement_json_projection();
-            std::borrow::Cow::Owned(content
-                .iter()
-                .map(|node| crate::serialize::node_to_prosemirror_json(node, schema))
-                .collect::<Vec<_>>())
-        };
-        let mut batch = prepare_xml_nodes(&json, limits, path.len().saturating_add(2))
-            .map_err(|error| map_prepared_node_error(self.request_id, operation_index, error))?;
+            crate::yrs_engine::codec::prepare_model_nodes(content.children(), schema, limits, depth)
+        }.map_err(|error| map_prepared_node_error(self.request_id, operation_index, error))?;
+
         for child in &mut batch.nodes {
             child.index = delete_start
                 .checked_add(child.index)
