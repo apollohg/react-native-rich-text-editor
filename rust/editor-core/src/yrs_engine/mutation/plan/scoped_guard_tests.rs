@@ -215,3 +215,219 @@ fn held_import_seal_uses_real_delete_set_evidence() {
         "a valid held scope cannot prove that the delete set is empty"
     );
 }
+
+fn observe_ancestors(owner: &CompilationReadTransaction<'_>, plan: &YrsMutationPlan) {
+    let signature = plan.actions[0].signature();
+    let scope = owner.scope().unwrap();
+    assert!(scope.begin_observed_path(owner, signature.path.len()));
+    for (parent, index) in signature.path.iter().rev() {
+        let children: Vec<_> = match parent {
+            BranchID::Root(name) => owner
+                .get_xml_fragment(name.clone())
+                .unwrap()
+                .children(owner)
+                .collect(),
+            BranchID::Nested(_) => {
+                match XmlOut::try_from(parent.get_branch(owner).unwrap()).unwrap() {
+                    XmlOut::Element(element) => element.children(owner).collect(),
+                    XmlOut::Fragment(fragment) => fragment.children(owner).collect(),
+                    XmlOut::Text(_) => panic!("a text node cannot be an ancestor"),
+                }
+            }
+        };
+        scope.observe_path_child(owner, parent.clone(), *index, &children);
+    }
+}
+
+#[test]
+fn observed_ancestor_reuse_preserves_work_and_rejects_wrong_edges_and_foreign_stores() {
+    use crate::yrs_engine::observability::PREFLIGHT_CHILDREN_ENUMERATED;
+    let (doc, plan) = fixture();
+    let owner = CompilationReadTransaction::for_immediate_commit(doc.transact());
+    observe_ancestors(&owner, &plan);
+    let eager_work = preflight_mutation_plan_impl(REQUEST_ID, &plan, &owner, None).unwrap();
+    PREFLIGHT_CHILDREN_ENUMERATED.set(0);
+    let observed_work =
+        preflight_mutation_plan_impl(REQUEST_ID, &plan, &owner, owner.scope()).unwrap();
+    assert_eq!(
+        observed_work, eager_work,
+        "reuse must charge complete parent widths"
+    );
+    assert_eq!(
+        PREFLIGHT_CHILDREN_ENUMERATED.get(),
+        0,
+        "the same immutable owner already observed every queried edge"
+    );
+    let mut altered = plan.clone();
+    let YrsMutationAction::InsertText { signature, .. } = &mut altered.actions[0] else {
+        panic!("expected insertion");
+    };
+    signature.path[0].1 += 1;
+    let eager_error = preflight_mutation_plan_impl(REQUEST_ID, &altered, &owner, None).unwrap_err();
+    let observed_error =
+        preflight_mutation_plan_impl(REQUEST_ID, &altered, &owner, owner.scope()).unwrap_err();
+    assert_eq!(
+        format!("{observed_error:?}"),
+        format!("{eager_error:?}"),
+        "a different edge must retain the original failure"
+    );
+    let foreign = candidate(&owner);
+    let foreign_owner = CompilationReadTransaction::for_immediate_commit(foreign.transact());
+    let mut rebound = plan.clone();
+    rebound.document_guard =
+        Some(capture_document_guard_with_read_scope(REQUEST_ID, &owner, owner.scope()).unwrap());
+    PREFLIGHT_CHILDREN_ENUMERATED.set(0);
+    rebound
+        .rebind_and_preflight_equivalent_store(REQUEST_ID, &foreign_owner, owner.scope())
+        .unwrap();
+    assert!(
+        PREFLIGHT_CHILDREN_ENUMERATED.get() > 0,
+        "candidate stores require complete traversal even with identical IDs"
+    );
+    assert!(!owner
+        .scope()
+        .unwrap()
+        .begin_observed_path(&foreign_owner, 1));
+    assert!(doc.try_transact_mut().is_err());
+    drop(owner);
+    assert!(doc.try_transact_mut().is_ok());
+    let replacement = CompilationReadTransaction::for_immediate_commit(doc.transact());
+    PREFLIGHT_CHILDREN_ENUMERATED.set(0);
+    assert_eq!(
+        preflight_mutation_plan_impl(REQUEST_ID, &plan, &replacement, replacement.scope()).unwrap(),
+        eager_work
+    );
+    assert!(
+        PREFLIGHT_CHILDREN_ENUMERATED.get() > 0,
+        "a new read owner must not inherit observations"
+    );
+}
+
+#[test]
+fn observed_parent_then_materialized_parent_is_charged_once() {
+    use crate::yrs_engine::observability::PREFLIGHT_CHILDREN_ENUMERATED;
+    let source = serde_json::json!({"type":"doc","content":[
+        {"type":"paragraph","content":[{"type":"text","text":"first"}]},
+        {"type":"paragraph","content":[{"type":"text","text":"second"}]}
+    ]});
+    let operations = [1, 8]
+        .into_iter()
+        .map(|offset| TypedOperation::InsertText {
+            at: RevisionedPosition {
+                offset,
+                kind: EditorOffsetKind::Scalar,
+                affinity: Affinity::After,
+            },
+            text: "!".into(),
+            marks: vec![],
+        })
+        .collect();
+    let (doc, _, _, compiled) = crate::yrs_engine::mutation_tests::compile_operations_with_schema(
+        &source,
+        operations,
+        crate::schema::presets::tiptap_schema(),
+    );
+    let plan = compiled.mutation_plan;
+    assert_eq!(plan.actions.len(), 2);
+    assert_ne!(
+        plan.actions[0].signature().path.last(),
+        plan.actions[1].signature().path.last()
+    );
+    let owner = CompilationReadTransaction::for_immediate_commit(doc.transact());
+    observe_ancestors(&owner, &plan);
+    PREFLIGHT_CHILDREN_ENUMERATED.set(0);
+    let eager = preflight_mutation_plan_impl(REQUEST_ID, &plan, &owner, None).unwrap();
+    let eager_scans = PREFLIGHT_CHILDREN_ENUMERATED.get();
+    PREFLIGHT_CHILDREN_ENUMERATED.set(0);
+    let observed = preflight_mutation_plan_impl(REQUEST_ID, &plan, &owner, owner.scope()).unwrap();
+    assert_eq!(
+        observed, eager,
+        "materializing the second root edge must not charge the root twice"
+    );
+    assert!(
+        PREFLIGHT_CHILDREN_ENUMERATED.get() < eager_scans,
+        "the first target must consume observed edges before the second target falls back"
+    );
+    assert!(
+        PREFLIGHT_CHILDREN_ENUMERATED.get() > 0,
+        "the other root child was not observed"
+    );
+    assert!(!owner
+        .scope()
+        .unwrap()
+        .begin_observed_path(&owner, usize::MAX));
+    PREFLIGHT_CHILDREN_ENUMERATED.set(0);
+    assert_eq!(
+        preflight_mutation_plan_impl(REQUEST_ID, &plan, &owner, owner.scope()).unwrap(),
+        eager
+    );
+    assert_eq!(
+        PREFLIGHT_CHILDREN_ENUMERATED.get(),
+        eager_scans,
+        "failed optional observation admission must restore full traversal"
+    );
+}
+
+#[test]
+fn structural_and_mixed_actions_do_not_consume_observed_ancestor_edges() {
+    use crate::yrs_engine::observability::PREFLIGHT_CHILDREN_ENUMERATED;
+    let source = serde_json::json!({"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"scope"}]}]});
+    let position = |offset| RevisionedPosition {
+        offset,
+        kind: EditorOffsetKind::Scalar,
+        affinity: Affinity::After,
+    };
+    for mixed in [false, true] {
+        let mut operations = Vec::new();
+        if mixed {
+            operations.push(TypedOperation::InsertText {
+                at: position(1),
+                text: "!".into(),
+                marks: vec![],
+            });
+        }
+        operations.push(TypedOperation::SplitBlock {
+            at: position(3),
+            node_type: "paragraph".into(),
+            attrs: HashMap::new(),
+        });
+        let (doc, _, _, compiled) =
+            crate::yrs_engine::mutation_tests::compile_operations_with_schema(
+                &source,
+                operations,
+                crate::schema::presets::tiptap_schema(),
+            );
+        let plan = compiled.mutation_plan;
+        assert!(plan.actions.iter().any(|action| matches!(
+            action,
+            YrsMutationAction::InsertXmlChildren { .. }
+                | YrsMutationAction::DeleteXmlChildren { .. }
+                | YrsMutationAction::CreateText { .. }
+        )));
+        if mixed {
+            assert!(plan
+                .actions
+                .iter()
+                .any(|action| matches!(action, YrsMutationAction::InsertText { .. })));
+        }
+        let owner = CompilationReadTransaction::for_immediate_commit(doc.transact());
+        let root = owner.get_xml_fragment(FRAGMENT_NAME).unwrap();
+        let children: Vec<_> = root.children(&owner).collect();
+        let scope = owner.scope().unwrap();
+        assert!(scope.begin_observed_path(&owner, 1));
+        scope.observe_path_child(&owner, AsRef::<Branch>::as_ref(&root).id(), 0, &children);
+        PREFLIGHT_CHILDREN_ENUMERATED.set(0);
+        let eager = preflight_mutation_plan_impl(REQUEST_ID, &plan, &owner, None).unwrap();
+        let eager_scans = PREFLIGHT_CHILDREN_ENUMERATED.get();
+        PREFLIGHT_CHILDREN_ENUMERATED.set(0);
+        let observed =
+            preflight_mutation_plan_impl(REQUEST_ID, &plan, &owner, owner.scope()).unwrap();
+        assert_eq!(observed, eager, "mixed={mixed}");
+        assert!(eager_scans > 0);
+        assert_eq!(
+            PREFLIGHT_CHILDREN_ENUMERATED.get(),
+            eager_scans,
+            "mixed={mixed}: structural/gap consumers must materialize complete children"
+        );
+    }
+}

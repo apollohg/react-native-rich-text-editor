@@ -806,3 +806,38 @@ fn native_frame_preserves_void_atom_render_kinds() {
         crate::viewer::FfiViewerElement::InlineAtom { .. }
     ));
 }
+
+#[test]
+fn native_table_typing_reuses_ancestors_observed_under_the_compilation_lock() {
+    use crate::test_support::large_table_fixture::plain_table_document;
+    use crate::yrs_engine::observability::PREFLIGHT_CHILDREN_ENUMERATED;
+    const DEEP_WRAPPERS: usize = 128;
+    const SINGLE_CHILD_ANCESTORS: usize = 3;
+    const LIVE_TEXTBLOCK_READS: usize = 2;
+    for (rows, columns, depth) in [(1000, 20, 0), (1, 1, DEEP_WRAPPERS)] {
+        let mut source = plain_table_document(rows, columns);
+        let mut block = source["content"][0].take();
+        for _ in 0..depth {
+            block = serde_json::json!({"type":"blockquote","content":[block]});
+        }
+        source["content"][0] = block;
+        let mut session = session_with_document(&source);
+        let mut mirror = crate::test_support::table_frame_mirror::TableFrameMirror::default();
+        mirror.apply(&frame(&mut session, Some(OWNER))).unwrap();
+        native_edit(&mut session, REQUEST, 0, "warm");
+        mirror.apply(&frame(&mut session, Some(OWNER))).unwrap();
+        PREFLIGHT_CHILDREN_ENUMERATED.set(0);
+        let before = session.engine.revision();
+        native_edit(&mut session, REQUEST + 1, 0, "🙂");
+        let scanned = PREFLIGHT_CHILDREN_ENUMERATED.get();
+        assert_eq!(session.engine.revision(), before + 1);
+        let delta = frame(&mut session, Some(OWNER));
+        assert_eq!(delta.tables.cell_updates.len(), 1);
+        mirror.apply(&delta).unwrap();
+        assert_mirror(&mut session, &mut mirror, "scoped ancestor reuse");
+        assert_eq!(
+            scanned, rows + columns + depth + SINGLE_CHILD_ANCESTORS + LIVE_TEXTBLOCK_READS,
+            "candidate-store traversal remains complete; live checks reuse only ancestors observed under their held read lock"
+        );
+    }
+}

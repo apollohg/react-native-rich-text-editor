@@ -52,6 +52,7 @@ impl LocalizedFormatCompiler {
             fragment,
             schema,
             LocalizedTextblockLocator::Format(locator),
+            None,
         )?
         else {
             return Ok(None);
@@ -321,6 +322,7 @@ fn localized_existing_textblock_targets<T: ReadTxn>(
     fragment: &XmlFragmentRef,
     schema: &Schema,
     locator: LocalizedTextblockLocator<'_>,
+    read_scope: Option<crate::yrs_engine::compiler::CompilationReadScope<'_>>,
 ) -> OperationResult<Option<LocalizedTextblockTargets>> {
     let Some((semantic_block, block_start, block_end)) =
         semantic_node_bounds(locator.document(), locator.block_path())
@@ -362,11 +364,16 @@ fn localized_existing_textblock_targets<T: ReadTxn>(
     let mut branch_path = Vec::<(BranchID, u32)>::new();
     let mut path_parent_widths = HashMap::<BranchID, usize>::new();
     let mut semantic_path = Vec::<u32>::new();
+    let observed_scope =
+        read_scope.filter(|scope| scope.begin_observed_path(txn, locator.block_path().len()));
     for &child_index in locator.block_path() {
         let children = match &parent {
             XmlParentRef::Fragment(parent) => parent.children(txn).collect::<Vec<_>>(),
             XmlParentRef::Element(parent) => parent.children(txn).collect::<Vec<_>>(),
         };
+        if let Some(scope) = observed_scope {
+            scope.observe_path_child(txn, parent.id(), child_index, &children);
+        }
         path_parent_widths.insert(parent.id(), children.len());
         let Some(child) = usize::try_from(child_index)
             .ok()

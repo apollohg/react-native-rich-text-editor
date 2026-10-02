@@ -200,6 +200,7 @@ impl LocalizedInsertCompiler {
             fragment,
             schema,
             LocalizedTextblockLocator::Insert(locator),
+            read_scope,
         )?
         else {
             return Ok(None);

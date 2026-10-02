@@ -32,9 +32,68 @@ pub(crate) struct CompilationReadScopeStamp(std::sync::Weak<()>);
 pub(crate) struct CompilationReadScope<'a> {
     identity: &'a std::sync::Arc<()>,
     store_token: usize,
+    observed_path: &'a std::cell::RefCell<Vec<ObservedPathChild>>,
+}
+
+struct ObservedPathChild {
+    parent: yrs::branch::BranchID,
+    index: u32,
+    child: yrs::branch::BranchID,
+    width: usize,
 }
 
 impl CompilationReadScope<'_> {
+    pub(crate) fn begin_observed_path<T: yrs::ReadTxn>(&self, txn: &T, depth: usize) -> bool {
+        if !self.matches_store(txn) {
+            return false;
+        }
+        let mut observed = self.observed_path.borrow_mut();
+        observed.clear();
+        observed.try_reserve_exact(depth).is_ok()
+    }
+
+    pub(crate) fn observe_path_child<T: yrs::ReadTxn>(
+        &self,
+        txn: &T,
+        parent: yrs::branch::BranchID,
+        index: u32,
+        children: &[yrs::types::xml::XmlOut],
+    ) {
+        if !self.matches_store(txn) {
+            return;
+        }
+        let Some(child) = children.get(index as usize) else {
+            return;
+        };
+        let mut observed = self.observed_path.borrow_mut();
+        if observed.len() < observed.capacity() {
+            observed.push(ObservedPathChild {
+                parent,
+                index,
+                child: child.id(),
+                width: children.len(),
+            });
+        }
+    }
+
+    pub(crate) fn observed_child_width<T: yrs::ReadTxn>(
+        &self,
+        txn: &T,
+        parent: &yrs::branch::BranchID,
+        index: u32,
+        child: &yrs::branch::BranchID,
+        depth: usize,
+    ) -> Option<usize> {
+        if !self.matches_store(txn) {
+            return None;
+        }
+        self.observed_path
+            .borrow()
+            .get(depth)
+            .filter(|edge| &edge.parent == parent && edge.index == index && &edge.child == child)
+            .map(|edge| edge.width)
+    }
+
     pub(crate) fn matches_store<T: yrs::ReadTxn>(&self, txn: &T) -> bool {
         self.matches_store_token(txn.store() as *const _ as usize)
     }
@@ -61,6 +120,7 @@ pub(crate) struct CompilationReadTransaction<'doc> {
     txn: yrs::Transaction<'doc>,
     snapshot: std::cell::RefCell<std::cell::OnceCell<yrs::Snapshot>>,
     scope: Option<std::sync::Arc<()>>,
+    observed_path: std::cell::RefCell<Vec<ObservedPathChild>>,
 }
 
 // Neither the memo nor the borrowed capability can outlive its owner.
@@ -94,6 +154,7 @@ impl<'doc> CompilationReadTransaction<'doc> {
             txn,
             snapshot: std::cell::RefCell::new(std::cell::OnceCell::new()),
             scope: None,
+            observed_path: std::cell::RefCell::new(Vec::new()),
         }
     }
 
@@ -108,6 +169,7 @@ impl<'doc> CompilationReadTransaction<'doc> {
         self.scope.as_ref().map(|identity| CompilationReadScope {
             identity,
             store_token: yrs::ReadTxn::store(&self.txn) as *const _ as usize,
+            observed_path: &self.observed_path,
         })
     }
 

@@ -1,3 +1,9 @@
+struct PreflightPathChildren<'a> {
+    materialized: HashMap<BranchID, Vec<BranchID>>,
+    observed_widths: HashMap<BranchID, usize>,
+    scope: Option<crate::yrs_engine::compiler::CompilationReadScope<'a>>,
+}
+
 impl YrsMutationPlan {
     pub(crate) fn cache_prepared_metrics(&mut self, request_id: u64) -> OperationResult<()> {
         if self.prepared_metrics.len() == self.actions.len() {
@@ -359,7 +365,7 @@ fn preflight_mutation_plan_with_evidence<T: ReadTxn>(
             "Yrs document snapshot changed before mutation preflight",
         ));
     }
-    let measured_work = preflight_mutation_plan_impl(request_id, plan, txn)?;
+    let measured_work = preflight_mutation_plan_impl(request_id, plan, txn, scope)?;
     debug_assert_eq!(measured_work, plan.expected_preflight_work);
     Ok(())
 }
@@ -390,13 +396,28 @@ fn preflight_mutation_plan_impl<T: ReadTxn>(
     request_id: u64,
     plan: &YrsMutationPlan,
     txn: &T,
+    scope: Option<crate::yrs_engine::compiler::CompilationReadScope<'_>>,
 ) -> OperationResult<usize> {
     use std::collections::HashMap;
 
     let mut virtual_lengths = HashMap::<BranchID, u32>::new();
     let mut created_gaps = HashMap::<BranchID, Vec<u32>>::new();
     let mut validated_targets = std::collections::HashSet::<BranchID>::new();
-    let mut path_children = HashMap::<BranchID, Vec<BranchID>>::new();
+    let mut path_children = PreflightPathChildren {
+        materialized: HashMap::new(),
+        observed_widths: HashMap::new(),
+        scope: scope.filter(|scope| {
+            scope.matches_store(txn)
+                && plan.actions.iter().all(|action| {
+                    matches!(
+                        action,
+                        YrsMutationAction::InsertText { .. }
+                            | YrsMutationAction::DeleteText { .. }
+                            | YrsMutationAction::FormatText { .. }
+                    )
+                })
+        }),
+    };
     let mut indexed_work = 0usize;
     let mut structural_parents = HashMap::<BranchID, StructuralPreflightState>::new();
     let mut validated_elements = std::collections::HashSet::<BranchID>::new();
@@ -546,7 +567,7 @@ fn preflight_mutation_plan_impl<T: ReadTxn>(
             ..
         } = action
         {
-            if !path_children.contains_key(&signature.parent) {
+            if !path_children.materialized.contains_key(&signature.parent) {
                 indexed_work = indexed_work
                     .checked_add(signature.path.len())
                     .ok_or_else(|| invalid_action_range(request_id, action.operation_index()))?;
@@ -563,7 +584,7 @@ fn preflight_mutation_plan_impl<T: ReadTxn>(
                 request_id,
                 action.operation_index(),
                 signature,
-                &path_children[&signature.parent],
+                &path_children.materialized[&signature.parent],
             )?;
             indexed_work = indexed_work
                 .checked_add(2)
@@ -708,8 +729,18 @@ fn preflight_mutation_plan_impl<T: ReadTxn>(
         }
     }
     let materialized_children = path_children
+        .materialized
         .values()
-        .try_fold(0usize, |total, children| total.checked_add(children.len()))
+        .map(Vec::len)
+        .chain(
+            path_children
+                .observed_widths
+                .iter()
+                .filter_map(|(parent, width)| {
+                    (!path_children.materialized.contains_key(parent)).then_some(*width)
+                }),
+        )
+        .try_fold(0usize, |total, width| total.checked_add(width))
         .ok_or_else(|| {
             OperationError::engine_invariant_failed(
                 request_id,
