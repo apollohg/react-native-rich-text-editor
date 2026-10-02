@@ -24,7 +24,7 @@ std::thread_local! {
 /// A block is either:
 /// - A text block (e.g. paragraph) that directly contains inline content
 /// - A block-level void node (e.g. horizontalRule) rendered as a placeholder
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct BlockMapping {
     /// Doc position at the start of this block's content (after the open tag).
     /// For void blocks, this is the position of the void node itself.
@@ -45,6 +45,25 @@ pub struct BlockMapping {
     pub node_path: SmallVec<[u32; 8]>,
     /// Whether this block maps a block-level void node instead of text content.
     pub is_void_block: bool,
+}
+
+impl Clone for BlockMapping {
+    fn clone(&self) -> Self {
+        Self {
+            doc_start: self.doc_start,
+            doc_end: self.doc_end,
+            scalar_start: self.scalar_start,
+            scalar_len: self.scalar_len,
+            scalar_prefix_len: self.scalar_prefix_len,
+            rendered_break_after: self.rendered_break_after,
+            node_path: if self.node_path.spilled() {
+                self.node_path.clone()
+            } else {
+                SmallVec::from_slice(&self.node_path)
+            },
+            is_void_block: self.is_void_block,
+        }
+    }
 }
 
 /// Bidirectional index for converting between doc positions and rendered-text
@@ -625,6 +644,38 @@ mod retained_size_tests {
             rendered_break_after: 0,
             node_path: path,
             is_void_block: false,
+        }
+    }
+
+    #[test]
+    fn block_clone_preserves_inline_and_spilled_storage_and_independence() {
+        const DEEP_PATH: usize = 128;
+        for depth in (0..=16).chain(std::iter::once(DEEP_PATH)) {
+            for force_spill in [false, true] {
+                let mut source = block((0..depth as u32).collect());
+                if force_spill {
+                    source.node_path.reserve(DEEP_PATH);
+                }
+                source.doc_start = 2;
+                source.doc_end = 7;
+                source.scalar_start = 11;
+                source.scalar_len = 5;
+                source.scalar_prefix_len = 3;
+                source.rendered_break_after = 1;
+                source.is_void_block = true;
+                let expected_path = source.node_path.clone();
+                let copy = source.clone();
+                assert_eq!(format!("{copy:?}"), format!("{source:?}"));
+                assert_eq!(
+                    copy.node_path.capacity(),
+                    expected_path.capacity(),
+                    "depth={depth}, forced={force_spill}"
+                );
+                assert_eq!(copy.node_path.spilled(), expected_path.spilled());
+                source.node_path.clear();
+                source.node_path.push(u32::MAX);
+                assert_eq!(copy.node_path, expected_path, "cloned paths must not alias");
+            }
         }
     }
 
