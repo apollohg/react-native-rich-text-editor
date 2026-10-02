@@ -14,6 +14,7 @@ use yrs::types::xml::{XmlElementRef, XmlFragment, XmlFragmentRef, XmlOut};
 use yrs::{Assoc, Offset, ReadTxn, StickyIndex};
 
 #[derive(Debug, Clone)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub(crate) struct BlockBranchIndex {
     blocks: Vec<BlockBranches>,
     by_branch: HashMap<BranchID, usize>,
@@ -22,6 +23,7 @@ pub(crate) struct BlockBranchIndex {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub(crate) struct BlockBranches {
     pub(crate) element: BranchID,
     pub(crate) texts: SmallVec<[BranchID; 2]>,
@@ -59,15 +61,16 @@ fn supports_inline_index(map: &PositionMap, document: &Document, index: usize) -
         })
 }
 
-impl BlockBranchIndex {
-    pub(crate) fn build<T: ReadTxn>(
-        txn: &T,
-        fragment: &XmlFragmentRef,
-        schema: &Schema,
-        position_map: &PositionMap,
-    ) -> Option<Self> {
-        #[cfg(test)]
-        super::observability::record_yrs_tree_walk();
+struct BlockBranchIndexBuilder {
+    starts: HashMap<u32, usize>,
+    blocks: Vec<Option<BlockBranches>>,
+    table_keys: BTreeMap<Vec<u32>, String>,
+    atom_ids: BTreeMap<Vec<u32>, String>,
+    unique_table_keys: HashSet<String>,
+}
+
+impl BlockBranchIndexBuilder {
+    fn new(position_map: &PositionMap) -> Self {
         let starts: HashMap<_, _> = (0..position_map.block_count())
             .map(|index| {
                 let block = position_map.block(index).unwrap();
@@ -77,6 +80,181 @@ impl BlockBranchIndex {
                 )
             })
             .collect();
+        Self {
+            starts,
+            blocks: vec![None; position_map.block_count()],
+            table_keys: BTreeMap::new(),
+            atom_ids: BTreeMap::new(),
+            unique_table_keys: HashSet::new(),
+        }
+    }
+
+    fn observe_identity(
+        &mut self,
+        path: &[u32],
+        branch: BranchID,
+        spec: Option<&crate::schema::NodeSpec>,
+    ) -> Option<()> {
+        if let BranchID::Nested(id) = branch {
+            if spec.is_some_and(|spec| spec.table_role == Some(crate::tables::TableRole::Table)) {
+                let key = format!("y{}-{}", id.client, id.clock);
+                if !self.unique_table_keys.insert(key.clone()) {
+                    return None;
+                }
+                self.table_keys.entry(path.to_vec()).or_insert(key);
+            }
+            if spec.is_some_and(|spec| {
+                spec.is_void && matches!(spec.role, crate::schema::NodeRole::Block)
+            }) {
+                self.atom_ids
+                    .entry(path.to_vec())
+                    .or_insert_with(|| format!("y{}-{}", id.client, id.clock));
+            }
+        }
+        Some(())
+    }
+
+    fn finish(self) -> Option<BlockBranchIndex> {
+        let blocks: Vec<_> = self.blocks.into_iter().collect::<Option<_>>()?;
+        let mut by_branch = HashMap::new();
+        for (index, block) in blocks.iter().enumerate() {
+            for branch in std::iter::once(&block.element).chain(&block.texts) {
+                if by_branch.insert(branch.clone(), index).is_some() {
+                    return None;
+                }
+            }
+        }
+        Some(BlockBranchIndex {
+            blocks,
+            by_branch,
+            table_keys: self.table_keys,
+            atom_ids: self.atom_ids,
+        })
+    }
+}
+
+pub(crate) struct BlockBranchIndexCapture {
+    builder: Option<BlockBranchIndexBuilder>,
+    position: u32,
+    path: Vec<u32>,
+    block: Option<(usize, usize)>,
+}
+
+impl BlockBranchIndexCapture {
+    pub(crate) fn new(map: &PositionMap) -> Self {
+        Self {
+            builder: Some(BlockBranchIndexBuilder::new(map)),
+            position: 0,
+            path: Vec::new(),
+            block: None,
+        }
+    }
+
+    pub(crate) fn enter<T: ReadTxn>(
+        &mut self,
+        ordinal: usize,
+        element: &XmlElementRef,
+        txn: &T,
+        schema: &Schema,
+        is_void: bool,
+    ) -> bool {
+        // The standalone walker inspects void descendants and skips mapped subtrees.
+        if is_void || self.block.is_some() {
+            return false;
+        }
+        let Some(builder) = self.builder.as_mut() else {
+            return true;
+        };
+        let Some(ordinal) = u32::try_from(ordinal).ok() else {
+            self.builder = None;
+            return true;
+        };
+        self.path.push(ordinal);
+        let branch = AsRef::<Branch>::as_ref(element).id();
+        let spec = super::codec::wire_element_node_spec(element, txn, schema);
+        if builder
+            .observe_identity(&self.path, branch.clone(), spec)
+            .is_none()
+        {
+            self.builder = None;
+            return true;
+        }
+        if let Some(&index) = builder.starts.get(&self.position) {
+            builder.blocks[index].get_or_insert_with(|| BlockBranches {
+                element: branch,
+                texts: SmallVec::new(),
+            });
+            self.block = Some((index, self.path.len()));
+        }
+        self.advance(NODE_OPENING_TOKENS);
+        true
+    }
+
+    fn advance(&mut self, width: u32) {
+        if let Some(position) = self.position.checked_add(width) {
+            self.position = position;
+        } else {
+            self.builder = None;
+        }
+    }
+
+    pub(crate) fn text(&mut self, branch: BranchID, scalar_len: u32) {
+        if let Some(builder) = self.builder.as_mut() {
+            if let Some((index, _)) = self.block {
+                builder.blocks[index].as_mut().unwrap().texts.push(branch);
+            }
+            self.advance(scalar_len);
+        }
+    }
+
+    pub(crate) fn exit(&mut self) {
+        if self.builder.is_none() {
+            return;
+        }
+        if self
+            .block
+            .is_some_and(|(_, depth)| depth == self.path.len())
+        {
+            self.block = None;
+        }
+        self.path.pop();
+        self.advance(NODE_CLOSING_TOKENS);
+    }
+
+    pub(crate) fn finish(self) -> Option<BlockBranchIndex> {
+        self.builder?.finish()
+    }
+}
+
+impl BlockBranchIndex {
+    #[cfg(test)]
+    pub(crate) fn assert_same_allocations_for_test(&self, other: &Self) {
+        assert_eq!(self, other);
+        assert_eq!(self.blocks.capacity(), other.blocks.capacity());
+        assert_eq!(self.by_branch.capacity(), other.by_branch.capacity());
+        for (left, right) in self.blocks.iter().zip(&other.blocks) {
+            assert_eq!(left.texts.capacity(), right.texts.capacity());
+        }
+        for (left, right) in self
+            .table_keys
+            .iter()
+            .zip(&other.table_keys)
+            .chain(self.atom_ids.iter().zip(&other.atom_ids))
+        {
+            assert_eq!(left.0.capacity(), right.0.capacity());
+            assert_eq!(left.1.capacity(), right.1.capacity());
+        }
+    }
+
+    pub(crate) fn build<T: ReadTxn>(
+        txn: &T,
+        fragment: &XmlFragmentRef,
+        schema: &Schema,
+        position_map: &PositionMap,
+    ) -> Option<Self> {
+        #[cfg(test)]
+        super::observability::record_yrs_tree_walk();
+        let mut builder = BlockBranchIndexBuilder::new(position_map);
         enum Frame {
             Visit { path: Vec<u32>, node: XmlOut },
             FinishElement { void_end: Option<u32> },
@@ -102,13 +280,9 @@ impl BlockBranchIndex {
             pending[first..].reverse();
             Some(())
         }
-        let mut blocks = vec![None; position_map.block_count()];
         let mut pending = Vec::new();
         push_children(&mut pending, fragment.children(txn), &[], false)?;
         let mut position = 0u32;
-        let mut table_keys = BTreeMap::new();
-        let mut atom_ids = BTreeMap::new();
-        let mut unique_table_keys = HashSet::new();
         while let Some(frame) = pending.pop() {
             let (path, node) = match frame {
                 Frame::FinishElement { void_end } => {
@@ -123,26 +297,9 @@ impl BlockBranchIndex {
             match &node {
                 XmlOut::Element(element) => {
                     let spec = super::codec::wire_element_node_spec(element, txn, schema);
-                    if let BranchID::Nested(id) = AsRef::<Branch>::as_ref(element).id() {
-                        if spec.is_some_and(|spec| {
-                            spec.table_role == Some(crate::tables::TableRole::Table)
-                        }) {
-                            let key = format!("y{}-{}", id.client, id.clock);
-                            if !unique_table_keys.insert(key.clone()) {
-                                return None;
-                            }
-                            table_keys.entry(path.clone()).or_insert(key);
-                        }
-                        if spec.is_some_and(|spec| {
-                            spec.is_void && matches!(spec.role, crate::schema::NodeRole::Block)
-                        }) {
-                            atom_ids
-                                .entry(path.clone())
-                                .or_insert_with(|| format!("y{}-{}", id.client, id.clock));
-                        }
-                    }
-                    if let Some(index) = starts.get(&position) {
-                        blocks[*index].get_or_insert_with(|| BlockBranches {
+                    builder.observe_identity(&path, AsRef::<Branch>::as_ref(element).id(), spec)?;
+                    if let Some(index) = builder.starts.get(&position) {
+                        builder.blocks[*index].get_or_insert_with(|| BlockBranches {
                             element: AsRef::<Branch>::as_ref(element).id(),
                             texts: text_branches(txn, element),
                         });
@@ -167,21 +324,7 @@ impl BlockBranchIndex {
                 }
             }
         }
-        let blocks: Vec<_> = blocks.into_iter().collect::<Option<_>>()?;
-        let mut by_branch = HashMap::new();
-        for (index, block) in blocks.iter().enumerate() {
-            for branch in std::iter::once(&block.element).chain(&block.texts) {
-                if by_branch.insert(branch.clone(), index).is_some() {
-                    return None;
-                }
-            }
-        }
-        Some(Self {
-            blocks,
-            by_branch,
-            table_keys,
-            atom_ids,
-        })
+        builder.finish()
     }
 
     pub(crate) fn with_block_replaced<T: ReadTxn>(

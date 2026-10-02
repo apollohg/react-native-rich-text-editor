@@ -165,7 +165,7 @@ impl MutationLookupSeed {
         yrs_state_epoch: u64,
         document_revision: u64,
     ) -> OperationResult<Self> {
-        Self::build_with_capacity_hint(
+        Self::build_with_branch_index(
             request_id,
             txn,
             fragment,
@@ -179,6 +179,7 @@ impl MutationLookupSeed {
             document_revision,
             None,
         )
+        .map(|(seed, _)| seed)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -390,7 +391,7 @@ impl MutationLookupSeed {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn build_with_capacity_hint<T: ReadTxn>(
+    pub(crate) fn build_with_branch_index<T: ReadTxn>(
         request_id: u64,
         txn: &T,
         fragment: &XmlFragmentRef,
@@ -402,28 +403,40 @@ impl MutationLookupSeed {
         schema_fingerprint: &str,
         yrs_state_epoch: u64,
         document_revision: u64,
-        target_capacity_hint: Option<usize>,
-    ) -> OperationResult<Self> {
+        position_map: Option<&crate::position::PositionMap>,
+    ) -> OperationResult<(
+        Self,
+        Option<Option<crate::yrs_engine::block_branch_index::BlockBranchIndex>>,
+    )> {
         #[cfg(test)]
         LOOKUP_SEED_BUILD_COUNT.set(LOOKUP_SEED_BUILD_COUNT.get().saturating_add(1));
-        let payload =
-            build_lookup_seed_payload(request_id, txn, fragment, schema, target_capacity_hint)?;
-        Ok(Self {
-            binding: MutationLookupBinding {
-                source_document: source_document.clone(),
-                canonical_artifact: None,
-                resource_limits: resource_limits.clone(),
-                editing_limits: editing_limits.clone(),
-                max_length,
-                store_token: txn.store() as *const _ as usize,
-                fragment_id: AsRef::<Branch>::as_ref(fragment).id(),
-                schema_fingerprint: Arc::from(schema_fingerprint),
-                yrs_state_epoch,
-                document_revision,
-                history_store_snapshot: None,
+        let (payload, branch_index) = build_lookup_seed_payload_with_branch_index(
+            request_id,
+            txn,
+            fragment,
+            schema,
+            None,
+            position_map,
+        )?;
+        Ok((
+            Self {
+                binding: MutationLookupBinding {
+                    source_document: source_document.clone(),
+                    canonical_artifact: None,
+                    resource_limits: resource_limits.clone(),
+                    editing_limits: editing_limits.clone(),
+                    max_length,
+                    store_token: txn.store() as *const _ as usize,
+                    fragment_id: AsRef::<Branch>::as_ref(fragment).id(),
+                    schema_fingerprint: Arc::from(schema_fingerprint),
+                    yrs_state_epoch,
+                    document_revision,
+                    history_store_snapshot: None,
+                },
+                state: MutationLookupSeedState::Ready(payload),
             },
-            state: MutationLookupSeedState::Ready(payload),
-        })
+            branch_index,
+        ))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -949,6 +962,7 @@ fn textblock_lookup_payload<T: ReadTxn>(
         schema,
         std::iter::once(XmlOut::Element(node)),
         &mut collector,
+        &mut None,
     );
     collector.finish_payload()
 }

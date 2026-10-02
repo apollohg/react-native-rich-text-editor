@@ -14,8 +14,9 @@ fn drive_lookup_materialization_collector<T: ReadTxn>(
     schema: &Schema,
     children: impl Iterator<Item = XmlOut>,
     collector: &mut ImportLookupMaterializationCollector,
+    branch_index: &mut Option<crate::yrs_engine::block_branch_index::BlockBranchIndexCapture>,
 ) {
-    for child in children {
+    for (ordinal, child) in children.enumerate() {
         if collector.has_failed() {
             break;
         }
@@ -37,6 +38,9 @@ fn drive_lookup_materialization_collector<T: ReadTxn>(
                 if collector.has_failed() {
                     break;
                 }
+                if let Some(index) = branch_index {
+                    index.text(AsRef::<Branch>::as_ref(&text).id(), capture.scalar_len);
+                }
                 collector.observe_text(AsRef::<Branch>::as_ref(&text).id(), capture);
             }
             XmlOut::Element(element) => {
@@ -57,6 +61,12 @@ fn drive_lookup_materialization_collector<T: ReadTxn>(
                     break;
                 }
                 let (is_void, is_textblock) = wire_element_semantics(&element, txn, schema);
+                if branch_index
+                    .as_mut()
+                    .is_some_and(|index| !index.enter(ordinal, &element, txn, schema, is_void))
+                {
+                    *branch_index = None;
+                }
                 let observe_children = collector.begin_element(
                     AsRef::<Branch>::as_ref(&element).id(),
                     attributes,
@@ -72,13 +82,18 @@ fn drive_lookup_materialization_collector<T: ReadTxn>(
                         schema,
                         element.children(txn),
                         collector,
+                        branch_index,
                     );
                     if !collector.has_failed() {
                         collector.end_container();
+                        if let Some(index) = branch_index {
+                            index.exit();
+                        }
                     }
                 }
             }
             XmlOut::Fragment(fragment) => {
+                *branch_index = None;
                 collector.begin_fragment();
                 if collector.has_failed() {
                     break;
@@ -88,6 +103,7 @@ fn drive_lookup_materialization_collector<T: ReadTxn>(
                     schema,
                     fragment.children(txn),
                     collector,
+                    branch_index,
                 );
                 if !collector.has_failed() {
                     collector.end_container();
@@ -104,6 +120,28 @@ fn build_lookup_seed_payload<T: ReadTxn>(
     schema: &Schema,
     target_capacity_hint: Option<usize>,
 ) -> OperationResult<MutationLookupPayload> {
+    build_lookup_seed_payload_with_branch_index(
+        request_id,
+        txn,
+        fragment,
+        schema,
+        target_capacity_hint,
+        None,
+    )
+    .map(|(payload, _)| payload)
+}
+
+fn build_lookup_seed_payload_with_branch_index<T: ReadTxn>(
+    request_id: u64,
+    txn: &T,
+    fragment: &XmlFragmentRef,
+    schema: &Schema,
+    target_capacity_hint: Option<usize>,
+    position_map: Option<&crate::position::PositionMap>,
+) -> OperationResult<(
+    MutationLookupPayload,
+    Option<Option<crate::yrs_engine::block_branch_index::BlockBranchIndex>>,
+)> {
     let root_width = usize::try_from(fragment.len(txn)).map_err(|_| {
         OperationError::engine_invariant_failed(
             request_id,
@@ -117,8 +155,18 @@ fn build_lookup_seed_payload<T: ReadTxn>(
         root_width,
         target_capacity_hint,
     );
-    drive_lookup_materialization_collector(txn, schema, fragment.children(txn), &mut collector);
-    collector.finish_payload()
+    let mut branch_index = position_map
+        .filter(|_| !collector.has_failed())
+        .map(crate::yrs_engine::block_branch_index::BlockBranchIndexCapture::new);
+    drive_lookup_materialization_collector(
+        txn,
+        schema,
+        fragment.children(txn),
+        &mut collector,
+        &mut branch_index,
+    );
+    let payload = collector.finish_payload()?;
+    Ok((payload, branch_index.map(|index| index.finish())))
 }
 
 include!("legacy_lookup.rs");
@@ -504,4 +552,75 @@ fn collect_text_targets_inner<'a, T: ReadTxn>(
         }
     }
     Ok(position)
+}
+
+#[cfg(test)]
+pub(crate) fn assert_lookup_and_branch_index_parity_for_test<T: ReadTxn>(
+    txn: &T,
+    fragment: &XmlFragmentRef,
+    schema: &Schema,
+    position_map: &crate::position::PositionMap,
+    expected_capture: Option<bool>,
+) {
+    const REQUEST: u64 = 91_003;
+    let ordinary = build_lookup_seed_payload(REQUEST, txn, fragment, schema, None);
+    let combined = build_lookup_seed_payload_with_branch_index(
+        REQUEST,
+        txn,
+        fragment,
+        schema,
+        None,
+        Some(position_map),
+    );
+    let ((ordinary, combined), captured) = match (ordinary, combined) {
+        (Ok(ordinary), Ok((combined, captured))) => ((ordinary, combined), captured),
+        (Err(ordinary), Err(combined)) => {
+            assert_eq!(
+                ordinary, combined,
+                "lookup errors must precede optional indexing"
+            );
+            return;
+        }
+        (ordinary, combined) => panic!(
+            "lookup outcome changed: ordinary={:?}, combined={:?}",
+            ordinary.err(),
+            combined.err()
+        ),
+    };
+    assert_eq!(ordinary.target_count, combined.target_count);
+    assert_eq!(
+        ordinary.pending_traversal_work,
+        combined.pending_traversal_work
+    );
+    assert_eq!(ordinary.path_parent_widths, combined.path_parent_widths);
+    assert_eq!(
+        ordinary.target_materialization_work,
+        combined.target_materialization_work
+    );
+    assert_eq!(
+        ordinary.path_parent_widths.capacity(),
+        combined.path_parent_widths.capacity()
+    );
+    if let Some(expected) = expected_capture {
+        assert_eq!(
+            captured.is_some(),
+            expected,
+            "capture must distinguish fallback from completed/unavailable"
+        );
+    }
+    let walked = crate::yrs_engine::block_branch_index::BlockBranchIndex::build(
+        txn,
+        fragment,
+        schema,
+        position_map,
+    );
+    if let Some(captured) = captured {
+        assert_eq!(
+            captured, walked,
+            "captured branch IDs, table paths and atom IDs must match the independent walker"
+        );
+        if let (Some(captured), Some(walked)) = (captured, walked) {
+            captured.assert_same_allocations_for_test(&walked);
+        }
+    }
 }

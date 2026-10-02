@@ -991,6 +991,10 @@ fn a_table_import_performs_each_document_wide_pass_once() {
         crate::yrs_engine::position::take_relative_position_traversal_counts_for_test();
     eprintln!("table import: {counts:#?}; cached renders: {renders:?}");
     assert_eq!(
+        counts.yrs_tree_walks, 0,
+        "ordinary table import must derive block branches during the mandatory lookup walk"
+    );
+    assert_eq!(
         counts.json_value_deserializations, 0,
         "plain table replacement must not allocate an intermediate JSON value tree"
     );
@@ -1002,6 +1006,18 @@ fn a_table_import_performs_each_document_wide_pass_once() {
     let state = engine.derived_state.as_ref().unwrap();
     let txn = engine.doc.transact();
     let fragment = txn.get_xml_fragment(engine.fragment_name.as_str()).unwrap();
+    let walked_index = crate::yrs_engine::block_branch_index::BlockBranchIndex::build(
+        &txn,
+        &fragment,
+        &engine.schema,
+        &state.position_map,
+    )
+    .unwrap();
+    state
+        .block_branch_index
+        .as_ref()
+        .unwrap()
+        .assert_same_allocations_for_test(&walked_index);
     assert_eq!(
         state.relative_selection,
         crate::yrs_engine::derived_state::operation_result_to_relative(

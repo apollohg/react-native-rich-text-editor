@@ -532,7 +532,9 @@ impl YrsDocumentEngine {
                     let path = compiled
                         .localized_textblock_edit_admission
                         .as_ref()
-                        .and_then(|admission| before.position_map.block_path(admission.block_index()));
+                        .and_then(|admission| {
+                            before.position_map.block_path(admission.block_index())
+                        });
                     if let (Some(budget), Some(path)) = (
                         pending.and_then(|pending| {
                             self.history
@@ -862,21 +864,27 @@ impl YrsDocumentEngine {
                     }
                 }
             }
+            let mut captured_branch_index = None;
             if prepared_mutation_lookup_seed.is_none() {
-                let candidate_seed = yrs_engine::mutation::MutationLookupSeed::build(
-                    request_id,
-                    &txn,
-                    &fragment,
-                    &self.schema,
-                    &preview,
-                    &self.resource_limits,
-                    &self.editing_limits,
-                    self.max_length,
-                    &self.schema_fingerprint,
-                    next_yrs_state_epoch,
-                    next_document_revision,
-                )?
-                .with_canonical_artifact(&canonical_artifact);
+                let (candidate_seed, branch_index) =
+                    yrs_engine::mutation::MutationLookupSeed::build_with_branch_index(
+                        request_id,
+                        &txn,
+                        &fragment,
+                        &self.schema,
+                        &preview,
+                        &self.resource_limits,
+                        &self.editing_limits,
+                        self.max_length,
+                        &self.schema_fingerprint,
+                        next_yrs_state_epoch,
+                        next_document_revision,
+                        preview_derivations
+                            .as_ref()
+                            .map(|derivations| &derivations.position_map),
+                    )?;
+                captured_branch_index = branch_index.map(|index| index.map(Arc::new));
+                let candidate_seed = candidate_seed.with_canonical_artifact(&canonical_artifact);
                 prepared_mutation_lookup_seed =
                     Some(Arc::new(candidate_seed.rebind_authoritative_store(
                         commit_authority.txn(),
@@ -900,6 +908,7 @@ impl YrsDocumentEngine {
                         .with_block_replaced(&txn, block_index, &self.schema)
                 })
                 .map(Some)
+                .or(captured_branch_index)
                 .or_else(|| {
                     let derivations = preview_derivations.as_ref()?;
                     Some(

@@ -50,6 +50,10 @@ fn the_ledger_counts_document_wide_work_on_the_generic_structural_path() {
     assert!(result.is_some(), "adding a row produced no transaction");
     let passes = take_full_pass_counts_for_test();
     eprintln!("generic structural path: {passes:#?}");
+    assert_eq!(
+        passes.yrs_tree_walks, 0,
+        "ordinary structural edits must share the lookup traversal for block indexing"
+    );
     for (kind, count) in [
         (
             "table_projection_derivations",
@@ -59,7 +63,6 @@ fn the_ledger_counts_document_wide_work_on_the_generic_structural_path() {
             "table_command_availability_plans",
             passes.table_command_availability_plans,
         ),
-        ("yrs_tree_walks", passes.yrs_tree_walks),
         ("cell_content_keys", passes.cell_content_keys),
         ("attribute_serializations", passes.attribute_serializations),
     ] {

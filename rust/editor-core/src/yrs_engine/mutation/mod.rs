@@ -12,7 +12,7 @@ pub(crate) use lowering::{
 
 #[cfg(test)]
 pub(crate) use lowering::{
-    lookup_payload_legacy_parity_for_test, reset_import_lookup_event_count_for_test,
+    assert_lookup_and_branch_index_parity_for_test, lookup_payload_legacy_parity_for_test, reset_import_lookup_event_count_for_test,
     set_lookup_seed_hydration_failpoint_for_test, take_import_lookup_event_count_for_test,
     LookupSeedHydrationFailpoint,
 };
