@@ -81,7 +81,8 @@ test('runner keeps unavailable history separate and never undoes prior history',
                 copy.checkpoints[1]!.textHistoryObservations = [];
             },
             (copy: typeof result) => {
-                copy.checkpoints[1]!.textHistoryObservations![0]!.raw.content![0]!.content![0]!.content![0]!.attrs!.rowspan = 3;
+                const cell = copy.checkpoints[1]!.textHistoryObservations![0]!.raw.content![0]!.content![0]!.content![0]!;
+                cell.attrs = { ...cell.attrs, rowspan: 3 };
             },
             (copy: typeof result) => {
                 copy.checkpoints[1]!.observations[0]!.document.tables[0]!.rows = 999;
