@@ -75,20 +75,33 @@ pub(crate) fn resolve_local_document(
             let depth_limit = crate::boundary::document_json_container_depth_limit(
                 config.resource_limits.max_document_depth,
             )?;
-            let value = parse_json_value_stack_safe(
+            let admitted = crate::boundary::DepthCheckedJson::new(
                 input.as_str(),
                 depth_limit,
                 config.resource_limits.max_document_depth,
                 "DOCUMENT_LIMIT_EXCEEDED",
-                "DOCUMENT_INVALID",
             )?;
-            let document = crate::serialize::from_prosemirror_json_with_limits(
-                value.as_value(),
-                &schema,
-                crate::serialize::UnknownTypeMode::Preserve,
-                &config.resource_limits,
-            )
-            .map_err(viewer_json_parse_error)?;
+            let document = crate::boundary::with_document_stack_for_json_container_depth(
+                admitted.container_depth(),
+                || {
+                    if let Some(document) = crate::serialize::json_in::try_from_plain_json(
+                        admitted.as_str(),
+                        &schema,
+                        &config.resource_limits,
+                    ) {
+                        document.map_err(viewer_json_parse_error)
+                    } else {
+                        let value = admitted.parse_value("DOCUMENT_INVALID")?;
+                        crate::serialize::from_prosemirror_json_with_limits(
+                            value.as_value(),
+                            &schema,
+                            crate::serialize::UnknownTypeMode::Preserve,
+                            &config.resource_limits,
+                        )
+                        .map_err(viewer_json_parse_error)
+                    }
+                },
+            )?;
             crate::yrs_engine::admit_local_import_document(
                 document,
                 &schema,

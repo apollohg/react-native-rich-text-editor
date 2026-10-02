@@ -899,3 +899,98 @@ fn viewer_reuses_import_validation_for_the_render_cache() {
     assert_eq!(counts.render_limit_tree_scans, 0, "{counts:#?}");
     assert_eq!(counts.table_projection_derivations, 0, "{counts:#?}");
 }
+
+#[test]
+fn plain_table_viewer_avoids_document_value_deserialization() {
+    use crate::yrs_engine::observability::{
+        reset_full_pass_counts_for_test, take_full_pass_counts_for_test,
+    };
+    const ROWS: usize = 1000;
+    const COLUMNS: usize = 20;
+    let request = FfiViewerCompileRequest {
+        source_kind: FfiViewerSourceKind::Json,
+        source: crate::test_support::large_table_fixture::plain_table_document(ROWS, COLUMNS)
+            .to_string(),
+        config_json: table_config(),
+        images_enabled: true,
+        mention_prefix: None,
+    };
+    reset_full_pass_counts_for_test();
+    let actual = viewer_compile(request.clone());
+    let actual_values = take_full_pass_counts_for_test().json_value_deserializations;
+    reset_full_pass_counts_for_test();
+    let expected = crate::serialize::json_in::with_legacy_json_for_test(|| viewer_compile(request));
+    let expected_values = take_full_pass_counts_for_test().json_value_deserializations;
+    assert!(actual.error.is_none(), "{:?}", actual.error);
+    assert!(expected.error.is_none(), "{:?}", expected.error);
+    assert_eq!(
+        actual_values + 1,
+        expected_values,
+        "eligible viewer content must avoid exactly its document Value tree"
+    );
+    assert_viewer_documents_equal(actual.value.unwrap(), expected.value.unwrap());
+}
+
+fn assert_viewer_documents_equal(
+    actual: std::sync::Arc<super::ViewerCompiledDocument>,
+    expected: std::sync::Arc<super::ViewerCompiledDocument>,
+) {
+    assert_eq!(actual.table_attributes, expected.table_attributes);
+    assert_eq!(actual.semantic_key, expected.semantic_key);
+    assert_eq!(actual.elements, expected.elements);
+    assert_eq!(actual.table_records, expected.table_records);
+    assert_eq!(actual.is_empty, expected.is_empty);
+    assert_eq!(
+        actual.preferred_text_block_name,
+        expected.preferred_text_block_name
+    );
+    assert_eq!(
+        actual.trailing_empty_text_block_count,
+        expected.trailing_empty_text_block_count
+    );
+    assert_eq!(actual.retained_bytes, expected.retained_bytes);
+}
+
+#[test]
+fn compact_viewer_json_preserves_complete_output_and_error_precedence() {
+    let sources = [
+        r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"a\n\uD83E\uDD80"}]}]}"#,
+        r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"rich","marks":[{"type":"bold"}]}]}]}"#,
+        r#"{"type":"doc","content":[{"type":"future","extra":{"nested":[null]}}]}"#,
+        r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":null,"text":"last wins"}]}]}"#,
+        r#"{"type":"doc","content":[{"type":"paragraph","content":null}]}"#,
+        r#"{"type":"doc","content":[{"type":"paragraph"}]} trailing"#,
+    ];
+    for source in sources {
+        for limits in [
+            serde_json::json!({}),
+            serde_json::json!({"resource":{"maxInputBytes":source.len() - 1}}),
+            serde_json::json!({"resource":{"maxDocumentNodes":2}}),
+            serde_json::json!({"resource":{"maxDocumentDepth":2}}),
+            serde_json::json!({"editing":{"maxDerivedOutputBytes":1}}),
+        ] {
+            let request = FfiViewerCompileRequest {
+                source_kind: FfiViewerSourceKind::Json,
+                source: source.into(),
+                config_json: serde_json::json!({
+                    "initialization":{"type":"localEmpty"}, "limits":limits,
+                })
+                .to_string(),
+                images_enabled: true,
+                mention_prefix: None,
+            };
+            let actual = viewer_compile(request.clone());
+            let expected =
+                crate::serialize::json_in::with_legacy_json_for_test(|| viewer_compile(request));
+            assert_eq!(
+                actual.error, expected.error,
+                "source {source}; limits {limits}"
+            );
+            match (actual.value, expected.value) {
+                (Some(actual), Some(expected)) => assert_viewer_documents_equal(actual, expected),
+                (None, None) => assert!(actual.error.is_some()),
+                _ => panic!("viewer success parity for source {source}; limits {limits}"),
+            }
+        }
+    }
+}
