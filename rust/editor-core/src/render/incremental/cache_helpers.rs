@@ -284,11 +284,7 @@ fn render_localized_table_block(
     replacement.doc_size = cell.node_size();
     replacement.content_key = content_key;
     replacement.elements = elements;
-    let mut cells = Vec::new();
-    cells
-        .try_reserve_exact(table.cell_capacity())
-        .map_err(|_| CachedRenderError::AllocationFailed)?;
-    cells.extend(table.cells.iter().cloned());
+    let mut cells = table.try_clone_cells()?;
     let cell_output_bytes = std::sync::OnceLock::new();
     if let Some(previous) = old
         .cell_output_bytes

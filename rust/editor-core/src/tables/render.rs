@@ -218,6 +218,20 @@ impl TableRenderCell {
     }
 }
 
+#[inline(always)]
+fn extend_cell_references(output: &mut Vec<Arc<TableRenderCell>>, input: &[Arc<TableRenderCell>]) {
+    output.extend(input.iter().cloned());
+}
+
+#[cfg(all(target_os = "android", target_arch = "aarch64"))]
+#[target_feature(enable = "lse")]
+unsafe fn extend_cell_references_lse(
+    output: &mut Vec<Arc<TableRenderCell>>,
+    input: &[Arc<TableRenderCell>],
+) {
+    extend_cell_references(output, input);
+}
+
 impl TableRenderRecord {
     pub(crate) fn new(
         structure: TableRenderStructure,
@@ -239,6 +253,21 @@ impl TableRenderRecord {
         self.cell_capacity
     }
 
+    pub(crate) fn try_clone_cells(&self) -> Result<Vec<Arc<TableRenderCell>>, CachedRenderError> {
+        let mut cells = Vec::new();
+        cells
+            .try_reserve_exact(self.cell_capacity())
+            .map_err(|_| CachedRenderError::AllocationFailed)?;
+        #[cfg(all(target_os = "android", target_arch = "aarch64"))]
+        if std::arch::is_aarch64_feature_detected!("lse") {
+            // Runtime detection keeps the baseline Android CPU requirement unchanged.
+            unsafe { extend_cell_references_lse(&mut cells, &self.cells) };
+            return Ok(cells);
+        }
+        extend_cell_references(&mut cells, &self.cells);
+        Ok(cells)
+    }
+
     pub(crate) fn shares_data_with(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.data, &other.data)
     }
@@ -250,7 +279,7 @@ impl TableRenderRecord {
     ) {
         let mut structure = self.structure.clone();
         let mut cells = Vec::with_capacity(self.cell_capacity);
-        cells.extend(self.cells.iter().cloned());
+        extend_cell_references(&mut cells, &self.cells);
         edit(&mut structure, &mut cells);
         *self = Self::new(structure, cells, self.source_fallback.clone());
     }
@@ -1005,6 +1034,60 @@ mod output_meter_tests {
             "snapshots remain valid after the source cache is released"
         );
         assert_eq!(snapshot.cells.len(), ROWS * COLUMNS);
+    }
+
+    #[test]
+    fn editable_cell_clones_preserve_capacity_identity_and_final_release() {
+        use crate::test_support::large_table_fixture::{
+            plain_table_document, session_with_document,
+        };
+        const ROWS: usize = 3;
+        const COLUMNS: usize = 3;
+        const EXTRA_CAPACITY: usize = 11;
+        let session = session_with_document(&plain_table_document(ROWS, COLUMNS));
+        let cache = crate::render::incremental::CachedRenderBlocks::build(
+            session.engine.document().unwrap(),
+            session.engine.schema(),
+            &crate::boundary::ResourceLimits::default(),
+        )
+        .unwrap();
+        let mut records = Vec::new();
+        cache.visit_table_records(&mut records);
+        let source = records[0].1;
+        for count in [0, 1, ROWS * COLUMNS] {
+            for spare in [0, EXTRA_CAPACITY] {
+                let mut cells = Vec::with_capacity(count + spare);
+                cells.extend(
+                    source
+                        .cells
+                        .iter()
+                        .take(count)
+                        .map(|cell| Arc::new((**cell).clone())),
+                );
+                let table = TableRenderRecord::new(source.structure.clone(), cells, None);
+                let weak: Vec<_> = table.cells.iter().map(Arc::downgrade).collect();
+                let mut baseline = Vec::new();
+                baseline.try_reserve_exact(table.cell_capacity()).unwrap();
+                baseline.extend(table.cells.iter().cloned());
+                let candidate = table.try_clone_cells().unwrap();
+                assert_eq!(
+                    candidate.capacity(),
+                    baseline.capacity(),
+                    "count={count} spare={spare}"
+                );
+                assert_eq!(candidate.len(), baseline.len());
+                for (old, new) in baseline.iter().zip(&candidate) {
+                    assert!(Arc::ptr_eq(old, new));
+                    assert_eq!(Arc::strong_count(new), 3);
+                }
+                drop(baseline);
+                drop(table);
+                assert!(candidate.iter().all(|cell| Arc::strong_count(cell) == 1));
+                assert!(weak.iter().all(|cell| cell.strong_count() == 1));
+                drop(candidate);
+                assert!(weak.iter().all(|cell| cell.upgrade().is_none()));
+            }
+        }
     }
 
     #[test]
