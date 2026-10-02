@@ -861,7 +861,10 @@ fn reserve_induced_compatible_roll_accepts_exact_standalone_metadata_boundary() 
     ));
 }
 
-fn recorded_text_history(edits: usize, policy: HistoryPolicy) -> (Doc, YrsHistory) {
+fn recorded_text_history(
+    edits: usize,
+    policy: impl Fn(usize) -> HistoryPolicy,
+) -> (Doc, YrsHistory) {
     const CLOCK_MILLIS: u64 = 10_000;
     const UPDATE_RESERVATION_BYTES: usize = 1024;
     let doc = Doc::new();
@@ -880,7 +883,7 @@ fn recorded_text_history(edits: usize, policy: HistoryPolicy) -> (Doc, YrsHistor
             .prepare_capture(
                 index as u64,
                 TransactionOrigin::LocalInput,
-                policy,
+                policy(index),
                 HistoryClass::Insert,
                 1,
                 Some(history_snapshot(index + 1)),
@@ -908,7 +911,7 @@ fn recorded_text_history(edits: usize, policy: HistoryPolicy) -> (Doc, YrsHistor
 fn coalesced_history_accounting_stops_when_the_newest_record_covers_the_stack() {
     use crate::yrs_engine::observability::HISTORY_REPLAY_METADATA_VISITS;
     const EDITS: usize = 256;
-    let (doc, history) = recorded_text_history(EDITS, HistoryPolicy::Auto);
+    let (doc, history) = recorded_text_history(EDITS, |_| HistoryPolicy::Auto);
     assert_eq!(history.manager.undo_stack().len(), 1);
     assert_eq!(history.replay_events.len(), EDITS);
     let retained = history.replay_metadata_bytes;
@@ -947,7 +950,7 @@ fn history_accounting_avoids_a_second_stack_pass_without_a_replay_ledger() {
     use crate::yrs_engine::observability::HISTORY_STACK_METADATA_VISITS;
     const EDITS: usize = 256;
     for policy in [HistoryPolicy::Auto, HistoryPolicy::Boundary] {
-        let (_doc, mut history) = recorded_text_history(EDITS, policy);
+        let (_doc, mut history) = recorded_text_history(EDITS, |_| policy);
         history.replay_events.clear();
         history.replay_metadata_bytes = 0;
         let expected = original_unmirrored_metadata_bytes(&history, 0).unwrap();
@@ -1054,7 +1057,7 @@ fn assert_history_membership_lookup_matches_original(history: &YrsHistory, label
 #[test]
 fn history_membership_preserves_charges_through_undo_redo_and_rebase() {
     const EDITS: usize = 12;
-    let (doc, mut history) = recorded_text_history(EDITS, HistoryPolicy::Boundary);
+    let (doc, mut history) = recorded_text_history(EDITS, |_| HistoryPolicy::Boundary);
     let fragment = doc.get_or_insert_xml_fragment("history-test");
     assert_eq!(history.manager.undo_stack().len(), EDITS);
     assert_history_membership_matches_original(&mut history, "separate undo groups");
@@ -1092,7 +1095,7 @@ fn history_membership_preserves_charges_through_undo_redo_and_rebase() {
 #[test]
 fn history_membership_preserves_slot_identity_and_original_error_order() {
     const SNAPSHOT_BYTES: usize = 9;
-    let (_doc, mut history) = recorded_text_history(2, HistoryPolicy::Boundary);
+    let (_doc, mut history) = recorded_text_history(2, |_| HistoryPolicy::Boundary);
     for event in &mut history.replay_events {
         if let ReplayEvent::Recorded { metadata, .. } = event {
             *metadata = metadata.shared_wrapper();
@@ -1159,17 +1162,12 @@ fn history_membership_preserves_slot_identity_and_original_error_order() {
 }
 
 #[test]
-fn history_membership_only_clones_slots_for_the_fee_pass() {
+fn history_membership_does_not_clone_mirrored_slots() {
     use crate::yrs_engine::observability::HISTORY_OWNED_SLOT_READS;
     const EDITS: usize = 256;
     for policy in [HistoryPolicy::Auto, HistoryPolicy::Boundary] {
-        let (_doc, history) = recorded_text_history(EDITS, policy);
+        let (_doc, history) = recorded_text_history(EDITS, |_| policy);
         let expected_bytes = original_unmirrored_metadata_bytes(&history, 0).unwrap();
-        let expected_reads = if policy == HistoryPolicy::Auto {
-            0
-        } else {
-            EDITS
-        };
         HISTORY_OWNED_SLOT_READS.set(0);
         assert_eq!(
             history.unmirrored_stack_metadata_bytes(0).unwrap(),
@@ -1177,8 +1175,93 @@ fn history_membership_only_clones_slots_for_the_fee_pass() {
         );
         assert_eq!(
             HISTORY_OWNED_SLOT_READS.get(),
-            expected_reads,
-            "{policy:?}: identity-only membership scans must not clone snapshot ownership"
+            0,
+            "{policy:?}: fully mirrored stacks must not clone snapshot ownership"
+        );
+    }
+}
+
+#[test]
+fn history_membership_checks_every_undo_item_before_skipping_the_fee_scan() {
+    const EDITS: usize = 4;
+    let (_doc, mut history) = recorded_text_history(EDITS, |_| HistoryPolicy::Boundary);
+    assert_eq!(history.manager.undo_stack().len(), EDITS);
+    let last = history.replay_events.pop().unwrap();
+    history.replay_events.clear();
+    history.replay_events.push(last);
+    assert!(history.unmirrored_stack_metadata_bytes(0).unwrap() > 0);
+    assert_history_membership_matches_original(
+        &mut history,
+        "short replay ledger matches newest item only",
+    );
+}
+
+#[test]
+fn history_membership_handles_distinct_wrappers_reordering_and_mixed_coalescing() {
+    const EDITS: usize = 12;
+    const GROUP_SIZE: usize = 3;
+    for mixed in [false, true] {
+        let (_doc, mut history) = recorded_text_history(EDITS, |index| {
+            if !mixed || index % GROUP_SIZE == 0 {
+                HistoryPolicy::Boundary
+            } else {
+                HistoryPolicy::Auto
+            }
+        });
+        assert_history_membership_matches_original(&mut history, "original wrappers");
+        history.replay_events.reverse();
+        assert_history_membership_matches_original(&mut history, "reordered coverage");
+        for event in &mut history.replay_events {
+            if let ReplayEvent::Recorded { metadata, .. } = event {
+                *metadata = metadata.shared_wrapper();
+            }
+        }
+        assert_history_membership_matches_original(
+            &mut history,
+            "same slots in different wrappers",
+        );
+    }
+}
+
+#[test]
+fn history_membership_ignores_unsealed_slots_only_when_mirrored() {
+    let (_doc, mut history) = recorded_text_history(1, |_| HistoryPolicy::Boundary);
+    history.manager.undo_stack()[0]
+        .meta()
+        .replace_slots(HistoryMetadataSlots {
+            before: Some(HistorySnapshotSlot::empty()),
+            after: Some(HistorySnapshotSlot::empty()),
+        });
+    assert_eq!(history.unmirrored_stack_metadata_bytes(0).unwrap(), 0);
+    assert_history_membership_matches_original(
+        &mut history,
+        "identical wrapper with unsealed slots",
+    );
+    history.replay_events.clear();
+    assert!(history.unmirrored_stack_metadata_bytes(0).is_err());
+    assert_history_membership_matches_original(&mut history, "unsealed slots without a mirror");
+}
+
+#[test]
+fn history_membership_preserves_poisoned_metadata_scan_behavior() {
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+    for edits in [3, 256] {
+        let (_doc, history) = recorded_text_history(edits, |_| HistoryPolicy::Auto);
+        let ReplayEvent::Recorded { metadata, .. } = &history.replay_events[0] else {
+            panic!("oldest edit must contain metadata");
+        };
+        assert!(catch_unwind(AssertUnwindSafe(|| {
+            let _guard = metadata.0.lock().unwrap();
+            panic!("poison an older metadata wrapper");
+        }))
+        .is_err());
+        let legacy_reads_oldest = edits == 3;
+        assert_eq!(
+            catch_unwind(AssertUnwindSafe(
+                || history.unmirrored_stack_metadata_bytes(0)
+            ))
+            .is_err(),
+            legacy_reads_oldest
         );
     }
 }

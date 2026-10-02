@@ -1,3 +1,5 @@
+const SNAPSHOT_SLOTS_PER_ITEM: usize = 2;
+
 impl YrsHistory {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn pre_admit_capture_limits(
@@ -323,8 +325,41 @@ impl YrsHistory {
         )
     }
 
+    fn undo_metadata_is_mirrored(&self) -> bool {
+        if !self.manager.redo_stack().is_empty() || self.replay_events.is_empty() {
+            return false;
+        }
+        let mut recorded = self.replay_events.iter().rev().filter_map(|event| {
+            if let ReplayEvent::Recorded { metadata, .. } = event {
+                #[cfg(test)]
+                super::observability::HISTORY_REPLAY_METADATA_VISITS
+                    .set(super::observability::HISTORY_REPLAY_METADATA_VISITS.get() + 1);
+                Some(metadata)
+            } else {
+                None
+            }
+        });
+        let all_mirrored = self.manager.undo_stack().iter().rev().all(|item| {
+            #[cfg(test)]
+            super::observability::HISTORY_STACK_METADATA_VISITS
+                .set(super::observability::HISTORY_STACK_METADATA_VISITS.get() + 1);
+            recorded.next().is_some_and(|metadata| {
+                Arc::ptr_eq(&item.meta().0, &metadata.0) && !metadata.0.is_poisoned()
+            })
+        });
+        if !all_mirrored {
+            return false;
+        }
+        // Preserve poisoned-lock behavior when the ordinary scan reads the entire ledger.
+        self.manager.undo_stack().len() < self.replay_events.len() / SNAPSHOT_SLOTS_PER_ITEM
+            || recorded.all(|metadata| !metadata.0.is_poisoned())
+    }
+
     fn unmirrored_stack_metadata_bytes(&self, request_id: u64) -> OperationResult<usize> {
-        const SNAPSHOT_SLOTS_PER_ITEM: usize = 2;
+        // Shared metadata wrappers prove every stack slot is already in the replay ledger.
+        if self.undo_metadata_is_mirrored() {
+            return Ok(0);
+        }
         let stack_items = self
             .manager
             .undo_stack()
