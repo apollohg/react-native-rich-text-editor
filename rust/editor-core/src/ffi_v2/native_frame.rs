@@ -75,6 +75,17 @@ impl TableContext<'_> {
         self.starts
             .get_or_init(|| cell_starts(self.record, self.position))
     }
+
+    fn cell_starts_at(&self, index: usize) -> (u32, Option<u32>) {
+        if let Some(starts) = self.starts.get() {
+            return (starts[index], starts.get(index + 1).copied());
+        }
+        let mut starts = crate::tables::render::absolute_cell_starts(self.record, self.position);
+        let start = starts
+            .nth(index)
+            .expect("render cell index must have a start");
+        (start, starts.next())
+    }
 }
 
 pub(super) fn contexts<'a>(
@@ -124,8 +135,7 @@ fn cell_record(
     keys: &BTreeMap<u32, String>,
 ) -> Result<FfiTableCellRecord, SessionError> {
     let cell = &context.record.cells[index];
-    let starts = context.starts();
-    let start = starts[index];
+    let (start, next_start) = context.cell_starts_at(index);
     let map = session
         .engine
         .position_map()
@@ -137,11 +147,11 @@ fn cell_record(
     let (origin, input_blocks, nested_tables) =
         super::native_frame_mapping::relative_cell_mapping(document, map, cell, start, keys)
             .map_err(invariant)?;
-    let scalar_end = if let Some(next) = starts.get(index + 1) {
+    let scalar_end = if let Some(next) = next_start {
         super::native_frame_mapping::scalar_range(
             map,
-            *next,
-            *next + context.record.cells[index + 1].doc_size,
+            next,
+            next + context.record.cells[index + 1].doc_size,
         )
         .0
     } else {
@@ -201,6 +211,9 @@ pub(super) fn table_record(
     context: &TableContext<'_>,
     keys: &BTreeMap<u32, String>,
 ) -> Result<FfiTableRecord, SessionError> {
+    if !context.record.cells.is_empty() {
+        context.starts();
+    }
     let structure = &context.record.structure;
     Ok(FfiTableRecord {
         table_key: context.key.clone(),
@@ -366,6 +379,9 @@ pub(crate) fn build_native_frame(
                 });
             match changed {
                 Some(changed) => {
+                    if changed.len() > 1 {
+                        context.starts();
+                    }
                     for index in changed {
                         tables.cell_updates.push(FfiTableCellUpdate {
                             table_key: context.key.clone(),

@@ -112,8 +112,8 @@ fn native_frame_keystroke_changes_one_cell_and_root_extents() {
     let delta = frame(&mut session, Some(OWNER));
     assert_eq!(
         super::native_frame::CELL_START_BUILDS.with(|count| count.get()),
-        1,
-        "a cell delta needs only its current table positions, not previous or unchanged tables"
+        0,
+        "a single-cell delta needs only its two boundaries, not a whole-table offset array"
     );
     assert!(
         delta.tables.tables.is_empty(),
@@ -852,4 +852,71 @@ fn native_table_typing_reuses_ancestors_observed_under_the_compilation_lock() {
             "candidate-store traversal remains complete; live checks reuse only ancestors observed under their held read lock"
         );
     }
+}
+
+#[test]
+fn native_frame_single_cell_offsets_stop_at_the_next_boundary_and_bulk_offsets_stay_linear() {
+    use super::native_frame::CELL_START_BUILDS;
+    use crate::tables::render::CELL_START_VALUE_VISITS;
+    const ROWS: usize = 1000;
+    const COLUMNS: usize = 20;
+    const CELLS: usize = ROWS * COLUMNS;
+    const CURRENT_AND_NEXT: usize = 2;
+    let source = crate::test_support::large_table_fixture::plain_table_document(ROWS, COLUMNS);
+    let mut session = session_with_document(&source);
+    let mut mirror = crate::test_support::table_frame_mirror::TableFrameMirror::default();
+    CELL_START_BUILDS.set(0);
+    CELL_START_VALUE_VISITS.set(0);
+    let full = frame(&mut session, Some(OWNER));
+    assert_eq!(
+        CELL_START_BUILDS.get(),
+        1,
+        "full frames share one offset array"
+    );
+    assert_eq!(
+        CELL_START_VALUE_VISITS.get(),
+        CELLS,
+        "full frames scan the cells once"
+    );
+    mirror.apply(&full).unwrap();
+    let edited_cells = [0, COLUMNS - 1, COLUMNS, CELLS / 2, CELLS - 1];
+    for (step, index) in edited_cells.into_iter().enumerate() {
+        native_edit(&mut session, REQUEST + step as u64, index, "🦀");
+        CELL_START_BUILDS.set(0);
+        CELL_START_VALUE_VISITS.set(0);
+        let delta = frame(&mut session, Some(OWNER));
+        assert_eq!(
+            CELL_START_BUILDS.get(),
+            0,
+            "cell {index}: no whole-table offsets"
+        );
+        assert_eq!(
+            CELL_START_VALUE_VISITS.get(),
+            (index + CURRENT_AND_NEXT).min(CELLS),
+            "cell {index}: stop after the following start, including row gaps"
+        );
+        assert_eq!(delta.tables.cell_updates.len(), 1);
+        assert_eq!(delta.tables.cell_updates[0].cell_index, index as u32);
+        mirror.apply(&delta).unwrap();
+        assert_mirror(&mut session, &mut mirror, &format!("single cell {index}"));
+    }
+    let batch_request = REQUEST + edited_cells.len() as u64;
+    native_edit(&mut session, batch_request, 0, "first");
+    native_edit(&mut session, batch_request + 1, CELLS - 1, "last");
+    CELL_START_BUILDS.set(0);
+    CELL_START_VALUE_VISITS.set(0);
+    let delta = frame(&mut session, Some(OWNER));
+    assert_eq!(delta.tables.cell_updates.len(), CURRENT_AND_NEXT);
+    assert_eq!(
+        CELL_START_BUILDS.get(),
+        1,
+        "bulk updates reuse a shared offset array"
+    );
+    assert_eq!(
+        CELL_START_VALUE_VISITS.get(),
+        CELLS,
+        "bulk updates scan the cells once"
+    );
+    mirror.apply(&delta).unwrap();
+    assert_mirror(&mut session, &mut mirror, "bulk update");
 }
