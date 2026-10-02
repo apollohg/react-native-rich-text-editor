@@ -127,11 +127,42 @@ pub struct TableRenderStructure {
     pub compatibility_diagnostic: Option<TableCompatibilityDiagnostic>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug)]
 pub struct TableRenderRecord {
-    pub structure: Arc<TableRenderStructure>,
-    pub cells: Vec<Arc<TableRenderCell>>,
+    data: Arc<TableRenderData>,
     pub(crate) source_fallback: Option<Arc<Vec<RenderElement>>>,
+    cell_capacity: usize,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct TableRenderData {
+    pub structure: TableRenderStructure,
+    pub cells: Box<[Arc<TableRenderCell>]>,
+}
+
+impl std::ops::Deref for TableRenderRecord {
+    type Target = TableRenderData;
+
+    fn deref(&self) -> &Self::Target {
+        &self.data
+    }
+}
+
+impl Clone for TableRenderRecord {
+    fn clone(&self) -> Self {
+        Self {
+            data: Arc::clone(&self.data),
+            source_fallback: self.source_fallback.clone(),
+            // Vec::clone charged only its length, even when the source had spare capacity.
+            cell_capacity: self.cells.len(),
+        }
+    }
+}
+
+impl PartialEq for TableRenderRecord {
+    fn eq(&self, other: &Self) -> bool {
+        self.data == other.data && self.source_fallback == other.source_fallback
+    }
 }
 
 impl Drop for TableRenderRecord {
@@ -184,6 +215,46 @@ impl TableRenderCell {
 }
 
 impl TableRenderRecord {
+    pub(crate) fn new(
+        structure: TableRenderStructure,
+        cells: Vec<Arc<TableRenderCell>>,
+        source_fallback: Option<Arc<Vec<RenderElement>>>,
+    ) -> Self {
+        let cell_capacity = cells.capacity();
+        Self {
+            data: Arc::new(TableRenderData {
+                structure,
+                cells: cells.into_boxed_slice(),
+            }),
+            source_fallback,
+            cell_capacity,
+        }
+    }
+
+    pub(crate) fn cell_capacity(&self) -> usize {
+        self.cell_capacity
+    }
+
+    pub(crate) fn shares_data_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.data, &other.data)
+    }
+
+    pub(crate) fn unique_cells_mut(&mut self) -> Option<&mut [Arc<TableRenderCell>]> {
+        Arc::get_mut(&mut self.data).map(|data| data.cells.as_mut())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn edit_parts_for_testing(
+        &mut self,
+        edit: impl FnOnce(&mut TableRenderStructure, &mut Vec<Arc<TableRenderCell>>),
+    ) {
+        let mut structure = self.structure.clone();
+        let mut cells = Vec::with_capacity(self.cell_capacity);
+        cells.extend(self.cells.iter().cloned());
+        edit(&mut structure, &mut cells);
+        *self = Self::new(structure, cells, self.source_fallback.clone());
+    }
+
     pub(crate) fn retained_bytes(&self, element_bytes: impl Fn(&RenderElement) -> usize) -> usize {
         self.retained_bytes_with_cell_bytes(element_bytes, None)
     }
@@ -196,14 +267,13 @@ impl TableRenderRecord {
         stacker::maybe_grow(RENDER_STACK_RED_ZONE, RENDER_STACK_SEGMENT, || {
             let mut bytes = std::mem::size_of::<Self>()
                 .saturating_add(
-                    crate::model::arc_allocation_retained_bytes(std::mem::size_of::<
-                        TableRenderStructure,
-                    >())
+                    crate::model::arc_allocation_retained_bytes(
+                        std::mem::size_of::<TableRenderData>(),
+                    )
                     .unwrap_or(usize::MAX),
                 )
                 .saturating_add(
-                    self.cells
-                        .capacity()
+                    self.cell_capacity
                         .saturating_mul(std::mem::size_of::<Arc<TableRenderCell>>()),
                 )
                 .saturating_add(self.structure.attrs_key.capacity())
@@ -689,11 +759,11 @@ pub(crate) fn generate_table(
         );
         context.source_only = previous_source_only;
         result?;
-        return Ok(TableRenderRecord {
-            structure: Arc::new(structure),
-            cells: Vec::new(),
-            source_fallback: Some(Arc::new(elements)),
-        });
+        return Ok(TableRenderRecord::new(
+            structure,
+            Vec::new(),
+            Some(Arc::new(elements)),
+        ));
     };
     structure.rows = projected.rows;
     structure.columns = projected.columns;
@@ -772,11 +842,7 @@ pub(crate) fn generate_table(
                 attrs_key: context.intern_attributes(&region.node, true),
             });
     }
-    Ok(TableRenderRecord {
-        structure: Arc::new(structure),
-        cells,
-        source_fallback: None,
-    })
+    Ok(TableRenderRecord::new(structure, cells, None))
 }
 
 pub(crate) fn absolute_cell_starts(table: &TableRenderRecord, table_pos: u32) -> Vec<u32> {
@@ -824,6 +890,99 @@ pub(crate) fn absolute_source_rows(
 #[cfg(test)]
 mod output_meter_tests {
     use super::*;
+
+    #[test]
+    fn shared_table_headers_preserve_the_legacy_render_charge() {
+        type PreviousRecord = (
+            Arc<TableRenderStructure>,
+            Vec<Arc<TableRenderCell>>,
+            Option<Arc<Vec<RenderElement>>>,
+        );
+        #[allow(dead_code)]
+        enum PreviousElementLayout {
+            Table {
+                table: PreviousRecord,
+                doc_offset: u32,
+            },
+            OpaqueInlineAtom {
+                node_type: String,
+                label: String,
+                doc_pos: u32,
+                attrs: std::collections::HashMap<String, serde_json::Value>,
+                mention_theme: Option<std::collections::HashMap<String, serde_json::Value>>,
+            },
+        }
+        const _: () = {
+            assert!(
+                std::mem::size_of::<TableRenderRecord>() + std::mem::size_of::<TableRenderData>()
+                    == std::mem::size_of::<PreviousRecord>()
+                        + std::mem::size_of::<TableRenderStructure>()
+            );
+            assert!(std::mem::size_of::<RenderElement>() == std::mem::size_of::<PreviousElementLayout>());
+        };
+        let allocation = crate::model::arc_allocation_retained_bytes;
+        assert_eq!(
+            std::mem::size_of::<TableRenderRecord>()
+                + allocation(std::mem::size_of::<TableRenderData>()).unwrap(),
+            std::mem::size_of::<PreviousRecord>()
+                + allocation(std::mem::size_of::<TableRenderStructure>()).unwrap(),
+            "sharing must not change fixed render/history admission charges",
+        );
+        assert_eq!(
+            std::mem::size_of::<RenderElement>(),
+            std::mem::size_of::<PreviousElementLayout>(),
+            "the table variant must not alter enclosing vector charges"
+        );
+    }
+
+    #[test]
+    fn table_snapshot_clones_share_cells_and_preserve_capacity_charges() {
+        use crate::render::output_bytes::render_element_bytes;
+        use crate::test_support::large_table_fixture::{
+            plain_table_document, session_with_document,
+        };
+        const ROWS: usize = 3;
+        const COLUMNS: usize = 3;
+        let session = session_with_document(&plain_table_document(ROWS, COLUMNS));
+        let cache = crate::render::incremental::CachedRenderBlocks::build(
+            session.engine.document().unwrap(),
+            session.engine.schema(),
+            &crate::boundary::ResourceLimits::default(),
+        )
+        .unwrap();
+        let mut records = Vec::new();
+        cache.visit_table_records(&mut records);
+        let table = records[0].1;
+        let charged = table.retained_bytes(render_element_bytes);
+        let capacity = table.cell_capacity();
+        assert!(
+            capacity > table.cells.len(),
+            "fixture must exercise spare vector capacity"
+        );
+        let snapshot = table.clone();
+        assert_eq!(
+            table.cells.as_ptr(),
+            snapshot.cells.as_ptr(),
+            "materializing a snapshot must not copy every cell reference"
+        );
+        assert_eq!(
+            snapshot.retained_bytes(render_element_bytes),
+            charged - (capacity - table.cells.len()) * std::mem::size_of::<Arc<TableRenderCell>>(),
+            "a cloned snapshot keeps the prior Vec clone's exact charge"
+        );
+        let next = snapshot.clone();
+        assert_eq!(
+            snapshot.retained_bytes(render_element_bytes),
+            next.retained_bytes(render_element_bytes)
+        );
+        drop(records);
+        drop(cache);
+        assert_eq!(
+            snapshot, next,
+            "snapshots remain valid after the source cache is released"
+        );
+        assert_eq!(snapshot.cells.len(), ROWS * COLUMNS);
+    }
 
     #[test]
     fn standalone_cell_output_meter_preserves_the_render_stack_guard() {

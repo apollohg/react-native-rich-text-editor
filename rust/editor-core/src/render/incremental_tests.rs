@@ -1280,16 +1280,18 @@ fn table_output_meter_reuses_only_identical_ordered_cell_allocations() {
     );
     assert_eq!(cache.table_cell_output_bytes(usize::MAX, table), None);
     let mut reordered = table.clone();
-    reordered.cells.swap(0, 1);
+    reordered.edit_parts_for_testing(|_, cells| cells.swap(0, 1));
     assert_eq!(cache.table_cell_output_bytes(0, &reordered), None);
     let mut duplicated = table.clone();
-    duplicated.cells[1] = Arc::clone(&duplicated.cells[0]);
+    duplicated.edit_parts_for_testing(|_, cells| cells[1] = Arc::clone(&cells[0]));
     assert_eq!(cache.table_cell_output_bytes(0, &duplicated), None);
     let mut changed = table.clone();
     const EXTRA_CAPACITY: usize = 1024;
-    Arc::make_mut(&mut changed.cells[0])
-        .attrs_key
-        .reserve(EXTRA_CAPACITY);
+    changed.edit_parts_for_testing(|_, cells| {
+        Arc::make_mut(&mut cells[0])
+            .attrs_key
+            .reserve(EXTRA_CAPACITY);
+    });
     assert_eq!(
         cache.table_cell_output_bytes(0, &changed),
         None,

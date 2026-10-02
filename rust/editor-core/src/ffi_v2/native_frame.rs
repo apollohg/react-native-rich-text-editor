@@ -325,7 +325,7 @@ pub(crate) fn build_native_frame(
                 .filter(|old| {
                     old_hosts.get(&context.key) == Some(&context.host)
                         && old.cells.len() == context.record.cells.len()
-                        && (Arc::ptr_eq(&old.structure, &context.record.structure)
+                        && (old.shares_data_with(context.record)
                             || same_layout(&old.structure, &context.record.structure))
                 })
                 .and_then(|old| {

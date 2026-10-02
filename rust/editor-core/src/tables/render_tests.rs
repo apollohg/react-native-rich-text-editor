@@ -131,6 +131,43 @@ fn raised_depth_table_transport_keeps_flat_table_records() {
                     crate::viewer::FfiViewerElement::TextRun { text, .. } if text == "deep")));
             }
         }
+        const DROP_THREAD_STACK_BYTES: usize = 128 * 1024;
+        for cache_first in [false, true] {
+            let owned = CachedRenderBlocks::build(&document, &schema, &limits).unwrap();
+            let mut tables = Vec::new();
+            owned.visit_table_records(&mut tables);
+            let weak_cells: Vec<_> = tables
+                .iter()
+                .flat_map(|(_, table)| table.cells.iter().map(Arc::downgrade))
+                .collect();
+            drop(tables);
+            let snapshot = owned.materialize();
+            let last = snapshot.clone();
+            std::thread::Builder::new()
+                .name(format!("shared-table-drop-cache-first-{cache_first}"))
+                .stack_size(DROP_THREAD_STACK_BYTES)
+                .spawn(move || {
+                    if cache_first {
+                        drop(owned);
+                        drop(snapshot);
+                    } else {
+                        drop(snapshot);
+                        drop(owned);
+                    }
+                    assert!(
+                        weak_cells.iter().all(|cell| cell.upgrade().is_some()),
+                        "the final snapshot must keep every nested cell alive"
+                    );
+                    drop(last);
+                    assert!(
+                        weak_cells.iter().all(|cell| cell.upgrade().is_none()),
+                        "the final owner must release every nested cell"
+                    );
+                })
+                .unwrap()
+                .join()
+                .expect("deep shared table destruction must not overflow");
+        }
         crate::boundary::drop_json_value_stack_safe(input);
     });
 }

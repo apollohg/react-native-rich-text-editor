@@ -520,22 +520,22 @@ mod result_meter_tests {
             };
             match variation {
                 0 => {}
-                1 => table.cells.reserve(EXTRA_CAPACITY),
-                2 => Arc::make_mut(&mut table.structure)
-                    .attrs_key
-                    .reserve(EXTRA_CAPACITY),
+                1 => table.edit_parts_for_testing(|_, cells| cells.reserve(EXTRA_CAPACITY)),
+                2 => table.edit_parts_for_testing(|structure, _| {
+                    structure.attrs_key.reserve(EXTRA_CAPACITY)
+                }),
                 3 => table.source_fallback = Some(Arc::new(base[0].clone())),
-                4 => {
-                    let cell = Arc::make_mut(&mut table.cells[0]);
+                4 => table.edit_parts_for_testing(|_, cells| {
+                    let cell = Arc::make_mut(&mut cells[0]);
                     Arc::make_mut(&mut cell.elements).push(RenderElement::TextRun {
                         text: "changed".into(),
                         marks: vec![],
                     });
-                }
-                5 => {
-                    table.cells.remove(0);
-                }
-                _ => table.cells.reverse(),
+                }),
+                5 => table.edit_parts_for_testing(|_, cells| {
+                    cells.remove(0);
+                }),
+                _ => table.edit_parts_for_testing(|_, cells| cells.reverse()),
             }
             for patch_start in [None, Some(0), Some(usize::MAX)] {
                 let update = match patch_start {
@@ -557,7 +557,7 @@ mod result_meter_tests {
                     let RenderElement::Table { table, .. } = &mut actual[0][0] else {
                         unreachable!()
                     };
-                    table.cells.reserve(EXTRA_CAPACITY);
+                    table.edit_parts_for_testing(|_, cells| cells.reserve(EXTRA_CAPACITY));
                 }
                 assert_eq!(
                     render_update_bytes(&update, Some(&cache)),

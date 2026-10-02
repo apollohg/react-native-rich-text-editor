@@ -168,12 +168,13 @@ impl CachedRenderBlocks {
         let [RenderElement::Table { table: cached, .. }] = block.elements.as_slice() else {
             return None;
         };
-        if cached.cells.len() != actual.cells.len()
-            || !cached
-                .cells
-                .iter()
-                .zip(&actual.cells)
-                .all(|(cached, actual)| Arc::ptr_eq(cached, actual))
+        if !cached.shares_data_with(actual)
+            && (cached.cells.len() != actual.cells.len()
+                || !cached
+                    .cells
+                    .iter()
+                    .zip(&actual.cells)
+                    .all(|(cached, actual)| Arc::ptr_eq(cached, actual)))
         {
             return None;
         }

@@ -287,7 +287,7 @@ fn render_localized_table_block(
     replacement.elements = elements;
     let mut cells = Vec::new();
     cells
-        .try_reserve_exact(table.cells.capacity())
+        .try_reserve_exact(table.cell_capacity())
         .map_err(|_| CachedRenderError::AllocationFailed)?;
     cells.extend(table.cells.iter().cloned());
     let cell_output_bytes = std::sync::OnceLock::new();
@@ -305,13 +305,9 @@ fn render_localized_table_block(
         }
     }
     cells[index] = Arc::new(replacement);
-    let mut structure = (*table.structure).clone();
+    let mut structure = table.structure.clone();
     structure.doc_size = new.node_size();
-    let table = crate::tables::render::TableRenderRecord {
-        structure: Arc::new(structure),
-        cells,
-        source_fallback: None,
-    };
+    let table = crate::tables::render::TableRenderRecord::new(structure, cells, None);
     let mut elements = Vec::new();
     elements
         .try_reserve_exact(old.elements.capacity())

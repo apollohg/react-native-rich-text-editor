@@ -190,7 +190,10 @@ impl RenderElement {
     pub(crate) fn drain_json_payloads(&mut self) {
         match self {
             Self::Table { table, .. } => {
-                for cell in &mut table.cells {
+                let Some(cells) = table.unique_cells_mut() else {
+                    return;
+                };
+                for cell in cells {
                     let Some(cell) = std::sync::Arc::get_mut(cell) else {
                         continue;
                     };
