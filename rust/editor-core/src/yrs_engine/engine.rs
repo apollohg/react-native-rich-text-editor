@@ -810,6 +810,8 @@ impl YrsDocumentEngine {
             schema: &self.schema,
             index: &state.table_projection_index,
             position_map: &state.position_map,
+            render_blocks: &state.render_blocks,
+            schema_fingerprint: &self.schema_fingerprint,
         }
     }
 

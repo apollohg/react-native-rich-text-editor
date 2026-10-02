@@ -1,5 +1,7 @@
+mod content_key;
 mod row_key;
 mod source_rows;
+pub use content_key::TableContentKey;
 pub use row_key::TableRowAttributeKey;
 pub use source_rows::TableSourceRows;
 
@@ -91,7 +93,7 @@ pub struct TableRenderCell {
     pub colspan: u32,
     pub header: bool,
     pub attrs_key: String,
-    pub content_key: String,
+    pub content_key: TableContentKey,
     pub elements: Arc<Vec<RenderElement>>,
 }
 
@@ -219,7 +221,7 @@ impl TableRenderCell {
             let bytes = crate::model::arc_allocation_retained_bytes(std::mem::size_of::<Self>())
                 .unwrap_or(usize::MAX)
                 .saturating_add(self.attrs_key.capacity())
-                .saturating_add(self.content_key.capacity())
+                .saturating_add(self.content_key.retained_string_capacity())
                 .saturating_add(
                     self.elements
                         .capacity()
@@ -416,7 +418,7 @@ pub(crate) fn element_shallow_count(element: &RenderElement) -> usize {
 pub(crate) struct TableRenderContext {
     pub index: Arc<TableProjectionIndex>,
     pub prior_cells: HashMap<usize, (Node, Arc<TableRenderCell>)>,
-    prior_content: HashMap<String, Arc<Vec<RenderElement>>>,
+    prior_content: HashMap<TableContentKey, Arc<Vec<RenderElement>>>,
     pub coordinate_origin: u32,
     pub source_only: bool,
     pub schema_key: String,
@@ -633,13 +635,17 @@ impl TableRenderContext {
     }
 }
 
-fn attribute_key(digest: &[u8; ATTRIBUTE_DIGEST_BYTES]) -> String {
-    let mut key = String::with_capacity(ATTRIBUTE_KEY_BYTES);
-    for byte in digest {
-        key.push(ATTRIBUTE_HEX_DIGITS[usize::from(byte >> 4)] as char);
-        key.push(ATTRIBUTE_HEX_DIGITS[usize::from(byte & 0x0f)] as char);
+fn attribute_key_bytes(digest: &[u8; ATTRIBUTE_DIGEST_BYTES]) -> [u8; ATTRIBUTE_KEY_BYTES] {
+    let mut bytes = [0; ATTRIBUTE_KEY_BYTES];
+    for (pair, byte) in bytes.chunks_exact_mut(2).zip(digest) {
+        pair[0] = ATTRIBUTE_HEX_DIGITS[usize::from(byte >> 4)];
+        pair[1] = ATTRIBUTE_HEX_DIGITS[usize::from(byte & 0x0f)];
     }
-    key
+    bytes
+}
+
+fn attribute_key(digest: &[u8; ATTRIBUTE_DIGEST_BYTES]) -> String {
+    String::from_utf8(attribute_key_bytes(digest).to_vec()).expect("hexadecimal is UTF-8")
 }
 
 fn increment_attribute_key(digest: &mut [u8; 32]) {
@@ -682,11 +688,17 @@ fn attrs_fingerprint(attrs: &[(&String, &serde_json::Value)]) -> u64 {
     hash.finish()
 }
 
-struct ContentKeySink(Sha256);
+pub(crate) const CELL_FINGERPRINT_CHILD_TERMINATOR: u8 = 0xff;
+
+struct ContentKeySink {
+    digest: Sha256,
+    cell: std::hash::DefaultHasher,
+}
 
 impl std::io::Write for ContentKeySink {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0.update(bytes);
+        self.digest.update(bytes);
+        self.cell.write(bytes);
         Ok(bytes.len())
     }
 
@@ -695,16 +707,20 @@ impl std::io::Write for ContentKeySink {
     }
 }
 
-fn content_key(cell: &Node, schema: &Schema, schema_key: &str) -> String {
+fn content_key(cell: &Node, schema: &Schema, schema_key: &str) -> TableContentKey {
     #[cfg(test)]
     crate::yrs_engine::observability::record_cell_content_key();
-    let mut sink = ContentKeySink(Sha256::new());
-    sink.0.update(schema_key.as_bytes());
+    let mut sink = ContentKeySink {
+        digest: Sha256::new(),
+        cell: std::hash::DefaultHasher::new(),
+    };
+    sink.digest.update(schema_key.as_bytes());
     for index in 0..cell.child_count() {
         crate::serialize::json_out::write_node_json(&mut sink, cell.child(index).unwrap(), schema)
             .expect("content hash writes are infallible");
+        sink.cell.write_u8(CELL_FINGERPRINT_CHILD_TERMINATOR);
     }
-    format!("{:x}", sink.0.finalize())
+    TableContentKey::new(sink.digest.finalize().into(), sink.cell.finish())
 }
 
 pub(crate) fn render_cell_content(
@@ -712,7 +728,7 @@ pub(crate) fn render_cell_content(
     schema: &Schema,
     cell_pos: u32,
     context: &mut TableRenderContext,
-) -> Result<(String, Arc<Vec<RenderElement>>), CachedRenderError> {
+) -> Result<(TableContentKey, Arc<Vec<RenderElement>>), CachedRenderError> {
     let key = content_key(cell, schema, &context.schema_key);
     let elements = if let Some(prior) = context.prior_content.get(&key) {
         Arc::clone(prior)

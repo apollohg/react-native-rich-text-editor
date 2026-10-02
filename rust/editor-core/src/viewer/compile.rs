@@ -200,7 +200,7 @@ fn viewer_element(
                         colspan: cell.colspan,
                         header: cell.header,
                         attrs_key: cell.attrs_key.clone(),
-                        content_key: cell.content_key.clone(),
+                        content_key: cell.content_key.to_owned_string(),
                         elements: cell
                             .elements
                             .iter()

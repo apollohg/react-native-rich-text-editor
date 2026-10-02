@@ -183,7 +183,7 @@ fn cell_record(
         colspan: cell.colspan,
         header: cell.header,
         attrs_key: cell.attrs_key.clone(),
-        content_key: cell.content_key.clone(),
+        content_key: cell.content_key.to_owned_string(),
         doc_size: cell.doc_size,
         scalar_stride: scalar_end
             .checked_sub(origin)

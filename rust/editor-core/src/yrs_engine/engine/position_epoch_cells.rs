@@ -16,6 +16,11 @@ const ADJACENT_TEXT_POSITION: u32 = 1;
 const TEXT_STEP: u32 = 1;
 const RUN_STEP: u32 = 1;
 
+#[cfg(test)]
+thread_local! {
+    static PINNED_CELL_SERIALIZATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 struct CellFingerprintSink(DefaultHasher);
 
 impl std::io::Write for CellFingerprintSink {
@@ -34,9 +39,82 @@ pub(super) struct CellPinning<'state> {
     pub(super) schema: &'state Schema,
     pub(super) index: &'state TableProjectionIndex,
     pub(super) position_map: &'state PositionMap,
+    pub(super) render_blocks: &'state crate::render::incremental::CachedRenderBlocks,
+    pub(super) schema_fingerprint: &'state str,
+}
+
+struct RenderedCellFingerprints<'state> {
+    tables: Vec<(
+        usize,
+        &'state ProjectedTable,
+        &'state crate::tables::render::TableRenderRecord,
+    )>,
+}
+
+impl RenderedCellFingerprints<'_> {
+    fn fingerprint(
+        &self,
+        table: &ProjectedTable,
+        cell: &ProjectedCell,
+        node: &Node,
+    ) -> Option<u64> {
+        let key = table as *const ProjectedTable as usize;
+        let entry = self
+            .tables
+            .binary_search_by_key(&key, |entry| entry.0)
+            .ok()?;
+        let (_, projected, rendered) = self.tables[entry];
+        if table.rows != projected.rows || table.columns != projected.columns {
+            return None;
+        }
+        let index = projected
+            .cells
+            .binary_search_by_key(&cell.source_pos, |cell| cell.source_pos)
+            .ok()?;
+        if projected.cells[index] != *cell {
+            return None;
+        }
+        let rendered = rendered.cells.get(index)?;
+        (rendered.doc_size == node.node_size()
+            && rendered.row == cell.rect.row
+            && rendered.column == cell.rect.column
+            && rendered.rowspan == cell.rect.rowspan
+            && rendered.colspan == cell.rect.colspan)
+            .then(|| rendered.content_key.cell_fingerprint())
+            .flatten()
+    }
 }
 
 impl CellPinning<'_> {
+    fn rendered_fingerprints(&self) -> RenderedCellFingerprints<'_> {
+        let mut tables = Vec::new();
+        if self
+            .render_blocks
+            .matches_identity(self.document, self.schema_fingerprint)
+        {
+            let mut records = Vec::new();
+            self.render_blocks.visit_table_records(&mut records);
+            for (position, record) in records {
+                let Some(source) = self.index.table_at(position) else {
+                    continue;
+                };
+                let Some(projected) = self.render_blocks.table_projection_index.table_at(position)
+                else {
+                    continue;
+                };
+                if record.source_fallback.is_none()
+                    && record.cells.len() == projected.cells.len()
+                    && record.structure.rows == projected.rows
+                    && record.structure.columns == projected.columns
+                {
+                    tables.push((source as *const ProjectedTable as usize, projected, record));
+                }
+            }
+            tables.sort_unstable_by_key(|entry| entry.0);
+        }
+        RenderedCellFingerprints { tables }
+    }
+
     pub(super) fn spans(&self, doc_positions: &[Vec<u32>]) -> Vec<Arc<PinnedCellSpan>> {
         let cells = self.cells_in_document_order();
         let points = self.text_points(
@@ -54,14 +132,22 @@ impl CellPinning<'_> {
         );
         let starts: Vec<u32> = cells.iter().map(|(_, cell)| cell.source_pos).collect();
         let nodes = nodes_starting_at(self.document, &starts);
+        let fingerprints = self.rendered_fingerprints();
         cells
             .into_iter()
             .zip(nodes)
             .zip(points)
             .filter_map(|(((table, cell), node), points)| {
                 let (node_path, node) = node?;
-                self.span(table, cell, node, node_path, points)
-                    .map(Arc::new)
+                self.span(
+                    table,
+                    cell,
+                    node,
+                    node_path,
+                    points,
+                    fingerprints.fingerprint(table, cell, node),
+                )
+                .map(Arc::new)
             })
             .collect()
     }
@@ -71,6 +157,7 @@ impl CellPinning<'_> {
         previous: &[&PinnedCellSpan],
         positions: &[(usize, Vec<u32>)],
     ) -> Option<Vec<Arc<PinnedCellSpan>>> {
+        let fingerprints = self.rendered_fingerprints();
         let mut cells = Vec::with_capacity(previous.len());
         for span in previous {
             let table_path = span.node_path.get(..span.node_path.len().checked_sub(2)?)?;
@@ -106,12 +193,14 @@ impl CellPinning<'_> {
             .zip(cells)
             .zip(points)
             .map(|((previous, (table, cell)), points)| {
+                let node = self.document.node_at(&previous.node_path)?;
                 self.span(
                     table,
                     cell,
-                    self.document.node_at(&previous.node_path)?,
+                    node,
                     previous.node_path.clone(),
                     points,
+                    fingerprints.fingerprint(table, cell, node),
                 )
                 .map(Arc::new)
             })
@@ -125,8 +214,9 @@ impl CellPinning<'_> {
         node: &Node,
         node_path: Vec<u32>,
         mut points: Vec<(u32, CellTextPoint)>,
+        content_fingerprint: Option<u64>,
     ) -> Option<PinnedCellSpan> {
-        let pinned = self.pin(table, cell, node, &points)?;
+        let pinned = self.pin(table, cell, node, &points, content_fingerprint)?;
         let block_range = self.position_map.block_range_for_path(&node_path);
         if !points.is_empty() {
             if block_range.is_empty() {
@@ -188,7 +278,7 @@ impl CellPinning<'_> {
             .ok()?;
         let node = node_starting_at(self.document, cell.source_pos)?;
         let points = self.cell_text_points(&cells, target)?;
-        if self.pin(table, cell, node, &points)? != *pinned.cell {
+        if self.pin(table, cell, node, &points, None)? != *pinned.cell {
             return None;
         }
         scalar_at_point(&points, pinned.point)
@@ -271,18 +361,20 @@ impl CellPinning<'_> {
         cell: &ProjectedCell,
         node: &Node,
         points: &[(u32, CellTextPoint)],
+        content_fingerprint: Option<u64>,
     ) -> Option<PinnedTableCell> {
-        let mut content_fingerprint = CellFingerprintSink(DefaultHasher::new());
-        for child in node.content()?.iter() {
-            crate::serialize::json_out::write_node_json(
-                &mut content_fingerprint,
-                child,
-                self.schema,
-            )
-            .expect("cell fingerprint writes are infallible");
-            const STRING_HASH_TERMINATOR: u8 = 0xff;
-            content_fingerprint.0.write_u8(STRING_HASH_TERMINATOR);
-        }
+        let content = node.content()?;
+        let content_fingerprint = content_fingerprint.unwrap_or_else(|| {
+            let mut fingerprint = CellFingerprintSink(DefaultHasher::new());
+            for child in content.iter() {
+                #[cfg(test)]
+                PINNED_CELL_SERIALIZATIONS.set(PINNED_CELL_SERIALIZATIONS.get() + 1);
+                crate::serialize::json_out::write_node_json(&mut fingerprint, child, self.schema)
+                    .expect("cell fingerprint writes are infallible");
+                fingerprint.0.write_u8(crate::tables::render::CELL_FINGERPRINT_CHILD_TERMINATOR);
+            }
+            fingerprint.0.finish()
+        });
         Some(PinnedTableCell {
             row: cell.rect.row,
             column: cell.rect.column,
@@ -290,7 +382,7 @@ impl CellPinning<'_> {
             colspan: cell.rect.colspan,
             table_rows: table.rows,
             table_columns: table.columns,
-            content_fingerprint: content_fingerprint.0.finish(),
+            content_fingerprint,
             text_fingerprint: text_fingerprint_of(node),
             run_structure: run_structure_of(points),
         })

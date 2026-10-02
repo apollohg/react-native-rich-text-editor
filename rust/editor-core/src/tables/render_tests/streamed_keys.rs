@@ -1,6 +1,7 @@
 use super::*;
 use crate::boundary::{drop_json_value_stack_safe, serialize_json_value_stack_safe};
 use crate::serialize::json_out::node_to_json;
+use std::hash::{Hash, Hasher};
 
 #[test]
 fn content_keys_hash_the_concatenated_child_json() {
@@ -60,6 +61,7 @@ fn content_keys_hash_the_concatenated_child_json() {
             {
                 let node = nodes[&pos];
                 let mut hash = Sha256::new();
+                let mut cell_hash = std::hash::DefaultHasher::new();
                 hash.update(crate::schema::schema_fingerprint(&schema).as_bytes());
                 for child in node.content().unwrap().iter() {
                     let value = node_to_json(child, &schema);
@@ -68,13 +70,32 @@ fn content_keys_hash_the_concatenated_child_json() {
                     crate::serialize::json_out::write_node_json(&mut streamed, child, &schema)
                         .unwrap();
                     assert_eq!(streamed, bytes, "{name}: cell {pos} streamed bytes");
+                    std::str::from_utf8(&bytes).unwrap().hash(&mut cell_hash);
                     hash.update(bytes);
                     drop_json_value_stack_safe(value);
                 }
                 assert_eq!(
-                    cell.content_key,
-                    format!("{:x}", hash.finalize()),
+                    cell.content_key.cell_fingerprint(),
+                    Some(cell_hash.finish()),
+                    "{name}: cell {pos} preserves the independent child string hashes"
+                );
+                let legacy_key = format!("{:x}", hash.finalize());
+                assert_eq!(
+                    cell.content_key.retained_string_capacity(),
+                    legacy_key.capacity(),
+                    "{name}: cell {pos} preserves the original format! allocation charge"
+                );
+                assert_eq!(
+                    cell.content_key.to_owned_string(),
+                    legacy_key,
                     "{name}: cell {pos} canonical concatenated children"
+                );
+                let mut legacy_cell = cell.as_ref().clone();
+                legacy_cell.content_key = legacy_key.into();
+                assert_eq!(
+                    cell.retained_bytes(|_| 0),
+                    legacy_cell.retained_bytes(|_| 0),
+                    "{name}: cell {pos} full cell retained charge"
                 );
             }
         }
