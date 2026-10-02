@@ -202,7 +202,7 @@ impl Transaction {
         let mut composed_map = StepMap::empty();
 
         for step in &self.steps {
-            let (new_doc, step_map) = apply::apply_step(&current, step, schema)?;
+            let (new_doc, step_map) = apply::apply_owned_step(current, step, schema)?;
             composed_map.append(&step_map);
             current = new_doc;
         }
@@ -210,3 +210,6 @@ impl Transaction {
         Ok((current, composed_map))
     }
 }
+
+#[cfg(test)]
+mod owned_replacement_tests;

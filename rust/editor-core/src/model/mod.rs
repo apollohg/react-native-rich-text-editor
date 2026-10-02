@@ -127,6 +127,11 @@ impl Document {
         &self.root
     }
 
+    pub(crate) fn replace_node_at_path(mut self, path: &[u32], replacement: Node) -> Self {
+        self.root.replace_node_at_path(path, replacement);
+        self
+    }
+
     pub(crate) fn shares_root_storage_with(&self, other: &Self) -> bool {
         self.root.shares_storage_with(&other.root)
     }
