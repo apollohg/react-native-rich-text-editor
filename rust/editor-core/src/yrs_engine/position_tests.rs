@@ -897,3 +897,214 @@ fn pinning_visits_every_yrs_node_once_however_many_boundaries_it_anchors() {
             .expect("the engine fragment exists");
     }
 }
+
+fn assert_plain_read_matches_diff(
+    label: &str,
+    text: &XmlTextRef,
+    txn: &impl ReadTxn,
+    expected_fallbacks: usize,
+) -> Option<String> {
+    use yrs::Text;
+    let expected = text
+        .diff(txn, yrs::types::text::YChange::identity)
+        .into_iter()
+        .try_fold(String::new(), |mut value, diff| {
+            let yrs::Out::Any(yrs::Any::String(run)) = diff.insert else {
+                return None;
+            };
+            value.push_str(&run);
+            Some(value)
+        });
+    super::PLAIN_TEXT_DIFF_FALLBACKS.set(0);
+    let actual = xml_text_plain_string(text, txn);
+    assert_eq!(
+        actual, expected,
+        "{label}: plain text differs from the mark-aware reader"
+    );
+    assert_eq!(
+        super::PLAIN_TEXT_DIFF_FALLBACKS.get(),
+        expected_fallbacks,
+        "{label}: only unsupported live item content needs mark diffs"
+    );
+    actual
+}
+
+fn plain_read_test_doc(client_id: u64) -> yrs::Doc {
+    let mut options = yrs::Options::with_client_id(yrs::ClientID::new(client_id));
+    options.offset_kind = yrs::OffsetKind::Utf16;
+    yrs::Doc::with_options(options)
+}
+
+#[test]
+fn plain_text_reads_preserve_embed_and_raw_branch_fallbacks() {
+    use yrs::{Any, Array, Text, Transact, XmlTextPrelim};
+    const CLIENT: u64 = 91;
+    const TEXT: &str = "a😀e\u{301} עברית";
+    let doc = plain_read_test_doc(CLIENT);
+    let fragment = doc.get_or_insert_xml_fragment("plain-text-read");
+    let array = doc.get_or_insert_array("raw-array");
+    let mut txn = doc.transact_mut();
+    let text = fragment.push_back(&mut txn, XmlTextPrelim::new(TEXT));
+    assert_eq!(
+        assert_plain_read_matches_diff("unformatted unicode", &text, &txn, 0),
+        Some(TEXT.into())
+    );
+    let length = text.len(&txn);
+    text.format(
+        &mut txn,
+        0,
+        length,
+        yrs::types::Attrs::from([
+            ("bold".into(), Any::Bool(true)),
+            ("link".into(), Any::String("target".into())),
+        ]),
+    );
+    assert_plain_read_matches_diff("formatted unicode", &text, &txn, 0);
+    text.insert_embed(&mut txn, 0, Any::String("prefix".into()));
+    assert_eq!(
+        assert_plain_read_matches_diff("string embed", &text, &txn, 1),
+        Some(format!("prefix{TEXT}"))
+    );
+    text.remove_range(&mut txn, 0, 1);
+    assert_eq!(
+        assert_plain_read_matches_diff("deleted string embed", &text, &txn, 0),
+        Some(TEXT.into())
+    );
+    text.insert_embed(&mut txn, 0, Any::Bool(true));
+    assert_eq!(
+        assert_plain_read_matches_diff("non-string embed", &text, &txn, 1),
+        None
+    );
+    text.remove_range(&mut txn, 0, 1);
+    assert_plain_read_matches_diff("deleted non-string embed", &text, &txn, 0);
+    text.insert_embed(&mut txn, 0, yrs::MapPrelim::default());
+    assert_eq!(
+        assert_plain_read_matches_diff("nested shared type", &text, &txn, 1),
+        None
+    );
+    text.remove_range(&mut txn, 0, 1);
+    assert_plain_read_matches_diff("deleted shared type", &text, &txn, 0);
+    let length = text.len(&txn);
+    text.remove_range(&mut txn, 0, length);
+    assert_eq!(
+        assert_plain_read_matches_diff("deleted formatted text", &text, &txn, 0),
+        Some(String::new())
+    );
+
+    array.insert_range(
+        &mut txn,
+        0,
+        [Any::String("ignored".into()), Any::Bool(true)],
+    );
+    let raw = XmlTextRef::from(BranchPtr::from(<yrs::ArrayRef as AsRef<Branch>>::as_ref(
+        &array,
+    )));
+    assert_eq!(
+        assert_plain_read_matches_diff("raw non-text array items", &raw, &txn, 1),
+        Some(String::new())
+    );
+    array.insert(&mut txn, 0, yrs::MapPrelim::default());
+    assert_eq!(
+        assert_plain_read_matches_diff("raw array shared type", &raw, &txn, 1),
+        None
+    );
+    let length = array.len(&txn);
+    array.remove_range(&mut txn, 0, length);
+    assert_eq!(
+        assert_plain_read_matches_diff("deleted raw array items", &raw, &txn, 0),
+        Some(String::new())
+    );
+}
+
+#[test]
+fn plain_text_reads_follow_merged_formatting_and_deleted_items() {
+    use yrs::{updates::decoder::Decode, Any, StateVector, Text, Transact, Update, XmlTextPrelim};
+    const LEFT_CLIENT: u64 = 92;
+    const RIGHT_CLIENT: u64 = 93;
+    const FRAGMENT: &str = "merged-plain-text";
+    let left = plain_read_test_doc(LEFT_CLIENT);
+    let right = plain_read_test_doc(RIGHT_CLIENT);
+    let left_root = left.get_or_insert_xml_fragment(FRAGMENT);
+    let right_root = right.get_or_insert_xml_fragment(FRAGMENT);
+    let left_text = {
+        let mut txn = left.transact_mut();
+        let text = left_root.push_back(&mut txn, XmlTextPrelim::new("a😀bcdef"));
+        text.format(
+            &mut txn,
+            0,
+            3,
+            yrs::types::Attrs::from([("bold".into(), Any::Bool(true))]),
+        );
+        text
+    };
+    let base = left
+        .transact()
+        .encode_state_as_update_v1(&StateVector::default());
+    right
+        .transact_mut()
+        .apply_update(Update::decode_v1(&base).unwrap())
+        .unwrap();
+    let XmlOut::Text(right_text) = right_root.get(&right.transact(), 0).unwrap() else {
+        panic!("text root child");
+    };
+    {
+        let mut txn = left.transact_mut();
+        left_text.insert(&mut txn, 0, "左");
+        left_text.remove_range(&mut txn, 1, 1);
+    }
+    {
+        let mut txn = right.transact_mut();
+        right_text.format(
+            &mut txn,
+            0,
+            3,
+            yrs::types::Attrs::from([("italic".into(), Any::Bool(true))]),
+        );
+        let last = right_text.len(&txn) - 1;
+        right_text.remove_range(&mut txn, last, 1);
+        right_text.insert(&mut txn, last, "右");
+    }
+    let left_update = left
+        .transact()
+        .encode_state_as_update_v1(&StateVector::default());
+    let right_update = right
+        .transact()
+        .encode_state_as_update_v1(&StateVector::default());
+    left.transact_mut()
+        .apply_update(Update::decode_v1(&right_update).unwrap())
+        .unwrap();
+    right
+        .transact_mut()
+        .apply_update(Update::decode_v1(&left_update).unwrap())
+        .unwrap();
+    assert_eq!(
+        assert_plain_read_matches_diff("left merged formatting", &left_text, &left.transact(), 0),
+        assert_plain_read_matches_diff(
+            "right merged formatting",
+            &right_text,
+            &right.transact(),
+            0
+        )
+    );
+    {
+        let mut txn = right.transact_mut();
+        let length = right_text.len(&txn);
+        right_text.remove_range(&mut txn, 0, length);
+        right_text.insert(&mut txn, 0, "replacement🙂");
+    }
+    let update = right
+        .transact()
+        .encode_state_as_update_v1(&StateVector::default());
+    left.transact_mut()
+        .apply_update(Update::decode_v1(&update).unwrap())
+        .unwrap();
+    assert_eq!(
+        assert_plain_read_matches_diff(
+            "remote full text replacement",
+            &left_text,
+            &left.transact(),
+            0
+        ),
+        Some("replacement🙂".into())
+    );
+}

@@ -378,6 +378,24 @@ pub trait Text: AsRef<Branch> + Sized {
         }
     }
 
+    /// Reads text without formatting. Returns `None` if any visible item is
+    /// neither text nor formatting; callers can use [Text::diff] for those items.
+    fn try_plain_string<T: ReadTxn>(&self, _txn: &T) -> Option<String> {
+        let mut next = self.as_ref().start;
+        let mut result = String::new();
+        while let Some(item) = next.as_deref() {
+            if !item.is_deleted() {
+                match &item.content {
+                    ItemContent::String(value) => result.push_str(value.as_str()),
+                    ItemContent::Format(_, _) => {}
+                    _ => return None,
+                }
+            }
+            next = item.right;
+        }
+        Some(result)
+    }
+
     /// Returns an ordered sequence of formatted chunks, current [Text] corresponds of. These chunks
     /// may contain inserted pieces of text or more complex elements like embedded binaries of
     /// shared objects. Chunks are organized by type of inserted value and formatting attributes

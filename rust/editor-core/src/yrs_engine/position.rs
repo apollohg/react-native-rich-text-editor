@@ -23,6 +23,7 @@ std::thread_local! {
     static RELATIVE_REVERSE_TRAVERSALS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static BOUNDARY_WALK_NODE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static BOUNDARY_SORT_TARGETS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static PLAIN_TEXT_DIFF_FALLBACKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]
@@ -968,6 +969,11 @@ pub(super) fn xml_out_pm_size<T: ReadTxn>(txn: &T, node: &XmlOut, schema: &Schem
 }
 
 pub(super) fn xml_text_plain_string<T: ReadTxn>(text: &XmlTextRef, txn: &T) -> Option<String> {
+    if let Some(value) = text.try_plain_string(txn) {
+        return Some(value);
+    }
+    #[cfg(test)]
+    PLAIN_TEXT_DIFF_FALLBACKS.set(PLAIN_TEXT_DIFF_FALLBACKS.get().saturating_add(1));
     let mut value = String::new();
     for diff in text.diff(txn, YChange::identity) {
         let yrs::Out::Any(Any::String(run)) = diff.insert else {
