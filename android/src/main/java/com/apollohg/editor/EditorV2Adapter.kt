@@ -135,8 +135,8 @@ internal class EditorV2Adapter private constructor(
         limit = ULong.MAX_VALUE.toString()
     )
 
-    private fun buildEnvelope(
-        payload: JSONObject,
+    private inline fun buildEnvelope(
+        payload: () -> String,
         includeBaseRevision: Boolean = true
     ): EditorV2CallResult<String> {
         if (nextRequestId == ULong.MAX_VALUE) {
@@ -153,7 +153,7 @@ internal class EditorV2Adapter private constructor(
                 "\"baseDocumentRevision\":${JSONObject.quote(baseDocumentRevision.toString())}"
             )
         }
-        val payloadJson = payload.toString()
+        val payloadJson = payload()
         if (payloadJson.length > 2) {
             parts.add(payloadJson.substring(1, payloadJson.length - 1))
         }
@@ -164,6 +164,13 @@ internal class EditorV2Adapter private constructor(
 
     internal fun callWithEnvelope(
         payload: JSONObject,
+        includeBaseRevision: Boolean = true,
+        call: (String) -> EditorV2CallResult<String>
+    ): EditorV2CallResult<String> =
+        callWithEnvelopeJson({ payload.toString() }, includeBaseRevision, call)
+
+    private inline fun callWithEnvelopeJson(
+        payload: () -> String,
         includeBaseRevision: Boolean = true,
         call: (String) -> EditorV2CallResult<String>
     ): EditorV2CallResult<String> =
@@ -1003,8 +1010,8 @@ internal class EditorV2Adapter private constructor(
         }?.also { markTablePresentationReset() }
 
     override fun setContentJson(json: String): String? {
-        val document = try {
-            JSONObject(json)
+        val payload = try {
+            prepareJsonReplacementPayload(json)
         } catch (error: Exception) {
             emit(contractError("setContentJson document is not valid JSON"))
             return null
@@ -1013,9 +1020,7 @@ internal class EditorV2Adapter private constructor(
             postSelectionMirror = intArrayOf(0, 0),
             includeSelectionInUpdate = true
         ) {
-            callWithEnvelope(
-                JSONObject().put("setJson", document).put("history", "resetAndClear")
-            ) { requestJson ->
+            callWithEnvelopeJson(payload) { requestJson ->
                 backend.applyLocalApi(editorId, requestJson)
             }
         }?.also { markTablePresentationReset() }

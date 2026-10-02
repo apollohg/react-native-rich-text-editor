@@ -45,6 +45,7 @@ internal class FakeEditorV2Backend : EditorV2Backend {
     var awarenessSelectionResult: EditorV2CallResult<String> =
         EditorV2CallResult.Ok("""{"outboundChanged":false}""")
     var lastAwarenessSelectionJson: String? = null
+    var lastLocalApiRequestJson: String? = null
     var nextPinPositionEpochResult: EditorV2CallResult<String>? = null
     var nextApplyNativeIntentResult: EditorV2CallResult<String>? = null
     var nextRenderUpdateResult: EditorV2CallResult<String>? = null
@@ -392,6 +393,7 @@ internal class FakeEditorV2Backend : EditorV2Backend {
 
     override fun applyLocalApi(editorId: String, requestJson: String): EditorV2CallResult<String> {
         calls.add("applyLocalApi")
+        lastLocalApiRequestJson = requestJson
         val request = JSONObject(requestJson)
         val (admittedSession, error) = admissionError(editorId, request, mutation = false)
         if (error != null) return EditorV2CallResult.Err(error)

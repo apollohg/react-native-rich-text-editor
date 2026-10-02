@@ -507,4 +507,41 @@ internal class EditorV2AdapterTest : EditorV2AdapterTestFixture() {
         assertEquals(ULong.MAX_VALUE.toString(), errors.last().requestId)
         assertEquals("max", documentText(adapter))
     }
+    @Test fun `JSON replacement preserves exact envelopes on certified and normalized inputs`() {
+        val adapter = makeAdapter()
+        for (source in listOf(
+            """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"plain"}]}]}""",
+            """ { 'type':'doc', 'content':[{'type':'paragraph','content':[{'type':'text','text':'a/b é'}]}] } """
+        )) {
+            val requestId = (adapter.lastRequestIdForTesting ?: 0uL) + 1u
+            val baseRevision = adapter.baseDocumentRevision
+            val calls = adapter.backendEnvelopeCallCountForTesting
+            val payload = JSONObject().put("setJson", JSONObject(source)).put("history", "resetAndClear").toString()
+            val expected = "{\"version\":1,\"requestId\":\"$requestId\",\"baseDocumentRevision\":\"$baseRevision\"," +
+                payload.substring(1)
+            assertNotNull(adapter.setContentJson(source))
+            assertEquals(expected, backend.lastLocalApiRequestJson)
+            assertEquals(requestId, adapter.lastRequestIdForTesting)
+            assertEquals(calls + 1, adapter.backendEnvelopeCallCountForTesting)
+        }
+    }
+
+    @Test fun `JSON parsing errors still precede request exhaustion and neither reaches backend`() {
+        val adapter = makeAdapter()
+        val errors = mutableListOf<EditorV2Error>()
+        adapter.onAutonomousError = { errors.add(it) }
+        adapter.setNextRequestIdForTesting(ULong.MAX_VALUE)
+        val calls = adapter.backendEnvelopeCallCountForTesting
+        val lastRequest = adapter.lastRequestIdForTesting
+        assertNull(adapter.setContentJson("{"))
+        assertEquals("setContentJson document is not valid JSON", errors.last().message)
+        for (source in listOf("{}", " { } ")) {
+            assertNull(adapter.setContentJson(source))
+            assertEquals("CONFIG_INVALID", errors.last().code)
+        }
+        assertEquals(calls, adapter.backendEnvelopeCallCountForTesting)
+        assertEquals(lastRequest, adapter.lastRequestIdForTesting)
+        assertNull(backend.lastLocalApiRequestJson)
+    }
+
 }
