@@ -27,6 +27,7 @@ base64 = "0.22"
 proptest = "1"
 
 [build-dependencies]
+cc = "1"
 uniffi = { version = "0.29", features = ["build"] }
 
 [[bin]]
@@ -52,3 +53,7 @@ harness = false
 [patch.crates-io]
 yrs = { path = "../vendor/yrs" }
 sha2 = { path = "../vendor/sha2" }
+
+[target.'cfg(target_os = "android")'.dependencies]
+mimalloc = { version = "=0.1.52", features = ["secure"] }
+libmimalloc-sys = "=0.1.49"

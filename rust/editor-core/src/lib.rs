@@ -9,6 +9,9 @@
 //! directive ("we don't need to keep legacy code"); no legacy code is
 //! retained anywhere in the workspace.
 
+#[cfg(target_os = "android")]
+mod android_allocator;
+
 #[cfg(feature = "table-interop")]
 mod availability_audit;
 pub(crate) mod boundary;

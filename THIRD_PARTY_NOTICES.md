@@ -71,6 +71,7 @@ The Rust standard library and compiler runtime notices are supplied separately i
 | `indexmap` | `2.13.0` | Apache-2.0 OR MIT | [Source](https://crates.io/api/v1/crates/indexmap/2.13.0/download) |
 | `itoa` | `1.0.17` | MIT OR Apache-2.0 | [Source](https://crates.io/api/v1/crates/itoa/1.0.17/download) |
 | `libc` | `0.2.183` | MIT OR Apache-2.0 | [Source](https://crates.io/api/v1/crates/libc/0.2.183/download) |
+| `libmimalloc-sys` | `0.1.49` | MIT | [Source](https://crates.io/api/v1/crates/libmimalloc-sys/0.1.49/download) |
 | `linux-raw-sys` | `0.12.1` | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | [Source](https://crates.io/api/v1/crates/linux-raw-sys/0.12.1/download) |
 | `lock_api` | `0.4.14` | MIT OR Apache-2.0 | [Source](https://crates.io/api/v1/crates/lock_api/0.4.14/download) |
 | `log` | `0.4.29` | MIT OR Apache-2.0 | [Source](https://crates.io/api/v1/crates/log/0.4.29/download) |
@@ -78,6 +79,7 @@ The Rust standard library and compiler runtime notices are supplied separately i
 | `markup5ever` | `0.14.1` | MIT OR Apache-2.0 | [Source](https://crates.io/api/v1/crates/markup5ever/0.14.1/download) |
 | `match_token` | `0.1.0` | MIT OR Apache-2.0 | [Source](https://crates.io/api/v1/crates/match_token/0.1.0/download) |
 | `memchr` | `2.8.0` | Unlicense OR MIT | [Source](https://crates.io/api/v1/crates/memchr/2.8.0/download) |
+| `mimalloc` | `0.1.52` | MIT | [Source](https://crates.io/api/v1/crates/mimalloc/0.1.52/download) |
 | `minimal-lexical` | `0.2.1` | MIT/Apache-2.0 | [Source](https://crates.io/api/v1/crates/minimal-lexical/0.2.1/download) |
 | `new_debug_unreachable` | `1.0.6` | MIT | [Source](https://crates.io/api/v1/crates/new_debug_unreachable/1.0.6/download) |
 | `nom` | `7.1.3` | MIT | [Source](https://crates.io/api/v1/crates/nom/7.1.3/download) |
@@ -11787,6 +11789,70 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
+### libmimalloc-sys 0.1.49
+
+License expression: `MIT`.
+
+Source: [published crate](https://crates.io/api/v1/crates/libmimalloc-sys/0.1.49/download); [upstream repository](https://github.com/purpleprotocol/mimalloc_rust).
+
+[LICENSE.txt](https://docs.rs/crate/libmimalloc-sys/0.1.49/source/LICENSE.txt)
+
+````text
+Copyright 2019 Octavian Oncescu
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+````
+
+Bundled mimalloc 3.3.2 is used by the Android Rust allocator with secure mode enabled.
+
+[c_src/mimalloc/v3/LICENSE](https://docs.rs/crate/libmimalloc-sys/0.1.49/source/c_src/mimalloc/v3/LICENSE)
+
+````text
+MIT License
+
+Copyright (c) 2018-2025 Microsoft Corporation, Daan Leijen
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+````
+
 ### linux-raw-sys 0.12.1
 
 License expression: `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT`.
@@ -13486,6 +13552,42 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+````
+
+### mimalloc 0.1.52
+
+License expression: `MIT`.
+
+Source: [published crate](https://crates.io/api/v1/crates/mimalloc/0.1.52/download); [upstream repository](https://github.com/purpleprotocol/mimalloc_rust).
+
+[LICENSE.txt](https://docs.rs/crate/mimalloc/0.1.52/source/LICENSE.txt)
+
+````text
+Copyright 2019 Octavian Oncescu
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
 ````
 
 ### minimal-lexical 0.2.1
