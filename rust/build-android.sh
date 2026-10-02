@@ -46,6 +46,8 @@ for pair in "${TARGET_ABI_PAIRS[@]}"; do
     abi="${pair#* }"
     echo "  -> $target ($abi)"
 
+    CARGO_PROFILE_RELEASE_LTO=thin \
+    CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 \
     "$RUST_TOOLCHAIN_CARGO" ndk \
         --target "$target" \
         --platform "$MIN_SDK_VERSION" \
