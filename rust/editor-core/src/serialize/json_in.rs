@@ -1,4 +1,3 @@
-#[cfg(test)]
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt;
@@ -221,18 +220,18 @@ fn parse_node(
                     }
                 }
                 let type_name = spec
-                    .map(|spec| spec.name.clone())
-                    .unwrap_or(normalized_type);
+                    .map(|spec| spec.name.as_str())
+                    .unwrap_or(normalized_type.as_ref());
 
                 if type_name == "text" {
                     built.push(parse_text_node(obj, schema, mode)?);
                     continue;
                 }
 
-                let Some(spec) = spec.or_else(|| schema.node(&type_name)) else {
+                let Some(spec) = spec.or_else(|| schema.node(type_name)) else {
                     match mode {
                         UnknownTypeMode::Error => {
-                            return Err(JsonParseError::UnknownType(type_name));
+                            return Err(JsonParseError::UnknownType(type_name.to_owned()));
                         }
                         UnknownTypeMode::Preserve => {
                             built.push(build_opaque_json_node(raw_type, json, placement));
@@ -256,7 +255,7 @@ fn parse_node(
                     attrs.remove("level");
                 }
                 if spec.is_void {
-                    built.push(Node::void(type_name, attrs));
+                    built.push(Node::void(type_name.to_owned(), attrs));
                     continue;
                 }
 
@@ -267,7 +266,7 @@ fn parse_node(
                     None => &[],
                 };
                 frames.push(Frame::BuildElement {
-                    type_name,
+                    type_name: type_name.to_owned(),
                     attrs,
                     parent: spec,
                     child_count: children.len(),
@@ -596,7 +595,10 @@ pub(crate) fn rehydrate_reserved_html_opaque(document: &Document) -> Document {
     Document::new(rehydrate_reserved_html_opaque_node(document.root()))
 }
 
-pub(crate) fn normalized_wire_json_node_type(tag: &str, attrs: &Map<String, Value>) -> String {
+pub(crate) fn normalized_wire_json_node_type<'a>(
+    tag: &'a str,
+    attrs: &Map<String, Value>,
+) -> Cow<'a, str> {
     if tag == "heading" {
         let level = attrs.get("level").and_then(|value| match value {
             Value::Number(_) => {
@@ -606,10 +608,10 @@ pub(crate) fn normalized_wire_json_node_type(tag: &str, attrs: &Map<String, Valu
             _ => None,
         });
         if let Some(level @ 1..=6) = level {
-            return format!("h{level}");
+            return Cow::Owned(format!("h{level}"));
         }
     }
-    tag.to_string()
+    Cow::Borrowed(tag)
 }
 
 fn rehydrate_reserved_html_opaque_node(node: &Node) -> Node {
