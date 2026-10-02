@@ -149,13 +149,13 @@ private class PreparedTableRectangles(
             if (xOffsets !is TableOffsets || cells.size > Int.MAX_VALUE / POSITION_FIELDS ||
                 cells.size.toLong() * (TABLE_RECTANGLE_RETAINED_BYTES + TABLE_SOURCE_ORDER_RETAINED_BYTES -
                     POSITION_RETAINED_BYTES) < FIXED_RETAINED_BYTES) return null
-            var index = 0
-            for (cell in cells) {
-                if (cell.sourceIndex != index) return null
-                index++
-            }
             val old = previous.rectangles as? PreparedTableRectangles
             val positions = if (old != null && old.matches(cells)) old.positions else {
+                var index = 0
+                for (cell in cells) {
+                    if (cell.sourceIndex != index) return null
+                    index++
+                }
                 IntArray(cells.size * POSITION_FIELDS).also { result ->
                     cells.forEachIndexed { index, cell ->
                         val offset = index * POSITION_FIELDS
