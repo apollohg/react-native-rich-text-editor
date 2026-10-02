@@ -1,7 +1,8 @@
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
-use yrs::{IndexScope, StickyIndex};
+use yrs::{Assoc, IndexScope, StickyIndex, ID};
 
 use crate::session::{ErrorDomain, SessionError};
 
@@ -69,9 +70,125 @@ pub(crate) struct PinnedCellSpan {
 
 #[derive(Debug)]
 pub(crate) struct EpochBlockChunk {
-    pub(crate) anchors: Vec<BoundaryAnchors>,
-    pub(crate) ancestor: Option<Arc<AncestorNode>>,
+    pub(crate) anchors: EpochAnchorStorage,
+    ancestor: Option<Arc<AncestorNode>>,
     pub(crate) retained_bytes: usize,
+}
+
+#[derive(Debug)]
+pub(crate) enum EpochAnchorStorage {
+    Dense(Vec<BoundaryAnchors>),
+    Plain(Box<PlainTextAnchors>),
+}
+
+#[derive(Debug)]
+pub(crate) struct PlainTextAnchors {
+    item: ID,
+    offsets: Vec<u32>,
+    utf16_length: u32,
+    start: BoundaryAnchors,
+    end: BoundaryAnchors,
+    pins: Vec<Option<CellTextPosition>>,
+}
+
+const _: () = assert!(
+    std::mem::size_of::<EpochBlockChunk>()
+        == std::mem::size_of::<Vec<BoundaryAnchors>>()
+            + std::mem::size_of::<Option<Arc<AncestorNode>>>()
+            + std::mem::size_of::<usize>()
+);
+
+impl PlainTextAnchors {
+    fn boundary(&self, index: usize) -> Option<BoundaryAnchors> {
+        let offset = *self.offsets.get(index)?;
+        let mut anchors = if offset == 0 {
+            self.start.clone()
+        } else if offset == self.utf16_length {
+            self.end.clone()
+        } else {
+            BoundaryAnchors {
+                before: StickyIndex::from_id(
+                    ID::new(self.item.client, self.item.clock + offset - 1),
+                    Assoc::Before,
+                ),
+                after: StickyIndex::from_id(
+                    ID::new(self.item.client, self.item.clock + offset),
+                    Assoc::After,
+                ),
+                ancestor: self.start.ancestor.clone(),
+                pinned_cell: None,
+            }
+        };
+        anchors.pinned_cell = self.pins.get(index).copied().flatten();
+        Some(anchors)
+    }
+}
+
+impl EpochAnchorStorage {
+    pub(crate) fn len(&self) -> usize {
+        match self {
+            Self::Dense(anchors) => anchors.len(),
+            Self::Plain(run) => run.offsets.len(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn capacity(&self) -> usize {
+        match self {
+            Self::Dense(anchors) => anchors.capacity(),
+            Self::Plain(run) => run.offsets.len(),
+        }
+    }
+
+    pub(crate) fn get(&self, index: usize) -> Option<Cow<'_, BoundaryAnchors>> {
+        match self {
+            Self::Dense(anchors) => anchors.get(index).map(Cow::Borrowed),
+            Self::Plain(run) => run.boundary(index).map(Cow::Owned),
+        }
+    }
+
+    pub(crate) fn iter(
+        &self,
+    ) -> impl DoubleEndedIterator<Item = Cow<'_, BoundaryAnchors>> + ExactSizeIterator {
+        (0..self.len()).map(|index| self.get(index).expect("anchor index is in range"))
+    }
+
+    pub(crate) fn to_dense(&self) -> Vec<BoundaryAnchors> {
+        self.iter().map(Cow::into_owned).collect()
+    }
+
+    fn visit_ancestors(&self, mut visit: impl FnMut(Option<&AncestorNode>)) {
+        match self {
+            Self::Dense(anchors) => {
+                for boundary in anchors {
+                    visit(boundary.ancestor.as_deref());
+                }
+            }
+            Self::Plain(run) => visit(run.start.ancestor.as_deref()),
+        }
+    }
+
+    fn attach_cell(&mut self, offset: usize, position: CellTextPosition) -> Option<()> {
+        match self {
+            Self::Plain(run) => {
+                run.offsets.get(offset)?;
+                if !run.start.inside_table_cell() {
+                    return Some(());
+                }
+                if run.pins.is_empty() {
+                    run.pins = vec![None; run.offsets.len()];
+                }
+                *run.pins.get_mut(offset)? = Some(position);
+            }
+            Self::Dense(anchors) => {
+                let boundary = anchors.get_mut(offset)?;
+                if boundary.inside_table_cell() {
+                    boundary.pinned_cell = Some(position);
+                }
+            }
+        }
+        Some(())
+    }
 }
 
 #[derive(Debug)]
@@ -108,6 +225,82 @@ impl BoundaryAnchors {
 }
 
 impl EpochBlockChunk {
+    #[cfg(test)]
+    pub(crate) fn stored_anchor_count(&self) -> usize {
+        match &self.anchors {
+            EpochAnchorStorage::Dense(anchors) => anchors.len(),
+            EpochAnchorStorage::Plain(_) => 2,
+        }
+    }
+
+    pub(crate) fn ancestor(&self) -> Option<Arc<AncestorNode>> {
+        self.ancestor.clone()
+    }
+
+    pub(crate) fn plain_text(
+        item: ID,
+        offsets: Vec<u32>,
+        utf16_length: u32,
+        start: BoundaryAnchors,
+        end: BoundaryAnchors,
+    ) -> Option<Self> {
+        if offsets.is_empty()
+            || !offsets.is_sorted()
+            || *offsets.last()? > utf16_length
+            || item.clock.checked_add(utf16_length).is_none()
+            || start.pinned_cell.is_some()
+            || end.pinned_cell.is_some()
+        {
+            return None;
+        }
+        match (&start.ancestor, &end.ancestor) {
+            (Some(a), Some(b)) if Arc::ptr_eq(a, b) => {}
+            (None, None) => {}
+            _ => return None,
+        }
+        let start_heap =
+            sticky_heap_bytes(&start.before).checked_add(sticky_heap_bytes(&start.after))?;
+        let end_heap = sticky_heap_bytes(&end.before).checked_add(sticky_heap_bytes(&end.after))?;
+        let retained_bytes = offsets.iter().try_fold(
+            offsets
+                .len()
+                .checked_mul(std::mem::size_of::<BoundaryAnchors>())?,
+            |total, offset| {
+                total.checked_add(if *offset == 0 {
+                    start_heap
+                } else if *offset == utf16_length {
+                    end_heap
+                } else {
+                    0
+                })
+            },
+        )?;
+        let physical_bytes = std::mem::size_of::<PlainTextAnchors>()
+            .checked_add(offsets.capacity().checked_mul(std::mem::size_of::<u32>())?)?
+            .checked_add(
+                offsets
+                    .len()
+                    .checked_mul(std::mem::size_of::<Option<CellTextPosition>>())?,
+            )?
+            .checked_add(start_heap)?
+            .checked_add(end_heap)?;
+        if physical_bytes > retained_bytes {
+            return None;
+        }
+        Some(Self {
+            ancestor: start.ancestor.clone(),
+            anchors: EpochAnchorStorage::Plain(Box::new(PlainTextAnchors {
+                item,
+                offsets,
+                utf16_length,
+                start,
+                end,
+                pins: Vec::new(),
+            })),
+            retained_bytes,
+        })
+    }
+
     pub(crate) fn new(anchors: Vec<BoundaryAnchors>) -> Option<Self> {
         let retained_bytes = anchors.iter().try_fold(
             anchors
@@ -123,7 +316,7 @@ impl EpochBlockChunk {
             ancestor: anchors
                 .first()
                 .and_then(|boundary| boundary.ancestor.clone()),
-            anchors,
+            anchors: EpochAnchorStorage::Dense(anchors),
             retained_bytes,
         })
     }
@@ -170,15 +363,11 @@ impl EpochSnapshot {
                 .checked_add(chunk.retained_bytes)?
                 .checked_add(std::mem::size_of::<EpochBlockChunk>())?;
             let mut previous = None;
-            for innermost in std::iter::once(chunk.ancestor.as_deref()).chain(
-                chunk
-                    .anchors
-                    .iter()
-                    .map(|boundary| boundary.ancestor.as_deref()),
-            ) {
+            let mut ancestor_bytes = Some(0usize);
+            chunk.anchors.visit_ancestors(|innermost| {
                 let identity = innermost.map(|node| node as *const AncestorNode);
                 if identity == previous {
-                    continue;
+                    return;
                 }
                 previous = identity;
                 let mut current = innermost;
@@ -186,13 +375,16 @@ impl EpochSnapshot {
                     if !ancestors.insert(node as *const AncestorNode) {
                         break;
                     }
-                    retained_bytes = retained_bytes
-                        .checked_add(std::mem::size_of::<AncestorNode>())?
-                        .checked_add(sticky_heap_bytes(&node.anchors.before))?
-                        .checked_add(sticky_heap_bytes(&node.anchors.after))?;
+                    ancestor_bytes = ancestor_bytes.and_then(|bytes| {
+                        bytes
+                            .checked_add(std::mem::size_of::<AncestorNode>())?
+                            .checked_add(sticky_heap_bytes(&node.anchors.before))?
+                            .checked_add(sticky_heap_bytes(&node.anchors.after))
+                    });
                     current = node.parent.as_deref();
                 }
-            }
+            });
+            retained_bytes = retained_bytes.checked_add(ancestor_bytes?)?;
         }
         for span in &cells {
             retained_bytes = retained_bytes.checked_add(span.retained_bytes()?)?;
@@ -253,13 +445,13 @@ impl EpochSnapshot {
                     let offset =
                         usize::try_from(relative.checked_add(origin)?.checked_sub(starts[block])?)
                             .ok()?;
-                    let boundary = chunk.anchors.get_mut(offset)?;
-                    if boundary.inside_table_cell() {
-                        boundary.pinned_cell = Some(CellTextPosition {
+                    chunk.anchors.attach_cell(
+                        offset,
+                        CellTextPosition {
                             cell,
                             point: *point,
-                        });
-                    }
+                        },
+                    )?;
                 }
             }
         }
@@ -283,14 +475,15 @@ impl EpochSnapshot {
             .get(block)?
             .anchors
             .get(usize::try_from(index.checked_sub(self.scalar_starts[block])?).ok()?)?;
+        let pinned_cell = anchors.pinned_cell.and_then(|position| {
+            Some(PinnedCellBoundary {
+                cell: &self.cells.get(position.cell)?.cell,
+                point: position.point,
+            })
+        });
         Some(EpochBoundary {
             anchors,
-            pinned_cell: anchors.pinned_cell.and_then(|position| {
-                Some(PinnedCellBoundary {
-                    cell: &self.cells.get(position.cell)?.cell,
-                    point: position.point,
-                })
-            }),
+            pinned_cell,
             document_revision: self.document_revision,
         })
     }
@@ -298,14 +491,16 @@ impl EpochSnapshot {
     #[cfg(test)]
     pub(crate) fn ancestor_count(&self) -> usize {
         let mut ancestors = HashSet::new();
-        for boundary in self.chunks.iter().flat_map(|chunk| &chunk.anchors) {
-            let mut current = boundary.ancestor.as_deref();
-            while let Some(node) = current {
-                if !ancestors.insert(node as *const AncestorNode) {
-                    break;
+        for chunk in self.chunks.iter() {
+            chunk.anchors.visit_ancestors(|ancestor| {
+                let mut current = ancestor;
+                while let Some(node) = current {
+                    if !ancestors.insert(node as *const AncestorNode) {
+                        break;
+                    }
+                    current = node.parent.as_deref();
                 }
-                current = node.parent.as_deref();
-            }
+            });
         }
         ancestors.len()
     }
@@ -431,15 +626,13 @@ impl EpochSnapshotUpdate {
 }
 
 pub(crate) struct EpochBoundary<'epoch> {
-    pub(crate) anchors: &'epoch BoundaryAnchors,
+    pub(crate) anchors: Cow<'epoch, BoundaryAnchors>,
     pub(crate) pinned_cell: Option<PinnedCellBoundary<'epoch>>,
     pub(crate) document_revision: u64,
 }
 
 impl<'epoch> EpochBoundary<'epoch> {
-    pub(crate) fn ancestor_chain(
-        &self,
-    ) -> impl Iterator<Item = &'epoch AncestorAnchors> + Clone + 'epoch {
+    pub(crate) fn ancestor_chain(&self) -> impl Iterator<Item = &AncestorAnchors> + Clone + '_ {
         self.anchors.ancestor_chain()
     }
 }

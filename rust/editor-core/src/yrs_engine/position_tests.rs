@@ -36,6 +36,100 @@ const FIRST_EDIT_REQUEST: u64 = 1;
 const INSIDE_WORD: u32 = 1;
 
 #[test]
+fn compact_text_epochs_preserve_every_dense_anchor_pin_and_retained_charge() {
+    struct DenseConstruction;
+    impl Drop for DenseConstruction {
+        fn drop(&mut self) {
+            super::BOUNDARY_COMPACTION_DISABLED.set(false);
+        }
+    }
+    let mut saved_anchors = 0;
+    for (label, engine) in corpus() {
+        let dense = {
+            super::BOUNDARY_COMPACTION_DISABLED.set(true);
+            let _reset = DenseConstruction;
+            engine.build_position_epoch_snapshot().unwrap()
+        };
+        let compact = engine.build_position_epoch_snapshot().unwrap();
+        assert_eq!(
+            dense.boundary_count(),
+            compact.boundary_count(),
+            "{label}: scalar domain"
+        );
+        assert_eq!(
+            dense.retained_bytes, compact.retained_bytes,
+            "{label}: unchanged admission charge"
+        );
+        for scalar in 0..dense.boundary_count() as u32 {
+            let expected = dense.boundary(scalar).unwrap();
+            let actual = compact.boundary(scalar).unwrap();
+            assert_eq!(
+                expected.anchors, actual.anchors,
+                "{label}: exact anchor at {scalar}"
+            );
+            assert_eq!(
+                expected.pinned_cell.map(|pin| (pin.cell, pin.point)),
+                actual.pinned_cell.map(|pin| (pin.cell, pin.point)),
+                "{label}: cell pin at {scalar}"
+            );
+        }
+        saved_anchors += dense.boundary_count()
+            - compact
+                .chunks
+                .iter()
+                .map(|chunk| chunk.stored_anchor_count())
+                .sum::<usize>();
+    }
+    assert!(
+        saved_anchors > 0,
+        "Certified plain text must avoid constructing per-character anchor objects"
+    );
+}
+
+#[test]
+fn splitting_one_text_into_ordered_chunks_keeps_scalar_traversal_linear() {
+    const REPEATS: usize = 128;
+    const CHUNK_BOUNDARIES: usize = 32;
+    let text = "café😀".repeat(REPEATS);
+    let engine = engine_with(
+        corpus_schema(),
+        vec![json!({"type":"paragraph", "content":[{"type":"text","text":text}]})],
+    );
+    let positions = scalar_doc_positions(&engine);
+    let chunks: Vec<_> = positions
+        .chunks(CHUNK_BOUNDARIES)
+        .map(<[_]>::to_vec)
+        .collect();
+    engine
+        .read_fragment_for_test(|txn, fragment| {
+            super::BOUNDARY_TEXT_SCALAR_VISITS.set(0);
+            let actual =
+                boundary_chunks_at_doc_positions(txn, fragment, &chunks, engine.schema()).unwrap();
+            assert_eq!(
+                actual
+                    .iter()
+                    .map(|chunk| chunk.anchors.len())
+                    .sum::<usize>(),
+                positions.len()
+            );
+            assert_eq!(
+                super::BOUNDARY_TEXT_SCALAR_VISITS.get(),
+                text.chars().count(),
+                "Split chunks must not rescan earlier UTF-16 prefixes"
+            );
+            for (chunk, positions) in actual.iter().zip(&chunks) {
+                for (anchor, position) in chunk.anchors.iter().zip(positions) {
+                    assert_eq!(
+                        DescentAnchors::batched(&anchor),
+                        anchors_by_descent(txn, fragment, *position, engine.schema()).unwrap()
+                    );
+                }
+            }
+        })
+        .unwrap();
+}
+
+#[test]
 fn scalar_to_utf16_preserves_mixed_text_boundaries() {
     const ASCII_PREFIX_LENGTH: usize = 257;
     let prefix = "a".repeat(ASCII_PREFIX_LENGTH);
@@ -636,7 +730,7 @@ fn assert_batch_matches_descent(
             let batched = snapshot.as_ref().map(|snapshot| snapshot.chunks.to_vec()).unwrap_or_else(||
                 boundary_chunks_at_doc_positions(txn, fragment, &[doc_positions.to_vec()], schema)
                     .unwrap_or_else(|| panic!("{label}: the batched walk failed to anchor every position")));
-            let flattened: Vec<_> = batched.iter().flat_map(|chunk| &chunk.anchors).collect();
+            let flattened: Vec<_> = batched.iter().flat_map(|chunk| chunk.anchors.iter()).collect();
             assert_eq!(flattened.len(), expected.len(), "{label}: one boundary per position");
             for (index, (actual, wanted)) in flattened.iter().zip(&expected).enumerate() {
                 assert_eq!(
@@ -684,8 +778,8 @@ fn ordered_boundary_chunks_borrow_targets_without_changing_anchors_or_fees() {
                     "{label}: empty chunks must survive"
                 );
                 for group in actual.chunks_exact(CHUNKS_PER_GROUP) {
-                    let source = group[1].anchors.last().unwrap();
-                    let repeated = &group[3].anchors[0];
+                    let source = group[1].anchors.iter().next_back().unwrap();
+                    let repeated = group[3].anchors.get(0).unwrap();
                     assert_eq!(source, repeated, "{label}: duplicate across an empty chunk");
                     match (&source.ancestor, &repeated.ancestor) {
                         (Some(source), Some(repeated)) => assert!(
@@ -733,7 +827,7 @@ fn ordered_boundary_chunks_borrow_targets_without_changing_anchors_or_fees() {
                             anchors_by_descent(txn, fragment, *position, engine.schema())
                                 .expect("scalar boundary must be resolvable");
                         assert_eq!(
-                            DescentAnchors::batched(anchor),
+                            DescentAnchors::batched(&anchor),
                             expected,
                             "{label}: chunk {index} position {position}"
                         );

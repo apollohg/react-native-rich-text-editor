@@ -705,7 +705,7 @@ impl YrsDocumentEngine {
         let branches = state.block_branch_index.as_ref()?;
         for (index, positions) in positions {
             if state.position_map.block(index)?.is_void_block {
-                let mut anchors = previous.chunks[index].anchors.clone();
+                let mut anchors = previous.chunks[index].anchors.to_dense();
                 for boundary in &mut anchors {
                     boundary.pinned_cell = None;
                 }
@@ -724,7 +724,7 @@ impl YrsDocumentEngine {
                 state.position_map.effective_doc_start(index),
                 positions,
                 &self.schema,
-                previous.chunks[index].ancestor.clone(),
+                previous.chunks[index].ancestor(),
             )?);
             #[cfg(test)]
             super::observability::record_epoch_block_rebuild();
@@ -823,7 +823,7 @@ impl YrsDocumentEngine {
         let state = self.derived_state.as_ref()?;
         let txn = self.doc.transact();
         let fragment = txn.get_xml_fragment(self.fragment_name.as_str())?;
-        let anchors = boundary.anchors;
+        let anchors = &boundary.anchors;
         let chain = boundary.ancestor_chain();
         let table_cell_ancestors = chain.clone().position(|ancestor| ancestor.table_cell);
         let side = |before: bool| {

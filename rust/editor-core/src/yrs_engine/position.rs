@@ -22,7 +22,9 @@ std::thread_local! {
     static RELATIVE_FORWARD_TRAVERSALS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static RELATIVE_REVERSE_TRAVERSALS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static BOUNDARY_WALK_NODE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static BOUNDARY_TEXT_SCALAR_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static BOUNDARY_SORT_TARGETS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(crate) static BOUNDARY_COMPACTION_DISABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static PLAIN_TEXT_DIFF_FALLBACKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static XML_SIZE_NODE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
@@ -545,6 +547,35 @@ impl<'positions> BoundaryTargets<'positions> {
     }
 }
 
+enum PendingBoundaryChunk {
+    Empty(usize),
+    Dense(Vec<Option<BoundaryAnchors>>),
+    Ready(EpochBlockChunk),
+}
+
+impl PendingBoundaryChunk {
+    fn insert(&mut self, offset: usize, anchors: BoundaryAnchors) {
+        if let Self::Empty(length) = self {
+            *self = Self::Dense(vec![None; *length]);
+        }
+        let Self::Dense(positions) = self else {
+            unreachable!("completed chunk has no pending targets")
+        };
+        positions[offset] = Some(anchors);
+    }
+
+    fn finish(self) -> Option<EpochBlockChunk> {
+        match self {
+            Self::Empty(0) => EpochBlockChunk::new(Vec::new()),
+            Self::Empty(_) => None,
+            Self::Dense(anchors) => {
+                EpochBlockChunk::new(anchors.into_iter().collect::<Option<Vec<_>>>()?)
+            }
+            Self::Ready(chunk) => Some(chunk),
+        }
+    }
+}
+
 fn boundary_chunks_in_sequence<T: ReadTxn>(
     txn: &T,
     children: impl Iterator<Item = XmlOut>,
@@ -560,7 +591,7 @@ fn boundary_chunks_in_sequence<T: ReadTxn>(
         targets: BoundaryTargets::new(doc_positions)?,
         chunks: doc_positions
             .iter()
-            .map(|positions| vec![None; positions.len()])
+            .map(|positions| PendingBoundaryChunk::Empty(positions.len()))
             .collect(),
         open: ancestor.into_iter().collect(),
     };
@@ -570,10 +601,7 @@ fn boundary_chunks_in_sequence<T: ReadTxn>(
     }
     walk.chunks
         .into_iter()
-        .map(|anchors| {
-            let anchors = anchors.into_iter().collect::<Option<Vec<_>>>()?;
-            EpochBlockChunk::new(anchors).map(Arc::new)
-        })
+        .map(|chunk| chunk.finish().map(Arc::new))
         .collect()
 }
 
@@ -581,7 +609,7 @@ struct BoundaryAnchorWalk<'walk, T> {
     txn: &'walk T,
     schema: &'walk Schema,
     targets: BoundaryTargets<'walk>,
-    chunks: Vec<Vec<Option<BoundaryAnchors>>>,
+    chunks: Vec<PendingBoundaryChunk>,
     open: Vec<Arc<AncestorNode>>,
 }
 
@@ -604,9 +632,9 @@ impl<T: ReadTxn> BoundaryAnchorWalk<'_, T> {
                 .peek()
                 .is_some_and(|target| target.0 == position)
             {
-                self.chunks[block][offset] = Some(leaf.clone());
+                self.chunks[block].insert(offset, leaf.clone());
             } else {
-                self.chunks[block][offset] = Some(leaf);
+                self.chunks[block].insert(offset, leaf);
                 break;
             }
         }
@@ -738,6 +766,94 @@ impl<T: ReadTxn> BoundaryAnchorWalk<'_, T> {
         Some(position)
     }
 
+    fn compact_text_chunk(
+        &mut self,
+        item: yrs::ID,
+        value: &str,
+        start: u32,
+        end: u32,
+        sequence_end: Option<u32>,
+        text_branch: BranchPtr,
+        branch: BranchPtr,
+        index: u32,
+    ) -> bool {
+        #[cfg(test)]
+        if BOUNDARY_COMPACTION_DISABLED.get() {
+            return false;
+        }
+        let BoundaryTargets::Ordered {
+            positions,
+            block,
+            offset: 0,
+        } = &self.targets
+        else {
+            return false;
+        };
+        let block = *block;
+        let positions = &positions[block];
+        if !matches!(self.chunks[block], PendingBoundaryChunk::Empty(_))
+            || positions.first().is_none_or(|position| *position != start)
+            || positions.last().is_none_or(|position| {
+                *position != end || sequence_end.is_some_and(|end| *position >= end)
+            })
+        {
+            return false;
+        }
+        let Some(utf16_length) = u32::try_from(value.encode_utf16().count()).ok() else {
+            return false;
+        };
+        let Some(mut first) = text_boundary_anchors(
+            self.txn,
+            text_branch,
+            branch,
+            index,
+            0,
+            utf16_length == 0,
+            Some(item),
+        ) else {
+            return false;
+        };
+        let Some(mut last) = text_boundary_anchors(
+            self.txn,
+            text_branch,
+            branch,
+            index,
+            utf16_length,
+            true,
+            Some(item),
+        ) else {
+            return false;
+        };
+        first.ancestor = self.open.last().cloned();
+        last.ancestor = first.ancestor.clone();
+        let mut offsets = Vec::with_capacity(positions.len());
+        let mut characters = value.chars();
+        let mut scalar = start;
+        let mut utf16 = 0;
+        for position in positions {
+            while scalar < *position {
+                let Some(character) = characters.next() else {
+                    return false;
+                };
+                #[cfg(test)]
+                BOUNDARY_TEXT_SCALAR_VISITS
+                    .set(BOUNDARY_TEXT_SCALAR_VISITS.get().saturating_add(1));
+                utf16 += character.len_utf16() as u32;
+                scalar += 1;
+            }
+            offsets.push(utf16);
+        }
+        let Some(chunk) = EpochBlockChunk::plain_text(item, offsets, utf16_length, first, last)
+        else {
+            return false;
+        };
+        self.chunks[block] = PendingBoundaryChunk::Ready(chunk);
+        while self.targets.peek().is_some_and(|target| target.1 == block) {
+            self.targets.advance();
+        }
+        true
+    }
+
     fn walk_text(
         &mut self,
         text: &XmlTextRef,
@@ -760,45 +876,83 @@ impl<T: ReadTxn> BoundaryAnchorWalk<'_, T> {
             .pending(sequence_end)
             .filter(|target| *target <= text_end)
         {
+            if let Some(item) = single_item {
+                if self.compact_text_chunk(
+                    item,
+                    &value,
+                    start,
+                    text_end,
+                    sequence_end,
+                    text_branch,
+                    branch,
+                    index,
+                ) {
+                    continue;
+                }
+            }
             let target_offset = target.checked_sub(start)?;
             while scalar_offset < target_offset {
                 let width = u32::try_from(characters.next()?.len_utf16()).ok()?;
+                #[cfg(test)]
+                BOUNDARY_TEXT_SCALAR_VISITS
+                    .set(BOUNDARY_TEXT_SCALAR_VISITS.get().saturating_add(1));
                 utf16_offset = utf16_offset.checked_add(width)?;
                 scalar_offset += 1;
             }
-            let before = single_item
-                .filter(|_| utf16_offset > 0)
-                .and_then(|id| {
-                    Some(StickyIndex::from_id(
-                        yrs::ID::new(id.client, id.clock.checked_add(utf16_offset - 1)?),
-                        Assoc::Before,
-                    ))
-                })
-                .or_else(|| sticky_at(self.txn, text_branch, utf16_offset, Assoc::Before))
-                .or_else(|| sticky_at(self.txn, branch, index, Assoc::Before));
-            let after = single_item
-                .filter(|_| target < text_end)
-                .and_then(|id| {
-                    Some(StickyIndex::from_id(
-                        yrs::ID::new(id.client, id.clock.checked_add(utf16_offset)?),
-                        Assoc::After,
-                    ))
-                })
-                .or_else(|| sticky_at(self.txn, text_branch, utf16_offset, Assoc::After))
-                .or_else(|| sticky_at(self.txn, branch, index.checked_add(1)?, Assoc::After));
-            match before.zip(after) {
-                Some((before, after)) => self.resolve(BoundaryAnchors {
-                    before,
-                    after,
-                    ancestor: None,
-                    pinned_cell: None,
-                }),
+            let anchors = text_boundary_anchors(
+                self.txn,
+                text_branch,
+                branch,
+                index,
+                utf16_offset,
+                target == text_end,
+                single_item,
+            );
+            match anchors {
+                Some(anchors) => self.resolve(anchors),
                 None if target == text_end && followed_by_text => break,
                 None => return None,
             }
         }
         Some(text_end)
     }
+}
+
+fn text_boundary_anchors<T: ReadTxn>(
+    txn: &T,
+    text_branch: BranchPtr,
+    branch: BranchPtr,
+    index: u32,
+    utf16_offset: u32,
+    at_end: bool,
+    single_item: Option<yrs::ID>,
+) -> Option<BoundaryAnchors> {
+    let before = single_item
+        .filter(|_| utf16_offset > 0)
+        .and_then(|id| {
+            Some(StickyIndex::from_id(
+                yrs::ID::new(id.client, id.clock.checked_add(utf16_offset - 1)?),
+                Assoc::Before,
+            ))
+        })
+        .or_else(|| sticky_at(txn, text_branch, utf16_offset, Assoc::Before))
+        .or_else(|| sticky_at(txn, branch, index, Assoc::Before));
+    let after = single_item
+        .filter(|_| !at_end)
+        .and_then(|id| {
+            Some(StickyIndex::from_id(
+                yrs::ID::new(id.client, id.clock.checked_add(utf16_offset)?),
+                Assoc::After,
+            ))
+        })
+        .or_else(|| sticky_at(txn, text_branch, utf16_offset, Assoc::After))
+        .or_else(|| sticky_at(txn, branch, index.checked_add(1)?, Assoc::After));
+    Some(BoundaryAnchors {
+        before: before?,
+        after: after?,
+        ancestor: None,
+        pinned_cell: None,
+    })
 }
 
 fn integrated_xml_child_id(child: &XmlOut) -> Option<yrs::ID> {

@@ -120,10 +120,12 @@ fn selected_text(session: &EditorSession, anchor: u32, head: u32) -> String {
 
 #[test]
 fn epoch_range_resolves_after_multiple_remote_revisions() {
-    let mut session = session_with_text("abcd");
+    let mut session = session_with_text("abcd retained compact Unicode 😀 anchors");
     let epoch = session
         .pin_position_epoch(7, session.engine.revision())
         .unwrap();
+    let retained = session.latest_epoch_snapshot_for_test().unwrap();
+    assert!(retained.chunks[0].stored_anchor_count() < retained.chunks[0].anchors.len());
     let mut replica = replica_of(&session);
 
     insert_at(&mut replica, 20, 2, "R");
@@ -539,7 +541,7 @@ fn epoch_array_reuse_preserves_external_references() {
         let chunks = previous.chunks.as_ptr();
         let cells = previous.cells.as_ptr();
         let old_revision = previous.document_revision;
-        let old_anchors = previous.chunks[0].anchors.clone();
+        let old_anchors = previous.chunks[0].anchors.to_dense();
         let old_cell = previous.cells[0].as_ref().clone();
         let old_starts = previous.scalar_starts.to_vec();
         let held = match case {
@@ -576,12 +578,12 @@ fn epoch_array_reuse_preserves_external_references() {
         match held {
             Held::Snapshot(old) => {
                 assert_eq!(old.document_revision, old_revision);
-                assert_eq!(old.chunks[0].anchors, old_anchors);
+                assert_eq!(old.chunks[0].anchors.to_dense(), old_anchors);
                 assert_eq!(old.cells[0].as_ref(), &old_cell);
                 assert_eq!(old.scalar_starts.as_ref(), old_starts);
             }
             Held::SnapshotWeak(old) => assert!(old.upgrade().is_none()),
-            Held::Chunks(old) => assert_eq!(old[0].anchors, old_anchors),
+            Held::Chunks(old) => assert_eq!(old[0].anchors.to_dense(), old_anchors),
             Held::ChunksWeak(old) => assert!(old.upgrade().is_none()),
             Held::Cells(old) => assert_eq!(old[0].as_ref(), &old_cell),
             Held::CellsWeak(old) => assert!(old.upgrade().is_none()),
@@ -604,7 +606,7 @@ fn exclusive_epoch_arrays_reuse_while_another_owner_keeps_an_older_snapshot() {
         .unwrap();
     let older = session.latest_epoch_snapshot_for_test().unwrap();
     let older_revision = older.document_revision;
-    let older_anchors = older.chunks[0].anchors.clone();
+    let older_anchors = older.chunks[0].anchors.to_dense();
     let older_cells = older.cells.to_vec();
     native_epoch_edit(&mut session, INCREMENTAL_EPOCH_REQUEST, 0, 0, "x").unwrap();
     let first_epoch = session
@@ -631,7 +633,7 @@ fn exclusive_epoch_arrays_reuse_while_another_owner_keeps_an_older_snapshot() {
     assert_eq!(current.chunks.as_ptr(), chunks);
     assert_eq!(current.cells.as_ptr(), cells);
     assert_eq!(older.document_revision, older_revision);
-    assert_eq!(older.chunks[0].anchors, older_anchors);
+    assert_eq!(older.chunks[0].anchors.to_dense(), older_anchors);
     assert_eq!(older.cells.as_ref(), older_cells);
     assert!(session
         .resolve_epoch_range(OLDER_OWNER, older_epoch, 0, 0)
@@ -683,8 +685,8 @@ fn assert_epoch_matches_fresh(session: &mut EditorSession, label: &str) {
     for (index, (actual, expected)) in cached
         .chunks
         .iter()
-        .flat_map(|chunk| &chunk.anchors)
-        .zip(fresh.chunks.iter().flat_map(|chunk| &chunk.anchors))
+        .flat_map(|chunk| chunk.anchors.iter())
+        .zip(fresh.chunks.iter().flat_map(|chunk| chunk.anchors.iter()))
         .enumerate()
     {
         assert_eq!(
@@ -712,7 +714,7 @@ fn incremental_epochs_equal_full_rebuilds_structurally() {
         (
             "prose",
             serde_json::json!({"type":"doc","content":[
-                {"type":"paragraph","content":[{"type":"text","text":"alpha🦀"}]},
+                {"type":"paragraph","content":[{"type":"text","text":"alpha🦀 retained compact Unicode anchors"}]},
                 {"type":"paragraph","content":[{"type":"text","text":"beta"}]},
                 {"type":"paragraph"}
             ]}),
@@ -722,6 +724,10 @@ fn incremental_epochs_equal_full_rebuilds_structurally() {
         let _clients = super::deterministic_clients::DeterministicClients::new();
         let mut session = session_with_document(&source);
         assert_epoch_matches_fresh(&mut session, label);
+        if label == "prose" {
+            let initial = session.latest_epoch_snapshot_for_test().unwrap();
+            assert!(initial.chunks[0].stored_anchor_count() < initial.chunks[0].anchors.len());
+        }
         let mut random = EPOCH_RANDOM_SEED;
         for step in 0..EPOCH_SEEDED_STEPS {
             random = random
@@ -871,12 +877,16 @@ fn incremental_and_full_epochs_resolve_identically_after_remote_cell_changes() {
         },
     ] {
         let deletes_cell = matches!(command, TableCommand::DeleteTableRows);
-        let mut incremental = session_with_document(&plain_table_document(3, 3));
+        let mut document = plain_table_document(3, 3);
+        document["content"][0]["content"][0]["content"][1]["content"][0]["content"][0]["text"] =
+            serde_json::json!("retained compact cell café 😀 anchors");
+        let mut incremental = session_with_document(&document);
         native_epoch_edit(&mut incremental, INCREMENTAL_EPOCH_REQUEST, 0, 0, "x").unwrap();
         let incremental_epoch = incremental
             .pin_position_epoch(INCREMENTAL_EPOCH_OWNER, incremental.engine.revision())
             .unwrap();
         let cached = incremental.latest_epoch_snapshot_for_test().unwrap();
+        assert!(cached.chunks[1].stored_anchor_count() < cached.chunks[1].anchors.len());
         let mut full = session_for_engine(replica_of(&incremental));
         let full_epoch = full
             .pin_position_epoch(INCREMENTAL_EPOCH_OWNER, full.engine.revision())

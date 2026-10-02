@@ -2,6 +2,36 @@ use super::*;
 use crate::test_support::large_table_fixture::{plain_table_document, session_with_document};
 
 #[test]
+fn compact_prose_rejects_out_of_range_cell_attachments_like_dense_storage() {
+    let session = session_with_document(&serde_json::json!({
+        "type": "doc", "content": [{"type": "paragraph", "content": [{
+            "type": "text", "text": "plain café العربية 👩🏽‍💻 ".repeat(8)
+        }]}]
+    }));
+    let mut snapshot = session.engine.build_position_epoch_snapshot().unwrap();
+    let compact = Arc::get_mut(&mut Arc::get_mut(&mut snapshot.chunks).unwrap()[0]).unwrap();
+    assert!(compact.stored_anchor_count() < compact.anchors.len());
+    assert!(!compact.anchors.get(0).unwrap().inside_table_cell());
+    let mut dense = EpochBlockChunk::new(compact.anchors.to_dense()).unwrap();
+    let position = CellTextPosition {
+        cell: 0,
+        point: CellTextPoint {
+            text_offset: 0,
+            run: 0,
+            run_offset: 0,
+            attachment: CellTextAttachment::FollowingText,
+        },
+    };
+    for offset in [compact.anchors.len(), usize::MAX] {
+        assert_eq!(None, dense.anchors.attach_cell(offset, position));
+        assert_eq!(None, compact.anchors.attach_cell(offset, position));
+    }
+    assert_eq!(Some(()), dense.anchors.attach_cell(0, position));
+    assert_eq!(Some(()), compact.anchors.attach_cell(0, position));
+    assert_eq!(dense.anchors.to_dense(), compact.anchors.to_dense());
+}
+
+#[test]
 fn rejected_epoch_updates_preserve_installed_state_and_error_order() {
     const OWNER: u64 = 41;
     const OTHER_OWNER: u64 = 42;
@@ -24,7 +54,7 @@ fn rejected_epoch_updates_preserve_installed_state_and_error_order() {
         let mut store = PositionEpochStore::new(PositionEpochLimits::default());
         let lineage = session.engine.client_id();
         let epoch = store.install(OWNER, lineage, latest.clone()).unwrap();
-        let mut anchors = latest.chunks[0].anchors.clone();
+        let mut anchors = latest.chunks[0].anchors.to_dense();
         anchors.push(anchors.last().unwrap().clone());
         let update = EpochSnapshotUpdate::new(
             &latest,
@@ -130,7 +160,7 @@ fn staged_cell_points_only_attach_to_rebuilt_exclusive_chunks() {
     let block = cell.block_range.start;
     let other = block + 1;
     let other_chunk =
-        Arc::new(EpochBlockChunk::new(previous.chunks[other].anchors.clone()).unwrap());
+        Arc::new(EpochBlockChunk::new(previous.chunks[other].anchors.to_dense()).unwrap());
     assert!(
         EpochSnapshotUpdate::new(
             &previous,
@@ -144,7 +174,8 @@ fn staged_cell_points_only_attach_to_rebuilt_exclusive_chunks() {
         .is_none(),
         "A changed cell must not mutate an unchanged chunk"
     );
-    let rebuilt = Arc::new(EpochBlockChunk::new(previous.chunks[block].anchors.clone()).unwrap());
+    let rebuilt =
+        Arc::new(EpochBlockChunk::new(previous.chunks[block].anchors.to_dense()).unwrap());
     let retained = rebuilt.clone();
     assert!(
         EpochSnapshotUpdate::new(
@@ -159,8 +190,12 @@ fn staged_cell_points_only_attach_to_rebuilt_exclusive_chunks() {
         .is_none(),
         "Shared rebuilt chunks cannot be modified"
     );
-    assert_eq!(retained.anchors, previous.chunks[block].anchors);
-    let rebuilt = Arc::new(EpochBlockChunk::new(previous.chunks[block].anchors.clone()).unwrap());
+    assert_eq!(
+        retained.anchors.to_dense(),
+        previous.chunks[block].anchors.to_dense()
+    );
+    let rebuilt =
+        Arc::new(EpochBlockChunk::new(previous.chunks[block].anchors.to_dense()).unwrap());
     assert!(
         EpochSnapshotUpdate::new(
             &previous,
