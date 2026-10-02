@@ -141,5 +141,6 @@ if grep -En '[[:blank:]]+$' \
 fi
 
 bash "$repo_root/scripts/tests/validate-swift-reader.sh"
+python3 "$repo_root/scripts/tests/validate-kotlin-encoder.py"
 
 echo "Generated binding normalization, ${#V2_SYMBOLS[@]} editor-v2 symbol, viewer ABI, checksum, and copy validation passed."

@@ -122,6 +122,7 @@ mkdir -p "$OUT_DIR/kotlin"
     --language kotlin \
     --no-format \
     --out-dir "$OUT_DIR/kotlin"
+python3 "$SCRIPT_DIR/optimize-kotlin-bindings.py" "$OUT_DIR/kotlin/uniffi/editor_core/editor_core.kt"
 normalize_header "$OUT_DIR/kotlin/uniffi/editor_core/editor_core.kt"
 
 echo "==> Verifying the generated bindings expose the v2 symbols..."

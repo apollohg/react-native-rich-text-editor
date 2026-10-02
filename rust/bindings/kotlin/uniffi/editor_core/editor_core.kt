@@ -26,8 +26,6 @@ import com.sun.jna.Callback
 import com.sun.jna.ptr.*
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.nio.CharBuffer
-import java.nio.charset.CodingErrorAction
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -1568,11 +1566,21 @@ public object FfiConverterString: FfiConverter<String, RustBuffer.ByValue> {
     }
 
     fun toUtf8(value: String): ByteBuffer {
-        // Make sure we don't have invalid UTF-16, check for lone surrogates.
-        return Charsets.UTF_8.newEncoder().run {
-            onMalformedInput(CodingErrorAction.REPORT)
-            encode(CharBuffer.wrap(value))
+        // String's native UTF-8 encoder replaces malformed input, so validate first.
+        var index = 0
+        while (index < value.length) {
+            val unit = value[index]
+            if (Character.isHighSurrogate(unit)) {
+                index += 1
+                if (index == value.length || !Character.isLowSurrogate(value[index])) {
+                    throw java.nio.charset.MalformedInputException(1)
+                }
+            } else if (Character.isLowSurrogate(unit)) {
+                throw java.nio.charset.MalformedInputException(1)
+            }
+            index += 1
         }
+        return ByteBuffer.wrap(value.toByteArray(Charsets.UTF_8))
     }
 
     override fun lower(value: String): RustBuffer.ByValue {
