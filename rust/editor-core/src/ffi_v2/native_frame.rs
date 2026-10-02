@@ -7,6 +7,17 @@ use crate::session::{EditorSession, SessionError};
 use crate::tables::render::{TableRenderCell, TableRenderRecord, TableRenderStructure};
 use crate::yrs_engine::YrsEngineError;
 
+#[cfg(test)]
+thread_local! {
+    pub(super) static CELL_START_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn cell_starts(record: &TableRenderRecord, position: u32) -> Vec<u32> {
+    #[cfg(test)]
+    CELL_START_BUILDS.with(|count| count.set(count.get() + 1));
+    crate::tables::render::absolute_cell_starts(record, position)
+}
+
 fn invariant(message: &'static str) -> SessionError {
     SessionError::from(YrsEngineError::new("ENGINE_INVARIANT_FAILED", message))
 }
@@ -55,8 +66,15 @@ pub(super) struct TableContext<'a> {
     position: u32,
     key: String,
     record: &'a TableRenderRecord,
-    starts: Vec<u32>,
+    starts: std::cell::OnceCell<Vec<u32>>,
     host: Option<FfiTableHost>,
+}
+
+impl TableContext<'_> {
+    fn starts(&self) -> &[u32] {
+        self.starts
+            .get_or_init(|| cell_starts(self.record, self.position))
+    }
 }
 
 pub(super) fn contexts<'a>(
@@ -74,10 +92,10 @@ pub(super) fn contexts<'a>(
         let host = ancestors.last().and_then(|parent| {
             let parent = &output[*parent];
             let index = parent
-                .starts
+                .starts()
                 .partition_point(|start| *start <= position)
                 .checked_sub(1)?;
-            (position < parent.starts[index] + parent.record.cells[index].doc_size).then(|| {
+            (position < parent.starts()[index] + parent.record.cells[index].doc_size).then(|| {
                 FfiTableHost {
                     table_key: parent.key.clone(),
                     cell_index: index as u32,
@@ -92,7 +110,7 @@ pub(super) fn contexts<'a>(
                 .ok_or_else(|| invariant("table identity missing"))?
                 .clone(),
             record,
-            starts: crate::tables::render::absolute_cell_starts(record, position),
+            starts: std::cell::OnceCell::new(),
             host,
         });
     }
@@ -106,7 +124,8 @@ fn cell_record(
     keys: &BTreeMap<u32, String>,
 ) -> Result<FfiTableCellRecord, SessionError> {
     let cell = &context.record.cells[index];
-    let start = context.starts[index];
+    let starts = context.starts();
+    let start = starts[index];
     let map = session
         .engine
         .position_map()
@@ -118,7 +137,7 @@ fn cell_record(
     let (origin, input_blocks, nested_tables) =
         super::native_frame_mapping::relative_cell_mapping(document, map, cell, start, keys)
             .map_err(invariant)?;
-    let scalar_end = if let Some(next) = context.starts.get(index + 1) {
+    let scalar_end = if let Some(next) = starts.get(index + 1) {
         super::native_frame_mapping::scalar_range(
             map,
             *next,

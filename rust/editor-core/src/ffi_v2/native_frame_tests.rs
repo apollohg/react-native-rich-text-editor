@@ -47,7 +47,13 @@ fn native_frame_full_delta_and_pin_cursor_lifetimes() {
         base,
         "a bare pin must not consume a frame transition"
     );
+    super::native_frame::CELL_START_BUILDS.with(|count| count.set(0));
     let next = frame(&mut session, Some(OWNER));
+    assert_eq!(
+        super::native_frame::CELL_START_BUILDS.with(|count| count.get()),
+        0,
+        "a prose delta must not build positions for unchanged flat tables"
+    );
     assert_eq!(next.tables.kind, FfiTableFrameKind::Delta);
     assert_eq!(next.tables.base_document_revision, Some(base.to_string()));
     assert!(
@@ -102,7 +108,13 @@ fn native_frame_keystroke_changes_one_cell_and_root_extents() {
     let mut session = session_with_document(&two_table_document());
     let first = frame(&mut session, Some(OWNER));
     native_edit(&mut session, REQUEST, 1, "🦀");
+    super::native_frame::CELL_START_BUILDS.with(|count| count.set(0));
     let delta = frame(&mut session, Some(OWNER));
+    assert_eq!(
+        super::native_frame::CELL_START_BUILDS.with(|count| count.get()),
+        1,
+        "a cell delta needs only its current table positions, not previous or unchanged tables"
+    );
     assert!(
         delta.tables.tables.is_empty(),
         "text edits preserve table layout"
