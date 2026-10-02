@@ -846,9 +846,9 @@ class PreparedProseRenderingTest {
                 .filter { it.kind == PreparedProseFragmentKind.TEXT }
                 .all { fragment ->
                     fragment.layout!!.let { layout ->
-                        (layout.text as android.text.Spanned)
-                            .getSpans(0, layout.text.length, FixedLineHeightMetricSpan::class.java)
-                            .isEmpty()
+                        val text = layout.text
+                        text !is android.text.Spanned ||
+                            text.getSpans(0, text.length, FixedLineHeightMetricSpan::class.java).isEmpty()
                     }
                 }
         ) { "natural text line-height spans ${metricProjection(document, natural)}" }

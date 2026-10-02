@@ -1280,12 +1280,15 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
         }
 
         val availableWidth = placement.availableWidth
+        val plainTextLayout = block.nodeType == "paragraph" &&
+            theme.sourceTheme?.styleSheet == null && paint.canUsePlainTextLayout
         val attributed = attributed(
             block.inlines,
             paint,
             theme,
             warningSemanticGeneration,
-            block.containers.map { it.nodeType } + block.nodeType
+            block.containers.map { it.nodeType } + block.nodeType,
+            omitUnmarkedSpans = plainTextLayout
         )
         var highlightedCodeKey: String? = null
         if (block.nodeType == "codeBlock") {
@@ -1312,7 +1315,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                 }
             }
         }
-        val layout = staticLayout(attributed.text, paint, availableWidth)
+        val layout = staticLayout(attributed.text, paint, availableWidth, usePlainText = plainTextLayout)
         val codeTopInset = if (block.nodeType == "codeBlock") theme.codePaddingVerticalPx else 0
         val firstLineHeight = layout.getLineBottom(0) - layout.getLineTop(0)
         val markerTopProtection = firstMarkers.maxOfOrNull { (_, marker) ->
@@ -1696,7 +1699,8 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
         base: PreparedTextPaint,
         theme: PreparedProseTheme,
         warningSemanticGeneration: String,
-        ancestors: List<String>
+        ancestors: List<String>,
+        omitUnmarkedSpans: Boolean
     ): AttributedBlock {
         val source = StringBuilder()
         val spans = mutableListOf<(SpannableString) -> Unit>()
@@ -1709,7 +1713,8 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                     source.append(inline.text)
                     val end = source.length
                     val markSpans =
-                        markSpans(inline.marks, base, theme, warningSemanticGeneration, ancestors)
+                        if (omitUnmarkedSpans && inlines.size == 1 && inline.marks.isEmpty()) emptyList()
+                        else markSpans(inline.marks, base, theme, warningSemanticGeneration, ancestors)
                     spans +=
                         { value ->
                             markSpans.forEach {
@@ -2017,14 +2022,22 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
         return result
     }
 
+    // Android's span and plain-text caret paths differ with letter spacing.
+    private val PreparedTextPaint.canUsePlainTextLayout: Boolean
+        get() = letterSpacing == 0f && lineHeightPx == null && textAlign == null
+
     private fun staticLayout(
         text: CharSequence,
         paint: PreparedTextPaint,
-        width: Int
+        width: Int,
+        usePlainText: Boolean = false
     ): StaticLayout {
         staticLayoutsBuilt += 1
         val resolved = paint.newTextPaint()
-        val preparedText = SpannableString(text).apply {
+        val preparedText = if (usePlainText &&
+            (text !is Spanned || text.getSpans(0, text.length, Any::class.java).isEmpty())) {
+            text.toString()
+        } else SpannableString(text).apply {
             // The full prepared range includes a single line and the final line
             // after a hard break; builder line spacing does not provide that
             // guarantee and would double-compensate these metrics.
