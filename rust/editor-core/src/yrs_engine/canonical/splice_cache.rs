@@ -7,8 +7,11 @@ use serde_json::value::RawValue;
 use std::ops::Range;
 use std::sync::{Arc, Weak};
 
+const CANONICAL_CACHE_GROWTH_BYTES: usize = 4 * 1024;
+
 #[cfg(test)]
 std::thread_local! {
+    static EXACT_CAPACITY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static CACHE_DISABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static FAILED_ALLOCATION: std::cell::Cell<Option<CacheAllocation>> = const { std::cell::Cell::new(None) };
 }
@@ -17,6 +20,7 @@ std::thread_local! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CacheAllocation {
     Buffer,
+    SpareBuffer,
     Path,
 }
 
@@ -73,6 +77,18 @@ impl CanonicalSpliceCache {
         let _restore = Restore(CACHE_DISABLED.replace(true));
         operation()
     }
+    #[cfg(test)]
+    pub(crate) fn with_exact_capacity_for_test<T>(operation: impl FnOnce() -> T) -> T {
+        struct Restore(bool);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                EXACT_CAPACITY.set(self.0);
+            }
+        }
+        let _restore = Restore(EXACT_CAPACITY.replace(true));
+        operation()
+    }
+
     pub(crate) fn retained_bytes(&self) -> Option<usize> {
         Self::fixed_bytes()?
             .checked_add(self.bytes.capacity())?
@@ -231,9 +247,35 @@ impl CanonicalSpliceCache {
         if expected_len > self.bytes.capacity() {
             #[cfg(test)]
             Self::allocation_allowed(CacheAllocation::Buffer)?;
-            self.bytes
-                .try_reserve_exact(expected_len.checked_sub(old_len)?)
-                .ok()?;
+            let spare_capacity = expected_len
+                .checked_add(CANONICAL_CACHE_GROWTH_BYTES)
+                .filter(|capacity| {
+                    let charge = self
+                        .retained_bytes()
+                        .and_then(|bytes| bytes.checked_sub(self.bytes.capacity()))
+                        .and_then(|bytes| bytes.checked_add(*capacity));
+                    charge.is_some_and(|charge| {
+                        previous_bytes
+                            .checked_add(charge)
+                            .is_some_and(|total| total <= byte_budget)
+                            && charge
+                                .checked_mul(2)
+                                .is_some_and(|total| total <= byte_budget)
+                    })
+                });
+            #[cfg(test)]
+            let spare_capacity = spare_capacity.filter(|_| {
+                !EXACT_CAPACITY.get()
+                    && Self::allocation_allowed(CacheAllocation::SpareBuffer).is_some()
+            });
+            // Spare capacity must fit both current staging and another cache of the same size.
+            let reserved_spare = spare_capacity
+                .is_some_and(|capacity| self.bytes.try_reserve_exact(capacity - old_len).is_ok());
+            if !reserved_spare {
+                self.bytes
+                    .try_reserve_exact(expected_len.checked_sub(old_len)?)
+                    .ok()?;
+            }
         }
         // Keep the existing old-plus-new staging headroom policy.
         if previous_bytes.checked_add(self.retained_bytes()?)? > byte_budget {
@@ -931,5 +973,52 @@ mod tests {
             CanonicalSpliceCache::prepare(Some(cache), &after, &retargeted, &[1], 2, 3, usize::MAX)
                 .unwrap();
         assert_canonical(&cache, &retargeted, &[1]);
+    }
+
+    #[test]
+    fn repeated_splice_growth_reuses_spare_capacity_within_staging_budget() {
+        const EDITS: usize = 256;
+        const BYTE_BUDGET: usize = 16 * 1024;
+        let schema = crate::prosemirror_schema();
+        let context = CanonicalSchemaContext::new(&schema);
+        let mut children = vec![paragraph("initial", 0), paragraph("unchanged", 0)];
+        let mut before = context.derive(&document(&children)).unwrap();
+        let mut cache =
+            CanonicalSpliceCache::prepare(None, &before, &before, &[0], 0, 0, BYTE_BUDGET).unwrap();
+        let mut retained = None;
+        for edit in 0..EDITS {
+            children[0] = paragraph(&"x".repeat(edit + 8), 0);
+            let after = context.derive(&document(&children)).unwrap();
+            let previous_bytes = cache.retained_bytes().unwrap();
+            cache = CanonicalSpliceCache::prepare(
+                Some(cache),
+                &before,
+                &after,
+                &[0],
+                edit as u64,
+                edit as u64 + 1,
+                BYTE_BUDGET,
+            )
+            .unwrap();
+            assert_canonical(&cache, &after, &[0]);
+            assert!(
+                previous_bytes + cache.retained_bytes().unwrap() <= BYTE_BUDGET,
+                "edit={edit}: actual old-plus-new staging charge"
+            );
+            let allocation = (cache.bytes.as_ptr(), cache.bytes.capacity());
+            if let Some(previous) = retained {
+                assert_eq!(
+                    allocation, previous,
+                    "edit={edit}: repeated typing should reuse its bounded spare allocation"
+                );
+            } else {
+                assert!(
+                    cache.bytes.capacity() >= cache.bytes.len() + EDITS,
+                    "the first growing edit should reserve capacity for subsequent edits"
+                );
+                retained = Some(allocation);
+            }
+            before = after;
+        }
     }
 }

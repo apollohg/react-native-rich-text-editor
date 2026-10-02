@@ -3,6 +3,10 @@ const CANONICAL_CACHE_TEST_TEXT_BYTES: usize = 4 * 1024;
 const CANONICAL_CACHE_TEST_CLOCK_MILLIS: u64 = 10_000;
 
 fn canonical_cache_engine() -> YrsDocumentEngine {
+    canonical_cache_engine_with_limits(CANONICAL_CACHE_TEST_LIMIT, CANONICAL_CACHE_TEST_TEXT_BYTES)
+}
+
+fn canonical_cache_engine_with_limits(byte_limit: usize, text_bytes: usize) -> YrsDocumentEngine {
     let mut engine = YrsDocumentEngine::new_with_history_clock(
         YrsEngineConfig {
             schema: tiptap_schema(),
@@ -10,7 +14,7 @@ fn canonical_cache_engine() -> YrsDocumentEngine {
             initialization_mode: crate::yrs_engine::InitializationMode::LocalEmpty,
             resource_limits: ResourceLimits::default(),
             editing_limits: crate::yrs_engine::EditingLimits {
-                max_derived_output_bytes: CANONICAL_CACHE_TEST_LIMIT,
+                max_derived_output_bytes: byte_limit,
                 ..crate::yrs_engine::EditingLimits::default()
             },
             max_length: None,
@@ -25,7 +29,7 @@ fn canonical_cache_engine() -> YrsDocumentEngine {
     engine
         .import_json(
             &json!({"type":"doc","content":[{"type":"paragraph","content":[
-        {"type":"text","text":"a".repeat(CANONICAL_CACHE_TEST_TEXT_BYTES)}]}]})
+        {"type":"text","text":"a".repeat(text_bytes)}]}]})
             .to_string(),
             TransactionOrigin::DocumentImport,
         )
@@ -247,13 +251,24 @@ fn canonical_cache_drops_failed_staging_and_invalidates_external_transitions() {
 #[test]
 fn optional_canonical_cache_allocation_failure_preserves_edit_and_history() {
     use crate::yrs_engine::canonical::{CacheAllocation, CanonicalSpliceCache};
-    for allocation in [CacheAllocation::Buffer, CacheAllocation::Path] {
-        let failed_request = match allocation {
-            CacheAllocation::Buffer => 108_601,
-            CacheAllocation::Path => 108_600,
+    for (allocation, failed_request) in [
+        (CacheAllocation::Buffer, 108_601),
+        (CacheAllocation::Path, 108_600),
+        (CacheAllocation::SpareBuffer, 108_601),
+    ] {
+        let scale = if allocation == CacheAllocation::SpareBuffer {
+            2
+        } else {
+            1
         };
-        let mut cached = canonical_cache_engine();
-        let mut uncached = canonical_cache_engine();
+        let mut cached = canonical_cache_engine_with_limits(
+            CANONICAL_CACHE_TEST_LIMIT * scale,
+            CANONICAL_CACHE_TEST_TEXT_BYTES * scale,
+        );
+        let mut uncached = canonical_cache_engine_with_limits(
+            CANONICAL_CACHE_TEST_LIMIT * scale,
+            CANONICAL_CACHE_TEST_TEXT_BYTES * scale,
+        );
         for request_id in 108_600..108_603 {
             let apply = || {
                 cached.apply_typed_transaction(canonical_cache_insert(
@@ -292,7 +307,7 @@ fn optional_canonical_cache_allocation_failure_preserves_edit_and_history() {
             );
             assert_eq!(
                 cached.canonical_splice_cache.is_some(),
-                request_id != failed_request
+                allocation == CacheAllocation::SpareBuffer || request_id != failed_request
             );
         }
         for request_id in 108_610..108_613 {
@@ -383,4 +398,127 @@ fn canonical_cache_edit_after_undo_preserves_redo_metadata_admission() {
         assert_eq!(cached.document_json(), uncached.document_json());
         request_id += 1;
     }
+}
+
+#[test]
+fn canonical_cache_growth_preserves_exact_and_disabled_history_policies() {
+    use crate::yrs_engine::canonical::CanonicalSpliceCache;
+    const EDITS: u64 = 96;
+    const FIRST_REQUEST: u64 = 108_800;
+    let mut saw_spare = false;
+    for scale in [1, 2] {
+        let make_engine = || {
+            canonical_cache_engine_with_limits(
+                CANONICAL_CACHE_TEST_LIMIT * scale,
+                CANONICAL_CACHE_TEST_TEXT_BYTES * scale,
+            )
+        };
+        let mut spare = make_engine();
+        let mut exact = make_engine();
+        let mut disabled = make_engine();
+        let mut saw_eviction = false;
+        let mut saw_reseed = false;
+        let mut had_cache = false;
+        for edit in 0..EDITS {
+            let request_id = FIRST_REQUEST + edit;
+            let policy = if edit % 3 == 0 {
+                HistoryPolicy::Boundary
+            } else {
+                HistoryPolicy::Auto
+            };
+            let actual =
+                spare.apply_typed_transaction(canonical_cache_insert(&spare, request_id, policy));
+            let legacy = CanonicalSpliceCache::with_exact_capacity_for_test(|| {
+                exact.apply_typed_transaction(canonical_cache_insert(&exact, request_id, policy))
+            });
+            let uncached = CanonicalSpliceCache::without_for_test(|| {
+                disabled
+                    .apply_typed_transaction(canonical_cache_insert(&disabled, request_id, policy))
+            });
+            assert_eq!(
+                actual, legacy,
+                "scale={scale}, edit={edit}: spare versus exact"
+            );
+            assert_eq!(
+                actual, uncached,
+                "scale={scale}, edit={edit}: spare versus disabled"
+            );
+            actual.unwrap();
+            for other in [&exact, &disabled] {
+                assert_eq!(
+                    spare.document_json(),
+                    other.document_json(),
+                    "scale={scale}, edit={edit}"
+                );
+                assert_eq!(
+                    spare.history.replay_metadata_bytes_for_test(),
+                    other.history.replay_metadata_bytes_for_test()
+                );
+                assert_eq!(
+                    spare.history.retained_units(request_id).unwrap(),
+                    other.history.retained_units(request_id).unwrap()
+                );
+                assert_eq!(
+                    spare.history.stack_depths_for_test(),
+                    other.history.stack_depths_for_test()
+                );
+            }
+            if let Some(cache) = &spare.canonical_splice_cache {
+                assert!(
+                    cache.retained_bytes().unwrap()
+                        <= spare
+                            .history
+                            .cache_metadata_headroom(request_id, 0)
+                            .unwrap()
+                );
+                saw_reseed |= saw_eviction;
+                had_cache = true;
+                if let Some(exact_cache) = &exact.canonical_splice_cache {
+                    saw_spare |=
+                        cache.retained_bytes().unwrap() > exact_cache.retained_bytes().unwrap();
+                }
+            } else {
+                saw_eviction |= had_cache;
+            }
+            if edit % 11 == 0 {
+                let reject = |engine: &mut YrsDocumentEngine| {
+                    let mut transaction = canonical_cache_insert(engine, request_id, policy);
+                    transaction.base_document_revision += 1;
+                    engine.apply_typed_transaction(transaction)
+                };
+                let actual = reject(&mut spare);
+                let legacy =
+                    CanonicalSpliceCache::with_exact_capacity_for_test(|| reject(&mut exact));
+                let uncached = CanonicalSpliceCache::without_for_test(|| reject(&mut disabled));
+                assert!(actual.is_err());
+                assert_eq!(actual, legacy);
+                assert_eq!(actual, uncached);
+            }
+        }
+        assert!(
+            saw_eviction && saw_reseed,
+            "scale={scale}: must exercise memory pressure and rollover"
+        );
+        let mut request_id = FIRST_REQUEST + EDITS;
+        while spare.can_undo() || exact.can_undo() || disabled.can_undo() {
+            let actual = spare.undo(request_id);
+            assert_eq!(actual, exact.undo(request_id));
+            assert_eq!(actual, disabled.undo(request_id));
+            assert_eq!(spare.document_json(), exact.document_json());
+            assert_eq!(spare.document_json(), disabled.document_json());
+            request_id += 1;
+        }
+        while spare.can_redo() || exact.can_redo() || disabled.can_redo() {
+            let actual = spare.redo(request_id);
+            assert_eq!(actual, exact.redo(request_id));
+            assert_eq!(actual, disabled.redo(request_id));
+            assert_eq!(spare.document_json(), exact.document_json());
+            assert_eq!(spare.document_json(), disabled.document_json());
+            request_id += 1;
+        }
+    }
+    assert!(
+        saw_spare,
+        "the larger fixture must exercise actual spare allocation"
+    );
 }
