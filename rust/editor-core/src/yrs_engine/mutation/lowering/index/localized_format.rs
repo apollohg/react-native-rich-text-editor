@@ -367,21 +367,15 @@ fn localized_existing_textblock_targets<T: ReadTxn>(
     let observed_scope =
         read_scope.filter(|scope| scope.begin_observed_path(txn, locator.block_path().len()));
     for &child_index in locator.block_path() {
-        let children = match &parent {
-            XmlParentRef::Fragment(parent) => parent.children(txn).collect::<Vec<_>>(),
-            XmlParentRef::Element(parent) => parent.children(txn).collect::<Vec<_>>(),
-        };
-        if let Some(scope) = observed_scope {
-            scope.observe_path_child(txn, parent.id(), child_index, &children);
-        }
-        path_parent_widths.insert(parent.id(), children.len());
-        let Some(child) = usize::try_from(child_index)
-            .ok()
-            .and_then(|index| children.get(index))
-        else {
+        let (child, width) = parent.child_with_width(txn, child_index);
+        path_parent_widths.insert(parent.id(), width);
+        let Some(child) = child else {
             return Ok(None);
         };
-        let XmlOut::Element(element) = child else {
+        if let Some(scope) = observed_scope {
+            scope.observe_path_child(txn, parent.id(), child_index, &child, width);
+        }
+        let XmlOut::Element(element) = &child else {
             return Ok(None);
         };
         semantic_path.push(child_index);

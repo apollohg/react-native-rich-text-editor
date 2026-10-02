@@ -38,6 +38,26 @@ impl XmlParentRef {
         }
     }
 
+    pub(super) fn child_with_width<T: ReadTxn>(
+        &self,
+        txn: &T,
+        index: u32,
+    ) -> (Option<XmlOut>, usize) {
+        let children = match self {
+            Self::Fragment(parent) => parent.children(txn),
+            Self::Element(parent) => parent.children(txn),
+        };
+        let mut selected = None;
+        let mut width = 0;
+        for child in children {
+            if width == index as usize {
+                selected = Some(child);
+            }
+            width += 1;
+        }
+        (selected, width)
+    }
+
     fn remove_range(&self, txn: &mut TransactionMut<'_>, index: u32, len: u32) {
         match self {
             Self::Fragment(parent) => parent.remove_range(txn, index, len),

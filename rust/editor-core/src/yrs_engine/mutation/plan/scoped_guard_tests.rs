@@ -235,7 +235,13 @@ fn observe_ancestors(owner: &CompilationReadTransaction<'_>, plan: &YrsMutationP
                 }
             }
         };
-        scope.observe_path_child(owner, parent.clone(), *index, &children);
+        scope.observe_path_child(
+            owner,
+            parent.clone(),
+            *index,
+            &children[*index as usize],
+            children.len(),
+        );
     }
 }
 
@@ -415,7 +421,13 @@ fn structural_and_mixed_actions_do_not_consume_observed_ancestor_edges() {
         let children: Vec<_> = root.children(&owner).collect();
         let scope = owner.scope().unwrap();
         assert!(scope.begin_observed_path(&owner, 1));
-        scope.observe_path_child(&owner, AsRef::<Branch>::as_ref(&root).id(), 0, &children);
+        scope.observe_path_child(
+            &owner,
+            AsRef::<Branch>::as_ref(&root).id(),
+            0,
+            &children[0],
+            children.len(),
+        );
         PREFLIGHT_CHILDREN_ENUMERATED.set(0);
         let eager = preflight_mutation_plan_impl(REQUEST_ID, &plan, &owner, None).unwrap();
         let eager_scans = PREFLIGHT_CHILDREN_ENUMERATED.get();
@@ -429,5 +441,64 @@ fn structural_and_mixed_actions_do_not_consume_observed_ancestor_edges() {
             eager_scans,
             "mixed={mixed}: structural/gap consumers must materialize complete children"
         );
+    }
+}
+
+#[test]
+fn selected_child_width_matches_xml_iteration_through_tombstones_and_non_xml_values() {
+    use yrs::{Array, ArrayRef, XmlElementPrelim, XmlTextPrelim};
+    let doc = Doc::new();
+    let root = doc.get_or_insert_xml_fragment(FRAGMENT_NAME);
+    let element = root.insert(
+        &mut doc.transact_mut(),
+        0,
+        XmlElementPrelim::empty("container"),
+    );
+    for parent in [XmlParentRef::Element(element), XmlParentRef::Fragment(root)] {
+        let branch = parent.id().get_branch(&doc.transact()).unwrap();
+        let array = ArrayRef::from(branch);
+        for phase in 0..4 {
+            {
+                let mut txn = doc.transact_mut();
+                match phase {
+                    0 => {}
+                    1 => {
+                        for _ in 0..64 {
+                            array.push_back(&mut txn, XmlElementPrelim::empty("paragraph"));
+                        }
+                        array.push_back(&mut txn, XmlTextPrelim::new("tail"));
+                    }
+                    2 => {
+                        array.remove(&mut txn, 0);
+                        array.remove(&mut txn, 17);
+                        let last = array.len(&txn) - 1;
+                        array.remove(&mut txn, last);
+                    }
+                    3 => {
+                        array.insert(&mut txn, 2, 42);
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            let txn = doc.transact();
+            let expected: Vec<_> = match &parent {
+                XmlParentRef::Fragment(value) => value.children(&txn).collect(),
+                XmlParentRef::Element(value) => value.children(&txn).collect(),
+            };
+            for index in (0..=expected.len() as u32 + 1).chain([u32::MAX]) {
+                let (child, width) = parent.child_with_width(&txn, index);
+                assert_eq!(width, expected.len(), "phase={phase} index={index}");
+                assert_eq!(
+                    child
+                        .as_ref()
+                        .map(|child| (std::mem::discriminant(child), child.id())),
+                    expected
+                        .get(index as usize)
+                        .map(|child| (std::mem::discriminant(child), child.id())),
+                    "phase={phase} index={index} parent={:?}",
+                    parent.id()
+                );
+            }
+        }
     }
 }

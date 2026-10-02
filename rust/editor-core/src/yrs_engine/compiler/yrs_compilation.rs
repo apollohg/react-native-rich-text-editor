@@ -57,21 +57,22 @@ impl CompilationReadScope<'_> {
         txn: &T,
         parent: yrs::branch::BranchID,
         index: u32,
-        children: &[yrs::types::xml::XmlOut],
+        child: &yrs::types::xml::XmlOut,
+        width: usize,
     ) {
         if !self.matches_store(txn) {
             return;
         }
-        let Some(child) = children.get(index as usize) else {
+        if index as usize >= width {
             return;
-        };
+        }
         let mut observed = self.observed_path.borrow_mut();
         if observed.len() < observed.capacity() {
             observed.push(ObservedPathChild {
                 parent,
                 index,
                 child: child.id(),
-                width: children.len(),
+                width,
             });
         }
     }
