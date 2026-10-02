@@ -1435,12 +1435,21 @@ final class EditorTableInputTests: XCTestCase {
         defer { destroyV2Editor(id: editorId) }
         let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
         let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
+        let window = makeTestWindow(frame: view.bounds)
+        window.addSubview(view)
+        window.makeKeyAndVisible()
+        defer {
+            view.activeTextInput.resignFirstResponder()
+            view.bindEditor(id: 0, initialUpdateJSON: nil)
+            window.isHidden = true
+        }
         view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
         XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(wideTwoCellDocument))))
         view.layoutIfNeeded()
         let tableID = try XCTUnwrap(adapter.tableRecordsForTesting.keys.first)
         let surface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
         let drawing = try XCTUnwrap(surface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
+        XCTAssertTrue(drawing.window === window, "Painting and hit testing require the mounted viewport")
         let first = try XCTUnwrap(surface.cellFrame(tableID: tableID, cellIndex: 0))
         XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: first))
 
@@ -1605,6 +1614,14 @@ final class EditorTableInputTests: XCTestCase {
         let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
         let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"three"}]}]}]}]}]}"#
         let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 360, height: 180))
+        let window = makeTestWindow(frame: view.bounds)
+        window.addSubview(view)
+        window.makeKeyAndVisible()
+        defer {
+            view.activeTextInput.resignFirstResponder()
+            view.bindEditor(id: 0, initialUpdateJSON: nil)
+            window.isHidden = true
+        }
         view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
         XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
         let record = try XCTUnwrap(adapter.tableRecordsForTesting.values.first)
@@ -1632,6 +1649,7 @@ final class EditorTableInputTests: XCTestCase {
         view.layoutIfNeeded()
         let surface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
         let drawing = try XCTUnwrap(surface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
+        XCTAssertTrue(drawing.window === window, "Painting and hit testing require the mounted viewport")
         let block = try XCTUnwrap(drawing.layout?.blocks.first)
         let table = try XCTUnwrap(block.tableSurface)
         let origin = try XCTUnwrap(block.tableBounds).origin
@@ -2868,12 +2886,21 @@ final class EditorTableInputTests: XCTestCase {
         let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
         let document = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"cell"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"#
         let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        let window = makeTestWindow(frame: view.bounds)
+        window.addSubview(view)
+        window.makeKeyAndVisible()
+        defer {
+            view.activeTextInput.resignFirstResponder()
+            view.bindEditor(id: 0, initialUpdateJSON: nil)
+            window.isHidden = true
+        }
         view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
         XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
         view.layoutIfNeeded()
 
         let tableSurface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
         let drawing = try XCTUnwrap(tableSurface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
+        XCTAssertTrue(drawing.window === window, "Painting and hit testing require the mounted viewport")
         let layout = try XCTUnwrap(drawing.layout)
         XCTAssertFalse(drawing.isOpaque)
         XCTAssertEqual(layout.blocks.compactMap(\.tableSurface).count, 1)
@@ -2898,6 +2925,14 @@ final class EditorTableInputTests: XCTestCase {
         let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
         let document = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"cell"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"#
         let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 320, height: 100))
+        let window = makeTestWindow(frame: view.bounds)
+        window.addSubview(view)
+        window.makeKeyAndVisible()
+        defer {
+            view.activeTextInput.resignFirstResponder()
+            view.bindEditor(id: 0, initialUpdateJSON: nil)
+            window.isHidden = true
+        }
         view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
         XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
         view.layoutIfNeeded()
@@ -2911,6 +2946,7 @@ final class EditorTableInputTests: XCTestCase {
 
         let tableSurface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
         let drawing = try XCTUnwrap(tableSurface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
+        XCTAssertTrue(drawing.window === window, "Painting and hit testing require the mounted viewport")
         let contentLayout = try XCTUnwrap(drawing.layout)
         let tableBounds = try XCTUnwrap(drawing.layout?.blocks.first?.tableBounds)
         let after = (view.textView.text as NSString).range(of: "after")
@@ -3019,6 +3055,14 @@ final class EditorTableInputTests: XCTestCase {
         let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
         let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_header","content":[{"type":"paragraph","content":[{"type":"text","text":"active"}]}]},{"type":"table_header","content":[{"type":"paragraph","content":[{"type":"text","text":"inactive"}]}]}]}]}]}"#
         let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 320, height: 180))
+        let window = makeTestWindow(frame: view.bounds)
+        window.addSubview(view)
+        window.makeKeyAndVisible()
+        defer {
+            view.activeTextInput.resignFirstResponder()
+            view.bindEditor(id: 0, initialUpdateJSON: nil)
+            window.isHidden = true
+        }
         view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
         XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
         view.layoutIfNeeded()
@@ -3026,6 +3070,7 @@ final class EditorTableInputTests: XCTestCase {
         let tableID = try XCTUnwrap(adapter.tableMappingsForTesting?.tables.keys.first)
         let tableSurface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
         let drawing = try XCTUnwrap(tableSurface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
+        XCTAssertTrue(drawing.window === window, "Painting and hit testing require the mounted viewport")
         let block = try XCTUnwrap(drawing.layout?.blocks.first)
         let surface = try XCTUnwrap(block.tableSurface)
         let tableBounds = try XCTUnwrap(block.tableBounds)
