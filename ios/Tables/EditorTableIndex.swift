@@ -263,8 +263,13 @@ final class EditorTableIndex {
         guard record.failure != nil || record.sourceRows.reduce(UInt64.zero, { $0 + UInt64($1.cellCount) }) == UInt64(record.cells.count) else {
             throw TableFrameRejection.cellIndexOutOfRange(key, record.cells.count)
         }
-        var entry = Entry(record: record, docPrefix: Array(repeating: 0, count: record.cells.count + 1),
-                          scalarPrefix: Array(repeating: 0, count: record.cells.count + 1), attributeCounts: counts, nestedCells: nestedCells)
+        var entry = Entry(
+            record: record,
+            docPrefix: Array(repeating: 0, count: record.cells.count + 1),
+            scalarPrefix: Array(repeating: 0, count: record.cells.count + 1),
+            attributeCounts: counts,
+            nestedCells: nestedCells
+        )
         try rebuildPrefixes(&entry, from: 0)
         let expected = UInt64(nodeBoundarySize) * UInt64(record.sourceRows.count + 1) + UInt64(entry.docPrefix.last ?? 0)
         guard record.failure != nil || expected == UInt64(record.docSize), record.failure == nil || record.cells.isEmpty else {
@@ -400,7 +405,7 @@ final class EditorTableIndex {
         let relative = position - start
         let index = Self.precedingIndex(entry.record.cells.count) { entry.scalarPrefix[$0] <= relative }
         guard let index, relative < entry.scalarPrefix[index + 1]
-                || (index == entry.record.cells.count - 1 && relative == entry.scalarPrefix[index + 1]) else { return nil }
+            || (index == entry.record.cells.count - 1 && relative == entry.scalarPrefix[index + 1]) else { return nil }
         return index
     }
 

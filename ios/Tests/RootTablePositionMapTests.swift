@@ -64,8 +64,10 @@ final class RootTablePositionMapTests: XCTestCase {
                 ("table", NSRange(location: 0, length: 1)), ("table", NSRange(location: 2, length: 1))
             ])
         ] {
-            XCTAssertNil(RootTablePositionMap.fromRendered(text, extents: ["table": extent], scalarLength: 6),
-                         "malformed markers must fail before installation: \(text)")
+            XCTAssertNil(
+                RootTablePositionMap.fromRendered(text, extents: ["table": extent], scalarLength: 6),
+                "malformed markers must fail before installation: \(text)"
+            )
         }
     }
 }

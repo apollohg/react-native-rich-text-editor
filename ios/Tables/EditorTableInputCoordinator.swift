@@ -76,8 +76,10 @@ final class EditorTableInputCoordinator {
         let rendered = renderedWithMarkers
         var observedTables = Set<String>()
         var markersValid = true
-        rendered.enumerateAttribute(RenderBridgeAttributes.rootTableMarker,
-                                    in: NSRange(location: 0, length: rendered.length)) { value, range, _ in
+        rendered.enumerateAttribute(
+            RenderBridgeAttributes.rootTableMarker,
+            in: NSRange(location: 0, length: rendered.length)
+        ) { value, range, _ in
             guard let value else { return }
             guard let tableID = value as? String, range.length == 1,
                   observedTables.insert(tableID).inserted else {
@@ -117,8 +119,12 @@ final class EditorTableInputCoordinator {
             self.positionMap = positionMap
             cellInput.tableCellPositionMap = positionMap
             cellInput.tableCellInputAuthority = inputAuthority
-            phase = .bound(tableKey: target.binding.tableKey, cellIndex: target.binding.cellIndex,
-                           documentRevision: String(target.binding.documentRevision), positionEpoch: String(target.binding.positionEpoch))
+            phase = .bound(
+                tableKey: target.binding.tableKey,
+                cellIndex: target.binding.cellIndex,
+                documentRevision: String(target.binding.documentRevision),
+                positionEpoch: String(target.binding.positionEpoch)
+            )
             return true
         }
         _ = cellInput.discardTransientNativeInputForEditorRebind()
@@ -170,9 +176,12 @@ final class EditorTableInputCoordinator {
         else { return false }
         positionMap = map
         cellInput.tableCellPositionMap = map
-        phase = .bound(tableKey: map.binding.tableKey, cellIndex: map.binding.cellIndex,
-                       documentRevision: String(map.binding.documentRevision),
-                       positionEpoch: String(map.binding.positionEpoch))
+        phase = .bound(
+            tableKey: map.binding.tableKey,
+            cellIndex: map.binding.cellIndex,
+            documentRevision: String(map.binding.documentRevision),
+            positionEpoch: String(map.binding.positionEpoch)
+        )
         return true
     }
 

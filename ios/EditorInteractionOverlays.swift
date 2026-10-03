@@ -40,8 +40,8 @@ struct RemoteSelectionDecoration {
     let color: UIColor
     let name: String?
     let isFocused: Bool
-    var cellRectangle: RemoteCellRectangle? = nil
-    var resolvedAt: RemoteSelectionFrame? = nil
+    var cellRectangle: RemoteCellRectangle?
+    var resolvedAt: RemoteSelectionFrame?
 
     static func from(json: String?) -> [RemoteSelectionDecoration] {
         guard let json,

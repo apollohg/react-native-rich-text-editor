@@ -284,8 +284,12 @@ final class PreparedProseAccessibilityTests: XCTestCase {
             }
         }
         let expected = node.rects.flatMap { rect in
-            [CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.minY),
-             CGPoint(x: rect.maxX, y: rect.maxY), CGPoint(x: rect.minX, y: rect.maxY)].map { point in
+            [
+                CGPoint(x: rect.minX, y: rect.minY),
+                CGPoint(x: rect.maxX, y: rect.minY),
+                CGPoint(x: rect.maxX, y: rect.maxY),
+                CGPoint(x: rect.minX, y: rect.maxY)
+            ].map { point in
                 window.convert(drawing.convert(point, to: window), to: window.screen.coordinateSpace)
             }
         }
@@ -329,13 +333,18 @@ final class PreparedProseAccessibilityTests: XCTestCase {
 
         drawing.install(layout: try prepare(plainDocument("Rewritten plain prose"), width: 180))
 
-        XCTAssertEqual(element.accessibilityLabel, "Rewritten plain prose",
-                       "a label read in the installing turn reflects the new layout")
+        XCTAssertEqual(
+            element.accessibilityLabel,
+            "Rewritten plain prose",
+            "a label read in the installing turn reflects the new layout"
+        )
         flushMainQueue()
         XCTAssertEqual(drawing.index(ofAccessibilityElement: element), 0, "a label change keeps the element")
         XCTAssertEqual(arguments.count, 1, "announcements: \(arguments)")
-        XCTAssertTrue(arguments.first.flatMap { $0 } as AnyObject === element,
-                      "VoiceOver re-reads the focused node without moving: \(arguments)")
+        XCTAssertTrue(
+            arguments.first.flatMap { $0 } as AnyObject === element,
+            "VoiceOver re-reads the focused node without moving: \(arguments)"
+        )
     }
 
     func testInvalidatingOffWindowReleasesTheSupersededLayout() throws {
@@ -356,8 +365,11 @@ final class PreparedProseAccessibilityTests: XCTestCase {
         drawing.removeFromSuperview()
         drawing.install(layout: try prepare(plainDocument("Rewritten plain prose"), width: 180))
 
-        XCTAssertEqual(drawing.materializedAccessibilityElementCountForTesting, 0,
-                       "an off-window view drops elements on invalidation")
+        XCTAssertEqual(
+            drawing.materializedAccessibilityElementCountForTesting,
+            0,
+            "an off-window view drops elements on invalidation"
+        )
         XCTAssertNil(superseded, "materialized elements must not keep a superseded layout alive")
     }
 

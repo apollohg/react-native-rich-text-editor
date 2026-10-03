@@ -40,8 +40,13 @@ enum TableAccessibilityText {
     }
 
     static func string(_ key: String, _ value: String) -> String {
-        NSLocalizedString(key, tableName: nil, bundle: Bundle(for: TableAccessibilityTableElement.self),
-                          value: value, comment: "")
+        NSLocalizedString(
+            key,
+            tableName: nil,
+            bundle: Bundle(for: TableAccessibilityTableElement.self),
+            value: value,
+            comment: ""
+        )
     }
 }
 
@@ -59,39 +64,90 @@ struct TableAccessibilityAction: Equatable {
     )
 
     static let all: [TableAccessibilityAction] = [
-        TableAccessibilityAction(key: "addRowBefore", applicability: "addTableRowBefore",
-                                 command: ["type": "addTableRow", "side": "before"], defaultLabel: "Insert row above"),
-        TableAccessibilityAction(key: "addRowAfter", applicability: "addTableRowAfter",
-                                 command: ["type": "addTableRow", "side": "after"], defaultLabel: "Insert row below"),
-        TableAccessibilityAction(key: "deleteRows", applicability: "deleteTableRows",
-                                 command: ["type": "deleteTableRows"], defaultLabel: "Delete row"),
-        TableAccessibilityAction(key: "selectRows", applicability: "selectTableRows",
-                                 command: ["type": "selectTableRows"], defaultLabel: "Select row"),
-        TableAccessibilityAction(key: "addColumnBefore", applicability: "addTableColumnBefore",
-                                 command: ["type": "addTableColumn", "side": "before"],
-                                 defaultLabel: "Insert column before"),
-        TableAccessibilityAction(key: "addColumnAfter", applicability: "addTableColumnAfter",
-                                 command: ["type": "addTableColumn", "side": "after"],
-                                 defaultLabel: "Insert column after"),
-        TableAccessibilityAction(key: "deleteColumns", applicability: "deleteTableColumns",
-                                 command: ["type": "deleteTableColumns"], defaultLabel: "Delete column"),
-        TableAccessibilityAction(key: "selectColumns", applicability: "selectTableColumns",
-                                 command: ["type": "selectTableColumns"], defaultLabel: "Select column"),
-        TableAccessibilityAction(key: "toggleHeaderRow", applicability: "toggleTableHeaderRow",
-                                 command: ["type": "toggleTableHeader", "target": "row"],
-                                 defaultLabel: "Toggle header row"),
-        TableAccessibilityAction(key: "toggleHeaderColumn", applicability: "toggleTableHeaderColumn",
-                                 command: ["type": "toggleTableHeader", "target": "column"],
-                                 defaultLabel: "Toggle header column"),
-        TableAccessibilityAction(key: "toggleHeaderCell", applicability: "toggleTableHeaderCell",
-                                 command: ["type": "toggleTableHeader", "target": "cell"],
-                                 defaultLabel: "Toggle header cell"),
-        TableAccessibilityAction(key: "mergeCells", applicability: "mergeTableCells",
-                                 command: ["type": "mergeTableCells"], defaultLabel: "Merge cells"),
-        TableAccessibilityAction(key: "splitCell", applicability: "splitTableCell",
-                                 command: ["type": "splitTableCell"], defaultLabel: "Split cell"),
-        TableAccessibilityAction(key: "clearCells", applicability: "clearTableCells",
-                                 command: ["type": "clearTableCells"], defaultLabel: "Clear cells"),
+        TableAccessibilityAction(
+            key: "addRowBefore",
+            applicability: "addTableRowBefore",
+            command: ["type": "addTableRow", "side": "before"],
+            defaultLabel: "Insert row above"
+        ),
+        TableAccessibilityAction(
+            key: "addRowAfter",
+            applicability: "addTableRowAfter",
+            command: ["type": "addTableRow", "side": "after"],
+            defaultLabel: "Insert row below"
+        ),
+        TableAccessibilityAction(
+            key: "deleteRows",
+            applicability: "deleteTableRows",
+            command: ["type": "deleteTableRows"],
+            defaultLabel: "Delete row"
+        ),
+        TableAccessibilityAction(
+            key: "selectRows",
+            applicability: "selectTableRows",
+            command: ["type": "selectTableRows"],
+            defaultLabel: "Select row"
+        ),
+        TableAccessibilityAction(
+            key: "addColumnBefore",
+            applicability: "addTableColumnBefore",
+            command: ["type": "addTableColumn", "side": "before"],
+            defaultLabel: "Insert column before"
+        ),
+        TableAccessibilityAction(
+            key: "addColumnAfter",
+            applicability: "addTableColumnAfter",
+            command: ["type": "addTableColumn", "side": "after"],
+            defaultLabel: "Insert column after"
+        ),
+        TableAccessibilityAction(
+            key: "deleteColumns",
+            applicability: "deleteTableColumns",
+            command: ["type": "deleteTableColumns"],
+            defaultLabel: "Delete column"
+        ),
+        TableAccessibilityAction(
+            key: "selectColumns",
+            applicability: "selectTableColumns",
+            command: ["type": "selectTableColumns"],
+            defaultLabel: "Select column"
+        ),
+        TableAccessibilityAction(
+            key: "toggleHeaderRow",
+            applicability: "toggleTableHeaderRow",
+            command: ["type": "toggleTableHeader", "target": "row"],
+            defaultLabel: "Toggle header row"
+        ),
+        TableAccessibilityAction(
+            key: "toggleHeaderColumn",
+            applicability: "toggleTableHeaderColumn",
+            command: ["type": "toggleTableHeader", "target": "column"],
+            defaultLabel: "Toggle header column"
+        ),
+        TableAccessibilityAction(
+            key: "toggleHeaderCell",
+            applicability: "toggleTableHeaderCell",
+            command: ["type": "toggleTableHeader", "target": "cell"],
+            defaultLabel: "Toggle header cell"
+        ),
+        TableAccessibilityAction(
+            key: "mergeCells",
+            applicability: "mergeTableCells",
+            command: ["type": "mergeTableCells"],
+            defaultLabel: "Merge cells"
+        ),
+        TableAccessibilityAction(
+            key: "splitCell",
+            applicability: "splitTableCell",
+            command: ["type": "splitTableCell"],
+            defaultLabel: "Split cell"
+        ),
+        TableAccessibilityAction(
+            key: "clearCells",
+            applicability: "clearTableCells",
+            command: ["type": "clearTableCells"],
+            defaultLabel: "Clear cells"
+        ),
         deleteTable
     ]
 }
@@ -150,8 +206,11 @@ struct TableAccessibilityTable {
         func headerLines(_ line: (TableAccessibilityCell) -> Int) -> Set<Int> {
             Set(Dictionary(grouping: cells, by: line).filter { $0.value.allSatisfy(\.isHeader) }.keys)
         }
-        func headerCells(in lines: Set<Int>, line: (TableAccessibilityCell) -> Int,
-                         covered: (TableAccessibilityCell) -> NSRange) -> [Int: [Int]] {
+        func headerCells(
+            in lines: Set<Int>,
+            line: (TableAccessibilityCell) -> Int,
+            covered: (TableAccessibilityCell) -> NSRange
+        ) -> [Int: [Int]] {
             var headers: [Int: [Int]] = [:]
             for (index, cell) in cells.enumerated() where cell.isHeader && lines.contains(line(cell)) {
                 let range = covered(cell)
@@ -310,10 +369,14 @@ enum TableAccessibility {
             case let .node(node):
                 return .node(role: node.node.role)
             case let .table(table):
-                return .table(rows: table.rowCount, columns: table.columnCount, frame: table.frame,
-                              cells: table.cells.map {
-                                  TableAccessibilityStructure.Cell(rows: $0.rows, columns: $0.columns, isHeader: $0.isHeader)
-                              })
+                return .table(
+                    rows: table.rowCount,
+                    columns: table.columnCount,
+                    frame: table.frame,
+                    cells: table.cells.map {
+                        TableAccessibilityStructure.Cell(rows: $0.rows, columns: $0.columns, isHeader: $0.isHeader)
+                    }
+                )
             case let .detachedFrame(frame):
                 return .detachedFrame(frame.frame)
             }
@@ -336,8 +399,11 @@ enum TableAccessibility {
 
 protocol TableAccessibilityEditing: AnyObject {
     func tableAccessibilityActions(for cell: TableAccessibilityCell, tableID: String) -> [TableAccessibilityAction]
-    func performTableAccessibilityAction(_ action: TableAccessibilityAction, for cell: TableAccessibilityCell,
-                                         tableID: String) -> Bool
+    func performTableAccessibilityAction(
+        _ action: TableAccessibilityAction,
+        for cell: TableAccessibilityCell,
+        tableID: String
+    ) -> Bool
     func activateTableAccessibilityCell(_ cell: TableAccessibilityCell, tableID: String) -> Bool
     func activeTableAccessibilityElement(for cell: TableAccessibilityCell, tableID: String) -> TableCellInputTextView?
     func detachedTableAccessibilityFrames() -> [TableAccessibilityDetachedFrame]
@@ -425,8 +491,12 @@ final class TableAccessibilityTableElement: TableAccessibilityGeneratedElement, 
     func cellElement(at index: Int) -> TableAccessibilityCellElement? {
         guard table.cells.indices.contains(index), let drawingView else { return nil }
         if let existing = materializedCellElements[index] { return existing }
-        let element = TableAccessibilityCellElement(drawingView: drawingView, tableElement: self,
-                                                    cell: table.cells[index], tableID: table.identity)
+        let element = TableAccessibilityCellElement(
+            drawingView: drawingView,
+            tableElement: self,
+            cell: table.cells[index],
+            tableID: table.identity
+        )
         materializedCellElements[index] = element
         return element
     }
@@ -462,7 +532,7 @@ final class TableAccessibilityTableElement: TableAccessibilityGeneratedElement, 
     private func element(for cellElement: TableAccessibilityCellElement) -> UIAccessibilityContainerDataTableCell {
         guard isCurrent,
               let input = drawingView?.tableAccessibilityEditing?.activeTableAccessibilityElement(
-                for: cellElement.cell, tableID: table.identity
+                  for: cellElement.cell, tableID: table.identity
               )
         else { return cellElement }
         return input
@@ -494,8 +564,12 @@ final class TableAccessibilityCellElement: TableAccessibilityGeneratedElement, U
     private(set) var cell: TableAccessibilityCell
     private(set) var tableID: String
 
-    init(drawingView: PreparedProseDrawingView, tableElement: TableAccessibilityTableElement,
-         cell: TableAccessibilityCell, tableID: String) {
+    init(
+        drawingView: PreparedProseDrawingView,
+        tableElement: TableAccessibilityTableElement,
+        cell: TableAccessibilityCell,
+        tableID: String
+    ) {
         self.tableElement = tableElement
         self.cell = cell
         self.tableID = tableID

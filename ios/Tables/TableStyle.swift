@@ -16,11 +16,15 @@ struct TableStyle {
     var selectionColor: UIColor = EditorTheme.color(from: "#3B82F633")!
     var resizeHandleColor: UIColor = EditorTheme.color(from: "#3B82F6")!
 
-    init(minColumnWidth: CGFloat = 80, cellPadding: CGFloat = 8, borderWidth: CGFloat = 1,
-         borderColor: UIColor = EditorTheme.color(from: "#D1D5DB")!,
-         headerBackgroundColor: UIColor = TableStyle.defaultHeaderBackgroundColor,
-         selectionColor: UIColor = EditorTheme.color(from: "#3B82F633")!,
-         resizeHandleColor: UIColor = EditorTheme.color(from: "#3B82F6")!) {
+    init(
+        minColumnWidth: CGFloat = 80,
+        cellPadding: CGFloat = 8,
+        borderWidth: CGFloat = 1,
+        borderColor: UIColor = EditorTheme.color(from: "#D1D5DB")!,
+        headerBackgroundColor: UIColor = TableStyle.defaultHeaderBackgroundColor,
+        selectionColor: UIColor = EditorTheme.color(from: "#3B82F633")!,
+        resizeHandleColor: UIColor = EditorTheme.color(from: "#3B82F6")!
+    ) {
         self.minColumnWidth = minColumnWidth
         self.cellPadding = cellPadding
         self.borderWidth = borderWidth
@@ -39,6 +43,6 @@ struct TableStyle {
 
     var isValid: Bool {
         minColumnWidth.isFinite && minColumnWidth > 0 && cellPadding.isFinite && cellPadding >= 0 &&
-        borderWidth.isFinite && borderWidth >= 0
+            borderWidth.isFinite && borderWidth >= 0
     }
 }

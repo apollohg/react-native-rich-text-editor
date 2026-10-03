@@ -16,8 +16,12 @@ private final class TableArrowSelectionDelegate: NSObject, EditorTextViewDelegat
 
 extension EditorTableNavigationTests {
     func testHardwareRightArrowAtCellEndSelectsVisualNeighborWithoutChangingDocument() throws {
-        let fixture = try makeFixture(config: tableConfig, document: TableInputTestSchema.twoCellDocument,
-                                      size: Self.editorSize, windowed: true)
+        let fixture = try makeFixture(
+            config: tableConfig,
+            document: TableInputTestSchema.twoCellDocument,
+            size: Self.editorSize,
+            windowed: true
+        )
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
@@ -31,16 +35,22 @@ extension EditorTableNavigationTests {
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
         XCTAssertTrue(view.activeTextInput === input)
         XCTAssertTrue(input.isFirstResponder)
-        XCTAssertEqual(input.tableCellPositionMap?.binding.documentPosition(in: adapter),
-                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[1].sourcePos)
+        XCTAssertEqual(
+            input.tableCellPositionMap?.binding.documentPosition(in: adapter),
+            adapter.tableMappingsForTesting?.tables[tableID]?.cells[1].sourcePos
+        )
         view.activeTextInput.insertText("!")
         let edited = try XCTUnwrap(adapter.documentJson())
         XCTAssertTrue(edited.contains(#""text":"!two""#), edited)
     }
 
     func testHardwareLeftArrowAtCellStartSelectsPreviousCell() throws {
-        let fixture = try makeFixture(config: tableConfig, document: TableInputTestSchema.twoCellDocument,
-                                      size: Self.editorSize, windowed: true)
+        let fixture = try makeFixture(
+            config: tableConfig,
+            document: TableInputTestSchema.twoCellDocument,
+            size: Self.editorSize,
+            windowed: true
+        )
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
@@ -52,8 +62,10 @@ extension EditorTableNavigationTests {
         let before = try XCTUnwrap(adapter.documentJson())
         try pressArrow(.left, in: input)
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
-        XCTAssertEqual(input.tableCellPositionMap?.binding.documentPosition(in: adapter),
-                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[0].sourcePos)
+        XCTAssertEqual(
+            input.tableCellPositionMap?.binding.documentPosition(in: adapter),
+            adapter.tableMappingsForTesting?.tables[tableID]?.cells[0].sourcePos
+        )
         XCTAssertTrue(input.isFirstResponder)
         input.insertText("!")
         let edited = try XCTUnwrap(adapter.documentJson())
@@ -61,8 +73,12 @@ extension EditorTableNavigationTests {
     }
 
     func testHardwareVerticalArrowsSelectSameColumnAndDoNotMutateDocument() throws {
-        let fixture = try makeFixture(config: tableConfig, document: Self.twoByTwoDocument,
-                                      size: Self.editorSize, windowed: true)
+        let fixture = try makeFixture(
+            config: tableConfig,
+            document: Self.twoByTwoDocument,
+            size: Self.editorSize,
+            windowed: true
+        )
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
@@ -79,20 +95,28 @@ extension EditorTableNavigationTests {
         XCTAssertTrue(input.becomeFirstResponder())
         let before = try XCTUnwrap(adapter.documentJson())
         try pressArrow(.down, in: input)
-        XCTAssertEqual(input.tableCellPositionMap?.binding.documentPosition(in: adapter),
-                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[3].sourcePos)
+        XCTAssertEqual(
+            input.tableCellPositionMap?.binding.documentPosition(in: adapter),
+            adapter.tableMappingsForTesting?.tables[tableID]?.cells[3].sourcePos
+        )
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
         select(NSRange(location: 0, length: 0), in: input)
         try pressArrow(.up, in: input)
-        XCTAssertEqual(input.tableCellPositionMap?.binding.documentPosition(in: adapter),
-                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[1].sourcePos)
+        XCTAssertEqual(
+            input.tableCellPositionMap?.binding.documentPosition(in: adapter),
+            adapter.tableMappingsForTesting?.tables[tableID]?.cells[1].sourcePos
+        )
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
         XCTAssertTrue(input.isFirstResponder)
     }
 
     func testPlainArrowCommandsLeaveOrdinaryTextSelectionToUIKit() throws {
-        let fixture = try makeFixture(config: tableConfig, document: TableInputTestSchema.twoCellDocument,
-                                      size: Self.editorSize, windowed: true)
+        let fixture = try makeFixture(
+            config: tableConfig,
+            document: TableInputTestSchema.twoCellDocument,
+            size: Self.editorSize,
+            windowed: true
+        )
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
@@ -105,14 +129,23 @@ extension EditorTableNavigationTests {
         select(NSRange(location: 0, length: 3), in: input)
         XCTAssertNil(input.keyCommands?.first { $0.input == UIKeyCommand.inputUpArrow })
         XCTAssertNil(input.keyCommands?.first { $0.input == UIKeyCommand.inputDownArrow })
-        XCTAssertEqual(input.keyCommands?.filter { $0.modifierFlags.contains(.shift)
-            && [UIKeyCommand.inputLeftArrow, UIKeyCommand.inputRightArrow,
-                UIKeyCommand.inputUpArrow, UIKeyCommand.inputDownArrow].contains($0.input) }.count, 0)
+        XCTAssertEqual(input.keyCommands?.filter {
+            $0.modifierFlags.contains(.shift)
+                && [
+                    UIKeyCommand.inputLeftArrow,
+                    UIKeyCommand.inputRightArrow,
+                    UIKeyCommand.inputUpArrow,
+                    UIKeyCommand.inputDownArrow
+                ].contains($0.input) }.count, 0)
     }
 
     func testHardwareArrowPublishesNativeSelectionEvent() throws {
-        let fixture = try makeFixture(config: tableConfig, document: TableInputTestSchema.twoCellDocument,
-                                      size: Self.editorSize, windowed: true)
+        let fixture = try makeFixture(
+            config: tableConfig,
+            document: TableInputTestSchema.twoCellDocument,
+            size: Self.editorSize,
+            windowed: true
+        )
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
@@ -131,8 +164,12 @@ extension EditorTableNavigationTests {
     }
 
     func testHorizontalArrowsWrapAcrossRowsWithoutAppending() throws {
-        let fixture = try makeFixture(config: tableConfig, document: Self.twoByTwoDocument,
-                                      size: Self.editorSize, windowed: true)
+        let fixture = try makeFixture(
+            config: tableConfig,
+            document: Self.twoByTwoDocument,
+            size: Self.editorSize,
+            windowed: true
+        )
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
@@ -142,13 +179,17 @@ extension EditorTableNavigationTests {
         select(NSRange(location: ("top-right" as NSString).length, length: 0), in: input)
         let before = try XCTUnwrap(adapter.documentJson())
         try pressArrow(.right, in: input)
-        XCTAssertEqual(input.tableCellPositionMap?.binding.documentPosition(in: adapter),
-                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[2].sourcePos)
+        XCTAssertEqual(
+            input.tableCellPositionMap?.binding.documentPosition(in: adapter),
+            adapter.tableMappingsForTesting?.tables[tableID]?.cells[2].sourcePos
+        )
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
         select(NSRange(location: 0, length: 0), in: input)
         try pressArrow(.left, in: input)
-        XCTAssertEqual(input.tableCellPositionMap?.binding.documentPosition(in: adapter),
-                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[1].sourcePos)
+        XCTAssertEqual(
+            input.tableCellPositionMap?.binding.documentPosition(in: adapter),
+            adapter.tableMappingsForTesting?.tables[tableID]?.cells[1].sourcePos
+        )
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
     }
 
@@ -162,8 +203,12 @@ extension EditorTableNavigationTests {
 
     func testRightArrowLeavesIrregularLastRealCellForProse() throws {
         let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"A"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"B"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"C"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"#
-        let fixture = try makeFixture(config: tableConfig, document: document,
-                                      size: Self.editorSize, windowed: true)
+        let fixture = try makeFixture(
+            config: tableConfig,
+            document: document,
+            size: Self.editorSize,
+            windowed: true
+        )
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
@@ -172,8 +217,11 @@ extension EditorTableNavigationTests {
         let drawing = try XCTUnwrap(tableSurface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
         let prepared = try XCTUnwrap(drawing.layout?.blocks.first?.tableSurface)
         let finalCell = try XCTUnwrap(prepared.cells.first { $0.sourceIndex == 2 })
-        XCTAssertLessThan(prepared.frame(ofCell: finalCell).maxX, prepared.bounds.maxX,
-                          "The final authored cell must stop before the synthetic trailing slot")
+        XCTAssertLessThan(
+            prepared.frame(ofCell: finalCell).maxX,
+            prepared.bounds.maxX,
+            "The final authored cell must stop before the synthetic trailing slot"
+        )
         XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 2, contentRect: .zero))
         let input = view.activeTextInput
         select(NSRange(location: 1, length: 0), in: input)
@@ -194,8 +242,12 @@ extension EditorTableNavigationTests {
             of: #""type":"table","content""#,
             with: #""type":"table","attrs":{"dir":"rtl"},"content""#
         )
-        let fixture = try makeFixture(config: config, document: document,
-                                      size: Self.editorSize, windowed: true)
+        let fixture = try makeFixture(
+            config: config,
+            document: document,
+            size: Self.editorSize,
+            windowed: true
+        )
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
@@ -205,19 +257,27 @@ extension EditorTableNavigationTests {
         select(NSRange(location: ("bottom-left" as NSString).length, length: 0), in: input)
         let before = try XCTUnwrap(adapter.documentJson())
         try pressArrow(.right, in: input)
-        XCTAssertEqual(input.tableCellPositionMap?.binding.documentPosition(in: adapter),
-                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[1].sourcePos)
+        XCTAssertEqual(
+            input.tableCellPositionMap?.binding.documentPosition(in: adapter),
+            adapter.tableMappingsForTesting?.tables[tableID]?.cells[1].sourcePos
+        )
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
         select(NSRange(location: 0, length: 0), in: input)
         try pressArrow(.left, in: input)
-        XCTAssertEqual(input.tableCellPositionMap?.binding.documentPosition(in: adapter),
-                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[2].sourcePos)
+        XCTAssertEqual(
+            input.tableCellPositionMap?.binding.documentPosition(in: adapter),
+            adapter.tableMappingsForTesting?.tables[tableID]?.cells[2].sourcePos
+        )
     }
 
     func testDownArrowUsesMergedRowspanGeometry() throws {
         let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"rowspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"tall"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"upper"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"lower"}]}]}]}]}]}"#
-        let fixture = try makeFixture(config: tableConfig, document: document,
-                                      size: Self.editorSize, windowed: true)
+        let fixture = try makeFixture(
+            config: tableConfig,
+            document: document,
+            size: Self.editorSize,
+            windowed: true
+        )
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
@@ -227,16 +287,26 @@ extension EditorTableNavigationTests {
         select(NSRange(location: 1, length: 0), in: input)
         let before = try XCTUnwrap(adapter.documentJson())
         try pressArrow(.down, in: input)
-        XCTAssertEqual(input.tableCellPositionMap?.binding.documentPosition(in: adapter),
-                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[2].sourcePos)
+        XCTAssertEqual(
+            input.tableCellPositionMap?.binding.documentPosition(in: adapter),
+            adapter.tableMappingsForTesting?.tables[tableID]?.cells[2].sourcePos
+        )
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
     }
 
     func testArrowEntersNestedContainingOuterProseWithoutEditingDescendant() throws {
-        let document = try nestedDocument(leadingText: "outer", nestedTableCount: 1,
-                                          trailingText: "after", precedingCellText: "one")
-        let fixture = try makeFixture(config: tableConfig, document: document,
-                                      size: Self.editorSize, windowed: true)
+        let document = try nestedDocument(
+            leadingText: "outer",
+            nestedTableCount: 1,
+            trailingText: "after",
+            precedingCellText: "one"
+        )
+        let fixture = try makeFixture(
+            config: tableConfig,
+            document: document,
+            size: Self.editorSize,
+            windowed: true
+        )
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
@@ -249,8 +319,10 @@ extension EditorTableNavigationTests {
         let before = try XCTUnwrap(adapter.documentJson())
         let nestedBefore = try nestedTableContent(in: before, outerCellIndex: 1)
         try pressArrow(.right, in: input)
-        XCTAssertEqual(input.tableCellPositionMap?.binding.documentPosition(in: adapter),
-                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[1].sourcePos)
+        XCTAssertEqual(
+            input.tableCellPositionMap?.binding.documentPosition(in: adapter),
+            adapter.tableMappingsForTesting?.tables[tableID]?.cells[1].sourcePos
+        )
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
         input.insertText("!")
         let edited = try XCTUnwrap(adapter.documentJson())
@@ -259,8 +331,12 @@ extension EditorTableNavigationTests {
     }
 
     func testArrowAtTableEdgeEntersSurroundingProseAndBareEdgeDoesNothing() throws {
-        let fixture = try makeFixture(config: tableConfig, document: Self.surroundedTableDocument,
-                                      size: Self.editorSize, windowed: true)
+        let fixture = try makeFixture(
+            config: tableConfig,
+            document: Self.surroundedTableDocument,
+            size: Self.editorSize,
+            windowed: true
+        )
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
@@ -276,8 +352,12 @@ extension EditorTableNavigationTests {
         let edited = try XCTUnwrap(adapter.documentJson())
         XCTAssertTrue(edited.contains(#""text":"before!""#), edited)
 
-        let bare = try makeFixture(config: tableConfig, document: TableInputTestSchema.twoCellDocument,
-                                   size: Self.editorSize, windowed: true)
+        let bare = try makeFixture(
+            config: tableConfig,
+            document: TableInputTestSchema.twoCellDocument,
+            size: Self.editorSize,
+            windowed: true
+        )
         defer { bare.close() }
         let bareID = try XCTUnwrap(bare.adapter.tableMappingsForTesting?.tables.keys.first)
         XCTAssertTrue(bare.view.bindTableCell(tableID: bareID, cellIndex: 0, contentRect: .zero))
@@ -290,8 +370,12 @@ extension EditorTableNavigationTests {
     }
 
     func testVerticalArrowsExitToSurroundingProse() throws {
-        let fixture = try makeFixture(config: tableConfig, document: Self.surroundedTableDocument,
-                                      size: Self.editorSize, windowed: true)
+        let fixture = try makeFixture(
+            config: tableConfig,
+            document: Self.surroundedTableDocument,
+            size: Self.editorSize,
+            windowed: true
+        )
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
@@ -320,8 +404,12 @@ extension EditorTableNavigationTests {
         let table = try XCTUnwrap((original["content"] as? [[String: Any]])?.first)
         let data = try JSONSerialization.data(withJSONObject: ["type": "doc", "content": [table, table]])
         let document = try XCTUnwrap(String(data: data, encoding: .utf8))
-        let fixture = try makeFixture(config: tableConfig, document: document,
-                                      size: Self.editorSize, windowed: true)
+        let fixture = try makeFixture(
+            config: tableConfig,
+            document: document,
+            size: Self.editorSize,
+            windowed: true
+        )
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
@@ -338,8 +426,12 @@ extension EditorTableNavigationTests {
     }
 
     func testCapturedArrowRefusesStaleEpochAndOldOwner() throws {
-        let fixture = try makeFixture(config: tableConfig, document: TableInputTestSchema.twoCellDocument,
-                                      size: Self.editorSize, windowed: true)
+        let fixture = try makeFixture(
+            config: tableConfig,
+            document: TableInputTestSchema.twoCellDocument,
+            size: Self.editorSize,
+            windowed: true
+        )
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
@@ -354,8 +446,10 @@ extension EditorTableNavigationTests {
         let before = try XCTUnwrap(adapter.documentJson())
         _ = input.perform(command.action)
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
-        XCTAssertEqual(input.tableCellPositionMap?.binding.documentPosition(in: adapter),
-                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[0].sourcePos)
+        XCTAssertEqual(
+            input.tableCellPositionMap?.binding.documentPosition(in: adapter),
+            adapter.tableMappingsForTesting?.tables[tableID]?.cells[0].sourcePos
+        )
 
         view.editorId = 0
         let second = RichTextEditorView(frame: view.frame)
@@ -367,8 +461,12 @@ extension EditorTableNavigationTests {
     }
 
     func testCapturedArrowRefusesReadOnlyInputAndReplacedDocument() throws {
-        let fixture = try makeFixture(config: tableConfig, document: TableInputTestSchema.twoCellDocument,
-                                      size: Self.editorSize, windowed: true)
+        let fixture = try makeFixture(
+            config: tableConfig,
+            document: TableInputTestSchema.twoCellDocument,
+            size: Self.editorSize,
+            windowed: true
+        )
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
@@ -381,8 +479,10 @@ extension EditorTableNavigationTests {
         let before = try XCTUnwrap(adapter.documentJson())
         _ = input.perform(command.action)
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
-        XCTAssertEqual(input.tableCellPositionMap?.binding.documentPosition(in: adapter),
-                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[0].sourcePos)
+        XCTAssertEqual(
+            input.tableCellPositionMap?.binding.documentPosition(in: adapter),
+            adapter.tableMappingsForTesting?.tables[tableID]?.cells[0].sourcePos
+        )
         input.isEditable = true
         let replacement = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"replacement"}]}]}"#
         XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(replacement))))
@@ -393,8 +493,12 @@ extension EditorTableNavigationTests {
     }
 
     func testCapturedArrowDoesNotOverrideExternalCompositionOrReentrantSelection() throws {
-        let fixture = try makeFixture(config: tableConfig, document: TableInputTestSchema.twoCellDocument,
-                                      size: Self.editorSize, windowed: true)
+        let fixture = try makeFixture(
+            config: tableConfig,
+            document: TableInputTestSchema.twoCellDocument,
+            size: Self.editorSize,
+            windowed: true
+        )
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
@@ -430,8 +534,12 @@ extension EditorTableNavigationTests {
 
     func testMultilineMiddleMovementAndVisualLineEdgesRemainNative() throws {
         let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]},{"type":"paragraph","content":[{"type":"text","text":"middle 🧭"}]},{"type":"paragraph","content":[{"type":"text","text":"last"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"target"}]}]}]}]}]}"#
-        let fixture = try makeFixture(config: tableConfig, document: document,
-                                      size: Self.editorSize, windowed: true)
+        let fixture = try makeFixture(
+            config: tableConfig,
+            document: document,
+            size: Self.editorSize,
+            windowed: true
+        )
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
@@ -457,8 +565,12 @@ extension EditorTableNavigationTests {
     func testSoftWrappedUpstreamCaretKeepsNativeDownMovement() throws {
         let text = "alpha beta gamma delta 🧭 אבג epsilon zeta eta theta iota kappa lambda"
         let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"\#(text)"}]}]}]}]}]}"#
-        let fixture = try makeFixture(config: tableConfig, document: document,
-                                      size: CGSize(width: 170, height: 300), windowed: true)
+        let fixture = try makeFixture(
+            config: tableConfig,
+            document: document,
+            size: CGSize(width: 170, height: 300),
+            windowed: true
+        )
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
@@ -477,31 +589,43 @@ extension EditorTableNavigationTests {
         let next = try XCTUnwrap(lines.last)
         XCTAssertTrue(input.becomeFirstResponder())
         let upstream = try XCTUnwrap(input.closestPosition(
-            to: CGPoint(x: input.bounds.maxX - input.textContainerInset.right,
-                        y: first.used.midY + input.textContainerInset.top)
+            to: CGPoint(
+                x: input.bounds.maxX - input.textContainerInset.right,
+                y: first.used.midY + input.textContainerInset.top
+            )
         ))
         let nativeDown = try XCTUnwrap(input.position(from: upstream, in: .down, offset: 1))
         let upstreamOffset = input.offset(from: input.beginningOfDocument, to: upstream)
         let nextOffset = input.offset(from: input.beginningOfDocument, to: nativeDown)
-        XCTAssertEqual(upstreamOffset,
-                       input.layoutManager.characterIndexForGlyph(at: next.glyphs.location),
-                       "The caret must have upstream affinity at the soft-wrap offset; first=\(first), next=\(next), bounds=\(input.bounds), inset=\(input.textContainerInset), upstreamCaret=\(input.caretRect(for: upstream))")
-        XCTAssertGreaterThan(input.caretRect(for: nativeDown).midY,
-                             input.caretRect(for: upstream).midY,
-                             "UIKit must have another visual line below this caret")
+        XCTAssertEqual(
+            upstreamOffset,
+            input.layoutManager.characterIndexForGlyph(at: next.glyphs.location),
+            "The caret must have upstream affinity at the soft-wrap offset; first=\(first), next=\(next), bounds=\(input.bounds), inset=\(input.textContainerInset), upstreamCaret=\(input.caretRect(for: upstream))"
+        )
+        XCTAssertGreaterThan(
+            input.caretRect(for: nativeDown).midY,
+            input.caretRect(for: upstream).midY,
+            "UIKit must have another visual line below this caret"
+        )
         XCTAssertNotEqual(nextOffset, upstreamOffset)
         input.selectedTextRange = input.textRange(from: upstream, to: upstream)
         input.textViewDidChangeSelection(input)
         let selected = try XCTUnwrap(input.selectedTextRange?.start)
         XCTAssertEqual(input.caretRect(for: selected).midY, input.caretRect(for: upstream).midY)
-        XCTAssertNil(input.keyCommands?.first { $0.input == UIKeyCommand.inputDownArrow },
-                     "Down must remain native at the upstream side of a soft wrap")
+        XCTAssertNil(
+            input.keyCommands?.first { $0.input == UIKeyCommand.inputDownArrow },
+            "Down must remain native at the upstream side of a soft wrap"
+        )
     }
 
     func testEmptyCellAndMarkedTextDoNotLeakOrHijackInput() throws {
         let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph"}]},{"type":"table_cell","content":[{"type":"paragraph"}]}]}]}]}"#
-        let fixture = try makeFixture(config: tableConfig, document: document,
-                                      size: Self.editorSize, windowed: true)
+        let fixture = try makeFixture(
+            config: tableConfig,
+            document: document,
+            size: Self.editorSize,
+            windowed: true
+        )
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
@@ -512,8 +636,10 @@ extension EditorTableNavigationTests {
         let before = try XCTUnwrap(adapter.documentJson())
         let command = try XCTUnwrap(input.keyCommands?.first { $0.input == UIKeyCommand.inputRightArrow })
         _ = input.perform(command.action)
-        XCTAssertEqual(input.tableCellPositionMap?.binding.documentPosition(in: adapter),
-                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[1].sourcePos)
+        XCTAssertEqual(
+            input.tableCellPositionMap?.binding.documentPosition(in: adapter),
+            adapter.tableMappingsForTesting?.tables[tableID]?.cells[1].sourcePos
+        )
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
         XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: .zero))
         select(NSRange(location: 0, length: 0), in: input)
@@ -542,8 +668,12 @@ extension EditorTableNavigationTests {
             of: #""type":"table","content"#,
             with: #""type":"table","attrs":{"dir":"rtl"},"content"#
         ) : Self.irregularRowDocument
-        let fixture = try makeFixture(config: config, document: document,
-                                      size: Self.editorSize, windowed: true)
+        let fixture = try makeFixture(
+            config: config,
+            document: document,
+            size: Self.editorSize,
+            windowed: true
+        )
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
@@ -566,8 +696,10 @@ extension EditorTableNavigationTests {
         select(NSRange(location: rightToLeft ? 0 : 1, length: 0), in: input)
         let before = try XCTUnwrap(adapter.documentJson())
         try pressArrow(direction, in: input)
-        XCTAssertEqual(input.tableCellPositionMap?.binding.documentPosition(in: adapter),
-                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[3].sourcePos)
+        XCTAssertEqual(
+            input.tableCellPositionMap?.binding.documentPosition(in: adapter),
+            adapter.tableMappingsForTesting?.tables[tableID]?.cells[3].sourcePos
+        )
         XCTAssertTrue(view.activeTextInput === input)
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
     }

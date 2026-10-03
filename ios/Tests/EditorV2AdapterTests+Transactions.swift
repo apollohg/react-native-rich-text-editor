@@ -65,8 +65,11 @@ extension EditorV2AdapterTests {
 
         let refreshed = adapter.setContentHtml("<p>stale reset</p>")
         XCTAssertNotNil(refreshed, "revision mismatch should refresh the authoritative engine state")
-        XCTAssertEqual(adapter.tableResetGeneration, acceptedGeneration,
-                       "a rejected reset must not clear mounted table positions")
+        XCTAssertEqual(
+            adapter.tableResetGeneration,
+            acceptedGeneration,
+            "a rejected reset must not clear mounted table positions"
+        )
         XCTAssertNotEqual(documentText(adapter), "stale reset")
     }
 
@@ -406,8 +409,16 @@ extension EditorV2AdapterTests {
             }
             return FfiJsonResult(
                 value: nil,
-                error: FfiError(domain: "boundary", code: rejection, message: rejection, requestId: nil,
-                                operationIndex: nil, limit: nil, actual: nil, detailsJson: nil)
+                error: FfiError(
+                    domain: "boundary",
+                    code: rejection,
+                    message: rejection,
+                    requestId: nil,
+                    operationIndex: nil,
+                    limit: nil,
+                    actual: nil,
+                    detailsJson: nil
+                )
             )
         }
     }

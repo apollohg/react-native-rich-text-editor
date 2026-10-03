@@ -27,8 +27,12 @@ final class EditorTableNavigationTests: XCTestCase {
     let listTableConfig = TableInputTestSchema.listTableConfig
 
     func testBindingSurvivesAKeystrokeBeforeItsCell() throws {
-        let fixture = try makeFixture(config: tableConfig, document: TableInputTestSchema.twoCellDocument,
-                                      size: Self.editorSize, windowed: true)
+        let fixture = try makeFixture(
+            config: tableConfig,
+            document: TableInputTestSchema.twoCellDocument,
+            size: Self.editorSize,
+            windowed: true
+        )
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
@@ -68,8 +72,10 @@ final class EditorTableNavigationTests: XCTestCase {
         })
         _ = input.perform(command.action)
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
-        XCTAssertEqual(view.activeTextInput.tableCellPositionMap?.binding.documentPosition(in: adapter),
-                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[1].sourcePos)
+        XCTAssertEqual(
+            view.activeTextInput.tableCellPositionMap?.binding.documentPosition(in: adapter),
+            adapter.tableMappingsForTesting?.tables[tableID]?.cells[1].sourcePos
+        )
         XCTAssertTrue(view.activeTextInput.isFirstResponder)
         view.activeTextInput.insertText("!")
         let edited = try XCTUnwrap(adapter.documentJson())
@@ -94,13 +100,17 @@ final class EditorTableNavigationTests: XCTestCase {
         })
         _ = input.perform(command.action)
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
-        XCTAssertEqual(view.activeTextInput.tableCellPositionMap?.binding.documentPosition(in: adapter),
-                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[0].sourcePos)
+        XCTAssertEqual(
+            view.activeTextInput.tableCellPositionMap?.binding.documentPosition(in: adapter),
+            adapter.tableMappingsForTesting?.tables[tableID]?.cells[0].sourcePos
+        )
         XCTAssertTrue(view.activeTextInput.isFirstResponder)
         _ = view.activeTextInput.perform(command.action)
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
-        XCTAssertEqual(view.activeTextInput.tableCellPositionMap?.binding.documentPosition(in: adapter),
-                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[0].sourcePos)
+        XCTAssertEqual(
+            view.activeTextInput.tableCellPositionMap?.binding.documentPosition(in: adapter),
+            adapter.tableMappingsForTesting?.tables[tableID]?.cells[0].sourcePos
+        )
     }
 
     func testHardwareTabAtFinalCellAppendsRowAndUndoRestoresDocument() throws {
@@ -126,8 +136,10 @@ final class EditorTableNavigationTests: XCTestCase {
         let table = try XCTUnwrap(contents[0]["content"] as? [[String: Any]])
         XCTAssertEqual(table.count, 2)
         XCTAssertNotEqual(appended, before)
-        XCTAssertEqual(view.activeTextInput.tableCellPositionMap?.binding.documentPosition(in: adapter),
-                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[2].sourcePos)
+        XCTAssertEqual(
+            view.activeTextInput.tableCellPositionMap?.binding.documentPosition(in: adapter),
+            adapter.tableMappingsForTesting?.tables[tableID]?.cells[2].sourcePos
+        )
         XCTAssertTrue(view.activeTextInput.isFirstResponder)
         XCTAssertTrue(view.textView.applyUpdateJSON(EditorV2Shadow.undo(id: editorId)))
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
@@ -170,8 +182,10 @@ final class EditorTableNavigationTests: XCTestCase {
         })
         _ = input.perform(command.action)
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
-        XCTAssertEqual(view.activeTextInput.tableCellPositionMap?.binding.documentPosition(in: adapter),
-                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[1].sourcePos)
+        XCTAssertEqual(
+            view.activeTextInput.tableCellPositionMap?.binding.documentPosition(in: adapter),
+            adapter.tableMappingsForTesting?.tables[tableID]?.cells[1].sourcePos
+        )
         view.activeTextInput.insertText("!")
         let edited = try XCTUnwrap(adapter.documentJson())
         XCTAssertTrue(edited.contains(#""text":"!next""#), edited)
@@ -212,8 +226,12 @@ final class EditorTableNavigationTests: XCTestCase {
     }
 
     func testHardwareTabEntersNestedContainingOuterCellAndEditsProseOnBothSides() throws {
-        let document = try nestedDocument(leadingText: "outer", nestedTableCount: 1,
-                                          trailingText: "after", precedingCellText: "one")
+        let document = try nestedDocument(
+            leadingText: "outer",
+            nestedTableCount: 1,
+            trailingText: "after",
+            precedingCellText: "one"
+        )
         let fixture = try makeFixture(config: tableConfig, document: document, size: Self.editorSize)
         defer { fixture.close() }
         let adapter = fixture.adapter
@@ -262,22 +280,33 @@ final class EditorTableNavigationTests: XCTestCase {
             $0.input == "\t" && $0.modifierFlags == [.shift]
         })
         _ = input.perform(reverse.action)
-        XCTAssertEqual(input.tableCellPositionMap?.binding.documentPosition(in: adapter),
-                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[0].sourcePos)
+        XCTAssertEqual(
+            input.tableCellPositionMap?.binding.documentPosition(in: adapter),
+            adapter.tableMappingsForTesting?.tables[tableID]?.cells[0].sourcePos
+        )
         _ = input.perform(command.action)
-        XCTAssertEqual(input.tableCellPositionMap?.binding.documentPosition(in: adapter),
-                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[1].sourcePos)
+        XCTAssertEqual(
+            input.tableCellPositionMap?.binding.documentPosition(in: adapter),
+            adapter.tableMappingsForTesting?.tables[tableID]?.cells[1].sourcePos
+        )
         _ = input.perform(command.action)
-        XCTAssertEqual(input.tableCellPositionMap?.binding.documentPosition(in: adapter),
-                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[2].sourcePos)
+        XCTAssertEqual(
+            input.tableCellPositionMap?.binding.documentPosition(in: adapter),
+            adapter.tableMappingsForTesting?.tables[tableID]?.cells[2].sourcePos
+        )
         _ = input.perform(reverse.action)
-        XCTAssertEqual(input.tableCellPositionMap?.binding.documentPosition(in: adapter),
-                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[1].sourcePos)
+        XCTAssertEqual(
+            input.tableCellPositionMap?.binding.documentPosition(in: adapter),
+            adapter.tableMappingsForTesting?.tables[tableID]?.cells[1].sourcePos
+        )
     }
 
     func testNestedMarkerCannotReceiveCellInputOrCrossBlockEdits() throws {
-        let document = try nestedDocument(leadingText: "before", nestedTableCount: 1,
-                                          trailingText: "after")
+        let document = try nestedDocument(
+            leadingText: "before",
+            nestedTableCount: 1,
+            trailingText: "after"
+        )
         let fixture = try makeFixture(config: tableConfig, document: document, size: Self.editorSize)
         defer { fixture.close() }
         let adapter = fixture.adapter
@@ -308,8 +337,10 @@ final class EditorTableNavigationTests: XCTestCase {
         XCTAssertEqual(extent, nested.tableID)
         let interior = PositionBridge.utf16OffsetToScalar(utf16Range.location, in: input)
         XCTAssertNil(input.inputScalar(atLocalScalar: interior))
-        XCTAssertNil(input.inputScalarRange(fromLocal: map.segments[0].localScalarRange.lowerBound,
-                                            toLocal: map.segments[1].localScalarRange.lowerBound))
+        XCTAssertNil(input.inputScalarRange(
+            fromLocal: map.segments[0].localScalarRange.lowerBound,
+            toLocal: map.segments[1].localScalarRange.lowerBound
+        ))
         let before = try XCTUnwrap(adapter.documentJson())
         input.selectedRange = utf16Range
         input.textViewDidChangeSelection(input)
@@ -324,9 +355,11 @@ final class EditorTableNavigationTests: XCTestCase {
             ("before", 1), (nil, 1), ("before", 2)
         ]
         for sample in cases {
-            let document = try nestedDocument(leadingText: sample.leading,
-                                              nestedTableCount: sample.nestedCount,
-                                              trailingText: "after")
+            let document = try nestedDocument(
+                leadingText: sample.leading,
+                nestedTableCount: sample.nestedCount,
+                trailingText: "after"
+            )
             let fixture = try makeFixture(config: tableConfig, document: document, size: Self.geometrySize)
             defer { fixture.close() }
             let adapter = fixture.adapter
@@ -351,8 +384,10 @@ final class EditorTableNavigationTests: XCTestCase {
                 input.layoutManager.ensureLayout(for: input.textContainer)
                 let after = (input.textStorage.string as NSString).range(of: "after")
                 let lastGlyphs = input.layoutManager.glyphRange(forCharacterRange: after, actualCharacterRange: nil)
-                let lastY = input.layoutManager.boundingRect(forGlyphRange: lastGlyphs,
-                                                             in: input.textContainer).minY
+                let lastY = input.layoutManager.boundingRect(
+                    forGlyphRange: lastGlyphs,
+                    in: input.textContainer
+                ).minY
                 var currentMarkerHeight: CGFloat?
                 input.textStorage.enumerateAttribute(
                     RenderBridgeAttributes.rootTableMarker,
@@ -363,14 +398,22 @@ final class EditorTableNavigationTests: XCTestCase {
                         .paragraphStyle, at: range.location, effectiveRange: nil
                     ) as? NSParagraphStyle)?.minimumLineHeight
                 }
-                XCTAssertEqual(lastY, try XCTUnwrap(prepared.blocks.last).bounds.minY, accuracy: 3,
-                               "leading=\(String(describing: leadingText)) nested=\(sample.nestedCount) reserved=\(tableSurface.nestedTableHeights(tableID: tableID, cellIndex: 0, input: input) ?? [:]) current=\(String(describing: currentMarkerHeight))")
+                XCTAssertEqual(
+                    lastY,
+                    try XCTUnwrap(prepared.blocks.last).bounds.minY,
+                    accuracy: 3,
+                    "leading=\(String(describing: leadingText)) nested=\(sample.nestedCount) reserved=\(tableSurface.nestedTableHeights(tableID: tableID, cellIndex: 0, input: input) ?? [:]) current=\(String(describing: currentMarkerHeight))"
+                )
                 if let leadingText {
                     let before = (input.textStorage.string as NSString).range(of: leadingText)
-                    let firstGlyphs = input.layoutManager.glyphRange(forCharacterRange: before,
-                                                                     actualCharacterRange: nil)
-                    let firstY = input.layoutManager.boundingRect(forGlyphRange: firstGlyphs,
-                                                                  in: input.textContainer).minY
+                    let firstGlyphs = input.layoutManager.glyphRange(
+                        forCharacterRange: before,
+                        actualCharacterRange: nil
+                    )
+                    let firstY = input.layoutManager.boundingRect(
+                        forGlyphRange: firstGlyphs,
+                        in: input.textContainer
+                    ).minY
                     XCTAssertEqual(firstY, prepared.blocks[0].bounds.minY, accuracy: 3)
                 }
             }
@@ -396,8 +439,11 @@ final class EditorTableNavigationTests: XCTestCase {
                 try assertAligned(leadingText: "Xbefore")
                 XCTAssertTrue(view.activeTextInput === input)
 
-                let replacement = try nestedDocument(leadingText: "remote", nestedTableCount: 1,
-                                                     trailingText: "after")
+                let replacement = try nestedDocument(
+                    leadingText: "remote",
+                    nestedTableCount: 1,
+                    trailingText: "after"
+                )
                 XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(replacement))))
                 if input.tableCellPositionMap == nil {
                     let settled = try XCTUnwrap(adapter.documentJson())
@@ -411,17 +457,31 @@ final class EditorTableNavigationTests: XCTestCase {
     }
 
     func testActiveNestedCellOpaqueHostScreenshots() throws {
-        let samples: [(name: String, size: CGSize, style: UIUserInterfaceStyle, ground: UIColor)] = [
-            ("phone-light", Self.editorSize, .light, .white),
-            ("phone-dark", Self.editorSize, .dark, .black),
-            ("tablet-width-light", CGSize(width: 768, height: 480), .light, .white),
-            ("tablet-width-dark", CGSize(width: 768, height: 480), .dark, .black)
+        struct Sample {
+            let name: String
+            let size: CGSize
+            let style: UIUserInterfaceStyle
+            let ground: UIColor
+        }
+        let samples: [Sample] = [
+            Sample(name: "phone-light", size: Self.editorSize, style: .light, ground: .white),
+            Sample(name: "phone-dark", size: Self.editorSize, style: .dark, ground: .black),
+            Sample(name: "tablet-width-light", size: CGSize(width: 768, height: 480), style: .light, ground: .white),
+            Sample(name: "tablet-width-dark", size: CGSize(width: 768, height: 480), style: .dark, ground: .black)
         ]
-        let document = try nestedDocument(leadingText: "outer", nestedTableCount: 1,
-                                          trailingText: "after", precedingCellText: "one")
+        let document = try nestedDocument(
+            leadingText: "outer",
+            nestedTableCount: 1,
+            trailingText: "after",
+            precedingCellText: "one"
+        )
         for sample in samples {
-            let fixture = try makeFixture(config: tableConfig, document: document,
-                                          size: sample.size, windowed: true)
+            let fixture = try makeFixture(
+                config: tableConfig,
+                document: document,
+                size: sample.size,
+                windowed: true
+            )
             defer { fixture.close() }
             let view = fixture.view
             fixture.window?.overrideUserInterfaceStyle = sample.style
@@ -500,11 +560,15 @@ final class EditorTableNavigationTests: XCTestCase {
         XCTAssertTrue(edited.contains(#""text":"Zone""#), edited)
         XCTAssertTrue(edited.contains(#""text":"two""#), edited)
         XCTAssertNil(view.activeTextInput.markedTextRange)
-        XCTAssertEqual(view.activeTextInput.tableCellPositionMap?.binding.documentPosition(in: adapter),
-                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[0].sourcePos)
+        XCTAssertEqual(
+            view.activeTextInput.tableCellPositionMap?.binding.documentPosition(in: adapter),
+            adapter.tableMappingsForTesting?.tables[tableID]?.cells[0].sourcePos
+        )
         _ = view.activeTextInput.perform(command.action)
-        XCTAssertEqual(view.activeTextInput.tableCellPositionMap?.binding.documentPosition(in: adapter),
-                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[1].sourcePos)
+        XCTAssertEqual(
+            view.activeTextInput.tableCellPositionMap?.binding.documentPosition(in: adapter),
+            adapter.tableMappingsForTesting?.tables[tableID]?.cells[1].sourcePos
+        )
         view.activeTextInput.insertText("!")
         let typed = try XCTUnwrap(adapter.documentJson())
         XCTAssertTrue(typed.contains(#""text":"!two""#), typed)
@@ -559,20 +623,26 @@ final class EditorTableNavigationTests: XCTestCase {
         XCTAssertTrue(committed.contains(#""text":"two""#), committed)
         XCTAssertTrue(view.activeTextInput === input)
         XCTAssertFalse(input.hasPendingCompositionForExternalRefresh)
-        XCTAssertEqual(view.activeTextInput.tableCellPositionMap?.binding.documentPosition(in: adapter),
-                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[0].sourcePos)
+        XCTAssertEqual(
+            view.activeTextInput.tableCellPositionMap?.binding.documentPosition(in: adapter),
+            adapter.tableMappingsForTesting?.tables[tableID]?.cells[0].sourcePos
+        )
         _ = input.perform(command.action)
-        XCTAssertEqual(view.activeTextInput.tableCellPositionMap?.binding.documentPosition(in: adapter),
-                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[1].sourcePos)
+        XCTAssertEqual(
+            view.activeTextInput.tableCellPositionMap?.binding.documentPosition(in: adapter),
+            adapter.tableMappingsForTesting?.tables[tableID]?.cells[1].sourcePos
+        )
         view.activeTextInput.insertText("!")
         let typed = try XCTUnwrap(adapter.documentJson())
         XCTAssertTrue(typed.contains(#""text":"!two""#), typed)
     }
 
     func testExternalCompositionRefusesExplicitlyStaleTableCellEpoch() throws {
-        let fixture = try makeFixture(config: tableConfig,
-                                      document: TableInputTestSchema.twoCellDocument,
-                                      size: Self.editorSize)
+        let fixture = try makeFixture(
+            config: tableConfig,
+            document: TableInputTestSchema.twoCellDocument,
+            size: Self.editorSize
+        )
         defer { fixture.close() }
         let adapter = fixture.adapter
         let view = fixture.view
@@ -615,16 +685,21 @@ final class EditorTableNavigationTests: XCTestCase {
         })
         _ = input.perform(command.action)
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
-        XCTAssertEqual(view.activeTextInput.tableCellPositionMap?.binding.documentPosition(in: adapter),
-                       adapter.tableMappingsForTesting?.tables[tableID]?.cells[1].sourcePos)
+        XCTAssertEqual(
+            view.activeTextInput.tableCellPositionMap?.binding.documentPosition(in: adapter),
+            adapter.tableMappingsForTesting?.tables[tableID]?.cells[1].sourcePos
+        )
         view.activeTextInput.insertText("!")
         let edited = try XCTUnwrap(adapter.documentJson())
         XCTAssertTrue(edited.contains(#""text":"!target""#), edited)
     }
 
     func testHardwareTabFromOldNativeOwnerCannotMutateOrRebind() throws {
-        let fixture = try makeFixture(config: tableConfig, document: TableInputTestSchema.twoCellDocument,
-                                      size: Self.editorSize)
+        let fixture = try makeFixture(
+            config: tableConfig,
+            document: TableInputTestSchema.twoCellDocument,
+            size: Self.editorSize
+        )
         defer { fixture.close() }
         let editorId = fixture.editorId
         let adapter = fixture.adapter

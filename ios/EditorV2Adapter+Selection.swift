@@ -70,7 +70,7 @@ extension EditorV2Adapter {
               endpoints.anchor == anchor,
               endpoints.head == head,
               case let .drawable(selectedTableID, _) = EditorCellSelection.resolve(
-                selection, index: tableIndex
+                  selection, index: tableIndex
               )
         else { return false }
         return selectedTableID == tableID
@@ -79,8 +79,11 @@ extension EditorV2Adapter {
     func admitsTableCellSelection(_ admission: TableCellSelectionAdmission) -> Bool {
         admitsTableMutation(admission.mutation)
             && positionEpoch == admission.positionEpoch
-            && cachedSelectionIsExactCells(anchor: admission.anchor, head: admission.head,
-                                           tableID: admission.tableID)
+            && cachedSelectionIsExactCells(
+                anchor: admission.anchor,
+                head: admission.head,
+                tableID: admission.tableID
+            )
     }
 
     private func applySelectionEnvelope(_ selection: [String: Any]) -> String? {
@@ -99,8 +102,11 @@ extension EditorV2Adapter {
         ]
     }
 
-    func selectExactTableCells(anchor: UInt32, head: UInt32,
-                               admission: TableCellSelectionAdmission) -> String? {
+    func selectExactTableCells(
+        anchor: UInt32,
+        head: UInt32,
+        admission: TableCellSelectionAdmission
+    ) -> String? {
         guard beginRuntimeOperation() else { return nil }
         defer { endRuntimeOperation() }
         guard admitsTableCellSelection(admission),
@@ -163,9 +169,9 @@ extension EditorV2Adapter {
         guard beginRuntimeOperation() else { return nil }
         defer { endRuntimeOperation() }
         guard let update = applySelectionEnvelope(["type": "atom", "docPos": Int(docPos), "edge": "node"]),
-            let data = update.data(using: .utf8),
-            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let selection = object["selection"] as? [String: Any]
+              let data = update.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let selection = object["selection"] as? [String: Any]
         else { return nil }
         if selection["type"] as? String == "node",
            let pos = Self.uint32Field(selection, "pos") {
@@ -402,7 +408,7 @@ extension EditorV2Adapter {
         guard roomBound else { return }
         let cells = cachedCollaborationCells()
         guard (cells?.anchor, cells?.head)
-                != (publishedCollaborationCells?.anchor, publishedCollaborationCells?.head)
+            != (publishedCollaborationCells?.anchor, publishedCollaborationCells?.head)
         else { return }
         publishCachedCollaborationSelection()
     }

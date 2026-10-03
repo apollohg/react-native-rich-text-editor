@@ -34,9 +34,17 @@ struct TableSurfaceSource {
         readOnlyDescendants = viewerTable.readOnlyDescendants
         attrsKey = viewerTable.attrsKey
         cells = viewerTable.cells.enumerated().map { index, cell in
-            TableSurfaceCell(sourceIndex: index, row: Int(cell.row), column: Int(cell.column),
-                             rowspan: Int(cell.rowspan), colspan: Int(cell.colspan), header: cell.header,
-                             attrsKey: cell.attrsKey, contentKey: cell.contentKey, elements: cell.elements)
+            TableSurfaceCell(
+                sourceIndex: index,
+                row: Int(cell.row),
+                column: Int(cell.column),
+                rowspan: Int(cell.rowspan),
+                colspan: Int(cell.colspan),
+                header: cell.header,
+                attrsKey: cell.attrsKey,
+                contentKey: cell.contentKey,
+                elements: cell.elements
+            )
         }
         syntheticRegions = viewerTable.syntheticRegions
         failure = viewerTable.failure
@@ -51,9 +59,17 @@ struct TableSurfaceSource {
         readOnlyDescendants = frameRecord.readOnlyDescendants
         attrsKey = frameRecord.attrsKey
         cells = frameRecord.cells.enumerated().map { index, cell in
-            TableSurfaceCell(sourceIndex: index, row: Int(cell.row), column: Int(cell.column),
-                             rowspan: Int(cell.rowspan), colspan: Int(cell.colspan), header: cell.header,
-                             attrsKey: cell.attrsKey, contentKey: cell.contentKey, elements: cell.elements)
+            TableSurfaceCell(
+                sourceIndex: index,
+                row: Int(cell.row),
+                column: Int(cell.column),
+                rowspan: Int(cell.rowspan),
+                colspan: Int(cell.colspan),
+                header: cell.header,
+                attrsKey: cell.attrsKey,
+                contentKey: cell.contentKey,
+                elements: cell.elements
+            )
         }
         syntheticRegions = frameRecord.syntheticRegions
         failure = frameRecord.failure

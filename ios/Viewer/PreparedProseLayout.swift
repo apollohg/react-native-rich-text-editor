@@ -320,9 +320,11 @@ public final class PreparedProseLayout: NSObject {
     private let tableRetainedBytesAtPreparation: Int
     var currentRetainedBytes: Int {
         var bytes = 0
-        forEachRetainedLayout(visit: { bytes += $0.retainedBytes - $0.tableRetainedBytesAtPreparation },
-                              storeBytes: { bytes += $0 },
-                              table: { bytes += $0.metadataRetainedBytes })
+        forEachRetainedLayout(
+            visit: { bytes += $0.retainedBytes - $0.tableRetainedBytesAtPreparation },
+            storeBytes: { bytes += $0 },
+            table: { bytes += $0.metadataRetainedBytes }
+        )
         return bytes
     }
     var cellShapeCatalogRetainedBytes: Int {
@@ -333,9 +335,11 @@ public final class PreparedProseLayout: NSObject {
         return shapes.values.reduce(0) { $0 + $1.catalogRetainedBytes }
     }
 
-    func forEachRetainedLayout(visit: (PreparedProseLayout) -> Void,
-                              storeBytes: (Int) -> Void = { _ in },
-                              table: (ViewerTableSurface) -> Void = { _ in }) {
+    func forEachRetainedLayout(
+        visit: (PreparedProseLayout) -> Void,
+        storeBytes: (Int) -> Void = { _ in },
+        table: (ViewerTableSurface) -> Void = { _ in }
+    ) {
         var layouts = Set<ObjectIdentifier>()
         var stores = Set<ObjectIdentifier>()
         var surfaces = Set<ObjectIdentifier>()
@@ -417,7 +421,6 @@ public final class PreparedProseLayout: NSObject {
     static func error(key: ProseLayoutKey, width: CGFloat, error: ProseViewerError) -> PreparedProseLayout {
         PreparedProseLayout(key: key, size: CGSize(width: width, height: 0), blocks: [], retainedBytes: 0, error: error)
     }
-
 
 }
 

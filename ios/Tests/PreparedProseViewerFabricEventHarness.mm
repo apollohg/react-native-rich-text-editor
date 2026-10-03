@@ -157,6 +157,7 @@ using namespace facebook::react;
       _stateData.leaseHandle, _stateData.leaseLifecycle);
   (void)manager.measure(_stateData.surfaceId, _stateData.componentTag, *_mutableProps,
       width, _scale, _stateData.attachmentRevision, _stateData.nativeFontRevision,
+      _stateData.tableGeometryRevision, _stateData.tableGeometryPolicy,
       _stateData.nativeFontScale, _stateData.userInterfaceStyle,
       _stateData.accessibilityContrast, _mutableProps->fontEnvironmentRevision,
       _stateData.leaseHandle, _stateData.leaseLifecycle);

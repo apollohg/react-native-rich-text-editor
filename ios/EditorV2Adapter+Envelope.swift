@@ -214,7 +214,10 @@ extension EditorV2Adapter {
             envelope.append(data.dropFirst().dropLast())
         }
         envelope.append(contentsOf: "}".utf8)
-        return .success(String(decoding: envelope, as: UTF8.self))
+        guard let json = String(data: envelope, encoding: .utf8) else {
+            return .failure(contractError("request envelope is not valid UTF-8"))
+        }
+        return .success(json)
     }
 
     func callWithEnvelope(

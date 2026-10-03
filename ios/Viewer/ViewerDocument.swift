@@ -785,9 +785,10 @@ struct ViewerDocument {
             var occupied = Set<UInt64>()
             func region(_ row: UInt32, _ column: UInt32, _ rowspan: UInt32, _ colspan: UInt32, _ key: String) -> Bool {
                 if rowspan == 0 || colspan == 0 || UInt64(row) + UInt64(rowspan) > rows || UInt64(column) + UInt64(colspan) > columns || pool[key] == nil { return false }
-                for r in UInt64(row)..<(UInt64(row) + UInt64(rowspan)) {
-                    for c in UInt64(column)..<(UInt64(column) + UInt64(colspan)) {
-                        if !occupied.insert(r * columns + c).inserted { return false }
+                for regionRow in UInt64(row)..<(UInt64(row) + UInt64(rowspan)) {
+                    for regionColumn in UInt64(column)..<(UInt64(column) + UInt64(colspan))
+                        where !occupied.insert(regionRow * columns + regionColumn).inserted {
+                        return false
                     }
                 }
                 return true
@@ -805,8 +806,9 @@ struct ViewerDocument {
                     pending.append((child, depth + 1, UInt64(cell.sourcePos) + 1, UInt64(cell.sourceEnd) - 1))
                 }
             }
-            for gap in table.syntheticRegions {
-                if !region(gap.row, gap.column, gap.rowspan, gap.colspan, gap.attrsKey) { return false }
+            for gap in table.syntheticRegions
+                where !region(gap.row, gap.column, gap.rowspan, gap.colspan, gap.attrsKey) {
+                return false
             }
         }
         return referenced == Set(records.keys)

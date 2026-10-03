@@ -103,8 +103,11 @@ enum PreparedProseInstrumentation {
         var authoritativeDocumentBytes = 0
         var retainedPresentations = 0
 
-        mutating func observe(_ drawing: PreparedProseDrawingView, additionalUnmountedBytes: Int = 0,
-                              cellInputs: [EditorTextView] = []) {
+        mutating func observe(
+            _ drawing: PreparedProseDrawingView,
+            additionalUnmountedBytes: Int = 0,
+            cellInputs: [EditorTextView] = []
+        ) {
             guard let layout = drawing.layout, let presentation = drawing.mountedTablePresentation() else { return }
             let inputs = Set(cellInputs.compactMap { ($0 as? TableCellInputTextView).map(ObjectIdentifier.init) })
             maxCellInputInstances = max(maxCellInputInstances, inputs.count)
@@ -123,9 +126,14 @@ enum PreparedProseInstrumentation {
             if !layout.size.width.isFinite || !layout.size.height.isFinite { nonFiniteLayouts += 1 }
             unmountedCacheBytes = max(unmountedCacheBytes, unmounted)
             let sidecars = drawing.preparedSurfaceRetainedBytesForTesting - layout.retainedBytes
-            pinnedLayoutBytes = max(pinnedLayoutBytes,
-                max(0, layout.currentRetainedBytes + layout.cellShapeCatalogRetainedBytes
-                    - (unmounted - additionalUnmountedBytes)) + sidecars)
+            pinnedLayoutBytes = max(
+                pinnedLayoutBytes,
+                max(
+                    0,
+                    layout.currentRetainedBytes + layout.cellShapeCatalogRetainedBytes
+                        - (unmounted - additionalUnmountedBytes)
+                ) + sidecars
+            )
         }
     }
     private static let lock = NSLock(); private static let sampleLimit = 20_000

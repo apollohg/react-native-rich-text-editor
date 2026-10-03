@@ -82,8 +82,10 @@ final class PositionBridge {
     static func scalarToUtf16Offset(_ scalar: UInt32, in textView: UITextView) -> Int {
         let conversionTable = textViewConversionTable(for: textView)
         let utf16ToScalar = conversionTable.adjustedUtf16ToScalar
-        return scalarToUtf16Offset(rootTablePositionMap(in: textView)?.localBoundary(global: scalar) ?? scalar,
-                                   inAdjustedUtf16ToScalarTable: utf16ToScalar)
+        return scalarToUtf16Offset(
+            rootTablePositionMap(in: textView)?.localBoundary(global: scalar) ?? scalar,
+            inAdjustedUtf16ToScalarTable: utf16ToScalar
+        )
     }
 
     static func isScalarPositionRepresentable(_ scalar: UInt32, in textView: UITextView) -> Bool {

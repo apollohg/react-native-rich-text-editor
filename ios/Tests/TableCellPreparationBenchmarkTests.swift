@@ -15,42 +15,78 @@ final class TableCellPreparationBenchmarkTests: XCTestCase {
         static let generation = "table-cell-preparation-benchmark"
     }
 
-
     func testCertifiedCellMeasurementPreservesExactSummaryAndCharges() throws {
         let engine = CoreTextProseLayoutEngine()
-        let texts = ["", " ", "    ", "word ", " word", "office fi ffi", "R0001C0001XY",
-            "a-b/c.d, e! f?", String(repeating: "wrap ", count: 40), String(repeating: "x", count: 200)]
-        XCTAssertLessThanOrEqual(MemoryLayout<TableCellAccessibilitySummary>.stride,
+        let texts = [
+            "",
+            " ",
+            "    ",
+            "word ",
+            " word",
+            "office fi ffi",
+            "R0001C0001XY",
+            "a-b/c.d, e! f?",
+            String(repeating: "wrap ", count: 40),
+            String(repeating: "x", count: 200)
+        ]
+        XCTAssertLessThanOrEqual(
+            MemoryLayout<TableCellAccessibilitySummary>.stride,
             MemoryLayout<PreparedProseAccessibilityNode>.stride,
-            "Summary storage must fit within the unchanged accessibility-node allowance")
+            "Summary storage must fit within the unchanged accessibility-node allowance"
+        )
         for fontScale: CGFloat in [1, 1.3, 2] {
             var theme = PreparedProseTheme.resolve(themeJSON: nil, fontScale: fontScale)
             theme.contentInsets = .zero
             for scale: CGFloat in [1, 1.5, 3] {
                 for width: CGFloat in [31.25, 62, 186.5] {
                     for text in texts {
-                        let document = ViewerDocument(semanticKey: text, paragraphs: [.init(text: text)],
-                            isEmpty: false, retainedBytes: 0).withPreparedTheme(theme)
+                        let document = ViewerDocument(
+                            semanticKey: text,
+                            paragraphs: [.init(text: text)],
+                            isEmpty: false,
+                            retainedBytes: 0
+                        ).withPreparedTheme(theme)
                         let pixels = try XCTUnwrap(ProseLayoutMetrics.widthPixels(widthPoints: width, scale: scale))
-                        let key = ProseLayoutKey(semanticKey: text, widthPixels: pixels,
-                            themeDigest: Benchmark.generation, nativeFontRevision: 0, fontEnvironmentRevision: 0,
-                            displayScale: scale, attachmentRevision: 0, generationIdentity: Benchmark.generation,
-                            semanticGenerationIdentity: Benchmark.generation)
-                        let full = try engine.prepare(document: document, key: key, widthPoints: width,
-                            displayScale: scale, cellMode: true)
+                        let key = ProseLayoutKey(
+                            semanticKey: text,
+                            widthPixels: pixels,
+                            themeDigest: Benchmark.generation,
+                            nativeFontRevision: 0,
+                            fontEnvironmentRevision: 0,
+                            displayScale: scale,
+                            attachmentRevision: 0,
+                            generationIdentity: Benchmark.generation,
+                            semanticGenerationIdentity: Benchmark.generation
+                        )
+                        let full = try engine.prepare(
+                            document: document,
+                            key: key,
+                            widthPoints: width,
+                            displayScale: scale,
+                            cellMode: true
+                        )
                         var endpointReads = 0
                         engine.accessibilityEndpointReadObserverForTesting = { endpointReads += 1 }
-                        let measured = try XCTUnwrap(engine.measurePlainCell(document: document, key: key,
-                            widthPoints: width, displayScale: scale, warningSemanticGeneration: Benchmark.generation,
-                            textPreparation: CoreTextProseLayoutEngine.PlainTextPreparation()),
-                            "text=<\(text)> fontScale=\(fontScale) scale=\(scale) width=\(width)")
+                        let measured = try XCTUnwrap(
+                            engine.measurePlainCell(
+                                document: document,
+                                key: key,
+                                widthPoints: width,
+                                displayScale: scale,
+                                warningSemanticGeneration: Benchmark.generation,
+                                textPreparation: CoreTextProseLayoutEngine.PlainTextPreparation()
+                            ),
+                            "text=<\(text)> fontScale=\(fontScale) scale=\(scale) width=\(width)"
+                        )
                         engine.accessibilityEndpointReadObserverForTesting = nil
                         XCTAssertEqual(endpointReads, 0)
                         XCTAssertEqual(measured.key, full.key)
                         XCTAssertEqual(measured.size, full.size)
                         XCTAssertEqual(measured.accessibilitySummary, TableAccessibility.contentSummary(of: full))
-                        XCTAssertEqual(measured.accessibilitySummary.reduce(0) { $0 + $1.estimatedRetainedBytes },
-                            full.accessibilityNodes.reduce(0) { $0 + $1.estimatedRetainedBytes })
+                        XCTAssertEqual(
+                            measured.accessibilitySummary.reduce(0) { $0 + $1.estimatedRetainedBytes },
+                            full.accessibilityNodes.reduce(0) { $0 + $1.estimatedRetainedBytes }
+                        )
                         XCTAssertTrue(measured.isPositionFree)
                         XCTAssertFalse(measured.hasNestedTables || measured.hasAtoms || measured.hasImages)
                         XCTAssertNil(measured.error)
@@ -66,39 +102,88 @@ final class TableCellPreparationBenchmarkTests: XCTestCase {
         plainTheme.contentInsets = .zero
         let width: CGFloat = 62
         let scale: CGFloat = 2
-        let texts = ["line\n", "one\ntwo", "a\r\nb", "a\tb", "e\u{301}", "日本語",
-            "👩🏽‍💻 family 👨‍👩‍👧", "العربية 123", "אבג Latin 42"]
+        let texts = [
+            "line\n",
+            "one\ntwo",
+            "a\r\nb",
+            "a\tb",
+            "e\u{301}",
+            "日本語",
+            "👩🏽‍💻 family 👨‍👩‍👧",
+            "العربية 123",
+            "אבג Latin 42"
+        ]
         var documents = texts.map {
-            ViewerDocument(semanticKey: $0, paragraphs: [.init(text: $0)], isEmpty: false,
-                retainedBytes: 0).withPreparedTheme(plainTheme)
+            ViewerDocument(
+                semanticKey: $0,
+                paragraphs: [.init(text: $0)],
+                isEmpty: false,
+                retainedBytes: 0
+            ).withPreparedTheme(plainTheme)
         }
         for inlines: [ViewerInline] in [
             [.text(text: "marked", marks: [.init(markType: "bold", attrsJson: "{}")])],
             [.text(text: "first", marks: []), .text(text: "second", marks: [])],
             [.atom(nodeType: "hard_break", docPos: 0, attrsJSON: "{}", label: "\n")]
         ] {
-            let block = ViewerBlock(nodeType: "paragraph", depth: 0, inBlockquote: false,
-                listContext: nil, listItemBoundary: nil, inlines: inlines)
-            documents.append(ViewerDocument(semanticKey: String(describing: inlines), blocks: [block],
-                isEmpty: false, retainedBytes: 0).withPreparedTheme(plainTheme))
+            let block = ViewerBlock(
+                nodeType: "paragraph",
+                depth: 0,
+                inBlockquote: false,
+                listContext: nil,
+                listItemBoundary: nil,
+                inlines: inlines
+            )
+            documents.append(ViewerDocument(
+                semanticKey: String(describing: inlines),
+                blocks: [block],
+                isEmpty: false,
+                retainedBytes: 0
+            ).withPreparedTheme(plainTheme))
         }
         var styledTheme = PreparedProseTheme.resolve(themeJSON:
             ##"{"version":1,"styles":{"paragraph":{"letterSpacing":2,"lineHeight":31,"color":"#123456"}}}"##)
         styledTheme.contentInsets = .zero
-        documents.append(ViewerDocument(semanticKey: "styled", paragraphs: [.init(text: "styled")],
-            isEmpty: false, retainedBytes: 0).withPreparedTheme(styledTheme))
+        documents.append(ViewerDocument(
+            semanticKey: "styled",
+            paragraphs: [.init(text: "styled")],
+            isEmpty: false,
+            retainedBytes: 0
+        ).withPreparedTheme(styledTheme))
         for document in documents {
-            let key = ProseLayoutKey(semanticKey: document.semanticKey, widthPixels: Int(width * scale),
-                themeDigest: Benchmark.generation, nativeFontRevision: 0, fontEnvironmentRevision: 0,
-                displayScale: scale, attachmentRevision: 0, generationIdentity: Benchmark.generation,
-                semanticGenerationIdentity: Benchmark.generation)
-            let expected = try engine.prepare(document: document, key: key, widthPoints: width,
-                displayScale: scale, cellMode: true)
-            XCTAssertNil(engine.measurePlainCell(document: document, key: key, widthPoints: width,
-                displayScale: scale, warningSemanticGeneration: Benchmark.generation,
-                textPreparation: CoreTextProseLayoutEngine.PlainTextPreparation()), document.semanticKey)
-            let full = try engine.prepare(document: document, key: key, widthPoints: width,
-                displayScale: scale, cellMode: true)
+            let key = ProseLayoutKey(
+                semanticKey: document.semanticKey,
+                widthPixels: Int(width * scale),
+                themeDigest: Benchmark.generation,
+                nativeFontRevision: 0,
+                fontEnvironmentRevision: 0,
+                displayScale: scale,
+                attachmentRevision: 0,
+                generationIdentity: Benchmark.generation,
+                semanticGenerationIdentity: Benchmark.generation
+            )
+            let expected = try engine.prepare(
+                document: document,
+                key: key,
+                widthPoints: width,
+                displayScale: scale,
+                cellMode: true
+            )
+            XCTAssertNil(engine.measurePlainCell(
+                document: document,
+                key: key,
+                widthPoints: width,
+                displayScale: scale,
+                warningSemanticGeneration: Benchmark.generation,
+                textPreparation: CoreTextProseLayoutEngine.PlainTextPreparation()
+            ), document.semanticKey)
+            let full = try engine.prepare(
+                document: document,
+                key: key,
+                widthPoints: width,
+                displayScale: scale,
+                cellMode: true
+            )
             XCTAssertEqual(full.size, expected.size)
             XCTAssertEqual(full.accessibilityNodes, expected.accessibilityNodes)
             XCTAssertEqual(full.retainedBytes, expected.retainedBytes)
@@ -108,13 +193,36 @@ final class TableCellPreparationBenchmarkTests: XCTestCase {
     func testScopedPlainTextTemplatesPreserveAttributesShapingAndPixels() {
         let engine = CoreTextProseLayoutEngine()
         let theme = PreparedProseTheme.resolve(themeJSON: nil)
-        let texts = ["", " ", "  ", "trailing  ", "line\n", "one\ntwo", "a\r\nb", "e\u{301}",
-            "👩🏽‍💻 family 👨‍👩‍👧", "العربية 123", "אבג Latin 42", "日本語", "office fi ffi", String(repeating: "wrap ", count: 40)]
-        func make(_ inlines: [ViewerInline], _ paint: PreparedTextPaint, _ spacing: CGFloat,
-                  _ template: CoreTextProseLayoutEngine.PlainTextPreparation? = nil) -> PreparedAttributedBlock {
-            engine.makeAttributedString(inlines, paint: paint, theme: theme,
-                warningSemanticGeneration: Benchmark.generation, paragraphSpacing: spacing,
-                textPreparation: template)
+        let texts = [
+            "",
+            " ",
+            "  ",
+            "trailing  ",
+            "line\n",
+            "one\ntwo",
+            "a\r\nb",
+            "e\u{301}",
+            "👩🏽‍💻 family 👨‍👩‍👧",
+            "العربية 123",
+            "אבג Latin 42",
+            "日本語",
+            "office fi ffi",
+            String(repeating: "wrap ", count: 40)
+        ]
+        func make(
+            _ inlines: [ViewerInline],
+            _ paint: PreparedTextPaint,
+            _ spacing: CGFloat,
+            _ template: CoreTextProseLayoutEngine.PlainTextPreparation? = nil
+        ) -> PreparedAttributedBlock {
+            engine.makeAttributedString(
+                inlines,
+                paint: paint,
+                theme: theme,
+                warningSemanticGeneration: Benchmark.generation,
+                paragraphSpacing: spacing,
+                textPreparation: template
+            )
         }
         func raster(_ line: CTLine) -> Data? {
             let format = UIGraphicsImageRendererFormat()
@@ -153,15 +261,21 @@ final class TableCellPreparationBenchmarkTests: XCTestCase {
                     let right = CTTypesetterCreateLine(after, range)
                     var leftAscent: CGFloat = 0, leftDescent: CGFloat = 0, leftLeading: CGFloat = 0
                     var rightAscent: CGFloat = 0, rightDescent: CGFloat = 0, rightLeading: CGFloat = 0
-                    XCTAssertEqual(CTLineGetTypographicBounds(left, &leftAscent, &leftDescent, &leftLeading),
-                        CTLineGetTypographicBounds(right, &rightAscent, &rightDescent, &rightLeading), context)
+                    XCTAssertEqual(
+                        CTLineGetTypographicBounds(left, &leftAscent, &leftDescent, &leftLeading),
+                        CTLineGetTypographicBounds(right, &rightAscent, &rightDescent, &rightLeading),
+                        context
+                    )
                     XCTAssertEqual(leftAscent, rightAscent, context)
                     XCTAssertEqual(leftDescent, rightDescent, context)
                     XCTAssertEqual(leftLeading, rightLeading, context)
                     for offset in start...(start + count) {
                         var leftSecondary: CGFloat = 0, rightSecondary: CGFloat = 0
-                        XCTAssertEqual(CTLineGetOffsetForStringIndex(left, offset, &leftSecondary),
-                            CTLineGetOffsetForStringIndex(right, offset, &rightSecondary), context)
+                        XCTAssertEqual(
+                            CTLineGetOffsetForStringIndex(left, offset, &leftSecondary),
+                            CTLineGetOffsetForStringIndex(right, offset, &rightSecondary),
+                            context
+                        )
                         XCTAssertEqual(leftSecondary, rightSecondary, context)
                     }
                     let expectedPixels = raster(left), actualPixels = raster(right)
@@ -188,15 +302,21 @@ final class TableCellPreparationBenchmarkTests: XCTestCase {
                             retained.append((actual.string, NSAttributedString(attributedString: actual.string)))
                         }
                         for (actual, snapshot) in retained { XCTAssertEqual(actual, snapshot) }
-                        let fallbacks: [[ViewerInline]] = [[], [.text(text: "", marks: [])],
+                        let fallbacks: [[ViewerInline]] = [
+                            [],
+                            [.text(text: "", marks: [])],
                             [.text(text: "first", marks: []), .text(text: "second", marks: [])],
                             [.text(text: "bold", marks: [.init(markType: "bold", attrsJson: "{}")])],
-                            [.atom(nodeType: "hard_break", docPos: 0, attrsJSON: "{}", label: "\n")]]
+                            [.atom(nodeType: "hard_break", docPos: 0, attrsJSON: "{}", label: "\n")]
+                        ]
                         for inlines in fallbacks { compare(make(inlines, paint, spacing), make(inlines, paint, spacing, template), "fallback") }
                         var styled = paint
                         styled.textValues = ["letterSpacing": 2]
-                        compare(make([.text(text: "styled", marks: [])], styled, spacing),
-                            make([.text(text: "styled", marks: [])], styled, spacing, template), "textValues fallback")
+                        compare(
+                            make([.text(text: "styled", marks: [])], styled, spacing),
+                            make([.text(text: "styled", marks: [])], styled, spacing, template),
+                            "textValues fallback"
+                        )
                     }
                 }
             }
@@ -204,10 +324,21 @@ final class TableCellPreparationBenchmarkTests: XCTestCase {
         let styleTheme = PreparedProseTheme.resolve(themeJSON: ##"{"version":1,"styles":{"paragraph":{"color":"#123456","letterSpacing":2}}}"##)
         XCTAssertNotNil(styleTheme.styleSheet)
         let inlines: [ViewerInline] = [.text(text: "styled fallback", marks: [])]
-        let baseline = engine.makeAttributedString(inlines, paint: styleTheme.paragraph, theme: styleTheme,
-            warningSemanticGeneration: Benchmark.generation, paragraphSpacing: 0)
-        let styled = engine.makeAttributedString(inlines, paint: styleTheme.paragraph, theme: styleTheme,
-            warningSemanticGeneration: Benchmark.generation, paragraphSpacing: 0, textPreparation: sharedPreparation)
+        let baseline = engine.makeAttributedString(
+            inlines,
+            paint: styleTheme.paragraph,
+            theme: styleTheme,
+            warningSemanticGeneration: Benchmark.generation,
+            paragraphSpacing: 0
+        )
+        let styled = engine.makeAttributedString(
+            inlines,
+            paint: styleTheme.paragraph,
+            theme: styleTheme,
+            warningSemanticGeneration: Benchmark.generation,
+            paragraphSpacing: 0,
+            textPreparation: sharedPreparation
+        )
         compare(baseline, styled, "stylesheet fallback")
         let colors = [UIColor { _ in .red }, UIColor { _ in .red }, UIColor { traits in
             traits.userInterfaceStyle == .dark ? .yellow : .blue
@@ -223,8 +354,10 @@ final class TableCellPreparationBenchmarkTests: XCTestCase {
     }
 
     func testPrepareDiscardMeasureAndWarmChangedCell() throws {
-        try XCTSkipUnless(ProcessInfo.processInfo.environment["PREPARED_PROSE_DEVICE_BENCHMARK"] == "1",
-                          "Run through the prepared prose performance scheme.")
+        try XCTSkipUnless(
+            ProcessInfo.processInfo.environment["PREPARED_PROSE_DEVICE_BENCHMARK"] == "1",
+            "Run through the prepared prose performance scheme."
+        )
         let style = TableStyle()
         let width = style.minColumnWidth - 2 * (style.cellPadding + style.borderWidth)
         let scale = UIScreen.main.scale
@@ -234,18 +367,29 @@ final class TableCellPreparationBenchmarkTests: XCTestCase {
             String(format: "R%04dC%04dXY", $0 / Benchmark.columns, $0 % Benchmark.columns)
         }
         func document(_ text: String) -> ViewerDocument {
-            ViewerDocument(semanticKey: text, paragraphs: [.init(text: text)], isEmpty: false,
-                           retainedBytes: 0).withPreparedTheme(theme)
+            ViewerDocument(
+                semanticKey: text,
+                paragraphs: [.init(text: text)],
+                isEmpty: false,
+                retainedBytes: 0
+            ).withPreparedTheme(theme)
         }
         let documents = texts.map(document)
         let changed = (0..<Benchmark.changedCellEdits).map {
             document(texts[Benchmark.cellCount / 2] + String(repeating: "x", count: $0 + 1))
         }
         func key(_ document: ViewerDocument) -> ProseLayoutKey {
-            ProseLayoutKey(semanticKey: document.semanticKey, widthPixels: Int(width * scale),
-                themeDigest: Benchmark.generation, nativeFontRevision: 0, fontEnvironmentRevision: 0,
-                displayScale: scale, attachmentRevision: 0, generationIdentity: Benchmark.generation,
-                semanticGenerationIdentity: Benchmark.generation)
+            ProseLayoutKey(
+                semanticKey: document.semanticKey,
+                widthPixels: Int(width * scale),
+                themeDigest: Benchmark.generation,
+                nativeFontRevision: 0,
+                fontEnvironmentRevision: 0,
+                displayScale: scale,
+                attachmentRevision: 0,
+                generationIdentity: Benchmark.generation,
+                semanticGenerationIdentity: Benchmark.generation
+            )
         }
         let keys = documents.map(key)
         let changedKeys = changed.map(key)
@@ -260,16 +404,26 @@ final class TableCellPreparationBenchmarkTests: XCTestCase {
             let prepareStart = CACurrentMediaTime()
             for index in documents.indices {
                 preparedHeights[index] = try autoreleasepool {
-                    try engine.prepare(document: documents[index], key: keys[index], widthPoints: width,
-                                       displayScale: scale, cellMode: true).size.height
+                    try engine.prepare(
+                        document: documents[index],
+                        key: keys[index],
+                        widthPoints: width,
+                        displayScale: scale,
+                        cellMode: true
+                    ).size.height
                 }
             }
             let prepareDuration = CACurrentMediaTime() - prepareStart
             let measureStart = CACurrentMediaTime()
             for index in texts.indices {
                 measuredHeights[index] = autoreleasepool {
-                    measurePlainText(texts[index], font: theme.paragraph.font, width: width,
-                                     scale: scale, collectLineEnds: false).height
+                    measurePlainText(
+                        texts[index],
+                        font: theme.paragraph.font,
+                        width: width,
+                        scale: scale,
+                        collectLineEnds: false
+                    ).height
                 }
             }
             let measureDuration = CACurrentMediaTime() - measureStart
@@ -281,8 +435,13 @@ final class TableCellPreparationBenchmarkTests: XCTestCase {
             for index in changed.indices {
                 let start = CACurrentMediaTime()
                 changedHeightChecksum += try autoreleasepool {
-                    try engine.prepare(document: changed[index], key: changedKeys[index], widthPoints: width,
-                                       displayScale: scale, cellMode: true).size.height
+                    try engine.prepare(
+                        document: changed[index],
+                        key: changedKeys[index],
+                        widthPoints: width,
+                        displayScale: scale,
+                        cellMode: true
+                    ).size.height
                 }
                 edits.append((CACurrentMediaTime() - start) * Benchmark.millisecondsPerSecond)
             }
@@ -296,8 +455,20 @@ final class TableCellPreparationBenchmarkTests: XCTestCase {
     }
 
     func testExactMeasurementPreservesPlainCellHeightAndLineBreaks() throws {
-        let texts = ["", "a", " ", "  ", "word ", " word", "word  word", "a-b/c.d, e! f?",
-                     "R0001C0001XY", String(repeating: "x", count: 200), "short", "last  "]
+        let texts = [
+            "",
+            "a",
+            " ",
+            "  ",
+            "word ",
+            " word",
+            "word  word",
+            "a-b/c.d, e! f?",
+            "R0001C0001XY",
+            String(repeating: "x", count: 200),
+            "short",
+            "last  "
+        ]
         let engine = CoreTextProseLayoutEngine()
         for fontScale: CGFloat in [1, 1.3, 2] {
             var theme = PreparedProseTheme.resolve(themeJSON: nil, fontScale: fontScale)
@@ -305,14 +476,30 @@ final class TableCellPreparationBenchmarkTests: XCTestCase {
             for scale: CGFloat in [1, 2, 3] {
                 for width: CGFloat in [31, 62, 186] {
                     for text in texts {
-                        let document = ViewerDocument(semanticKey: text, paragraphs: [.init(text: text)],
-                            isEmpty: false, retainedBytes: 0).withPreparedTheme(theme)
-                        let key = ProseLayoutKey(semanticKey: text, widthPixels: Int(width * scale),
-                            themeDigest: Benchmark.generation, nativeFontRevision: 0, fontEnvironmentRevision: 0,
-                            displayScale: scale, attachmentRevision: 0, generationIdentity: Benchmark.generation,
-                            semanticGenerationIdentity: Benchmark.generation)
-                        let prepared = try engine.prepare(document: document, key: key, widthPoints: width,
-                                                          displayScale: scale, cellMode: true)
+                        let document = ViewerDocument(
+                            semanticKey: text,
+                            paragraphs: [.init(text: text)],
+                            isEmpty: false,
+                            retainedBytes: 0
+                        ).withPreparedTheme(theme)
+                        let key = ProseLayoutKey(
+                            semanticKey: text,
+                            widthPixels: Int(width * scale),
+                            themeDigest: Benchmark.generation,
+                            nativeFontRevision: 0,
+                            fontEnvironmentRevision: 0,
+                            displayScale: scale,
+                            attachmentRevision: 0,
+                            generationIdentity: Benchmark.generation,
+                            semanticGenerationIdentity: Benchmark.generation
+                        )
+                        let prepared = try engine.prepare(
+                            document: document,
+                            key: key,
+                            widthPoints: width,
+                            displayScale: scale,
+                            cellMode: true
+                        )
                         let measured = measurePlainText(text, font: theme.paragraph.font, width: width, scale: scale)
                         let context = "text=<\(text)> fontScale=\(fontScale) scale=\(scale) width=\(width)"
                         XCTAssertEqual(prepared.size.height, measured.height, context)
@@ -330,18 +517,28 @@ final class TableCellPreparationBenchmarkTests: XCTestCase {
         }
     }
 
-    private func measurePlainText(_ text: String, font: UIFont, width: CGFloat, scale: CGFloat,
-                                  collectLineEnds: Bool = true) -> (height: CGFloat, lineEnds: [Int]) {
+    private func measurePlainText(
+        _ text: String,
+        font: UIFont,
+        width: CGFloat,
+        scale: CGFloat,
+        collectLineEnds: Bool = true
+    ) -> (height: CGFloat, lineEnds: [Int]) {
         if text.isEmpty { return (ceil(font.lineHeight * scale) / scale, []) }
         let attributed = NSAttributedString(string: text, attributes: [
             kCTFontAttributeName as NSAttributedString.Key: CoreTextProseLayoutEngine.coreTextFont(from: font)
         ])
         let framesetter = CTFramesetterCreateWithAttributedString(attributed)
-        let size = CTFramesetterSuggestFrameSizeWithConstraints(framesetter, CFRange(location: 0, length: 0),
-            nil, CGSize(width: width, height: .greatestFiniteMagnitude), nil)
+        let size = CTFramesetterSuggestFrameSizeWithConstraints(
+            framesetter,
+            CFRange(location: 0, length: 0),
+            nil,
+            CGSize(width: width, height: .greatestFiniteMagnitude),
+            nil
+        )
         let path = CGPath(rect: CGRect(x: 0, y: 0, width: width, height: size.height), transform: nil)
         let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: 0, length: 0), path, nil)
-        let lines = CTFrameGetLines(frame) as! [CTLine]
+        let lines = (CTFrameGetLines(frame) as [AnyObject]).map { unsafeDowncast($0, to: CTLine.self) }
         let height = lines.reduce(CGFloat.zero) { height, line in
             var ascent: CGFloat = 0
             var descent: CGFloat = 0

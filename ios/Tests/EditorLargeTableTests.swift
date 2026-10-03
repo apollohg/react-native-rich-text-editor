@@ -70,8 +70,10 @@ final class EditorLargeTableTests: XCTestCase {
         let window = hostEditorView(view, size: Window.viewport)
         defer { window.isHidden = true }
         view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
-        let update = try XCTUnwrap(adapter.setContentJson(try plainTableDocument(rows: rows, columns: columns, repeatedText: repeatedText)),
-                                   "\(label): the fixture renders instead of failing: \(adapter.debugNotes)")
+        let update = try XCTUnwrap(
+            adapter.setContentJson(try plainTableDocument(rows: rows, columns: columns, repeatedText: repeatedText)),
+            "\(label): the fixture renders instead of failing: \(adapter.debugNotes)"
+        )
         XCTAssertTrue(view.textView.applyUpdateJSON(update), "\(label): the render applies")
         view.layoutIfNeeded()
         let surface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
@@ -91,8 +93,12 @@ final class EditorLargeTableTests: XCTestCase {
             var preparations: [Int] = []
             surface.onTableCellPreparedForTesting = { index, _ in preparations.append(index) }
             let frame = try XCTUnwrap(surface.cellFrame(tableID: table.identity, cellIndex: UInt32(index)))
-            if case let .cell(destination) = surface.arrowDestination(tableID: table.identity, cellIndex: UInt32(index),
-                direction: .left, caret: CGPoint(x: frame.midX, y: frame.midY)) {
+            if case let .cell(destination) = surface.arrowDestination(
+                tableID: table.identity,
+                cellIndex: UInt32(index),
+                direction: .left,
+                caret: CGPoint(x: frame.midX, y: frame.midY)
+            ) {
                 XCTAssertEqual(destination, UInt32(index - 1))
             } else {
                 XCTFail("The left arrow must resolve the adjacent offscreen cell from stored geometry")
@@ -116,8 +122,12 @@ final class EditorLargeTableTests: XCTestCase {
             view.textView.contentOffset.y = 0
             view.layoutIfNeeded()
             let pressureKey = try XCTUnwrap(drawing.layout).key
-            table.layoutStore.insert(PreparedProseLayout(key: pressureKey, size: .zero, blocks: [],
-                retainedBytes: PreparedProseLayoutCache.preparedLayoutUnmountedByteBudget))
+            table.layoutStore.insert(PreparedProseLayout(
+                key: pressureKey,
+                size: .zero,
+                blocks: [],
+                retainedBytes: PreparedProseLayoutCache.preparedLayoutUnmountedByteBudget
+            ))
             XCTAssertTrue(cell.cachedContent === pinned, "The active cell must survive eviction outside the viewport")
             preparations.removeAll()
             _ = drawing.mountedTablePresentation()
@@ -126,8 +136,12 @@ final class EditorLargeTableTests: XCTestCase {
             drawing.layer.displayIfNeeded()
             XCTAssertTrue(preparations.isEmpty, "Drawing must use visible and active-cell pins: \(preparations)")
             surface.hideActiveInput()
-            table.layoutStore.insert(PreparedProseLayout(key: pressureKey, size: .zero, blocks: [],
-                retainedBytes: PreparedProseLayoutCache.preparedLayoutUnmountedByteBudget))
+            table.layoutStore.insert(PreparedProseLayout(
+                key: pressureKey,
+                size: .zero,
+                blocks: [],
+                retainedBytes: PreparedProseLayoutCache.preparedLayoutUnmountedByteBudget
+            ))
             XCTAssertNil(cell.cachedContent, "Ending editing must release the independent offscreen input pin")
         }
     }
@@ -137,8 +151,10 @@ final class EditorLargeTableTests: XCTestCase {
             let table = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface)
             XCTAssertEqual(table.cells.count, 20_000)
             XCTAssertLessThanOrEqual(table.cells.filter { $0.cachedContent != nil }.count, maximumRetainedPresentations)
-            XCTAssertLessThanOrEqual(table.layoutStore.unmountedRetainedBytes,
-                                     PreparedProseLayoutCache.preparedLayoutUnmountedByteBudget)
+            XCTAssertLessThanOrEqual(
+                table.layoutStore.unmountedRetainedBytes,
+                PreparedProseLayoutCache.preparedLayoutUnmountedByteBudget
+            )
             XCTAssertEqual(table.cells.map(\.contentSize.height).count, 20_000)
         }
     }
@@ -186,21 +202,35 @@ final class EditorLargeTableTests: XCTestCase {
             view.layoutIfNeeded()
             let after = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface)
             XCTAssertEqual(after.cells.count, before.cells.count + shape.columns)
-            XCTAssertEqual(preparedKeys.filter { oldKeys.contains($0) }.count, 0,
-                "Structural geometry must reuse unchanged cell metadata even after drawing eviction")
+            XCTAssertEqual(
+                preparedKeys.filter { oldKeys.contains($0) }.count,
+                0,
+                "Structural geometry must reuse unchanged cell metadata even after drawing eviction"
+            )
             let moved = after.cells[middleIndex + shape.columns]
             XCTAssertEqual(moved.contentSize, middle.contentSize)
             XCTAssertGreaterThan(after.frame(ofCell: moved).minY, before.frame(ofCell: middle).minY)
             XCTAssertNil(moved.cachedContent, "Structural updates must not populate offscreen drawing objects")
             let rebuilt = moved.content
-            XCTAssertEqual(rebuilt.size, middle.contentSize,
-                "The moved cell must still rebuild after geometry reuse")
-            XCTAssertEqual(TableAccessibility.contentSummary(of: rebuilt), middle.accessibilitySummary,
-                "Reconstruction must preserve the moved cell's accessibility metadata")
-            XCTAssertEqual(rebuilt.accessibilityNodes, middle.prepareContent().accessibilityNodes,
-                "The moved cell must retain the original exact accessibility geometry")
-            XCTAssertLessThanOrEqual(after.layoutStore.unmountedRetainedBytes,
-                PreparedProseLayoutCache.preparedLayoutUnmountedByteBudget)
+            XCTAssertEqual(
+                rebuilt.size,
+                middle.contentSize,
+                "The moved cell must still rebuild after geometry reuse"
+            )
+            XCTAssertEqual(
+                TableAccessibility.contentSummary(of: rebuilt),
+                middle.accessibilitySummary,
+                "Reconstruction must preserve the moved cell's accessibility metadata"
+            )
+            XCTAssertEqual(
+                rebuilt.accessibilityNodes,
+                middle.prepareContent().accessibilityNodes,
+                "The moved cell must retain the original exact accessibility geometry"
+            )
+            XCTAssertLessThanOrEqual(
+                after.layoutStore.unmountedRetainedBytes,
+                PreparedProseLayoutCache.preparedLayoutUnmountedByteBudget
+            )
         }
     }
 
@@ -254,12 +284,21 @@ final class EditorLargeTableTests: XCTestCase {
                     _ = renderer.image { _ in drawing.drawInstalledLayersForTesting() }
                     let presented = try XCTUnwrap(drawing.mountedTablePresentation())
                     print("\(label) at y \(offsetY), table offset \(drawing.tableLogicalOffset(for: table.surface.identity)): \(presented.cells.count) presented, \(drawnCells.last ?? -1) drawn, bound \(maximumRetainedPresentations)")
-                    XCTAssertLessThanOrEqual(presented.cells.count, maximumRetainedPresentations,
-                                             "\(label): the presentation is bounded by the viewport window, not the table")
-                    XCTAssertLessThanOrEqual(presented.layouts.count, maximumRetainedPresentations + 1,
-                                             "\(label): only window cells reach the recursive traversal")
-                    XCTAssertLessThanOrEqual(try XCTUnwrap(drawnCells.last), maximumRetainedPresentations,
-                                             "\(label): drawing mounts only the window")
+                    XCTAssertLessThanOrEqual(
+                        presented.cells.count,
+                        maximumRetainedPresentations,
+                        "\(label): the presentation is bounded by the viewport window, not the table"
+                    )
+                    XCTAssertLessThanOrEqual(
+                        presented.layouts.count,
+                        maximumRetainedPresentations + 1,
+                        "\(label): only window cells reach the recursive traversal"
+                    )
+                    XCTAssertLessThanOrEqual(
+                        try XCTUnwrap(drawnCells.last),
+                        maximumRetainedPresentations,
+                        "\(label): drawing mounts only the window"
+                    )
                     let centre = CGPoint(x: surface.bounds.midX, y: surface.bounds.midY)
                     XCTAssertNotNil(surface.cellHit(at: centre), "\(label): the cell under the viewport centre is presented")
                 }
@@ -290,8 +329,10 @@ final class EditorLargeTableTests: XCTestCase {
                 view.layoutIfNeeded()
                 let frame = element.accessibilityFrame
                 let presented = try XCTUnwrap(drawing.accessibilityCellGeometry(element.cell))
-                let expectedFrame = drawing.convert(presented.bounds.intersection(presented.clip),
-                    to: try XCTUnwrap(view.window).screen.coordinateSpace)
+                let expectedFrame = drawing.convert(
+                    presented.bounds.intersection(presented.clip),
+                    to: try XCTUnwrap(view.window).screen.coordinateSpace
+                )
                 XCTAssertEqual(frame.minX, expectedFrame.minX, accuracy: 1 / drawing.contentScaleFactor)
                 XCTAssertEqual(frame.minY, expectedFrame.minY, accuracy: 1 / drawing.contentScaleFactor)
                 let headers = table.accessibilityHeaderElements(forColumn: column) ?? []
@@ -302,12 +343,16 @@ final class EditorLargeTableTests: XCTestCase {
                 XCTAssertEqual(headers.count, 1, "row \(row) announces its column header")
                 XCTAssertEqual((headers.first as? NSObject)?.accessibilityLabel, PlainTable.cellText(row: PlainTable.headerRow, column: column))
                 XCTAssertTrue(try tableElement() === table, "row \(row) keeps the same table element")
-                XCTAssertTrue(table.accessibilityDataTableCellElement(forRow: row, column: column) === element,
-                              "row \(row) keeps focus on the same element after its reveal")
+                XCTAssertTrue(
+                    table.accessibilityDataTableCellElement(forRow: row, column: column) === element,
+                    "row \(row) keeps focus on the same element after its reveal"
+                )
                 XCTAssertTrue(drawing.isLiveAccessibilityElement(table), "row \(row) keeps the table element live")
             }
-            XCTAssertTrue(table.accessibilityDataTableCellElement(forRow: 1, column: 0) === firstBody,
-                          "cell elements do not change identity while scrolling")
+            XCTAssertTrue(
+                table.accessibilityDataTableCellElement(forRow: 1, column: 0) === firstBody,
+                "cell elements do not change identity while scrolling"
+            )
         }
     }
 
@@ -386,8 +431,11 @@ final class EditorLargeTableTests: XCTestCase {
         XCTAssertEqual(editedText.count, 1, "the keystroke lands in exactly one cell")
         XCTAssertEqual(prepared.count, 1, "only the edited cell is measured again: \(prepared)")
         XCTAssertEqual(surface.incrementalRelayoutsForTesting, replacementsBefore + 1)
-        XCTAssertEqual(surface.seededShapeLayoutsForTesting, seededBefore,
-            "An incremental cell edit must not enumerate previous resident layouts to seed shapes")
+        XCTAssertEqual(
+            surface.seededShapeLayoutsForTesting,
+            seededBefore,
+            "An incremental cell edit must not enumerate previous resident layouts to seed shapes"
+        )
         let clock = TableTestFrameClock()
         defer { clock.close() }
         let drawing = try XCTUnwrap(surface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
@@ -440,8 +488,11 @@ final class EditorLargeTableTests: XCTestCase {
             let after = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface)
             XCTAssertEqual(after.hostViewportWidth, before.hostViewportWidth - widthChange)
             XCTAssertEqual(surface.incrementalRelayoutsForTesting, incrementalBefore)
-            XCTAssertGreaterThan(surface.seededShapeLayoutsForTesting, seededBefore,
-                "The final width guard must preserve resident shape reuse for a full rebuild")
+            XCTAssertGreaterThan(
+                surface.seededShapeLayoutsForTesting,
+                seededBefore,
+                "The final width guard must preserve resident shape reuse for a full rebuild"
+            )
             XCTAssertEqual(after.cells.count, before.cells.count)
             XCTAssertTrue(after.cells.allSatisfy { $0.contentSize.height.isFinite && $0.contentSize.height > 0 })
         }
@@ -497,7 +548,8 @@ final class EditorLargeTableTests: XCTestCase {
             let scalar = try XCTUnwrap(adapter.tableIndex.scalarStart(tableKey: key, cellIndex: 4))
             XCTAssertNotNil(adapter.syncSelection(anchor: scalar, head: scalar))
             XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.applyTableCommandAtSelection(
-                try XCTUnwrap(TableAccessibilityAction.all.first { $0.key == "addRowAfter" }).command, admission: try XCTUnwrap(adapter.tableMutationAdmission(tableID: key))))))
+                try XCTUnwrap(TableAccessibilityAction.all.first { $0.key == "addRowAfter" }).command, admission: try XCTUnwrap(adapter.tableMutationAdmission(tableID: key))
+            ))))
             view.layoutIfNeeded()
             let after = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface)
             XCTAssertEqual(after.cells.filter { retained.contains(ObjectIdentifier($0.content)) }.count, before.cells.count)
@@ -521,13 +573,19 @@ final class EditorLargeTableTests: XCTestCase {
                 view.layoutIfNeeded()
                 let table = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface)
                 let identities = Set(table.cells.map { ObjectIdentifier($0.content) })
-                XCTAssertEqual(identities.count, table.cells.count,
-                    "Equal text must preserve separate drawing identities and active-cell exclusion")
+                XCTAssertEqual(
+                    identities.count,
+                    table.cells.count,
+                    "Equal text must preserve separate drawing identities and active-cell exclusion"
+                )
                 guard identities.count == table.cells.count else { return }
                 drawing.layer.displayIfNeeded()
                 try assertLayeredMatchesSinglePass(drawing)
-                XCTAssertEqual(preparedKeys.filter { oldKeys.contains($0) }.count, 0,
-                    "New bindings with existing content should share its shape without reshaping")
+                XCTAssertEqual(
+                    preparedKeys.filter { oldKeys.contains($0) }.count,
+                    0,
+                    "New bindings with existing content should share its shape without reshaping"
+                )
             }
         }
     }
@@ -570,8 +628,11 @@ final class EditorLargeTableTests: XCTestCase {
             drawing.layer.displayIfNeeded()
             let afterCell = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface.cell(sourceIndex: cellIndex))
             XCTAssertEqual(afterCell.contentSize.height, beforeCell.contentSize.height)
-            XCTAssertEqual(drawing.layerRedrawsForTesting, before,
-                "A tall native input edit must not rerasterize unchanged excluded cell chrome")
+            XCTAssertEqual(
+                drawing.layerRedrawsForTesting,
+                before,
+                "A tall native input edit must not rerasterize unchanged excluded cell chrome"
+            )
             try assertLayeredMatchesSinglePass(drawing)
 
             drawing.layer.displayIfNeeded()
@@ -579,8 +640,11 @@ final class EditorLargeTableTests: XCTestCase {
             let excludedCount = drawing.layerRedrawsForTesting["boundCell", default: 0]
             drawing.excludedTableCellContentLayout = nil
             drawing.layer.displayIfNeeded()
-            XCTAssertEqual(drawing.layerRedrawsForTesting["boundCell", default: 0], excludedCount + 1,
-                "Restoring prepared content without a document revision must invalidate the chrome-only raster")
+            XCTAssertEqual(
+                drawing.layerRedrawsForTesting["boundCell", default: 0],
+                excludedCount + 1,
+                "Restoring prepared content without a document revision must invalidate the chrome-only raster"
+            )
             try assertLayeredMatchesSinglePass(drawing)
             drawing.excludedTableCellContentLayout = excluded
         }
@@ -686,9 +750,18 @@ final class EditorLargeTableTests: XCTestCase {
             let columnWidth = try XCTUnwrap(table.layout.columnOffsets.dropFirst().first)
             let maximum = table.bounds.width - table.hostViewportWidth
             let pixel = 1 / drawing.contentScaleFactor
-            let offsets: [CGFloat] = [0, pixel / 2, columnWidth - pixel / 2,
-                columnWidth, columnWidth + pixel / 2, maximum / 2, maximum - pixel / 2,
-                maximum, maximum / 2, 0]
+            let offsets: [CGFloat] = [
+                0,
+                pixel / 2,
+                columnWidth - pixel / 2,
+                columnWidth,
+                columnWidth + pixel / 2,
+                maximum / 2,
+                maximum - pixel / 2,
+                maximum,
+                maximum / 2,
+                0
+            ]
             for offset in offsets {
                 try XCTContext.runActivity(named: "horizontal offset \(offset)") { _ in
                     let current = drawing.tableLogicalOffset(for: table.identity)
@@ -744,25 +817,40 @@ final class EditorLargeTableTests: XCTestCase {
                     XCTAssertGreaterThan(width, 0)
                     let y = floor(geometry.bounds.minY + table.style.borderWidth + table.style.cellPadding / 2)
                     var pixels = [UInt8](repeating: 0, count: width * channels)
-                    let context = try XCTUnwrap(CGContext(data: &pixels, width: width, height: 1,
-                        bitsPerComponent: 8, bytesPerRow: width * channels,
+                    let context = try XCTUnwrap(CGContext(
+                        data: &pixels,
+                        width: width,
+                        height: 1,
+                        bitsPerComponent: 8,
+                        bytesPerRow: width * channels,
                         space: CGColorSpaceCreateDeviceRGB(),
-                        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
+                        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+                    ))
                     context.scaleBy(x: scale, y: scale)
                     context.translateBy(x: -start, y: -y)
                     drawing.layer.displayIfNeeded()
                     for layer in [drawing.aboveLayer, drawing.boundRowLayer, drawing.boundCellLayer, drawing.belowLayer]
-                    where !layer.isHidden {
-                        let image = try XCTUnwrap(layer.contents) as! CGImage
-                        XCTAssertEqual(image.width, Int((layer.bounds.width * scale).rounded()),
-                            "frame \(frame): bitmap width must match its physical-pixel frame \(layer.frame)")
-                        XCTAssertEqual(image.height, Int((layer.bounds.height * scale).rounded()),
-                            "frame \(frame): bitmap height must match its physical-pixel frame \(layer.frame)")
+                        where !layer.isHidden {
+                        let contents = try XCTUnwrap(layer.contents) as AnyObject
+                        XCTAssertEqual(CFGetTypeID(contents), CGImage.typeID)
+                        let image = unsafeDowncast(contents, to: CGImage.self)
+                        XCTAssertEqual(
+                            image.width,
+                            Int((layer.bounds.width * scale).rounded()),
+                            "frame \(frame): bitmap width must match its physical-pixel frame \(layer.frame)"
+                        )
+                        XCTAssertEqual(
+                            image.height,
+                            Int((layer.bounds.height * scale).rounded()),
+                            "frame \(frame): bitmap height must match its physical-pixel frame \(layer.frame)"
+                        )
                     }
                     drawing.layer.render(in: context)
                     let transparent = (0..<width).filter { pixels[$0 * channels + channels - 1] != opaqueAlpha }
-                    XCTAssertTrue(transparent.isEmpty,
-                        "header scanline (bound: \(bindsHeader), scale: \(scale)) lost opacity at frame \(frame), offset \(fraction * maximum), pixels \(transparent)")
+                    XCTAssertTrue(
+                        transparent.isEmpty,
+                        "header scanline (bound: \(bindsHeader), scale: \(scale)) lost opacity at frame \(frame), offset \(fraction * maximum), pixels \(transparent)"
+                    )
                 }
             }
         }
@@ -776,8 +864,12 @@ final class EditorLargeTableTests: XCTestCase {
                 drawing.usesEditAnchoredLayers = layered
                 let initial = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first)
                 let visible = try XCTUnwrap(drawing.editorVisibleRectInWindow)
-                let gutter = CGRect(x: initial.clip.maxX, y: initial.bounds.minY,
-                    width: visible.maxX - initial.clip.maxX, height: initial.bounds.height)
+                let gutter = CGRect(
+                    x: initial.clip.maxX,
+                    y: initial.bounds.minY,
+                    width: visible.maxX - initial.clip.maxX,
+                    height: initial.bounds.height
+                )
                 XCTAssertGreaterThan(gutter.width, 0, "The fixture must expose the trailing text-container inset")
                 let cell = try XCTUnwrap(initial.surface.cell(sourceIndex: enteringColumn))
                 let contentStart = initial.bounds.minX + initial.surface.frame(ofCell: cell).minX + cell.contentOrigin.x
@@ -787,29 +879,41 @@ final class EditorLargeTableTests: XCTestCase {
                 let snapshot = try XCTUnwrap(drawing.mountedTablePresentation())
                 let entering = try XCTUnwrap(snapshot.mountedCells.first { $0.sourceIndex == enteringColumn })
                 XCTAssertTrue(entering.contentBounds.intersects(gutter))
-                XCTAssertTrue(entering.contentBounds.intersection(entering.clip).isNull,
-                              "The entering content must be entirely beyond the table host clip")
+                XCTAssertTrue(
+                    entering.contentBounds.intersection(entering.clip).isNull,
+                    "The entering content must be entirely beyond the table host clip"
+                )
                 let scale = drawing.contentScaleFactor
                 let width = Int((gutter.width * scale).rounded())
                 let height = Int((gutter.height * scale).rounded())
                 var pixels = [UInt8](repeating: 0, count: width * height * channels)
-                let context = try XCTUnwrap(CGContext(data: &pixels, width: width, height: height,
-                    bitsPerComponent: 8, bytesPerRow: width * channels,
+                let context = try XCTUnwrap(CGContext(
+                    data: &pixels,
+                    width: width,
+                    height: height,
+                    bitsPerComponent: 8,
+                    bytesPerRow: width * channels,
                     space: CGColorSpaceCreateDeviceRGB(),
-                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+                ))
                 context.scaleBy(x: scale, y: scale)
                 context.translateBy(x: -gutter.minX, y: -gutter.minY)
                 drawing.layer.displayIfNeeded()
                 drawing.layer.render(in: context)
                 let painted = stride(from: channels - 1, to: pixels.count, by: channels).filter { pixels[$0] != 0 }
-                XCTAssertTrue(painted.isEmpty,
-                    "layered=\(layered), offset=\(offset), gutter=\(gutter): \(painted.count) pixels leaked from fully clipped cells")
+                XCTAssertTrue(
+                    painted.isEmpty,
+                    "layered=\(layered), offset=\(offset), gutter=\(gutter): \(painted.count) pixels leaked from fully clipped cells"
+                )
             }
         }
     }
 
-    private func assertLayeredMatchesSinglePass(_ drawing: PreparedProseDrawingView,
-                                               file: StaticString = #filePath, line: UInt = #line) throws {
+    private func assertLayeredMatchesSinglePass(
+        _ drawing: PreparedProseDrawingView,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
         let format = UIGraphicsImageRendererFormat()
         format.scale = drawing.contentScaleFactor
         let layered = UIGraphicsImageRenderer(bounds: drawing.bounds, format: format).image { _ in
@@ -837,8 +941,12 @@ final class EditorLargeTableTests: XCTestCase {
                 add(attachment)
             }
         }
-        XCTAssertTrue(layeredPixels == singlePassPixels,
-            "translated layers must match a complete repaint pixel for pixel", file: file, line: line)
+        XCTAssertTrue(
+            layeredPixels == singlePassPixels,
+            "translated layers must match a complete repaint pixel for pixel",
+            file: file,
+            line: line
+        )
     }
 
     func testWrappingInsideRowspanKeepsCrossingContentAndFollowingRowsAligned() throws {
@@ -853,9 +961,11 @@ final class EditorLargeTableTests: XCTestCase {
                 [cell(String(repeating: "spanning content ", count: 20), span: 3), cell("first")],
                 [cell("edited")], [cell("last")], [cell("below left"), cell("below right")]
             ].map { ["type": PlainTable.row, "content": $0] as [String: Any] }
-            let data = try JSONSerialization.data(withJSONObject: ["type": PlainTable.document,
-                "content": [["type": PlainTable.table, "content": rows]]])
-            XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(String(decoding: data, as: UTF8.self)))))
+            let data = try JSONSerialization.data(withJSONObject: [
+                "type": PlainTable.document,
+                "content": [["type": PlainTable.table, "content": rows]]
+            ])
+            XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(try XCTUnwrap(String(data: data, encoding: .utf8))))))
             view.layoutIfNeeded()
             XCTAssertTrue(view.bindTableCell(tableID: try adapter.editableTableID(), cellIndex: 2, contentRect: .zero))
             let input = view.activeTextInput

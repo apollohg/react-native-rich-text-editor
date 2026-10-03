@@ -41,12 +41,10 @@ struct ViewerImageAttachment: Hashable {
     }
 
     static func sourceAndDeclaredSize(in block: ViewerBlock) -> SourceMetadata? {
-        guard let atom = block.inlines.compactMap({ inline -> (String, UInt32, String)? in
-            guard case let .atom(nodeType, docPos, attrsJSON, _) = inline,
-                  nodeType == "image" else { return nil }
-            return (nodeType, docPos, attrsJSON)
-        }).first else { return nil }
-        return sourceAndDeclaredSize(nodeType: atom.0, docPos: atom.1, attrsJSON: atom.2)
+        for case let .atom(nodeType, docPos, attrsJSON, _) in block.inlines where nodeType == "image" {
+            return sourceAndDeclaredSize(nodeType: nodeType, docPos: docPos, attrsJSON: attrsJSON)
+        }
+        return nil
     }
 
     static func sourceAndDeclaredSize(nodeType: String, docPos: UInt32, attrsJSON: String) -> SourceMetadata? {

@@ -60,8 +60,13 @@ final class ViewerTableTests: XCTestCase {
         let source = try jsonSource(["type": "doc", "content": [["type": "table", "content": [
             ["type": "table_row", "content": [cell("first cell"), cell("second cell")]]
         ]]]])
-        let compiled = viewerCompile(request: FfiViewerCompileRequest(sourceKind: .json, source: source,
-            configJson: Self.config, imagesEnabled: true, mentionPrefix: nil))
+        let compiled = viewerCompile(request: FfiViewerCompileRequest(
+            sourceKind: .json,
+            source: source,
+            configJson: Self.config,
+            imagesEnabled: true,
+            mentionPrefix: nil
+        ))
         let document = try ViewerDocument(compiled: XCTUnwrap(compiled.value))
         let initialWidth: CGFloat = 320
         let changedWidth: CGFloat = 280
@@ -110,18 +115,34 @@ final class ViewerTableTests: XCTestCase {
             ("dangling table", [.table(tableId: "missing")])
         ]
         for (name, elements) in variants {
-            let cell = TableSurfaceCell(sourceIndex: 0, row: 0, column: 0, rowspan: 1, colspan: 1,
-                header: false, attrsKey: "attrs", contentKey: name, elements: elements)
+            let cell = TableSurfaceCell(
+                sourceIndex: 0,
+                row: 0,
+                column: 0,
+                rowspan: 1,
+                colspan: 1,
+                header: false,
+                attrsKey: "attrs",
+                contentKey: name,
+                elements: elements
+            )
             let lowered = try? document.cellDocument(for: cell, in: "table")
             let expected = lowered?.blocks.allSatisfy { block in
                 !block.isBlockAtom && block.nodeType != "image" && block.tableKey == nil
                     && block.inlines.allSatisfy { if case .atom = $0 { return false }; return true }
             } ?? false
             XCTAssertEqual(document.cellSupportsBackgroundPreparation(cell, in: "table"), expected, name)
-            let missingFrame = ViewerDocument(semanticKey: "missing-frame", blocks: [], isEmpty: true,
-                retainedBytes: 0, frameIndex: EditorTableIndex())
-            XCTAssertFalse(missingFrame.cellSupportsBackgroundPreparation(cell, in: "table"),
-                "Missing frame ownership must reject even plain cells: \(name)")
+            let missingFrame = ViewerDocument(
+                semanticKey: "missing-frame",
+                blocks: [],
+                isEmpty: true,
+                retainedBytes: 0,
+                frameIndex: EditorTableIndex()
+            )
+            XCTAssertFalse(
+                missingFrame.cellSupportsBackgroundPreparation(cell, in: "table"),
+                "Missing frame ownership must reject even plain cells: \(name)"
+            )
         }
     }
 
@@ -133,8 +154,13 @@ final class ViewerTableTests: XCTestCase {
                 cell("unique cell \(row) \(column)")
             }]
         }]]])
-        let compiled = viewerCompile(request: FfiViewerCompileRequest(sourceKind: .json, source: source,
-            configJson: Self.config, imagesEnabled: true, mentionPrefix: nil))
+        let compiled = viewerCompile(request: FfiViewerCompileRequest(
+            sourceKind: .json,
+            source: source,
+            configJson: Self.config,
+            imagesEnabled: true,
+            mentionPrefix: nil
+        ))
         let document = try ViewerDocument(compiled: try XCTUnwrap(compiled.value))
         for workers in [1, CoreTextProseLayoutEngine.maxTablePreparationWorkers] {
             let engine = CoreTextProseLayoutEngine()
@@ -144,29 +170,46 @@ final class ViewerTableTests: XCTestCase {
             let layout = try autoreleasepool { try prepare(document, engine: engine) }
             XCTAssertNil(layout.error)
             XCTAssertFalse(templates.isEmpty)
-            XCTAssertLessThanOrEqual(templates.count, workers,
-                "A cold table should build at most one compatible text template per executing preparation scope")
-            XCTAssertTrue(templates.allSatisfy { $0.value == nil },
-                "Completed layouts and their rebuild callbacks must not retain batch templates")
+            XCTAssertLessThanOrEqual(
+                templates.count,
+                workers,
+                "A cold table should build at most one compatible text template per executing preparation scope"
+            )
+            XCTAssertTrue(
+                templates.allSatisfy { $0.value == nil },
+                "Completed layouts and their rebuild callbacks must not retain batch templates"
+            )
             let surface = try XCTUnwrap(layout.blocks.first?.tableSurface)
             XCTAssertEqual(surface.layoutStore.count, 0)
             templates.removeAll()
             let owner = ViewerTablePresentationOwner()
-            let presented = ViewerTablePresentation.project(layout: layout, owner: owner,
-                viewport: .known(CGRect(x: 0, y: 0, width: 320, height: 100)))
+            let presented = ViewerTablePresentation.project(
+                layout: layout,
+                owner: owner,
+                viewport: .known(CGRect(x: 0, y: 0, width: 320, height: 100))
+            )
             XCTAssertFalse(presented.mountedCells.isEmpty)
             XCTAssertFalse(templates.isEmpty, "Evicted cells must rebuild after the original scope has ended")
             XCTAssertTrue(presented.mountedCells.allSatisfy { $0.content.error == nil })
-            XCTAssertTrue(templates.allSatisfy { $0.value == nil },
-                "Each lazy rebuild must release its own template")
+            XCTAssertTrue(
+                templates.allSatisfy { $0.value == nil },
+                "Each lazy rebuild must release its own template"
+            )
         }
     }
 
     func testTextTemplatesReleaseWhenTableCellWidthFails() throws {
-        let source = try jsonSource(["type": "doc", "content": [paragraph("seed template before failure"),
-            ["type": "table", "content": [["type": "table_row", "content": [cell("cannot fit")]]]]]])
-        let compiled = viewerCompile(request: FfiViewerCompileRequest(sourceKind: .json, source: source,
-            configJson: Self.config, imagesEnabled: true, mentionPrefix: nil))
+        let source = try jsonSource(["type": "doc", "content": [
+            paragraph("seed template before failure"),
+            ["type": "table", "content": [["type": "table_row", "content": [cell("cannot fit")]]]]
+        ]])
+        let compiled = viewerCompile(request: FfiViewerCompileRequest(
+            sourceKind: .json,
+            source: source,
+            configJson: Self.config,
+            imagesEnabled: true,
+            mentionPrefix: nil
+        ))
         let document = try ViewerDocument(compiled: XCTUnwrap(compiled.value))
         let engine = CoreTextProseLayoutEngine()
         var templates: [WeakTemplate] = []
@@ -176,16 +219,23 @@ final class ViewerTableTests: XCTestCase {
         }
         XCTAssertNotNil(layout.error, "The finite padding must leave no inner cell width")
         XCTAssertEqual(templates.count, 1, "Leading prose must seed a template before cell preparation fails")
-        XCTAssertTrue(templates.allSatisfy { $0.value == nil },
-            "A retained error layout must not keep the failed preparation's template")
+        XCTAssertTrue(
+            templates.allSatisfy { $0.value == nil },
+            "A retained error layout must not keep the failed preparation's template"
+        )
     }
 
     func testTextTemplateScopesRemainIndependentDuringObserverReentry() throws {
         let source = try jsonSource(["type": "doc", "content": [["type": "table", "content": [
             ["type": "table_row", "content": [cell("outer first"), cell("outer second")]]
         ]]]])
-        let compiled = viewerCompile(request: FfiViewerCompileRequest(sourceKind: .json, source: source,
-            configJson: Self.config, imagesEnabled: true, mentionPrefix: nil))
+        let compiled = viewerCompile(request: FfiViewerCompileRequest(
+            sourceKind: .json,
+            source: source,
+            configJson: Self.config,
+            imagesEnabled: true,
+            mentionPrefix: nil
+        ))
         let document = try ViewerDocument(compiled: XCTUnwrap(compiled.value))
         let engine = CoreTextProseLayoutEngine()
         engine.tablePreparationWorkerLimit = 1
@@ -197,8 +247,11 @@ final class ViewerTableTests: XCTestCase {
             guard !entered else { return }
             entered = true
             do {
-                nested = try self.prepare(document, themeJSON: ##"{"paragraph":{"fontSize":23,"color":"#123456"}}"##,
-                    engine: engine)
+                nested = try self.prepare(
+                    document,
+                    themeJSON: ##"{"paragraph":{"fontSize":23,"color":"#123456"}}"##,
+                    engine: engine
+                )
             } catch { XCTFail("Reentrant preparation failed: \(error)") }
         }
         defer { engine.plainTextTemplateBuildObserverForTesting = nil }
@@ -209,10 +262,14 @@ final class ViewerTableTests: XCTestCase {
         XCTAssertTrue(templates.allSatisfy { $0.value == nil })
         let expected = try prepare(document)
         XCTAssertEqual(actual.size, expected.size)
-        XCTAssertEqual(actual.blocks.first?.tableSurface?.cells.map(\.contentSize),
-            expected.blocks.first?.tableSurface?.cells.map(\.contentSize))
-        XCTAssertEqual(actual.blocks.first?.tableSurface?.cells.map(\.accessibilitySummary),
-            expected.blocks.first?.tableSurface?.cells.map(\.accessibilitySummary))
+        XCTAssertEqual(
+            actual.blocks.first?.tableSurface?.cells.map(\.contentSize),
+            expected.blocks.first?.tableSurface?.cells.map(\.contentSize)
+        )
+        XCTAssertEqual(
+            actual.blocks.first?.tableSurface?.cells.map(\.accessibilitySummary),
+            expected.blocks.first?.tableSurface?.cells.map(\.accessibilitySummary)
+        )
     }
 
     private func coordinateTableSource(rows: Int, columns: Int, hasHeader: Bool = false) throws -> String {
@@ -228,8 +285,13 @@ final class ViewerTableTests: XCTestCase {
         let rows = 1_000
         let columns = 20
         let source = try coordinateTableSource(rows: rows, columns: columns)
-        let compiled = viewerCompile(request: FfiViewerCompileRequest(sourceKind: .json, source: source,
-            configJson: Self.config, imagesEnabled: true, mentionPrefix: nil))
+        let compiled = viewerCompile(request: FfiViewerCompileRequest(
+            sourceKind: .json,
+            source: source,
+            configJson: Self.config,
+            imagesEnabled: true,
+            mentionPrefix: nil
+        ))
         let document = try ViewerDocument(compiled: XCTUnwrap(compiled.value))
         let expected = try prepare(document, widthPoints: 390)
         let expectedSurface = try XCTUnwrap(expected.blocks.first?.tableSurface)
@@ -249,15 +311,21 @@ final class ViewerTableTests: XCTestCase {
             XCTAssertEqual(surface.cells.map(\.contentSize), expectedSurface.cells.map(\.contentSize))
             XCTAssertEqual(surface.cells.map(\.accessibilitySummary), expectedSurface.cells.map(\.accessibilitySummary))
             XCTAssertEqual(surface.cells.map(\.metadataRetainedBytes), expectedSurface.cells.map(\.metadataRetainedBytes))
-            XCTAssertEqual(endpointReads, 0,
-                "Unique transient cells must retain exact accessibility summaries without querying glyph endpoints; workers=\(workers)")
+            XCTAssertEqual(
+                endpointReads,
+                0,
+                "Unique transient cells must retain exact accessibility summaries without querying glyph endpoints; workers=\(workers)"
+            )
             let indices = [0, surface.cells.count / 2, surface.cells.count - 1]
             for index in indices {
                 let cell = surface.cells[index]
                 let previousReads = endpointReads
                 let content = cell.content
-                XCTAssertGreaterThan(endpointReads, previousReads,
-                    "Full preparation must still obtain real glyph endpoints for cell \(index)")
+                XCTAssertGreaterThan(
+                    endpointReads,
+                    previousReads,
+                    "Full preparation must still obtain real glyph endpoints for cell \(index)"
+                )
                 XCTAssertEqual(content.size, cell.contentSize)
                 XCTAssertFalse(content.accessibilityNodes.isEmpty)
                 XCTAssertEqual(TableAccessibility.contentSummary(of: content), cell.accessibilitySummary)
@@ -267,8 +335,13 @@ final class ViewerTableTests: XCTestCase {
 
     func testMeasuredHeaderAndBodyRebuildAfterParentAndShapeContextRelease() throws {
         let source = try coordinateTableSource(rows: 200, columns: 20, hasHeader: true)
-        let compiled = viewerCompile(request: FfiViewerCompileRequest(sourceKind: .json, source: source,
-            configJson: Self.config, imagesEnabled: true, mentionPrefix: nil))
+        let compiled = viewerCompile(request: FfiViewerCompileRequest(
+            sourceKind: .json,
+            source: source,
+            configJson: Self.config,
+            imagesEnabled: true,
+            mentionPrefix: nil
+        ))
         let document = try ViewerDocument(compiled: XCTUnwrap(compiled.value))
         let baseline = try prepare(document)
         let baselineSurface = try XCTUnwrap(baseline.blocks.first?.tableSurface)
@@ -314,8 +387,13 @@ final class ViewerTableTests: XCTestCase {
         let rows = 200
         let columns = 20
         let source = try coordinateTableSource(rows: rows, columns: columns)
-        let compiled = viewerCompile(request: FfiViewerCompileRequest(sourceKind: .json, source: source,
-            configJson: Self.config, imagesEnabled: true, mentionPrefix: nil))
+        let compiled = viewerCompile(request: FfiViewerCompileRequest(
+            sourceKind: .json,
+            source: source,
+            configJson: Self.config,
+            imagesEnabled: true,
+            mentionPrefix: nil
+        ))
         let document = try ViewerDocument(compiled: XCTUnwrap(compiled.value))
         let engine = CoreTextProseLayoutEngine()
         engine.allowsTransientCellMeasurement = true
@@ -347,8 +425,13 @@ final class ViewerTableTests: XCTestCase {
             _ = UIGraphicsImageRenderer(size: viewport.size, format: format).image { _ in
                 drawing.draw(drawing.bounds)
             }
-            XCTAssertEqual(endpointReads, before,
-                "Drawing and geometry queries must use resident cells after \(mutation)", file: file, line: line)
+            XCTAssertEqual(
+                endpointReads,
+                before,
+                "Drawing and geometry queries must use resident cells after \(mutation)",
+                file: file,
+                line: line
+            )
         }
         verifyResident("initial layout publication")
         let table = try tableElement(in: drawing)
@@ -387,10 +470,16 @@ final class ViewerTableTests: XCTestCase {
         drawing.removeFromSuperview()
         XCTAssertEqual(endpointReads, beforeDetach, "Detachment must not prepare the entire table")
         XCTAssertLessThanOrEqual(replacementSurface.layoutStore.count, residentBeforeDetach)
-        XCTAssertTrue(try XCTUnwrap(drawing.mountedTablePresentation()).cells.isEmpty,
-            "Detached native presentation has no visible window")
-        replacementSurface.layoutStore.insert(PreparedProseLayout(key: replacement.key, size: .zero, blocks: [],
-            retainedBytes: PreparedProseLayoutCache.preparedLayoutUnmountedByteBudget))
+        XCTAssertTrue(
+            try XCTUnwrap(drawing.mountedTablePresentation()).cells.isEmpty,
+            "Detached native presentation has no visible window"
+        )
+        replacementSurface.layoutStore.insert(PreparedProseLayout(
+            key: replacement.key,
+            size: .zero,
+            blocks: [],
+            retainedBytes: PreparedProseLayoutCache.preparedLayoutUnmountedByteBudget
+        ))
         XCTAssertEqual(replacementSurface.layoutStore.count, 0, "Detachment releases every visible-owner pin")
         scroll.addSubview(drawing)
         XCTAssertGreaterThan(endpointReads, beforeDetach, "Reattachment prepares the visible window synchronously")
@@ -401,18 +490,29 @@ final class ViewerTableTests: XCTestCase {
         let rows = 1_000
         let columns = 20
         let plain = try coordinateTableSource(rows: rows, columns: columns)
-        let bold: [String: Any] = ["type": "paragraph", "content": [["type": "text",
-            "text": "Bold café العربية 👩🏽‍💻", "marks": [["type": "bold"]]]]]
-        let merged: [String: Any] = ["type": "table_cell", "attrs": ["rowspan": 2],
-            "content": [bold, paragraph("second paragraph wraps across multiple lines")]]
+        let bold: [String: Any] = ["type": "paragraph", "content": [[
+            "type": "text",
+            "text": "Bold café العربية 👩🏽‍💻",
+            "marks": [["type": "bold"]]
+        ]]]
+        let merged: [String: Any] = [
+            "type": "table_cell",
+            "attrs": ["rowspan": 2],
+            "content": [bold, paragraph("second paragraph wraps across multiple lines")]
+        ]
         let rich = try jsonSource(["type": "doc", "content": [["type": "table", "content": [
             ["type": "table_row", "content": [merged, cell("wide merged", colspan: 2)]],
             ["type": "table_row", "content": [cell("é accents"), cell("אבג RTL")]],
             ["type": "table_row", "content": [cell("last row"), cell("more text"), cell("final text")]]
         ]]]])
         for (name, source) in [("plain-1000x20", plain), ("rich-merged", rich), ("nested-image", try nestedHeaderImageSource())] {
-            let compiled = viewerCompile(request: FfiViewerCompileRequest(sourceKind: .json, source: source,
-                configJson: Self.config, imagesEnabled: true, mentionPrefix: nil))
+            let compiled = viewerCompile(request: FfiViewerCompileRequest(
+                sourceKind: .json,
+                source: source,
+                configJson: Self.config,
+                imagesEnabled: true,
+                mentionPrefix: nil
+            ))
             let document = try ViewerDocument(compiled: try XCTUnwrap(compiled.value, name))
             let sequential = CoreTextProseLayoutEngine()
             sequential.tablePreparationWorkerLimit = 1
@@ -434,16 +534,23 @@ final class ViewerTableTests: XCTestCase {
             var templates: [WeakTemplate] = []
             parallel.plainTextTemplateBuildObserverForTesting = { templates.append(WeakTemplate($0)) }
             let actual = try autoreleasepool { try prepare(document, engine: parallel) }
-            XCTAssertTrue(templates.allSatisfy { $0.value == nil },
-                "\(name): nested preparation must release all templates while completed layouts remain alive")
+            XCTAssertTrue(
+                templates.allSatisfy { $0.value == nil },
+                "\(name): nested preparation must release all templates while completed layouts remain alive"
+            )
             XCTAssertNil(actual.error, name)
             XCTAssertEqual(actual.size, expected.size, name)
-            XCTAssertTrue(actualGeometry.preparationsByKey.values.allSatisfy { $0 == 1 },
-                "\(name): each cell must prepare once, including nested cells on the caller thread")
+            XCTAssertTrue(
+                actualGeometry.preparationsByKey.values.allSatisfy { $0 == 1 },
+                "\(name): each cell must prepare once, including nested cells on the caller thread"
+            )
             XCTAssertEqual(actualGeometry.heights, expectedGeometry.heights, "\(name): every measured cell height")
             XCTAssertEqual(actualGeometry.glyphBounds, expectedGeometry.glyphBounds, "\(name): every prepared glyph bound")
-            XCTAssertEqual(actualGeometry.accessibilityNodes, expectedGeometry.accessibilityNodes,
-                "\(name): every exact accessibility rectangle, including rich and nested cells")
+            XCTAssertEqual(
+                actualGeometry.accessibilityNodes,
+                expectedGeometry.accessibilityNodes,
+                "\(name): every exact accessibility rectangle, including rich and nested cells"
+            )
             for (left, right) in zip(expected.blocks, actual.blocks) {
                 guard let lhs = left.tableSurface, let rhs = right.tableSurface else { continue }
                 XCTAssertEqual(lhs.layout.sourceOrder, rhs.layout.sourceOrder, name)
@@ -452,25 +559,41 @@ final class ViewerTableTests: XCTestCase {
                 XCTAssertEqual(lhs.cells.map(\.contentSize), rhs.cells.map(\.contentSize), name)
                 XCTAssertEqual(lhs.cells.map(\.accessibilitySummary), rhs.cells.map(\.accessibilitySummary), name)
                 for cell in rhs.cells {
-                    XCTAssertEqual(cell.accessibilitySummary, actualGeometry.accessibilitySummary[cell.contentKey.semanticKey],
-                        "\(name): measured accessibility must remain complete after releasing transient layouts")
+                    XCTAssertEqual(
+                        cell.accessibilitySummary,
+                        actualGeometry.accessibilitySummary[cell.contentKey.semanticKey],
+                        "\(name): measured accessibility must remain complete after releasing transient layouts"
+                    )
                 }
                 if name == "plain-1000x20" {
-                    XCTAssertEqual(sequentialCatalog.prunePassesForTesting, 0,
-                        "Transient misses must not fill and prune the reusable shape catalog")
-                    XCTAssertLessThanOrEqual(parallelCatalog.prunePassesForTesting,
+                    XCTAssertEqual(
+                        sequentialCatalog.prunePassesForTesting,
+                        0,
+                        "Transient misses must not fill and prune the reusable shape catalog"
+                    )
+                    XCTAssertLessThanOrEqual(
+                        parallelCatalog.prunePassesForTesting,
                         CoreTextProseLayoutEngine.maxTablePreparationWorkers,
-                        "Only worker context closure may prune; transient misses must not stage shapes")
-                    XCTAssertEqual(rhs.layoutStore.count, 0,
-                        "Unique cells beyond resident capacity must not churn the resident cache during measurement")
-                    XCTAssertNil(actualGeometry.lastLayout,
-                        "The rebuild closure must not retain the discarded Core Text layout")
+                        "Only worker context closure may prune; transient misses must not stage shapes"
+                    )
+                    XCTAssertEqual(
+                        rhs.layoutStore.count,
+                        0,
+                        "Unique cells beyond resident capacity must not churn the resident cache during measurement"
+                    )
+                    XCTAssertNil(
+                        actualGeometry.lastLayout,
+                        "The rebuild closure must not retain the discarded Core Text layout"
+                    )
                     parallel.tableCellLayoutObserverForTesting = nil
                     let owner = ViewerTablePresentationOwner()
                     let viewportSize = CGSize(width: 320, height: 100)
                     for originY in [CGFloat.zero, max(0, actual.size.height - viewportSize.height)] {
-                        let snapshot = ViewerTablePresentation.project(layout: actual, owner: owner,
-                            viewport: .known(CGRect(origin: CGPoint(x: 0, y: originY), size: viewportSize)))
+                        let snapshot = ViewerTablePresentation.project(
+                            layout: actual,
+                            owner: owner,
+                            viewport: .known(CGRect(origin: CGPoint(x: 0, y: originY), size: viewportSize))
+                        )
                         XCTAssertFalse(snapshot.mountedCells.isEmpty)
                         let rebuilt = CellGeometryProbe()
                         for presented in snapshot.mountedCells {
@@ -481,11 +604,17 @@ final class ViewerTableTests: XCTestCase {
                             XCTAssertEqual(rebuilt.accessibilityNodes[semanticKey], actualGeometry.accessibilityNodes[semanticKey])
                         }
                     }
-                    let detached = ViewerTablePresentation.project(layout: actual, owner: owner,
-                        viewport: .known(.zero))
+                    let detached = ViewerTablePresentation.project(
+                        layout: actual,
+                        owner: owner,
+                        viewport: .known(.zero)
+                    )
                     XCTAssertTrue(detached.mountedCells.isEmpty)
-                    let reattached = ViewerTablePresentation.project(layout: actual, owner: owner,
-                        viewport: .known(CGRect(origin: .zero, size: viewportSize)))
+                    let reattached = ViewerTablePresentation.project(
+                        layout: actual,
+                        owner: owner,
+                        viewport: .known(CGRect(origin: .zero, size: viewportSize))
+                    )
                     XCTAssertFalse(reattached.mountedCells.isEmpty)
                 }
             }
@@ -498,13 +627,20 @@ final class ViewerTableTests: XCTestCase {
     func testLargeColdTableRetainsDuplicateShapesWhileDiscardingUniqueLayouts() throws {
         let cellCount = TableCellLayoutStore.maximumResidentLayouts + 1
         let repeatedText = "shared café العربية 👩🏽‍💻"
-        let source = try jsonSource(["type": "doc", "content": [["type": "table", "content":
-            (0..<cellCount).map { index in
-                ["type": "table_row", "content": [cell(index < 2 ? repeatedText : "unique \(index)")]]
-            }
+        let source = try jsonSource(["type": "doc", "content": [[
+            "type": "table",
+            "content":
+                (0..<cellCount).map { index in
+                    ["type": "table_row", "content": [cell(index < 2 ? repeatedText : "unique \(index)")]]
+                }
         ]]])
-        let compiled = viewerCompile(request: FfiViewerCompileRequest(sourceKind: .json, source: source,
-            configJson: Self.config, imagesEnabled: true, mentionPrefix: nil))
+        let compiled = viewerCompile(request: FfiViewerCompileRequest(
+            sourceKind: .json,
+            source: source,
+            configJson: Self.config,
+            imagesEnabled: true,
+            mentionPrefix: nil
+        ))
         let document = try ViewerDocument(compiled: XCTUnwrap(compiled.value))
         let catalog = PreparedCellShapeCatalog()
         let context = catalog.newBuildContext()
@@ -523,20 +659,33 @@ final class ViewerTableTests: XCTestCase {
         XCTAssertNotNil(first.cellShape)
         XCTAssertTrue(first.cellShape === second.cellShape)
         XCTAssertTrue(surface.cells.dropFirst(2).allSatisfy { $0.cachedContent == nil })
-        XCTAssertEqual(catalog.prunePassesForTesting, 0,
-            "Unique discarded measurements must not cause shape catalog churn")
-        let seededSource = try jsonSource(["type": "doc", "content": [["type": "table", "content":
-            (0..<cellCount).map { index in
-                ["type": "table_row", "content": [cell(index == 0 ? repeatedText : "next unique \(index)")]]
-            }
+        XCTAssertEqual(
+            catalog.prunePassesForTesting,
+            0,
+            "Unique discarded measurements must not cause shape catalog churn"
+        )
+        let seededSource = try jsonSource(["type": "doc", "content": [[
+            "type": "table",
+            "content":
+                (0..<cellCount).map { index in
+                    ["type": "table_row", "content": [cell(index == 0 ? repeatedText : "next unique \(index)")]]
+                }
         ]]])
-        let seededCompile = viewerCompile(request: FfiViewerCompileRequest(sourceKind: .json, source: seededSource,
-            configJson: Self.config, imagesEnabled: true, mentionPrefix: nil))
+        let seededCompile = viewerCompile(request: FfiViewerCompileRequest(
+            sourceKind: .json,
+            source: seededSource,
+            configJson: Self.config,
+            imagesEnabled: true,
+            mentionPrefix: nil
+        ))
         shapeBuilds = 0
         let seededLayout = try prepare(ViewerDocument(compiled: XCTUnwrap(seededCompile.value)), engine: engine)
         let seededSurface = try XCTUnwrap(seededLayout.blocks.first?.tableSurface)
-        XCTAssertEqual(shapeBuilds, cellCount - 1,
-            "A locally unique transient cell must still reuse a live shape from another parent")
+        XCTAssertEqual(
+            shapeBuilds,
+            cellCount - 1,
+            "A locally unique transient cell must still reuse a live shape from another parent"
+        )
         XCTAssertEqual(seededSurface.cells[0].accessibilitySummary, surface.cells[0].accessibilitySummary)
         XCTAssertEqual(seededSurface.layoutStore.count, 0)
         context.close()
@@ -557,8 +706,13 @@ final class ViewerTableTests: XCTestCase {
                 cell("plain two")
             ]
         ]]]]])
-        let compiled = viewerCompile(request: FfiViewerCompileRequest(sourceKind: .json, source: source,
-            configJson: Self.config, imagesEnabled: true, mentionPrefix: nil))
+        let compiled = viewerCompile(request: FfiViewerCompileRequest(
+            sourceKind: .json,
+            source: source,
+            configJson: Self.config,
+            imagesEnabled: true,
+            mentionPrefix: nil
+        ))
         let document = try ViewerDocument(compiled: try XCTUnwrap(compiled.value))
         let engine = CoreTextProseLayoutEngine()
         engine.tablePreparationWorkerLimit = CoreTextProseLayoutEngine.maxTablePreparationWorkers
@@ -569,9 +723,11 @@ final class ViewerTableTests: XCTestCase {
             lock.lock(); defer { lock.unlock() }
             callerPreparations[index] = Thread.current === caller
         }
-        let layout = try prepare(document,
+        let layout = try prepare(
+            document,
             themeJSON: #"{"viewerAtoms":{"generation":"parallel","revision":"one","nodeTypes":["card"],"estimatedHeights":{"card":40}}}"#,
-            engine: engine)
+            engine: engine
+        )
         XCTAssertNil(layout.error)
         XCTAssertEqual(callerPreparations.count, 4)
         XCTAssertEqual(callerPreparations[0], true, "Custom atom preparation stays on the caller")
@@ -627,8 +783,11 @@ final class ViewerTableTests: XCTestCase {
         let originalCell = try XCTUnwrap(original.cell(sourceIndex: 1))
         let shiftedCell = try XCTUnwrap(shifted.cell(sourceIndex: 1))
         XCTAssertTrue(originalCell.content === shiftedCell.content)
-        XCTAssertEqual(shifted.frame(ofCell: shiftedCell).minY,
-                       original.frame(ofCell: originalCell).minY + translation, accuracy: 0.01)
+        XCTAssertEqual(
+            shifted.frame(ofCell: shiftedCell).minY,
+            original.frame(ofCell: originalCell).minY + translation,
+            accuracy: 0.01
+        )
         XCTAssertEqual(shifted.visibleCells(in: shifted.frame(ofCell: shiftedCell)).map(\.sourceIndex), [1])
         XCTAssertEqual(preparations, 0)
     }
@@ -678,8 +837,11 @@ final class ViewerTableTests: XCTestCase {
             preparationError: wideTable.preparationError
         )
         XCTAssertEqual(owner.logicalOffset(for: rtl), owner.logicalOffset(for: wideTable), accuracy: 1)
-        XCTAssertEqual(owner.physicalOffset(for: rtl),
-                       rtl.bounds.width - rtl.hostViewportWidth - owner.logicalOffset(for: rtl), accuracy: 1)
+        XCTAssertEqual(
+            owner.physicalOffset(for: rtl),
+            rtl.bounds.width - rtl.hostViewportWidth - owner.logicalOffset(for: rtl),
+            accuracy: 1
+        )
     }
 
     func testMountedNestedPanEdges() throws {
@@ -865,8 +1027,12 @@ final class ViewerTableTests: XCTestCase {
         drawing.removeFromSuperview()
         let stoppedHostOffset = scroll.contentOffset.x
         RunLoop.current.run(until: Date().addingTimeInterval(0.5))
-        XCTAssertEqual(scroll.contentOffset.x, stoppedHostOffset, accuracy: 1,
-                       "detaching the mounted table must cancel its deceleration")
+        XCTAssertEqual(
+            scroll.contentOffset.x,
+            stoppedHostOffset,
+            accuracy: 1,
+            "detaching the mounted table must cancel its deceleration"
+        )
 
         scroll.setContentOffset(.zero, animated: false)
         scroll.addSubview(drawing)
@@ -883,8 +1049,12 @@ final class ViewerTableTests: XCTestCase {
             return XCTFail("A real pan did not reach the mounted reentrant geometry callback")
         }
         RunLoop.current.run(until: Date().addingTimeInterval(0.5))
-        XCTAssertEqual(drawing.tableLogicalOffset(for: surface.identity), 0, accuracy: 1,
-                       "reentrant owner replacement must not restart pan or deceleration")
+        XCTAssertEqual(
+            drawing.tableLogicalOffset(for: surface.identity),
+            0,
+            accuracy: 1,
+            "reentrant owner replacement must not restart pan or deceleration"
+        )
         drawing.onTableGeometryChanged = nil
 
         status.text = "TABLE DIAGONAL READY"
@@ -907,8 +1077,12 @@ final class ViewerTableTests: XCTestCase {
         guard XCTWaiter.wait(for: [disabledHost], timeout: 180) == .completed else {
             return XCTFail("real table pan failed to reach edge over disabled scroll host")
         }
-        XCTAssertEqual(scroll.contentOffset.x, 0, accuracy: 1,
-                       "disabled UIScrollView must not consume table edge remainder")
+        XCTAssertEqual(
+            scroll.contentOffset.x,
+            0,
+            accuracy: 1,
+            "disabled UIScrollView must not consume table edge remainder"
+        )
     }
 
     func testLiveAtomPanPrecedesTable() throws {
@@ -942,8 +1116,12 @@ final class ViewerTableTests: XCTestCase {
         guard XCTWaiter.wait(for: [atomPan], timeout: 180) == .completed else {
             return XCTFail("Real pan on custom atom did not reach its own recognizer")
         }
-        XCTAssertEqual(drawing.tableLogicalOffset(for: surface.identity), 0, accuracy: 1,
-                       "custom atom's native pan must take priority over table motion")
+        XCTAssertEqual(
+            drawing.tableLogicalOffset(for: surface.identity),
+            0,
+            accuracy: 1,
+            "custom atom's native pan must take priority over table motion"
+        )
     }
 
     func testMountedViewportBoundsTableCandidatesWithoutRepreparingCells() throws {
@@ -1086,9 +1264,9 @@ final class ViewerTableTests: XCTestCase {
         XCTAssertEqual(try rgba(rendered, quotePoint), [0, 255, 0, 255])
         let rootProse = try XCTUnwrap(layout.blocks.first { $0 !== outer })
         let proseBounds = try XCTUnwrap(rootProse.fragments.first { $0.kind == .text }?.bounds)
-        let proseHasInk = (Int(proseBounds.minY)..<Int(proseBounds.maxY)).contains { y in
-            (Int(proseBounds.minX)..<Int(proseBounds.maxX)).contains { x in
-                let pixel = try! rgba(rendered, CGPoint(x: x, y: y))
+        let proseHasInk = try (Int(proseBounds.minY)..<Int(proseBounds.maxY)).contains { y in
+            try (Int(proseBounds.minX)..<Int(proseBounds.maxX)).contains { x in
+                let pixel = try rgba(rendered, CGPoint(x: x, y: y))
                 return pixel[3] > 0 && pixel[0] < 200 && pixel[1] < 200 && pixel[2] < 200
             }
         }
@@ -1130,15 +1308,27 @@ final class ViewerTableTests: XCTestCase {
         let surface = try XCTUnwrap(layout.blocks.first?.tableSurface)
         let rootTable = try XCTUnwrap(ViewerTablePresentation.rootTables(in: layout).first)
         let entering = try XCTUnwrap(surface.cell(sourceIndex: 1))
-        let gutter = CGRect(x: rootTable.clip.maxX, y: rootTable.bounds.minY,
-                            width: gutterWidth, height: rootTable.bounds.height)
+        let gutter = CGRect(
+            x: rootTable.clip.maxX,
+            y: rootTable.bounds.minY,
+            width: gutterWidth,
+            height: rootTable.bounds.height
+        )
         let drawing = PreparedProseDrawingView(frame: CGRect(x: 0, y: 0, width: gutter.maxX, height: gutter.maxY))
         // EditorTableSurface installs table blocks without the viewer's outer content box.
         let tableBounds = try XCTUnwrap(layout.blocks.first?.tableBounds)
-        let tableBlock = PreparedProseBlock(fragments: [], bounds: tableBounds,
-            tableSurface: surface, tableBounds: tableBounds)
-        let editorLayout = PreparedProseLayout(key: layout.key, size: drawing.bounds.size,
-            blocks: [tableBlock], retainedBytes: layout.retainedBytes)
+        let tableBlock = PreparedProseBlock(
+            fragments: [],
+            bounds: tableBounds,
+            tableSurface: surface,
+            tableBounds: tableBounds
+        )
+        let editorLayout = PreparedProseLayout(
+            key: layout.key,
+            size: drawing.bounds.size,
+            blocks: [tableBlock],
+            retainedBytes: layout.retainedBytes
+        )
         drawing.install(layout: editorLayout)
         let offset = rootTable.bounds.minX + surface.frame(ofCell: entering).minX + entering.contentOrigin.x
             - (gutter.minX + surface.style.cellPadding)
@@ -1159,14 +1349,21 @@ final class ViewerTableTests: XCTestCase {
         }.cgImage)
         let channels = 4
         var pixels = [UInt8](repeating: 0, count: image.width * image.height * channels)
-        let context = try XCTUnwrap(CGContext(data: &pixels, width: image.width, height: image.height,
-            bitsPerComponent: 8, bytesPerRow: image.width * channels,
+        let context = try XCTUnwrap(CGContext(
+            data: &pixels,
+            width: image.width,
+            height: image.height,
+            bitsPerComponent: 8,
+            bytesPerRow: image.width * channels,
             space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+        ))
         context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
         let painted = stride(from: channels - 1, to: pixels.count, by: channels).filter { pixels[$0] != 0 }
-        XCTAssertTrue(painted.isEmpty,
-            "A fully clipped quote, nested header, selection, and border leaked \(painted.count) pixels into \(gutter)")
+        XCTAssertTrue(
+            painted.isEmpty,
+            "A fully clipped quote, nested header, selection, and border leaked \(painted.count) pixels into \(gutter)"
+        )
     }
 
     func testActiveOuterCellExclusionPaintsNestedHeaderBackground() throws {
@@ -1220,10 +1417,10 @@ final class ViewerTableTests: XCTestCase {
         XCTAssertEqual(layout.imageAttachments.filter { $0.id == image.id }.count, 1)
         XCTAssertEqual(image.declaredSize, CGSize(width: 20, height: 20))
         let initialSnapshot = ViewerTablePresentation.project(
-                layout: layout,
-                owner: ViewerTablePresentationOwner(),
-                viewport: .unknown
-            )
+            layout: layout,
+            owner: ViewerTablePresentationOwner(),
+            viewport: .unknown
+        )
         let projectedImage = try XCTUnwrap(initialSnapshot.images.first { $0.attachment.id == image.id })
         let nestedSurface = try XCTUnwrap(initialSnapshot.cells.first { $0.surface !== surface }?.surface)
         let fixedHostLeft = try XCTUnwrap(initialSnapshot.cells.first { $0.surface === nestedSurface }?.clip.minX)
@@ -1319,8 +1516,10 @@ final class ViewerTableTests: XCTestCase {
         XCTAssertTrue(try tableElement(in: drawing) === table)
         XCTAssertFalse(perform(open), "the reused action follows the scrolled geometry, so the clipped link refuses")
         let clippedCell = try XCTUnwrap(try tableElement(in: drawing).allCellElements.first)
-        XCTAssertFalse(perform(try action(named: TableAccessibilityText.openLink("same").localized, on: clippedCell)),
-                       "a link scrolled out of its cell clip must not activate")
+        XCTAssertFalse(
+            perform(try action(named: TableAccessibilityText.openLink("same").localized, on: clippedCell)),
+            "a link scrolled out of its cell clip must not activate"
+        )
         XCTAssertNil(activated)
 
         drawing.linkInteractionsEnabled = false
@@ -1356,11 +1555,16 @@ final class ViewerTableTests: XCTestCase {
         drawing.setTableLogicalOffset(offset, sourceIdentity: surface.identity)
 
         let cellFrame = cell.accessibilityFrame
-        XCTAssertEqual(cellFrame, window.convert(drawing.convert(visible, to: window), to: window.screen.coordinateSpace),
-                       "initial \(initialCellFrame), read \(cellFrame)")
+        XCTAssertEqual(
+            cellFrame,
+            window.convert(drawing.convert(visible, to: window), to: window.screen.coordinateSpace),
+            "initial \(initialCellFrame), read \(cellFrame)"
+        )
         XCTAssertNotEqual(cellFrame, initialCellFrame)
-        XCTAssertEqual(table.accessibilityFrame, window.convert(drawing.convert(scrolledTable.bounds.intersection(scrolledTable.clip), to: window),
-            to: window.screen.coordinateSpace), "initial table frame \(initialTableFrame)")
+        XCTAssertEqual(table.accessibilityFrame, window.convert(
+            drawing.convert(scrolledTable.bounds.intersection(scrolledTable.clip), to: window),
+            to: window.screen.coordinateSpace
+        ), "initial table frame \(initialTableFrame)")
     }
 
     func testTableCellLinksStayReachableThroughTheLinksRotor() throws {
@@ -1414,20 +1618,33 @@ final class ViewerTableTests: XCTestCase {
             XCTAssertEqual(table.accessibilityRowCount(), 3)
             XCTAssertEqual(table.accessibilityColumnCount(), 3)
             let cells = table.allCellElements
-            XCTAssertEqual(cells.compactMap(\.accessibilityLabel), ["A", "B", "C", "D", "E", "F", "G"],
-                           "\(direction): traversal follows document order")
-            XCTAssertEqual(cells.map { [$0.accessibilityRowRange().location, $0.accessibilityRowRange().length,
-                                        $0.accessibilityColumnRange().location, $0.accessibilityColumnRange().length] },
-                           [[0, 1, 0, 1], [0, 1, 1, 1], [0, 1, 2, 1], [1, 1, 0, 2], [1, 2, 2, 1], [2, 1, 0, 1], [2, 1, 1, 1]])
+            XCTAssertEqual(
+                cells.compactMap(\.accessibilityLabel),
+                ["A", "B", "C", "D", "E", "F", "G"],
+                "\(direction): traversal follows document order"
+            )
+            XCTAssertEqual(
+                cells.map { [
+                    $0.accessibilityRowRange().location,
+                    $0.accessibilityRowRange().length,
+                    $0.accessibilityColumnRange().location,
+                    $0.accessibilityColumnRange().length
+                ] },
+                [[0, 1, 0, 1], [0, 1, 1, 1], [0, 1, 2, 1], [1, 1, 0, 2], [1, 2, 2, 1], [2, 1, 0, 1], [2, 1, 1, 1]]
+            )
             XCTAssertEqual(cells[3].accessibilityValue, TableAccessibilityText.columnSpan(2).localized)
             XCTAssertEqual(cells[4].accessibilityValue, TableAccessibilityText.rowSpan(2).localized)
             XCTAssertNil(cells[5].accessibilityValue)
             XCTAssertTrue(cells[0].accessibilityTraits.contains(.header))
             XCTAssertFalse(cells[3].accessibilityTraits.contains(.header))
-            XCTAssertTrue(table.accessibilityDataTableCellElement(forRow: 1, column: 1) === cells[3],
-                          "a slot covered by a colspan resolves to the spanning cell")
-            XCTAssertTrue(table.accessibilityDataTableCellElement(forRow: 2, column: 2) === cells[4],
-                          "a slot covered by a rowspan resolves to the spanning cell")
+            XCTAssertTrue(
+                table.accessibilityDataTableCellElement(forRow: 1, column: 1) === cells[3],
+                "a slot covered by a colspan resolves to the spanning cell"
+            )
+            XCTAssertTrue(
+                table.accessibilityDataTableCellElement(forRow: 2, column: 2) === cells[4],
+                "a slot covered by a rowspan resolves to the spanning cell"
+            )
             XCTAssertTrue(table.accessibilityHeaderElements(forColumn: 1)?.first === cells[1])
             XCTAssertEqual(table.accessibilityHeaderElements(forColumn: 1)?.count, 1)
             XCTAssertEqual(table.accessibilityHeaderElements(forRow: 1)?.count, 0, "no header column exists")
@@ -1454,8 +1671,10 @@ final class ViewerTableTests: XCTestCase {
         XCTAssertEqual(table.allCellElements.compactMap(\.accessibilityLabel), ["tall", "wide", "later"])
         XCTAssertEqual(table.accessibilityElementCount(), 3, "synthetic slots expose no element")
         for region in surface.syntheticRegions {
-            XCTAssertNil(table.accessibilityDataTableCellElement(forRow: Int(region.row), column: Int(region.column)),
-                         "synthetic slot \(region.row),\(region.column) must not resolve to a cell")
+            XCTAssertNil(
+                table.accessibilityDataTableCellElement(forRow: Int(region.row), column: Int(region.column)),
+                "synthetic slot \(region.row),\(region.column) must not resolve to a cell"
+            )
         }
         XCTAssertTrue(table.accessibilityDataTableCellElement(forRow: 1, column: 0) === table.allCellElements[0])
     }
@@ -1556,8 +1775,10 @@ final class ViewerTableTests: XCTestCase {
         let partiallyVisible = try tableElement(in: drawing).allCellElements[0]
         XCTAssertEqual(
             partiallyVisible.accessibilityFrame,
-            window.convert(drawing.convert(partialCell.bounds.intersection(partialCell.clip), to: window),
-                to: window.screen.coordinateSpace)
+            window.convert(
+                drawing.convert(partialCell.bounds.intersection(partialCell.clip), to: window),
+                to: window.screen.coordinateSpace
+            )
         )
         XCTAssertTrue(perform(try action(named: openLink, on: partiallyVisible)))
         XCTAssertEqual(activated.last?.href, "https://cell-one.example")
@@ -1617,8 +1838,10 @@ final class ViewerTableTests: XCTestCase {
         XCTAssertEqual(activated.last?.href, "https://before.example")
 
         let staleRoot = keptRoot
-        drawing.install(layout: try prepare(try jsonSource(["type": "doc", "content": [link("https://other.example")]]),
-                                            configJSON: config))
+        drawing.install(layout: try prepare(
+            try jsonSource(["type": "doc", "content": [link("https://other.example")]]),
+            configJSON: config
+        ))
         XCTAssertEqual(drawing.index(ofAccessibilityElement: staleRoot), NSNotFound, "a structural replacement drops them")
         let callbacksBeforeStaleRootActivation = activated.count
         XCTAssertFalse(staleRoot.accessibilityActivate())
@@ -1655,15 +1878,18 @@ final class ViewerTableTests: XCTestCase {
         let owner = "deep-registry-reuse"
         defer { registry.releaseDirectMounted(owner) }
         let configuration = ProseViewerConfiguration(configJSON: try configWithMaxDocumentDepth(1024))
-        let source = nestedTablesSource(depth: depth)
+        let source = try nestedTablesSource(depth: depth)
         let prefix = #"{"type":"doc","content":["#
         let shifted = prefix + (try jsonSource(paragraph("shifted anchor"))) + "," + source.dropFirst(prefix.count)
         let traits = UITraitCollection(userInterfaceStyle: .dark)
         func measure(_ source: String) -> PreparedProseLayout {
             var layout: PreparedProseLayout!
             traits.performAsCurrent {
-                layout = registry.measure(request: ProseViewerRequest(source: .json(source), configuration: configuration),
-                    widthPoints: 320, scale: 3)
+                layout = registry.measure(
+                    request: ProseViewerRequest(source: .json(source), configuration: configuration),
+                    widthPoints: 320,
+                    scale: 3
+                )
             }
             return layout
         }
@@ -1675,8 +1901,10 @@ final class ViewerTableTests: XCTestCase {
         let replacement = measure(shifted)
         XCTAssertNil(replacement.error)
         let replacementTable = try XCTUnwrap(replacement.blocks.first { $0.tableSurface != nil }?.tableSurface)
-        XCTAssertTrue(replacementTable.cells.first?.content.cellShape === initialShape,
-            "moving an unchanged deeply nested table must bind its retained shape")
+        XCTAssertTrue(
+            replacementTable.cells.first?.content.cellShape === initialShape,
+            "moving an unchanged deeply nested table must bind its retained shape"
+        )
         var current = replacement
         var count = 0
         var evictedCell: PreparedViewerTableCell?
@@ -1686,8 +1914,12 @@ final class ViewerTableTests: XCTestCase {
             XCTAssertTrue(cell.contentSize.width.isFinite && cell.contentSize.height.isFinite, "level \(count)")
             current = cell.content
             if count == depth / 2 {
-                table.layoutStore.insert(PreparedProseLayout(key: replacement.key, size: .zero, blocks: [],
-                    retainedBytes: PreparedProseLayoutCache.preparedLayoutUnmountedByteBudget))
+                table.layoutStore.insert(PreparedProseLayout(
+                    key: replacement.key,
+                    size: .zero,
+                    blocks: [],
+                    retainedBytes: PreparedProseLayoutCache.preparedLayoutUnmountedByteBudget
+                ))
                 XCTAssertNil(cell.cachedContent, "the regression must force a real nested cache miss")
                 evictedCell = cell
             }
@@ -1703,7 +1935,7 @@ final class ViewerTableTests: XCTestCase {
             rebuilt = try XCTUnwrap(table.cells.first).content
         }
         XCTAssertEqual(rebuiltCount, depth)
-        XCTAssertEqual(UIColor(cgColor: highlightColor(in: rebuilt)), UIColor.label.resolvedColor(with: traits))
+        XCTAssertEqual(UIColor(cgColor: try highlightColor(in: rebuilt)), UIColor.label.resolvedColor(with: traits))
         let snapshot = ViewerTablePresentation.project(layout: replacement, owner: ViewerTablePresentationOwner(), viewport: .unknown)
         XCTAssertEqual(snapshot.cells.count, depth)
         XCTAssertEqual(snapshot.mountedCells.count, depth)
@@ -1711,7 +1943,7 @@ final class ViewerTableTests: XCTestCase {
 
     func testCompilerBackedRaisedDepth110TablesPrepareFiniteRetainedSurfaces() throws {
         let layout = try prepare(
-            nestedTablesSource(depth: 110),
+            try nestedTablesSource(depth: 110),
             configJSON: try configWithMaxDocumentDepth(1024)
         )
 
@@ -1779,7 +2011,7 @@ final class ViewerTableTests: XCTestCase {
         let boldLine = try XCTUnwrap(surface.cells[0].content.blocks.flatMap(\.fragments).first { $0.kind == .text }?.line)
         let boldRun = try XCTUnwrap((CTLineGetGlyphRuns(boldLine) as? [CTRun])?.first)
         let attributes = try XCTUnwrap(CTRunGetAttributes(boldRun) as? [NSAttributedString.Key: Any])
-        let font = attributes[kCTFontAttributeName as NSAttributedString.Key] as! CTFont
+        let font = try unwrapCoreTextAttribute(attributes[kCTFontAttributeName as NSAttributedString.Key], as: CTFont.self)
         XCTAssertTrue(CTFontGetSymbolicTraits(font).contains(.traitBold))
         XCTAssertEqual(surface.layout.contentSize.height, surface.cells[0].content.size.height + 2 * (TableStyle().cellPadding + TableStyle().borderWidth), accuracy: 0.01)
         XCTAssertEqual(layout.imageAttachments.map(\.ordinal), [0, 1, 2, 3])
@@ -1921,9 +2153,9 @@ final class ViewerTableTests: XCTestCase {
             drawing.draw(drawing.bounds)
         }.cgImage)
         XCTAssertTrue(
-            (Int(frame.minY)..<Int(frame.maxY)).contains { y in
-                (Int(frame.minX)..<Int(frame.maxX)).contains { x in
-                    let pixel = try! rgba(rendered, CGPoint(x: x, y: y))
+            try (Int(frame.minY)..<Int(frame.maxY)).contains { y in
+                try (Int(frame.minX)..<Int(frame.maxX)).contains { x in
+                    let pixel = try rgba(rendered, CGPoint(x: x, y: y))
                     return pixel[3] > 0 && pixel[0] > 200 && pixel[1] < 100 && pixel[2] < 100
                 }
             },
@@ -1932,11 +2164,11 @@ final class ViewerTableTests: XCTestCase {
         let prose = layout.blocks.filter { $0.tableSurface == nil }
         XCTAssertEqual(prose.count, 2)
         XCTAssertTrue(
-            prose.allSatisfy { block in
+            try prose.allSatisfy { block in
                 guard let bounds = block.fragments.first(where: { $0.kind == .text })?.bounds else { return false }
-                return (Int(bounds.minY)..<Int(bounds.maxY)).contains { y in
-                    (Int(bounds.minX)..<Int(bounds.maxX)).contains { x in
-                        let pixel = try! rgba(rendered, CGPoint(x: x, y: y))
+                return try (Int(bounds.minY)..<Int(bounds.maxY)).contains { y in
+                    try (Int(bounds.minX)..<Int(bounds.maxX)).contains { x in
+                        let pixel = try rgba(rendered, CGPoint(x: x, y: y))
                         return pixel[3] > 0 && pixel[0] < 200 && pixel[1] < 200 && pixel[2] < 200
                     }
                 }
@@ -2003,15 +2235,21 @@ final class ViewerTableTests: XCTestCase {
                 ]]
             ]
         ])
-        let compiled = viewerCompile(request: FfiViewerCompileRequest(sourceKind: .json, source: source,
-            configJson: Self.config, imagesEnabled: true, mentionPrefix: nil))
+        let compiled = viewerCompile(request: FfiViewerCompileRequest(
+            sourceKind: .json,
+            source: source,
+            configJson: Self.config,
+            imagesEnabled: true,
+            mentionPrefix: nil
+        ))
         let document = try ViewerDocument(compiled: XCTUnwrap(compiled.value))
         let tableBlock = try XCTUnwrap(document.blocks.first { $0.tableKey != nil })
         let sourceTable = try XCTUnwrap(tableBlock.tableSurfaceSource)
         let child = try document.cellDocument(for: XCTUnwrap(sourceTable.cells.first), in: XCTUnwrap(tableBlock.tableKey))
         var wholeScope: CoreTextProseLayoutEngine.HighlightingScope? = .init(
             configuration: NativeCodeHighlightConfiguration(provider: "table-fixture", theme: "fixture"),
-            generation: "scope-retention")
+            generation: "scope-retention"
+        )
         wholeScope!.preassign(document: document)
         weak var releasedScope = wholeScope
         let cellScope = wholeScope!.scoped(to: child)
@@ -2051,9 +2289,9 @@ final class ViewerTableTests: XCTestCase {
         XCTAssertTrue(resolved.highlightingResolved)
         XCTAssertNil(resolvedCell.content.highlightingRequest)
         XCTAssertNil(resolvedNested.cells[0].content.highlightingRequest)
-        XCTAssertEqual(highlightColor(in: resolved), UIColor.red.cgColor)
-        XCTAssertEqual(highlightColor(in: resolvedCell.content), UIColor.green.cgColor)
-        XCTAssertEqual(highlightColor(in: resolvedNested.cells[0].content), UIColor.blue.cgColor)
+        XCTAssertEqual(try highlightColor(in: resolved), UIColor.red.cgColor)
+        XCTAssertEqual(try highlightColor(in: resolvedCell.content), UIColor.green.cgColor)
+        XCTAssertEqual(try highlightColor(in: resolvedNested.cells[0].content), UIColor.blue.cgColor)
     }
 
     func testCompilerBackedTableOnlyListItemReservesOneMarkerGutter() throws {
@@ -2525,7 +2763,12 @@ final class ViewerTableTests: XCTestCase {
                 try engine.prepare(document: document, key: key, widthPoints: width, displayScale: scale, cellShapeContext: context)
             }
         )
-        var owners: [(name: String, request: ProseViewerRequest, layout: PreparedProseLayout)] = []
+        struct LayoutOwner {
+            let name: String
+            let request: ProseViewerRequest
+            let layout: PreparedProseLayout
+        }
+        var owners: [LayoutOwner] = []
         for seed in 0..<256 where registry.layoutRetainedBytesForTesting <= byteBudget {
             let request = ProseViewerRequest(
                 source: .json(try tableHeavySource(payloadWordCount: 2_048)),
@@ -2544,7 +2787,7 @@ final class ViewerTableTests: XCTestCase {
             XCTAssertTrue(snapshot.cells.contains { $0.surface !== outer })
             let name = "table-heavy-\(seed)"
             registry.registerDirectMounted(name, layout: layout)
-            owners.append((name, request, layout))
+            owners.append(LayoutOwner(name: name, request: request, layout: layout))
         }
         XCTAssertGreaterThan(registry.layoutRetainedBytesForTesting, byteBudget)
         XCTAssertGreaterThan(preparedCells, 0)
@@ -3290,11 +3533,11 @@ final class ViewerTableTests: XCTestCase {
         return try CoreTextProseLayoutEngine().prepare(document: document.withPreparedTheme(theme), key: key, widthPoints: 320, displayScale: 2)
     }
 
-    private func highlightColor(in layout: PreparedProseLayout) -> CGColor {
-        let line = try! XCTUnwrap(layout.blocks.flatMap(\.fragments).first { $0.kind == .text }?.line)
-        let run = try! XCTUnwrap((CTLineGetGlyphRuns(line) as? [CTRun])?.first)
+    private func highlightColor(in layout: PreparedProseLayout) throws -> CGColor {
+        let line = try XCTUnwrap(layout.blocks.flatMap(\.fragments).first { $0.kind == .text }?.line)
+        let run = try XCTUnwrap((CTLineGetGlyphRuns(line) as? [CTRun])?.first)
         let attributes = CTRunGetAttributes(run) as NSDictionary
-        return try! unwrapCoreTextAttribute(attributes[kCTForegroundColorAttributeName], as: CGColor.self)
+        return try unwrapCoreTextAttribute(attributes[kCTForegroundColorAttributeName], as: CGColor.self)
     }
 
     private func codeBlock(_ text: String) -> [String: Any] {
@@ -3331,8 +3574,10 @@ final class ViewerTableTests: XCTestCase {
     }
 
     private func action(named name: String, on element: NSObject) throws -> UIAccessibilityCustomAction {
-        try XCTUnwrap(element.accessibilityCustomActions?.first { $0.name == name },
-                      "missing action \(name) in \(element.accessibilityCustomActions?.map(\.name) ?? [])")
+        try XCTUnwrap(
+            element.accessibilityCustomActions?.first { $0.name == name },
+            "missing action \(name) in \(element.accessibilityCustomActions?.map(\.name) ?? [])"
+        )
     }
 
     private func perform(_ action: UIAccessibilityCustomAction) -> Bool {
@@ -3413,8 +3658,11 @@ final class ViewerTableTests: XCTestCase {
         let nestedRow: [String: Any] = ["type": "table_row", "content": [nestedHeader] + (nestedOverflow ? [["type": "table_cell", "attrs": ["colwidth": [500]], "content": [paragraph("nested body")]]] : [])]
         let nestedTable: [String: Any] = ["type": "table", "content": [nestedRow]]
         let quote: [String: Any] = ["type": "blockquote", "content": [paragraph("quoted"), nestedTable]]
-        let outerHeader: [String: Any] = ["type": outerHeader ? "table_header" : "table_cell",
-                                          "attrs": ["colwidth": [300]], "content": [quote]]
+        let outerHeader: [String: Any] = [
+            "type": outerHeader ? "table_header" : "table_cell",
+            "attrs": ["colwidth": [300]],
+            "content": [quote]
+        ]
         let outerCell: [String: Any] = ["type": "table_cell", "attrs": ["colwidth": [nestedOverflow ? 500 : 300]], "content": [paragraph("body")]]
         let outerRow: [String: Any] = ["type": "table_row", "content": [outerHeader, outerCell]]
         let outerTable: [String: Any] = ["type": "table", "content": [outerRow]]
@@ -3452,10 +3700,10 @@ final class ViewerTableTests: XCTestCase {
         return try jsonSource(["type": "doc", "content": [paragraph(beforeText), table, paragraph("after table")]])
     }
 
-    private func nestedTablesSource(depth: Int) -> String {
+    private func nestedTablesSource(depth: Int) throws -> String {
         let tablePrefix = #"{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":["#
         let tableSuffix = "]}]}]}"
-        let leaf = try! jsonSource(paragraph("deep"))
+        let leaf = try jsonSource(paragraph("deep"))
         return #"{"type":"doc","content":["# + String(repeating: tablePrefix, count: depth)
             + leaf + String(repeating: tableSuffix, count: depth) + "]}"
     }
@@ -3590,18 +3838,20 @@ final class ViewerTableTests: XCTestCase {
         throw ProseViewerError.layout(message: "Expected nested card atom.")
     }
 
+    private struct TableImageMetrics {
+        let imageBounds: CGRect
+        let cellHeight: CGFloat
+        let targetRow: Int
+        let targetRowHeight: CGFloat
+        let unrelatedRowHeight: CGFloat
+        let tableHeight: CGFloat
+        let fullHeight: CGFloat
+    }
+
     private func tableImageMetrics(
         layout: PreparedProseLayout,
         attachmentID: String
-    ) throws -> (
-        imageBounds: CGRect,
-        cellHeight: CGFloat,
-        targetRow: Int,
-        targetRowHeight: CGFloat,
-        unrelatedRowHeight: CGFloat,
-        tableHeight: CGFloat,
-        fullHeight: CGFloat
-    ) {
+    ) throws -> TableImageMetrics {
         let image = try XCTUnwrap(layout.imageAttachments.first { $0.id == attachmentID })
         let surface = try XCTUnwrap(layout.blocks.first { $0.tableSurface != nil }?.tableSurface)
         let cell = try XCTUnwrap(surface.cells.first {
@@ -3615,14 +3865,14 @@ final class ViewerTableTests: XCTestCase {
         let row = Int(sourceCell.row)
         let offsets = surface.layout.rowOffsets
         XCTAssertGreaterThan(offsets.count, row + 1)
-        return (
-            image.bounds,
-            surface.frame(ofCell: cell).height,
-            row,
-            offsets[row + 1] - offsets[row],
-            offsets[1] - offsets[0],
-            surface.bounds.height,
-            layout.size.height
+        return TableImageMetrics(
+            imageBounds: image.bounds,
+            cellHeight: surface.frame(ofCell: cell).height,
+            targetRow: row,
+            targetRowHeight: offsets[row + 1] - offsets[row],
+            unrelatedRowHeight: offsets[1] - offsets[0],
+            tableHeight: surface.bounds.height,
+            fullHeight: layout.size.height
         )
     }
 

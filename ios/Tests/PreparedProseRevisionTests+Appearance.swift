@@ -116,17 +116,17 @@ extension PreparedProseRevisionTests {
         nodes.append(["name": codeNode, "content": "text*", "group": "block", "role": "textBlock"])
         schema["nodes"] = nodes
         configuration["schema"] = schema
-        let configJSON = String(decoding: try JSONSerialization.data(withJSONObject: configuration), as: UTF8.self)
+        let configJSON = try XCTUnwrap(String(data: try JSONSerialization.data(withJSONObject: configuration), encoding: .utf8))
         let cells = (0..<8).map { index in
             ["type": "table_cell", "content": [["type": "paragraph", "content": [
                 ["type": "text", "text": "Appearance cell \(index)"]
             ]], ["type": codeNode, "content": [["type": "text", "text": "code \(index)"]]]]] as [String: Any]
         }
-        let source = String(decoding: try JSONSerialization.data(withJSONObject: [
+        let source = try XCTUnwrap(String(data: try JSONSerialization.data(withJSONObject: [
             "type": "doc", "content": [["type": "table", "content": [
                 ["type": "table_row", "content": cells]
             ]]]
-        ]), as: UTF8.self)
+        ]), encoding: .utf8))
         for style in [UIUserInterfaceStyle.dark, .light] {
             let traits = UITraitCollection(userInterfaceStyle: style)
             let otherTraits = UITraitCollection(userInterfaceStyle: style == .dark ? .light : .dark)
@@ -207,9 +207,9 @@ extension PreparedProseRevisionTests {
             ["type": "table_cell", "content": [paragraph]]
         ]]]]
         let outer: [String: Any] = ["type": "table_cell", "content": [nested]]
-        let source = String(decoding: try JSONSerialization.data(withJSONObject: ["type": "doc", "content": [
+        let source = try XCTUnwrap(String(data: try JSONSerialization.data(withJSONObject: ["type": "doc", "content": [
             ["type": "table", "content": [["type": "table_row", "content": [outer, outer]]]]
-        ]]), as: UTF8.self)
+        ]]), encoding: .utf8))
         let registry = PreparedProseLayoutRegistry()
         let traits = UITraitCollection(userInterfaceStyle: .dark)
         var layout: PreparedProseLayout!

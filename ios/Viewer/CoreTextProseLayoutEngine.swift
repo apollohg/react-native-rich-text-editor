@@ -40,8 +40,11 @@ final class CoreTextProseLayoutEngine {
         prepare: @escaping (TableGridCell, CGFloat, CoreTextProseLayoutEngine, PreparedCellShapeBuildContext?, Bool, PlainTextPreparation?) -> PreparedTableCellContent
     ) -> TablePreparationPlan {
         var result = TablePreparationPlan()
-        let count = min(Self.maxTablePreparationWorkers, max(1, tablePreparationWorkerLimit),
-                        max(1, ProcessInfo.processInfo.activeProcessorCount - 1))
+        let count = min(
+            Self.maxTablePreparationWorkers,
+            max(1, tablePreparationWorkerLimit),
+            max(1, ProcessInfo.processInfo.activeProcessorCount - 1)
+        )
         guard !cellMode, theme.codeHighlighting == nil, reusableTableCell == nil else { return result }
         let frequencies = Dictionary(table.cells.map { ($0.contentKey, 1) }, uniquingKeysWith: +)
         let exceedsResidentCapacity = table.cells.count > TableCellLayoutStore.maximumResidentLayouts
@@ -218,12 +221,19 @@ final class CoreTextProseLayoutEngine {
     ) throws -> PreparedProseLayout {
         let queue = PreparationQueue()
         var result: PreparedProseLayout?
-        queue.prepare(makePreparation(document: document, key: key, widthPoints: widthPoints,
-            displayScale: displayScale, semanticGenerationIdentity: semanticGenerationIdentity,
-            cellMode: cellMode, highlightingScope: highlightingScope, cellShapeContext: cellShapeContext,
-            textPreparation: queue.textPreparation)) {
-                result = $0
-            }
+        queue.prepare(makePreparation(
+            document: document,
+            key: key,
+            widthPoints: widthPoints,
+            displayScale: displayScale,
+            semanticGenerationIdentity: semanticGenerationIdentity,
+            cellMode: cellMode,
+            highlightingScope: highlightingScope,
+            cellShapeContext: cellShapeContext,
+            textPreparation: queue.textPreparation
+        )) {
+            result = $0
+        }
         queue.run()
         guard let result else { preconditionFailure("Document preparation returned no layout") }
         return result
@@ -240,24 +250,40 @@ final class CoreTextProseLayoutEngine {
             return CellPreparation(prepare: { _, completion in completion(.full(failure)) }, rebuild: { failure })
         }
         guard let widthPixels = ProseLayoutMetrics.widthPixels(widthPoints: cellWidth, scale: displayScale) else {
-            let failure = PreparedProseLayout.error(key: key, width: cellWidth,
-                error: .hostContract(message: "A finite positive table cell width is required."))
+            let failure = PreparedProseLayout.error(
+                key: key,
+                width: cellWidth,
+                error: .hostContract(message: "A finite positive table cell width is required.")
+            )
             return CellPreparation(prepare: { _, completion in completion(.full(failure)) }, rebuild: { failure })
         }
-        let childKey = ProseLayoutKey(semanticKey: child.semanticKey, widthPixels: widthPixels,
-            themeDigest: key.themeDigest, nativeFontRevision: key.nativeFontRevision,
-            fontEnvironmentRevision: key.fontEnvironmentRevision, displayScale: displayScale,
-            attachmentRevision: key.attachmentRevision, generationIdentity: key.generationIdentity,
-            semanticGenerationIdentity: key.semanticGenerationIdentity)
+        let childKey = ProseLayoutKey(
+            semanticKey: child.semanticKey,
+            widthPixels: widthPixels,
+            themeDigest: key.themeDigest,
+            nativeFontRevision: key.nativeFontRevision,
+            fontEnvironmentRevision: key.fontEnvironmentRevision,
+            displayScale: displayScale,
+            attachmentRevision: key.attachmentRevision,
+            generationIdentity: key.generationIdentity,
+            semanticGenerationIdentity: key.semanticGenerationIdentity
+        )
         let childScope = scope?.scoped(to: child)
         let traits = UITraitCollection.current
         let makeBuild = { [self] (queue: PreparationQueue) in
             tableCellPreparationObserver?(source.sourceIndex, source.contentKey)
             tableCellShapeBuildObserver?(source.sourceIndex)
-            return makePreparation(document: child, key: childKey, widthPoints: cellWidth,
-                displayScale: displayScale, semanticGenerationIdentity: warningSemanticGeneration,
-                cellMode: true, highlightingScope: childScope, cellShapeContext: context,
-                textPreparation: queue.textPreparation)
+            return makePreparation(
+                document: child,
+                key: childKey,
+                widthPoints: cellWidth,
+                displayScale: displayScale,
+                semanticGenerationIdentity: warningSemanticGeneration,
+                cellMode: true,
+                highlightingScope: childScope,
+                cellShapeContext: context,
+                textPreparation: queue.textPreparation
+            )
         }
         let didBuild: (PreparedProseLayout) -> Void = { [self] prepared in
             tableCellBindingObserver?(source.sourceIndex)
@@ -289,10 +315,14 @@ final class CoreTextProseLayoutEngine {
             }
             let buildOrMeasure = {
                 if !retainShape, self.allowsTransientCellMeasurement,
-                   let measurement = self.measurePlainCell(document: child, key: childKey,
-                        widthPoints: cellWidth, displayScale: displayScale,
-                        warningSemanticGeneration: warningSemanticGeneration,
-                        textPreparation: queue.textPreparation) {
+                   let measurement = self.measurePlainCell(
+                       document: child,
+                       key: childKey,
+                       widthPoints: cellWidth,
+                       displayScale: displayScale,
+                       warningSemanticGeneration: warningSemanticGeneration,
+                       textPreparation: queue.textPreparation
+                   ) {
                     self.tableCellPreparationObserver?(source.sourceIndex, source.contentKey)
                     self.tableCellShapeBuildObserver?(source.sourceIndex)
                     self.tableCellBindingObserver?(source.sourceIndex)
@@ -300,29 +330,39 @@ final class CoreTextProseLayoutEngine {
                 } else { build(finish) }
             }
             guard let context, cellTheme.codeHighlighting == nil else { buildOrMeasure(); return }
-            let shapeKey = preparedCellShapeKey(contentKey: source.contentKey, document: child,
-                widthPixels: widthPixels, theme: cellTheme, key: childKey)
+            let shapeKey = preparedCellShapeKey(
+                contentKey: source.contentKey,
+                document: child,
+                widthPixels: widthPixels,
+                theme: cellTheme,
+                key: childKey
+            )
             let bind: (PreparedCellShape, @escaping (PreparedProseLayout?) -> Void) -> Void = { shape, bound in
-                queue.prepare(self.makeBinding(shape, document: child, key: childKey, widthPoints: cellWidth,
-                    displayScale: displayScale, theme: cellTheme,
-                    warningSemanticGeneration: warningSemanticGeneration, context: context)) { prepared in
-                        if prepared != nil { self.tableCellBindingObserver?(source.sourceIndex) }
-                        bound(prepared)
-                    }
+                queue.prepare(self.makeBinding(
+                    shape,
+                    document: child,
+                    key: childKey,
+                    widthPoints: cellWidth,
+                    displayScale: displayScale,
+                    theme: cellTheme,
+                    warningSemanticGeneration: warningSemanticGeneration,
+                    context: context
+                )) { prepared in
+                    if prepared != nil { self.tableCellBindingObserver?(source.sourceIndex) }
+                    bound(prepared)
+                }
             }
             switch context.beginResolution(shapeKey) {
             case .uncached: buildOrMeasure()
             case let .cached(shape):
                 bind(shape) { prepared in
-                    if let prepared { finish(prepared.withCellShape(shape)) }
-                    else { build(finish) }
+                    if let prepared { finish(prepared.withCellShape(shape)) } else { build(finish) }
                 }
             case .fresh:
                 guard retainShape else { buildOrMeasure(); return }
                 build { fresh in
                     let (candidate, selected) = context.stage(fresh, for: shapeKey)
-                    if selected === candidate { finish(fresh.withCellShape(selected)) }
-                    else {
+                    if selected === candidate { finish(fresh.withCellShape(selected)) } else {
                         bind(selected) { bound in finish((bound ?? fresh).withCellShape(selected)) }
                     }
                 }
@@ -352,9 +392,14 @@ final class CoreTextProseLayoutEngine {
                 return .pending { queue, resume in
                     let cellRequest = request(cell, width)
                     cellRequest.prepare(queue) { content in
-                        cells[cell.sourceIndex] = ViewerTableSurface.captureCell(cell,
-                            content: content, sourceTable: source, style: style, layoutStore: store,
-                            prepareContent: cellRequest.rebuild)
+                        cells[cell.sourceIndex] = ViewerTableSurface.captureCell(
+                            cell,
+                            content: content,
+                            sourceTable: source,
+                            style: style,
+                            layoutStore: store,
+                            prepareContent: cellRequest.rebuild
+                        )
                         resume()
                     }
                 }
@@ -472,8 +517,11 @@ final class CoreTextProseLayoutEngine {
                         $0.adding(theme.styleSheet?.box($1.nodeType, ancestors: block.ancestors(before: $1)).outerInsets ?? .zero)
                     }
                     let tableX = theme.contentInsets.left + tableAncestors.left + tableBox.margin.left + placement.listInset + placement.quoteInset + tableBox.inset.left
-                    let tableWidth = max(1, canonicalWidth - theme.contentInsets.left - theme.contentInsets.right
-                        - tableAncestors.left - tableAncestors.right - tableBox.margin.left - tableBox.margin.right - tableBox.inset.left - tableBox.inset.right - placement.listInset - placement.quoteInset)
+                    let tableWidth = max(
+                        1,
+                        canonicalWidth - theme.contentInsets.left - theme.contentInsets.right
+                            - tableAncestors.left - tableAncestors.right - tableBox.margin.left - tableBox.margin.right - tableBox.inset.left - tableBox.inset.right - placement.listInset - placement.quoteInset
+                    )
                     let surfaceSource = table
                     let incremental: (ViewerTableSurface, IndexSet)? = cellMode ? nil : incrementalTableSurface?(tableKey).flatMap { previous, changed in
                         guard previous.hostViewportWidth == tableWidth, previous.displayScale == displayScale,
@@ -481,32 +529,52 @@ final class CoreTextProseLayoutEngine {
                         return (previous, changed)
                     }
                     let tableShapes = (cellMode ? nil : tableCellShapeContextProvider?(incremental != nil)) ?? cellShapeContext
-                    func cellRequest(_ cell: TableGridCell, width cellWidth: CGFloat,
-                                     worker: CoreTextProseLayoutEngine? = nil,
-                                     workerContext: PreparedCellShapeBuildContext? = nil,
-                                     retainShape: Bool = true) -> CellPreparation {
+                    func cellRequest(
+                        _ cell: TableGridCell,
+                        width cellWidth: CGFloat,
+                        worker: CoreTextProseLayoutEngine? = nil,
+                        workerContext: PreparedCellShapeBuildContext? = nil,
+                        retainShape: Bool = true
+                    ) -> CellPreparation {
                         let engine = worker ?? self
                         let context = worker == nil ? tableShapes : workerContext
                         guard surfaceSource.cells.indices.contains(cell.sourceIndex) else {
                             let failure = PreparedProseLayout.error(key: key, width: cellWidth, error: .layout(message: "Invalid table cell."))
                             return CellPreparation(prepare: { _, completion in completion(.full(failure)) }, rebuild: { failure })
                         }
-                        return engine.makeCellPreparation(source: surfaceSource.cells[cell.sourceIndex], tableKey: tableKey,
-                            document: document, key: key, cellWidth: cellWidth, displayScale: displayScale,
-                            cellTheme: cellTheme, warningSemanticGeneration: warningSemanticGeneration,
-                            scope: scope, context: context, retainShape: retainShape)
+                        return engine.makeCellPreparation(
+                            source: surfaceSource.cells[cell.sourceIndex],
+                            tableKey: tableKey,
+                            document: document,
+                            key: key,
+                            cellWidth: cellWidth,
+                            displayScale: displayScale,
+                            cellTheme: cellTheme,
+                            warningSemanticGeneration: warningSemanticGeneration,
+                            scope: scope,
+                            context: context,
+                            retainShape: retainShape
+                        )
                     }
                     weak var batchTextPreparation = textPreparation
-                    func prepareCell(_ cell: TableGridCell, width: CGFloat,
-                                     worker: CoreTextProseLayoutEngine? = nil,
-                                     workerContext: PreparedCellShapeBuildContext? = nil,
-                                     retainShape: Bool = true,
-                                     workerTextPreparation: PlainTextPreparation? = nil) -> PreparedTableCellContent {
+                    func prepareCell(
+                        _ cell: TableGridCell,
+                        width: CGFloat,
+                        worker: CoreTextProseLayoutEngine? = nil,
+                        workerContext: PreparedCellShapeBuildContext? = nil,
+                        retainShape: Bool = true,
+                        workerTextPreparation: PlainTextPreparation? = nil
+                    ) -> PreparedTableCellContent {
                         let textPreparation = worker == nil ? batchTextPreparation : workerTextPreparation
                         let queue = PreparationQueue(textPreparation: textPreparation ?? PlainTextPreparation())
                         var prepared: PreparedTableCellContent!
-                        cellRequest(cell, width: width, worker: worker, workerContext: workerContext,
-                            retainShape: retainShape).prepare(queue) { prepared = $0 }
+                        cellRequest(
+                            cell,
+                            width: width,
+                            worker: worker,
+                            workerContext: workerContext,
+                            retainShape: retainShape
+                        ).prepare(queue) { prepared = $0 }
                         queue.run()
                         return prepared
                     }
@@ -530,17 +598,32 @@ final class CoreTextProseLayoutEngine {
                                     let inner = max(0, previous.frame(ofCell: old).width - 2 * (theme.tableStyle.cellPadding + theme.tableStyle.borderWidth))
                                     contents[index] = prepareCell(cell, width: inner).fullContent
                                 }
-                                surface = previous.replacingCells(contents,
+                                surface = previous.replacingCells(
+                                    contents,
                                     contentHeights: contents.mapValues { $0.size.height },
-                                    sourceTable: surfaceSource, sourceAttributes: document.tableAttributes,
-                                    prepareCell: { prepareCell($0, width: $1).fullContent })
+                                    sourceTable: surfaceSource,
+                                    sourceAttributes: document.tableAttributes,
+                                    prepareCell: { prepareCell($0, width: $1).fullContent }
+                                )
                                 self.tableIncrementalRelayoutObserver?()
                             } else if let record {
-                                let workers = self.tablePreparationPlan(document: document, table: surfaceSource, tableKey: tableKey,
-                                    theme: theme, cellMode: cellMode, context: tableShapes) { cell, width, worker, context, retainShape, textPreparation in
-                                        prepareCell(cell, width: width, worker: worker, workerContext: context,
-                                            retainShape: retainShape, workerTextPreparation: textPreparation)
-                                    }
+                                let workers = self.tablePreparationPlan(
+                                    document: document,
+                                    table: surfaceSource,
+                                    tableKey: tableKey,
+                                    theme: theme,
+                                    cellMode: cellMode,
+                                    context: tableShapes
+                                ) { cell, width, worker, context, retainShape, textPreparation in
+                                    prepareCell(
+                                        cell,
+                                        width: width,
+                                        worker: worker,
+                                        workerContext: context,
+                                        retainShape: retainShape,
+                                        workerTextPreparation: textPreparation
+                                    )
+                                }
                                 defer {
                                     workers.contexts.forEach { $0.close() }
                                     withExtendedLifetime(workers.textPreparations) {}
@@ -564,8 +647,12 @@ final class CoreTextProseLayoutEngine {
                                     prepareCellContentWorkers: workers.prepare,
                                     parallelCellIndices: workers.indices,
                                     transientCellIndices: workers.transientIndices,
-                                    prepareCellContent: { prepareCell($0, width: $1,
-                                        retainShape: !transientIndices.contains($0.sourceIndex)) })
+                                    prepareCellContent: { prepareCell(
+                                        $0,
+                                        width: $1,
+                                        retainShape: !transientIndices.contains($0.sourceIndex)
+                                    ) }
+                                )
                             } else {
                                 preconditionFailure("Full table preparation requires a grid record.")
                             }
@@ -614,10 +701,19 @@ final class CoreTextProseLayoutEngine {
                             assemble([:])
                         } else if let record {
                             let inputs = TableGridLayout(displayScale: displayScale).measurementInputs(
-                                record: record, viewportWidth: tableWidth, style: theme.tableStyle)
-                            self.prepareNestedCells(inputs: inputs, source: surfaceSource, displayScale: displayScale,
-                                store: tableLayoutStore, style: theme.tableStyle, reuse: reuse,
-                                request: { cellRequest($0, width: $1) }, queue: queue, completion: assemble)
+                                record: record, viewportWidth: tableWidth, style: theme.tableStyle
+                            )
+                            self.prepareNestedCells(
+                                inputs: inputs,
+                                source: surfaceSource,
+                                displayScale: displayScale,
+                                store: tableLayoutStore,
+                                style: theme.tableStyle,
+                                reuse: reuse,
+                                request: { cellRequest($0, width: $1) },
+                                queue: queue,
+                                completion: assemble
+                            )
                         }
                     }
                 }
@@ -829,25 +925,50 @@ final class CoreTextProseLayoutEngine {
                     let store = TableCellLayoutStore()
                     let record = TableGridRecord(table: table, documentOwner: document.semanticKey)
                     let inputs = TableGridLayout(displayScale: displayScale).measurementInputs(
-                        record: record, viewportWidth: cachedSurface.hostViewportWidth, style: cachedSurface.style)
+                        record: record, viewportWidth: cachedSurface.hostViewportWidth, style: cachedSurface.style
+                    )
                     return .pending { queue, resume in
-                        self.prepareNestedCells(inputs: inputs, source: table, displayScale: displayScale,
-                            store: store, style: cachedSurface.style, reuse: nil,
+                        self.prepareNestedCells(
+                            inputs: inputs,
+                            source: table,
+                            displayScale: displayScale,
+                            store: store,
+                            style: cachedSurface.style,
+                            reuse: nil,
                             request: { cell, width in
-                                self.makeCellPreparation(source: table.cells[cell.sourceIndex], tableKey: tableKey,
-                                    document: document, key: key, cellWidth: width, displayScale: displayScale,
-                                    cellTheme: childTheme, warningSemanticGeneration: warningSemanticGeneration,
-                                    scope: nil, context: context)
-                            }, queue: queue) { nested in
-                                if let bound = self.bindTableSurface(table, tableKey: tableKey, document: document,
-                                    cachedSurface: cachedSurface, tableBounds: tableBounds, key: key,
-                                    displayScale: displayScale, theme: theme,
-                                    warningSemanticGeneration: warningSemanticGeneration, context: context,
-                                    nested: nested, layoutStore: store) {
-                                    failed = !appendBlock(tableSurface: bound)
-                                } else { failed = true }
-                                resume()
-                            }
+                                self.makeCellPreparation(
+                                    source: table.cells[cell.sourceIndex],
+                                    tableKey: tableKey,
+                                    document: document,
+                                    key: key,
+                                    cellWidth: width,
+                                    displayScale: displayScale,
+                                    cellTheme: childTheme,
+                                    warningSemanticGeneration: warningSemanticGeneration,
+                                    scope: nil,
+                                    context: context
+                                )
+                            },
+                            queue: queue,
+                            completion: { nested in
+                            if let bound = self.bindTableSurface(
+                                table,
+                                tableKey: tableKey,
+                                document: document,
+                                cachedSurface: cachedSurface,
+                                tableBounds: tableBounds,
+                                key: key,
+                                displayScale: displayScale,
+                                theme: theme,
+                                warningSemanticGeneration: warningSemanticGeneration,
+                                context: context,
+                                nested: nested,
+                                layoutStore: store
+                            ) {
+                                failed = !appendBlock(tableSurface: bound)
+                            } else { failed = true }
+                            resume()
+                        })
                     }
                 }
                 guard localBlock.tableSurface == nil, appendBlock(tableSurface: nil) else { return .complete(nil) }
@@ -901,21 +1022,29 @@ final class CoreTextProseLayoutEngine {
             sourceTable: surfaceSource,
             sourceAttributes: document.tableAttributes,
             layoutStore: layoutStore,
-            reuseCell: { cell, _ in nested[cell.sourceIndex] }
-        ) { cell, cellWidth in
+            reuseCell: { cell, _ in nested[cell.sourceIndex] },
+            prepareCell: { cell, cellWidth in
             guard let source = cellsByIndex[cell.sourceIndex] else {
                 return .error(key: key, width: cellWidth, error: .layout(message: "Invalid table cell."))
             }
-            let request = self.makeCellPreparation(source: source, tableKey: tableKey,
-                document: document, key: key, cellWidth: cellWidth, displayScale: displayScale,
-                cellTheme: childTheme, warningSemanticGeneration: warningSemanticGeneration,
-                scope: nil, context: context)
+            let request = self.makeCellPreparation(
+                source: source,
+                tableKey: tableKey,
+                document: document,
+                key: key,
+                cellWidth: cellWidth,
+                displayScale: displayScale,
+                cellTheme: childTheme,
+                warningSemanticGeneration: warningSemanticGeneration,
+                scope: nil,
+                context: context
+            )
             let queue = PreparationQueue()
             var prepared: PreparedProseLayout!
             request.prepare(queue) { prepared = $0.fullContent }
             queue.run()
             return prepared
-        }
+        })
         guard abs(surface.bounds.width - tableBounds.width) <= 1,
               abs(surface.bounds.height - tableBounds.height) <= 1,
               surface.preparationError == nil
@@ -1001,17 +1130,35 @@ final class CoreTextProseLayoutEngine {
         guard theme.styleSheet == nil, theme.codeHighlighting == nil,
               theme.paint(for: block).textValues.isEmpty else { return nil }
         let width = ProseLayoutMetrics.canonicalWidth(widthPixels: widthPixels, scale: displayScale)
-        guard case let .measured(measurement) = prepareBlock(block, highlighting: [], attachmentOrdinal: 0,
-            listMarker: nil, theme: theme, width: width, cursorY: theme.contentInsets.top,
-            omitBottomMargin: false, disappearingListItemIdentities: [], entersNestedListItem: false,
-            displayScale: displayScale, warningSemanticGeneration: warningSemanticGeneration,
-            textPreparation: textPreparation, measureOnly: true) else { return nil }
+        guard case let .measured(measurement) = prepareBlock(
+            block,
+            highlighting: [],
+            attachmentOrdinal: 0,
+            listMarker: nil,
+            theme: theme,
+            width: width,
+            cursorY: theme.contentInsets.top,
+            omitBottomMargin: false,
+            disappearingListItemIdentities: [],
+            entersNestedListItem: false,
+            displayScale: displayScale,
+            warningSemanticGeneration: warningSemanticGeneration,
+            textPreparation: textPreparation,
+            measureOnly: true
+        ) else { return nil }
         let bottom = (theme.styleSheet == nil ? measurement.bounds.maxY
             : max(measurement.nextY, measurement.bounds.maxY)) + theme.contentInsets.bottom
         let size = CGSize(width: width, height: ceil(bottom * displayScale) / displayScale)
-        return PreparedTableCellMetadata(key: key, size: size,
-            accessibilitySummary: measurement.accessibilitySummary, hasNestedTables: false,
-            hasAtoms: false, hasImages: false, isPositionFree: true, error: nil)
+        return PreparedTableCellMetadata(
+            key: key,
+            size: size,
+            accessibilitySummary: measurement.accessibilitySummary,
+            hasNestedTables: false,
+            hasAtoms: false,
+            hasImages: false,
+            isPositionFree: true,
+            error: nil
+        )
     }
 
     private struct BlockPreparation {
@@ -1251,11 +1398,15 @@ final class CoreTextProseLayoutEngine {
         }
 
         let availableWidth = max(1, contentWidth - listInset - quoteInset - codeInset * 2 - box.inset.left - box.inset.right)
-        let attributed = makeAttributedString(block.inlines, paint: paint, theme: theme,
+        let attributed = makeAttributedString(
+            block.inlines,
+            paint: paint,
+            theme: theme,
             warningSemanticGeneration: warningSemanticGeneration,
             paragraphSpacing: paint.paragraphSpacing(inBlockquote: block.inBlockquote, inList: block.listContext != nil),
             ancestors: block.styleAncestors.map(\.nodeType) + [block.nodeType],
-            textPreparation: textPreparation)
+            textPreparation: textPreparation
+        )
         let highlighted: NSAttributedString
         if highlighting.isEmpty {
             highlighted = attributed.string
@@ -1333,8 +1484,10 @@ final class CoreTextProseLayoutEngine {
                     var intersections = 0
                     for run in glyphRuns {
                         let stringRange = CTRunGetStringRange(run)
-                        let overlap = NSIntersectionRange(NSIntersectionRange(range, lineRange),
-                            NSRange(location: stringRange.location, length: stringRange.length))
+                        let overlap = NSIntersectionRange(
+                            NSIntersectionRange(range, lineRange),
+                            NSRange(location: stringRange.location, length: stringRange.length)
+                        )
                         if overlap.length > 0 { intersections += 1 }
                     }
                     guard intersections <= 1 else { return .unsupportedMeasurement }
@@ -1431,12 +1584,20 @@ final class CoreTextProseLayoutEngine {
                 if !label.isEmpty {
                     let role: PreparedProseAccessibilityNode.Role =
                         block.nodeType == "heading" || theme.headings[block.nodeType] != nil ? .heading : .text
-                    summary.append(TableCellAccessibilitySummary(interactionIndex: nil, role: role,
-                        label: label, rectangleCount: measuredRectangleCount, sourceBlockIndex: 0))
+                    summary.append(TableCellAccessibilitySummary(
+                        interactionIndex: nil,
+                        role: role,
+                        label: label,
+                        rectangleCount: measuredRectangleCount,
+                        sourceBlockIndex: 0
+                    ))
                 }
             }
-            return .measured(BlockMeasurement(bounds: bounds, nextY: totalEnd + itemSpacing,
-                accessibilitySummary: summary))
+            return .measured(BlockMeasurement(
+                bounds: bounds,
+                nextY: totalEnd + itemSpacing,
+                accessibilitySummary: summary
+            ))
         }
         let prepared = PreparedProseBlock(fragments: fragments, bounds: bounds)
         var interactions: [PreparedProseInteraction] = []

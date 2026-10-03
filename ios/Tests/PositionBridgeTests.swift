@@ -142,13 +142,13 @@ final class PositionBridgeTests: XCTestCase {
         let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
         let textView = EditorTextView(frame: .zero, textContainer: nil)
         textView.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
-        let first = try JSONSerialization.jsonObject(with: rootTableDocument(cellTexts: ["a"]).data(using: .utf8)!) as! [String: Any]
-        let second = try JSONSerialization.jsonObject(with: rootTableDocument(cellTexts: ["b"]).data(using: .utf8)!) as! [String: Any]
+        let first = try XCTUnwrap(JSONSerialization.jsonObject(with: rootTableDocument(cellTexts: ["a"]).data(using: .utf8)!) as? [String: Any])
+        let second = try XCTUnwrap(JSONSerialization.jsonObject(with: rootTableDocument(cellTexts: ["b"]).data(using: .utf8)!) as? [String: Any])
         let document = try JSONSerialization.data(withJSONObject: [
             "type": "doc",
             "content": [
-                (first["content"] as! [[String: Any]])[0],
-                (second["content"] as! [[String: Any]])[0]
+                try XCTUnwrap(first["content"] as? [[String: Any]])[0],
+                try XCTUnwrap(second["content"] as? [[String: Any]])[0]
             ]
         ])
         XCTAssertTrue(textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(
@@ -616,8 +616,11 @@ final class PositionBridgeTests: XCTestCase {
         XCTAssertEqual(rendered.string, "A\nB\nC")
         let positions: [(Int, UInt32)] = [(0, 2), (2, 4), (3, 5), (4, 8), (5, 9)]
         for (offset, scalar) in positions {
-            XCTAssertEqual(PositionBridge.utf16OffsetToScalar(offset, in: view), scalar,
-                           "Only real list item boundaries contribute marker scalars at UTF-16 offset \(offset)")
+            XCTAssertEqual(
+                PositionBridge.utf16OffsetToScalar(offset, in: view),
+                scalar,
+                "Only real list item boundaries contribute marker scalars at UTF-16 offset \(offset)"
+            )
         }
         XCTAssertTrue(RenderBridge.isListContinuationParagraph(2, in: rendered))
         XCTAssertFalse(RenderBridge.isListContinuationParagraph(4, in: rendered))

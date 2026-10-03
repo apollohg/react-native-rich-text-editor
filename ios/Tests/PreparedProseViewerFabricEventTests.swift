@@ -149,7 +149,14 @@ final class PreparedProseViewerFabricEventTests: XCTestCase {
         _ = try XCTUnwrap(compiled.value, String(describing: compiled.error))
     }
 
-    private func event(_ value: [String: Any]) throws -> (generation: String, revision: String, sequence: UInt64, atoms: [[String: Any]]) {
+    private struct AtomEvent {
+        let generation: String
+        let revision: String
+        let sequence: UInt64
+        let atoms: [[String: Any]]
+    }
+
+    private func event(_ value: [String: Any]) throws -> AtomEvent {
         let generation = try XCTUnwrap(value["generation"] as? String)
         let revision = try XCTUnwrap(value["revision"] as? String)
         let atomsJSON = try XCTUnwrap(value["atomsJson"] as? String)
@@ -157,7 +164,7 @@ final class PreparedProseViewerFabricEventTests: XCTestCase {
         let sequenceText = try XCTUnwrap(envelope["presentationSequence"] as? String)
         let sequence = try XCTUnwrap(UInt64(sequenceText))
         let atoms = try XCTUnwrap(envelope["atoms"] as? [[String: Any]])
-        return (generation, revision, sequence, atoms)
+        return AtomEvent(generation: generation, revision: revision, sequence: sequence, atoms: atoms)
     }
 
     private func clip(_ atom: [String: Any]) throws -> [String: Double] {

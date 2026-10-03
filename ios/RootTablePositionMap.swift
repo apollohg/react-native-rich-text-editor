@@ -19,15 +19,20 @@ struct RootTablePositionMap {
     let extents: [String: TableScalarExtent]
     var hasTables: Bool { !markers.isEmpty }
 
-    static func fromRendered(_ text: NSAttributedString, extents: [String: TableScalarExtent],
-                             scalarLength: UInt32) -> RootTablePositionMap? {
+    static func fromRendered(
+        _ text: NSAttributedString,
+        extents: [String: TableScalarExtent],
+        scalarLength: UInt32
+    ) -> RootTablePositionMap? {
         var markers: [Marker] = []
         var observed = Set<String>()
         var delta: UInt64 = 0
         var valid = true
         let string = text.string as NSString
-        text.enumerateAttribute(RenderBridgeAttributes.rootTableMarker,
-                                in: NSRange(location: 0, length: text.length)) { value, range, stop in
+        text.enumerateAttribute(
+            RenderBridgeAttributes.rootTableMarker,
+            in: NSRange(location: 0, length: text.length)
+        ) { value, range, stop in
             guard let value else { return }
             guard let key = value as? String, let extent = extents[key],
                   observed.insert(key).inserted, range.length == 1,
@@ -50,8 +55,12 @@ struct RootTablePositionMap {
         }
         let localLength = PositionBridge.utf16OffsetToScalar(text.length, in: text)
         guard valid, observed == Set(extents.keys), UInt64(localLength) + delta == UInt64(scalarLength) else { return nil }
-        return RootTablePositionMap(markers: markers, localLength: localLength,
-                                    globalLength: scalarLength, extents: extents)
+        return RootTablePositionMap(
+            markers: markers,
+            localLength: localLength,
+            globalLength: scalarLength,
+            extents: extents
+        )
     }
 
     func globalScalar(local: UInt32) -> UInt32? {

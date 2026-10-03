@@ -182,12 +182,11 @@ extension EditorV2Adapter {
         defer { endRuntimeOperation() }
         return performMutation(
             postSelectionMirror: (0, 0), includeSelectionInUpdate: true,
-            onAcceptedMutation: { self.tableResetGeneration &+= 1 }
-        ) {
+            onAcceptedMutation: { self.tableResetGeneration &+= 1 }, {
             self.callWithEnvelope(["setHtml": html, "history": "resetAndClear"]) { requestJson in
                 editorV2ApplyLocalApi(editorId: self.editorId, requestJson: requestJson)
             }
-        }
+        })
     }
 
     func setContentJson(_ json: String) -> String? {
@@ -201,12 +200,11 @@ extension EditorV2Adapter {
         }
         return performMutation(
             postSelectionMirror: (0, 0), includeSelectionInUpdate: true,
-            onAcceptedMutation: { self.tableResetGeneration &+= 1 }
-        ) {
+            onAcceptedMutation: { self.tableResetGeneration &+= 1 }, {
             self.callWithEnvelope(["setJson": document, "history": "resetAndClear"]) { requestJson in
                 editorV2ApplyLocalApi(editorId: self.editorId, requestJson: requestJson)
             }
-        }
+        })
     }
 
     /// Undoable whole-document replace (legacy `editorReplaceHtml` parity:

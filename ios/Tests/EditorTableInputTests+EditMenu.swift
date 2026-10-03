@@ -21,8 +21,11 @@ extension EditorTableInputTests {
     private final class SuggestedActionsProbe: NSObject, UIEditMenuInteractionDelegate {
         private(set) var suggested: [UIMenuElement]?
 
-        func editMenuInteraction(_ interaction: UIEditMenuInteraction, menuFor configuration: UIEditMenuConfiguration,
-                                 suggestedActions: [UIMenuElement]) -> UIMenu? {
+        func editMenuInteraction(
+            _ interaction: UIEditMenuInteraction,
+            menuFor configuration: UIEditMenuConfiguration,
+            suggestedActions: [UIMenuElement]
+        ) -> UIMenu? {
             suggested = suggestedActions
             return nil
         }
@@ -58,22 +61,28 @@ extension EditorTableInputTests {
     }
 
     private func showMenuByTappingSelection(_ fixture: MountedTableFixture) throws {
-        fixture.view.tapTableCell(at: try surfacePoint(fixture, inCell: CellMenu.firstCell),
-                                  touchedAt: ProcessInfo.processInfo.systemUptime)
+        fixture.view.tapTableCell(
+            at: try surfacePoint(fixture, inCell: CellMenu.firstCell),
+            touchedAt: ProcessInfo.processInfo.systemUptime
+        )
         XCTAssertTrue(fixture.surface.isCellEditMenuVisible, "a tap inside the selection shows the cell menu")
         XCTAssertTrue(fixture.view.textView.authoritativeCellSelectionActive, "the tap keeps the cell selection")
         fixture.updates.updates.removeAll()
     }
 
     private func tableCellTapRecognizer(_ fixture: MountedTableFixture, taps: Int) throws -> UITapGestureRecognizer {
-        try XCTUnwrap(fixture.view.textView.gestureRecognizers?.compactMap { $0 as? UITapGestureRecognizer }
-            .first { $0.delegate === fixture.view && $0.numberOfTapsRequired == taps },
-            "no \(taps)-tap table cell recognizer")
+        try XCTUnwrap(
+            fixture.view.textView.gestureRecognizers?.compactMap { $0 as? UITapGestureRecognizer }
+                .first { $0.delegate === fixture.view && $0.numberOfTapsRequired == taps },
+            "no \(taps)-tap table cell recognizer"
+        )
     }
 
     private func perform(_ command: UICommand, fixture: MountedTableFixture) {
-        XCTAssertTrue(UIApplication.shared.sendAction(command.action, to: nil, from: command, for: nil),
-                      "\(command.action) found no responder")
+        XCTAssertTrue(
+            UIApplication.shared.sendAction(command.action, to: nil, from: command, for: nil),
+            "\(command.action) found no responder"
+        )
     }
 
     func testHandleDragEndLeavesTheMenuClosedAndATapInsideOffersCopyCutAndPaste() throws {
@@ -168,8 +177,10 @@ extension EditorTableInputTests {
             let stale = RichTextEditorView(frame: CGRect(origin: .zero, size: CellMenu.editorSize))
             fixture.view.window?.addSubview(stale)
             defer { stale.removeFromSuperview() }
-            stale.bindEditor(id: fixture.view.editorId,
-                             initialUpdateJSON: try XCTUnwrap(fixture.adapter.initialUpdateJSON()))
+            stale.bindEditor(
+                id: fixture.view.editorId,
+                initialUpdateJSON: try XCTUnwrap(fixture.adapter.initialUpdateJSON())
+            )
             XCTAssertTrue(stale.textView.applyUpdateJSON(
                 try XCTUnwrap(fixture.adapter.refreshFromRustState(mirrorSelection: nil))
             ))
@@ -190,13 +201,17 @@ extension EditorTableInputTests {
             let secondTouch = ProcessInfo.processInfo.systemUptime
             fixture.surface.dismissCellEditMenu()
             fixture.view.tapTableCell(at: inside, touchedAt: secondTouch)
-            XCTAssertFalse(fixture.surface.isCellEditMenuVisible,
-                           "a tap whose touch-down closed the menu must not reopen it")
+            XCTAssertFalse(
+                fixture.surface.isCellEditMenuVisible,
+                "a tap whose touch-down closed the menu must not reopen it"
+            )
 
             fixture.view.tapTableCell(at: inside, touchedAt: ProcessInfo.processInfo.systemUptime)
             XCTAssertTrue(fixture.surface.isCellEditMenuVisible)
-            fixture.view.tapTableCell(at: try surfacePoint(fixture, inCell: CellMenu.lastCell),
-                                      touchedAt: ProcessInfo.processInfo.systemUptime)
+            fixture.view.tapTableCell(
+                at: try surfacePoint(fixture, inCell: CellMenu.lastCell),
+                touchedAt: ProcessInfo.processInfo.systemUptime
+            )
             XCTAssertFalse(fixture.surface.isCellEditMenuVisible, "leaving the cell selection closes the menu")
             XCTAssertTrue(fixture.view.activeTextInput !== fixture.view.textView, "the outside tap edits that cell")
         }
@@ -206,8 +221,10 @@ extension EditorTableInputTests {
         try withCellMenuTable(head: CellMenu.lastCell) { fixture in
             let single = try tableCellTapRecognizer(fixture, taps: 1)
             let double = try tableCellTapRecognizer(fixture, taps: 2)
-            XCTAssertTrue(fixture.view.gestureRecognizer(single, shouldRequireFailureOf: double),
-                          "the menu tap must wait for a double tap to fail")
+            XCTAssertTrue(
+                fixture.view.gestureRecognizer(single, shouldRequireFailureOf: double),
+                "the menu tap must wait for a double tap to fail"
+            )
             XCTAssertFalse(fixture.view.gestureRecognizer(double, shouldRequireFailureOf: single))
 
             fixture.view.doubleTapTableCell(at: try surfacePoint(fixture, inCell: CellMenu.lastCell))
@@ -216,16 +233,22 @@ extension EditorTableInputTests {
             XCTAssertTrue(fixture.view.activeTextInput !== fixture.view.textView, "the double tap edits a cell")
             XCTAssertTrue(fixture.view.activeTextInput.isFirstResponder)
             let map = try XCTUnwrap(fixture.view.activeTextInput.tableCellPositionMap)
-            XCTAssertEqual(map.binding.documentPosition(in: fixture.adapter), fixture.positions[CellMenu.lastCell],
-                           "the caret lands in the double-tapped cell")
+            XCTAssertEqual(
+                map.binding.documentPosition(in: fixture.adapter),
+                fixture.positions[CellMenu.lastCell],
+                "the caret lands in the double-tapped cell"
+            )
         }
     }
 
     func testSelectionChangeClosesTheMenu() throws {
         try withCellMenuTable { fixture in
             try showMenuByTappingSelection(fixture)
-            try fixture.view.textView.selectTableCells(adapter: fixture.adapter,
-                                                       anchor: fixture.positions[CellMenu.firstCell], head: fixture.positions[CellMenu.lastCell])
+            try fixture.view.textView.selectTableCells(
+                adapter: fixture.adapter,
+                anchor: fixture.positions[CellMenu.firstCell],
+                head: fixture.positions[CellMenu.lastCell]
+            )
             XCTAssertFalse(fixture.surface.isCellEditMenuVisible, "a different rectangle closes the menu")
         }
     }
@@ -263,8 +286,10 @@ extension EditorTableInputTests {
             fixture.view.layoutIfNeeded()
             XCTAssertTrue(fixture.surface.isCellEditMenuVisible, "a partly visible selection keeps its menu")
 
-            textView.setContentOffset(CGPoint(x: 0, y: textView.contentSize.height - textView.bounds.height),
-                                      animated: false)
+            textView.setContentOffset(
+                CGPoint(x: 0, y: textView.contentSize.height - textView.bounds.height),
+                animated: false
+            )
             fixture.view.layoutIfNeeded()
             XCTAssertFalse(fixture.surface.isCellEditMenuVisible, "an offscreen selection closes the menu")
         }

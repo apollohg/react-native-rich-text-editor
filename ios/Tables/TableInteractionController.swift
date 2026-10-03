@@ -243,8 +243,11 @@ final class TableInteractionController: NSObject, UIGestureRecognizerDelegate {
     private func canScroll(_ scrollView: UIScrollView?, by delta: CGFloat) -> Bool {
         guard let scrollView, scrollView.isScrollEnabled, delta != 0 else { return false }
         let minimum = -scrollView.adjustedContentInset.left
-        let maximum = max(minimum, scrollView.contentSize.width - scrollView.bounds.width
-                          + scrollView.adjustedContentInset.right)
+        let maximum = max(
+            minimum,
+            scrollView.contentSize.width - scrollView.bounds.width
+                + scrollView.adjustedContentInset.right
+        )
         return delta > 0 ? scrollView.contentOffset.x > minimum : scrollView.contentOffset.x < maximum
     }
 
@@ -258,8 +261,11 @@ final class TableInteractionController: NSObject, UIGestureRecognizerDelegate {
         for outer in outerScrollViews where remaining != 0 {
             guard let scroll = outer.value, scroll.isScrollEnabled else { continue }
             let minimum = -scroll.adjustedContentInset.left
-            let maximum = max(minimum, scroll.contentSize.width - scroll.bounds.width
-                              + scroll.adjustedContentInset.right)
+            let maximum = max(
+                minimum,
+                scroll.contentSize.width - scroll.bounds.width
+                    + scroll.adjustedContentInset.right
+            )
             let old = scroll.contentOffset.x
             let next = min(maximum, max(minimum, old - remaining))
             if next != old {
@@ -304,7 +310,7 @@ final class TableInteractionController: NSObject, UIGestureRecognizerDelegate {
         consume(delta)
         guard generation == motionGeneration else { return }
         let rate = Double(outerScrollViews.compactMap(\.value).first?.decelerationRate.rawValue
-                          ?? UIScrollView.DecelerationRate.normal.rawValue)
+            ?? UIScrollView.DecelerationRate.normal.rawValue)
         velocity *= CGFloat(pow(rate, elapsed * Constants.millisecondsPerSecond))
         if abs(velocity) < Constants.minimumVelocity { cancelMotion() }
     }

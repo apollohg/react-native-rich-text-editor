@@ -26,33 +26,85 @@ final class EditorTableIndexTests: XCTestCase {
     }
 
     private func cell(_ column: UInt32, stride: UInt32) -> FfiTableCellRecord {
-        FfiTableCellRecord(sourceRow: 0, row: 0, column: column, rowspan: 1, colspan: 1,
-                           header: false, attrsKey: attributeKey, contentKey: "cell-\(column)",
-                           docSize: 5, scalarStride: stride,
-                           elements: [.blockStart(nodeType: "paragraph", language: nil, depth: 0, listContextJson: nil),
-                                      .textRun(text: "a", marks: []), .blockEnd],
-                           voidElementIndices: [], inputBlocks: [FfiCellInputBlock(elementIndex: 0, docStart: 2, docEnd: 3,
-                               scalarStart: 0, contentScalarStart: 0, scalarEnd: 1, breakScalarEnd: stride, void: false)],
-                           nestedTables: [])
+        FfiTableCellRecord(
+            sourceRow: 0,
+            row: 0,
+            column: column,
+            rowspan: 1,
+            colspan: 1,
+            header: false,
+            attrsKey: attributeKey,
+            contentKey: "cell-\(column)",
+            docSize: 5,
+            scalarStride: stride,
+            elements: [
+                .blockStart(nodeType: "paragraph", language: nil, depth: 0, listContextJson: nil),
+                .textRun(text: "a", marks: []),
+                .blockEnd
+            ],
+            voidElementIndices: [],
+            inputBlocks: [FfiCellInputBlock(
+                elementIndex: 0,
+                docStart: 2,
+                docEnd: 3,
+                scalarStart: 0,
+                contentScalarStart: 0,
+                scalarEnd: 1,
+                breakScalarEnd: stride,
+                void: false
+            )],
+            nestedTables: []
+        )
     }
 
     private func frame() -> FfiTableFrame {
         let cells = [cell(0, stride: 2), cell(1, stride: 1)]
-        let table = FfiTableRecord(tableKey: rootKey, host: nil, docSize: 14,
-                                  rows: 1, columns: 2, columnWidths: [nil, nil], direction: nil,
-                                  irregular: false, readOnlyDescendants: false, attrsKey: attributeKey,
-                                  sourceRows: [.init(attrsKey: attributeKey, cellCount: 2)], cells: cells,
-                                  syntheticRegions: [], failure: nil, compatibilityDiagnostic: nil)
-        return FfiTableFrame(kind: .full, baseDocumentRevision: nil,
-                             attributes: [.init(key: attributeKey, json: "{}")], removedAttributeKeys: [],
-                             tables: [table], removedTableKeys: [], cellUpdates: [],
-                             extents: [.init(tableKey: rootKey, docStart: rootDocStart, docSize: table.docSize,
-                                              scalarStart: rootScalarStart, scalarEnd: rootScalarStart + 3)])
+        let table = FfiTableRecord(
+            tableKey: rootKey,
+            host: nil,
+            docSize: 14,
+            rows: 1,
+            columns: 2,
+            columnWidths: [nil, nil],
+            direction: nil,
+            irregular: false,
+            readOnlyDescendants: false,
+            attrsKey: attributeKey,
+            sourceRows: [.init(attrsKey: attributeKey, cellCount: 2)],
+            cells: cells,
+            syntheticRegions: [],
+            failure: nil,
+            compatibilityDiagnostic: nil
+        )
+        return FfiTableFrame(
+            kind: .full,
+            baseDocumentRevision: nil,
+            attributes: [.init(key: attributeKey, json: "{}")],
+            removedAttributeKeys: [],
+            tables: [table],
+            removedTableKeys: [],
+            cellUpdates: [],
+            extents: [.init(
+                tableKey: rootKey,
+                docStart: rootDocStart,
+                docSize: table.docSize,
+                scalarStart: rootScalarStart,
+                scalarEnd: rootScalarStart + 3
+            )]
+        )
     }
 
     private func delta() -> FfiTableFrame {
-        FfiTableFrame(kind: .delta, baseDocumentRevision: String(revision), attributes: [],
-                      removedAttributeKeys: [], tables: [], removedTableKeys: [], cellUpdates: [], extents: frame().extents)
+        FfiTableFrame(
+            kind: .delta,
+            baseDocumentRevision: String(revision),
+            attributes: [],
+            removedAttributeKeys: [],
+            tables: [],
+            removedTableKeys: [],
+            cellUpdates: [],
+            extents: frame().extents
+        )
     }
 
     func testIncrementalCellsReleaseHistoricalIndexesAndRebuildAfterEviction() throws {
@@ -89,30 +141,59 @@ final class EditorTableIndexTests: XCTestCase {
                     changed.contentKey = "edited-\(step)"
                     changed.elements[1] = .textRun(text: "b", marks: [])
                     change.cellUpdates = [.init(tableKey: rootKey, cellIndex: UInt32(step - 1), cell: changed)]
-                    _ = try index.adopt(change, installedRevision: revision + UInt64(step - 1),
-                        frameRevision: revision + UInt64(step)).get()
+                    _ = try index.adopt(
+                        change,
+                        installedRevision: revision + UInt64(step - 1),
+                        frameRevision: revision + UInt64(step)
+                    ).get()
                     let previous = try XCTUnwrap(retained.blocks.first?.tableSurface)
                     engine.incrementalTableSurface = { _ in (previous, IndexSet(integer: step - 1)) }
                 }
                 let record = try XCTUnwrap(index.record(tableKey: rootKey))
-                let document = ViewerDocument(semanticKey: "revision-\(step)",
-                    blocks: [ViewerBlock(nodeType: "table", depth: 0, inBlockquote: false,
-                        listContext: nil, listItemBoundary: nil, inlines: [], frameTable: record)],
-                    isEmpty: false, retainedBytes: 0, tableAttributes: index.attributeObjects, frameIndex: index)
-                let key = ProseLayoutKey(semanticKey: document.semanticKey, widthPixels: Int(width),
-                    themeDigest: "retention", nativeFontRevision: 0, fontEnvironmentRevision: 0,
-                    displayScale: 1, attachmentRevision: 0, generationIdentity: "retention",
-                    semanticGenerationIdentity: "retention")
+                let document = ViewerDocument(
+                    semanticKey: "revision-\(step)",
+                    blocks: [ViewerBlock(
+                        nodeType: "table",
+                        depth: 0,
+                        inBlockquote: false,
+                        listContext: nil,
+                        listItemBoundary: nil,
+                        inlines: [],
+                        frameTable: record
+                    )],
+                    isEmpty: false,
+                    retainedBytes: 0,
+                    tableAttributes: index.attributeObjects,
+                    frameIndex: index
+                )
+                let key = ProseLayoutKey(
+                    semanticKey: document.semanticKey,
+                    widthPixels: Int(width),
+                    themeDigest: "retention",
+                    nativeFontRevision: 0,
+                    fontEnvironmentRevision: 0,
+                    displayScale: 1,
+                    attachmentRevision: 0,
+                    generationIdentity: "retention",
+                    semanticGenerationIdentity: "retention"
+                )
                 retained = try engine.prepare(document: document, key: key, widthPoints: width, displayScale: 1)
                 engine.incrementalTableSurface = nil
                 references.append(IndexReference(index))
             }
         }
-        XCTAssertEqual(references.filter { $0.value != nil }.count, 0,
-            "Cell rebuild closures must not retain any whole historical frame index")
+        XCTAssertEqual(
+            references.filter { $0.value != nil }.count,
+            0,
+            "Cell rebuild closures must not retain any whole historical frame index"
+        )
         let surface = try XCTUnwrap(retained.blocks.first?.tableSurface)
-        let eviction = PreparedProseLayout(key: retained.key, size: .zero, blocks: [],
-            retainedBytes: PreparedProseLayoutCache.preparedLayoutUnmountedByteBudget)
+        let eviction = PreparedProseLayout(
+            key: retained.key,
+            size: .zero,
+            blocks: [],
+            retainedBytes: PreparedProseLayoutCache.preparedLayoutUnmountedByteBudget
+        )
         surface.layoutStore.insert(eviction)
         for cell in surface.cells {
             XCTAssertNil(cell.cachedContent)
@@ -134,8 +215,13 @@ final class EditorTableIndexTests: XCTestCase {
         let key = try XCTUnwrap(adapter.tableIndex.tableKeys.first)
         let record = try XCTUnwrap(adapter.tableIndex.record(tableKey: key))
         let cell = try XCTUnwrap(TableSurfaceSource(frameRecord: record).cells.first)
-        let doc = ViewerDocument(semanticKey: "frame-atom", blocks: [], isEmpty: false, retainedBytes: 0,
-                                 frameIndex: adapter.tableIndex)
+        let doc = ViewerDocument(
+            semanticKey: "frame-atom",
+            blocks: [],
+            isEmpty: false,
+            retainedBytes: 0,
+            frameIndex: adapter.tableIndex
+        )
         let child = try doc.cellDocument(for: cell, in: key)
         guard case let .atom(_, actual, _, _) = child.blocks.first?.inlines.first else {
             return XCTFail("the real horizontal rule must remain an atom in the cell document")
@@ -151,8 +237,12 @@ final class EditorTableIndexTests: XCTestCase {
         defer { destroyV2Editor(id: editorId) }
         let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
         XCTAssertNotNil(adapter.setContentJson(TableInputTestSchema.twoCellDocument))
-        let result = editorV2RenderNativeFrame(editorId: adapter.editorId, ownerId: nil,
-                                               mirrorScalarAnchor: nil, mirrorScalarHead: nil)
+        let result = editorV2RenderNativeFrame(
+            editorId: adapter.editorId,
+            ownerId: nil,
+            mirrorScalarAnchor: nil,
+            mirrorScalarHead: nil
+        )
         XCTAssertNil(result.error)
         let native = try XCTUnwrap(result.frame)
         let table = try XCTUnwrap(native.tables.tables.first)
@@ -173,8 +263,11 @@ final class EditorTableIndexTests: XCTestCase {
             let segment = try XCTUnwrap(segments.first)
             XCTAssertEqual(segment.globalScalarStart, scalarStart)
             XCTAssertEqual(segment.localScalarRange.count, Int(scalarEnd - scalarStart + 1))
-            XCTAssertEqual(index.cellIndex(tableKey: table.tableKey, containingScalar: scalarEnd), cellIndex,
-                           "the terminal caret of each real input block belongs to its cell")
+            XCTAssertEqual(
+                index.cellIndex(tableKey: table.tableKey, containingScalar: scalarEnd),
+                cellIndex,
+                "the terminal caret of each real input block belongs to its cell"
+            )
         }
     }
 
@@ -184,8 +277,12 @@ final class EditorTableIndexTests: XCTestCase {
         defer { destroyV2Editor(id: editorId) }
         let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
         XCTAssertNotNil(adapter.setContentJson(source))
-        let result = editorV2RenderNativeFrame(editorId: adapter.editorId, ownerId: nil,
-                                               mirrorScalarAnchor: nil, mirrorScalarHead: nil)
+        let result = editorV2RenderNativeFrame(
+            editorId: adapter.editorId,
+            ownerId: nil,
+            mirrorScalarAnchor: nil,
+            mirrorScalarHead: nil
+        )
         XCTAssertNil(result.error)
         let native = try XCTUnwrap(result.frame)
         let root = try XCTUnwrap(native.tables.tables.first { $0.host == nil })
@@ -197,8 +294,11 @@ final class EditorTableIndexTests: XCTestCase {
             baseFont: .systemFont(ofSize: 17), textColor: .black, theme: nil, atomConfiguration: nil
         ))
         XCTAssertEqual(projection.positionMap.segments.map(\.localScalarRange), [0..<7, 9..<15])
-        XCTAssertEqual(index.inputSegments(tableKey: root.tableKey, cellIndex: 0), projection.positionMap.segments,
-                       "nested scalar widths must collapse to the one rendered marker before later input blocks")
+        XCTAssertEqual(
+            index.inputSegments(tableKey: root.tableKey, cellIndex: 0),
+            projection.positionMap.segments,
+            "nested scalar widths must collapse to the one rendered marker before later input blocks"
+        )
     }
 
     func testOneDeltaCanExchangeNestedTablesBetweenCells() throws {
@@ -213,8 +313,14 @@ final class EditorTableIndexTests: XCTestCase {
             full.tables[0].cells[cellIndex].scalarStride = cellIndex == 0 ? 4 : 3
             full.tables[0].cells[cellIndex].elements = [.table(tableId: child.tableKey)]
             full.tables[0].cells[cellIndex].inputBlocks = []
-            full.tables[0].cells[cellIndex].nestedTables = [.init(elementIndex: 0, tableKey: child.tableKey,
-                docOffset: 1, docSize: child.docSize, scalarStart: 0, scalarEnd: 3)]
+            full.tables[0].cells[cellIndex].nestedTables = [.init(
+                elementIndex: 0,
+                tableKey: child.tableKey,
+                docOffset: 1,
+                docSize: child.docSize,
+                scalarStart: 0,
+                scalarEnd: 3
+            )]
         }
         full.tables[0].docSize = 36
         full.extents[0].docSize = 36
@@ -291,36 +397,44 @@ final class EditorTableIndexTests: XCTestCase {
 
     func testEveryRejectionLeavesInstalledRecordsAndPositionsUnchanged() throws {
         let original = frame()
-        var cases: [(String, FfiTableFrame, TableFrameRejection)] = []
+        struct RejectionCase {
+            let label: String
+            let candidate: FfiTableFrame
+            let expected: TableFrameRejection
+        }
+        var cases: [RejectionCase] = []
         var update = delta()
         update.baseDocumentRevision = "0"
-        cases.append(("base", update, .baseRevisionMismatch(expected: revision, actual: 0)))
+        cases.append(RejectionCase(label: "base", candidate: update, expected: .baseRevisionMismatch(expected: revision, actual: 0)))
         update = delta(); update.removedTableKeys = ["missing"]
-        cases.append(("unknown table", update, .unknownTable("missing")))
+        cases.append(RejectionCase(label: "unknown table", candidate: update, expected: .unknownTable("missing")))
         update = delta(); update.cellUpdates = [.init(tableKey: rootKey, cellIndex: 2, cell: original.tables[0].cells[0])]
-        cases.append(("cell index", update, .cellIndexOutOfRange(rootKey, 2)))
+        cases.append(RejectionCase(label: "cell index", candidate: update, expected: .cellIndexOutOfRange(rootKey, 2)))
         var changed = original.tables[0].cells[0]; changed.header = true
         update = delta(); update.cellUpdates = [.init(tableKey: rootKey, cellIndex: 0, cell: changed)]
-        cases.append(("structural cell update", update, .cellStructureChanged(rootKey, 0)))
+        cases.append(RejectionCase(label: "structural cell update", candidate: update, expected: .cellStructureChanged(rootKey, 0)))
         update = delta(); update.extents[0].docSize += 1
-        cases.append(("doc size", update, .docSizeMismatch(rootKey, expected: 14, actual: 15)))
+        cases.append(RejectionCase(label: "doc size", candidate: update, expected: .docSizeMismatch(rootKey, expected: 14, actual: 15)))
         update = delta(); update.extents[0].scalarEnd += 1
-        cases.append(("scalar size", update, .scalarSizeMismatch(rootKey, expected: 3, actual: 4)))
+        cases.append(RejectionCase(label: "scalar size", candidate: update, expected: .scalarSizeMismatch(rootKey, expected: 3, actual: 4)))
         changed = original.tables[0].cells[0]; changed.inputBlocks[0].breakScalarEnd = changed.scalarStride + 1
         update = delta(); update.cellUpdates = [.init(tableKey: rootKey, cellIndex: 0, cell: changed)]
-        cases.append(("input stride", update, .inputBlockOutOfStride(rootKey, 0)))
+        cases.append(RejectionCase(label: "input stride", candidate: update, expected: .inputBlockOutOfStride(rootKey, 0)))
         update = delta(); update.removedAttributeKeys = [attributeKey]
-        cases.append(("attribute", update, .missingAttribute(attributeKey)))
+        cases.append(RejectionCase(label: "attribute", candidate: update, expected: .missingAttribute(attributeKey)))
         update = delta(); update.tables = [original.tables[0], original.tables[0]]
-        cases.append(("duplicate table", update, .duplicateTableKey(rootKey)))
+        cases.append(RejectionCase(label: "duplicate table", candidate: update, expected: .duplicateTableKey(rootKey)))
         update = delta(); var orphan = original.tables[0]; orphan.host = .init(tableKey: "missing", cellIndex: 0)
         update.tables = [orphan]; update.extents = []
-        cases.append(("host", update, .hostMissing(rootKey)))
+        cases.append(RejectionCase(label: "host", candidate: update, expected: .hostMissing(rootKey)))
         update = delta(); update.extents = []
-        cases.append(("extents", update, .extentsIncomplete))
+        cases.append(RejectionCase(label: "extents", candidate: update, expected: .extentsIncomplete))
         let index = EditorTableIndex()
         _ = try index.adopt(original, installedRevision: nil, frameRevision: revision).get()
-        for (label, candidate, expected) in cases {
+        for item in cases {
+            let label = item.label
+            let candidate = item.candidate
+            let expected = item.expected
             let result = index.adopt(candidate, installedRevision: revision, frameRevision: revision + 1)
             guard case let .failure(actual) = result else { return XCTFail("accepted invalid \(label): \(result)") }
             XCTAssertEqual(actual, expected, label)
@@ -342,8 +456,14 @@ final class EditorTableIndexTests: XCTestCase {
         parent.cells[0].scalarStride = 4
         parent.cells[0].elements = [.table(tableId: childKey)]
         parent.cells[0].inputBlocks = []
-        parent.cells[0].nestedTables = [.init(elementIndex: 0, tableKey: childKey, docOffset: 1,
-                                            docSize: child.docSize, scalarStart: 0, scalarEnd: 3)]
+        parent.cells[0].nestedTables = [.init(
+            elementIndex: 0,
+            tableKey: childKey,
+            docOffset: 1,
+            docSize: child.docSize,
+            scalarStart: 0,
+            scalarEnd: 3
+        )]
         parent.docSize = 25
         full.tables = [child, parent]
         full.extents[0].docSize = parent.docSize

@@ -11,10 +11,12 @@ extension EditorTableInputTests {
 
     private func accessibleTable(_ fixture: MountedTableFixture, containing label: String) throws
         -> TableAccessibilityTableElement {
-        try XCTUnwrap((0..<fixture.drawing.accessibilityElementCount()).lazy.compactMap {
-            fixture.drawing.accessibilityElement(at: $0) as? TableAccessibilityTableElement
-        }.first { $0.allCellElements.contains { $0.accessibilityLabel == label } },
-        "no data table element contains \(label)")
+        try XCTUnwrap(
+            (0..<fixture.drawing.accessibilityElementCount()).lazy.compactMap {
+                fixture.drawing.accessibilityElement(at: $0) as? TableAccessibilityTableElement
+            }.first { $0.allCellElements.contains { $0.accessibilityLabel == label } },
+            "no data table element contains \(label)"
+        )
     }
 
     private func accessibleFrame(_ fixture: MountedTableFixture) throws -> TableAccessibilityFrameElement {
@@ -35,8 +37,10 @@ extension EditorTableInputTests {
     }
 
     private func perform(_ label: String, on element: NSObject) throws -> Bool {
-        let action = try XCTUnwrap(element.accessibilityCustomActions?.first { $0.name == label },
-                                   "missing \(label) in \(element.accessibilityCustomActions?.map(\.name) ?? [])")
+        let action = try XCTUnwrap(
+            element.accessibilityCustomActions?.first { $0.name == label },
+            "missing \(label) in \(element.accessibilityCustomActions?.map(\.name) ?? [])"
+        )
         return action.actionHandler?(action) ?? false
     }
 
@@ -49,14 +53,18 @@ extension EditorTableInputTests {
     func testTableSurfaceExposesOnlyTheDrawingViewAsItsAccessibilityContainer() throws {
         try withMountedTable(document: TableAccessibilityFixture.fourCellDocument, cellSelection: nil) { fixture in
             XCTAssertEqual(fixture.surface.accessibilityElements?.count, 1)
-            XCTAssertTrue(fixture.surface.accessibilityElements?.first as? PreparedProseDrawingView === fixture.drawing,
-                          "the active input must only be reachable through its table cell slot")
+            XCTAssertTrue(
+                fixture.surface.accessibilityElements?.first as? PreparedProseDrawingView === fixture.drawing,
+                "the active input must only be reachable through its table cell slot"
+            )
             let table = try accessibleTable(fixture, containing: "one")
             XCTAssertEqual(table.allCellElements.compactMap(\.accessibilityLabel), ["one", "two", "three", "four"])
             XCTAssertEqual(table.accessibilityRowCount(), 2)
             XCTAssertEqual(table.accessibilityColumnCount(), 2)
-            XCTAssertFalse((fixture.view.textView as Any) is UIAccessibilityContainerDataTableCell,
-                           "only the cell input carries data table cell semantics")
+            XCTAssertFalse(
+                (fixture.view.textView as Any) is UIAccessibilityContainerDataTableCell,
+                "only the cell input carries data table cell semantics"
+            )
         }
     }
 
@@ -64,8 +72,11 @@ extension EditorTableInputTests {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "table-toolbar-actions", withExtension: "json"))
         let data = try Data(contentsOf: url)
         let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [[String: Any]])
-        XCTAssertEqual(TableAccessibilityAction.all.map(\.key), fixture.compactMap { $0["action"] as? String },
-                       "native actions must list the toolbar actions in toolbar order")
+        XCTAssertEqual(
+            TableAccessibilityAction.all.map(\.key),
+            fixture.compactMap { $0["action"] as? String },
+            "native actions must list the toolbar actions in toolbar order"
+        )
         for (action, expected) in zip(TableAccessibilityAction.all, fixture) {
             XCTAssertEqual(action.applicability, expected["applicability"] as? String, action.key)
             XCTAssertEqual(action.command, expected["command"] as? [String: String], action.key)
@@ -146,8 +157,10 @@ extension EditorTableInputTests {
             fixture.drawing.onAccessibilityLayoutChangedForTesting = { arguments.append($0) }
             fixture.drawing.accessibilityFocusProbe = { $0 === cell }
 
-            try apply(TableAccessibilityFixture.fourCellDocument.replacingOccurrences(of: "\"one\"", with: "\"uno\""),
-                      to: fixture)
+            try apply(
+                TableAccessibilityFixture.fourCellDocument.replacingOccurrences(of: "\"one\"", with: "\"uno\""),
+                to: fixture
+            )
 
             XCTAssertTrue(try accessibleTable(fixture, containing: "uno") === table, "a content-only revision keeps the table element")
             XCTAssertTrue(table.allCellElements[0] === cell)
@@ -155,8 +168,10 @@ extension EditorTableInputTests {
             XCTAssertNotEqual(fixture.drawing.index(ofAccessibilityElement: table), NSNotFound)
             XCTAssertFalse(cell.accessibilityFrame.isEmpty, "the focused element keeps its highlight")
             XCTAssertEqual(arguments.count, 1)
-            XCTAssertTrue(arguments.first.flatMap { $0 } as AnyObject === cell,
-                          "VoiceOver re-reads the focused cell without moving")
+            XCTAssertTrue(
+                arguments.first.flatMap { $0 } as AnyObject === cell,
+                "VoiceOver re-reads the focused cell without moving"
+            )
             XCTAssertTrue(cell.accessibilityActivate(), "the kept element still activates its cell")
 
             try apply(TableAccessibilityFixture.frameBetweenTablesDocument, to: fixture)
@@ -196,13 +211,18 @@ extension EditorTableInputTests {
             var arguments: [Any?] = []
             fixture.drawing.onAccessibilityLayoutChangedForTesting = { arguments.append($0) }
             fixture.drawing.accessibilityFocusProbe = { $0 === cell }
-            try apply(TableAccessibilityFixture.frameBetweenTablesDocument
-                .replacingOccurrences(of: "\"first\"", with: "\"primero\""), to: fixture)
+            try apply(
+                TableAccessibilityFixture.frameBetweenTablesDocument
+                    .replacingOccurrences(of: "\"first\"", with: "\"primero\""),
+                to: fixture
+            )
 
             XCTAssertEqual(cell.accessibilityLabel, "primero")
             XCTAssertEqual(arguments.count, 1, "announcements: \(arguments)")
-            XCTAssertTrue(arguments.first.flatMap { $0 } as AnyObject === cell,
-                          "a structural change VoiceOver never heard must not move focus later: \(arguments)")
+            XCTAssertTrue(
+                arguments.first.flatMap { $0 } as AnyObject === cell,
+                "a structural change VoiceOver never heard must not move focus later: \(arguments)"
+            )
         }
     }
 
@@ -224,8 +244,10 @@ extension EditorTableInputTests {
             let expected = try publishedActionLabels(fixture)
             let merge = try XCTUnwrap(TableAccessibilityAction.all.first { $0.key == "mergeCells" })
             let split = try XCTUnwrap(TableAccessibilityAction.all.first { $0.key == "splitCell" })
-            XCTAssertTrue(expected.contains(merge.label),
-                          "a two-cell selection must publish merge: \(expected)")
+            XCTAssertTrue(
+                expected.contains(merge.label),
+                "a two-cell selection must publish merge: \(expected)"
+            )
             XCTAssertFalse(expected.contains(split.label))
             let cells = try accessibleTable(fixture, containing: "one").allCellElements
             XCTAssertEqual(cells[0].accessibilityCustomActions?.map(\.name), expected)
@@ -296,13 +318,18 @@ extension EditorTableInputTests {
             XCTAssertTrue(table.allCellElements[3].accessibilityActivate())
 
             let input = fixture.surface.inputCoordinator.cellInput
-            XCTAssertEqual(input.accessibilityRowRange(), NSRange(location: 1, length: 1),
-                           "activation binds the cell position before the table is queried")
+            XCTAssertEqual(
+                input.accessibilityRowRange(),
+                NSRange(location: 1, length: 1),
+                "activation binds the cell position before the table is queried"
+            )
             XCTAssertEqual(input.accessibilityCustomActions?.map(\.name), try publishedActionLabels(fixture))
             let fresh = try accessibleTable(fixture, containing: "one")
             XCTAssertEqual(fresh.accessibilityElementCount(), 4)
-            XCTAssertTrue(fresh.accessibilityElement(at: 3) as? EditorTextView === input,
-                          "the active cell slot is the real text input")
+            XCTAssertTrue(
+                fresh.accessibilityElement(at: 3) as? EditorTextView === input,
+                "the active cell slot is the real text input"
+            )
             XCTAssertEqual(fresh.index(ofAccessibilityElement: input), 3)
             XCTAssertTrue(fresh.accessibilityDataTableCellElement(forRow: 1, column: 1) === input)
             XCTAssertEqual(input.accessibilityRowRange(), NSRange(location: 1, length: 1))

@@ -55,8 +55,10 @@ final class TableCellLayoutStore {
     private var pinnedBytes = 0
     private var contentRevision: UInt64 = 0
 
-    init(byteBudget: Int = PreparedProseLayoutCache.preparedLayoutUnmountedByteBudget,
-         capacity: Int = TableCellLayoutStore.maximumResidentLayouts) {
+    init(
+        byteBudget: Int = PreparedProseLayoutCache.preparedLayoutUnmountedByteBudget,
+        capacity: Int = TableCellLayoutStore.maximumResidentLayouts
+    ) {
         self.byteBudget = max(0, byteBudget)
         self.capacity = max(0, capacity)
     }

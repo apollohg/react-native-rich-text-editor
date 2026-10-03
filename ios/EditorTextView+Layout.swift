@@ -47,8 +47,10 @@ extension EditorTextView {
         if overlap > 0, let input = keyboardCaretInput, let selection = input.selectedTextRange {
             let caret = input.caretRect(for: selection.end)
             if !caret.isEmpty {
-                scrollVerticallyToReveal(convert(caret, from: input).insetBy(dx: 0, dy: -Self.keyboardCaretMargin),
-                                         within: bounds)
+                scrollVerticallyToReveal(
+                    convert(caret, from: input).insetBy(dx: 0, dy: -Self.keyboardCaretMargin),
+                    within: bounds
+                )
             }
         }
     }

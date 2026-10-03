@@ -98,8 +98,11 @@ final class EditorTableInputTests: XCTestCase {
         }
 
         func engineSelection() throws -> (UInt32, UInt32) {
-            let result = editorV2RenderUpdate(editorId: adapter.editorId,
-                                              mirrorScalarAnchor: nil, mirrorScalarHead: nil)
+            let result = editorV2RenderUpdate(
+                editorId: adapter.editorId,
+                mirrorScalarAnchor: nil,
+                mirrorScalarHead: nil
+            )
             XCTAssertNil(result.error)
             let raw = try XCTUnwrap(result.value)
             let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
@@ -121,8 +124,10 @@ final class EditorTableInputTests: XCTestCase {
         func textSelectionScalars() throws -> (UInt32, UInt32) {
             let selection = try XCTUnwrap(adapter.cachedAtomicRenderSelection())
             XCTAssertEqual(selection["type"] as? String, "text")
-            return (try XCTUnwrap(EditorV2Adapter.uint32Field(selection, "anchorScalar")),
-                    try XCTUnwrap(EditorV2Adapter.uint32Field(selection, "headScalar")))
+            return (
+                try XCTUnwrap(EditorV2Adapter.uint32Field(selection, "anchorScalar")),
+                try XCTUnwrap(EditorV2Adapter.uint32Field(selection, "headScalar"))
+            )
         }
 
         func presentedCell(_ index: Int) throws -> ViewerTablePresentedCell {
@@ -137,14 +142,19 @@ final class EditorTableInputTests: XCTestCase {
             return drawing.convert(CGPoint(x: x, y: cell.bounds.midY), to: view)
         }
 
-        func assertBodyEdgeDoesNotClaimAResize(cellIndex index: Int, physicalDelta: CGFloat,
-                                                  _ message: String) throws {
+        func assertBodyEdgeDoesNotClaimAResize(
+            cellIndex index: Int,
+            physicalDelta: CGFloat,
+            _ message: String
+        ) throws {
             let edge = try trailingEdgeHostPoint(cellIndex: index)
             let point = drawing.convert(edge, from: view)
             XCTAssertNil(drawing.hitResizeEdge(at: point), "\(message): not a resize handle")
             XCTAssertFalse(surface.beginResizeDrag(at: edge), "\(message): a drag must not start a resize")
-            XCTAssertTrue(drawing.canScrollTables(in: drawing.tableChain(at: point), by: physicalDelta),
-                          "\(message): the drag stays available to the table pan")
+            XCTAssertTrue(
+                drawing.canScrollTables(in: drawing.tableChain(at: point), by: physicalDelta),
+                "\(message): the drag stays available to the table pan"
+            )
         }
 
         func documentObject() throws -> NSDictionary {
@@ -168,8 +178,15 @@ final class EditorTableInputTests: XCTestCase {
         roomAwareness: ((String, String) -> FfiJsonResult)? = nil,
         _ body: (MountedTableFixture) throws -> Void
     ) throws {
-        try withMountedTable(document: document, configJSON: configJSON, theme: theme, size: size,
-                             cellSelection: (anchorIndex, headIndex), roomAwareness: roomAwareness, body)
+        try withMountedTable(
+            document: document,
+            configJSON: configJSON,
+            theme: theme,
+            size: size,
+            cellSelection: (anchorIndex, headIndex),
+            roomAwareness: roomAwareness,
+            body
+        )
     }
 
     func withMountedTable(
@@ -192,17 +209,26 @@ final class EditorTableInputTests: XCTestCase {
         let tableID = try adapter.editableTableID()
         let positions = try adapter.tableCellPositions()
         if let cellSelection {
-            try view.textView.selectTableCells(adapter: adapter,
-                                               anchor: positions[cellSelection.anchor], head: positions[cellSelection.head])
+            try view.textView.selectTableCells(
+                adapter: adapter,
+                anchor: positions[cellSelection.anchor],
+                head: positions[cellSelection.head]
+            )
         }
         view.layoutIfNeeded()
         let surface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
         let drawing = try XCTUnwrap(surface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
         let updates = UpdateSpy()
         view.textView.editorDelegate = updates
-        try body(MountedTableFixture(view: view, adapter: adapter, tableID: tableID,
-                                      positions: positions, surface: surface, drawing: drawing,
-                                      updates: updates))
+        try body(MountedTableFixture(
+            view: view,
+            adapter: adapter,
+            tableID: tableID,
+            positions: positions,
+            surface: surface,
+            drawing: drawing,
+            updates: updates
+        ))
     }
 
     func testMountedHeadDragPublishesExactCellSelectionWithoutDocumentMutation() throws {
@@ -246,21 +272,28 @@ final class EditorTableInputTests: XCTestCase {
 
     func testRoomHeadDragPublishesTheDraggedCellsAsPresence() throws {
         let log = PresenceLog()
-        try withMountedHandles(document: fourCellDocument, anchorIndex: 0, headIndex: 0,
-                               roomAwareness: { _, json in log.record(json) }) { fixture in
+        try withMountedHandles(
+            document: fourCellDocument,
+            anchorIndex: 0,
+            headIndex: 0,
+            roomAwareness: { _, json in log.record(json) },
+            { fixture in
             log.selections.removeAll()
             XCTAssertTrue(fixture.surface.beginHandleDrag(at: try fixture.hostPoint(for: .head)))
             fixture.surface.updateHandleDrag(at: try fixture.hostPoint(inCell: 3))
             fixture.surface.cancelHandleDrag()
 
             XCTAssertTrue(log.lastIsCells(fixture.positions[0], fixture.positions[3]), "\(log.selections)")
-        }
+        })
     }
 
     func testRoomNativeSelectionOnlyTableCommandPublishesCellPresence() throws {
         let log = PresenceLog()
-        try withMountedTable(document: fourCellDocument, cellSelection: nil,
-                             roomAwareness: { _, json in log.record(json) }) { fixture in
+        try withMountedTable(
+            document: fourCellDocument,
+            cellSelection: nil,
+            roomAwareness: { _, json in log.record(json) },
+            { fixture in
             XCTAssertNotNil(fixture.adapter.nativeOwnerId, "the mounted view owns native intents")
             let caret = try XCTUnwrap(fixture.adapter.scalarPosition(forDoc: fixture.positions[0] + 2))
             let revision = fixture.adapter.baseDocumentRevision
@@ -270,7 +303,7 @@ final class EditorTableInputTests: XCTestCase {
 
             XCTAssertEqual(fixture.adapter.baseDocumentRevision, revision)
             XCTAssertTrue(log.lastIsCells(fixture.positions[0], fixture.positions[1]), "\(log.selections)")
-        }
+        })
     }
 
     func testHandleDragReportsTheCellRectangleThroughTheSelectionDelegate() throws {
@@ -279,8 +312,11 @@ final class EditorTableInputTests: XCTestCase {
             fixture.surface.updateHandleDrag(at: try fixture.hostPoint(inCell: 3))
             fixture.surface.cancelHandleDrag()
 
-            XCTAssertEqual(fixture.updates.selections, [[fixture.positions[0], fixture.positions[3]]],
-                           "the delegate receives the new cell endpoints in document positions")
+            XCTAssertEqual(
+                fixture.updates.selections,
+                [[fixture.positions[0], fixture.positions[3]]],
+                "the delegate receives the new cell endpoints in document positions"
+            )
             let state = try XCTUnwrap(fixture.adapter.currentStateJSON())
             let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(state.utf8)) as? [String: Any])
             let selection = try XCTUnwrap(object["selection"] as? [String: Any])
@@ -299,16 +335,22 @@ final class EditorTableInputTests: XCTestCase {
             fixture.view.layoutIfNeeded()
 
             XCTAssertEqual(try fixture.presentedCell(0).surface.direction, .rightToLeft)
-            XCTAssertLessThanOrEqual(try fixture.presentedCell(1).bounds.maxX, try fixture.presentedCell(0).bounds.minX + 0.5,
-                                     "the host direction lays logical column 0 out on the right")
+            XCTAssertLessThanOrEqual(
+                try fixture.presentedCell(1).bounds.maxX,
+                try fixture.presentedCell(0).bounds.minX + 0.5,
+                "the host direction lays logical column 0 out on the right"
+            )
             let first = try fixture.presentedCell(0)
             XCTAssertEqual(fixture.drawing.hitResizeEdge(at: CGPoint(x: first.bounds.minX, y: first.bounds.midY))?.edge.column, 0)
 
             fixture.view.tableDirection = nil
             fixture.view.layoutIfNeeded()
 
-            XCTAssertLessThanOrEqual(try fixture.presentedCell(0).bounds.maxX, try fixture.presentedCell(1).bounds.minX + 0.5,
-                                     "clearing the host direction restores the platform direction")
+            XCTAssertLessThanOrEqual(
+                try fixture.presentedCell(0).bounds.maxX,
+                try fixture.presentedCell(1).bounds.minX + 0.5,
+                "clearing the host direction restores the platform direction"
+            )
         }
         let config = rightToLeftTableConfig
         let declaredLTR = fixedWidthFourCellDocument.replacingOccurrences(
@@ -318,8 +360,11 @@ final class EditorTableInputTests: XCTestCase {
             fixture.view.tableDirection = .rightToLeft
             fixture.view.layoutIfNeeded()
 
-            XCTAssertEqual(try fixture.presentedCell(0).surface.direction, .leftToRight,
-                           "a declared table direction outranks the host direction")
+            XCTAssertEqual(
+                try fixture.presentedCell(0).surface.direction,
+                .leftToRight,
+                "a declared table direction outranks the host direction"
+            )
         }
     }
 
@@ -344,8 +389,10 @@ final class EditorTableInputTests: XCTestCase {
             let selection = try fixture.selection()
             XCTAssertEqual(selection.0, fixture.positions[3])
             XCTAssertEqual(selection.1, fixture.positions[2])
-            XCTAssertEqual(fixture.drawing.selectionHandles().first { $0.role == .anchor }?.sourcePosition,
-                           fixture.positions[3])
+            XCTAssertEqual(
+                fixture.drawing.selectionHandles().first { $0.role == .anchor }?.sourcePosition,
+                fixture.positions[3]
+            )
             fixture.surface.cancelHandleDrag()
         }
     }
@@ -367,9 +414,11 @@ final class EditorTableInputTests: XCTestCase {
         try withMountedHandles(document: fourCellDocument, anchorIndex: 0, headIndex: 0) { fixture in
             XCTAssertTrue(fixture.surface.beginHandleDrag(at: try fixture.hostPoint(for: .head)))
             let request = fixture.adapter.callWithEnvelope([
-                "selection": ["type": "cell",
-                              "anchorCell": ["kind": "document", "offset": Int(fixture.positions[1])],
-                              "headCell": ["kind": "document", "offset": Int(fixture.positions[1])]]
+                "selection": [
+                    "type": "cell",
+                    "anchorCell": ["kind": "document", "offset": Int(fixture.positions[1])],
+                    "headCell": ["kind": "document", "offset": Int(fixture.positions[1])]
+                ]
             ]) { editorV2SetSelection(editorId: fixture.adapter.editorId, requestJson: $0) }
             XCTAssertNil(request.error)
             XCTAssertTrue(fixture.view.textView.applyUpdateJSON(
@@ -384,8 +433,10 @@ final class EditorTableInputTests: XCTestCase {
                 try XCTUnwrap(fixture.adapter.setContentJson(fourCellDocument))
             ))
             fixture.surface.updateHandleDrag(at: stalePoint)
-            XCTAssertEqual(fixture.adapter.cachedAtomicRenderDocumentRevision,
-                           fixture.adapter.baseDocumentRevision)
+            XCTAssertEqual(
+                fixture.adapter.cachedAtomicRenderDocumentRevision,
+                fixture.adapter.baseDocumentRevision
+            )
             XCTAssertNil(fixture.drawing.selectedTableCellEndpoints)
         }
     }
@@ -408,8 +459,10 @@ final class EditorTableInputTests: XCTestCase {
             let reboundID = makeV2Editor(configJson: tableConfig)
             defer { destroyV2Editor(id: reboundID) }
             let reboundAdapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: reboundID))
-            fixture.view.bindEditor(id: reboundID,
-                                    initialUpdateJSON: try XCTUnwrap(reboundAdapter.initialUpdateJSON()))
+            fixture.view.bindEditor(
+                id: reboundID,
+                initialUpdateJSON: try XCTUnwrap(reboundAdapter.initialUpdateJSON())
+            )
             fixture.surface.updateHandleDrag(at: CGPoint(x: 300, y: 200))
             XCTAssertEqual(try fixture.engineSelection().0, oldSelection.0)
             XCTAssertEqual(try fixture.engineSelection().1, oldSelection.1)
@@ -423,8 +476,10 @@ final class EditorTableInputTests: XCTestCase {
             let offscreenHead = try XCTUnwrap(fixture.drawing.mountedTablePresentation()?.cells.first {
                 $0.surface.identity == fixture.tableID && $0.sourceIndex == 1
             })
-            XCTAssertNil(fixture.drawing.hitSelectionHandle(at: CGPoint(x: offscreenHead.bounds.maxX - 8,
-                                                                          y: offscreenHead.bounds.maxY - 8)))
+            XCTAssertNil(fixture.drawing.hitSelectionHandle(at: CGPoint(
+                x: offscreenHead.bounds.maxX - 8,
+                y: offscreenHead.bounds.maxY - 8
+            )))
             fixture.drawing.setTableLogicalOffset(350, sourceIdentity: fixture.tableID)
             XCTAssertTrue(fixture.drawing.selectionHandles().isEmpty)
             let table = try XCTUnwrap(fixture.drawing.mountedTablePresentation()?.tables.first {
@@ -455,24 +510,38 @@ final class EditorTableInputTests: XCTestCase {
         let theme = EditorTheme(dictionary: ["table": [
             "minColumnWidth": 24, "cellPadding": 0, "borderWidth": 1
         ]])
-        try withMountedHandles(document: document, theme: theme,
-                               size: CGSize(width: 40, height: 100), anchorIndex: 0, headIndex: 0) { fixture in
+        try withMountedHandles(
+            document: document,
+            theme: theme,
+            size: CGSize(width: 40, height: 100),
+            anchorIndex: 0,
+            headIndex: 0
+        ) { fixture in
             let anchor = try XCTUnwrap(fixture.drawing.selectionHandles().first { $0.role == .anchor })
             let head = try XCTUnwrap(fixture.drawing.selectionHandles().first { $0.role == .head })
-            let midpoint = CGPoint(x: (anchor.center.x + head.center.x) / 2,
-                                   y: (anchor.center.y + head.center.y) / 2)
-            XCTAssertLessThan(hypot(head.center.x - anchor.center.x,
-                                    head.center.y - anchor.center.y), 44)
+            let midpoint = CGPoint(
+                x: (anchor.center.x + head.center.x) / 2,
+                y: (anchor.center.y + head.center.y) / 2
+            )
+            XCTAssertLessThan(hypot(
+                head.center.x - anchor.center.x,
+                head.center.y - anchor.center.y
+            ), 44)
             XCTAssertEqual(fixture.drawing.hitSelectionHandle(at: midpoint)?.role, .anchor)
-            let towardHead = CGPoint(x: (midpoint.x + head.center.x) / 2,
-                                     y: (midpoint.y + head.center.y) / 2)
+            let towardHead = CGPoint(
+                x: (midpoint.x + head.center.x) / 2,
+                y: (midpoint.y + head.center.y) / 2
+            )
             XCTAssertEqual(fixture.drawing.hitSelectionHandle(at: towardHead)?.role, .head)
         }
     }
 
     func testOffscreenRealRowsDoNotCreateViewportEdgeHandles() throws {
-        try withMountedHandles(document: tallTableDocument(rowCount: 25),
-                               anchorIndex: 0, headIndex: 24) { fixture in
+        try withMountedHandles(
+            document: tallTableDocument(rowCount: 25),
+            anchorIndex: 0,
+            headIndex: 24
+        ) { fixture in
             XCTAssertEqual(fixture.drawing.selectionHandles().map(\.role), [.anchor])
             XCTAssertFalse(fixture.drawing.mountedTablePresentation()?.cells.contains {
                 $0.sourceIndex == 24
@@ -482,8 +551,11 @@ final class EditorTableInputTests: XCTestCase {
             fixture.surface.updateHandleDrag(at: fixture.drawing.convert(
                 CGPoint(x: last.bounds.midX, y: last.bounds.midY), to: fixture.view
             ))
-            XCTAssertEqual(try fixture.engineSelection().0, fixture.positions[0],
-                           "offscreen real row must not be a drag target")
+            XCTAssertEqual(
+                try fixture.engineSelection().0,
+                fixture.positions[0],
+                "offscreen real row must not be a drag target"
+            )
             fixture.surface.cancelHandleDrag()
             fixture.view.textView.setContentOffset(
                 CGPoint(x: 0, y: fixture.view.textView.contentSize.height - fixture.view.textView.bounds.height),
@@ -543,8 +615,10 @@ final class EditorTableInputTests: XCTestCase {
                 $0.surface.identity != fixture.tableID && $0.surface.sourceTable != nil
             })
             let point = CGPoint(x: nested.bounds.midX, y: nested.bounds.midY)
-            XCTAssertEqual(fixture.drawing.selectedTableCell(at: point, tableID: fixture.tableID),
-                           fixture.positions[0])
+            XCTAssertEqual(
+                fixture.drawing.selectedTableCell(at: point, tableID: fixture.tableID),
+                fixture.positions[0]
+            )
             XCTAssertTrue(fixture.surface.beginHandleDrag(at: try fixture.hostPoint(for: .head)))
             fixture.surface.updateHandleDrag(at: fixture.drawing.convert(point, to: fixture.view))
             XCTAssertEqual(try fixture.selection().1, fixture.positions[0])
@@ -581,8 +655,11 @@ final class EditorTableInputTests: XCTestCase {
             let offset = fixture.drawing.tableLogicalOffset(for: fixture.tableID)
             XCTAssertGreaterThan(offset, 150)
             XCTAssertLessThan(offset, table.surface.bounds.width - table.surface.hostViewportWidth)
-            XCTAssertEqual(try fixture.selection().0, fixture.positions[1],
-                           "held pointer must re-hit after each frame's table scroll")
+            XCTAssertEqual(
+                try fixture.selection().0,
+                fixture.positions[1],
+                "held pointer must re-hit after each frame's table scroll"
+            )
             XCTAssertEqual(try XCTUnwrap(fixture.adapter.documentJson()), initialDocument)
             fixture.surface.cancelHandleDrag()
         }
@@ -596,8 +673,10 @@ final class EditorTableInputTests: XCTestCase {
             let head = try fixture.hostPoint(for: .head)
             XCTAssertTrue(fixture.surface.beginHandleDrag(at: head))
             let viewport = try XCTUnwrap(fixture.drawing.tableSelectionViewport())
-            let edgePoint = CGPoint(x: fixture.drawing.convert(head, from: fixture.view).x,
-                                    y: viewport.maxY - 6)
+            let edgePoint = CGPoint(
+                x: fixture.drawing.convert(head, from: fixture.view).x,
+                y: viewport.maxY - 6
+            )
             let window = try XCTUnwrap(fixture.view.window)
             let edgeInWindow = fixture.drawing.convert(edgePoint, to: window)
             fixture.surface.updateHandleDrag(at: fixture.drawing.convert(edgePoint, to: fixture.view))
@@ -608,8 +687,11 @@ final class EditorTableInputTests: XCTestCase {
             let maximum = scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom
             XCTAssertGreaterThan(scroll.contentOffset.y, 0)
             XCTAssertLessThan(scroll.contentOffset.y, maximum)
-            XCTAssertNotEqual(afterFrame, beforeFrame,
-                              "stationary pointer must select a newly reached real row")
+            XCTAssertNotEqual(
+                afterFrame,
+                beforeFrame,
+                "stationary pointer must select a newly reached real row"
+            )
             let pointedCell = fixture.drawing.selectedTableCell(
                 at: fixture.drawing.convert(edgeInWindow, from: window), tableID: fixture.tableID
             )
@@ -626,8 +708,11 @@ final class EditorTableInputTests: XCTestCase {
     }
 
     func testAutoGrowHostRetargetsStationaryWindowPointerThroughScrollAncestor() throws {
-        try withMountedHandles(document: tallTableDocument(rowCount: 25),
-                               anchorIndex: 0, headIndex: 0) { fixture in
+        try withMountedHandles(
+            document: tallTableDocument(rowCount: 25),
+            anchorIndex: 0,
+            headIndex: 0
+        ) { fixture in
             let window = try XCTUnwrap(fixture.view.window)
             let scroll = UIScrollView(frame: window.bounds)
             let contentHeight: CGFloat = 1_400
@@ -642,16 +727,20 @@ final class EditorTableInputTests: XCTestCase {
             XCTAssertFalse(fixture.view.textView.isScrollEnabled)
             XCTAssertTrue(fixture.surface.beginHandleDrag(at: head))
             let visible = try XCTUnwrap(fixture.drawing.tableSelectionViewport())
-            let edgeInDrawing = CGPoint(x: fixture.drawing.convert(head, from: fixture.view).x,
-                                        y: visible.maxY - 6)
+            let edgeInDrawing = CGPoint(
+                x: fixture.drawing.convert(head, from: fixture.view).x,
+                y: visible.maxY - 6
+            )
             let edgeInWindow = fixture.drawing.convert(edgeInDrawing, to: window)
             fixture.surface.updateHandleDrag(at: fixture.view.convert(edgeInWindow, from: window))
             let before = try fixture.engineSelection().1
             RunLoop.main.run(until: Date().addingTimeInterval(0.3))
             let after = try fixture.engineSelection().1
             XCTAssertGreaterThan(scroll.contentOffset.y, 0)
-            XCTAssertLessThan(scroll.contentOffset.y,
-                              scroll.contentSize.height - scroll.bounds.height)
+            XCTAssertLessThan(
+                scroll.contentOffset.y,
+                scroll.contentSize.height - scroll.bounds.height
+            )
             XCTAssertNotEqual(after, before)
             XCTAssertEqual(after, fixture.drawing.selectedTableCell(
                 at: fixture.drawing.convert(edgeInWindow, from: window), tableID: fixture.tableID
@@ -672,8 +761,10 @@ final class EditorTableInputTests: XCTestCase {
             XCTAssertEqual(fixture.drawing.activeTableResizeEdge, TableResizeEdge(tableID: fixture.tableID, column: 0))
             let dragged = CGPoint(x: edge.x + 60, y: edge.y)
             fixture.surface.updateResizeDrag(at: dragged)
-            XCTAssertEqual(fixture.surface.resizePreview,
-                           TableResizePreview(edge: TableResizeEdge(tableID: fixture.tableID, column: 0), width: 180))
+            XCTAssertEqual(
+                fixture.surface.resizePreview,
+                TableResizePreview(edge: TableResizeEdge(tableID: fixture.tableID, column: 0), width: 180)
+            )
             XCTAssertEqual(try fixture.presentedCell(0).bounds.width, 180, accuracy: 0.5, "preview must remeasure the dragged column")
             XCTAssertEqual(try fixture.presentedCell(2).bounds.width, 180, accuracy: 0.5, "every cell covering the column follows the preview")
             XCTAssertEqual(try fixture.presentedCell(1).bounds.width, 120, accuracy: 0.5)
@@ -737,8 +828,10 @@ final class EditorTableInputTests: XCTestCase {
             let second = try fixture.presentedCell(1)
             XCTAssertLessThanOrEqual(second.bounds.maxX, first.bounds.minX, "logical column 0 renders at the right in RTL")
             XCTAssertEqual(fixture.drawing.hitResizeEdge(at: CGPoint(x: first.bounds.minX, y: first.bounds.midY))?.edge.column, 0)
-            XCTAssertNil(fixture.drawing.hitResizeEdge(at: CGPoint(x: first.bounds.maxX - 1, y: first.bounds.midY)),
-                         "the table's physical right border is not a trailing edge in RTL")
+            XCTAssertNil(
+                fixture.drawing.hitResizeEdge(at: CGPoint(x: first.bounds.maxX - 1, y: first.bounds.midY)),
+                "the table's physical right border is not a trailing edge in RTL"
+            )
             let edge = try fixture.trailingEdgeHostPoint(cellIndex: 0)
             XCTAssertTrue(fixture.surface.beginResizeDrag(at: edge))
             let dragged = CGPoint(x: edge.x - 40, y: edge.y)
@@ -822,8 +915,10 @@ final class EditorTableInputTests: XCTestCase {
             XCTAssertFalse(input === fixture.view.textView)
             let inputFrame = fixture.surface.convert(input.bounds, from: input)
             let insideInput = CGPoint(x: inputFrame.maxX - 2, y: inputFrame.midY)
-            XCTAssertFalse(fixture.surface.beginResizeDrag(at: fixture.surface.convert(insideInput, to: fixture.view)),
-                           "touches inside the active cell input stay text gestures")
+            XCTAssertFalse(
+                fixture.surface.beginResizeDrag(at: fixture.surface.convert(insideInput, to: fixture.view)),
+                "touches inside the active cell input stay text gestures"
+            )
             let border = try fixture.trailingEdgeHostPoint(cellIndex: 0)
             XCTAssertTrue(fixture.surface.beginResizeDrag(at: border))
             let dragged = CGPoint(x: border.x + 50, y: border.y)
@@ -842,14 +937,18 @@ final class EditorTableInputTests: XCTestCase {
         try withMountedHandles(document: tallTableDocument(rowCount: 4), anchorIndex: 0, headIndex: 3) { fixture in
             let head = try XCTUnwrap(fixture.drawing.selectionHandles().first { $0.role == .head })
             let cornerEdge = CGPoint(x: try fixture.presentedCell(3).bounds.maxX, y: head.center.y)
-            XCTAssertNotNil(fixture.drawing.hitResizeEdge(at: cornerEdge),
-                            "the handle sits on a selected column's body-row resize edge")
+            XCTAssertNotNil(
+                fixture.drawing.hitResizeEdge(at: cornerEdge),
+                "the handle sits on a selected column's body-row resize edge"
+            )
             XCTAssertFalse(fixture.surface.beginResizeDrag(at: fixture.drawing.convert(cornerEdge, to: fixture.view)))
             XCTAssertTrue(fixture.surface.beginHandleDrag(at: fixture.drawing.convert(cornerEdge, to: fixture.view)))
             fixture.surface.cancelHandleDrag()
             XCTAssertTrue(fixture.surface.beginResizeDrag(at: try fixture.trailingEdgeHostPoint(cellIndex: 1)))
-            XCTAssertFalse(fixture.surface.beginHandleDrag(at: try fixture.trailingEdgeHostPoint(cellIndex: 1)),
-                           "a held resize owns the touch")
+            XCTAssertFalse(
+                fixture.surface.beginHandleDrag(at: try fixture.trailingEdgeHostPoint(cellIndex: 1)),
+                "a held resize owns the touch"
+            )
             fixture.surface.cancelResizeDrag()
         }
     }
@@ -868,8 +967,12 @@ final class EditorTableInputTests: XCTestCase {
             XCTAssertEqual(fixture.drawing.tableLogicalOffset(for: fixture.tableID), 300, accuracy: 1)
             fixture.surface.endResizeDrag(at: dragged)
             XCTAssertEqual(try fixture.columnWidths(row: 0), [[550], [500]])
-            XCTAssertEqual(fixture.drawing.tableLogicalOffset(for: fixture.tableID), 300, accuracy: 1,
-                           "the logical scroll anchor survives the width change")
+            XCTAssertEqual(
+                fixture.drawing.tableLogicalOffset(for: fixture.tableID),
+                300,
+                accuracy: 1,
+                "the logical scroll anchor survives the width change"
+            )
         }
     }
 
@@ -889,8 +992,11 @@ final class EditorTableInputTests: XCTestCase {
             RunLoop.main.run(until: Date().addingTimeInterval(0.5))
             let scrolled = fixture.drawing.tableLogicalOffset(for: fixture.tableID) - 300
             XCTAssertGreaterThan(scrolled, 20, "a held pointer at the viewport edge scrolls the table")
-            XCTAssertEqual(fixture.surface.resizePreview?.width, (500 + fingerDelta + scrolled).rounded(),
-                           "scrolled distance keeps growing the column under a stationary finger")
+            XCTAssertEqual(
+                fixture.surface.resizePreview?.width,
+                (500 + fingerDelta + scrolled).rounded(),
+                "scrolled distance keeps growing the column under a stationary finger"
+            )
             fixture.surface.cancelResizeDrag()
             XCTAssertNil(fixture.surface.resizePreview)
             XCTAssertEqual(try fixture.presentedCell(0).bounds.width, 500, accuracy: 0.5, "cancel restores authoritative geometry")
@@ -939,8 +1045,12 @@ final class EditorTableInputTests: XCTestCase {
             RunLoop.main.run(until: Date().addingTimeInterval(0.2))
             XCTAssertNil(fixture.surface.resizePreview, "the frame step must drop a drag whose owner is gone")
             XCTAssertNil(fixture.drawing.activeTableResizeEdge)
-            XCTAssertEqual(try fixture.presentedCell(0).bounds.width, 500, accuracy: 0.5,
-                           "a frame-step cancel must not leave previewed widths on screen")
+            XCTAssertEqual(
+                try fixture.presentedCell(0).bounds.width,
+                500,
+                accuracy: 0.5,
+                "a frame-step cancel must not leave previewed widths on screen"
+            )
             let stopped = fixture.drawing.tableLogicalOffset(for: fixture.tableID)
             RunLoop.main.run(until: Date().addingTimeInterval(0.1))
             XCTAssertEqual(fixture.drawing.tableLogicalOffset(for: fixture.tableID), stopped, accuracy: 0.5)
@@ -967,18 +1077,26 @@ final class EditorTableInputTests: XCTestCase {
             let wide = try fixture.presentedCell(1)
             let later = try fixture.presentedCell(2)
             XCTAssertFalse(wide.surface.syntheticRegions.isEmpty, "the irregular fixture must project a synthetic gap")
-            XCTAssertNil(fixture.drawing.hitResizeEdge(at: CGPoint(x: wide.bounds.maxX, y: later.bounds.midY)),
-                         "the gap's outer border is not a resize edge")
+            XCTAssertNil(
+                fixture.drawing.hitResizeEdge(at: CGPoint(x: wide.bounds.maxX, y: later.bounds.midY)),
+                "the gap's outer border is not a resize edge"
+            )
             XCTAssertGreaterThan(wide.bounds.maxX, later.bounds.maxX, "the gap sits after the last real cell of row 1")
-            XCTAssertNil(fixture.drawing.hitResizeEdge(at: CGPoint(x: (later.bounds.maxX + wide.bounds.maxX) / 2,
-                                                                   y: later.bounds.midY)),
-                         "the gap interior is not a resize edge")
+            XCTAssertNil(
+                fixture.drawing.hitResizeEdge(at: CGPoint(
+                    x: (later.bounds.maxX + wide.bounds.maxX) / 2,
+                    y: later.bounds.midY
+                )),
+                "the gap interior is not a resize edge"
+            )
             XCTAssertEqual(fixture.drawing.hitResizeEdge(at: CGPoint(x: wide.bounds.maxX, y: wide.bounds.midY))?.edge.column, 2)
             XCTAssertEqual(fixture.drawing.hitResizeEdge(at: CGPoint(x: later.bounds.maxX, y: later.bounds.midY))?.edge.column, 1)
             let tall = try fixture.presentedCell(0)
             XCTAssertEqual(fixture.drawing.hitResizeEdge(at: CGPoint(x: tall.bounds.maxX, y: wide.bounds.midY))?.edge.column, 0)
-            XCTAssertNil(fixture.drawing.hitResizeEdge(at: CGPoint(x: tall.bounds.maxX, y: later.bounds.midY)),
-                         "a first-row cell spanning into an unselected body row has no handle below the first row")
+            XCTAssertNil(
+                fixture.drawing.hitResizeEdge(at: CGPoint(x: tall.bounds.maxX, y: later.bounds.midY)),
+                "a first-row cell spanning into an unselected body row has no handle below the first row"
+            )
         }
     }
 
@@ -987,25 +1105,41 @@ final class EditorTableInputTests: XCTestCase {
             let label = headerRow ? "header row" : "first row of a table without a header row"
             try withMountedTable(document: narrowColumnGridDocument(headerRow: headerRow), cellSelection: nil) { fixture in
                 let handle = try fixture.trailingEdgeHostPoint(cellIndex: 0)
-                XCTAssertEqual(fixture.drawing.hitResizeEdge(at: fixture.drawing.convert(handle, from: fixture.view))?.edge,
-                               TableResizeEdge(tableID: fixture.tableID, column: 0), "the \(label) edge is a handle")
+                XCTAssertEqual(
+                    fixture.drawing.hitResizeEdge(at: fixture.drawing.convert(handle, from: fixture.view))?.edge,
+                    TableResizeEdge(tableID: fixture.tableID, column: 0),
+                    "the \(label) edge is a handle"
+                )
                 XCTAssertTrue(fixture.surface.beginResizeDrag(at: handle))
                 fixture.surface.endResizeDrag(at: CGPoint(x: handle.x + 40, y: handle.y))
-                XCTAssertEqual(try fixture.columnWidths(row: 0).first, [Self.narrowColumnWidth + 40],
-                               "the \(label) edge resizes")
+                XCTAssertEqual(
+                    try fixture.columnWidths(row: 0).first,
+                    [Self.narrowColumnWidth + 40],
+                    "the \(label) edge resizes"
+                )
                 try fixture.assertBodyEdgeDoesNotClaimAResize(
                     cellIndex: Self.gridSize, physicalDelta: -Self.bodySwipeDistance,
-                    "a body-row edge below the \(label)")
+                    "a body-row edge below the \(label)"
+                )
             }
         }
     }
 
-    private func tableDocument(rightToLeft: Bool, rows: [[(text: String, colspan: Int, rowspan: Int)]]) throws -> String {
+    private struct CellSpec {
+        let text: String
+        let colspan: Int
+        let rowspan: Int
+    }
+
+    private func tableDocument(rightToLeft: Bool, rows: [[CellSpec]]) throws -> String {
         let content: [[String: Any]] = rows.map { row in
             ["type": "table_row", "content": row.map { cell in [
                 "type": "table_cell",
-                "attrs": ["colspan": cell.colspan, "rowspan": cell.rowspan,
-                          "colwidth": Array(repeating: Self.narrowColumnWidth, count: cell.colspan)],
+                "attrs": [
+                    "colspan": cell.colspan,
+                    "rowspan": cell.rowspan,
+                    "colwidth": Array(repeating: Self.narrowColumnWidth, count: cell.colspan)
+                ],
                 "content": [["type": "paragraph", "content": [["type": "text", "text": cell.text]]]]
             ] }]
         }
@@ -1017,100 +1151,139 @@ final class EditorTableInputTests: XCTestCase {
 
     private func mergedTitleRowDocument(rightToLeft: Bool) throws -> String {
         try tableDocument(rightToLeft: rightToLeft, rows: [
-            [("Release plan", 2, 1), ("Status", 1, 1)],
-            [("Core editor", 1, 2), ("iOS", 1, 1), ("Ready", 1, 1)],
-            [("Android", 1, 1), ("In review", 1, 1)],
-            [("a", 1, 1), ("b", 1, 1), ("c", 1, 1)]
+            [CellSpec(text: "Release plan", colspan: 2, rowspan: 1), CellSpec(text: "Status", colspan: 1, rowspan: 1)],
+            [CellSpec(text: "Core editor", colspan: 1, rowspan: 2), CellSpec(text: "iOS", colspan: 1, rowspan: 1), CellSpec(text: "Ready", colspan: 1, rowspan: 1)],
+            [CellSpec(text: "Android", colspan: 1, rowspan: 1), CellSpec(text: "In review", colspan: 1, rowspan: 1)],
+            [CellSpec(text: "a", colspan: 1, rowspan: 1), CellSpec(text: "b", colspan: 1, rowspan: 1), CellSpec(text: "c", colspan: 1, rowspan: 1)]
         ])
     }
 
     func testAColumnEdgeHiddenByAMergedFirstRowTakesItsHandleFromTheFirstRowWhereItExists() throws {
         for rightToLeft in [false, true] {
             let label = rightToLeft ? "RTL" : "LTR"
-            try withMountedTable(document: mergedTitleRowDocument(rightToLeft: rightToLeft),
-                                 configJSON: rightToLeft ? rightToLeftTableConfig : nil, cellSelection: nil) { fixture in
+            try withMountedTable(
+                document: mergedTitleRowDocument(rightToLeft: rightToLeft),
+                configJSON: rightToLeft ? rightToLeftTableConfig : nil,
+                cellSelection: nil
+            ) { fixture in
                 let edgeX = fixture.drawing.convert(
-                    try fixture.trailingEdgeHostPoint(cellIndex: Self.mergedCoreEditor), from: fixture.view).x
+                    try fixture.trailingEdgeHostPoint(cellIndex: Self.mergedCoreEditor), from: fixture.view
+                ).x
                 func hit(_ index: Int) throws -> TableResizeEdge? {
                     fixture.drawing.hitResizeEdge(at: CGPoint(x: edgeX, y: try fixture.presentedCell(index).bounds.midY))?.edge
                 }
                 XCTAssertNil(try hit(Self.mergedReleasePlan), "\(label): the merged title cell has no edge where column 0 ends")
-                XCTAssertEqual(try hit(Self.mergedRowOneNeighbour), TableResizeEdge(tableID: fixture.tableID, column: 0),
-                               "\(label): column 0's edge first exists in row 1, so row 1 carries its handle")
+                XCTAssertEqual(
+                    try hit(Self.mergedRowOneNeighbour),
+                    TableResizeEdge(tableID: fixture.tableID, column: 0),
+                    "\(label): column 0's edge first exists in row 1, so row 1 carries its handle"
+                )
                 XCTAssertNil(try hit(Self.mergedRowTwoNeighbour), "\(label): the spanning cell below row 1 is not a handle")
                 XCTAssertNil(try hit(Self.mergedLastRowFirstCell), "\(label): a later body row is not a handle")
                 let titleEdge = fixture.drawing.convert(
-                    try fixture.trailingEdgeHostPoint(cellIndex: Self.mergedReleasePlan), from: fixture.view)
-                XCTAssertEqual(fixture.drawing.hitResizeEdge(at: titleEdge)?.edge.column, 1,
-                               "\(label): the merged title's own trailing edge keeps its first-row handle")
+                    try fixture.trailingEdgeHostPoint(cellIndex: Self.mergedReleasePlan), from: fixture.view
+                )
+                XCTAssertEqual(
+                    fixture.drawing.hitResizeEdge(at: titleEdge)?.edge.column,
+                    1,
+                    "\(label): the merged title's own trailing edge keeps its first-row handle"
+                )
                 let start = fixture.drawing.convert(
-                    CGPoint(x: edgeX, y: try fixture.presentedCell(Self.mergedRowOneNeighbour).bounds.midY), to: fixture.view)
+                    CGPoint(x: edgeX, y: try fixture.presentedCell(Self.mergedRowOneNeighbour).bounds.midY), to: fixture.view
+                )
                 XCTAssertTrue(fixture.surface.beginResizeDrag(at: start))
                 fixture.surface.endResizeDrag(at: CGPoint(x: start.x + (rightToLeft ? -40 : 40), y: start.y))
-                XCTAssertEqual(try fixture.columnWidths(row: 1).first, [Self.narrowColumnWidth + 40],
-                               "\(label): row 1 resizes column 0")
+                XCTAssertEqual(
+                    try fixture.columnWidths(row: 1).first,
+                    [Self.narrowColumnWidth + 40],
+                    "\(label): row 1 resizes column 0"
+                )
             }
         }
     }
 
     func testAMergedCellThatGrowsTheSelectionToTheFirstRowIsNotAColumnSelection() throws {
         let document = try tableDocument(rightToLeft: false, rows: [
-            [("a", 1, 1), ("b", 1, 2)],
-            [("c", 1, 1)],
-            [("d", 1, 1), ("e", 1, 1)]
+            [CellSpec(text: "a", colspan: 1, rowspan: 1), CellSpec(text: "b", colspan: 1, rowspan: 2)],
+            [CellSpec(text: "c", colspan: 1, rowspan: 1)],
+            [CellSpec(text: "d", colspan: 1, rowspan: 1), CellSpec(text: "e", colspan: 1, rowspan: 1)]
         ])
         try withMountedTable(document: document, cellSelection: (4, 2)) { fixture in
-            XCTAssertTrue(fixture.drawing.selectedTableCellSourceIndices[fixture.tableID]?
-                .contains(0) == true,
-                          "the merged cell must grow the drawn rectangle to the first row")
+            XCTAssertTrue(
+                fixture.drawing.selectedTableCellSourceIndices[fixture.tableID]?
+                    .contains(0) == true,
+                "the merged cell must grow the drawn rectangle to the first row"
+            )
             for index in [2, 3] {
                 let edge = fixture.drawing.convert(try fixture.trailingEdgeHostPoint(cellIndex: index), from: fixture.view)
-                XCTAssertNil(fixture.drawing.hitResizeEdge(at: edge),
-                             "body cell \(index): endpoints below the first row do not make a column selection")
+                XCTAssertNil(
+                    fixture.drawing.hitResizeEdge(at: edge),
+                    "body cell \(index): endpoints below the first row do not make a column selection"
+                )
             }
         }
     }
 
     func testAWholeSelectedColumnCarriesResizeHandlesInEveryRow() throws {
         let middleColumn = [1, Self.gridSize + 1, 2 * Self.gridSize + 1]
-        try withMountedTable(document: narrowColumnGridDocument(headerRow: true),
-                             cellSelection: (middleColumn[0], middleColumn[2])) { fixture in
+        try withMountedTable(
+            document: narrowColumnGridDocument(headerRow: true),
+            cellSelection: (middleColumn[0], middleColumn[2])
+        ) { fixture in
             for index in middleColumn.dropFirst() {
                 let edge = fixture.drawing.convert(try fixture.trailingEdgeHostPoint(cellIndex: index), from: fixture.view)
-                XCTAssertEqual(fixture.drawing.hitResizeEdge(at: edge)?.edge,
-                               TableResizeEdge(tableID: fixture.tableID, column: 1),
-                               "the selected column's edge in body cell \(index) is a handle")
+                XCTAssertEqual(
+                    fixture.drawing.hitResizeEdge(at: edge)?.edge,
+                    TableResizeEdge(tableID: fixture.tableID, column: 1),
+                    "the selected column's edge in body cell \(index) is a handle"
+                )
             }
             try fixture.assertBodyEdgeDoesNotClaimAResize(
-                cellIndex: Self.gridSize, physicalDelta: -Self.bodySwipeDistance, "an unselected column's body edge")
+                cellIndex: Self.gridSize, physicalDelta: -Self.bodySwipeDistance, "an unselected column's body edge"
+            )
             let edge = try fixture.trailingEdgeHostPoint(cellIndex: middleColumn[1])
             XCTAssertTrue(fixture.surface.beginResizeDrag(at: edge))
             fixture.surface.endResizeDrag(at: CGPoint(x: edge.x + 40, y: edge.y))
-            XCTAssertEqual(try fixture.columnWidths(row: Self.gridSize - 1),
-                           [[Self.narrowColumnWidth], [Self.narrowColumnWidth + 40], [Self.narrowColumnWidth]],
-                           "a selected column resizes from a body row")
+            XCTAssertEqual(
+                try fixture.columnWidths(row: Self.gridSize - 1),
+                [[Self.narrowColumnWidth], [Self.narrowColumnWidth + 40], [Self.narrowColumnWidth]],
+                "a selected column resizes from a body row"
+            )
         }
-        try withMountedTable(document: narrowColumnGridDocument(headerRow: true),
-                             cellSelection: (middleColumn[1], middleColumn[2])) { fixture in
+        try withMountedTable(
+            document: narrowColumnGridDocument(headerRow: true),
+            cellSelection: (middleColumn[1], middleColumn[2])
+        ) { fixture in
             let edge = fixture.drawing.convert(try fixture.trailingEdgeHostPoint(cellIndex: middleColumn[1]), from: fixture.view)
-            XCTAssertNil(fixture.drawing.hitResizeEdge(at: edge),
-                         "a selection that does not reach the first row is not a column selection")
+            XCTAssertNil(
+                fixture.drawing.hitResizeEdge(at: edge),
+                "a selection that does not reach the first row is not a column selection"
+            )
         }
     }
 
     func testRTLBodyRowsScrollWhileTheFirstRowKeepsItsLogicalTrailingHandles() throws {
-        try withMountedTable(document: narrowColumnGridDocument(headerRow: false, rightToLeft: true),
-                             configJSON: rightToLeftTableConfig, cellSelection: nil) { fixture in
-            XCTAssertLessThanOrEqual(try fixture.presentedCell(1).bounds.maxX, try fixture.presentedCell(0).bounds.minX + 0.5,
-                                     "the first logical column renders at the right in RTL")
+        try withMountedTable(
+            document: narrowColumnGridDocument(headerRow: false, rightToLeft: true),
+            configJSON: rightToLeftTableConfig,
+            cellSelection: nil
+        ) { fixture in
+            XCTAssertLessThanOrEqual(
+                try fixture.presentedCell(1).bounds.maxX,
+                try fixture.presentedCell(0).bounds.minX + 0.5,
+                "the first logical column renders at the right in RTL"
+            )
             let handle = try fixture.trailingEdgeHostPoint(cellIndex: 0)
-            XCTAssertEqual(fixture.drawing.hitResizeEdge(at: fixture.drawing.convert(handle, from: fixture.view))?.edge,
-                           TableResizeEdge(tableID: fixture.tableID, column: 0))
+            XCTAssertEqual(
+                fixture.drawing.hitResizeEdge(at: fixture.drawing.convert(handle, from: fixture.view))?.edge,
+                TableResizeEdge(tableID: fixture.tableID, column: 0)
+            )
             XCTAssertTrue(fixture.surface.beginResizeDrag(at: handle))
             fixture.surface.endResizeDrag(at: CGPoint(x: handle.x - 40, y: handle.y))
             XCTAssertEqual(try fixture.columnWidths(row: 0).first, [Self.narrowColumnWidth + 40])
             try fixture.assertBodyEdgeDoesNotClaimAResize(
-                cellIndex: Self.gridSize, physicalDelta: Self.bodySwipeDistance, "an RTL body-row edge")
+                cellIndex: Self.gridSize, physicalDelta: Self.bodySwipeDistance, "an RTL body-row edge"
+            )
         }
     }
 
@@ -1134,9 +1307,11 @@ final class EditorTableInputTests: XCTestCase {
         let tableID = try adapter.editableTableID()
         let positions = try adapter.tableCellPositions(tableID: tableID)
         let request = adapter.callWithEnvelope([
-            "selection": ["type": "cell",
-                          "anchorCell": ["kind": "document", "offset": Int(positions[0])],
-                          "headCell": ["kind": "document", "offset": Int(positions[0])]]
+            "selection": [
+                "type": "cell",
+                "anchorCell": ["kind": "document", "offset": Int(positions[0])],
+                "headCell": ["kind": "document", "offset": Int(positions[0])]
+            ]
         ]) { editorV2SetSelection(editorId: adapter.editorId, requestJson: $0) }
         XCTAssertNil(request.error)
         XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.refreshFromRustState(mirrorSelection: nil))))
@@ -1166,8 +1341,11 @@ final class EditorTableInputTests: XCTestCase {
             else { return false }
             return endpoints.anchor == positions[0] && endpoints.head == positions[3]
         }, object: nil)
-        XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 90), .completed,
-                       "real handle gesture did not change the authoritative cell endpoint")
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [changed], timeout: 90),
+            .completed,
+            "real handle gesture did not change the authoritative cell endpoint"
+        )
         XCTAssertEqual(adapter.baseDocumentRevision, beforeRevision)
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), beforeDocument)
         XCTAssertEqual(drawing.selectedTableCellEndpoints?.head, positions[3])
@@ -1182,8 +1360,12 @@ final class EditorTableInputTests: XCTestCase {
 
     func testLiveColumnResizeChangesFirstColumnWhileSecondCellIsSelected() throws {
         try LiveGestureProbe.requireOptIn()
-        try withMountedHandles(document: fixedWidthFourCellDocument, size: CGSize(width: 360, height: 400),
-                               anchorIndex: 3, headIndex: 3) { fixture in
+        try withMountedHandles(
+            document: fixedWidthFourCellDocument,
+            size: CGSize(width: 360, height: 400),
+            anchorIndex: 3,
+            headIndex: 3
+        ) { fixture in
             fixture.view.frame = CGRect(x: 0, y: 100, width: 360, height: 240)
             fixture.view.layoutIfNeeded()
             fixture.surface.updateGeometry(from: fixture.view.textView)
@@ -1204,8 +1386,11 @@ final class EditorTableInputTests: XCTestCase {
                 guard let json = fixture.adapter.documentJson() else { return false }
                 return json != before && json.contains(#""colwidth":[180]"#)
             }, object: nil)
-            XCTAssertEqual(XCTWaiter.wait(for: [resized], timeout: 90), .completed,
-                           "real drag on first logical column edge did not resize that column")
+            XCTAssertEqual(
+                XCTWaiter.wait(for: [resized], timeout: 90),
+                .completed,
+                "real drag on first logical column edge did not resize that column"
+            )
             let json = try XCTUnwrap(fixture.adapter.documentJson())
             let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
             let tableNode = try XCTUnwrap((root["content"] as? [[String: Any]])?.first)
@@ -1224,8 +1409,13 @@ final class EditorTableInputTests: XCTestCase {
     private static let liveScrollThreshold: CGFloat = 40
     private static let liveResizeDistance: CGFloat = 30
 
-    private func awaitLiveGesture(_ banner: String, from start: CGPoint, to end: CGPoint, in fixture: MountedTableFixture,
-                                  until done: @escaping () -> Bool) -> Bool {
+    private func awaitLiveGesture(
+        _ banner: String,
+        from start: CGPoint,
+        to end: CGPoint,
+        in fixture: MountedTableFixture,
+        until done: @escaping () -> Bool
+    ) -> Bool {
         let window = fixture.view.window
         let from = fixture.view.convert(start, to: window)
         let to = fixture.view.convert(end, to: window)
@@ -1236,8 +1426,11 @@ final class EditorTableInputTests: XCTestCase {
 
     private func withLiveProbeTable(_ body: (MountedTableFixture) throws -> Void) throws {
         try LiveGestureProbe.requireOptIn()
-        try withMountedTable(document: try narrowColumnGridDocument(headerRow: false),
-                             size: Self.liveProbeWindowSize, cellSelection: nil) { fixture in
+        try withMountedTable(
+            document: try narrowColumnGridDocument(headerRow: false),
+            size: Self.liveProbeWindowSize,
+            cellSelection: nil
+        ) { fixture in
             fixture.view.frame = Self.liveProbeHostFrame
             fixture.view.layoutIfNeeded()
             fixture.surface.updateGeometry(from: fixture.view.textView)
@@ -1258,12 +1451,18 @@ final class EditorTableInputTests: XCTestCase {
             let positions = [root.closestPosition(to: overCell), root.closestPosition(to: overCell, within: full)]
             for (index, position) in positions.enumerated() {
                 let resolved = try XCTUnwrap(position, "text positioning \(index) over a body cell")
-                XCTAssertEqual(root.offset(from: caret, to: resolved), 0,
-                               "a long-press or loupe over a table cell must not move the root caret (variant \(index))")
+                XCTAssertEqual(
+                    root.offset(from: caret, to: resolved),
+                    0,
+                    "a long-press or loupe over a table cell must not move the root caret (variant \(index))"
+                )
             }
             let overProse = try XCTUnwrap(root.closestPosition(to: root.caretRect(for: root.beginningOfDocument).origin))
-            XCTAssertEqual(root.offset(from: root.beginningOfDocument, to: overProse), 0,
-                           "positioning over prose is unchanged")
+            XCTAssertEqual(
+                root.offset(from: root.beginningOfDocument, to: overProse),
+                0,
+                "positioning over prose is unchanged"
+            )
         }
     }
 
@@ -1320,14 +1519,18 @@ final class EditorTableInputTests: XCTestCase {
                 let touch = ScriptedTouch(at: root.convert(point, from: fixture.view), in: root)
                 XCTAssertTrue(controller.gestureRecognizer(pan, shouldReceive: touch), "a touch on a table body cell")
                 XCTAssertEqual(pan.translation(in: fixture.view), .zero, "shouldBegin runs before any movement")
-                XCTAssertTrue(controller.gestureRecognizerShouldBegin(pan),
-                              "an overflowing table's pan may begin at touch-down with zero translation")
+                XCTAssertTrue(
+                    controller.gestureRecognizerShouldBegin(pan),
+                    "an overflowing table's pan may begin at touch-down with zero translation"
+                )
             }
 
             try touchDown()
             XCTAssertTrue(pan.claimsMovement(by: leftward), "a leftward swipe scrolls the table forward")
-            XCTAssertFalse(pan.claimsMovement(by: rightward),
-                           "at offset 0 a rightward swipe cannot scroll, so the pan leaves it to other gestures")
+            XCTAssertFalse(
+                pan.claimsMovement(by: rightward),
+                "at offset 0 a rightward swipe cannot scroll, so the pan leaves it to other gestures"
+            )
             XCTAssertFalse(pan.claimsMovement(by: CGPoint(x: 0, y: swipe)), "a vertical swipe is not a table pan")
 
             let maximum = try XCTUnwrap(fixture.drawing.mountedTablePresentation()?.tables.first {
@@ -1351,14 +1554,20 @@ final class EditorTableInputTests: XCTestCase {
                 (view.gestureRecognizers ?? []) + view.subviews.flatMap(recognizers(in:))
             }
             let textGestures = fixture.view.textInputs.flatMap(recognizers(in:)).filter { !($0 is UIPanGestureRecognizer) }
-            XCTAssertTrue(textGestures.contains { $0 is UILongPressGestureRecognizer },
-                          "the editing root carries the text loupe: \(textGestures.map { type(of: $0) })")
+            XCTAssertTrue(
+                textGestures.contains { $0 is UILongPressGestureRecognizer },
+                "the editing root carries the text loupe: \(textGestures.map { type(of: $0) })"
+            )
             for recognizer in textGestures {
-                XCTAssertTrue(fixture.surface.gestureRecognizer(resize, shouldBeRequiredToFailBy: recognizer),
-                              "\(type(of: recognizer)) must wait for a drag that starts on a resize handle")
+                XCTAssertTrue(
+                    fixture.surface.gestureRecognizer(resize, shouldBeRequiredToFailBy: recognizer),
+                    "\(type(of: recognizer)) must wait for a drag that starts on a resize handle"
+                )
             }
-            XCTAssertFalse(fixture.surface.gestureRecognizer(resize, shouldBeRequiredToFailBy: UITapGestureRecognizer()),
-                           "gestures outside the editor's text inputs do not wait for the resize handle")
+            XCTAssertFalse(
+                fixture.surface.gestureRecognizer(resize, shouldBeRequiredToFailBy: UITapGestureRecognizer()),
+                "gestures outside the editor's text inputs do not wait for the resize handle"
+            )
         }
     }
 
@@ -1368,19 +1577,30 @@ final class EditorTableInputTests: XCTestCase {
             let bodyCell = Self.gridSize + 1
             let offset = { fixture.drawing.tableLogicalOffset(for: fixture.tableID) }
             let midCell = try fixture.hostPoint(inCell: bodyCell)
-            XCTAssertTrue(awaitLiveGesture("MID_CELL_SCROLL", from: midCell,
-                                           to: CGPoint(x: midCell.x - Self.bodySwipeDistance * 2, y: midCell.y),
-                                           in: fixture) { offset() > Self.liveScrollThreshold },
-                          "a slow swipe from mid-cell must scroll the table, offset \(offset())")
+            XCTAssertTrue(
+                awaitLiveGesture(
+                    "MID_CELL_SCROLL",
+                    from: midCell,
+                    to: CGPoint(x: midCell.x - Self.bodySwipeDistance * 2, y: midCell.y),
+                    in: fixture
+                ) { offset() > Self.liveScrollThreshold },
+                "a slow swipe from mid-cell must scroll the table, offset \(offset())"
+            )
             fixture.drawing.cancelTableMotion()
             fixture.drawing.setTableLogicalOffset(0, sourceIdentity: fixture.tableID)
             try fixture.assertBodyEdgeDoesNotClaimAResize(
-                cellIndex: bodyCell, physicalDelta: -Self.bodySwipeDistance, "a body-row column edge")
+                cellIndex: bodyCell, physicalDelta: -Self.bodySwipeDistance, "a body-row column edge"
+            )
             let edge = try fixture.trailingEdgeHostPoint(cellIndex: bodyCell)
-            XCTAssertTrue(awaitLiveGesture("BODY_EDGE_SCROLL", from: edge,
-                                           to: CGPoint(x: edge.x - Self.bodySwipeDistance * 2, y: edge.y),
-                                           in: fixture) { offset() > Self.liveScrollThreshold },
-                          "a slow swipe from a body-row column edge must scroll the table, offset \(offset())")
+            XCTAssertTrue(
+                awaitLiveGesture(
+                    "BODY_EDGE_SCROLL",
+                    from: edge,
+                    to: CGPoint(x: edge.x - Self.bodySwipeDistance * 2, y: edge.y),
+                    in: fixture
+                ) { offset() > Self.liveScrollThreshold },
+                "a slow swipe from a body-row column edge must scroll the table, offset \(offset())"
+            )
             XCTAssertEqual(try fixture.documentObject(), before, "scrolling never mutates the document")
         }
     }
@@ -1391,13 +1611,20 @@ final class EditorTableInputTests: XCTestCase {
             XCTAssertTrue(fixture.view.textView.isFirstResponder, "the root text view is editing")
             let edge = try fixture.trailingEdgeHostPoint(cellIndex: 0)
             XCTAssertNotNil(fixture.drawing.hitResizeEdge(at: fixture.drawing.convert(edge, from: fixture.view)))
-            XCTAssertTrue(awaitLiveGesture("SLOW_RESIZE", from: edge,
-                                           to: CGPoint(x: edge.x + Self.liveResizeDistance, y: edge.y),
-                                           in: fixture) {
+            XCTAssertTrue(awaitLiveGesture(
+                "SLOW_RESIZE",
+                from: edge,
+                to: CGPoint(x: edge.x + Self.liveResizeDistance, y: edge.y),
+                in: fixture
+            ) {
                 ((try? fixture.columnWidths(row: 0).first)??.first ?? 0) > Self.narrowColumnWidth
             }, "a slow drag from a first-row handle must resize, widths \(String(describing: try? fixture.columnWidths(row: 0)))")
-            XCTAssertEqual(fixture.drawing.tableLogicalOffset(for: fixture.tableID), 0, accuracy: 1,
-                           "a resize does not scroll the table")
+            XCTAssertEqual(
+                fixture.drawing.tableLogicalOffset(for: fixture.tableID),
+                0,
+                accuracy: 1,
+                "a resize does not scroll the table"
+            )
         }
     }
 
@@ -1456,8 +1683,11 @@ final class EditorTableInputTests: XCTestCase {
         drawing.setTableLogicalOffset(350, sourceIdentity: tableID)
         let scrolledFirst = try XCTUnwrap(surface.cellFrame(tableID: tableID, cellIndex: 0))
         XCTAssertEqual(scrolledFirst.minX, first.minX - 350, accuracy: 1)
-        XCTAssertEqual(surface.convert(view.activeTextInput.bounds, from: view.activeTextInput).minX,
-                       scrolledFirst.minX, accuracy: 1)
+        XCTAssertEqual(
+            surface.convert(view.activeTextInput.bounds, from: view.activeTextInput).minX,
+            scrolledFirst.minX,
+            accuracy: 1
+        )
         guard case .cell(1) = surface.arrowDestination(
             tableID: tableID, cellIndex: 0, direction: .right,
             caret: CGPoint(x: scrolledFirst.maxX, y: scrolledFirst.midY)
@@ -1660,10 +1890,15 @@ final class EditorTableInputTests: XCTestCase {
         }
         let cgImage = try XCTUnwrap(image.cgImage)
         var pixels = [UInt8](repeating: 0, count: cgImage.width * cgImage.height * 4)
-        let bitmap = try XCTUnwrap(CGContext(data: &pixels, width: cgImage.width, height: cgImage.height,
-                                              bitsPerComponent: 8, bytesPerRow: cgImage.width * 4,
-                                              space: CGColorSpaceCreateDeviceRGB(),
-                                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
+        let bitmap = try XCTUnwrap(CGContext(
+            data: &pixels,
+            width: cgImage.width,
+            height: cgImage.height,
+            bitsPerComponent: 8,
+            bytesPerRow: cgImage.width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+        ))
         bitmap.draw(cgImage, in: CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
         let selectedPositions = drawing.selectedTableCellSourceIndices
         drawing.selectedTableCellSourceIndices = [:]
@@ -1673,10 +1908,15 @@ final class EditorTableInputTests: XCTestCase {
         drawing.selectedTableCellSourceIndices = selectedPositions
         let baselineCG = try XCTUnwrap(baselineImage.cgImage)
         var baselinePixels = [UInt8](repeating: 0, count: baselineCG.width * baselineCG.height * 4)
-        let baselineBitmap = try XCTUnwrap(CGContext(data: &baselinePixels, width: baselineCG.width, height: baselineCG.height,
-                                                      bitsPerComponent: 8, bytesPerRow: baselineCG.width * 4,
-                                                      space: CGColorSpaceCreateDeviceRGB(),
-                                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
+        let baselineBitmap = try XCTUnwrap(CGContext(
+            data: &baselinePixels,
+            width: baselineCG.width,
+            height: baselineCG.height,
+            bitsPerComponent: 8,
+            bytesPerRow: baselineCG.width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+        ))
         baselineBitmap.draw(baselineCG, in: CGRect(x: 0, y: 0, width: baselineCG.width, height: baselineCG.height))
         let offset = { (cell: PreparedViewerTableCell) -> Int in
             let x = Int(origin.x + table.frame(ofCell: cell).maxX - 6)
@@ -1733,16 +1973,23 @@ final class EditorTableInputTests: XCTestCase {
         let first = try XCTUnwrap(selected.min { $0.bounds.minX < $1.bounds.minX })
         let last = try XCTUnwrap(selected.max { $0.bounds.maxX < $1.bounds.maxX })
         let handleInset: CGFloat = 8
-        let points = [CGPoint(x: first.bounds.minX + handleInset, y: first.bounds.minY + handleInset),
-                      CGPoint(x: last.bounds.maxX - handleInset, y: last.bounds.maxY - handleInset)]
+        let points = [
+            CGPoint(x: first.bounds.minX + handleInset, y: first.bounds.minY + handleInset),
+            CGPoint(x: last.bounds.maxX - handleInset, y: last.bounds.maxY - handleInset)
+        ]
         let renderer = UIGraphicsImageRenderer(size: drawing.bounds.size)
         let image = renderer.image { _ in drawing.drawInstalledLayersForTesting() }
         let cgImage = try XCTUnwrap(image.cgImage)
         var pixels = [UInt8](repeating: 0, count: cgImage.width * cgImage.height * 4)
-        let bitmap = try XCTUnwrap(CGContext(data: &pixels, width: cgImage.width, height: cgImage.height,
-                                              bitsPerComponent: 8, bytesPerRow: cgImage.width * 4,
-                                              space: CGColorSpaceCreateDeviceRGB(),
-                                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
+        let bitmap = try XCTUnwrap(CGContext(
+            data: &pixels,
+            width: cgImage.width,
+            height: cgImage.height,
+            bitsPerComponent: 8,
+            bytesPerRow: cgImage.width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+        ))
         bitmap.draw(cgImage, in: CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
         for point in points {
             let x = Int(point.x * image.scale)
@@ -1805,8 +2052,10 @@ final class EditorTableInputTests: XCTestCase {
         root.layoutManager.ensureLayout(forCharacterRange: afterRange)
         let glyphs = root.layoutManager.glyphRange(forCharacterRange: afterRange, actualCharacterRange: nil)
         let rect = root.layoutManager.boundingRect(forGlyphRange: glyphs, in: root.textContainer)
-        let point = CGPoint(x: rect.minX + root.textContainerInset.left + 2,
-                            y: rect.midY + root.textContainerInset.top)
+        let point = CGPoint(
+            x: rect.minX + root.textContainerInset.left + 2,
+            y: rect.midY + root.textContainerInset.top
+        )
         XCTAssertTrue(root.placeCaret(at: point))
         flushMainQueue()
         XCTAssertFalse(root.authoritativeCellSelectionActive)
@@ -1852,60 +2101,124 @@ final class EditorTableInputTests: XCTestCase {
             var tables: [FfiTableRecord] = []
             var extents: [FfiTableExtent] = []
             for (key, raw) in records {
-                let start = (raw["tablePos"] as! Int)
-                let end = (raw["sourceEnd"] as! Int)
+                let start = (try XCTUnwrap(raw["tablePos"] as? Int))
+                let end = (try XCTUnwrap(raw["sourceEnd"] as? Int))
                 let failure: TableRenderFailure? = raw["failure"] is NSNull ? nil : .gridLimit
-                let rawCells = raw["cells"] as! [[String: Any]]
-                let cells = rawCells.enumerated().map { index, cell -> FfiTableCellRecord in
-                    let position = cell["sourcePos"] as! Int
-                    let next = index + 1 < rawCells.count ? rawCells[index + 1]["sourcePos"] as! Int : end - 2
-                    return .init(sourceRow: 0, row: UInt32(cell["row"] as! Int), column: UInt32(cell["column"] as! Int),
-                        rowspan: UInt32(cell["rowspan"] as! Int), colspan: UInt32(cell["colspan"] as! Int), header: false,
-                        attrsKey: "empty", contentKey: "cell-\(index)", docSize: UInt32(next - position), scalarStride: 0,
-                        elements: [], voidElementIndices: [], inputBlocks: [], nestedTables: [])
+                let rawCells = try XCTUnwrap(raw["cells"] as? [[String: Any]])
+                let cells = try rawCells.enumerated().map { index, cell -> FfiTableCellRecord in
+                    let position = try XCTUnwrap(cell["sourcePos"] as? Int)
+                    let next = index + 1 < rawCells.count ? try XCTUnwrap(rawCells[index + 1]["sourcePos"] as? Int) : end - 2
+                    return .init(
+                        sourceRow: 0,
+                        row: UInt32(try XCTUnwrap(cell["row"] as? Int)),
+                        column: UInt32(try XCTUnwrap(cell["column"] as? Int)),
+                        rowspan: UInt32(try XCTUnwrap(cell["rowspan"] as? Int)),
+                        colspan: UInt32(try XCTUnwrap(cell["colspan"] as? Int)),
+                        header: false,
+                        attrsKey: "empty",
+                        contentKey: "cell-\(index)",
+                        docSize: UInt32(next - position),
+                        scalarStride: 0,
+                        elements: [],
+                        voidElementIndices: [],
+                        inputBlocks: [],
+                        nestedTables: []
+                    )
                 }
-                tables.append(.init(tableKey: key, host: nil, docSize: UInt32(end - start),
-                    rows: UInt32(raw["rows"] as? Int ?? 0), columns: UInt32(raw["columns"] as? Int ?? 0), columnWidths: [],
-                    direction: raw["direction"] as? String, irregular: false, readOnlyDescendants: false, attrsKey: "empty",
+                tables.append(.init(
+                    tableKey: key,
+                    host: nil,
+                    docSize: UInt32(end - start),
+                    rows: UInt32(raw["rows"] as? Int ?? 0),
+                    columns: UInt32(raw["columns"] as? Int ?? 0),
+                    columnWidths: [],
+                    direction: raw["direction"] as? String,
+                    irregular: false,
+                    readOnlyDescendants: false,
+                    attrsKey: "empty",
                     sourceRows: failure == nil ? [.init(attrsKey: "empty", cellCount: UInt32(cells.count))] : [],
-                    cells: cells, syntheticRegions: [], failure: failure, compatibilityDiagnostic: nil))
+                    cells: cells,
+                    syntheticRegions: [],
+                    failure: failure,
+                    compatibilityDiagnostic: nil
+                ))
                 extents.append(.init(tableKey: key, docStart: UInt32(start), docSize: UInt32(end - start), scalarStart: 0, scalarEnd: 0))
             }
             let result = EditorTableIndex()
-            _ = try result.adopt(.init(kind: .full, baseDocumentRevision: nil, attributes: [.init(key: "empty", json: "{}")],
-                removedAttributeKeys: [], tables: tables, removedTableKeys: [], cellUpdates: [], extents: extents),
-                installedRevision: nil, frameRevision: 1).get()
+            _ = try result.adopt(
+                .init(
+                    kind: .full,
+                    baseDocumentRevision: nil,
+                    attributes: [.init(key: "empty", json: "{}")],
+                    removedAttributeKeys: [],
+                    tables: tables,
+                    removedTableKeys: [],
+                    cellUpdates: [],
+                    extents: extents
+                ),
+                installedRevision: nil,
+                frameRevision: 1
+            ).get()
             return result
         }
         func cell(_ pos: Int, _ row: Int, _ column: Int, colspan: Int = 1) -> [String: Any] {
             ["sourcePos": pos, "row": row, "column": column, "rowspan": 1, "colspan": colspan]
         }
         let records: [String: [String: Any]] = [
-            "t1": ["tablePos": 1, "sourceEnd": 40, "rows": 2, "columns": 3,
-                   "direction": "rtl", "failure": NSNull(),
-                   "cells": [cell(3, 0, 0), cell(7, 0, 1, colspan: 2),
-                             cell(13, 1, 0), cell(17, 1, 1), cell(21, 1, 2)],
-                   "syntheticRegions": [["row": 0, "column": 2]]],
-            "t40": ["tablePos": 40, "sourceEnd": 70, "rows": 1, "columns": 1,
-                    "failure": NSNull(), "cells": [cell(42, 0, 0)]]
+            "t1": [
+                "tablePos": 1,
+                "sourceEnd": 40,
+                "rows": 2,
+                "columns": 3,
+                "direction": "rtl",
+                "failure": NSNull(),
+                "cells": [
+                    cell(3, 0, 0),
+                    cell(7, 0, 1, colspan: 2),
+                    cell(13, 1, 0),
+                    cell(17, 1, 1),
+                    cell(21, 1, 2)
+                ],
+                "syntheticRegions": [["row": 0, "column": 2]]
+            ],
+            "t40": [
+                "tablePos": 40,
+                "sourceEnd": 70,
+                "rows": 1,
+                "columns": 1,
+                "failure": NSNull(),
+                "cells": [cell(42, 0, 0)]
+            ]
         ]
         let selection: [String: Any] = ["type": "cell", "anchorCell": 3, "headCell": 17]
-        XCTAssertEqual(EditorCellSelection.resolve(selection, index: try index(records)),
-                       .drawable(tableID: "t1", sourceIndices: Set([0, 1, 2, 3, 4])))
+        XCTAssertEqual(
+            EditorCellSelection.resolve(selection, index: try index(records)),
+            .drawable(tableID: "t1", sourceIndices: Set([0, 1, 2, 3, 4]))
+        )
         XCTAssertNil(EditorCellSelection.resolve(selection.merging(["anchorScalar": 0]) { _, new in new }, index: try index(records)))
         XCTAssertNil(EditorCellSelection.resolve(["type": "cell", "anchorCell": 3.5, "headCell": 17], index: try index(records)))
         XCTAssertNil(EditorCellSelection.resolve(["type": "cell", "anchorCell": 3, "headCell": 42], index: try index(records)))
-        let failed: [String: [String: Any]] = ["t1": ["tablePos": 1, "sourceEnd": 40,
-                                                   "failure": "gridLimit", "cells": []]]
+        let failed: [String: [String: Any]] = ["t1": [
+            "tablePos": 1,
+            "sourceEnd": 40,
+            "failure": "gridLimit",
+            "cells": []
+        ]]
         XCTAssertEqual(EditorCellSelection.resolve(selection, index: try index(failed)), .unavailable(tableID: "t1"))
-        let chained: [String: [String: Any]] = ["t1": ["tablePos": 1, "sourceEnd": 40,
-            "rows": 3, "columns": 3, "failure": NSNull(), "direction": "rtl",
+        let chained: [String: [String: Any]] = ["t1": [
+            "tablePos": 1,
+            "sourceEnd": 40,
+            "rows": 3,
+            "columns": 3,
+            "failure": NSNull(),
+            "direction": "rtl",
             "cells": [
                 ["sourcePos": 3, "row": 0, "column": 0, "rowspan": 2, "colspan": 1],
                 ["sourcePos": 7, "row": 2, "column": 0, "rowspan": 1, "colspan": 2],
                 ["sourcePos": 11, "row": 1, "column": 1, "rowspan": 1, "colspan": 1],
                 ["sourcePos": 15, "row": 1, "column": 2, "rowspan": 2, "colspan": 1]
-            ]]]
+            ]
+        ]]
         let forward: [String: Any] = ["type": "cell", "anchorCell": 11, "headCell": 15]
         let backward: [String: Any] = ["type": "cell", "anchorCell": 15, "headCell": 11]
         let closed = EditorCellSelection.drawable(tableID: "t1", sourceIndices: Set([0, 1, 2, 3]))
@@ -1966,15 +2279,20 @@ final class EditorTableInputTests: XCTestCase {
         }
 
         func selectCells(anchor: Int, head: Int) throws {
-            try host.richTextView.textView.selectTableCells(adapter: adapter, anchor: positions[anchor],
-                                                            head: positions[head])
+            try host.richTextView.textView.selectTableCells(
+                adapter: adapter,
+                anchor: positions[anchor],
+                head: positions[head]
+            )
         }
 
         func activateCell(_ index: Int) throws -> EditorTextView {
             let surface = try XCTUnwrap(drawing.superview as? EditorTableSurface)
             let frame = try XCTUnwrap(surface.cellFrame(tableID: tableID, cellIndex: UInt32(index)))
-            XCTAssertTrue(host.richTextView.activateTableCell(at: CGPoint(x: frame.midX, y: frame.midY)),
-                          "cell \(index) refused activation")
+            XCTAssertTrue(
+                host.richTextView.activateTableCell(at: CGPoint(x: frame.midX, y: frame.midY)),
+                "cell \(index) refused activation"
+            )
             let input = host.richTextView.activeTextInput
             XCTAssertFalse(input === host.richTextView.textView, "cell \(index) must own the cell input")
             XCTAssertTrue(input.isFirstResponder, "activating cell \(index) focuses its input")
@@ -2007,13 +2325,22 @@ final class EditorTableInputTests: XCTestCase {
 
         static func rect(_ raw: [String: Double]) throws -> CGRect {
             XCTAssertEqual(Set(raw.keys), ["x", "y", "width", "height"])
-            return CGRect(x: try XCTUnwrap(raw["x"]), y: try XCTUnwrap(raw["y"]),
-                          width: try XCTUnwrap(raw["width"]), height: try XCTUnwrap(raw["height"]))
+            return CGRect(
+                x: try XCTUnwrap(raw["x"]),
+                y: try XCTUnwrap(raw["y"]),
+                width: try XCTUnwrap(raw["width"]),
+                height: try XCTUnwrap(raw["height"])
+            )
         }
     }
 
-    private func assertRects(_ actual: [CGRect], _ expected: [CGRect], _ message: String = "",
-                             file: StaticString = #filePath, line: UInt = #line) {
+    private func assertRects(
+        _ actual: [CGRect],
+        _ expected: [CGRect],
+        _ message: String = "",
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
         let accuracy: CGFloat = 0.001
         let matches = actual.count == expected.count && zip(actual, expected).allSatisfy { lhs, rhs in
             abs(lhs.minX - rhs.minX) <= accuracy && abs(lhs.minY - rhs.minY) <= accuracy
@@ -2062,8 +2389,14 @@ final class EditorTableInputTests: XCTestCase {
         let surface = try XCTUnwrap(host.richTextView.subviews.compactMap { $0 as? EditorTableSurface }.first)
         let drawing = try XCTUnwrap(surface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
         waitForGeometryFrame()
-        try body(ExpoGeometryFixture(host: host, adapter: adapter, tableID: tableID, positions: positions,
-                                     drawing: drawing, recorder: recorder))
+        try body(ExpoGeometryFixture(
+            host: host,
+            adapter: adapter,
+            tableID: tableID,
+            positions: positions,
+            drawing: drawing,
+            recorder: recorder
+        ))
     }
 
     func testCellSelectionPublishesWindowSpaceGeometryOnTheNextFrame() throws {
@@ -2075,20 +2408,35 @@ final class EditorTableInputTests: XCTestCase {
 
             XCTAssertEqual(fixture.recorder.payloads.count, 1, "\(fixture.recorder.payloads)")
             let payload = try XCTUnwrap(fixture.recorder.payloads.first)
-            XCTAssertEqual(Set(payload.keys).subtracting(["keyboard"]),
-                           ["editorId", "documentRevision", "layoutEpoch", "tablePos",
-                            "coordinateSpace", "rects", "viewport", "safeArea", "editMenuVisible"])
+            XCTAssertEqual(
+                Set(payload.keys).subtracting(["keyboard"]),
+                [
+                    "editorId",
+                    "documentRevision",
+                    "layoutEpoch",
+                    "tablePos",
+                    "coordinateSpace",
+                    "rects",
+                    "viewport",
+                    "safeArea",
+                    "editMenuVisible"
+                ]
+            )
             XCTAssertEqual(payload["editMenuVisible"] as? Bool, false, "no native edit menu is showing")
             let window = try XCTUnwrap(fixture.host.window)
-            XCTAssertEqual(try GeometryRecorder.rect(try XCTUnwrap(payload["safeArea"] as? [String: Double])),
-                           window.bounds.inset(by: window.safeAreaInsets),
-                           "the safe area is the window minus its safe-area insets")
+            XCTAssertEqual(
+                try GeometryRecorder.rect(try XCTUnwrap(payload["safeArea"] as? [String: Double])),
+                window.bounds.inset(by: window.safeAreaInsets),
+                "the safe area is the window minus its safe-area insets"
+            )
             XCTAssertEqual(payload["editorId"] as? String, fixture.adapter.editorId)
             XCTAssertEqual(payload["documentRevision"] as? String, String(fixture.adapter.baseDocumentRevision))
             XCTAssertEqual(payload["layoutEpoch"] as? String, try XCTUnwrap(fixture.adapter.positionEpoch).description)
             let record = try XCTUnwrap(fixture.adapter.tableRecordsForTesting[fixture.tableID])
-            XCTAssertEqual(payload["tablePos"] as? Int,
-                           Int(try XCTUnwrap(EditorV2Adapter.uint32Field(record, "tablePos"))))
+            XCTAssertEqual(
+                payload["tablePos"] as? Int,
+                Int(try XCTUnwrap(EditorV2Adapter.uint32Field(record, "tablePos")))
+            )
             XCTAssertEqual(payload["coordinateSpace"] as? String, "window")
             let rects = try fixture.recorder.rects(at: 0)
             XCTAssertEqual(rects.count, 4)
@@ -2113,14 +2461,20 @@ final class EditorTableInputTests: XCTestCase {
             waitForGeometryFrame()
             XCTAssertEqual(fixture.recorder.payloads.count, 2, "showing the menu republishes once: \(fixture.recorder.payloads)")
             XCTAssertEqual(fixture.recorder.payloads.last?["editMenuVisible"] as? Bool, true)
-            assertRects(try fixture.recorder.rects(at: 1), try fixture.recorder.rects(at: 0),
-                        "the menu does not move the selection geometry")
+            assertRects(
+                try fixture.recorder.rects(at: 1),
+                try fixture.recorder.rects(at: 0),
+                "the menu does not move the selection geometry"
+            )
 
             surface.dismissCellEditMenu()
             waitForGeometryFrame()
             XCTAssertEqual(fixture.recorder.payloads.count, 3, "\(fixture.recorder.payloads)")
-            XCTAssertEqual(fixture.recorder.payloads.last?["editMenuVisible"] as? Bool, false,
-                           "the toolbar returns once the menu closes")
+            XCTAssertEqual(
+                fixture.recorder.payloads.last?["editMenuVisible"] as? Bool,
+                false,
+                "the toolbar returns once the menu closes"
+            )
         }
     }
 
@@ -2149,8 +2503,12 @@ final class EditorTableInputTests: XCTestCase {
                 $0.surface.identity == fixture.tableID && $0.sourceIndex == 0
             })
             let scrolledEdge = fixture.windowRect(fixture.drawing.convert(firstCell.bounds, to: fixture.host)).maxX
-            XCTAssertEqual(after.first?.maxX ?? .nan, scrolledEdge, accuracy: 0.001,
-                           "the first cell's trailing edge is reported where the scrolled table draws it")
+            XCTAssertEqual(
+                after.first?.maxX ?? .nan,
+                scrolledEdge,
+                accuracy: 0.001,
+                "the first cell's trailing edge is reported where the scrolled table draws it"
+            )
             XCTAssertEqual(fixture.recorder.payloads[1]["tablePos"] as? Int, fixture.recorder.payloads[0]["tablePos"] as? Int)
         }
     }
@@ -2164,8 +2522,10 @@ final class EditorTableInputTests: XCTestCase {
             let shift: CGFloat = 40
 
             fixture.host.frame = fixture.host.frame.offsetBy(dx: 0, dy: shift)
-            XCTAssertTrue(fixture.host.tableSelectionGeometryPublisher.hasScheduledFlushForTesting,
-                          "moving the host schedules a geometry frame")
+            XCTAssertTrue(
+                fixture.host.tableSelectionGeometryPublisher.hasScheduledFlushForTesting,
+                "moving the host schedules a geometry frame"
+            )
             XCTAssertEqual(fixture.recorder.payloads.count, 1, "the move is published on the next frame")
             waitForGeometryFrame()
 
@@ -2222,8 +2582,10 @@ final class EditorTableInputTests: XCTestCase {
 
     func testKeyboardOcclusionFollowsTheUndockedKeyboardLayoutGuide() throws {
         try withExpoTableGeometry(document: fourCellDocument) { fixture in
-            XCTAssertTrue(fixture.host.keyboardLayoutGuide.followsUndockedKeyboard,
-                          "the guide must follow undocked and floating keyboards")
+            XCTAssertTrue(
+                fixture.host.keyboardLayoutGuide.followsUndockedKeyboard,
+                "the guide must follow undocked and floating keyboards"
+            )
             XCTAssertEqual(fixture.host.keyboardOcclusionConstraints.count, 4)
             XCTAssertTrue(fixture.host.keyboardOcclusionConstraints.allSatisfy {
                 $0.secondItem === fixture.host.keyboardLayoutGuide
@@ -2254,13 +2616,20 @@ final class EditorTableInputTests: XCTestCase {
             let publication = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
                 !fixture.recorder.payloads.isEmpty
             }, object: nil)
-            XCTAssertEqual(XCTWaiter.wait(for: [publication], timeout: geometryTimeout), .completed,
-                           "The scheduled geometry frame must publish before its payload is inspected")
+            XCTAssertEqual(
+                XCTWaiter.wait(for: [publication], timeout: geometryTimeout),
+                .completed,
+                "The scheduled geometry frame must publish before its payload is inspected"
+            )
 
             let payload = try XCTUnwrap(fixture.recorder.payloads.last)
-            XCTAssertEqual(try GeometryRecorder.rect(try XCTUnwrap(payload["keyboard"] as? [String: Double],
-                                                                   "no keyboard in \(payload)")),
-                           CGRect(x: 24, y: 252, width: 340, height: 80))
+            XCTAssertEqual(
+                try GeometryRecorder.rect(try XCTUnwrap(
+                    payload["keyboard"] as? [String: Double],
+                    "no keyboard in \(payload)"
+                )),
+                CGRect(x: 24, y: 252, width: 340, height: 80)
+            )
         }
     }
 
@@ -2278,10 +2647,14 @@ final class EditorTableInputTests: XCTestCase {
 
             XCTAssertEqual(fixture.recorder.payloads.count, published + 1, "\(fixture.recorder.payloads)")
             let payload = try XCTUnwrap(fixture.recorder.payloads.last)
-            XCTAssertEqual(try GeometryRecorder.rect(try XCTUnwrap(payload["keyboard"] as? [String: Double],
-                                                                   "no keyboard in \(payload)")),
-                           CGRect(x: 84, y: 112, width: 120, height: 100),
-                           "a floating keyboard is published where the guide moved it")
+            XCTAssertEqual(
+                try GeometryRecorder.rect(try XCTUnwrap(
+                    payload["keyboard"] as? [String: Double],
+                    "no keyboard in \(payload)"
+                )),
+                CGRect(x: 84, y: 112, width: 120, height: 100),
+                "a floating keyboard is published where the guide moved it"
+            )
         }
     }
 
@@ -2294,8 +2667,11 @@ final class EditorTableInputTests: XCTestCase {
             let viewport = try GeometryRecorder.rect(try XCTUnwrap(payload["viewport"] as? [String: Double]))
             let hostInWindow = try XCTUnwrap(fixture.host.superview).convert(fixture.host.frame, to: nil)
 
-            XCTAssertEqual(viewport, hostInWindow.intersection(clip),
-                           "the viewport excludes what a clipping ancestor hides")
+            XCTAssertEqual(
+                viewport,
+                hostInWindow.intersection(clip),
+                "the viewport excludes what a clipping ancestor hides"
+            )
             for rect in try fixture.recorder.rects(at: fixture.recorder.payloads.count - 1) {
                 XCTAssertTrue(viewport.contains(rect), "\(rect) lies inside the clipped viewport \(viewport)")
             }
@@ -2373,11 +2749,15 @@ final class EditorTableInputTests: XCTestCase {
 
     func testBoundCellInputCarriesTheKeyboardToolbar() throws {
         try withExpoTableGeometry(document: fourCellDocument) { fixture in
-            XCTAssertTrue(fixture.host.richTextView.textView.inputAccessoryView === fixture.host.accessoryToolbar,
-                          "the focused root shows the keyboard toolbar")
+            XCTAssertTrue(
+                fixture.host.richTextView.textView.inputAccessoryView === fixture.host.accessoryToolbar,
+                "the focused root shows the keyboard toolbar"
+            )
             let input = try fixture.activateCell(1)
-            XCTAssertTrue(input.inputAccessoryView === fixture.host.accessoryToolbar,
-                          "the focused cell input shows the keyboard toolbar, got \(String(describing: input.inputAccessoryView))")
+            XCTAssertTrue(
+                input.inputAccessoryView === fixture.host.accessoryToolbar,
+                "the focused cell input shows the keyboard toolbar, got \(String(describing: input.inputAccessoryView))"
+            )
             XCTAssertTrue(fixture.host.isUsingAccessoryToolbarForTesting())
         }
     }
@@ -2394,17 +2774,24 @@ final class EditorTableInputTests: XCTestCase {
             let payload = try XCTUnwrap(fixture.recorder.payloads.first)
             XCTAssertEqual(payload["editorId"] as? String, fixture.adapter.editorId)
             let record = try XCTUnwrap(fixture.adapter.tableRecordsForTesting[fixture.tableID])
-            XCTAssertEqual(payload["tablePos"] as? Int,
-                           Int(try XCTUnwrap(EditorV2Adapter.uint32Field(record, "tablePos"))))
-            assertRects(try fixture.recorder.rects(at: 0),
-                        try fixture.expectedWindowRects(sourceIndices: [1]),
-                        "the active cell anchors the table toolbar")
+            XCTAssertEqual(
+                payload["tablePos"] as? Int,
+                Int(try XCTUnwrap(EditorV2Adapter.uint32Field(record, "tablePos")))
+            )
+            assertRects(
+                try fixture.recorder.rects(at: 0),
+                try fixture.expectedWindowRects(sourceIndices: [1]),
+                "the active cell anchors the table toolbar"
+            )
 
             fixture.host.richTextView.invalidateTableCellBinding()
             waitForGeometryFrame()
             XCTAssertEqual(fixture.recorder.payloads.count, 2, "\(fixture.recorder.payloads)")
-            XCTAssertEqual(fixture.recorder.payloads[1] as? [String: String], ["editorId": fixture.adapter.editorId],
-                           "releasing the cell clears its geometry")
+            XCTAssertEqual(
+                fixture.recorder.payloads[1] as? [String: String],
+                ["editorId": fixture.adapter.editorId],
+                "releasing the cell clears its geometry"
+            )
         }
     }
 
@@ -2466,8 +2853,11 @@ final class EditorTableInputTests: XCTestCase {
             XCTAssertGreaterThan(root.contentInset.bottom, 0, "the root reserves room for the keyboard")
             let caret = input.caretRect(for: try XCTUnwrap(input.selectedTextRange).end)
             let caretInWindow = input.convert(caret, to: window)
-            XCTAssertLessThanOrEqual(caretInWindow.maxY, keyboardTop,
-                                     "the focused cell's caret \(caretInWindow) scrolls above the keyboard at \(keyboardTop)")
+            XCTAssertLessThanOrEqual(
+                caretInWindow.maxY,
+                keyboardTop,
+                "the focused cell's caret \(caretInWindow) scrolls above the keyboard at \(keyboardTop)"
+            )
             NotificationCenter.default.post(name: UIResponder.keyboardWillHideNotification, object: nil)
             XCTAssertEqual(root.contentInset.bottom, 0, accuracy: 0.5)
         }
@@ -2480,8 +2870,11 @@ final class EditorTableInputTests: XCTestCase {
             let input = try fixture.activateCell(1)
             RunLoop.main.run(until: Date())
             XCTAssertTrue(input.isFirstResponder)
-            XCTAssertEqual(focusEvents.compactMap { $0["isFocused"] as? Bool }, [],
-                           "handing focus from the root to the cell input is not a blur: \(focusEvents)")
+            XCTAssertEqual(
+                focusEvents.compactMap { $0["isFocused"] as? Bool },
+                [],
+                "handing focus from the root to the cell input is not a blur: \(focusEvents)"
+            )
 
             fixture.host.blur()
             RunLoop.main.run(until: Date())
@@ -2504,15 +2897,23 @@ final class EditorTableInputTests: XCTestCase {
             XCTAssertTrue(selectRow.actionHandler?(selectRow) ?? false, "select row was refused")
             RunLoop.main.run(until: Date())
 
-            XCTAssertEqual(focusEvents.compactMap { $0["isFocused"] as? Bool }, [],
-                           "leaving the cell for a rectangle is not a blur: \(focusEvents)")
+            XCTAssertEqual(
+                focusEvents.compactMap { $0["isFocused"] as? Bool },
+                [],
+                "leaving the cell for a rectangle is not a blur: \(focusEvents)"
+            )
             XCTAssertTrue(fixture.host.richTextView.textView.isFirstResponder, "the root takes focus for the rectangle")
-            XCTAssertEqual(fixture.drawing.selectedTableCellSourceIndices[fixture.tableID],
-                           Set([0, 1]))
+            XCTAssertEqual(
+                fixture.drawing.selectedTableCellSourceIndices[fixture.tableID],
+                Set([0, 1])
+            )
             waitForGeometryFrame()
             XCTAssertGreaterThan(fixture.recorder.payloads.count, before, "\(fixture.recorder.payloads)")
-            assertRects(try fixture.recorder.rects(at: fixture.recorder.payloads.count - 1),
-                        try fixture.expectedWindowRects(), "the row rectangle anchors the table toolbar")
+            assertRects(
+                try fixture.recorder.rects(at: fixture.recorder.payloads.count - 1),
+                try fixture.expectedWindowRects(),
+                "the row rectangle anchors the table toolbar"
+            )
         }
     }
 
@@ -2545,8 +2946,10 @@ final class EditorTableInputTests: XCTestCase {
     }
 
     func testKeyboardToolbarMarkPressTogglesTheMarkInTheBoundCell() throws {
-        try withExpoTableGeometry(configJson: TableInputTestSchema.strongMarkTableConfig,
-                                  document: fourCellDocument) { fixture in
+        try withExpoTableGeometry(
+            configJson: TableInputTestSchema.strongMarkTableConfig,
+            document: fourCellDocument
+        ) { fixture in
             fixture.host.setToolbarButtonsJson(TableToolbarTestItems.strongJson)
             let input = try fixture.activateCell(1)
             input.selectedRange = NSRange(location: 0, length: input.textStorage.length)
@@ -2563,8 +2966,11 @@ final class EditorTableInputTests: XCTestCase {
                 ((cell["content"] as? [[String: Any]])?.first?["content"] as? [[String: Any]]) ?? []
             }
             XCTAssertEqual(runs(cells[1]).map { $0["text"] as? String }, ["two"], "\(cells[1])")
-            XCTAssertEqual(runs(cells[1]).first?["marks"] as? [[String: String]], [["type": TableToolbarTestItems.strongMark]],
-                           "the toolbar marks the focused cell's text: \(cells[1])")
+            XCTAssertEqual(
+                runs(cells[1]).first?["marks"] as? [[String: String]],
+                [["type": TableToolbarTestItems.strongMark]],
+                "the toolbar marks the focused cell's text: \(cells[1])"
+            )
             XCTAssertNil(runs(cells[0]).first?["marks"], "the root's former caret cell is untouched: \(cells[0])")
         }
     }
@@ -2596,8 +3002,11 @@ final class EditorTableInputTests: XCTestCase {
 
             try root.pressAccessoryToolbarButton(labeled: TableToolbarTestItems.undoLabel)
             XCTAssertEqual(try fixture.adapter.tableCellTexts(), original, "undo under a rectangle restores the document")
-            XCTAssertEqual(try authoritativeSelection(fixture.adapter) as NSDictionary, originalSelection,
-                           "undo resolves to the selection before the edit")
+            XCTAssertEqual(
+                try authoritativeSelection(fixture.adapter) as NSDictionary,
+                originalSelection,
+                "undo resolves to the selection before the edit"
+            )
             XCTAssertFalse(root.authoritativeCellSelectionActive, "undo leaves no stale rectangle on the root")
             XCTAssertEqual(fixture.drawing.selectedTableCellSourceIndices, [:], "undo clears the drawn rectangle")
             XCTAssertTrue(view.activeTextInput === cellInput, "the cell holding the restored caret takes the input")
@@ -2609,8 +3018,11 @@ final class EditorTableInputTests: XCTestCase {
 
             try cellInput.pressAccessoryToolbarButton(labeled: TableToolbarTestItems.redoLabel)
             XCTAssertEqual(try fixture.adapter.tableCellTexts(), edited, "redo reapplies the edit")
-            XCTAssertEqual(try authoritativeSelection(fixture.adapter) as NSDictionary, editedSelection,
-                           "redo resolves to the selection after the edit")
+            XCTAssertEqual(
+                try authoritativeSelection(fixture.adapter) as NSDictionary,
+                editedSelection,
+                "redo resolves to the selection after the edit"
+            )
             XCTAssertEqual(view.activeTableCellPosition, fixture.positions[1])
             XCTAssertTrue(cellInput.isFirstResponder)
             XCTAssertEqual(cellInput.selectedRange, NSRange(location: 4, length: 0))
@@ -2638,8 +3050,11 @@ final class EditorTableInputTests: XCTestCase {
                 editorV2Undo(editorId: fixture.adapter.editorId, requestJson: $0)
             }
             XCTAssertNil(undone.error, "the JavaScript undo was refused: \(String(describing: undone.error))")
-            let rendered = editorV2RenderUpdate(editorId: fixture.adapter.editorId,
-                                                mirrorScalarAnchor: nil, mirrorScalarHead: nil)
+            let rendered = editorV2RenderUpdate(
+                editorId: fixture.adapter.editorId,
+                mirrorScalarAnchor: nil,
+                mirrorScalarHead: nil
+            )
             XCTAssertTrue(fixture.host.applyEditorUpdate(try XCTUnwrap(rendered.value)))
 
             XCTAssertEqual(try fixture.adapter.tableCellTexts(), original, "the JavaScript undo restores the document")
@@ -2662,8 +3077,11 @@ final class EditorTableInputTests: XCTestCase {
                 editorV2Undo(editorId: fixture.adapter.editorId, requestJson: $0)
             }
             XCTAssertNil(undone.error)
-            let rendered = editorV2RenderUpdate(editorId: fixture.adapter.editorId,
-                                                mirrorScalarAnchor: nil, mirrorScalarHead: nil)
+            let rendered = editorV2RenderUpdate(
+                editorId: fixture.adapter.editorId,
+                mirrorScalarAnchor: nil,
+                mirrorScalarHead: nil
+            )
             XCTAssertTrue(fixture.host.applyEditorUpdate(try XCTUnwrap(rendered.value)))
             XCTAssertEqual(try fixture.adapter.tableCellTexts(), original)
             XCTAssertTrue(view.textInputs.allSatisfy { !$0.isFirstResponder }, "JavaScript undo preserves the blur")
@@ -2734,8 +3152,11 @@ final class EditorTableInputTests: XCTestCase {
 
             try input.pressAccessoryToolbarButton(labeled: TableToolbarTestItems.undoLabel)
             XCTAssertEqual(try fixture.adapter.tableCellTexts(), original, "undo through the bound cell restores the document")
-            XCTAssertEqual(try authoritativeSelection(fixture.adapter) as NSDictionary, originalSelection,
-                           "undo resolves to the selection before the edit")
+            XCTAssertEqual(
+                try authoritativeSelection(fixture.adapter) as NSDictionary,
+                originalSelection,
+                "undo resolves to the selection before the edit"
+            )
             XCTAssertTrue(view.activeTextInput === input, "the restored caret's cell keeps the cell input")
             XCTAssertEqual(view.activeTableCellPosition, fixture.positions[0], "the earlier cell holding the caret is bound")
             XCTAssertTrue(input.isFirstResponder, "the rebound cell keeps focus")
@@ -2747,8 +3168,11 @@ final class EditorTableInputTests: XCTestCase {
 
             try input.pressAccessoryToolbarButton(labeled: TableToolbarTestItems.redoLabel)
             XCTAssertEqual(try fixture.adapter.tableCellTexts(), edited, "redo reapplies the edit")
-            XCTAssertEqual(try authoritativeSelection(fixture.adapter) as NSDictionary, editedSelection,
-                           "redo resolves to the selection after the edit")
+            XCTAssertEqual(
+                try authoritativeSelection(fixture.adapter) as NSDictionary,
+                editedSelection,
+                "redo resolves to the selection after the edit"
+            )
             XCTAssertEqual(view.activeTableCellPosition, editedPositions[0], "redo keeps the edited cell bound")
             XCTAssertTrue(input.isFirstResponder, "the rebound cell keeps focus")
             XCTAssertEqual(input.textStorage.string, "oneX")
@@ -2796,8 +3220,11 @@ final class EditorTableInputTests: XCTestCase {
             XCTAssertEqual(fixture.host.richTextView.activeTableCellPosition, fixture.positions[1])
             input.blockExternalEditorUpdatePreparationForTesting = false
             try input.pressAccessoryToolbarButton(labeled: TableToolbarTestItems.undoLabel)
-            XCTAssertEqual(try fixture.adapter.tableCellTexts(), [["one", "two"], ["three", "four"]],
-                           "undo applies once the cell drains")
+            XCTAssertEqual(
+                try fixture.adapter.tableCellTexts(),
+                [["one", "two"], ["three", "four"]],
+                "undo applies once the cell drains"
+            )
         }
     }
 
@@ -2811,12 +3238,18 @@ final class EditorTableInputTests: XCTestCase {
 
             try input.pressAccessoryToolbarButton(labeled: TableToolbarTestItems.undoLabel)
             XCTAssertNil(input.markedTextRange, "undo commits the cell composition first")
-            XCTAssertEqual(try fixture.adapter.tableCellTexts(), [["one", "twoX"], ["three", "four"]],
-                           "undo reverts the committed composition as its own step")
+            XCTAssertEqual(
+                try fixture.adapter.tableCellTexts(),
+                [["one", "twoX"], ["three", "four"]],
+                "undo reverts the committed composition as its own step"
+            )
 
             try fixture.host.richTextView.activeTextInput.pressAccessoryToolbarButton(labeled: TableToolbarTestItems.redoLabel)
-            XCTAssertEqual(try fixture.adapter.tableCellTexts(), [["one", "twoXzz"], ["three", "four"]],
-                           "redo restores the committed composition exactly once")
+            XCTAssertEqual(
+                try fixture.adapter.tableCellTexts(),
+                [["one", "twoXzz"], ["three", "four"]],
+                "redo restores the committed composition exactly once"
+            )
         }
     }
 
@@ -2832,8 +3265,12 @@ final class EditorTableInputTests: XCTestCase {
         let second = try XCTUnwrap(cells[1]["sourcePos"] as? Int)
         let request = #"{"version":1,"requestId":"991106","baseDocumentRevision":"\#(adapter.baseDocumentRevision)","selection":{"type":"cell","anchorCell":{"offset":\#(EditorV2Shadow.docToScalar(id: editorId, docPos: UInt32(first + 2))),"kind":"scalar"},"headCell":{"offset":\#(EditorV2Shadow.docToScalar(id: editorId, docPos: UInt32(second + 2))),"kind":"scalar"}}}"#
         XCTAssertNil(editorV2SetSelection(editorId: adapter.editorId, requestJson: request).error)
-        let native = try XCTUnwrap(editorV2RenderNativeFrame(editorId: adapter.editorId, ownerId: nil,
-            mirrorScalarAnchor: nil, mirrorScalarHead: nil).frame)
+        let native = try XCTUnwrap(editorV2RenderNativeFrame(
+            editorId: adapter.editorId,
+            ownerId: nil,
+            mirrorScalarAnchor: nil,
+            mirrorScalarHead: nil
+        ).frame)
         var frame = native.tables
         let recordIndex = try XCTUnwrap(frame.tables.firstIndex { $0.tableKey == tableID })
         frame.tables[recordIndex].failure = .gridLimit
@@ -3077,7 +3514,12 @@ final class EditorTableInputTests: XCTestCase {
         let activeHeader = try XCTUnwrap(surface.cells.first { $0.sourceIndex == 0 })
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
-        func paint() -> (rich: Int, chrome: Int, image: CGImage?) {
+        struct PaintResult {
+            let rich: Int
+            let chrome: Int
+            let image: CGImage?
+        }
+        func paint() -> PaintResult {
             var rich = 0
             var chrome = 0
             drawing.onTableRichFragmentDrawnForTesting = { rich += 1 }
@@ -3085,7 +3527,7 @@ final class EditorTableInputTests: XCTestCase {
             let image = UIGraphicsImageRenderer(size: drawing.bounds.size, format: format).image { _ in
                 drawing.drawInstalledLayersForTesting()
             }.cgImage
-            return (rich, chrome, image)
+            return PaintResult(rich: rich, chrome: chrome, image: image)
         }
 
         let unbound = paint()
@@ -3288,8 +3730,11 @@ final class EditorTableInputTests: XCTestCase {
         XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: .zero))
         let input = view.activeTextInput
         let origin = try XCTUnwrap(drawing.layout?.blocks.first?.tableBounds?.origin)
-        XCTAssertEqual(input.convert(.zero, to: tableSurface).x,
-                       (origin.x + preparedSurface.frame(ofCell: cell).minX + cell.contentOrigin.x).rounded(), accuracy: 1)
+        XCTAssertEqual(
+            input.convert(.zero, to: tableSurface).x,
+            (origin.x + preparedSurface.frame(ofCell: cell).minX + cell.contentOrigin.x).rounded(),
+            accuracy: 1
+        )
         XCTAssertEqual(input.textContainerInset, .zero)
         XCTAssertEqual(input.textContainer.lineFragmentPadding, 0)
     }
@@ -3489,8 +3934,11 @@ final class EditorTableInputTests: XCTestCase {
         XCTAssertEqual(view.activeTableCellPosition, movedCell.sourcePos, "the moved cell is bound from a fresh projection")
         XCTAssertEqual(oldInput.textStorage.string, "replacement")
         oldInput.insertText("!")
-        XCTAssertEqual(try adapter.tableCellTexts(), [["longer", "!replacement"]],
-                       "typing lands at the authoritative caret in the moved cell")
+        XCTAssertEqual(
+            try adapter.tableCellTexts(),
+            [["longer", "!replacement"]],
+            "typing lands at the authoritative caret in the moved cell"
+        )
     }
 
     func testRootInputBlocksStaleCaretWhenAuthoritativeSelectionMovesInsideTable() throws {
@@ -3888,9 +4336,11 @@ final class EditorTableInputTests: XCTestCase {
         let root = EditorTextView(frame: .zero, textContainer: nil)
         let coordinator = EditorTableInputCoordinator()
         let input = coordinator.cellInput
-        let themes: [EditorTheme?] = [nil,
+        let themes: [EditorTheme?] = [
+            nil,
             EditorTheme(dictionary: ["contentInsets": ["top": 12, "left": 20]]),
-            EditorTheme(dictionary: ["version": 1, "styles": ["content": ["paddingTop": 12, "paddingLeft": 20]]])]
+            EditorTheme(dictionary: ["version": 1, "styles": ["content": ["paddingTop": 12, "paddingLeft": 20]]])
+        ]
         for theme in themes {
             root.theme = theme
             coordinator.copyInputTraits(from: root)

@@ -96,16 +96,17 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         let themeDigest: String
     }
 
-    private struct ReusableCellContents {
-        private struct Key: Hashable {
-            let contentKey: String
-            let header: Bool
-            let attributesKey: String
-            let widthPixels: Int
-            let displayScaleBits: UInt64
-        }
+    private struct ReusableCellKey: Hashable {
+        let contentKey: String
+        let header: Bool
+        let attributesKey: String
+        let widthPixels: Int
+        let displayScaleBits: UInt64
+    }
 
-        private var contents: [Key: [PreparedViewerTableCell]] = [:]
+    private struct ReusableCellContents {
+
+        private var contents: [ReusableCellKey: [PreparedViewerTableCell]] = [:]
 
         init(_ entry: Entry?, themeDigest: String) {
             guard let entry, entry.themeDigest == themeDigest, let source = entry.surface.sourceTable else { return }
@@ -113,16 +114,25 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
                 let index = cell.sourceIndex
                 guard source.cells.indices.contains(index), cell.isPositionFree else { continue }
                 let sourceCell = source.cells[index]
-                let key = Key(contentKey: sourceCell.contentKey, header: sourceCell.header,
-                    attributesKey: sourceCell.attrsKey, widthPixels: cell.contentKey.widthPixels,
-                    displayScaleBits: cell.contentKey.displayScaleBits)
+                let key = ReusableCellKey(
+                    contentKey: sourceCell.contentKey,
+                    header: sourceCell.header,
+                    attributesKey: sourceCell.attrsKey,
+                    widthPixels: cell.contentKey.widthPixels,
+                    displayScaleBits: cell.contentKey.displayScaleBits
+                )
                 contents[key, default: []].append(cell)
             }
         }
 
         mutating func take(_ cell: TableSurfaceCell, widthPixels: Int, displayScale: CGFloat) -> PreparedViewerTableCell? {
-            let key = Key(contentKey: cell.contentKey, header: cell.header, attributesKey: cell.attrsKey,
-                          widthPixels: widthPixels, displayScaleBits: Double(displayScale).bitPattern)
+            let key = ReusableCellKey(
+                contentKey: cell.contentKey,
+                header: cell.header,
+                attributesKey: cell.attrsKey,
+                widthPixels: widthPixels,
+                displayScaleBits: Double(displayScale).bitPattern
+            )
             return contents[key]?.popLast()
         }
     }
@@ -188,8 +198,13 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         let role: TableSelectionHandleRole
         let touchOffset: CGPoint
 
-        init(adapter: EditorV2Adapter, admission: EditorV2Adapter.TableCellSelectionAdmission,
-             role: TableSelectionHandleRole, touchOffset: CGPoint, windowPoint: CGPoint) {
+        init(
+            adapter: EditorV2Adapter,
+            admission: EditorV2Adapter.TableCellSelectionAdmission,
+            role: TableSelectionHandleRole,
+            touchOffset: CGPoint,
+            windowPoint: CGPoint
+        ) {
             self.admission = admission
             self.role = role
             self.touchOffset = touchOffset
@@ -206,8 +221,13 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         var scrolledLogical: CGFloat = 0
         var previewWidth: CGFloat
 
-        init(adapter: EditorV2Adapter, admission: EditorV2Adapter.TableMutationAdmission,
-             hit: TableResizeEdgeHit, startX: CGFloat, windowPoint: CGPoint) {
+        init(
+            adapter: EditorV2Adapter,
+            admission: EditorV2Adapter.TableMutationAdmission,
+            hit: TableResizeEdgeHit,
+            startX: CGFloat,
+            windowPoint: CGPoint
+        ) {
             self.admission = admission
             self.edge = hit.edge
             self.startWidth = hit.columnWidth
@@ -322,9 +342,13 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         drawingView.installTableInteraction(on: host)
     }
 
-    func present(_ presentation: EditorV2Adapter.EditorTablePresentationSnapshot,
-                 selection: EditorCellSelection?, endpoints: (anchor: UInt32, head: UInt32)?, ownerIdentity: String,
-                 from textView: EditorTextView) {
+    func present(
+        _ presentation: EditorV2Adapter.EditorTablePresentationSnapshot,
+        selection: EditorCellSelection?,
+        endpoints: (anchor: UInt32, head: UInt32)?,
+        ownerIdentity: String,
+        from textView: EditorTextView
+    ) {
         defer { selectionGeometryMayChange() }
         drawingView.setTableOwnerIdentity(ownerIdentity)
         latestPresentation = presentation
@@ -486,9 +510,13 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
               let anchor = toolbarAnchorCells(),
               let tablePos = presentation.index.tableDocStart(tableKey: anchor.tableID),
               let visible = drawingView.tableSelectionViewport(),
-              let rects = clipped(drawingView.tableCellRects(tableID: anchor.tableID,
-                                                             sourceIndices: anchor.sourceIndices),
-                                  to: visible)
+              let rects = clipped(
+                  drawingView.tableCellRects(
+                      tableID: anchor.tableID,
+                      sourceIndices: anchor.sourceIndices
+                  ),
+                  to: visible
+              )
         else { return nil }
         return TableSelectionGeometry(
             editorId: host.editorId,
@@ -540,8 +568,12 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
               let endpoints = drawingView.selectedTableCellEndpoints,
               let sourceIndices = drawingView.selectedTableCellSourceIndices[endpoints.tableID]
         else { return nil }
-        return TableCellDragSource(tableID: endpoints.tableID, anchor: endpoints.anchor, head: endpoints.head,
-                                   sourceIndices: sourceIndices)
+        return TableCellDragSource(
+            tableID: endpoints.tableID,
+            anchor: endpoints.anchor,
+            head: endpoints.head,
+            sourceIndices: sourceIndices
+        )
     }
 
     func cellDragPreview() -> UITargetedDragPreview? {
@@ -697,14 +729,20 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         return surface.direction == .rightToLeft
     }
 
-    func arrowDestination(tableID: String, cellIndex: UInt32,
-                          direction: TableCellArrowDirection, caret: CGPoint) -> ArrowDestination? {
+    func arrowDestination(
+        tableID: String,
+        cellIndex: UInt32,
+        direction: TableCellArrowDirection,
+        caret: CGPoint
+    ) -> ArrowDestination? {
         guard let presented = drawingView.tableCellGeometry(tableID: tableID, sourceIndex: Int(cellIndex)),
               let source = presented.surface.cells.first(where: { $0.sourceIndex == Int(cellIndex) })
         else { return nil }
         func frame(_ cell: PreparedViewerTableCell) -> CGRect { presented.surface.frame(ofCell: cell) }
-        let origin = CGPoint(x: presented.bounds.minX - frame(source).minX - drawingOffset.x,
-                             y: presented.bounds.minY - frame(source).minY - drawingOffset.y)
+        let origin = CGPoint(
+            x: presented.bounds.minX - frame(source).minX - drawingOffset.x,
+            y: presented.bounds.minY - frame(source).minY - drawingOffset.y
+        )
         let cells = presented.surface.cells.filter { $0.sourceIndex != Int(cellIndex) }
         let x = min(max(caret.x - origin.x, frame(source).minX), frame(source).maxX.nextDown)
         let y = min(max(caret.y - origin.y, frame(source).minY), frame(source).maxY.nextDown)
@@ -850,10 +888,13 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         return (host, current)
     }
 
-    private func actionableHandle(at point: CGPoint) -> (
-        handle: TableSelectionHandle, adapter: EditorV2Adapter,
-        admission: EditorV2Adapter.TableCellSelectionAdmission
-    )? {
+    private struct ActionableHandle {
+        let handle: TableSelectionHandle
+        let adapter: EditorV2Adapter
+        let admission: EditorV2Adapter.TableCellSelectionAdmission
+    }
+
+    private func actionableHandle(at point: CGPoint) -> ActionableHandle? {
         guard let (host, adapter) = hostAllowsTableInteraction(),
               activeCell == nil, host.activeTextInput === host.textView,
               let ownerID = adapter.nativeOwnerId,
@@ -875,7 +916,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
             head: endpoints.head
         )
         guard adapter.admitsTableCellSelection(admission) else { return nil }
-        return (handle, adapter, admission)
+        return ActionableHandle(handle: handle, adapter: adapter, admission: admission)
     }
 
     private func activeInputContains(_ point: CGPoint) -> Bool {
@@ -884,10 +925,13 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         return drawingView.convert(input.bounds, from: input).contains(point)
     }
 
-    private func actionableResizeEdge(at point: CGPoint) -> (
-        hit: TableResizeEdgeHit, adapter: EditorV2Adapter,
-        admission: EditorV2Adapter.TableMutationAdmission
-    )? {
+    private struct ActionableResizeEdge {
+        let hit: TableResizeEdgeHit
+        let adapter: EditorV2Adapter
+        let admission: EditorV2Adapter.TableMutationAdmission
+    }
+
+    private func actionableResizeEdge(at point: CGPoint) -> ActionableResizeEdge? {
         guard activeDrag == nil,
               let (_, adapter) = hostAllowsTableInteraction(),
               let viewport = interactionViewport(),
@@ -898,7 +942,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
               let admission = adapter.tableMutationAdmission(tableID: hit.edge.tableID),
               adapter.admitsTableMutation(admission)
         else { return nil }
-        return (hit, adapter, admission)
+        return ActionableResizeEdge(hit: hit, adapter: adapter, admission: admission)
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
@@ -993,12 +1037,18 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         dismissCellEditMenu()
         drawingView.cancelTableMotion()
         let point = drawingView.convert(hostPoint, from: host)
-        let offset = CGPoint(x: point.x - actionable.handle.center.x,
-                             y: point.y - actionable.handle.center.y)
+        let offset = CGPoint(
+            x: point.x - actionable.handle.center.x,
+            y: point.y - actionable.handle.center.y
+        )
         guard let window = host.window else { return false }
-        activeDrag = HandleDrag(adapter: actionable.adapter, admission: actionable.admission,
-                                role: actionable.handle.role, touchOffset: offset,
-                                windowPoint: host.convert(hostPoint, to: window))
+        activeDrag = HandleDrag(
+            adapter: actionable.adapter,
+            admission: actionable.admission,
+            role: actionable.handle.role,
+            touchOffset: offset,
+            windowPoint: host.convert(hostPoint, to: window)
+        )
         scheduleDragFrame()
         return true
     }
@@ -1017,9 +1067,13 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         let point = drawingView.convert(hostPoint, from: host)
         guard let actionable = actionableResizeEdge(at: point) else { return false }
         drawingView.cancelTableMotion()
-        activeDrag = ResizeDrag(adapter: actionable.adapter, admission: actionable.admission,
-                                hit: actionable.hit, startX: point.x,
-                                windowPoint: host.convert(hostPoint, to: window))
+        activeDrag = ResizeDrag(
+            adapter: actionable.adapter,
+            admission: actionable.admission,
+            hit: actionable.hit,
+            startX: point.x,
+            windowPoint: host.convert(hostPoint, to: window)
+        )
         drawingView.activeTableResizeEdge = actionable.hit.edge
         return true
     }
@@ -1040,7 +1094,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         guard let host = interactionHost else { return }
         guard valid, drag.previewWidth != drag.clampedWidth(drag.startWidth),
               let update = drag.adapter.resizeTableColumn(
-                column: drag.edge.column, width: Int(drag.previewWidth), admission: drag.admission
+                  column: drag.edge.column, width: Int(drag.previewWidth), admission: drag.admission
               ),
               host.activeTextInput.applyUpdateJSON(update)
         else {
@@ -1071,9 +1125,9 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
               let (host, _) = hostAllowsTableInteraction(drag.adapter),
               activeCell == nil, host.activeTextInput === host.textView,
               drawingView.selectedTableCellEndpoints == TableSelectionEndpoints(
-                tableID: drag.admission.tableID,
-                anchor: drag.admission.anchor,
-                head: drag.admission.head
+                  tableID: drag.admission.tableID,
+                  anchor: drag.admission.anchor,
+                  head: drag.admission.head
               )
         else { return false }
         return drag.adapter.admitsTableCellSelection(drag.admission)
@@ -1099,11 +1153,13 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
             return
         }
         let point = drawingView.convert(drag.windowPoint, from: window)
-        let targetPoint = CGPoint(x: point.x - drag.touchOffset.x,
-                                  y: point.y - drag.touchOffset.y)
+        let targetPoint = CGPoint(
+            x: point.x - drag.touchOffset.x,
+            y: point.y - drag.touchOffset.y
+        )
         guard let viewport = interactionViewport(),
               let target = drawingView.selectedTableCell(
-                at: targetPoint, tableID: drag.admission.tableID, visibleIn: viewport
+                  at: targetPoint, tableID: drag.admission.tableID, visibleIn: viewport
               )
         else { return }
         let anchor = drag.role == .anchor ? target : drag.admission.anchor
@@ -1167,7 +1223,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
                 let horizontal: CGFloat = point.x < tableViewport.minX + HandleScrollMetrics.edgeBand
                     ? HandleScrollMetrics.stepPerFrame
                     : point.x > tableViewport.maxX - HandleScrollMetrics.edgeBand
-                        ? -HandleScrollMetrics.stepPerFrame : 0
+                    ? -HandleScrollMetrics.stepPerFrame : 0
                 if horizontal != 0 {
                     let before = drawingView.tableLogicalOffset(for: drag.tableID)
                     scrolled = drawingView.scrollTables(
@@ -1184,11 +1240,14 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
             let vertical: CGFloat = point.y < viewport.minY + HandleScrollMetrics.edgeBand
                 ? -HandleScrollMetrics.stepPerFrame
                 : point.y > viewport.maxY - HandleScrollMetrics.edgeBand
-                    ? HandleScrollMetrics.stepPerFrame : 0
+                ? HandleScrollMetrics.stepPerFrame : 0
             if vertical != 0, let scroll = verticalScrollTarget(for: host) {
                 let minimum = -scroll.adjustedContentInset.top
-                let maximum = max(minimum, scroll.contentSize.height - scroll.bounds.height
-                                  + scroll.adjustedContentInset.bottom)
+                let maximum = max(
+                    minimum,
+                    scroll.contentSize.height - scroll.bounds.height
+                        + scroll.adjustedContentInset.bottom
+                )
                 let next = min(maximum, max(minimum, scroll.contentOffset.y + vertical))
                 if next != scroll.contentOffset.y {
                     scroll.setContentOffset(CGPoint(x: scroll.contentOffset.x, y: next), animated: false)
@@ -1366,8 +1425,8 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
                 displayScale: displayScale,
                 cellShapeContext: shapes
             ), let tableBlock = prepared.blocks.first(where: { $0.tableSurface != nil }),
-               let surface = tableBlock.tableSurface,
-               let localTableBounds = tableBlock.tableBounds
+            let surface = tableBlock.tableSurface,
+            let localTableBounds = tableBlock.tableBounds
             else { return }
             entries[tableID] = Entry(
                 tableID: tableID,
@@ -1391,9 +1450,9 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
             return
         }
         guard presentationRevision != presentation.documentRevision
-                || abs(preparedWidth - width) > 0.5
-                || preparedAppearanceRevision != appearanceRevision
-                || preparedResizePreview != resizePreview
+            || abs(preparedWidth - width) > 0.5
+            || preparedAppearanceRevision != appearanceRevision
+            || preparedResizePreview != resizePreview
         else {
             textView.reserveRootTableHeights(entries.mapValues(\.occupiedHeight))
             return
@@ -1431,8 +1490,10 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         }
         let width = max(bounds.width, textView.contentSize.width, tableBounds.maxX)
         let height = max(bounds.height, textView.contentSize.height, tableBounds.maxY)
-        return CGSize(width: width.isFinite ? max(1, width) : max(1, bounds.width),
-                      height: height.isFinite ? max(1, height) : max(1, bounds.height))
+        return CGSize(
+            width: width.isFinite ? max(1, width) : max(1, bounds.width),
+            height: height.isFinite ? max(1, height) : max(1, bounds.height)
+        )
     }
 
     private func anchorFrames(in textView: EditorTextView) -> [String: CGRect] {
@@ -1537,9 +1598,13 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
 }
 
 extension EditorTableSurface: TableAccessibilityEditing {
-    func tableMutationContext(tableID: String) -> (
-        host: RichTextEditorView, adapter: EditorV2Adapter, admission: EditorV2Adapter.TableMutationAdmission
-    )? {
+    struct TableMutationContext {
+        let host: RichTextEditorView
+        let adapter: EditorV2Adapter
+        let admission: EditorV2Adapter.TableMutationAdmission
+    }
+
+    func tableMutationContext(tableID: String) -> TableMutationContext? {
         guard let host = interactionHost, host.window != nil, host.editorId != 0,
               let adapter = EditorV2Registry.adapter(forLegacyId: host.editorId),
               host.hasTableCellBindingAuthority(adapter),
@@ -1548,7 +1613,7 @@ extension EditorTableSurface: TableAccessibilityEditing {
               let admission = adapter.tableMutationAdmission(tableID: tableID),
               adapter.admitsTableMutation(admission)
         else { return nil }
-        return (host, adapter, admission)
+        return TableMutationContext(host: host, adapter: adapter, admission: admission)
     }
 
     private func ownsAccessibilitySelection(_ cell: TableAccessibilityCell, tableID: String) -> Bool {
@@ -1566,8 +1631,11 @@ extension EditorTableSurface: TableAccessibilityEditing {
         return TableAccessibilityAction.all.filter { commands[$0.applicability] as? Bool == true }
     }
 
-    func performTableAccessibilityAction(_ action: TableAccessibilityAction, for cell: TableAccessibilityCell,
-                                         tableID: String) -> Bool {
+    func performTableAccessibilityAction(
+        _ action: TableAccessibilityAction,
+        for cell: TableAccessibilityCell,
+        tableID: String
+    ) -> Bool {
         guard tableAccessibilityActions(for: cell, tableID: tableID).contains(action),
               let context = tableMutationContext(tableID: tableID),
               let update = context.adapter.applyTableCommandAtSelection(action.command, admission: context.admission)
@@ -1623,9 +1691,12 @@ extension EditorTableSurface: TableAccessibilityEditing {
         let caret = textView.caretRect(for: PositionBridge.scalarToTextView(scalar, in: textView))
         guard !caret.isNull, caret.minX.isFinite, caret.minY.isFinite, caret.height.isFinite else { return .zero }
         let insets = textView.textContainerInset
-        let line = CGRect(x: insets.left, y: caret.minY,
-                          width: max(caret.width, textView.bounds.width - insets.left - insets.right),
-                          height: caret.height)
+        let line = CGRect(
+            x: insets.left,
+            y: caret.minY,
+            width: max(caret.width, textView.bounds.width - insets.left - insets.right),
+            height: caret.height
+        )
         return accessibilityScreenRect(line, in: textView)
     }
 

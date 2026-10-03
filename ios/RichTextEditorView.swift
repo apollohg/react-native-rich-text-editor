@@ -286,15 +286,15 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
               let table = adapter.tableIndex.record(tableKey: tableID),
               let epoch = adapter.positionEpoch,
               let projection = EditorTableInputCoordinator.projection(
-                cellIndex: cellIndex,
-                tableKey: tableID,
-                index: adapter.tableIndex,
-                documentRevision: adapter.baseDocumentRevision,
-                positionEpoch: epoch,
-                baseFont: textView.baseFont,
-                textColor: textView.baseTextColor,
-                theme: textView.theme,
-                atomConfiguration: textView.atomRenderConfiguration
+                  cellIndex: cellIndex,
+                  tableKey: tableID,
+                  index: adapter.tableIndex,
+                  documentRevision: adapter.baseDocumentRevision,
+                  positionEpoch: epoch,
+                  baseFont: textView.baseFont,
+                  textColor: textView.baseTextColor,
+                  theme: textView.theme,
+                  atomConfiguration: textView.atomRenderConfiguration
               )
         else { return false }
         let nestedHeights = tableSurface.nestedTableHeights(tableID: tableID, cellIndex: cellIndex) ?? [:]
@@ -362,10 +362,10 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
               let epoch = adapter.positionEpoch,
               oldMap.binding.tableKey == tableID, oldMap.binding.cellIndex == cellIndex,
               let projection = EditorTableInputCoordinator.projection(
-                cellIndex: cellIndex, tableKey: tableID, index: adapter.tableIndex,
-                documentRevision: adapter.baseDocumentRevision, positionEpoch: epoch,
-                baseFont: textView.baseFont, textColor: textView.baseTextColor,
-                theme: textView.theme, atomConfiguration: textView.atomRenderConfiguration
+                  cellIndex: cellIndex, tableKey: tableID, index: adapter.tableIndex,
+                  documentRevision: adapter.baseDocumentRevision, positionEpoch: epoch,
+                  baseFont: textView.baseFont, textColor: textView.baseTextColor,
+                  theme: textView.theme, atomConfiguration: textView.atomRenderConfiguration
               ),
               projection.text.string == input.textStorage.string,
               tableInputCoordinator.refreshPositionMap(projection.positionMap)
@@ -521,8 +521,11 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
             textView.syncSelectionImmediately()
         case .cell(let targetIndex):
             guard targetIndex != cellIndex,
-                  bindTableCell(tableID: tableID, cellIndex: targetIndex,
-                                contentRect: input.frame),
+                  bindTableCell(
+                      tableID: tableID,
+                      cellIndex: targetIndex,
+                      contentRect: input.frame
+                  ),
                   let targetMap = tableInputCoordinator.positionMap,
                   activeTextInput === input,
                   tableInputCoordinator.activeTableID == tableID,
@@ -552,7 +555,7 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
                 : targetMap.segments.first?.localScalarRange.lowerBound
             guard let local = nearest.flatMap({ targetMap.globalScalar(forLocalScalar: $0) }) != nil
                 ? nearest : fallback,
-                  let scalar = targetMap.globalScalar(forLocalScalar: local)
+                let scalar = targetMap.globalScalar(forLocalScalar: local)
             else {
                 if activeTextInput === input && tableInputCoordinator.activeTableID == tableID
                     && tableInputCoordinator.activeCellIndex == targetIndex {
@@ -599,13 +602,13 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
             let rendered = root.textStorage.string as NSString
             while neighbor >= 0 && neighbor < rendered.length,
                   rendered.substring(with: NSRange(location: neighbor, length: 1))
-                    .rangeOfCharacter(from: .newlines) != nil {
+                  .rangeOfCharacter(from: .newlines) != nil {
                 neighbor += forward ? 1 : -1
             }
             guard neighbor >= 0,
                   neighbor < rendered.length,
                   root.textStorage.attribute(
-                    RenderBridgeAttributes.rootTableMarker, at: neighbor, effectiveRange: nil
+                      RenderBridgeAttributes.rootTableMarker, at: neighbor, effectiveRange: nil
                   ) == nil
             else { return }
             let scalar = forward ? extent.scalarEnd.addingReportingOverflow(1)
@@ -613,7 +616,7 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
             guard !scalar.overflow,
                   PositionBridge.isScalarPositionRepresentable(scalar.partialValue, in: root),
                   PositionBridge.isRootTextInputRangeSafe(
-                    from: scalar.partialValue, to: scalar.partialValue, in: root
+                      from: scalar.partialValue, to: scalar.partialValue, in: root
                   )
             else { return }
             result = scalar.partialValue
@@ -663,8 +666,10 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
             invalidateTableCellBinding()
             return
         }
-        let frame = tableSurface.convert(tableInputCoordinator.cellInput.bounds,
-                                         from: tableInputCoordinator.cellInput)
+        let frame = tableSurface.convert(
+            tableInputCoordinator.cellInput.bounds,
+            from: tableInputCoordinator.cellInput
+        )
         guard isApplyingActiveTableCellUpdate,
               binding.tableKey == tableID, binding.cellIndex == cellIndex,
               adapter.cachedTablePresentation?.changes.replacedTables.contains(tableID) != true,
@@ -705,8 +710,12 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         _ = bindTableCell(holding: selection, adapter: adapter, fallback: .zero, focus: true)
     }
 
-    private func bindTableCell(holding selection: [String: Any], adapter: EditorV2Adapter,
-                               fallback: CGRect, focus: Bool) -> Bool {
+    private func bindTableCell(
+        holding selection: [String: Any],
+        adapter: EditorV2Adapter,
+        fallback: CGRect,
+        focus: Bool
+    ) -> Bool {
         guard let range = selectionScalarRange(selection),
               let tableID = adapter.tableIndex.tableKey(containingScalar: range.start),
               let index = adapter.tableIndex.cellIndex(tableKey: tableID, containingScalar: range.start),

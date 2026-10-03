@@ -274,8 +274,7 @@ extension EditorV2Adapter {
                 work += 1
                 if work > json.utf8.count || depth > 1024 { return nil }
                 if let number = item as? NSNumber, !number.doubleValue.isFinite { return nil }
-                if let object = item as? [String: Any] { pending.append(contentsOf: object.values.map { ($0, depth + 1) }) }
-                else if let array = item as? [Any] { pending.append(contentsOf: array.map { ($0, depth + 1) }) }
+                if let object = item as? [String: Any] { pending.append(contentsOf: object.values.map { ($0, depth + 1) }) } else if let array = item as? [Any] { pending.append(contentsOf: array.map { ($0, depth + 1) }) }
             }
             pool[key] = object
         }

@@ -15,8 +15,13 @@ final class TableCellDragContext {
     let payload: EditorClipboardPayload
     let movable: Bool
 
-    init(editorId: UInt64, documentRevision: UInt64, source: TableCellDragSource,
-         payload: EditorClipboardPayload, movable: Bool) {
+    init(
+        editorId: UInt64,
+        documentRevision: UInt64,
+        source: TableCellDragSource,
+        payload: EditorClipboardPayload,
+        movable: Bool
+    ) {
         self.editorId = editorId
         self.documentRevision = documentRevision
         self.source = source
@@ -57,8 +62,10 @@ private enum TableCellDropResolution {
 }
 
 extension EditorTableSurface: UIDragInteractionDelegate {
-    func dragInteraction(_ interaction: UIDragInteraction,
-                         itemsForBeginning session: UIDragSession) -> [UIDragItem] {
+    func dragInteraction(
+        _ interaction: UIDragInteraction,
+        itemsForBeginning session: UIDragSession
+    ) -> [UIDragItem] {
         guard let host = interactionHost, host.editorId != 0,
               let adapter = EditorV2Registry.adapter(forLegacyId: host.editorId),
               let source = cellDragSource(at: session.location(in: self)),
@@ -75,8 +82,11 @@ extension EditorTableSurface: UIDragInteractionDelegate {
         return [item]
     }
 
-    func dragInteraction(_ interaction: UIDragInteraction, previewForLifting item: UIDragItem,
-                         session: UIDragSession) -> UITargetedDragPreview? {
+    func dragInteraction(
+        _ interaction: UIDragInteraction,
+        previewForLifting item: UIDragItem,
+        session: UIDragSession
+    ) -> UITargetedDragPreview? {
         cellDragPreview()
     }
 }
@@ -165,8 +175,12 @@ extension EditorTableSurface: TableCellDropHandling {
         }
         let pastesIntoSelection = sameEditorDrag == nil && cellSelectionIncludes(target)
             && host.textView.canMutateSelectedTableCells()
-        return .accepted(TableCellDrop(target: target, revision: revision, kind: kind,
-                                       pastesIntoSelection: pastesIntoSelection))
+        return .accepted(TableCellDrop(
+            target: target,
+            revision: revision,
+            kind: kind,
+            pastesIntoSelection: pastesIntoSelection
+        ))
     }
 
     private func applyTableCellDrop(_ drop: TableCellDrop, payload: [String: Data], moved: TableCellDragSource?) {

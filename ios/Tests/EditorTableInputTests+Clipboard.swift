@@ -36,8 +36,12 @@ extension EditorTableInputTests {
     ) throws {
         UIPasteboard.general.items = []
         defer { UIPasteboard.general.items = [] }
-        try withMountedTable(document: document, configJSON: TableClipboard.config,
-                             size: TableClipboard.editorSize, cellSelection: nil) { fixture in
+        try withMountedTable(
+            document: document,
+            configJSON: TableClipboard.config,
+            size: TableClipboard.editorSize,
+            cellSelection: nil
+        ) { fixture in
             XCTAssertEqual(fixture.adapter.historyFlags()?.canUndo, false, "fixture must start without history")
             if let anchorIndex, let headIndex {
                 try select(fixture, anchor: fixture.positions[anchorIndex], head: fixture.positions[headIndex])
@@ -59,20 +63,35 @@ extension EditorTableInputTests {
         return try XCTUnwrap(table["content"] as? [[String: Any]])
     }
 
-    private func assertOneUndoableUpdate(_ fixture: MountedTableFixture, restoring before: NSDictionary,
-                                         file: StaticString = #filePath, line: UInt = #line) throws {
+    private func assertOneUndoableUpdate(
+        _ fixture: MountedTableFixture,
+        restoring before: NSDictionary,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
         XCTAssertEqual(fixture.updates.updates.count, 1, "exactly one published update", file: file, line: line)
         XCTAssertEqual(fixture.adapter.historyFlags()?.canUndo, true, file: file, line: line)
-        XCTAssertTrue(fixture.view.textView.applyUpdateJSON(try XCTUnwrap(fixture.adapter.undo())),
-                      file: file, line: line)
+        XCTAssertTrue(
+            fixture.view.textView.applyUpdateJSON(try XCTUnwrap(fixture.adapter.undo())),
+            file: file,
+            line: line
+        )
         XCTAssertEqual(try fixture.documentObject(), before, "one undo must restore the table", file: file, line: line)
-        XCTAssertEqual(fixture.adapter.historyFlags()?.canUndo, false,
-                       "the action must be a single history entry", file: file, line: line)
+        XCTAssertEqual(
+            fixture.adapter.historyFlags()?.canUndo,
+            false,
+            "the action must be a single history entry",
+            file: file,
+            line: line
+        )
     }
 
     func testCellSelectionCopyWritesExactTableFlavoursWithoutAnUpdate() throws {
-        try withClipboardTable(TableClipboard.mergedDocument, anchorIndex: TableClipboard.mergedWideCell,
-                               headIndex: TableClipboard.mergedSecondRowMiddleCell) { fixture in
+        try withClipboardTable(
+            TableClipboard.mergedDocument,
+            anchorIndex: TableClipboard.mergedWideCell,
+            headIndex: TableClipboard.mergedSecondRowMiddleCell
+        ) { fixture in
             let root = fixture.view.textView
             root.selectedRange = NSRange(location: 0, length: 0)
             let before = try fixture.documentObject()
@@ -104,8 +123,11 @@ extension EditorTableInputTests {
     }
 
     func testCellSelectionCutClearsTheCellsInOneUndoableUpdate() throws {
-        try withClipboardTable(TableClipboard.gridDocument, anchorIndex: TableClipboard.firstCell,
-                               headIndex: TableClipboard.secondCell) { fixture in
+        try withClipboardTable(
+            TableClipboard.gridDocument,
+            anchorIndex: TableClipboard.firstCell,
+            headIndex: TableClipboard.secondCell
+        ) { fixture in
             let root = fixture.view.textView
             let before = try fixture.documentObject()
 
@@ -120,8 +142,11 @@ extension EditorTableInputTests {
     }
 
     func testCellSelectionPasteFillsTheGridWithoutReplacingTheSelection() throws {
-        try withClipboardTable(TableClipboard.gridDocument, anchorIndex: TableClipboard.firstCell,
-                               headIndex: TableClipboard.lastCell) { fixture in
+        try withClipboardTable(
+            TableClipboard.gridDocument,
+            anchorIndex: TableClipboard.firstCell,
+            headIndex: TableClipboard.lastCell
+        ) { fixture in
             let before = try fixture.documentObject()
             UIPasteboard.general.string = TableClipboard.pastedGridTSV
 
@@ -136,8 +161,11 @@ extension EditorTableInputTests {
     }
 
     func testCellSelectionRichPastePrefersHTMLAndPlainPasteUsesText() throws {
-        try withClipboardTable(TableClipboard.gridDocument, anchorIndex: TableClipboard.firstCell,
-                               headIndex: TableClipboard.secondCell) { fixture in
+        try withClipboardTable(
+            TableClipboard.gridDocument,
+            anchorIndex: TableClipboard.firstCell,
+            headIndex: TableClipboard.secondCell
+        ) { fixture in
             let before = try fixture.documentObject()
             UIPasteboard.general.items = [[
                 TableClipboard.htmlType: Data(TableClipboard.htmlTable.utf8),
@@ -148,8 +176,11 @@ extension EditorTableInputTests {
             XCTAssertEqual(try fixture.adapter.tableCellTexts(), [["h1", "h2"], ["C", "D"]])
             try assertOneUndoableUpdate(fixture, restoring: before)
 
-            try select(fixture, anchor: fixture.positions[TableClipboard.firstCell],
-                       head: fixture.positions[TableClipboard.secondCell])
+            try select(
+                fixture,
+                anchor: fixture.positions[TableClipboard.firstCell],
+                head: fixture.positions[TableClipboard.secondCell]
+            )
             fixture.view.textView.pasteAndMatchStyle(nil)
             XCTAssertEqual(try fixture.adapter.tableCellTexts(), [["p1", "p2"], ["C", "D"]])
             try assertOneUndoableUpdate(fixture, restoring: before)
@@ -189,13 +220,18 @@ extension EditorTableInputTests {
     }
 
     func testAViewThatDoesNotOwnTheTableCannotCutOrPasteItsCellSelection() throws {
-        try withClipboardTable(TableClipboard.gridDocument, anchorIndex: TableClipboard.firstCell,
-                               headIndex: TableClipboard.lastCell) { fixture in
+        try withClipboardTable(
+            TableClipboard.gridDocument,
+            anchorIndex: TableClipboard.firstCell,
+            headIndex: TableClipboard.lastCell
+        ) { fixture in
             let stale = RichTextEditorView(frame: CGRect(origin: .zero, size: TableClipboard.editorSize))
             fixture.view.window?.addSubview(stale)
             defer { stale.removeFromSuperview() }
-            stale.bindEditor(id: fixture.view.editorId,
-                             initialUpdateJSON: try XCTUnwrap(fixture.adapter.initialUpdateJSON()))
+            stale.bindEditor(
+                id: fixture.view.editorId,
+                initialUpdateJSON: try XCTUnwrap(fixture.adapter.initialUpdateJSON())
+            )
             XCTAssertTrue(stale.textView.applyUpdateJSON(
                 try XCTUnwrap(fixture.adapter.refreshFromRustState(mirrorSelection: nil))
             ))
@@ -225,22 +261,31 @@ extension EditorTableInputTests {
     }
 
     func testAtomCellsRoundTripThroughTheCellClipboard() throws {
-        try withClipboardTable(TableClipboard.atomDocument, anchorIndex: TableClipboard.firstCell,
-                               headIndex: TableClipboard.secondCell) { fixture in
+        try withClipboardTable(
+            TableClipboard.atomDocument,
+            anchorIndex: TableClipboard.firstCell,
+            headIndex: TableClipboard.secondCell
+        ) { fixture in
             fixture.view.textView.copy(nil)
             let fragment = try XCTUnwrap(
                 UIPasteboard.general.data(forPasteboardType: EditorClipboardPayload.fragmentType)
             )
             XCTAssertTrue(try XCTUnwrap(String(data: fragment, encoding: .utf8)).contains(TableClipboard.atomMetadataKind))
 
-            try select(fixture, anchor: fixture.positions[TableClipboard.thirdCell],
-                       head: fixture.positions[TableClipboard.lastCell])
+            try select(
+                fixture,
+                anchor: fixture.positions[TableClipboard.thirdCell],
+                head: fixture.positions[TableClipboard.lastCell]
+            )
             let before = try fixture.documentObject()
             fixture.view.textView.paste(nil)
 
             let rows = try tableRows(fixture)
-            XCTAssertEqual(rows[1]["content"] as? NSArray, rows[0]["content"] as? NSArray,
-                           "the pasted row must reproduce the copied atom payload")
+            XCTAssertEqual(
+                rows[1]["content"] as? NSArray,
+                rows[0]["content"] as? NSArray,
+                "the pasted row must reproduce the copied atom payload"
+            )
             try assertOneUndoableUpdate(fixture, restoring: before)
         }
     }

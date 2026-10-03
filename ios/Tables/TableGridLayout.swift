@@ -22,16 +22,29 @@ struct TableGridCell: Hashable {
     let contentKey: String
     let attachmentRevision: Int
 
-    init(sourceIndex: Int, row: Int, column: Int, rowspan: Int = 1, colspan: Int = 1,
-         contentKey: String, attachmentRevision: Int = 0) {
+    init(
+        sourceIndex: Int,
+        row: Int,
+        column: Int,
+        rowspan: Int = 1,
+        colspan: Int = 1,
+        contentKey: String,
+        attachmentRevision: Int = 0
+    ) {
         self.sourceIndex = sourceIndex; self.row = row; self.column = column
         self.rowspan = rowspan; self.colspan = colspan; self.contentKey = contentKey
         self.attachmentRevision = attachmentRevision
     }
 
     init(source: TableSurfaceCell) {
-        self.init(sourceIndex: source.sourceIndex, row: source.row, column: source.column,
-                  rowspan: source.rowspan, colspan: source.colspan, contentKey: source.contentKey)
+        self.init(
+            sourceIndex: source.sourceIndex,
+            row: source.row,
+            column: source.column,
+            rowspan: source.rowspan,
+            colspan: source.colspan,
+            contentKey: source.contentKey
+        )
     }
 }
 
@@ -44,18 +57,30 @@ struct TableGridRecord {
     let failure: TableRenderFailure?
     let compatibilityDiagnostic: TableCompatibilityDiagnostic?
 
-    init(documentOwner: String, columns: Int, rows: Int, columnWidths: [CGFloat?], cells: [TableGridCell],
-         failure: TableRenderFailure? = nil, compatibilityDiagnostic: TableCompatibilityDiagnostic? = nil) {
+    init(
+        documentOwner: String,
+        columns: Int,
+        rows: Int,
+        columnWidths: [CGFloat?],
+        cells: [TableGridCell],
+        failure: TableRenderFailure? = nil,
+        compatibilityDiagnostic: TableCompatibilityDiagnostic? = nil
+    ) {
         self.documentOwner = documentOwner; self.columns = columns; self.rows = rows
         self.columnWidths = columnWidths; self.cells = cells; self.failure = failure
         self.compatibilityDiagnostic = compatibilityDiagnostic
     }
 
     init(table: TableSurfaceSource, documentOwner: String) {
-        self.init(documentOwner: documentOwner, columns: table.columns, rows: table.rows,
-                  columnWidths: table.columnWidths,
-                  cells: table.cells.map(TableGridCell.init(source:)),
-                  failure: table.failure, compatibilityDiagnostic: table.compatibilityDiagnostic)
+        self.init(
+            documentOwner: documentOwner,
+            columns: table.columns,
+            rows: table.rows,
+            columnWidths: table.columnWidths,
+            cells: table.cells.map(TableGridCell.init(source:)),
+            failure: table.failure,
+            compatibilityDiagnostic: table.compatibilityDiagnostic
+        )
     }
 }
 
@@ -79,15 +104,27 @@ final class TableGridLayout {
         self.cache = cache
     }
 
-    func layout(record: TableGridRecord, viewportWidth: CGFloat, style: TableStyle, direction: TableLayoutDirection,
-                themeDigest: String = "", fontEnvironmentRevision: Int = 0, textScale: CGFloat = 1,
-                measureCell: (TableGridCell, CGFloat) -> CGFloat?) -> TableLayoutResult {
+    func layout(
+        record: TableGridRecord,
+        viewportWidth: CGFloat,
+        style: TableStyle,
+        direction: TableLayoutDirection,
+        themeDigest: String = "",
+        fontEnvironmentRevision: Int = 0,
+        textScale: CGFloat = 1,
+        measureCell: (TableGridCell, CGFloat) -> CGFloat?
+    ) -> TableLayoutResult {
         var heights: [Int: CGFloat] = [:]
         for (cell, innerWidthPixels) in measurementInputs(record: record, viewportWidth: viewportWidth, style: style) {
-            let key = TableCellMeasurementKey(documentOwner: record.documentOwner, contentKey: cell.contentKey,
-                                              innerWidthPixels: innerWidthPixels, themeDigest: themeDigest,
-                                              fontEnvironmentRevision: fontEnvironmentRevision, textScale: textScale,
-                                              attachmentRevision: cell.attachmentRevision)
+            let key = TableCellMeasurementKey(
+                documentOwner: record.documentOwner,
+                contentKey: cell.contentKey,
+                innerWidthPixels: innerWidthPixels,
+                themeDigest: themeDigest,
+                fontEnvironmentRevision: fontEnvironmentRevision,
+                textScale: textScale,
+                attachmentRevision: cell.attachmentRevision
+            )
             if let cached = cache.value(for: key) {
                 heights[cell.sourceIndex] = cached
             } else {
@@ -97,8 +134,13 @@ final class TableGridLayout {
                 heights[cell.sourceIndex] = measured
             }
         }
-        return relayout(record: record, viewportWidth: viewportWidth, style: style, direction: direction,
-                        cachedContentHeights: heights)
+        return relayout(
+            record: record,
+            viewportWidth: viewportWidth,
+            style: style,
+            direction: direction,
+            cachedContentHeights: heights
+        )
     }
 
     func measurementInputs(record: TableGridRecord, viewportWidth: CGFloat, style: TableStyle) -> [(TableGridCell, Int)] {
@@ -107,8 +149,11 @@ final class TableGridLayout {
               let geometry = columnGeometry(record: record, viewportWidth: viewportWidth, style: style) else { return [] }
         var inputs: [(TableGridCell, Int)] = []
         for cell in record.cells.sorted(by: { $0.sourceIndex < $1.sourceIndex }) {
-            let inner = max(0, geometry.offsets[cell.column + cell.colspan] - geometry.offsets[cell.column]
-                            - 2 * (style.cellPadding + style.borderWidth))
+            let inner = max(
+                0,
+                geometry.offsets[cell.column + cell.colspan] - geometry.offsets[cell.column]
+                    - 2 * (style.cellPadding + style.borderWidth)
+            )
             let roundedPixels = (inner * displayScale).rounded()
             guard roundedPixels.isFinite, roundedPixels >= 0,
                   let innerWidthPixels = Int(exactly: roundedPixels) else { break }
@@ -117,8 +162,13 @@ final class TableGridLayout {
         return inputs
     }
 
-    func relayout(record: TableGridRecord, viewportWidth: CGFloat, style: TableStyle,
-                  direction: TableLayoutDirection, cachedContentHeights: [Int: CGFloat]) -> TableLayoutResult {
+    func relayout(
+        record: TableGridRecord,
+        viewportWidth: CGFloat,
+        style: TableStyle,
+        direction: TableLayoutDirection,
+        cachedContentHeights: [Int: CGFloat]
+    ) -> TableLayoutResult {
         let minimumRow = style.cellPadding * 2 + style.borderWidth * 2
         let fallbackHeight = minimumRow.isFinite && minimumRow >= 1 ? minimumRow : 1
         let fallbackWidth: CGFloat
@@ -211,7 +261,7 @@ final class TableGridLayout {
 
     private func valid(_ cell: TableGridCell, in record: TableGridRecord) -> Bool {
         cell.row >= 0 && cell.column >= 0 && cell.rowspan > 0 && cell.colspan > 0 &&
-        cell.rowspan <= record.rows - cell.row && cell.colspan <= record.columns - cell.column
+            cell.rowspan <= record.rows - cell.row && cell.colspan <= record.columns - cell.column
     }
 
     private func fallback(_ failure: TableRenderFailure, _ record: TableGridRecord, width: CGFloat, height: CGFloat) -> TableLayoutResult {

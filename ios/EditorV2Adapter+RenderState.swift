@@ -74,8 +74,7 @@ extension EditorV2Adapter {
         )
         tableIndex = nextIndex
         installedFrameRevision = snapshot.documentRevision
-        if changes.fullReset { fullFrameAdoptionCountForTesting += 1 }
-        else { deltaFrameAdoptionCountForTesting += 1 }
+        if changes.fullReset { fullFrameAdoptionCountForTesting += 1 } else { deltaFrameAdoptionCountForTesting += 1 }
         baseDocumentRevision = snapshot.documentRevision
         stateRevision = snapshot.stateRevision
         cachedScalarLength = snapshot.scalarLength

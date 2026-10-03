@@ -51,16 +51,26 @@ enum EditorCellSelection: Equatable {
             }
             let cells = record.cells.enumerated().compactMap { cellIndex, cell -> Cell? in
                 guard let source = index.docStart(tableKey: tableID, cellIndex: cellIndex) else { return nil }
-                return Cell(sourceIndex: cellIndex, documentPosition: source, top: cell.row, left: cell.column,
-                            bottom: cell.row + cell.rowspan, right: cell.column + cell.colspan)
+                return Cell(
+                    sourceIndex: cellIndex,
+                    documentPosition: source,
+                    top: cell.row,
+                    left: cell.column,
+                    bottom: cell.row + cell.rowspan,
+                    right: cell.column + cell.colspan
+                )
             }
             guard cells.filter({ $0.documentPosition == anchor }).count == 1,
                   cells.filter({ $0.documentPosition == head }).count == 1,
                   let first = cells.first(where: { $0.documentPosition == anchor }),
                   let last = cells.first(where: { $0.documentPosition == head })
             else { continue }
-            var bounds = Bounds(top: min(first.top, last.top), left: min(first.left, last.left),
-                                bottom: max(first.bottom, last.bottom), right: max(first.right, last.right))
+            var bounds = Bounds(
+                top: min(first.top, last.top),
+                left: min(first.left, last.left),
+                bottom: max(first.bottom, last.bottom),
+                right: max(first.right, last.right)
+            )
             while true {
                 let previous = bounds
                 for cell in cells where cell.intersects(previous) { bounds.include(cell) }

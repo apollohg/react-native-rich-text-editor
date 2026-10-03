@@ -33,8 +33,12 @@ extension EditorTableInputTests {
         anchor: Int = CellDrag.firstCell, head: Int = CellDrag.secondCell,
         _ body: (MountedTableFixture) throws -> Void
     ) throws {
-        try withMountedTable(document: document, configJSON: CellDrag.config, size: CellDrag.editorSize,
-                             cellSelection: (anchor, head)) { fixture in
+        try withMountedTable(
+            document: document,
+            configJSON: CellDrag.config,
+            size: CellDrag.editorSize,
+            cellSelection: (anchor, head)
+        ) { fixture in
             XCTAssertTrue(fixture.view.textView.becomeFirstResponder())
             XCTAssertTrue(fixture.view.textView.authoritativeCellSelectionActive, "root did not adopt the cell selection")
             XCTAssertEqual(fixture.adapter.historyFlags()?.canUndo, false, "fixture must start without history")
@@ -48,8 +52,11 @@ extension EditorTableInputTests {
     }
 
     private func cellDragInteraction(_ fixture: MountedTableFixture) throws -> UIDragInteraction {
-        try XCTUnwrap(fixture.view.textView.interactions.compactMap { $0 as? UIDragInteraction }
-            .first { $0.delegate === fixture.surface }, "the table surface installs no drag interaction on the root")
+        try XCTUnwrap(
+            fixture.view.textView.interactions.compactMap { $0 as? UIDragInteraction }
+                .first { $0.delegate === fixture.surface },
+            "the table surface installs no drag interaction on the root"
+        )
     }
 
     private func startCellDrag(_ fixture: MountedTableFixture, at windowPoint: CGPoint) throws -> StartedCellDrag {
@@ -60,8 +67,11 @@ extension EditorTableInputTests {
     }
 
     private func dropRequest(_ fixture: MountedTableFixture, session: UIDropSession) -> TestTextDropRequest {
-        TestTextDropRequest(dropPosition: fixture.view.textView.beginningOfDocument, isSameView: true,
-                            dropSession: session)
+        TestTextDropRequest(
+            dropPosition: fixture.view.textView.beginningOfDocument,
+            isSameView: true,
+            dropSession: session
+        )
     }
 
     private func proposal(_ fixture: MountedTableFixture, for request: TestTextDropRequest) -> UITextDropProposal {
@@ -88,13 +98,22 @@ extension EditorTableInputTests {
         TableCellDropTarget(tableID: fixture.tableID, sourceIndex: index)
     }
 
-    private func assertSingleUndoRestores(_ fixture: MountedTableFixture, _ before: NSDictionary,
-                                          file: StaticString = #filePath, line: UInt = #line) throws {
+    private func assertSingleUndoRestores(
+        _ fixture: MountedTableFixture,
+        _ before: NSDictionary,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
         XCTAssertEqual(fixture.updates.updates.count, 1, "the drop publishes exactly one update", file: file, line: line)
         XCTAssertTrue(fixture.view.textView.applyUpdateJSON(try XCTUnwrap(fixture.adapter.undo())), file: file, line: line)
         XCTAssertEqual(try fixture.documentObject(), before, "one undo restores source and target", file: file, line: line)
-        XCTAssertEqual(fixture.adapter.historyFlags()?.canUndo, false,
-                       "the drop must be a single history entry", file: file, line: line)
+        XCTAssertEqual(
+            fixture.adapter.historyFlags()?.canUndo,
+            false,
+            "the drop must be a single history entry",
+            file: file,
+            line: line
+        )
     }
 
     func testCellDragExportsTheCopyFlavoursAndLiftsTheSelectedCellUnion() throws {
@@ -108,12 +127,18 @@ extension EditorTableInputTests {
             let item = try XCTUnwrap(drag.items.first, "a long press inside the selection lifts the cells")
             XCTAssertEqual(drag.items.count, 1)
             XCTAssertEqual(item.itemProvider.registeredTypeIdentifiers, EditorClipboardPayload.exportedTypes)
-            XCTAssertEqual(try loadedData(item.itemProvider, type: EditorClipboardPayload.fragmentType),
-                           copied.data(forPasteboardType: EditorClipboardPayload.fragmentType))
-            XCTAssertEqual(try loadedData(item.itemProvider, type: EditorClipboardPayload.htmlType),
-                           copied.data(forPasteboardType: EditorClipboardPayload.htmlType))
-            XCTAssertEqual(String(data: try loadedData(item.itemProvider, type: EditorClipboardPayload.plainTextType),
-                                  encoding: .utf8), CellDrag.firstRowTSV)
+            XCTAssertEqual(
+                try loadedData(item.itemProvider, type: EditorClipboardPayload.fragmentType),
+                copied.data(forPasteboardType: EditorClipboardPayload.fragmentType)
+            )
+            XCTAssertEqual(
+                try loadedData(item.itemProvider, type: EditorClipboardPayload.htmlType),
+                copied.data(forPasteboardType: EditorClipboardPayload.htmlType)
+            )
+            XCTAssertEqual(String(
+                data: try loadedData(item.itemProvider, type: EditorClipboardPayload.plainTextType),
+                encoding: .utf8
+            ), CellDrag.firstRowTSV)
             XCTAssertEqual(copied.string, CellDrag.firstRowTSV)
             let context = try XCTUnwrap(drag.session.localContext as? TableCellDragContext)
             XCTAssertTrue(context.movable)
@@ -127,18 +152,26 @@ extension EditorTableInputTests {
             let selected = try XCTUnwrap(fixture.drawing.selectedTableCellRects(tableID: fixture.tableID))
             let union = selected.dropFirst().reduce(selected[0]) { $0.union($1) }
             XCTAssertTrue(preview.view === fixture.drawing)
-            XCTAssertEqual(preview.parameters.visiblePath?.bounds, union,
-                           "the lift preview is exactly the selected cells")
+            XCTAssertEqual(
+                preview.parameters.visiblePath?.bounds,
+                union,
+                "the lift preview is exactly the selected cells"
+            )
         }
     }
 
     func testCellDragDoesNotBeginOnAHandleOrOutsideTheSelection() throws {
         try withCellDragTable { fixture in
             let handle = fixture.view.convert(try fixture.hostPoint(for: .head), to: nil)
-            XCTAssertTrue(try startCellDrag(fixture, at: handle).items.isEmpty,
-                          "the selection handle keeps precedence over the drag")
-            XCTAssertTrue(try startCellDrag(fixture, at: try windowPoint(fixture, inCell: CellDrag.thirdCell))
-                .items.isEmpty, "a long press outside the selection lifts nothing")
+            XCTAssertTrue(
+                try startCellDrag(fixture, at: handle).items.isEmpty,
+                "the selection handle keeps precedence over the drag"
+            )
+            XCTAssertTrue(
+                try startCellDrag(fixture, at: try windowPoint(fixture, inCell: CellDrag.thirdCell))
+                    .items.isEmpty,
+                "a long press outside the selection lifts nothing"
+            )
         }
     }
 
@@ -153,8 +186,11 @@ extension EditorTableInputTests {
             let offered = proposal(fixture, for: request)
             XCTAssertEqual(offered.operation, .move)
             XCTAssertEqual(offered.dropPerformer, .delegate)
-            XCTAssertEqual(fixture.drawing.tableCellDropTarget, dropTarget(fixture, cell: CellDrag.thirdCell),
-                           "hovering highlights the real drop cell")
+            XCTAssertEqual(
+                fixture.drawing.tableCellDropTarget,
+                dropTarget(fixture, cell: CellDrag.thirdCell),
+                "hovering highlights the real drop cell"
+            )
             perform(fixture, request)
 
             XCTAssertEqual(try fixture.adapter.tableCellTexts(), [["", ""], ["A", "B"]])
@@ -187,8 +223,12 @@ extension EditorTableInputTests {
             let drag = try startCellDrag(source, at: try windowPoint(source, inCell: CellDrag.firstCell))
             XCTAssertFalse(drag.items.isEmpty)
 
-            try withMountedTable(document: CellDrag.targetDocument, configJSON: CellDrag.config,
-                                 size: CellDrag.editorSize, cellSelection: nil) { target in
+            try withMountedTable(
+                document: CellDrag.targetDocument,
+                configJSON: CellDrag.config,
+                size: CellDrag.editorSize,
+                cellSelection: nil
+            ) { target in
                 let request = dropRequest(target, session: TestTextDropSession(
                     dragSession: drag.session, windowLocation: try windowPoint(target, inCell: CellDrag.thirdCell)
                 ))
@@ -207,8 +247,12 @@ extension EditorTableInputTests {
     }
 
     func testExternalDropLoadsItsItemsAndPastesTheMatrixAtTheDropCell() throws {
-        try withMountedTable(document: CellDrag.targetDocument, configJSON: CellDrag.config,
-                             size: CellDrag.editorSize, cellSelection: nil) { fixture in
+        try withMountedTable(
+            document: CellDrag.targetDocument,
+            configJSON: CellDrag.config,
+            size: CellDrag.editorSize,
+            cellSelection: nil
+        ) { fixture in
             let before = try fixture.documentObject()
             let item = UIDragItem(itemProvider: NSItemProvider(object: CellDrag.externalTSV as NSString))
             let request = dropRequest(fixture, session: TestTextDropSession(
@@ -224,8 +268,11 @@ extension EditorTableInputTests {
             RunLoop.main.run(until: Date().addingTimeInterval(CellDrag.lateUpdateWindow))
             XCTAssertEqual(fixture.updates.updates.count, 1, "updates: \(fixture.updates.updates)")
 
-            XCTAssertEqual(try fixture.adapter.tableCellTexts(), [["w", "x", ""], ["y", "e1", "e2"]],
-                           "the matrix grows the table from the real drop cell")
+            XCTAssertEqual(
+                try fixture.adapter.tableCellTexts(),
+                [["w", "x", ""], ["y", "e1", "e2"]],
+                "the matrix grows the table from the real drop cell"
+            )
             try assertSingleUndoRestores(fixture, before)
         }
     }
@@ -254,8 +301,10 @@ extension EditorTableInputTests {
             let before = try fixture.documentObject()
 
             let drag = try startCellDrag(fixture, at: try windowPoint(fixture, inCell: CellDrag.firstCell))
-            let context = try XCTUnwrap(drag.session.localContext as? TableCellDragContext,
-                                        "a read-only editor still offers its cells for copying")
+            let context = try XCTUnwrap(
+                drag.session.localContext as? TableCellDragContext,
+                "a read-only editor still offers its cells for copying"
+            )
             XCTAssertFalse(context.movable)
             let request = dropRequest(fixture, session: TestTextDropSession(
                 dragSession: drag.session, windowLocation: try windowPoint(fixture, inCell: CellDrag.thirdCell)
@@ -273,8 +322,10 @@ extension EditorTableInputTests {
             let stale = RichTextEditorView(frame: CGRect(origin: .zero, size: CellDrag.editorSize))
             fixture.view.window?.addSubview(stale)
             defer { stale.removeFromSuperview() }
-            stale.bindEditor(id: fixture.view.editorId,
-                             initialUpdateJSON: try XCTUnwrap(fixture.adapter.initialUpdateJSON()))
+            stale.bindEditor(
+                id: fixture.view.editorId,
+                initialUpdateJSON: try XCTUnwrap(fixture.adapter.initialUpdateJSON())
+            )
             XCTAssertTrue(stale.textView.applyUpdateJSON(
                 try XCTUnwrap(fixture.adapter.refreshFromRustState(mirrorSelection: nil))
             ))
@@ -295,8 +346,10 @@ extension EditorTableInputTests {
                     dragSession: session, windowLocation: try windowPoint(fixture, inCell: CellDrag.thirdCell)
                 )
             )
-            XCTAssertEqual(stale.textView.textDroppableView(stale.textView, proposalForDrop: request).operation,
-                           .forbidden)
+            XCTAssertEqual(
+                stale.textView.textDroppableView(stale.textView, proposalForDrop: request).operation,
+                .forbidden
+            )
             stale.textView.textDroppableView(stale.textView, willPerformDrop: request)
             XCTAssertEqual(try fixture.documentObject(), before)
             XCTAssertEqual(fixture.adapter.historyFlags()?.canUndo, false)
@@ -311,8 +364,11 @@ extension EditorTableInputTests {
             fixture.view.textView.isComposing = true
             defer { fixture.view.textView.isComposing = false }
 
-            XCTAssertTrue(try startCellDrag(fixture, at: try windowPoint(fixture, inCell: CellDrag.firstCell))
-                .items.isEmpty, "a composing editor lifts no cells")
+            XCTAssertTrue(
+                try startCellDrag(fixture, at: try windowPoint(fixture, inCell: CellDrag.firstCell))
+                    .items.isEmpty,
+                "a composing editor lifts no cells"
+            )
             let request = dropRequest(fixture, session: TestTextDropSession(
                 dragSession: movable.session, windowLocation: try windowPoint(fixture, inCell: CellDrag.thirdCell)
             ))
@@ -324,8 +380,11 @@ extension EditorTableInputTests {
     }
 
     func testADropOntoASyntheticSlotIsRefusedWithoutMutation() throws {
-        try withCellDragTable(CellDrag.irregularDocument, anchor: CellDrag.irregularLaterCell,
-                              head: CellDrag.irregularLaterCell) { fixture in
+        try withCellDragTable(
+            CellDrag.irregularDocument,
+            anchor: CellDrag.irregularLaterCell,
+            head: CellDrag.irregularLaterCell
+        ) { fixture in
             let wide = try fixture.presentedCell(CellDrag.irregularWideCell)
             let later = try fixture.presentedCell(CellDrag.irregularLaterCell)
             let gap = CGPoint(x: (later.bounds.maxX + wide.bounds.maxX) / 2, y: later.bounds.midY)
@@ -339,11 +398,16 @@ extension EditorTableInputTests {
             let external = UIDragItem(itemProvider: NSItemProvider(object: CellDrag.externalTSV as NSString))
             let before = try XCTUnwrap(fixture.adapter.documentJson())
 
-            for session in [TestTextDropSession(dragSession: drag.session, windowLocation: gapInWindow),
-                            TestTextDropSession(externalItems: [external], windowLocation: gapInWindow)] {
+            for session in [
+                TestTextDropSession(dragSession: drag.session, windowLocation: gapInWindow),
+                TestTextDropSession(externalItems: [external], windowLocation: gapInWindow)
+            ] {
                 let request = dropRequest(fixture, session: session)
-                XCTAssertEqual(proposal(fixture, for: request).operation, .forbidden,
-                               "a synthetic slot never receives UIKit's text insertion")
+                XCTAssertEqual(
+                    proposal(fixture, for: request).operation,
+                    .forbidden,
+                    "a synthetic slot never receives UIKit's text insertion"
+                )
                 XCTAssertNil(fixture.drawing.tableCellDropTarget)
                 perform(fixture, request)
             }

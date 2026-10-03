@@ -44,9 +44,11 @@ final class PreparedCellShapeBuildContext {
     private var pins: [ObjectIdentifier: PreparedCellShapeReference] = [:]
     private var closed = false
 
-    fileprivate init(catalog: PreparedCellShapeCatalog,
-                     resolved: [PreparedCellShapeKey: PreparedCellShapeReference] = [:],
-                     pins: [ObjectIdentifier: PreparedCellShapeReference] = [:]) {
+    fileprivate init(
+        catalog: PreparedCellShapeCatalog,
+        resolved: [PreparedCellShapeKey: PreparedCellShapeReference] = [:],
+        pins: [ObjectIdentifier: PreparedCellShapeReference] = [:]
+    ) {
         self.catalog = catalog
         self.resolved = resolved
         self.pins = pins
@@ -203,8 +205,7 @@ final class PreparedCellShapeCatalog {
         for shape in shapes {
             let identifier = ObjectIdentifier(shape)
             guard let pin = buildPins[identifier], pin.reference.shape === shape else { continue }
-            if pin.count == 1 { buildPins.removeValue(forKey: identifier) }
-            else { buildPins[identifier] = (pin.reference, pin.count - 1) }
+            if pin.count == 1 { buildPins.removeValue(forKey: identifier) } else { buildPins[identifier] = (pin.reference, pin.count - 1) }
         }
         pruneLocked()
         lock.unlock()
@@ -272,10 +273,17 @@ final class PreparedCellShapeCatalog {
 
 private extension ProseLayoutKey {
     func sourceNeutralized(semanticKey: String) -> ProseLayoutKey {
-        ProseLayoutKey(semanticKey: semanticKey, widthPixels: widthPixels, themeDigest: themeDigest,
-            nativeFontRevision: nativeFontRevision, fontEnvironmentRevision: fontEnvironmentRevision,
-            displayScale: CGFloat(Double(bitPattern: displayScaleBits)), attachmentRevision: 0,
-            generationIdentity: "cell-shape", semanticGenerationIdentity: "cell-shape")
+        ProseLayoutKey(
+            semanticKey: semanticKey,
+            widthPixels: widthPixels,
+            themeDigest: themeDigest,
+            nativeFontRevision: nativeFontRevision,
+            fontEnvironmentRevision: fontEnvironmentRevision,
+            displayScale: CGFloat(Double(bitPattern: displayScaleBits)),
+            attachmentRevision: 0,
+            generationIdentity: "cell-shape",
+            semanticGenerationIdentity: "cell-shape"
+        )
     }
 }
 
@@ -320,15 +328,27 @@ private extension PreparedProseLayout {
 private extension ViewerTableSurface {
     func sourceNeutralized() -> ViewerTableSurface {
         let store = TableCellLayoutStore()
-        return ViewerTableSurface(identity: "cell-table", hostViewportWidth: hostViewportWidth,
-            style: style, direction: direction, layout: layout, cells: cells.map { cell in
+        return ViewerTableSurface(
+            identity: "cell-table",
+            hostViewportWidth: hostViewportWidth,
+            style: style,
+            direction: direction,
+            layout: layout,
+            cells: cells.map { cell in
                 let rebuild = cell.prepareContent
                 let semanticKey = "cell-shape:\(cell.sourceIndex)"
                 let key = cell.contentKey.sourceNeutralized(semanticKey: semanticKey)
-                return PreparedViewerTableCell(copyingGeometry: cell, contentKey: key,
-                    attributesKey: nil, layoutStore: store,
-                    prepareContent: { rebuild().sourceNeutralized(semanticKey: semanticKey) })
-            }, preparationError: preparationError, displayScale: displayScale)
+                return PreparedViewerTableCell(
+                    copyingGeometry: cell,
+                    contentKey: key,
+                    attributesKey: nil,
+                    layoutStore: store,
+                    prepareContent: { rebuild().sourceNeutralized(semanticKey: semanticKey) }
+                )
+            },
+            preparationError: preparationError,
+            displayScale: displayScale
+        )
     }
 
 }

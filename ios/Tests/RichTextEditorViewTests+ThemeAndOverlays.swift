@@ -368,7 +368,6 @@ extension RichTextEditorViewTests {
     }
 }
 
-
 extension RichTextEditorViewTests {
     func testDocumentStyleBackgroundStaysBoundedAndPreservesScrolledPixels() throws {
         let viewport = CGSize(width: 320, height: 220)
@@ -405,9 +404,11 @@ extension RichTextEditorViewTests {
             let expected = renderer.image { context in
                 background.box?.draw(in: document.offsetBy(dx: 0, dy: -offset), context: context.cgContext)
             }
-            XCTAssertEqual(try XCTUnwrap(actual.cgImage?.dataProvider?.data) as Data,
-                           try XCTUnwrap(expected.cgImage?.dataProvider?.data) as Data,
-                           "Background, borders and corners remain anchored at document offset \(offset)")
+            XCTAssertEqual(
+                try XCTUnwrap(actual.cgImage?.dataProvider?.data) as Data,
+                try XCTUnwrap(expected.cgImage?.dataProvider?.data) as Data,
+                "Background, borders and corners remain anchored at document offset \(offset)"
+            )
         }
     }
 

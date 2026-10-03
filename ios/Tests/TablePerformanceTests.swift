@@ -54,8 +54,10 @@ final class TablePerformanceTests: XCTestCase {
                 }
                 tableRows.append(["type": "table_row", "content": cells])
             }
-            return String(decoding: try JSONSerialization.data(withJSONObject: ["type": "doc",
-                "content": [["type": "table", "content": tableRows]]], options: [.sortedKeys]), as: UTF8.self)
+            return try XCTUnwrap(String(data: try JSONSerialization.data(withJSONObject: [
+                "type": "doc",
+                "content": [["type": "table", "content": tableRows]]
+            ], options: [.sortedKeys]), encoding: .utf8))
         }
     }
 
@@ -76,10 +78,16 @@ final class TablePerformanceTests: XCTestCase {
         }
     }
 
+    private struct PresentationTiming {
+        let commit: Double
+        let displayed: Double
+        let measured: Double
+    }
+
     private struct Measurement {
         let durationMs: Double
         var stagesMs: [String: Double] = [:]
-        var presentation: (commit: Double, displayed: Double, measured: Double)?
+        var presentation: PresentationTiming?
     }
 
     private enum MeasurementEndpoint {
@@ -137,8 +145,11 @@ final class TablePerformanceTests: XCTestCase {
         let surface: EditorTableSurface
         let drawing: PreparedProseDrawingView
 
-        init(id: UInt64? = nil, viewport: CGSize = Benchmark.viewport,
-             appearance: UIUserInterfaceStyle = .unspecified) throws {
+        init(
+            id: UInt64? = nil,
+            viewport: CGSize = Benchmark.viewport,
+            appearance: UIUserInterfaceStyle = .unspecified
+        ) throws {
             window = makeTestWindow(frame: CGRect(origin: .zero, size: viewport))
             window.overrideUserInterfaceStyle = appearance
             view = RichTextEditorView(frame: window.bounds)
@@ -191,8 +202,10 @@ final class TablePerformanceTests: XCTestCase {
             view.layoutIfNeeded()
             let contentRect = try XCTUnwrap(surface.cellFrame(tableID: table.identity, cellIndex: UInt32(cellIndex)))
             let bound = view.bindTableCell(tableID: table.identity, cellIndex: UInt32(cellIndex), contentRect: contentRect)
-            let input = try XCTUnwrap(bound ? view.activeTextInput as? TableCellInputTextView : nil,
-                                     "Table cell \(cellIndex) rejected its input binding")
+            let input = try XCTUnwrap(
+                bound ? view.activeTextInput as? TableCellInputTextView : nil,
+                "Table cell \(cellIndex) rejected its input binding"
+            )
             XCTAssertTrue(input.becomeFirstResponder())
             input.selectedRange = NSRange(location: input.textStorage.length, length: 0)
             return input
@@ -232,8 +245,11 @@ final class TablePerformanceTests: XCTestCase {
                 let index = Int(ceil(Double(ordered.count) * Benchmark.warmPercentile)) - 1
                 XCTAssertEqual(ordered.count, Benchmark.warmSamples)
                 XCTAssertEqual(sample.counters.unchangedCellRemeasurements, 0)
-                XCTAssertLessThanOrEqual(ordered[index], Benchmark.warmBudgetMs,
-                    "\(fixture.name) unchanged warm measurement p99")
+                XCTAssertLessThanOrEqual(
+                    ordered[index],
+                    Benchmark.warmBudgetMs,
+                    "\(fixture.name) unchanged warm measurement p99"
+                )
             }
         }
     }
@@ -263,8 +279,10 @@ final class TablePerformanceTests: XCTestCase {
         defer { PreparedProseInstrumentation.tableWorkObserverForTesting = nil }
         try host.load(Fixture(rows: 3, columns: 3, rich: false).source())
         let spans = work.consume(through: DispatchTime.now().uptimeNanoseconds)
-        XCTAssertTrue(spans.contains { $0.kind == .layout && $0.endNanos > $0.startNanos },
-                      "Editor table preparation must participate in delayed-frame attribution")
+        XCTAssertTrue(
+            spans.contains { $0.kind == .layout && $0.endNanos > $0.startNanos },
+            "Editor table preparation must participate in delayed-frame attribution"
+        )
     }
 
     func testNativeStagesObserveReplacementAndTyping() throws {
@@ -289,8 +307,10 @@ final class TablePerformanceTests: XCTestCase {
     }
 
     func testExportTablePerformance() throws {
-        try XCTSkipUnless(ProcessInfo.processInfo.environment["PREPARED_PROSE_DEVICE_BENCHMARK"] == "1",
-                          "Run through NativeEditorPreparedProsePerformance.")
+        try XCTSkipUnless(
+            ProcessInfo.processInfo.environment["PREPARED_PROSE_DEVICE_BENCHMARK"] == "1",
+            "Run through NativeEditorPreparedProsePerformance."
+        )
         clock = TableTestFrameClock()
         defer { clock.close(); clock = nil }
         for rich in [false, true] {
@@ -317,7 +337,7 @@ final class TablePerformanceTests: XCTestCase {
         attachment.name = "table-performance-ios.json"
         attachment.lifetime = .keepAlways
         add(attachment)
-        print(Benchmark.marker + String(decoding: data, as: UTF8.self))
+        print(try Benchmark.marker + XCTUnwrap(String(data: data, encoding: .utf8)))
     }
 
     private func saveExport() throws -> Data {
@@ -328,16 +348,21 @@ final class TablePerformanceTests: XCTestCase {
     }
 
     func testExporterPrimitives() throws {
-        try XCTSkipUnless(ProcessInfo.processInfo.environment["PREPARED_PROSE_DEVICE_BENCHMARK"] == "1",
-                          "Run through NativeEditorPreparedProsePerformance.")
+        try XCTSkipUnless(
+            ProcessInfo.processInfo.environment["PREPARED_PROSE_DEVICE_BENCHMARK"] == "1",
+            "Run through NativeEditorPreparedProsePerformance."
+        )
         clock = TableTestFrameClock()
         defer { clock.close(); clock = nil }
         let fixture = Fixture(rows: 3, columns: 3, rich: false)
         let source = try fixture.source()
         try cold(fixture, source: source)
         for sample in samples {
-            XCTAssertEqual(sample.samplesMs, sample.stageSamplesMs["synchronousAction"],
-                "Cold source compilation and exact layout must end before presentation waiting: \(sample.metric)")
+            XCTAssertEqual(
+                sample.samplesMs,
+                sample.stageSamplesMs["synchronousAction"],
+                "Cold source compilation and exact layout must end before presentation waiting: \(sample.metric)"
+            )
         }
         try autoreleasepool { try typing(fixture, source: source, run: 1) }
         try autoreleasepool { try cellChange(fixture, source: source, atEnd: true) }
@@ -345,8 +370,10 @@ final class TablePerformanceTests: XCTestCase {
         try autoreleasepool { try structural(fixture, source: source) }
         try autoreleasepool { try remote(fixture, source: source) }
         XCTAssertTrue(samples.allSatisfy { $0.samplesMs.allSatisfy { $0.isFinite && $0 >= 0 } })
-        XCTAssertEqual(samples.first { $0.metric == "cellChangeEnd" }?.counters.changedCellRemeasurements,
-                       Benchmark.baselineSamples)
+        XCTAssertEqual(
+            samples.first { $0.metric == "cellChangeEnd" }?.counters.changedCellRemeasurements,
+            Benchmark.baselineSamples
+        )
         XCTAssertTrue(samples.allSatisfy { $0.counters.unchangedCellRemeasurements == 0 })
         let typing = try XCTUnwrap(samples.first { $0.metric == "typing" })
         XCTAssertGreaterThan(try XCTUnwrap(typing.wrapCount), 0)
@@ -354,8 +381,10 @@ final class TablePerformanceTests: XCTestCase {
     }
 
     func testLargeTableHorizontalScrollPresentation() throws {
-        try XCTSkipUnless(ProcessInfo.processInfo.environment["PREPARED_PROSE_DEVICE_BENCHMARK"] == "1",
-                          "Run through NativeEditorPreparedProsePerformance.")
+        try XCTSkipUnless(
+            ProcessInfo.processInfo.environment["PREPARED_PROSE_DEVICE_BENCHMARK"] == "1",
+            "Run through NativeEditorPreparedProsePerformance."
+        )
         clock = TableTestFrameClock()
         defer { clock.close(); clock = nil }
         let fixture = Fixture(rows: 1_000, columns: 20, rich: false)
@@ -396,37 +425,56 @@ final class TablePerformanceTests: XCTestCase {
             let run = try XCTUnwrap((CTLineGetGlyphRuns(line) as? [CTRun])?.first)
             let attributes = try XCTUnwrap(CTRunGetAttributes(run) as? [NSAttributedString.Key: Any])
             let preparedColor = try unwrapCoreTextAttribute(
-                XCTUnwrap(attributes[kCTForegroundColorAttributeName as NSAttributedString.Key]), as: CGColor.self)
+                XCTUnwrap(attributes[kCTForegroundColorAttributeName as NSAttributedString.Key]), as: CGColor.self
+            )
             XCTAssertEqual(UIColor(cgColor: preparedColor), UIColor.label.resolvedColor(with: input.traitCollection))
             let background = luminance(table.style.headerBackgroundColor, traits: input.traitCollection)
             for index in [0, insertion] {
                 let foreground = try XCTUnwrap(input.textStorage.attribute(.foregroundColor, at: index, effectiveRange: nil) as? UIColor)
                 let text = luminance(foreground, traits: input.traitCollection)
                 let contrast = (max(text, background) + 0.05) / (min(text, background) + 0.05)
-                XCTAssertGreaterThanOrEqual(contrast, minimumTextContrast,
-                    "appearance=\(appearance.rawValue), character=\(index): bound header text must contrast with its painted background")
+                XCTAssertGreaterThanOrEqual(
+                    contrast,
+                    minimumTextContrast,
+                    "appearance=\(appearance.rawValue), character=\(index): bound header text must contrast with its painted background"
+                )
             }
             let image = try captureWindow(host.window, name: "typed-header-appearance-\(appearance.rawValue)")
             let cellFrame = try XCTUnwrap(host.surface.cellFrame(tableID: table.identity, cellIndex: 0))
-            let point = host.surface.convert(CGPoint(x: cellFrame.minX - table.style.cellPadding / 2,
-                                                     y: cellFrame.minY - table.style.cellPadding / 2), to: host.window)
+            let point = host.surface.convert(CGPoint(
+                x: cellFrame.minX - table.style.cellPadding / 2,
+                y: cellFrame.minY - table.style.cellPadding / 2
+            ), to: host.window)
             let bitmap = try XCTUnwrap(image.cgImage)
             let channelCount = 4
             var pixels = [UInt8](repeating: 0, count: bitmap.width * bitmap.height * channelCount)
             try pixels.withUnsafeMutableBytes { buffer in
-                let context = try XCTUnwrap(CGContext(data: buffer.baseAddress, width: bitmap.width, height: bitmap.height,
-                    bitsPerComponent: 8, bytesPerRow: bitmap.width * channelCount, space: CGColorSpaceCreateDeviceRGB(),
-                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
+                let context = try XCTUnwrap(CGContext(
+                    data: buffer.baseAddress,
+                    width: bitmap.width,
+                    height: bitmap.height,
+                    bitsPerComponent: 8,
+                    bytesPerRow: bitmap.width * channelCount,
+                    space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+                ))
                 context.draw(bitmap, in: CGRect(x: 0, y: 0, width: bitmap.width, height: bitmap.height))
             }
             let pixelIndex = (Int(point.y * image.scale) * bitmap.width + Int(point.x * image.scale)) * channelCount
             let channelMaximum: CGFloat = 255
-            let painted = UIColor(red: CGFloat(pixels[pixelIndex]) / channelMaximum,
+            let painted = UIColor(
+                red: CGFloat(pixels[pixelIndex]) / channelMaximum,
                 green: CGFloat(pixels[pixelIndex + 1]) / channelMaximum,
-                blue: CGFloat(pixels[pixelIndex + 2]) / channelMaximum, alpha: 1)
+                blue: CGFloat(pixels[pixelIndex + 2]) / channelMaximum,
+                alpha: 1
+            )
             XCTAssertEqual(pixels[pixelIndex + 3], UInt8(channelMaximum), "The composited header sample remains opaque")
-            XCTAssertEqual(luminance(painted, traits: input.traitCollection), background, accuracy: 0.01,
-                "The header bitmap must use the mounted view's appearance")
+            XCTAssertEqual(
+                luminance(painted, traits: input.traitCollection),
+                background,
+                accuracy: 0.01,
+                "The header bitmap must use the mounted view's appearance"
+            )
         }
     }
 
@@ -465,10 +513,16 @@ final class TablePerformanceTests: XCTestCase {
             _ = rebuild()
         }
         XCTAssertGreaterThan(host.adapter.baseDocumentRevision, previousRevision)
-        XCTAssertEqual(counters.unchangedCellRemeasurements, 1,
-            "The rebuilt original second-row cell is unchanged after moving to the third row")
-        XCTAssertEqual(counters.changedCellRemeasurements, 1,
-            "The inserted empty cells share one newly prepared shape")
+        XCTAssertEqual(
+            counters.unchangedCellRemeasurements,
+            1,
+            "The rebuilt original second-row cell is unchanged after moving to the third row"
+        )
+        XCTAssertEqual(
+            counters.changedCellRemeasurements,
+            1,
+            "The inserted empty cells share one newly prepared shape"
+        )
     }
 
     func testTypingBeyondViewportKeepsTheWholeRowAligned() throws {
@@ -511,7 +565,7 @@ final class TablePerformanceTests: XCTestCase {
         ]
         schema["nodes"] = nodes
         config["schema"] = schema
-        let configJSON = String(decoding: try JSONSerialization.data(withJSONObject: config), as: UTF8.self)
+        let configJSON = try XCTUnwrap(String(data: try JSONSerialization.data(withJSONObject: config), encoding: .utf8))
         let paragraph: [String: Any] = ["type": "paragraph", "content": [["type": "text", "text": "a\n\nb\n"]]]
         let splitCRLF: [String: Any] = ["type": "paragraph", "content": [
             ["type": "text", "text": "a\r", "marks": [["type": TableToolbarTestItems.strongMark]]],
@@ -523,9 +577,16 @@ final class TablePerformanceTests: XCTestCase {
         let listParagraph: [String: Any] = ["type": "paragraph", "content": [["type": "text", "text": "List line"]]]
         let listParagraphs = Array(repeating: listParagraph, count: 20)
         let nestedList: [String: Any] = ["type": "bulletList", "content": [["type": "listItem", "content": [listParagraph]]]]
-        let quotedHeadings: [String: Any] = ["type": "blockquote", "content": Array(repeating:
-            ["type": "h1", "content": [["type": "text", "text": "Heading"]]], count: 10)]
-        let contents: [[String: Any]] = [paragraph, splitCRLF, hardBreak, quotedHeadings,
+        let quotedHeadings: [String: Any] = ["type": "blockquote", "content": Array(
+            repeating:
+            ["type": "h1", "content": [["type": "text", "text": "Heading"]]],
+            count: 10
+        )]
+        let contents: [[String: Any]] = [
+            paragraph,
+            splitCRLF,
+            hardBreak,
+            quotedHeadings,
             ["type": "bulletList", "content": [["type": "listItem", "content": [listParagraph, nestedList, listParagraph]]]],
             ["type": "bulletList", "content": [["type": "listItem", "content": [hardBreak]], ["type": "listItem", "content": [listParagraph]]]],
             ["type": "bulletList", "content": listParagraphs.map { ["type": "listItem", "content": [$0]] }],
@@ -534,7 +595,9 @@ final class TablePerformanceTests: XCTestCase {
             ["type": "blockquote", "content": [["type": "codeBlock", "content": [["type": "text", "text": "a\nb\n"]]]]],
             ["type": "blockquote", "content": [["type": "h1", "content": [["type": "text", "text": "a\nb\n"]]]]]
         ]
-        let themes: [[String: Any]] = [[:], ["text": ["spacingAfter": 0]],
+        let themes: [[String: Any]] = [
+            [:],
+            ["text": ["spacingAfter": 0]],
             ["paragraph": ["spacingAfter": 20]],
             ["paragraph": ["spacingAfter": 12], "list": ["itemSpacing": 3]],
             ["blockquote": ["text": ["spacingAfter": 20]], "headings": ["h1": ["fontSize": 32, "fontWeight": "700"]]],
@@ -548,12 +611,15 @@ final class TablePerformanceTests: XCTestCase {
                 let source: [String: Any] = ["type": "doc", "content": [["type": "table", "content": [
                     ["type": "table_row", "content": [["type": "table_cell", "content": [content]]]]
                 ]]]]
-                try host.load(String(decoding: try JSONSerialization.data(withJSONObject: source), as: UTF8.self))
+                try host.load(try XCTUnwrap(String(data: try JSONSerialization.data(withJSONObject: source), encoding: .utf8)))
                 let input = try host.bind(0)
                 _ = try measure(host.drawing) {}
                 let diagnostic = "content=\(content), theme=\(theme), input=\(input.bounds)"
-                XCTAssertEqual(NSMaxRange(input.layoutManager.glyphRange(for: input.textContainer)),
-                               input.layoutManager.numberOfGlyphs, diagnostic)
+                XCTAssertEqual(
+                    NSMaxRange(input.layoutManager.glyphRange(for: input.textContainer)),
+                    input.layoutManager.numberOfGlyphs,
+                    diagnostic
+                )
                 let caret = input.caretRect(for: try XCTUnwrap(input.selectedTextRange).end)
                 XCTAssertGreaterThanOrEqual(caret.height, input.baseFont.lineHeight / 2, diagnostic)
                 XCTAssertLessThanOrEqual(caret.maxY, input.bounds.height + 1, diagnostic)
@@ -572,9 +638,12 @@ final class TablePerformanceTests: XCTestCase {
                     }
                     XCTAssertEqual(preparedLines.count, nativeLines.count, diagnostic)
                     for (previous, index) in zip(visibleLineIndices, visibleLineIndices.dropFirst()) where preparedLines.indices.contains(index) {
-                        XCTAssertEqual(preparedLines[index] - preparedLines[previous],
-                                       nativeLines[index] - nativeLines[previous],
-                                       accuracy: 1, "line=\(index), \(diagnostic)")
+                        XCTAssertEqual(
+                            preparedLines[index] - preparedLines[previous],
+                            nativeLines[index] - nativeLines[previous],
+                            accuracy: 1,
+                            "line=\(index), \(diagnostic)"
+                        )
                     }
                 }
                 if let marker = fragments.first(where: { $0.kind == .marker }),
@@ -585,8 +654,13 @@ final class TablePerformanceTests: XCTestCase {
         }
     }
 
-    private func checkRowScroll(pasteNewlines: Bool, wraps: Bool = false,
-                               autoGrow: Bool = false, keyboard: Bool = false, theme: EditorTheme? = nil) throws {
+    private func checkRowScroll(
+        pasteNewlines: Bool,
+        wraps: Bool = false,
+        autoGrow: Bool = false,
+        keyboard: Bool = false,
+        theme: EditorTheme? = nil
+    ) throws {
         clock = TableTestFrameClock()
         defer { clock.close(); clock = nil }
         let host = try EditorHost(viewport: sceneViewport())
@@ -615,11 +689,20 @@ final class TablePerformanceTests: XCTestCase {
         let keyboardHeight: CGFloat = 300
         if keyboard {
             if autoGrow { scroll.contentInset.bottom = keyboardHeight }
-            let frame = host.window.convert(CGRect(x: 0, y: host.window.bounds.maxY - keyboardHeight,
-                width: host.window.bounds.width, height: keyboardHeight), to: host.window.screen.coordinateSpace)
-            NotificationCenter.default.post(name: UIResponder.keyboardWillChangeFrameNotification, object: nil,
-                userInfo: [UIResponder.keyboardFrameEndUserInfoKey: NSValue(cgRect: frame),
-                           UIResponder.keyboardAnimationDurationUserInfoKey: 0])
+            let frame = host.window.convert(CGRect(
+                x: 0,
+                y: host.window.bounds.maxY - keyboardHeight,
+                width: host.window.bounds.width,
+                height: keyboardHeight
+            ), to: host.window.screen.coordinateSpace)
+            NotificationCenter.default.post(
+                name: UIResponder.keyboardWillChangeFrameNotification,
+                object: nil,
+                userInfo: [
+                    UIResponder.keyboardFrameEndUserInfoKey: NSValue(cgRect: frame),
+                    UIResponder.keyboardAnimationDurationUserInfoKey: 0
+                ]
+            )
         }
         defer {
             if keyboard { NotificationCenter.default.post(name: UIResponder.keyboardWillHideNotification, object: nil) }
@@ -646,38 +729,63 @@ final class TablePerformanceTests: XCTestCase {
         let adjacent = try XCTUnwrap(table.cell(sourceIndex: 1))
         XCTAssertGreaterThan(table.frame(ofCell: edited).height, scroll.bounds.height)
         XCTAssertEqual(table.frame(ofCell: edited).height, table.frame(ofCell: adjacent).height)
-        XCTAssertEqual(NSMaxRange(input.layoutManager.glyphRange(for: input.textContainer)), input.layoutManager.numberOfGlyphs,
-                       "The shared row must contain every native input glyph")
-        XCTAssertEqual(input.contentOffset.y, 0, accuracy: 1,
-                       "The active cell must not scroll its text independently of its row")
-        XCTAssertGreaterThan(scroll.contentOffset.y, initialOffset,
-                             "Caret reveal must move the whole document row")
+        XCTAssertEqual(
+            NSMaxRange(input.layoutManager.glyphRange(for: input.textContainer)),
+            input.layoutManager.numberOfGlyphs,
+            "The shared row must contain every native input glyph"
+        )
+        XCTAssertEqual(
+            input.contentOffset.y,
+            0,
+            accuracy: 1,
+            "The active cell must not scroll its text independently of its row"
+        )
+        XCTAssertGreaterThan(
+            scroll.contentOffset.y,
+            initialOffset,
+            "Caret reveal must move the whole document row"
+        )
         let selection = try XCTUnwrap(input.selectedTextRange)
         XCTAssertEqual(input.selectedRange, NSRange(location: input.textStorage.length, length: 0))
         XCTAssertGreaterThanOrEqual(input.caretRect(for: selection.end).height, input.baseFont.lineHeight / 2)
         XCTAssertLessThanOrEqual(input.caretRect(for: selection.end).maxY, input.bounds.height + 1)
         let caret = scroll.convert(input.caretRect(for: selection.end), from: input)
         let visibleBottom = scroll.bounds.maxY - scroll.adjustedContentInset.bottom
-        XCTAssertLessThanOrEqual(caret.maxY, visibleBottom + 1,
-                                 "The typed caret must remain above the keyboard")
+        XCTAssertLessThanOrEqual(
+            caret.maxY,
+            visibleBottom + 1,
+            "The typed caret must remain above the keyboard"
+        )
         if wraps { _ = try captureWindow(host.window, name: "typed-tall-row") }
         let manualOffset = max(-scroll.adjustedContentInset.top, scroll.contentOffset.y - scroll.bounds.height / 2)
         scroll.setContentOffset(CGPoint(x: scroll.contentOffset.x, y: manualOffset), animated: false)
         _ = try measure(host.drawing) {}
         _ = try measure(host.drawing) {}
-        XCTAssertEqual(scroll.contentOffset.y, manualOffset, accuracy: 1,
-                       "Ordinary scrolling must not snap back to the caret")
+        XCTAssertEqual(
+            scroll.contentOffset.y,
+            manualOffset,
+            accuracy: 1,
+            "Ordinary scrolling must not snap back to the caret"
+        )
         let map = try XCTUnwrap(input.tableCellPositionMap)
         let first = try XCTUnwrap(map.globalScalar(forLocalScalar: 0))
         let last = try XCTUnwrap(map.globalScalar(forLocalScalar: UInt32(input.textStorage.string.unicodeScalars.count)))
-        _ = input.applySelectionFromJSON(["type": "text", "anchor": NSNumber(value: last), "head": NSNumber(value: first),
-                                         "anchorScalar": NSNumber(value: last), "headScalar": NSNumber(value: first)])
+        _ = input.applySelectionFromJSON([
+            "type": "text",
+            "anchor": NSNumber(value: last),
+            "head": NSNumber(value: first),
+            "anchorScalar": NSNumber(value: last),
+            "headScalar": NSNumber(value: first)
+        ])
         input.textViewDidChangeSelection(input)
         _ = try measure(host.drawing) {}
         XCTAssertEqual(input.currentLogicalScalarSelection()?.head, first)
         let headCaret = scroll.convert(input.caretRect(for: try XCTUnwrap(input.selectedTextRange).start), from: input)
-        XCTAssertGreaterThanOrEqual(headCaret.minY, scroll.bounds.minY + scroll.adjustedContentInset.top - 1,
-                                   "A backward selection must reveal its head")
+        XCTAssertGreaterThanOrEqual(
+            headCaret.minY,
+            scroll.bounds.minY + scroll.adjustedContentInset.top - 1,
+            "A backward selection must reveal its head"
+        )
         XCTAssertLessThanOrEqual(headCaret.maxY, scroll.bounds.maxY - scroll.adjustedContentInset.bottom + 1)
         input.selectedRange = NSRange(location: input.textStorage.length / 2, length: 0)
         let revision = host.adapter.baseDocumentRevision
@@ -713,8 +821,11 @@ final class TablePerformanceTests: XCTestCase {
             "offset=\(scroll.contentOffset.y) presentation=\(String(describing: scroll.layer.presentation()?.bounds.origin.y)) size=\(scroll.contentSize.height) bounds=\(scroll.bounds.height) inset=\(scroll.adjustedContentInset) keyboard=\(scroll.keyboardBottomInset) drawing=\(host.drawing.bounds.origin.y)"
         }
         var trace: [String] = []
-        let notifications = [UIResponder.keyboardWillChangeFrameNotification,
-            UIResponder.keyboardDidChangeFrameNotification, UIResponder.keyboardWillHideNotification]
+        let notifications = [
+            UIResponder.keyboardWillChangeFrameNotification,
+            UIResponder.keyboardDidChangeFrameNotification,
+            UIResponder.keyboardWillHideNotification
+        ]
         let observers = notifications.map { name in
             NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { notification in
                 trace.append("\(notification.name.rawValue) \(scrollState())")
@@ -748,8 +859,11 @@ final class TablePerformanceTests: XCTestCase {
         try structural(fixture, source: fixture.source())
         let sample = try XCTUnwrap(samples.first { $0.metric == "structuralCommand" })
         XCTAssertEqual(sample.counters.unchangedCellRemeasurements, 0)
-        XCTAssertEqual(sample.counters.changedCellRemeasurements, 1,
-            "All inserted empty rows share one shape and keep separate bindings")
+        XCTAssertEqual(
+            sample.counters.changedCellRemeasurements,
+            1,
+            "All inserted empty rows share one shape and keep separate bindings"
+        )
     }
 
     func testLargeTableStyleBackgroundHasViewportSizedBacking() throws {
@@ -763,8 +877,11 @@ final class TablePerformanceTests: XCTestCase {
         _ = try clock.present(host.drawing) {}
         XCTAssertGreaterThan(background.bounds.height, 0)
         XCTAssertGreaterThan(background.bounds.width, 0)
-        XCTAssertLessThanOrEqual(background.bounds.height, host.window.bounds.height,
-                                 "The stylesheet background must not allocate a document-height bitmap")
+        XCTAssertLessThanOrEqual(
+            background.bounds.height,
+            host.window.bounds.height,
+            "The stylesheet background must not allocate a document-height bitmap"
+        )
         XCTAssertLessThanOrEqual(background.bounds.width, host.window.bounds.width)
     }
 
@@ -774,8 +891,10 @@ final class TablePerformanceTests: XCTestCase {
     }
 
     func testLargeTableColdLayout() throws {
-        try XCTSkipUnless(ProcessInfo.processInfo.environment["PREPARED_PROSE_DEVICE_BENCHMARK"] == "1",
-                          "Run through NativeEditorPreparedProsePerformance.")
+        try XCTSkipUnless(
+            ProcessInfo.processInfo.environment["PREPARED_PROSE_DEVICE_BENCHMARK"] == "1",
+            "Run through NativeEditorPreparedProsePerformance."
+        )
         clock = TableTestFrameClock()
         defer { clock.close(); clock = nil }
         let fixture = Fixture(rows: 1_000, columns: 20, rich: false)
@@ -784,8 +903,10 @@ final class TablePerformanceTests: XCTestCase {
     }
 
     func testLargeTableTypingPreservesIncrementalPreparation() throws {
-        try XCTSkipUnless(ProcessInfo.processInfo.environment["PREPARED_PROSE_DEVICE_BENCHMARK"] == "1",
-                          "Run through NativeEditorPreparedProsePerformance.")
+        try XCTSkipUnless(
+            ProcessInfo.processInfo.environment["PREPARED_PROSE_DEVICE_BENCHMARK"] == "1",
+            "Run through NativeEditorPreparedProsePerformance."
+        )
         clock = TableTestFrameClock()
         defer { clock.close(); clock = nil }
         for rich in [false, true] {
@@ -813,8 +934,10 @@ final class TablePerformanceTests: XCTestCase {
         for sample in samples {
             XCTAssertEqual(sample.counters.unchangedCellRemeasurements, 0, sample.metric)
         }
-        XCTAssertEqual(samples.first { $0.metric == "cellChangeEnd" }?.counters.changedCellRemeasurements,
-                       Benchmark.baselineSamples)
+        XCTAssertEqual(
+            samples.first { $0.metric == "cellChangeEnd" }?.counters.changedCellRemeasurements,
+            Benchmark.baselineSamples
+        )
     }
 
     func testInputTimingUsesDisplayedFrameAfterCommit() throws {
@@ -832,15 +955,24 @@ final class TablePerformanceTests: XCTestCase {
                 host.view.layoutIfNeeded()
             }
             let frame = try XCTUnwrap(measurement.presentation)
-            XCTAssertGreaterThanOrEqual(frame.displayed, frame.commit,
-                "Edit \(edit): a delayed callback for a pre-commit frame cannot acknowledge this edit")
-            XCTAssertEqual(frame.measured, frame.displayed,
-                "Edit \(edit): a scheduled future frame is not a displayed frame")
+            XCTAssertGreaterThanOrEqual(
+                frame.displayed,
+                frame.commit,
+                "Edit \(edit): a delayed callback for a pre-commit frame cannot acknowledge this edit"
+            )
+            XCTAssertEqual(
+                frame.measured,
+                frame.displayed,
+                "Edit \(edit): a scheduled future frame is not a displayed frame"
+            )
         }
     }
 
-    private func measure(_ drawing: PreparedProseDrawingView, endpoint: MeasurementEndpoint = .displayedFrameAfterCommit,
-                         action: () throws -> Void) throws -> Measurement {
+    private func measure(
+        _ drawing: PreparedProseDrawingView,
+        endpoint: MeasurementEndpoint = .displayedFrameAfterCommit,
+        action: () throws -> Void
+    ) throws -> Measurement {
         let stages = StageProbe()
         PreparedProseInstrumentation.tableStageObserverForTesting = stages.record
         defer { PreparedProseInstrumentation.tableStageObserverForTesting = nil }
@@ -859,13 +991,22 @@ final class TablePerformanceTests: XCTestCase {
             measurementEnd = end
             measured["presentationWait"] = (end - actionEnd) * Benchmark.millisecondsPerSecond
         }
-        return Measurement(durationMs: (measurementEnd - start) * Benchmark.millisecondsPerSecond, stagesMs: measured,
-            presentation: (frame.commit, frame.displayed, end))
+        return Measurement(
+            durationMs: (measurementEnd - start) * Benchmark.millisecondsPerSecond,
+            stagesMs: measured,
+            presentation: PresentationTiming(commit: frame.commit, displayed: frame.displayed, measured: end)
+        )
     }
 
-    private func append(_ fixture: Fixture, metric: String, run: Int = 1, values: [Measurement],
-                        counters: PreparedProseInstrumentation.TablePerformanceCounters,
-                        attributed: [Bool]? = nil, wraps: Int? = nil) {
+    private func append(
+        _ fixture: Fixture,
+        metric: String,
+        run: Int = 1,
+        values: [Measurement],
+        counters: PreparedProseInstrumentation.TablePerformanceCounters,
+        attributed: [Bool]? = nil,
+        wraps: Int? = nil
+    ) {
         var system = utsname()
         uname(&system)
         let machineCapacity = MemoryLayout.size(ofValue: system.machine)
@@ -873,24 +1014,35 @@ final class TablePerformanceTests: XCTestCase {
             $0.withMemoryRebound(to: CChar.self, capacity: machineCapacity) { String(cString: $0) }
         }
         #if DEBUG
-        let buildType = "debug"
+            let buildType = "debug"
         #else
-        let buildType = "release"
+            let buildType = "release"
         #endif
         #if targetEnvironment(simulator)
-        let physical = false
+            let physical = false
         #else
-        let physical = true
+            let physical = true
         #endif
         let stageNames = Set(values.flatMap { $0.stagesMs.keys })
         let stageSamples = Dictionary(uniqueKeysWithValues: stageNames.map { stage in
             (stage, values.map { $0.stagesMs[stage] ?? 0 })
         })
-        samples.append(Sample(device: device, buildType: buildType, physicalDevice: physical,
-            refreshHz: UIScreen.main.maximumFramesPerSecond, fixture: fixture.name, metric: metric, run: run,
-            samplesMs: values.map(\.durationMs), stageSamplesMs: stageSamples,
+        samples.append(Sample(
+            device: device,
+            buildType: buildType,
+            physicalDevice: physical,
+            refreshHz: UIScreen.main.maximumFramesPerSecond,
+            fixture: fixture.name,
+            metric: metric,
+            run: run,
+            samplesMs: values.map(\.durationMs),
+            stageSamplesMs: stageSamples,
             warmupSamplesDiscarded: metric == "typing" ? Benchmark.warmupSamples : nil,
-            tableAttributed: attributed, wrapCount: wraps, nonWrapCount: wraps.map { values.count - $0 }, counters: counters))
+            tableAttributed: attributed,
+            wrapCount: wraps,
+            nonWrapCount: wraps.map { values.count - $0 },
+            counters: counters
+        ))
         print("TABLE_PERFORMANCE_CASE fixture=\(fixture.name) metric=\(metric) run=\(run) samples=\(values.count) wraps=\(wraps.map(String.init) ?? "n/a")")
     }
 
@@ -929,9 +1081,11 @@ final class TablePerformanceTests: XCTestCase {
         append(fixture, metric: "viewerColdLayout", values: viewer, counters: viewerCounters)
     }
 
-    private func measureChange(_ host: EditorHost,
-                               counters: inout PreparedProseInstrumentation.TablePerformanceCounters,
-                               action: () throws -> Void) throws -> Measurement {
+    private func measureChange(
+        _ host: EditorHost,
+        counters: inout PreparedProseInstrumentation.TablePerformanceCounters,
+        action: () throws -> Void
+    ) throws -> Measurement {
         let oldKeys = Set(try XCTUnwrap(host.table().sourceTable).cells.map(\.contentKey))
         var prepared: [(Int, String)] = []
         host.surface.onTableCellPreparedForTesting = { prepared.append(($0, $1)) }
@@ -942,20 +1096,24 @@ final class TablePerformanceTests: XCTestCase {
             if oldKeys.contains(key) {
                 counters.unchangedCellRemeasurements += 1
                 unchanged.append(index)
-            }
-            else { counters.changedCellRemeasurements += 1 }
+            } else { counters.changedCellRemeasurements += 1 }
         }
         if !unchanged.isEmpty { print("TABLE_UNCHANGED_PREPARATION indices=\(unchanged)") }
         counters.observe(host.drawing, cellInputs: host.view.textInputs)
         return duration
     }
 
-    private func edit(_ host: EditorHost, input: EditorTextView,
-                      counters: inout PreparedProseInstrumentation.TablePerformanceCounters,
-                      sample: String) throws -> (Measurement, Bool) {
+    private func edit(
+        _ host: EditorHost,
+        input: EditorTextView,
+        counters: inout PreparedProseInstrumentation.TablePerformanceCounters,
+        sample: String
+    ) throws -> (Measurement, Bool) {
         func requireFocus(_ phase: String) throws {
-            _ = try XCTUnwrap(input.isFirstResponder ? input : nil,
-                "\(sample) \(phase): editor=\(host.id), activeInput=\(host.view.activeTextInput === input), attached=\(input.window != nil), keyWindow=\(input.window?.isKeyWindow == true), hidden=\(input.isHidden)")
+            _ = try XCTUnwrap(
+                input.isFirstResponder ? input : nil,
+                "\(sample) \(phase): editor=\(host.id), activeInput=\(host.view.activeTextInput === input), attached=\(input.window != nil), keyWindow=\(input.window?.isKeyWindow == true), hidden=\(input.isHidden)"
+            )
         }
         try requireFocus("before input")
         let cellIndex = try XCTUnwrap(input.tableCellPositionMap).binding.cellIndex
@@ -986,8 +1144,12 @@ final class TablePerformanceTests: XCTestCase {
         var values: [Measurement] = []
         var wraps = 0
         for index in 0..<Benchmark.typingSamples {
-            let (duration, wrapped) = try edit(host, input: input, counters: &counters,
-                sample: "\(fixture.name) run=\(run) sample=\(index)")
+            let (duration, wrapped) = try edit(
+                host,
+                input: input,
+                counters: &counters,
+                sample: "\(fixture.name) run=\(run) sample=\(index)"
+            )
             values.append(duration)
             if wrapped { wraps += 1 }
         }
@@ -1004,8 +1166,12 @@ final class TablePerformanceTests: XCTestCase {
         var counters = PreparedProseInstrumentation.TablePerformanceCounters()
         var values: [Measurement] = []
         for index in 0..<Benchmark.baselineSamples {
-            values.append(try edit(host, input: input, counters: &counters,
-                sample: "\(fixture.name) cellChange atEnd=\(atEnd) sample=\(index)").0)
+            values.append(try edit(
+                host,
+                input: input,
+                counters: &counters,
+                sample: "\(fixture.name) cellChange atEnd=\(atEnd) sample=\(index)"
+            ).0)
         }
         counters.authoritativeDocumentBytes = try host.authoritativeBytes()
         append(fixture, metric: atEnd ? "cellChangeEnd" : "cellChangeStart", values: values, counters: counters)
@@ -1035,8 +1201,12 @@ final class TablePerformanceTests: XCTestCase {
         append(fixture, metric: "warmMeasurement", values: values, counters: counters)
     }
 
-    private func scroll(_ fixture: Fixture, source: String, horizontal: Bool,
-                        viewport: CGSize = Benchmark.viewport) throws {
+    private func scroll(
+        _ fixture: Fixture,
+        source: String,
+        horizontal: Bool,
+        viewport: CGSize = Benchmark.viewport
+    ) throws {
         let host = try EditorHost(viewport: viewport)
         defer { host.close() }
         try host.load(source)
@@ -1064,9 +1234,13 @@ final class TablePerformanceTests: XCTestCase {
                 traversalMs += duration * Benchmark.millisecondsPerSecond
                 let from = UInt64(previous * Benchmark.nanosecondsPerSecond)
                 let to = UInt64(link.timestamp * Benchmark.nanosecondsPerSecond)
-                attributed.append(PreparedProseInstrumentation.viewerCaused(from, to,
-                    work.consume(through: to), rawDeltaNanos: to - from,
-                    nominalFramePeriodNanos: PreparedProseInstrumentation.nominalFramePeriodNanos))
+                attributed.append(PreparedProseInstrumentation.viewerCaused(
+                    from,
+                    to,
+                    work.consume(through: to),
+                    rawDeltaNanos: to - from,
+                    nominalFramePeriodNanos: PreparedProseInstrumentation.nominalFramePeriodNanos
+                ))
             }
             previous = link.timestamp
             let elapsed = link.timestamp - start
@@ -1089,8 +1263,13 @@ final class TablePerformanceTests: XCTestCase {
         while !finished { RunLoop.main.run(until: Date().addingTimeInterval(TableTestFrameClock.runLoopSlice)) }
         counters.observe(host.drawing, cellInputs: host.view.textInputs)
         counters.authoritativeDocumentBytes = try host.authoritativeBytes()
-        append(fixture, metric: horizontal ? "scrollHorizontal" : "scrollVertical", values: values,
-               counters: counters, attributed: attributed)
+        append(
+            fixture,
+            metric: horizontal ? "scrollHorizontal" : "scrollVertical",
+            values: values,
+            counters: counters,
+            attributed: attributed
+        )
     }
 
     private func structural(_ fixture: Fixture, source: String) throws {
@@ -1105,8 +1284,10 @@ final class TablePerformanceTests: XCTestCase {
         for _ in 0..<Benchmark.baselineSamples {
             let previousCellCount = try host.table().cells.count
             values.append(try measureChange(host, counters: &counters) {
-                let update = try XCTUnwrap(host.adapter.commandAtSelection(command, anchor: 0, head: 0),
-                                          "structural command: \(host.adapter.debugNotes)")
+                let update = try XCTUnwrap(
+                    host.adapter.commandAtSelection(command, anchor: 0, head: 0),
+                    "structural command: \(host.adapter.debugNotes)"
+                )
                 XCTAssertTrue(host.view.textView.applyUpdateJSON(update))
                 host.view.layoutIfNeeded()
             })

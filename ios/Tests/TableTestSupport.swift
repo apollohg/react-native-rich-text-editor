@@ -103,8 +103,11 @@ final class TableCollaborationRelay {
         for editorId in editorIds {
             let driven = try Self.object(editorV2CollaborationDrive(editorId: editorId, nowMillis: Self.nowMillis))
             let generation = try XCTUnwrap(driven["generationToOpen"] as? String, "\(editorId) issued no generation: \(driven)")
-            _ = try Self.object(editorV2CollaborationSocketOpen(editorId: editorId, generation: generation,
-                                                                nowMillis: Self.nowMillis))
+            _ = try Self.object(editorV2CollaborationSocketOpen(
+                editorId: editorId,
+                generation: generation,
+                nowMillis: Self.nowMillis
+            ))
             generations[editorId] = generation
         }
         self.generations = generations
@@ -127,8 +130,11 @@ final class TableCollaborationRelay {
                         committed.insert(to)
                     }
                 }
-                _ = try Self.object(editorV2CollaborationAckOutbound(editorId: from, generation: fromGeneration,
-                                                                     leaseId: outbound.leaseId))
+                _ = try Self.object(editorV2CollaborationAckOutbound(
+                    editorId: from,
+                    generation: fromGeneration,
+                    leaseId: outbound.leaseId
+                ))
                 delivered = true
             }
             if !delivered {
@@ -276,10 +282,13 @@ extension EditorV2Adapter {
                     return block
                 }
                 let excluded = cell.nestedTables.map { nested in
-                    TableMappingProbe.Exclusion(elementIndex: nested.elementIndex, tableID: nested.tableKey,
+                    TableMappingProbe.Exclusion(
+                        elementIndex: nested.elementIndex,
+                        tableID: nested.tableKey,
                         extent: nested.scalarStart.flatMap { start in nested.scalarEnd.map {
                             TableScalarExtent(scalarStart: scalar + start, scalarEnd: scalar + $0)
-                        } })
+                        } }
+                    )
                 }
                 return .init(cellIndex: UInt32(index), sourcePos: doc, sourceEnd: doc + cell.docSize, blocks: blocks, excluded: excluded)
             }
@@ -287,8 +296,7 @@ extension EditorV2Adapter {
             let start = root?.scalarStart ?? cells.first?.blocks.first?.scalarStart
             let end = root?.scalarEnd ?? cells.last?.blocks.last?.scalarEnd
             let extent: TableScalarExtent?
-            if let start, let end, start < end { extent = .init(scalarStart: start, scalarEnd: end) }
-            else { extent = nil }
+            if let start, let end, start < end { extent = .init(scalarStart: start, scalarEnd: end) } else { extent = nil }
             tables[key] = .init(extent: extent, cells: cells)
         }
         return TableMappingProbe(tables: tables)
@@ -299,20 +307,42 @@ extension EditorV2Adapter {
             guard let record = tableIndex.record(tableKey: key), let start = tableIndex.tableDocStart(tableKey: key) else { return nil }
             let cells: [[String: Any]] = record.cells.enumerated().map { index, cell in
                 let doc = tableIndex.docStart(tableKey: key, cellIndex: index)!
-                return ["sourcePos": Int(doc), "sourceEnd": Int(doc + cell.docSize), "row": Int(cell.row), "column": Int(cell.column),
-                        "rowspan": Int(cell.rowspan), "colspan": Int(cell.colspan), "header": cell.header,
-                        "attrsKey": cell.attrsKey, "contentKey": cell.contentKey,
-                        "elements": RenderBridge.inputElements(cell.elements, voidElementIndices: cell.voidElementIndices, cellDocStart: doc)!]
+                return [
+                    "sourcePos": Int(doc),
+                    "sourceEnd": Int(doc + cell.docSize),
+                    "row": Int(cell.row),
+                    "column": Int(cell.column),
+                    "rowspan": Int(cell.rowspan),
+                    "colspan": Int(cell.colspan),
+                    "header": cell.header,
+                    "attrsKey": cell.attrsKey,
+                    "contentKey": cell.contentKey,
+                    "elements": RenderBridge.inputElements(cell.elements, voidElementIndices: cell.voidElementIndices, cellDocStart: doc)!
+                ]
             }
-            return (key, ["tablePos": Int(start), "sourceEnd": Int(start + record.docSize), "rows": Int(record.rows), "columns": Int(record.columns),
-                          "columnWidths": record.columnWidths.map { $0.map { $0 as Any } ?? NSNull() },
-                          "irregular": record.irregular, "readOnlyDescendants": record.readOnlyDescendants, "cells": cells,
-                          "failure": record.failure.map { String(describing: $0) } as Any? ?? NSNull(),
-                          "attrsKey": record.attrsKey, "direction": record.direction as Any? ?? NSNull(),
-                          "syntheticRegions": record.syntheticRegions.map { region -> [String: Any] in
-                              ["row": Int(region.row), "column": Int(region.column), "rowspan": Int(region.rowspan),
-                               "colspan": Int(region.colspan), "header": region.header, "attrsKey": region.attrsKey]
-                          }])
+            return (key, [
+                "tablePos": Int(start),
+                "sourceEnd": Int(start + record.docSize),
+                "rows": Int(record.rows),
+                "columns": Int(record.columns),
+                "columnWidths": record.columnWidths.map { $0.map { $0 as Any } ?? NSNull() },
+                "irregular": record.irregular,
+                "readOnlyDescendants": record.readOnlyDescendants,
+                "cells": cells,
+                "failure": record.failure.map { String(describing: $0) } as Any? ?? NSNull(),
+                "attrsKey": record.attrsKey,
+                "direction": record.direction as Any? ?? NSNull(),
+                "syntheticRegions": record.syntheticRegions.map { region -> [String: Any] in
+                    [
+                        "row": Int(region.row),
+                        "column": Int(region.column),
+                        "rowspan": Int(region.rowspan),
+                        "colspan": Int(region.colspan),
+                        "header": region.header,
+                        "attrsKey": region.attrsKey
+                    ]
+                }
+            ])
         })
     }
 }

@@ -41,11 +41,14 @@ extension EditorV2AdapterTests {
                 let object = parseObject(try XCTUnwrap(result.value))
                 XCTAssertEqual(object["version"] as? Int, 1)
                 XCTAssertEqual(object["requestId"] as? String, String(UInt64.max))
-                XCTAssertEqual(object["baseDocumentRevision"] as? String,
-                               includeBaseRevision ? String(adapter.baseDocumentRevision) : nil)
+                XCTAssertEqual(
+                    object["baseDocumentRevision"] as? String,
+                    includeBaseRevision ? String(adapter.baseDocumentRevision) : nil
+                )
                 XCTAssertEqual(object["text"] as? String, payload["text"])
-                XCTAssertEqual(Set(object.keys), Set(payload.keys).union(includeBaseRevision
-                    ? ["version", "requestId", "baseDocumentRevision"] : ["version", "requestId"]))
+                let envelopeKeys = includeBaseRevision
+                    ? ["version", "requestId", "baseDocumentRevision"] : ["version", "requestId"]
+                XCTAssertEqual(Set(object.keys), Set(payload.keys).union(envelopeKeys))
             }
         }
         adapter.setNextRequestIdForTesting(0)

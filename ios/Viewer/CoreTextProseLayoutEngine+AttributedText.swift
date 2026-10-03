@@ -8,29 +8,39 @@ private extension Int {
     }
 }
 
+private struct PlainTextTemplate {
+    let font: UIFont
+    let color: UIColor
+    let resolvedColor: CGColor
+    let spacing: CGFloat
+    let traits: UITraitCollection
+    let string: NSAttributedString
+}
+
 extension CoreTextProseLayoutEngine {
     final class PlainTextPreparation {
         static let seedText = " "
-        private struct Template {
-            let font: UIFont
-            let color: UIColor
-            let resolvedColor: CGColor
-            let spacing: CGFloat
-            let traits: UITraitCollection
-            let string: NSAttributedString
-        }
-        private var cached: Template?
+        private var cached: PlainTextTemplate?
 
-        func template(paint: PreparedTextPaint, spacing: CGFloat,
-                      build: () -> NSAttributedString) -> NSAttributedString {
+        func template(
+            paint: PreparedTextPaint,
+            spacing: CGFloat,
+            build: () -> NSAttributedString
+        ) -> NSAttributedString {
             let resolvedColor = paint.color.cgColor
             let traits = UITraitCollection.current
             if let cached, cached.font === paint.font, cached.color === paint.color,
                cached.resolvedColor == resolvedColor, cached.spacing == spacing,
                cached.traits.isEqual(traits) { return cached.string }
             let string = build()
-            cached = Template(font: paint.font, color: paint.color, resolvedColor: resolvedColor,
-                spacing: spacing, traits: traits, string: string)
+            cached = PlainTextTemplate(
+                font: paint.font,
+                color: paint.color,
+                resolvedColor: resolvedColor,
+                spacing: spacing,
+                traits: traits,
+                string: string
+            )
             return string
         }
     }
@@ -48,8 +58,13 @@ extension CoreTextProseLayoutEngine {
         if let textPreparation, inlines.count == 1, theme.styleSheet == nil, paint.textValues.isEmpty,
            case let .text(text, marks) = inlines[0], !text.isEmpty, marks.isEmpty {
             template = textPreparation.template(paint: paint, spacing: paragraphSpacing) {
-                let seed = makeAttributedString([.text(text: PlainTextPreparation.seedText, marks: [])], paint: paint, theme: theme,
-                    warningSemanticGeneration: warningSemanticGeneration, paragraphSpacing: paragraphSpacing)
+                let seed = makeAttributedString(
+                    [.text(text: PlainTextPreparation.seedText, marks: [])],
+                    paint: paint,
+                    theme: theme,
+                    warningSemanticGeneration: warningSemanticGeneration,
+                    paragraphSpacing: paragraphSpacing
+                )
                 let immutable = NSAttributedString(attributedString: seed.string)
                 plainTextTemplateBuildObserverForTesting?(immutable)
                 return immutable
@@ -60,7 +75,7 @@ extension CoreTextProseLayoutEngine {
         if template == nil {
             let paragraphStyle = NSMutableParagraphStyle()
             paragraphStyle.paragraphSpacing = paragraphSpacing
-            immutableParagraphStyle = paragraphStyle.copy() as! NSParagraphStyle
+            immutableParagraphStyle = unsafeDowncast(paragraphStyle.copy() as AnyObject, to: NSParagraphStyle.self)
         } else { immutableParagraphStyle = nil }
         var atoms: [PreparedAtomSpec] = []
         var semanticRanges: [PreparedSemanticRange] = []
@@ -383,7 +398,7 @@ extension CoreTextProseLayoutEngine {
         if theme.styleSheet != nil {
             scale = !context.ordered && context.kind != "task"
                 ? EditorTheme.cgFloat(marker["scale"])
-                    ?? LayoutConstants.unorderedListMarkerFontScale
+                ?? LayoutConstants.unorderedListMarkerFontScale
                 : 1
             if !context.ordered, context.kind != "task" {
                 let diameter = EditorLayoutManager.unorderedBulletDrawingRect(usedRect: .zero, lineFragmentRect: .zero, markerWidth: 0, baselineY: 0, baseFont: paint.font, markerScale: scale, origin: .zero).width
