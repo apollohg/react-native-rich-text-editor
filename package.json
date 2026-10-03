@@ -49,6 +49,8 @@
         "lint:android": "npm run prebuild:example:android && cd example/android && ./gradlew :apollohg_react-native-rich-text-editor:lintDebug && node ../../scripts/assert-android-lint-clean.mjs ../../android/build/reports/lint-results-debug.xml",
         "lint:ios": "node scripts/swiftlint.mjs lint --strict",
         "lint:kotlin": "node scripts/ktlint.mjs",
+        "notices:generate": "node scripts/generate-third-party-notices.mjs",
+        "notices:check": "node scripts/generate-third-party-notices.mjs --check",
         "prebuild:example": "npm --prefix example run prebuild",
         "prebuild:example:android": "npm --prefix example run prebuild:android",
         "prebuild:example:ios": "npm --prefix example run prebuild:ios",
