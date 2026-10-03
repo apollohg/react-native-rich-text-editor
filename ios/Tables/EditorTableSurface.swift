@@ -1547,7 +1547,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     private func placeInput(in presented: ViewerTablePresentedCell?, fallback: CGRect) {
         guard let presented else {
             activeCellClipView.frame = bounds
-            inputCoordinator.cellInput.frame = fallback.integral
+            inputCoordinator.cellInput.frame = fallback
             return
         }
         let clip = presented.clip.offsetBy(dx: -drawingOffset.x, dy: -drawingOffset.y)
@@ -1558,7 +1558,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
             .insetBy(dx: inset, dy: inset)
         inputCoordinator.cellInput.frame = content.offsetBy(
             dx: -activeCellClipView.frame.minX, dy: -activeCellClipView.frame.minY
-        ).integral
+        )
     }
 
     private func refreshActiveInputFrame() {

@@ -231,6 +231,78 @@ final class EditorTableInputTests: XCTestCase {
         ))
     }
 
+    func testFocusingHeaderPreservesTextAppearanceAndBaseline() throws {
+        let theme = EditorTheme(dictionary: ["version": 1, "styles": [
+            "content": ["backgroundColor": "#ffffff", "paddingTop": 28, "paddingHorizontal": 20],
+            "text": ["color": "#1b1f2a", "fontSize": 17],
+            "paragraph": ["lineHeight": 27, "marginBottom": 12]
+        ]])
+        let document = fourCellDocument.replacingOccurrences(of: "table_cell", with: "table_header")
+        try withMountedTable(document: document, theme: theme, cellSelection: nil) { fixture in
+            try assertFocusPreservesCellAppearance(fixture)
+        }
+    }
+
+    func testFocusingWrappedCellPreservesEveryBaselineAcrossThemes() throws {
+        let document = fourCellDocument.replacingOccurrences(of: "one", with: "First line then a second line and a third line of wrapped text")
+        let themes: [EditorTheme?] = [
+            nil,
+            EditorTheme(dictionary: ["text": ["fontSize": 17], "paragraph": ["lineHeight": 27]]),
+            EditorTheme(dictionary: ["version": 1, "styles": [
+                "text": ["fontSize": 17], "paragraph": ["lineHeight": 27]
+            ]]),
+            EditorTheme(dictionary: ["table": ["cellPadding": 8.25, "borderWidth": 1.25]])
+        ]
+        for theme in themes {
+            try withMountedTable(document: document, theme: theme, cellSelection: nil) { fixture in
+                let cell = try fixture.presentedCell(0)
+                XCTAssertGreaterThan(cell.content.blocks.flatMap(\.fragments).filter { $0.kind == .text }.count, 1)
+                try assertFocusPreservesCellAppearance(fixture)
+            }
+        }
+    }
+
+    private func assertFocusPreservesCellAppearance(_ fixture: MountedTableFixture) throws {
+        let cell = try fixture.presentedCell(0)
+        let backgroundPoint = fixture.drawing.convert(CGPoint(
+            x: cell.contentBounds.maxX - 1, y: cell.contentBounds.minY + 1
+        ), to: fixture.view)
+        func backgroundPixel() -> Data? {
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 1
+            return UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1), format: format).image { context in
+                context.cgContext.translateBy(x: -backgroundPoint.x, y: -backgroundPoint.y)
+                fixture.view.layer.render(in: context.cgContext)
+            }.pngData()
+        }
+        let backgroundBeforeFocus = try XCTUnwrap(backgroundPixel())
+        XCTAssertTrue(fixture.view.activateTableCell(at: try fixture.hostPoint(inCell: 0)))
+        fixture.view.layoutIfNeeded()
+        let input = fixture.view.activeTextInput
+        XCTAssertTrue(input.isFirstResponder)
+        input.layoutManager.ensureLayout(for: input.textContainer)
+        XCTAssertEqual(try XCTUnwrap(backgroundPixel()), backgroundBeforeFocus,
+                       "the editing overlay must preserve the painted cell background")
+        for fragment in cell.content.blocks.flatMap(\.fragments).filter({ $0.kind == .text }) {
+            let line = try XCTUnwrap(fragment.line)
+            let characterIndex = CTLineGetStringRange(line).location
+            let run = try XCTUnwrap((CTLineGetGlyphRuns(line) as? [CTRun])?.first)
+            let attributes = try XCTUnwrap(CTRunGetAttributes(run) as? [NSAttributedString.Key: Any])
+            let preparedColor = try unwrapCoreTextAttribute(
+                XCTUnwrap(attributes[kCTForegroundColorAttributeName as NSAttributedString.Key]), as: CGColor.self
+            )
+            let preparedBaseline = fixture.drawing.convert(CGPoint(
+                x: cell.contentBounds.minX + fragment.origin.x,
+                y: cell.contentBounds.minY + fragment.origin.y
+            ), to: fixture.view)
+            let inputColor = try XCTUnwrap(input.textStorage.attribute(.foregroundColor, at: characterIndex, effectiveRange: nil) as? UIColor)
+            XCTAssertEqual(inputColor.resolvedColor(with: input.traitCollection), UIColor(cgColor: preparedColor))
+            let editingBaseline = input.convert(CGPoint(x: 0, y: try XCTUnwrap(input.baselineY(forCharacterAt: characterIndex))), to: fixture.view)
+            XCTAssertEqual(editingBaseline.y, preparedBaseline.y, accuracy: 0.5 / input.traitCollection.displayScale,
+                           "focusing must preserve the painted glyph baseline at character \(characterIndex)")
+        }
+    }
+
     func testMountedHeadDragPublishesExactCellSelectionWithoutDocumentMutation() throws {
         try withMountedHandles(document: fourCellDocument, anchorIndex: 0, headIndex: 0) { fixture in
             let beforeDocument = try XCTUnwrap(fixture.adapter.documentJson())

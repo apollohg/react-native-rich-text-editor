@@ -73,7 +73,17 @@ final class EditorTableInputCoordinator {
         ) { elementIndex, range in
             blockRanges[elementIndex] = range
         }
-        let rendered = renderedWithMarkers
+        let rendered = NSMutableAttributedString(attributedString: renderedWithMarkers)
+        renderedWithMarkers.enumerateAttributes(in: NSRange(location: 0, length: renderedWithMarkers.length)) { attributes, range, _ in
+            guard let paragraph = attributes[.paragraphStyle] as? NSParagraphStyle,
+                  paragraph.minimumLineHeight > 0 || paragraph.maximumLineHeight > 0,
+                  let adjusted = paragraph.mutableCopy() as? NSMutableParagraphStyle else { return }
+            // Use the layout manager's centred leading, matching the painted cell.
+            let height = max(paragraph.minimumLineHeight, EditorTheme.cgFloat(attributes[editorInlineLineHeightAttribute]) ?? 0)
+            adjusted.minimumLineHeight = 0
+            adjusted.maximumLineHeight = 0
+            rendered.addAttributes([.paragraphStyle: adjusted, editorInlineLineHeightAttribute: height], range: range)
+        }
         var observedTables = Set<String>()
         var markersValid = true
         rendered.enumerateAttribute(
@@ -151,6 +161,7 @@ final class EditorTableInputCoordinator {
             cellInput.baseTextColor = root.baseTextColor
             cellInput.baseBackgroundColor = root.baseBackgroundColor
             cellInput.theme = root.theme
+            cellInput.styleContentView.box = nil
             cellInput.atomRenderConfiguration = root.atomRenderConfiguration
             inputTraitsSource = root
             copiedAppearanceRevisions = (root.renderAppearanceRevision, cellInput.renderAppearanceRevision)
