@@ -61,9 +61,10 @@ function evaluateInteger(expression) {
 }
 
 function evaluateRustInteger(source, expression) {
+    expression = expression.replace(/asusize$/, '');
     if (/^[A-Z][A-Z0-9_]*$/.test(expression)) {
         const match = source.match(
-            new RegExp(`(?:pub\\(crate\\))?const${expression}:usize=([\\d_*+]+);`)
+            new RegExp(`(?:pub\\(crate\\))?const${expression}:(?:usize|u32)=([\\d_*+]+);`)
         );
         assert.ok(match, `Rust integer constant missing for ${expression}`);
         expression = match[1];
@@ -133,7 +134,7 @@ assert.deepEqual(
 for (const [name, ceiling] of Object.entries(resourceCeilings)) {
     const snake = name.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
     const match = compactRust.match(
-        new RegExp(`\\("${name}",(?:self|limits)\\.${snake},([A-Z][A-Z0-9_]*|[\\d_*+]+),?\\)`)
+        new RegExp(`\\("${name}",(?:self|limits)\\.${snake},((?:[A-Z][A-Z0-9_]*|[\\d_*+]+)(?:asusize)?),?\\)`)
     );
     assert.ok(match, `Rust ceiling missing for ${name}`);
     assert.equal(evaluateRustInteger(compactRust, match[1]), ceiling, `Rust ceiling drift for ${name}`);
