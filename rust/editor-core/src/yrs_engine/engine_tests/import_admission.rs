@@ -1207,24 +1207,68 @@ fn compact_root_json_matches_legacy_import_documents_fees_and_errors() {
     }
 }
 
+const SMALL_IMPORT_STACK_BYTES: usize = 128 * 1024;
+const COMPACT_JSON_ADMITTED_DEPTH: usize = 256;
+const COMPACT_JSON_FALLBACK_NESTINGS: [usize; 5] = [7, 8, 60, 64, 70];
+
+fn nested_plain_blockquote_json(nesting: usize) -> String {
+    let mut input = String::from(r#"{"type":"doc","content":["#);
+    for _ in 0..nesting {
+        input.push_str(r#"{"type":"blockquote","content":["#);
+    }
+    input.push_str(r#"{"type":"paragraph","content":[{"type":"text","text":"deep"}]}"#);
+    for _ in 0..=nesting {
+        input.push_str("]}");
+    }
+    input
+}
+
 #[test]
-fn compact_root_json_preserves_near_ceiling_fallback_on_a_small_stack() {
-    const SMALL_STACK_BYTES: usize = 128 * 1024;
-    const ADMITTED_DEPTH: usize = 256;
-    for nesting in [7, 8, 60, 64, 70] {
-        std::thread::Builder::new()
-            .stack_size(SMALL_STACK_BYTES)
+fn compact_root_json_admission_fits_a_small_stack() {
+    for nesting in COMPACT_JSON_FALLBACK_NESTINGS {
+        let engine = transaction_engine_with_resource_limits_and_mode(
+            ResourceLimits {
+                max_document_depth: COMPACT_JSON_ADMITTED_DEPTH,
+                ..ResourceLimits::default()
+            },
+            crate::yrs_engine::InitializationMode::LocalEmpty,
+        );
+        let input = nested_plain_blockquote_json(nesting);
+        let (actual, oracle) = std::thread::Builder::new()
+            .name(format!("compact-json-admission-{nesting}"))
+            .stack_size(SMALL_IMPORT_STACK_BYTES)
             .spawn(move || {
-                let mut input = String::from(r#"{"type":"doc","content":["#);
-                for _ in 0..nesting {
-                    input.push_str(r#"{"type":"blockquote","content":["#);
-                }
-                input.push_str(r#"{"type":"paragraph","content":[{"type":"text","text":"deep"}]}"#);
-                for _ in 0..=nesting {
-                    input.push_str("]}");
-                }
+                let actual = engine.admit_root_replacement_json(&input).unwrap();
+                let oracle = crate::serialize::json_in::with_legacy_json_for_test(|| {
+                    engine.admit_root_replacement_json(&input)
+                })
+                .unwrap();
+                (actual, oracle)
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+        assert_eq!(actual.document, oracle.document, "nesting {nesting}");
+        assert_eq!(
+            actual.canonical_artifact.value(),
+            oracle.canonical_artifact.value(),
+            "canonical import at nesting {nesting}"
+        );
+    }
+}
+
+#[test]
+fn compact_root_json_preserves_near_ceiling_fallback() {
+    for nesting in COMPACT_JSON_FALLBACK_NESTINGS {
+        let thread = std::thread::Builder::new().name(format!("compact-json-commit-{nesting}"));
+        // The unoptimized transaction compiler exceeds the release stack budget.
+        #[cfg(not(debug_assertions))]
+        let thread = thread.stack_size(SMALL_IMPORT_STACK_BYTES);
+        thread
+            .spawn(move || {
+                let input = nested_plain_blockquote_json(nesting);
                 let limits = ResourceLimits {
-                    max_document_depth: ADMITTED_DEPTH,
+                    max_document_depth: COMPACT_JSON_ADMITTED_DEPTH,
                     ..ResourceLimits::default()
                 };
                 let mut actual = transaction_engine_with_resource_limits_and_mode(

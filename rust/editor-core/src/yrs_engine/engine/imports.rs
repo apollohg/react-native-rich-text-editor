@@ -316,7 +316,7 @@ impl YrsDocumentEngine {
 
     /// Shared bounded-input/parse/model admission for JSON root replacement,
     /// used by both the commit path and the outbound-bound probe.
-    fn admit_root_replacement_json(
+    pub(super) fn admit_root_replacement_json(
         &self,
         input: &str,
     ) -> Result<ValidatedImportDocument, yrs_engine::RootReplacementError> {
