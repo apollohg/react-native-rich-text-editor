@@ -94,7 +94,7 @@ describe('prepared prose native lifecycle contracts', () => {
         expect(shadow).toContain('props,\n      *widthPx,');
         expect(shadow).not.toContain('static_cast<Float>(*widthPx) / scale');
         expect(mount).toMatch(/generation,\s*request\.nativeFontRevision,?/);
-        expect(mount).toContain('prepareForFabricMount(generation)');
+        expect(mount).toMatch(/prepareForFabricMount\(\s*generation\s*\)/);
         expect(mount).not.toContain('view.width');
         expect(mount).not.toContain('releaseFabricMountMiss');
         expect(drawing).toContain('contentOriginXPx');
@@ -224,15 +224,21 @@ describe('prepared prose native lifecycle contracts', () => {
 
         expect(androidMeasure).toContain('val leaseHandle = FabricLeaseHandleBridge.currentHandle()');
 
+        const androidRequest = androidMeasure.match(
+            /val\s+request\s*=\s*requestFrom\(\s*props,\s*state,\s*leaseHandle,\s*context\.resources\.displayMetrics\.heightPixels\s*\)/,
+        )?.[0];
+        expect(androidRequest).toBeDefined();
+        if (androidRequest === undefined) throw new Error('Fabric measure must construct its request from the live lease and viewport');
+
         const androidDeclinesWithoutLease = androidMeasure.slice(
             androidMeasure.indexOf('if (surface != null && leaseHandle <= 0L) {'),
-            androidMeasure.indexOf('val request = requestFrom(props, state, leaseHandle)'),
+            androidMeasure.indexOf(androidRequest),
         );
 
         expect(androidDeclinesWithoutLease).toContain('return YogaMeasureOutput.make(0f, 0f)');
-        expect(androidMeasure).toContain('val request = requestFrom(props, state, leaseHandle)');
+        expect(androidMeasure).toContain(androidRequest);
 
-        expect(androidMeasure.indexOf('val request = requestFrom(props, state, leaseHandle)')).toBeLessThan(
+        expect(androidMeasure.indexOf(androidRequest)).toBeLessThan(
             androidMeasure.indexOf('PreparedProseLayoutRegistry.shared.measure(')
         );
 

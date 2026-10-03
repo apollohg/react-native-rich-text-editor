@@ -1,3 +1,4 @@
+import { canonicalDocumentShape } from '../assertions.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
@@ -95,7 +96,7 @@ test('TBL-10 a real tableEditing plugin repairs its own ragged insert before it 
 
         await exchangeUntilIdle([web, native]);
         const admitted = await snapshot(native);
-        assert.deepEqual(admitted.documentJson, inserted.documentJson);
+        assert.deepEqual(canonicalDocumentShape(admitted.documentJson), canonicalDocumentShape(inserted.documentJson));
         assert.equal(admitted.autonomousRepairWrites, NO_NATIVE_REPAIR_WRITES);
     }, tableFixture('prosemirror'));
 });
@@ -105,7 +106,7 @@ test('TBL-10 a web-generated irregular merge lands in Rust exactly, with no loca
         await call(first, 'command', { type: 'insertNode', node: regularTable(ROW_NODE, CELL_NODE) });
         await seedFrom(first, [second, native]);
         await exchangeUntilIdle([first, second, native]);
-        assert.deepEqual((await snapshot(native)).documentJson, (await snapshot(first)).documentJson);
+        assert.deepEqual(canonicalDocumentShape((await snapshot(native)).documentJson), canonicalDocumentShape((await snapshot(first)).documentJson));
         await flushDocumentEvents(native);
 
         await call(first, 'command', {
@@ -176,8 +177,8 @@ test('TBL-10 every peer converges on the merged geometry and Rust agrees on its 
         await exchangeUntilIdle([first, second, native]);
 
         const settled = await snapshot(native);
-        assert.deepEqual(settled.documentJson, (await snapshot(first)).documentJson);
-        assert.deepEqual(settled.documentJson, (await snapshot(second)).documentJson);
+        assert.deepEqual(canonicalDocumentShape(settled.documentJson), canonicalDocumentShape((await snapshot(first)).documentJson));
+        assert.deepEqual(canonicalDocumentShape(settled.documentJson), canonicalDocumentShape((await snapshot(second)).documentJson));
         assert.equal(
             settled.autonomousRepairWrites,
             NO_NATIVE_REPAIR_WRITES,
@@ -209,7 +210,7 @@ test('TBL-10 a real Tiptap table peer and Rust share the same table document', a
         await exchangeUntilIdle([web, native]);
 
         const admitted = await snapshot(native);
-        assert.deepEqual(admitted.documentJson, (await snapshot(web)).documentJson);
+        assert.deepEqual(canonicalDocumentShape(admitted.documentJson), canonicalDocumentShape((await snapshot(web)).documentJson));
         assert.equal(admitted.autonomousRepairWrites, NO_NATIVE_REPAIR_WRITES);
         assert.equal(documentTables(admitted.documentJson).length, 1);
     }, tableFixture('tiptap'));

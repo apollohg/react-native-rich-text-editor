@@ -5,7 +5,7 @@
     "type": "module",
     "scripts": {
         "typecheck": "tsc -p tsconfig.json && tsc -p browser/tsconfig.json",
-        "test:unit": "tsx --test cases/*.test.ts",
+        "test:unit": "tsx --test --test-concurrency=1 cases/*.test.ts",
         "test:plumbing": "tsx run.ts --suite plumbing",
         "test:awareness": "tsx run.ts --suite awareness",
         "test:schema-admission": "tsx run.ts --suite schema-admission",

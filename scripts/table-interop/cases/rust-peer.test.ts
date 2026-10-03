@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertReply } from '../peer-protocol.js';
 import type { PeerReply } from '../peer-protocol.js';
@@ -111,5 +114,40 @@ test('the spawned Rust peer edits, reports one local update, and exits cleanly',
         );
     } finally {
         await peer.close();
+    }
+});
+
+const DELAYED_EXIT_MILLIS = 100;
+
+test('close awaits an explicit shutdown without writing another request', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'table-peer-shutdown-'));
+    const executable = join(directory, 'peer.cjs');
+    const requests = join(directory, 'requests.jsonl');
+    await writeFile(executable, String.raw`#!/usr/bin/env node
+const { appendFileSync } = require('node:fs');
+const { createInterface } = require('node:readline');
+const reader = createInterface({ input: process.stdin });
+let shutdowns = 0;
+reader.on('line', line => {
+    const request = JSON.parse(line);
+    appendFileSync(${JSON.stringify(requests)}, line + '\n');
+    if (request.operation !== 'shutdown' || ++shutdowns !== 1) process.exit(1);
+    process.stdout.write(JSON.stringify({ id: request.id, value: {}, error: null, events: [] }) + '\n');
+    setTimeout(() => process.exit(0), ${DELAYED_EXIT_MILLIS});
+});
+`);
+    await chmod(executable, 0o755);
+    const peer = await startRustPeer(executable);
+    try {
+        const request = { id: 'explicit-shutdown', operation: 'shutdown', payload: {} } as const;
+        requireValue(await peer.request(request), request.id);
+        await Promise.all([peer.close(), peer.close()]);
+        assert.deepEqual((await readFile(requests, 'utf8')).trim().split('\n').map(line => JSON.parse(line)), [request]);
+    } finally {
+        try {
+            await peer.close();
+        } finally {
+            await rm(directory, { recursive: true, force: true });
+        }
     }
 });

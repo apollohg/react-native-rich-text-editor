@@ -1,3 +1,4 @@
+import { canonicalDocumentShape } from '../assertions.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
@@ -126,7 +127,7 @@ async function seedTable(web: Peer, native: Peer): Promise<number[]> {
     await call(web, 'command', { type: 'insertNode', node: regularTable() });
     await exchangeUntilIdle([web, native]);
     const shared = await snapshot(native);
-    assert.deepEqual(shared.documentJson, (await snapshot(web)).documentJson);
+    assert.deepEqual(canonicalDocumentShape(shared.documentJson), canonicalDocumentShape((await snapshot(web)).documentJson));
     return cellOpenings(shared.documentJson);
 }
 
@@ -142,7 +143,7 @@ async function seedNativeTable(
     await seedFrom(source, [target]);
     await exchangeUntilIdle([source, target]);
     const shared = await snapshot(target);
-    assert.deepEqual(shared.documentJson, (await snapshot(source)).documentJson);
+    assert.deepEqual(canonicalDocumentShape(shared.documentJson), canonicalDocumentShape((await snapshot(source)).documentJson));
     return cellOpenings(shared.documentJson);
 }
 
@@ -389,7 +390,7 @@ test('TBL-14 a native text cursor inside a rich cell reaches a stock web peer', 
         });
         await exchangeUntilIdle([web, native]);
         const shared = await snapshot(native);
-        assert.deepEqual(shared.documentJson, (await snapshot(web)).documentJson);
+        assert.deepEqual(canonicalDocumentShape(shared.documentJson), canonicalDocumentShape((await snapshot(web)).documentJson));
         const [richCellOpening] = cellOpenings(shared.documentJson);
         const [leadParagraph = ''] = RICH_CELL_PARAGRAPHS;
         const secondParagraphText =

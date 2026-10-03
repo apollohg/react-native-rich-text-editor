@@ -30,6 +30,7 @@ class RustPeer implements Peer {
     private spawnError: Error | null = null;
     private failure: Error | null = null;
     private closing: Promise<void> | null = null;
+    private shutdownRequested = false;
 
     constructor(executable: string) {
         this.child = spawn(executable, [], { stdio: ['pipe', 'pipe', 'pipe'] });
@@ -43,6 +44,7 @@ class RustPeer implements Peer {
         });
         this.reader = createInterface({ input: this.child.stdout, crlfDelay: Infinity });
         this.reader.on('line', (line: string) => this.acceptLine(line));
+        this.child.stdin.on('error', (error: Error) => this.fail(error));
         this.child.on('error', (error: Error) => {
             this.spawnError = error;
             this.exit ??= { code: null, signal: null };
@@ -96,6 +98,12 @@ class RustPeer implements Peer {
     }
 
     request(request: Request): Promise<PeerReply> {
+        if (this.shutdownRequested) {
+            return Promise.reject(new Error('peer shutdown has already been requested'));
+        }
+        if (request.operation === 'shutdown') {
+            this.shutdownRequested = true;
+        }
         return this.send(request.id, JSON.stringify(request));
     }
 
@@ -129,7 +137,8 @@ class RustPeer implements Peer {
 
     private async shutdown(): Promise<void> {
         try {
-            if (this.exit === null && this.child.stdin.writable) {
+            if (!this.shutdownRequested && this.exit === null && this.child.stdin.writable) {
+                this.shutdownRequested = true;
                 await this.send(SHUTDOWN_REQUEST_ID, JSON.stringify({
                     id: SHUTDOWN_REQUEST_ID,
                     operation: 'shutdown',

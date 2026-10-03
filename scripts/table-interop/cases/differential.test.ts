@@ -1,3 +1,4 @@
+import { canonicalDocumentShape } from '../assertions.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
@@ -201,8 +202,8 @@ test('only an explicit normalization request advances the native pass counter', 
             await exchangeUntilIdle([web, engine]);
             const converged = await snapshot(engine);
             assert.deepEqual(
-                converged.documentJson,
-                (await snapshot(web)).documentJson,
+                canonicalDocumentShape(converged.documentJson),
+                canonicalDocumentShape((await snapshot(web)).documentJson),
                 'the remote table must actually have arrived before its zero means anything',
             );
             assert.equal(
