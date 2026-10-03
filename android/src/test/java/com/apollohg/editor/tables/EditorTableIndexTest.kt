@@ -3,20 +3,19 @@ package com.apollohg.editor.tables
 import com.apollohg.editor.EditorV2Adapter
 import com.apollohg.editor.EditorV2CallResult
 import com.apollohg.editor.UniffiEditorV2Backend
-import org.json.JSONObject
-import java.lang.ref.WeakReference
-import com.apollohg.editor.viewer.ViewerDocument
-import com.apollohg.editor.viewer.ViewerBlock
+import com.apollohg.editor.viewer.PREPARED_LAYOUT_UNMOUNTED_BYTE_BUDGET
 import com.apollohg.editor.viewer.PreparedProseLayout
 import com.apollohg.editor.viewer.PreparedProseTheme
 import com.apollohg.editor.viewer.ProseLayoutKey
 import com.apollohg.editor.viewer.StaticLayoutAndroidProseLayoutEngine
-import com.apollohg.editor.viewer.PREPARED_LAYOUT_UNMOUNTED_BYTE_BUDGET
-import uniffi.editor_core.editorV2RenderNativeFrame
+import com.apollohg.editor.viewer.ViewerBlock
+import com.apollohg.editor.viewer.ViewerDocument
+import java.lang.ref.WeakReference
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
-import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -35,6 +34,7 @@ import uniffi.editor_core.FfiTableRecord
 import uniffi.editor_core.FfiTableSourceRow
 import uniffi.editor_core.FfiViewerElement
 import uniffi.editor_core.TableRenderFailure
+import uniffi.editor_core.editorV2RenderNativeFrame
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -49,25 +49,57 @@ internal class EditorTableIndexTest {
 
     private fun cell(column: UInt, stride: UInt) = FfiTableCellRecord(
         0u, 0u, column, 1u, 1u, false, ATTRIBUTE_KEY, "cell-$column", 5u, stride,
-        listOf(FfiViewerElement.BlockStart("paragraph", null, 0u, null),
-            FfiViewerElement.TextRun("a", emptyList()), FfiViewerElement.BlockEnd),
+        listOf(
+            FfiViewerElement.BlockStart("paragraph", null, 0u, null),
+            FfiViewerElement.TextRun("a", emptyList()),
+            FfiViewerElement.BlockEnd
+        ),
         emptyList(), listOf(FfiCellInputBlock(0u, 2u, 3u, 0u, 0u, 1u, stride, false)), emptyList()
     )
 
     private fun frame(): FfiTableFrame {
-        val table = FfiTableRecord(ROOT_KEY, null, 14u, 1u, 2u, listOf(null, null), null,
+        val table = FfiTableRecord(
+            ROOT_KEY, null, 14u, 1u, 2u, listOf(null, null), null,
             false, false, ATTRIBUTE_KEY, listOf(FfiTableSourceRow(ATTRIBUTE_KEY, 2u)),
-            listOf(cell(0u, 2u), cell(1u, 1u)), emptyList(), null, null)
-        return FfiTableFrame(FfiTableFrameKind.FULL, null, listOf(FfiTableAttribute(ATTRIBUTE_KEY, "{}")),
-            emptyList(), listOf(table), emptyList(), emptyList(),
-            listOf(FfiTableExtent(ROOT_KEY, ROOT_DOC_START, table.docSize, ROOT_SCALAR_START, ROOT_SCALAR_START + 3u)))
+            listOf(cell(0u, 2u), cell(1u, 1u)), emptyList(), null, null
+        )
+        return FfiTableFrame(
+            FfiTableFrameKind.FULL,
+            null,
+            listOf(FfiTableAttribute(ATTRIBUTE_KEY, "{}")),
+            emptyList(),
+            listOf(table),
+            emptyList(),
+            emptyList(),
+            listOf(
+                FfiTableExtent(
+                    ROOT_KEY,
+                    ROOT_DOC_START,
+                    table.docSize,
+                    ROOT_SCALAR_START,
+                    ROOT_SCALAR_START + 3u
+                )
+            )
+        )
     }
 
-    private fun delta() = FfiTableFrame(FfiTableFrameKind.DELTA, REVISION.toString(), emptyList(),
-        emptyList(), emptyList(), emptyList(), emptyList(), frame().extents)
+    private fun delta() = FfiTableFrame(
+        FfiTableFrameKind.DELTA,
+        REVISION.toString(),
+        emptyList(),
+        emptyList(),
+        emptyList(),
+        emptyList(),
+        emptyList(),
+        frame().extents
+    )
 
-    private fun adopt(index: EditorTableIndex, frame: FfiTableFrame, installed: ULong? = null,
-                      revision: ULong = REVISION): TableFrameChanges {
+    private fun adopt(
+        index: EditorTableIndex,
+        frame: FfiTableFrame,
+        installed: ULong? = null,
+        revision: ULong = REVISION
+    ): TableFrameChanges {
         val result = index.adopt(frame, installed, revision)
         assertTrue("frame rejected: $result", result is TableFrameAdoption.Adopted)
         return (result as TableFrameAdoption.Adopted).changes
@@ -76,25 +108,46 @@ internal class EditorTableIndexTest {
     @Test fun `prefix bounds accept UInt maximum and reject overflow atomically`() {
         val original = frame()
         val max = UInt.MAX_VALUE
-        val table = original.tables.single().copy(docSize = max, cells = listOf(
-            cell(0u, max - 1u).copy(docSize = max - 9u), cell(1u, 1u)))
-        val boundary = original.copy(tables = listOf(table), extents = listOf(
-            FfiTableExtent(ROOT_KEY, 0u, max, 0u, max)))
+        val table = original.tables.single().copy(
+            docSize = max,
+            cells = listOf(cell(0u, max - 1u).copy(docSize = max - 9u), cell(1u, 1u))
+        )
+        val boundary = original.copy(
+            tables = listOf(table),
+            extents = listOf(FfiTableExtent(ROOT_KEY, 0u, max, 0u, max))
+        )
         val index = EditorTableIndex()
         adopt(index, boundary)
         assertEquals(max - 7u, index.docStart(ROOT_KEY, 1))
         assertEquals(max - 1u, index.scalarStart(ROOT_KEY, 1))
         val nextRevision = REVISION + 1u
-        val scalarOverflow = delta().copy(extents = boundary.extents, cellUpdates = listOf(
-            FfiTableCellUpdate(ROOT_KEY, 1u, table.cells[1].copy(scalarStride = 2u))))
-        assertEquals(TableFrameAdoption.Rejected(TableFrameRejection.ScalarSizeMismatch(ROOT_KEY, max - 1u, 2u)),
-            index.adopt(scalarOverflow, REVISION, nextRevision))
+        val scalarOverflow = delta().copy(
+            extents = boundary.extents,
+            cellUpdates = listOf(
+                FfiTableCellUpdate(ROOT_KEY, 1u, table.cells[1].copy(scalarStride = 2u))
+            )
+        )
+        assertEquals(
+            TableFrameAdoption.Rejected(
+                TableFrameRejection.ScalarSizeMismatch(
+                    ROOT_KEY,
+                    max - 1u,
+                    2u
+                )
+            ),
+            index.adopt(scalarOverflow, REVISION, nextRevision)
+        )
         assertEquals(table, index.record(ROOT_KEY))
         assertEquals(max - 1u, index.scalarStart(ROOT_KEY, 1))
-        val docOverflow = boundary.copy(tables = listOf(table.copy(cells = listOf(
-            table.cells[0].copy(docSize = max), table.cells[1]))))
-        assertEquals(TableFrameAdoption.Rejected(TableFrameRejection.DocSizeMismatch(ROOT_KEY, max, 5u)),
-            index.adopt(docOverflow, REVISION, nextRevision))
+        val docOverflow = boundary.copy(
+            tables = listOf(
+                table.copy(cells = listOf(table.cells[0].copy(docSize = max), table.cells[1]))
+            )
+        )
+        assertEquals(
+            TableFrameAdoption.Rejected(TableFrameRejection.DocSizeMismatch(ROOT_KEY, max, 5u)),
+            index.adopt(docOverflow, REVISION, nextRevision)
+        )
         assertEquals(table, index.record(ROOT_KEY))
         assertEquals(max - 7u, index.docStart(ROOT_KEY, 1))
         assertEquals(max - 1u, index.scalarStart(ROOT_KEY, 1))
@@ -106,12 +159,22 @@ internal class EditorTableIndexTest {
         val width = 400
         val gcAttempts = 8
         val original = frame()
-        val table = original.tables.single().copy(columns = cellCount.toUInt(),
-            columnWidths = List(cellCount) { null }, docSize = (cellCount * 5 + 4).toUInt(),
+        val table = original.tables.single().copy(
+            columns = cellCount.toUInt(),
+            columnWidths = List(cellCount) { null },
+            docSize = (cellCount * 5 + 4).toUInt(),
             sourceRows = listOf(FfiTableSourceRow(ATTRIBUTE_KEY, cellCount.toUInt())),
-            cells = List(cellCount) { cell(it.toUInt(), if (it == cellCount - 1) 1u else 2u) })
-        val full = original.copy(tables = listOf(table), extents = listOf(original.extents.single().copy(
-            docSize = table.docSize, scalarEnd = ROOT_SCALAR_START + (cellCount * 2 - 1).toUInt())))
+            cells = List(cellCount) { cell(it.toUInt(), if (it == cellCount - 1) 1u else 2u) }
+        )
+        val full = original.copy(
+            tables = listOf(table),
+            extents = listOf(
+                original.extents.single().copy(
+                    docSize = table.docSize,
+                    scalarEnd = ROOT_SCALAR_START + (cellCount * 2 - 1).toUInt()
+                )
+            )
+        )
         val references = mutableListOf<WeakReference<EditorTableIndex>>()
         fun prepareRevisions(): PreparedProseLayout {
             var index = EditorTableIndex()
@@ -121,31 +184,96 @@ internal class EditorTableIndexTest {
             for (step in 0..cellCount) {
                 if (step > 0) {
                     index = index.copy()
-                    val changed = table.cells[step - 1].copy(contentKey = "edited-$step",
-                        elements = listOf(FfiViewerElement.BlockStart("paragraph", null, 0u, null),
-                            FfiViewerElement.TextRun("b", emptyList()), FfiViewerElement.BlockEnd))
-                    val change = delta().copy(baseDocumentRevision = (REVISION + (step - 1).toULong()).toString(),
-                        extents = full.extents, cellUpdates = listOf(FfiTableCellUpdate(ROOT_KEY, (step - 1).toUInt(), changed)))
+                    val changed = table.cells[step - 1].copy(
+                        contentKey = "edited-$step",
+                        elements = listOf(
+                            FfiViewerElement.BlockStart("paragraph", null, 0u, null),
+                            FfiViewerElement.TextRun("b", emptyList()),
+                            FfiViewerElement.BlockEnd
+                        )
+                    )
+                    val change = delta().copy(
+                        baseDocumentRevision = (
+                            REVISION +
+                                (step - 1).toULong()
+                            ).toString(),
+                        extents = full.extents,
+                        cellUpdates = listOf(
+                            FfiTableCellUpdate(
+                                ROOT_KEY,
+                                (
+                                    step -
+                                        1
+                                    ).toUInt(),
+                                changed
+                            )
+                        )
+                    )
                     adopt(index, change, REVISION + (step - 1).toULong(), REVISION + step.toULong())
                     val previous = requireNotNull(retained).blocks.first().tableSurface!!
                     engine.incrementalTableSurface = { previous to setOf(step - 1) }
                 }
-                val document = ViewerDocument("revision-$step",
-                    listOf(ViewerBlock("table", 0, false, null, null, emptyList(), frameRecord = index.record(ROOT_KEY))),
-                    false, 0, tableAttributes = index.attributeObjects, frameIndex = index)
-                val key = ProseLayoutKey(document.semanticKey, width, "retention", 0, 0, 1, 0, "retention")
+                val document = ViewerDocument(
+                    "revision-$step",
+                    listOf(
+                        ViewerBlock(
+                            "table",
+                            0,
+                            false,
+                            null,
+                            null,
+                            emptyList(),
+                            frameRecord = index.record(ROOT_KEY)
+                        )
+                    ),
+                    false,
+                    0,
+                    tableAttributes = index.attributeObjects,
+                    frameIndex = index
+                )
+                val key =
+                    ProseLayoutKey(
+                        document.semanticKey,
+                        width,
+                        "retention",
+                        0,
+                        0,
+                        1,
+                        0,
+                        "retention"
+                    )
                 val previousSource = retained?.blocks?.first()?.tableSurface?.sourceTable
-                retained = engine.prepare(document, key, PreparedProseTheme.resolve(null, 1f), width, 1f, false)
+                retained =
+                    engine.prepare(
+                        document,
+                        key,
+                        PreparedProseTheme.resolve(null, 1f),
+                        width,
+                        1f,
+                        false
+                    )
                 engine.incrementalTableSurface = null
-                val currentSource = requireNotNull(retained.blocks.first().tableSurface?.sourceTable)
-                assertEquals("Revision $step must retain exactly the current native source",
-                    TableSurfaceSource.from(requireNotNull(index.record(ROOT_KEY))), currentSource)
+                val currentSource =
+                    requireNotNull(retained.blocks.first().tableSurface?.sourceTable)
+                assertEquals(
+                    "Revision $step must retain exactly the current native source",
+                    TableSurfaceSource.from(requireNotNull(index.record(ROOT_KEY))),
+                    currentSource
+                )
                 if (previousSource != null) {
                     currentSource.cells.indices.forEach { cellIndex ->
                         if (cellIndex == step - 1) {
-                            assertNotSame("Revision $step must convert the changed source cell", previousSource.cells[cellIndex], currentSource.cells[cellIndex])
+                            assertNotSame(
+                                "Revision $step must convert the changed source cell",
+                                previousSource.cells[cellIndex],
+                                currentSource.cells[cellIndex]
+                            )
                         } else {
-                            assertSame("Revision $step must reuse unchanged source cell $cellIndex", previousSource.cells[cellIndex], currentSource.cells[cellIndex])
+                            assertSame(
+                                "Revision $step must reuse unchanged source cell $cellIndex",
+                                previousSource.cells[cellIndex],
+                                currentSource.cells[cellIndex]
+                            )
                         }
                     }
                 }
@@ -154,24 +282,50 @@ internal class EditorTableIndexTest {
             return requireNotNull(retained)
         }
         val retained = prepareRevisions()
-        repeat(gcAttempts) { System.gc(); System.runFinalization() }
-        assertEquals("Cell rebuild closures must not retain whole historical indexes", 0,
-            references.count { it.get() != null })
+        repeat(gcAttempts) {
+            System.gc()
+            System.runFinalization()
+        }
+        assertEquals(
+            "Cell rebuild closures must not retain whole historical indexes",
+            0,
+            references.count { it.get() != null }
+        )
         val surface = requireNotNull(retained.blocks.first().tableSurface)
-        surface.layoutStore.insert(PreparedProseLayout(retained.key, width, 0, emptyList(),
-            retainedBytes = PREPARED_LAYOUT_UNMOUNTED_BYTE_BUDGET))
+        surface.layoutStore.insert(
+            PreparedProseLayout(
+                retained.key,
+                width,
+                0,
+                emptyList(),
+                retainedBytes = PREPARED_LAYOUT_UNMOUNTED_BYTE_BUDGET
+            )
+        )
         surface.cells.forEach { cell ->
             assertNull(cell.cachedContent)
             assertNull("Evicted cell ${cell.sourceIndex} must rebuild", cell.content.error)
-            assertEquals("b", cell.content.blocks.flatMap { it.fragments }.mapNotNull { it.layout?.text }.joinToString(""))
+            assertEquals(
+                "b",
+                cell.content.blocks.flatMap {
+                    it.fragments
+                }.mapNotNull { it.layout?.text }.joinToString("")
+            )
         }
     }
 
-    private fun withEngineFrame(source: String, config: String = PlainTableFixture.CONFIG,
-                               check: (FfiTableFrame, EditorV2Adapter, ULong) -> Unit) {
+    private fun withEngineFrame(
+        source: String,
+        config: String = PlainTableFixture.CONFIG,
+        check: (FfiTableFrame, EditorV2Adapter, ULong) -> Unit
+    ) {
         val created = UniffiEditorV2Backend.create(config, null) as EditorV2CallResult.Ok
-        val adapter = requireNotNull(EditorV2Adapter.attach(UniffiEditorV2Backend,
-            JSONObject(created.value).getString("editorId"), false))
+        val adapter = requireNotNull(
+            EditorV2Adapter.attach(
+                UniffiEditorV2Backend,
+                JSONObject(created.value).getString("editorId"),
+                false
+            )
+        )
         try {
             requireNotNull(adapter.setContentJson(source))
             val native = editorV2RenderNativeFrame(adapter.editorId.toString(), null, null, null)
@@ -182,7 +336,8 @@ internal class EditorTableIndexTest {
         }
     }
 
-    @Test fun `source reuse preserves shifted positions and leaves reuse after atom introduction`() =
+    @Test
+    fun `source reuse preserves shifted positions and leaves reuse after atom introduction`() =
         withEngineFrame(PlainTableFixture.document(1, 3), ViewerTableTest.CONFIG) { _, adapter, _ ->
             val width = 400
             val prefix = "🙂 "
@@ -191,25 +346,64 @@ internal class EditorTableIndexTest {
             adapter.claimNativeBindingIfUnowned(nativeOwnerToken)
             val tableId = adapter.tableIndex.tableKeys.single()
             val theme = PreparedProseTheme.resolve(
-                """{"viewerAtoms":{"generation":"source-reuse","revision":"one","nodeTypes":["card"],"estimatedHeights":{"card":40}}}""", 1f)
+                """{"viewerAtoms":{"generation":"source-reuse",""" +
+                    """"revision":"one","nodeTypes":["card"],""" +
+                    """"estimatedHeights":{"card":40}}}""",
+                1f
+            )
             var previous: ViewerTableSurface? = null
             var previousRevision: ULong? = null
             fun prepareCurrent(): ViewerTableSurface {
                 val index = adapter.tableIndex
-                val document = ViewerDocument("source-${adapter.baseDocumentRevision}",
-                    listOf(ViewerBlock("table", 0, false, null, null, emptyList(), frameRecord = index.record(tableId))),
-                    false, 0, tableAttributes = index.attributeObjects, frameIndex = index)
-                val key = ProseLayoutKey(document.semanticKey, width, "source-reuse", 0, 0, 1, 0, "source-reuse")
+                val document = ViewerDocument(
+                    "source-${adapter.baseDocumentRevision}",
+                    listOf(
+                        ViewerBlock(
+                            "table",
+                            0,
+                            false,
+                            null,
+                            null,
+                            emptyList(),
+                            frameRecord = index.record(tableId)
+                        )
+                    ),
+                    false,
+                    0,
+                    tableAttributes = index.attributeObjects,
+                    frameIndex = index
+                )
+                val key =
+                    ProseLayoutKey(
+                        document.semanticKey,
+                        width,
+                        "source-reuse",
+                        0,
+                        0,
+                        1,
+                        0,
+                        "source-reuse"
+                    )
                 val engine = StaticLayoutAndroidProseLayoutEngine()
                 val retained = previous
                 val presentation = requireNotNull(adapter.cachedTablePresentation)
                 if (retained != null && previousRevision == presentation.baseDocumentRevision &&
-                    !presentation.changes.fullReset && tableId !in presentation.changes.replacedTables &&
-                    retained.cells.all { it.isPositionFree }) {
-                    engine.incrementalTableSurface = { retained to presentation.changes.changedCells[tableId].orEmpty() }
+                    !presentation.changes.fullReset &&
+                    tableId !in presentation.changes.replacedTables &&
+                    retained.cells.all { it.isPositionFree }
+                ) {
+                    engine.incrementalTableSurface =
+                        { retained to presentation.changes.changedCells[tableId].orEmpty() }
                 }
                 val actual = engine.prepare(document, key, theme, width, 1f, false)
-                val fresh = StaticLayoutAndroidProseLayoutEngine().prepare(document, key, theme, width, 1f, false)
+                val fresh = StaticLayoutAndroidProseLayoutEngine().prepare(
+                    document,
+                    key,
+                    theme,
+                    width,
+                    1f,
+                    false
+                )
                 assertNull(actual.error)
                 val surface = requireNotNull(actual.blocks.single().tableSurface)
                 val reference = requireNotNull(fresh.blocks.single().tableSurface)
@@ -226,20 +420,43 @@ internal class EditorTableIndexTest {
             val initial = prepareCurrent()
             val scalarBefore = requireNotNull(adapter.tableIndex.scalarStart(tableId, 1))
             val docBefore = requireNotNull(adapter.tableIndex.docStart(tableId, 1))
-            requireNotNull(adapter.insertText(prefix, requireNotNull(adapter.tableIndex.scalarStart(tableId, 0)).toInt()))
+            requireNotNull(
+                adapter.insertText(
+                    prefix,
+                    requireNotNull(adapter.tableIndex.scalarStart(tableId, 0)).toInt()
+                )
+            )
             val grown = prepareCurrent()
             assertSame(initial.sourceTable!!.cells[1], grown.sourceTable!!.cells[1])
-            assertEquals(scalarBefore + prefixScalars.toUInt(), adapter.tableIndex.scalarStart(tableId, 1))
-            assertEquals(docBefore + prefixScalars.toUInt(), adapter.tableIndex.docStart(tableId, 1))
+            assertEquals(
+                scalarBefore + prefixScalars.toUInt(),
+                adapter.tableIndex.scalarStart(tableId, 1)
+            )
+            assertEquals(
+                docBefore + prefixScalars.toUInt(),
+                adapter.tableIndex.docStart(tableId, 1)
+            )
             val at = requireNotNull(adapter.tableIndex.scalarStart(tableId, 1)).toInt()
             requireNotNull(adapter.insertNode("card", at, at))
             val withAtom = prepareCurrent()
             val atomBefore = withAtom.cells[1].content.viewerAtoms.single().docPos
             assertTrue(withAtom.cells[1].hasAtoms)
-            requireNotNull(adapter.insertText(prefix, requireNotNull(adapter.tableIndex.scalarStart(tableId, 0)).toInt()))
+            requireNotNull(
+                adapter.insertText(
+                    prefix,
+                    requireNotNull(adapter.tableIndex.scalarStart(tableId, 0)).toInt()
+                )
+            )
             val moved = prepareCurrent()
-            assertNotSame("Position-bearing sources must use full conversion", withAtom.sourceTable!!.cells[1], moved.sourceTable!!.cells[1])
-            assertEquals(atomBefore + prefixScalars, moved.cells[1].content.viewerAtoms.single().docPos)
+            assertNotSame(
+                "Position-bearing sources must use full conversion",
+                withAtom.sourceTable!!.cells[1],
+                moved.sourceTable!!.cells[1]
+            )
+            assertEquals(
+                atomBefore + prefixScalars,
+                moved.cells[1].content.viewerAtoms.single().docPos
+            )
         }
 
     @Test
@@ -251,48 +468,82 @@ internal class EditorTableIndexTest {
         for (indices in listOf(listOf(0u), listOf(3u), listOf(1u, 1u))) {
             val corrupted = frame()
             if (indices.size > 1) {
-                corrupted.tables[0].cells[0].elements = corrupted.tables[0].cells[0].elements.toMutableList().apply {
-                    set(1, FfiViewerElement.InlineAtom("mention", 2u, "{}", "a"))
-                }
+                corrupted.tables[0].cells[0].elements =
+                    corrupted.tables[0].cells[0].elements.toMutableList().apply {
+                        set(1, FfiViewerElement.InlineAtom("mention", 2u, "{}", "a"))
+                    }
             }
             corrupted.tables[0].cells[0].voidElementIndices = indices
-            assertEquals(TableFrameAdoption.Rejected(TableFrameRejection.InputBlockOutOfStride(ROOT_KEY, 0)),
-                index.adopt(corrupted, REVISION, REVISION))
+            assertEquals(
+                TableFrameAdoption.Rejected(TableFrameRejection.InputBlockOutOfStride(ROOT_KEY, 0)),
+                index.adopt(corrupted, REVISION, REVISION)
+            )
             assertEquals(original, index.record(ROOT_KEY))
         }
     }
 
-    @Test fun engineFramePositionsMatchEngineScalarConversions() = withEngineFrame(PlainTableFixture.document(2, 2)) { frame, adapter, revision ->
-        val index = EditorTableIndex()
-        adopt(index, frame, revision = revision)
-        val table = frame.tables.single()
-        val expectedCellStarts = listOf(2, 18, 36, 52)
-        val cellContentOffset = 2
-        val textLength = PlainTableFixture.CELL_TEXT.codePointCount(0, PlainTableFixture.CELL_TEXT.length)
-        assertEquals(expectedCellStarts.size, table.cells.size)
-        expectedCellStarts.forEachIndexed { cellIndex, docStart ->
-            assertEquals(docStart.toUInt(), index.docStart(table.tableKey, cellIndex))
-            val contentStart = docStart + cellContentOffset
-            val scalarStart = requireNotNull(adapter.scalarPositionForDoc(contentStart))
-            val scalarEnd = requireNotNull(adapter.scalarPositionForDoc(contentStart + textLength))
-            assertEquals(scalarStart.toUInt(), index.scalarStart(table.tableKey, cellIndex))
-            val segments = requireNotNull(index.inputSegments(table.tableKey, cellIndex))
-            assertEquals(1, segments.size)
-            val segment = segments.single()
-            assertEquals(scalarStart, segment.globalScalarStart)
-            assertEquals(scalarEnd - scalarStart + 1, segment.localScalarEndExclusive - segment.localScalarStart)
-            assertEquals(cellIndex, index.cellIndexContainingScalar(table.tableKey, scalarEnd.toUInt()))
+    @Test fun engineFramePositionsMatchEngineScalarConversions() =
+        withEngineFrame(PlainTableFixture.document(2, 2)) {
+                frame,
+                adapter,
+                revision
+            ->
+            val index = EditorTableIndex()
+            adopt(index, frame, revision = revision)
+            val table = frame.tables.single()
+            val expectedCellStarts = listOf(2, 18, 36, 52)
+            val cellContentOffset = 2
+            val textLength = PlainTableFixture.CELL_TEXT.codePointCount(
+                0,
+                PlainTableFixture.CELL_TEXT.length
+            )
+            assertEquals(expectedCellStarts.size, table.cells.size)
+            expectedCellStarts.forEachIndexed { cellIndex, docStart ->
+                assertEquals(docStart.toUInt(), index.docStart(table.tableKey, cellIndex))
+                val contentStart = docStart + cellContentOffset
+                val scalarStart = requireNotNull(adapter.scalarPositionForDoc(contentStart))
+                val scalarEnd =
+                    requireNotNull(adapter.scalarPositionForDoc(contentStart + textLength))
+                assertEquals(scalarStart.toUInt(), index.scalarStart(table.tableKey, cellIndex))
+                val segments = requireNotNull(index.inputSegments(table.tableKey, cellIndex))
+                assertEquals(1, segments.size)
+                val segment = segments.single()
+                assertEquals(scalarStart, segment.globalScalarStart)
+                assertEquals(
+                    scalarEnd - scalarStart + 1,
+                    segment.localScalarEndExclusive - segment.localScalarStart
+                )
+                assertEquals(
+                    cellIndex,
+                    index.cellIndexContainingScalar(table.tableKey, scalarEnd.toUInt())
+                )
+            }
         }
-    }
 
     @Test fun nestedInputSegmentsCollapseMarkersBeforeFollowingProse() {
-        val source = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"nested text"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}]}]}]}"""
+        val source = """{"type":"doc","content":[{"type":"table",""" +
+            """"content":[{"type":"table_row",""" +
+            """"content":[{"type":"table_cell",""" +
+            """"content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"before"}]},""" +
+            """{"type":"table","content":[{"type":"table_row",""" +
+            """"content":[{"type":"table_cell",""" +
+            """"content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"nested """ +
+            """text"}]}]}]}]},{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"after"}]}]}]}]}]}"""
         withEngineFrame(source) { frame, _, revision ->
             val index = EditorTableIndex()
             adopt(index, frame, revision = revision)
             val root = frame.tables.single { it.host == null }
             val segments = requireNotNull(index.inputSegments(root.tableKey, 0))
-            assertEquals(listOf(0 until 7, 9 until 15), segments.map { it.localScalarStart until it.localScalarEndExclusive })
+            assertEquals(
+                listOf(0 until 7, 9 until 15),
+                segments.map {
+                    it.localScalarStart until
+                        it.localScalarEndExclusive
+                }
+            )
             assertEquals(listOf(0, 19), segments.map { it.globalScalarStart })
         }
     }
@@ -300,22 +551,76 @@ internal class EditorTableIndexTest {
     @Test fun oneDeltaCanExchangeNestedTablesBetweenCellsWithoutMutatingThePriorIndex() {
         val full = frame()
         val children = full.tables.single().cells.indices.map { index ->
-            frame().tables.single().copy(tableKey = "child-$index", host = FfiTableHost(ROOT_KEY, index.toUInt()))
+            frame().tables.single().copy(
+                tableKey = "child-$index",
+                host = FfiTableHost(ROOT_KEY, index.toUInt())
+            )
         }
-        val parent = full.tables.single().copy(docSize = 36u, cells = full.tables.single().cells.mapIndexed { index, cell ->
-            cell.copy(docSize = children[index].docSize + 2u, scalarStride = if (index == 0) 4u else 3u,
-                elements = listOf(FfiViewerElement.Table(children[index].tableKey)), inputBlocks = emptyList(),
-                nestedTables = listOf(FfiCellNestedTable(0u, children[index].tableKey, 1u, children[index].docSize, 0u, 3u)))
-        })
+        val parent = full.tables.single().copy(
+            docSize = 36u,
+            cells = full.tables.single().cells.mapIndexed {
+                    index,
+                    cell
+                ->
+                cell.copy(
+                    docSize = children[index].docSize + 2u,
+                    scalarStride = if (index ==
+                        0
+                    ) {
+                        4u
+                    } else {
+                        3u
+                    },
+                    elements = listOf(FfiViewerElement.Table(children[index].tableKey)),
+                    inputBlocks = emptyList(),
+                    nestedTables = listOf(
+                        FfiCellNestedTable(
+                            0u,
+                            children[index].tableKey,
+                            1u,
+                            children[index].docSize,
+                            0u,
+                            3u
+                        )
+                    )
+                )
+            }
+        )
         full.tables = listOf(parent) + children
-        full.extents = full.extents.map { it.copy(docSize = parent.docSize, scalarEnd = ROOT_SCALAR_START + 7u) }
+        full.extents =
+            full.extents.map {
+                it.copy(docSize = parent.docSize, scalarEnd = ROOT_SCALAR_START + 7u)
+            }
         val original = EditorTableIndex()
         adopt(original, full)
         val updated = original.copy()
-        val update = delta().copy(extents = full.extents,
-            tables = children.mapIndexed { index, child -> child.copy(host = FfiTableHost(ROOT_KEY, (1 - index).toUInt())) },
-            cellUpdates = parent.cells.mapIndexed { index, cell -> FfiTableCellUpdate(ROOT_KEY, index.toUInt(),
-                cell.copy(elements = parent.cells[1 - index].elements, nestedTables = parent.cells[1 - index].nestedTables)) })
+        val update = delta().copy(
+            extents = full.extents,
+            tables = children.mapIndexed { index, child ->
+                child.copy(
+                    host = FfiTableHost(
+                        ROOT_KEY,
+                        (
+                            1 -
+                                index
+                            ).toUInt()
+                    )
+                )
+            },
+            cellUpdates = parent.cells.mapIndexed { index, cell ->
+                FfiTableCellUpdate(
+                    ROOT_KEY,
+                    index.toUInt(),
+                    cell.copy(
+                        elements = parent.cells[1 - index].elements,
+                        nestedTables = parent.cells[
+                            1 -
+                                index
+                        ].nestedTables
+                    )
+                )
+            }
+        )
         adopt(updated, update, REVISION, REVISION + 1uL)
         assertEquals(ROOT_DOC_START + 5u, updated.docStart(children[1].tableKey, 0))
         assertEquals(ROOT_DOC_START + 21u, updated.docStart(children[0].tableKey, 0))
@@ -342,7 +647,10 @@ internal class EditorTableIndexTest {
         assertEquals(ROOT_KEY, index.tableKeyContainingDoc(ROOT_DOC_START + 8u))
         assertEquals(ROOT_KEY, index.tableKeyContainingScalar(ROOT_SCALAR_START + 1u))
         assertEquals(ROOT_DOC_START + 9u, index.absoluteDocPos(ROOT_KEY, 1, 2u))
-        assertEquals(listOf(TableCellPositionMap.Segment(0, 2, ROOT_SCALAR_START.toInt())), index.inputSegments(ROOT_KEY, 0))
+        assertEquals(
+            listOf(TableCellPositionMap.Segment(0, 2, ROOT_SCALAR_START.toInt())),
+            index.inputSegments(ROOT_KEY, 0)
+        )
         assertNull(index.docStart(ROOT_KEY, -1))
         assertNull(index.absoluteDocPos(ROOT_KEY, 0, 6u))
     }
@@ -353,17 +661,38 @@ internal class EditorTableIndexTest {
         adopt(index, full)
         val original = full.tables.single().cells.first()
         val growth = 3u
-        val changed = original.copy(docSize = original.docSize + growth, scalarStride = original.scalarStride + growth,
-            contentKey = "changed", elements = original.elements.toMutableList().apply {
+        val changed = original.copy(
+            docSize = original.docSize + growth,
+            scalarStride =
+                original.scalarStride + growth,
+            contentKey = "changed",
+            elements = original.elements.toMutableList().apply {
                 set(1, FfiViewerElement.TextRun("aaaa", emptyList()))
-            }, inputBlocks = original.inputBlocks.map { it.copy(docEnd = it.docEnd + growth,
-                scalarEnd = it.scalarEnd + growth, breakScalarEnd = it.breakScalarEnd + growth) })
+            },
+            inputBlocks = original.inputBlocks.map {
+                it.copy(
+                    docEnd = it.docEnd + growth,
+                    scalarEnd = it.scalarEnd + growth,
+                    breakScalarEnd = it.breakScalarEnd + growth
+                )
+            }
+        )
         val update = delta().apply {
             cellUpdates = listOf(FfiTableCellUpdate(ROOT_KEY, 0u, changed))
-            extents = extents.map { it.copy(docSize = it.docSize + growth, scalarEnd = it.scalarEnd + growth) }
+            extents =
+                extents.map {
+                    it.copy(
+                        docSize = it.docSize + growth,
+                        scalarEnd =
+                            it.scalarEnd + growth
+                    )
+                }
         }
         val changes = adopt(index, update, REVISION, REVISION + 1uL)
-        assertEquals(TableFrameChanges(false, emptySet(), emptySet(), mapOf(ROOT_KEY to setOf(0))), changes)
+        assertEquals(
+            TableFrameChanges(false, emptySet(), emptySet(), mapOf(ROOT_KEY to setOf(0))),
+            changes
+        )
         assertEquals(ROOT_DOC_START + 7u + growth, index.docStart(ROOT_KEY, 1))
         assertEquals(ROOT_SCALAR_START + 2u + growth, index.scalarStart(ROOT_KEY, 1))
         assertEquals(full.tables.single().cells[1], index.record(ROOT_KEY)!!.cells[1])
@@ -380,7 +709,9 @@ internal class EditorTableIndexTest {
         cells.removeAt(cells.lastIndex)
         val original = cells.single()
         val replacement = original.copy(contentKey = "changed")
-        val update = delta().copy(cellUpdates = listOf(FfiTableCellUpdate(ROOT_KEY, 0u, replacement)))
+        val update = delta().copy(
+            cellUpdates = listOf(FfiTableCellUpdate(ROOT_KEY, 0u, replacement))
+        )
 
         val changes = adopt(index, update, REVISION, REVISION + 1uL)
 
@@ -388,47 +719,168 @@ internal class EditorTableIndexTest {
         assertEquals(listOf(replacement), requireNotNull(index.record(ROOT_KEY)).cells)
         assertEquals(ROOT_DOC_START + 2u, index.docStart(ROOT_KEY, 0))
         assertEquals(ROOT_SCALAR_START, index.scalarStart(ROOT_KEY, 0))
-        assertEquals("Staged replacement must not mutate the exposed input list", listOf(original), cells)
+        assertEquals(
+            "Staged replacement must not mutate the exposed input list",
+            listOf(original),
+            cells
+        )
     }
 
     @Test fun everyRejectionLeavesInstalledRecordsAndPositionsUnchanged() {
         val full = frame()
         val first = full.tables.single().cells.first()
         val cases = listOf(
-            "base" to (delta().copy(baseDocumentRevision = "0") to TableFrameRejection.BaseRevisionMismatch(REVISION, 0uL)),
-            "unknown table" to (delta().copy(removedTableKeys = listOf("missing")) to TableFrameRejection.UnknownTable("missing")),
-            "cell index" to (delta().copy(cellUpdates = listOf(FfiTableCellUpdate(ROOT_KEY, 2u, first))) to TableFrameRejection.CellIndexOutOfRange(ROOT_KEY, 2)),
-            "structure" to (delta().copy(cellUpdates = listOf(FfiTableCellUpdate(ROOT_KEY, 0u, first.copy(header = true)))) to TableFrameRejection.CellStructureChanged(ROOT_KEY, 0)),
-            "doc size" to (delta().let { it.copy(extents = it.extents.map { e -> e.copy(docSize = e.docSize + 1u) }) } to TableFrameRejection.DocSizeMismatch(ROOT_KEY, 14u, 15u)),
-            "scalar size" to (delta().let { it.copy(extents = it.extents.map { e -> e.copy(scalarEnd = e.scalarEnd + 1u) }) } to TableFrameRejection.ScalarSizeMismatch(ROOT_KEY, 3u, 4u)),
-            "input stride" to (delta().copy(cellUpdates = listOf(FfiTableCellUpdate(ROOT_KEY, 0u,
-                first.copy(inputBlocks = first.inputBlocks.map { it.copy(breakScalarEnd = first.scalarStride + 1u) })) )) to TableFrameRejection.InputBlockOutOfStride(ROOT_KEY, 0)),
-            "attribute" to (delta().copy(removedAttributeKeys = listOf(ATTRIBUTE_KEY)) to TableFrameRejection.MissingAttribute(ATTRIBUTE_KEY)),
-            "duplicate" to (delta().copy(tables = listOf(full.tables.single(), full.tables.single())) to TableFrameRejection.DuplicateTableKey(ROOT_KEY)),
-            "host" to (delta().copy(tables = listOf(full.tables.single().copy(host = FfiTableHost("missing", 0u))), extents = emptyList()) to TableFrameRejection.HostMissing(ROOT_KEY)),
-            "extents" to (delta().copy(extents = emptyList()) to TableFrameRejection.ExtentsIncomplete)
+            "base" to
+                (
+                    delta().copy(baseDocumentRevision = "0") to
+                        TableFrameRejection.BaseRevisionMismatch(REVISION, 0uL)
+                    ),
+            "unknown table" to
+                (
+                    delta().copy(removedTableKeys = listOf("missing")) to
+                        TableFrameRejection.UnknownTable("missing")
+                    ),
+            "cell index" to
+                (
+                    delta().copy(cellUpdates = listOf(FfiTableCellUpdate(ROOT_KEY, 2u, first))) to
+                        TableFrameRejection.CellIndexOutOfRange(ROOT_KEY, 2)
+                    ),
+            "structure" to
+                (
+                    delta().copy(
+                        cellUpdates = listOf(
+                            FfiTableCellUpdate(ROOT_KEY, 0u, first.copy(header = true))
+                        )
+                    ) to
+                        TableFrameRejection.CellStructureChanged(ROOT_KEY, 0)
+                    ),
+            "doc size" to
+                (
+                    delta().let {
+                        it.copy(
+                            extents = it.extents.map { e ->
+                                e.copy(
+                                    docSize =
+                                        e.docSize + 1u
+                                )
+                            }
+                        )
+                    } to
+                        TableFrameRejection.DocSizeMismatch(ROOT_KEY, 14u, 15u)
+                    ),
+            "scalar size" to
+                (
+                    delta().let {
+                        it.copy(
+                            extents = it.extents.map { e ->
+                                e.copy(
+                                    scalarEnd =
+                                        e.scalarEnd + 1u
+                                )
+                            }
+                        )
+                    } to
+                        TableFrameRejection.ScalarSizeMismatch(ROOT_KEY, 3u, 4u)
+                    ),
+            "input stride" to (
+                delta().copy(
+                    cellUpdates = listOf(
+                        FfiTableCellUpdate(
+                            ROOT_KEY,
+                            0u,
+                            first.copy(
+                                inputBlocks = first.inputBlocks.map {
+                                    it.copy(
+                                        breakScalarEnd =
+                                            first.scalarStride + 1u
+                                    )
+                                }
+                            )
+                        )
+                    )
+                ) to
+                    TableFrameRejection.InputBlockOutOfStride(ROOT_KEY, 0)
+                ),
+            "attribute" to
+                (
+                    delta().copy(removedAttributeKeys = listOf(ATTRIBUTE_KEY)) to
+                        TableFrameRejection.MissingAttribute(ATTRIBUTE_KEY)
+                    ),
+            "duplicate" to
+                (
+                    delta().copy(tables = listOf(full.tables.single(), full.tables.single())) to
+                        TableFrameRejection.DuplicateTableKey(ROOT_KEY)
+                    ),
+            "host" to
+                (
+                    delta().copy(
+                        tables = listOf(
+                            full.tables.single().copy(host = FfiTableHost("missing", 0u))
+                        ),
+                        extents = emptyList()
+                    ) to
+                        TableFrameRejection.HostMissing(ROOT_KEY)
+                    ),
+            "extents" to
+                (delta().copy(extents = emptyList()) to TableFrameRejection.ExtentsIncomplete)
         )
         val index = EditorTableIndex()
         adopt(index, full)
         for ((label, candidate) in cases) {
             val (update, rejection) = candidate
-            assertEquals(label, TableFrameAdoption.Rejected(rejection), index.adopt(update, REVISION, REVISION + 1uL))
+            assertEquals(
+                label,
+                TableFrameAdoption.Rejected(rejection),
+                index.adopt(
+                    update,
+                    REVISION,
+                    REVISION + 1uL
+                )
+            )
             assertEquals("$label mutated records", full.tables.single(), index.record(ROOT_KEY))
-            assertEquals("$label mutated doc prefix", ROOT_DOC_START + 7u, index.docStart(ROOT_KEY, 1))
-            assertEquals("$label mutated scalar prefix", ROOT_SCALAR_START + 2u, index.scalarStart(ROOT_KEY, 1))
+            assertEquals(
+                "$label mutated doc prefix",
+                ROOT_DOC_START + 7u,
+                index.docStart(ROOT_KEY, 1)
+            )
+            assertEquals(
+                "$label mutated scalar prefix",
+                ROOT_SCALAR_START + 2u,
+                index.scalarStart(ROOT_KEY, 1)
+            )
         }
     }
 
     @Test fun nestedPositionsUseHostCellAndRelativeExclusion() {
         val full = frame()
         val childKey = "child"
-        val child = full.tables.single().copy(tableKey = childKey, host = FfiTableHost(ROOT_KEY, 0u), readOnlyDescendants = true)
-        val parent = full.tables.single().let { table -> table.copy(docSize = 25u,
-            cells = listOf(table.cells[0].copy(docSize = child.docSize + 2u, scalarStride = 4u,
-                elements = listOf(FfiViewerElement.Table(childKey)), inputBlocks = emptyList(),
-                nestedTables = listOf(FfiCellNestedTable(0u, childKey, 1u, child.docSize, 0u, 3u))), table.cells[1])) }
+        val child = full.tables.single().copy(
+            tableKey = childKey,
+            host = FfiTableHost(ROOT_KEY, 0u),
+            readOnlyDescendants = true
+        )
+        val parent = full.tables.single().let { table ->
+            table.copy(
+                docSize = 25u,
+                cells = listOf(
+                    table.cells[0].copy(
+                        docSize = child.docSize + 2u,
+                        scalarStride = 4u,
+                        elements = listOf(FfiViewerElement.Table(childKey)),
+                        inputBlocks = emptyList(),
+                        nestedTables = listOf(
+                            FfiCellNestedTable(0u, childKey, 1u, child.docSize, 0u, 3u)
+                        )
+                    ),
+                    table.cells[1]
+                )
+            )
+        }
         full.tables = listOf(child, parent)
-        full.extents = full.extents.map { it.copy(docSize = parent.docSize, scalarEnd = ROOT_SCALAR_START + 5u) }
+        full.extents =
+            full.extents.map {
+                it.copy(docSize = parent.docSize, scalarEnd = ROOT_SCALAR_START + 5u)
+            }
         val index = EditorTableIndex()
         adopt(index, full)
         assertEquals(ROOT_DOC_START + 5u, index.docStart(childKey, 0))
@@ -437,8 +889,10 @@ internal class EditorTableIndexTest {
         assertEquals(childKey, index.tableKeyContainingScalar(ROOT_SCALAR_START + 2u))
         assertEquals(ROOT_DOC_START + 12u, index.absoluteDocPos(childKey, 1, 2u))
         val removal = delta().copy(extents = full.extents, removedTableKeys = listOf(childKey))
-        assertEquals(TableFrameAdoption.Rejected(TableFrameRejection.UnknownTable(childKey)),
-            index.adopt(removal, REVISION, REVISION + 1uL))
+        assertEquals(
+            TableFrameAdoption.Rejected(TableFrameRejection.UnknownTable(childKey)),
+            index.adopt(removal, REVISION, REVISION + 1uL)
+        )
         assertEquals(child, index.record(childKey))
         assertEquals(parent, index.record(ROOT_KEY))
     }
@@ -450,14 +904,26 @@ internal class EditorTableIndexTest {
         assertEquals(TableFrameChanges(false, emptySet(), emptySet(), emptyMap()), changes)
         assertEquals(ROOT_KEY, index.tableKeyContainingScalar(ROOT_SCALAR_START))
         assertEquals(ROOT_DOC_START + 7u, index.docStart(ROOT_KEY, 1))
-        adopt(index, frame().copy(tables = emptyList(), extents = emptyList(), attributes = emptyList()), REVISION, REVISION + 1uL)
+        adopt(
+            index,
+            frame().copy(tables = emptyList(), extents = emptyList(), attributes = emptyList()),
+            REVISION,
+            REVISION + 1uL
+        )
         assertNull(index.record(ROOT_KEY))
         assertNull(index.tableKeyContainingScalar(ROOT_SCALAR_START))
     }
 
     @Test fun failedTableAcceptsAnEmptyExtent() {
         val full = frame()
-        full.tables = full.tables.map { it.copy(failure = TableRenderFailure.GRID_LIMIT, cells = emptyList(), sourceRows = emptyList()) }
+        full.tables =
+            full.tables.map {
+                it.copy(
+                    failure = TableRenderFailure.GRID_LIMIT,
+                    cells = emptyList(),
+                    sourceRows = emptyList()
+                )
+            }
         full.extents = full.extents.map { it.copy(scalarEnd = it.scalarStart) }
         val index = EditorTableIndex()
         adopt(index, full)
@@ -467,9 +933,18 @@ internal class EditorTableIndexTest {
 
     @Test fun emptySourceRowsContributeDocumentBoundaries() {
         val full = frame()
-        full.tables = full.tables.map { it.copy(rows = 3u, docSize = it.docSize + 4u,
-            sourceRows = listOf(FfiTableSourceRow(ATTRIBUTE_KEY, 0u), FfiTableSourceRow(ATTRIBUTE_KEY, 2u), FfiTableSourceRow(ATTRIBUTE_KEY, 0u)),
-            cells = it.cells.map { cell -> cell.copy(sourceRow = 1u, row = 1u) }) }
+        full.tables = full.tables.map {
+            it.copy(
+                rows = 3u,
+                docSize = it.docSize + 4u,
+                sourceRows = listOf(
+                    FfiTableSourceRow(ATTRIBUTE_KEY, 0u),
+                    FfiTableSourceRow(ATTRIBUTE_KEY, 2u),
+                    FfiTableSourceRow(ATTRIBUTE_KEY, 0u)
+                ),
+                cells = it.cells.map { cell -> cell.copy(sourceRow = 1u, row = 1u) }
+            )
+        }
         full.extents = full.extents.map { it.copy(docSize = it.docSize + 4u) }
         val index = EditorTableIndex()
         adopt(index, full)

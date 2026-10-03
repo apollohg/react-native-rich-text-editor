@@ -39,7 +39,11 @@ internal object PreparedProseInstrumentation {
         var authoritativeDocumentBytes = 0L
         var retainedPresentations = 0
 
-        fun observe(drawing: PreparedProseDrawingView, additionalUnmountedBytes: Long = 0L, inputInstances: Int = 0) {
+        fun observe(
+            drawing: PreparedProseDrawingView,
+            additionalUnmountedBytes: Long = 0L,
+            inputInstances: Int = 0
+        ) {
             val layout = drawing.preparedLayout ?: return
             val cells = drawing.presentedTableCells()
             maxCellInputInstances = maxOf(maxCellInputInstances, inputInstances)
@@ -47,30 +51,52 @@ internal object PreparedProseInstrumentation {
             val tables = layout.blocks.mapNotNull { it.tableSurface } + cells.map { it.surface }
             val stores = tables.map { it.layoutStore }.distinct()
             val cellUnmounted = stores.sumOf { it.unmountedRetainedBytes }
-            unmountedCacheBytes = maxOf(unmountedCacheBytes, additionalUnmountedBytes + cellUnmounted)
+            unmountedCacheBytes =
+                maxOf(unmountedCacheBytes, additionalUnmountedBytes + cellUnmounted)
             tables.distinct().forEach { table ->
-                val dimensions = table.layout.columnWidths + table.layout.columnOffsets + table.layout.rowOffsets +
-                    listOf(table.layout.contentWidth, table.layout.contentHeight)
+                val dimensions =
+                    table.layout.columnWidths + table.layout.columnOffsets +
+                        table.layout.rowOffsets +
+                        listOf(table.layout.contentWidth, table.layout.contentHeight)
                 nonFiniteLayouts += dimensions.count { !it.isFinite() }
             }
-            pinnedLayoutBytes = maxOf(pinnedLayoutBytes,
-                (layout.currentRetainedBytes + layout.cellShapeCatalogBytes() - cellUnmounted).coerceAtLeast(0L) +
-                    drawing.tablePresentationRetainedBytesForTesting)
+            pinnedLayoutBytes = maxOf(
+                pinnedLayoutBytes,
+                (layout.currentRetainedBytes + layout.cellShapeCatalogBytes() - cellUnmounted)
+                    .coerceAtLeast(
+                        0L
+                    ) +
+                    drawing.tablePresentationRetainedBytesForTesting
+            )
         }
 
         fun json(): JSONObject = JSONObject().put("maxCellInputInstances", maxCellInputInstances)
-            .put("nonFiniteLayouts", nonFiniteLayouts).put("unchangedCellRemeasurements", unchangedCellRemeasurements)
-            .put("changedCellRemeasurements", changedCellRemeasurements).put("unmountedCacheBytes", unmountedCacheBytes)
-            .put("pinnedLayoutBytes", pinnedLayoutBytes).put("authoritativeDocumentBytes", authoritativeDocumentBytes)
+            .put(
+                "nonFiniteLayouts",
+                nonFiniteLayouts
+            ).put("unchangedCellRemeasurements", unchangedCellRemeasurements)
+            .put(
+                "changedCellRemeasurements",
+                changedCellRemeasurements
+            ).put("unmountedCacheBytes", unmountedCacheBytes)
+            .put(
+                "pinnedLayoutBytes",
+                pinnedLayoutBytes
+            ).put("authoritativeDocumentBytes", authoritativeDocumentBytes)
             .put("retainedPresentations", retainedPresentations)
     }
     enum class TableStage(val jsonName: String) {
-        REPLACEMENT_AND_FFI("replacementAndFFI"), NATIVE_INPUT_AND_FFI("nativeInputAndFFI"),
-        NATIVE_FRAME_AND_FFI("nativeFrameAndFFI"), ADAPTER_ADOPTION("adapterAdoption"),
-        VIEWER_COMPILE_AND_LIFT("viewerCompileAndLift"), TABLE_PREPARATION_AND_GEOMETRY("tablePreparationAndGeometry"),
+        REPLACEMENT_AND_FFI("replacementAndFFI"),
+        NATIVE_INPUT_AND_FFI("nativeInputAndFFI"),
+        NATIVE_FRAME_AND_FFI("nativeFrameAndFFI"),
+        ADAPTER_ADOPTION("adapterAdoption"),
+        VIEWER_COMPILE_AND_LIFT("viewerCompileAndLift"),
+        TABLE_PREPARATION_AND_GEOMETRY("tablePreparationAndGeometry"),
         DRAWING_AND_LAYER_RECORDING("drawingAndLayerRecording")
     }
+
     @Volatile var tableStageObserverForTesting: ((TableStage, Long, Long) -> Unit)? = null
+
     @Volatile var tableWorkObserverForTesting: ((ViewerWorkSpan) -> Unit)? = null
 
     fun recordTableStage(stage: TableStage, start: Long) {
@@ -79,11 +105,19 @@ internal object PreparedProseInstrumentation {
 
     inline fun <T> measureTableStage(stage: TableStage, body: () -> T): T {
         val start = now()
-        try { return body() } finally { recordTableStage(stage, start) }
+        try {
+            return body()
+        } finally {
+            recordTableStage(stage, start)
+        }
     }
 
     private fun observeTableWork(start: Long, kind: ViewerWorkKind) {
-        if (start != 0L) tableWorkObserverForTesting?.invoke(ViewerWorkSpan(start, System.nanoTime(), kind))
+        if (start !=
+            0L
+        ) {
+            tableWorkObserverForTesting?.invoke(ViewerWorkSpan(start, System.nanoTime(), kind))
+        }
     }
     enum class ViewerWorkKind { LAYOUT, DRAW }
     data class ViewerWorkSpan(val startNanos: Long, val endNanos: Long, val kind: ViewerWorkKind)
@@ -495,7 +529,8 @@ internal object PreparedProseInstrumentation {
                 ).put("duplicatePublications", duplicatePublications).toString()
         }
     }
-    fun now(): Long = if (tableStageObserverForTesting != null || tableWorkObserverForTesting != null ||
+    fun now(): Long = if (tableStageObserverForTesting != null ||
+        tableWorkObserverForTesting != null ||
         (BuildConfig.PREPARED_PROSE_INSTRUMENTATION && enabled)
     ) {
         System.nanoTime()

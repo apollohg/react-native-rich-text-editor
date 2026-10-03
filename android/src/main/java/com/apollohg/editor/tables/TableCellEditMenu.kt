@@ -32,7 +32,12 @@ internal class TableCellEditMenu(
         override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
             ITEMS.forEachIndexed { order, (id, title) ->
                 if (root.canPerformCellSelectionMenuItem(id)) {
-                    menu.add(Menu.NONE, id, order, title).setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
+                    menu.add(
+                        Menu.NONE,
+                        id,
+                        order,
+                        title
+                    ).setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
                 }
             }
             return menu.size() > 0

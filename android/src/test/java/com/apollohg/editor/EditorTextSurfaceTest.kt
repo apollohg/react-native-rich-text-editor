@@ -244,10 +244,20 @@ class EditorTextSurfaceTest {
             val focused = android.graphics.Rect()
             editor.getFocusedRect(focused)
             val line = editor.layout.getLineForOffset(offset)
-            assertEquals("focus top at offset $offset", editor.layout.editorTextLineTop(line) + verticalPadding, focused.top)
-            assertEquals("focus bottom at offset $offset", editor.layout.editorTextLineBottom(line) + verticalPadding, focused.bottom)
-            assertTrue("focus rectangle must identify the caret rather than the full surface: $focused",
-                focused.width() < horizontalPadding)
+            assertEquals(
+                "focus top at offset $offset",
+                editor.layout.editorTextLineTop(line) + verticalPadding,
+                focused.top
+            )
+            assertEquals(
+                "focus bottom at offset $offset",
+                editor.layout.editorTextLineBottom(line) + verticalPadding,
+                focused.bottom
+            )
+            assertTrue(
+                "focus rectangle must identify the caret rather than the full surface: $focused",
+                focused.width() < horizontalPadding
+            )
         }
     }
 

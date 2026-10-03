@@ -2,13 +2,20 @@ package com.apollohg.editor.tables
 
 import com.apollohg.editor.viewer.PreparedProseLayout
 import com.apollohg.editor.viewer.ProseLayoutKey
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TableCellLayoutStoreTest {
     private fun layout(name: String, bytes: Long = CELL_BYTES) = PreparedProseLayout(
         ProseLayoutKey(name, 100, "store-test", 0, 0, 1, 0, "store-test"),
-        100, 20, emptyList(), retainedBytes = bytes)
+        100,
+        20,
+        emptyList(),
+        retainedBytes = bytes
+    )
 
     @Test fun testStoreEvictsByRetainedBytes() {
         val store = TableCellLayoutStore(byteBudget = CELL_BYTES * 2)
@@ -50,8 +57,17 @@ class TableCellLayoutStoreTest {
         val retainedKey = layout("before-rebind").key
         val rebuilt = layout("after-rebind")
         assertSame(rebuilt, store.value(retainedKey) { rebuilt })
-        assertSame("A reused cell keeps its lookup identity after eviction", rebuilt, store.peek(retainedKey))
-        assertSame(rebuilt, store.value(retainedKey) { error("The rebuilt cell was lost under a different artifact key") })
+        assertSame(
+            "A reused cell keeps its lookup identity after eviction",
+            rebuilt,
+            store.peek(retainedKey)
+        )
+        assertSame(
+            rebuilt,
+            store.value(retainedKey) {
+                error("The rebuilt cell was lost under a different artifact key")
+            }
+        )
     }
 
     @Test fun testBulkChargePreservesAliasesDuplicatesAndEvictionOrder() {
@@ -64,12 +80,24 @@ class TableCellLayoutStoreTest {
         val keys = listOf(second.key, lookup, lookup, layout("missing").key)
         val revision = store.revision
         val bytes = store.unmountedRetainedBytes
-        assertEquals("Each mapped occurrence retains its original charge",
-            keys.sumOf { store.peek(it)?.retainedBytes ?: 0L }, store.retainedBytes(keys.asSequence()))
-        assertEquals("Aliased duplicate entries are counted twice", CELL_BYTES * 5,
-            store.retainedBytes(keys.asSequence()))
+        assertEquals(
+            "Each mapped occurrence retains its original charge",
+            keys.sumOf {
+                store.peek(it)?.retainedBytes ?: 0L
+            },
+            store.retainedBytes(keys.asSequence())
+        )
+        assertEquals(
+            "Aliased duplicate entries are counted twice",
+            CELL_BYTES * 5,
+            store.retainedBytes(keys.asSequence())
+        )
         assertEquals("Accounting must not mutate store revision", revision, store.revision)
-        assertEquals("Accounting must not change admission charges", bytes, store.unmountedRetainedBytes)
+        assertEquals(
+            "Accounting must not change admission charges",
+            bytes,
+            store.unmountedRetainedBytes
+        )
         val third = layout("third")
         store.insert(third)
         assertNull("Reading the alias must not promote the oldest entry", store.peek(lookup))

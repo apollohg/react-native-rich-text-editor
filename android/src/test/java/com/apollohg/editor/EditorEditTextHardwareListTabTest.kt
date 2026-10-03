@@ -20,29 +20,57 @@ internal class EditorEditTextHardwareListTabTest : EditorInputConnectionTestFixt
         try {
             val input = harness.editText
             input.setSelection(input.text.toString().indexOf("Second") + 2)
-            assertTrue(input.dispatchKeyEvent(KeyEvent(401L, 401L,
-                KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_TAB, 0)))
+            assertTrue(
+                input.dispatchKeyEvent(
+                    KeyEvent(
+                        401L,
+                        401L,
+                        KeyEvent.ACTION_DOWN,
+                        KeyEvent.KEYCODE_TAB,
+                        0
+                    )
+                )
+            )
 
             val indented = JSONObject(requireNotNull(harness.adapter.documentJson()))
                 .getJSONArray("content").getJSONObject(0).getJSONArray("content")
             assertEquals(1, indented.length())
             val nestedList = indented.getJSONObject(0).getJSONArray("content").getJSONObject(1)
             assertEquals("bullet_list", nestedList.getString("type"))
-            assertEquals("Second", nestedList.getJSONArray("content").getJSONObject(0)
-                .getJSONArray("content").getJSONObject(0).getJSONArray("content")
-                .getJSONObject(0).getString("text"))
+            assertEquals(
+                "Second",
+                nestedList.getJSONArray("content").getJSONObject(0)
+                    .getJSONArray("content").getJSONObject(0).getJSONArray("content")
+                    .getJSONObject(0).getString("text")
+            )
 
             input.setSelection(input.text.toString().indexOf("Second") + 2)
-            assertTrue(input.dispatchKeyEvent(KeyEvent(402L, 402L,
-                KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_TAB, 0, KeyEvent.META_SHIFT_ON)))
+            assertTrue(
+                input.dispatchKeyEvent(
+                    KeyEvent(
+                        402L,
+                        402L,
+                        KeyEvent.ACTION_DOWN,
+                        KeyEvent.KEYCODE_TAB,
+                        0,
+                        KeyEvent.META_SHIFT_ON
+                    )
+                )
+            )
 
             val outdented = JSONObject(requireNotNull(harness.adapter.documentJson()))
                 .getJSONArray("content").getJSONObject(0).getJSONArray("content")
             assertEquals(2, outdented.length())
-            assertEquals("First", outdented.getJSONObject(0).getJSONArray("content")
-                .getJSONObject(0).getJSONArray("content").getJSONObject(0).getString("text"))
-            assertEquals("Second", outdented.getJSONObject(1).getJSONArray("content")
-                .getJSONObject(0).getJSONArray("content").getJSONObject(0).getString("text"))
+            assertEquals(
+                "First",
+                outdented.getJSONObject(0).getJSONArray("content")
+                    .getJSONObject(0).getJSONArray("content").getJSONObject(0).getString("text")
+            )
+            assertEquals(
+                "Second",
+                outdented.getJSONObject(1).getJSONArray("content")
+                    .getJSONObject(0).getJSONArray("content").getJSONObject(0).getString("text")
+            )
         } finally {
             harness.adapter.destroy()
         }

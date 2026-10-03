@@ -394,6 +394,7 @@ internal fun EditorEditText.applySelectionFromJSON(
                 authoritativeNodeSelectionRange = null
                 selectAll()
             }
+
             "cell" -> {
                 if (isTableCellInput) return
                 logicalSelectionSnapshot = null
@@ -407,6 +408,7 @@ internal fun EditorEditText.applySelectionFromJSON(
                 setSelection(selectionEnd.coerceIn(0, length))
                 updateAtomBoundaryCursorVisibility()
             }
+
             else -> if (rootTablePositionMap != null) rootTableSelectionInputBlocked = true
         }
     } finally {

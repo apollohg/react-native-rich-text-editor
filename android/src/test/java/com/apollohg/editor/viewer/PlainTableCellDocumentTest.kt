@@ -3,7 +3,9 @@ package com.apollohg.editor.viewer
 import com.apollohg.editor.tables.EditorTableIndex
 import com.apollohg.editor.tables.TableSurfaceCell
 import java.lang.ref.WeakReference
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -21,22 +23,51 @@ class PlainTableCellDocumentTest {
     fun detachedPlainCellsMaterializeTheExactOrdinaryDocumentAfterSourceMutation() {
         for (text in listOf(null, "", "plain", "a😀e\u0301 العربية\nnext")) {
             for (depth in listOf<UShort>(0u, 7u)) {
-                val elements = mutableListOf<FfiViewerElement>(
-                    FfiViewerElement.BlockStart("paragraph", "language", depth, null))
+                val elements =
+                    mutableListOf<FfiViewerElement>(
+                        FfiViewerElement.BlockStart("paragraph", "language", depth, null)
+                    )
                 val marks = mutableListOf<FfiViewerMark>()
                 if (text != null) elements += FfiViewerElement.TextRun(text, marks)
                 elements += FfiViewerElement.BlockEnd
-                val parent = ViewerDocument("parent", emptyList(), false, 0, preferredTextBlockName = "customParagraph",
-                    frameIndex = EditorTableIndex())
+                val parent =
+                    ViewerDocument(
+                        "parent",
+                        emptyList(),
+                        false,
+                        0,
+                        preferredTextBlockName = "customParagraph",
+                        frameIndex = EditorTableIndex()
+                    )
                 val source = cell(elements)
-                val expected = parent.cellDocument(cell(elements.map { element ->
-                    if (element is FfiViewerElement.TextRun) element.copy(marks = element.marks.toList()) else element
-                }), TABLE_KEY)
-                val captured = requireNotNull(PlainTableCellDocument.capture(parent, source, TABLE_KEY))
+                val expected = parent.cellDocument(
+                    cell(
+                        elements.map { element ->
+                            if (element is FfiViewerElement.TextRun) {
+                                element.copy(
+                                    marks = element.marks.toList()
+                                )
+                            } else {
+                                element
+                            }
+                        }
+                    ),
+                    TABLE_KEY
+                )
+                val captured =
+                    requireNotNull(PlainTableCellDocument.capture(parent, source, TABLE_KEY))
                 elements.clear()
                 marks += FfiViewerMark("bold", "{}")
-                assertEquals("Original text must not contain measurement placeholders", text.orEmpty(), captured.text)
-                assertEquals("The child preserves key, depth, language, empty-run presence and preferred block", expected, captured.materialize())
+                assertEquals(
+                    "Original text must not contain measurement placeholders",
+                    text.orEmpty(),
+                    captured.text
+                )
+                assertEquals(
+                    "The child preserves key, depth, language, empty-run presence and preferred block",
+                    expected,
+                    captured.materialize()
+                )
                 assertEquals(expected, captured.materialize())
             }
         }
@@ -70,17 +101,33 @@ class PlainTableCellDocumentTest {
         fun capture(): PlainTableCellDocument {
             val index = EditorTableIndex()
             val parent = ViewerDocument("parent", emptyList(), false, 0, frameIndex = index)
-            val elements = mutableListOf<FfiViewerElement>(FfiViewerElement.BlockStart("paragraph", null, 0u, null),
-                FfiViewerElement.TextRun("retained", emptyList()), FfiViewerElement.BlockEnd)
+            val elements =
+                mutableListOf<FfiViewerElement>(
+                    FfiViewerElement.BlockStart("paragraph", null, 0u, null),
+                    FfiViewerElement.TextRun("retained", emptyList()),
+                    FfiViewerElement.BlockEnd
+                )
             references += WeakReference(parent)
             references += WeakReference(index)
             references += WeakReference(elements)
             return requireNotNull(PlainTableCellDocument.capture(parent, cell(elements), TABLE_KEY))
         }
         val retained = capture()
-        repeat(GC_ATTEMPTS) { System.gc(); System.runFinalization() }
-        assertTrue("A retained refill source must release its parent, index and mutable source list", references.all { it.get() == null })
-        assertEquals("retained", (retained.materialize().blocks.single().inlines.single() as ViewerInline.Text).text)
+        repeat(GC_ATTEMPTS) {
+            System.gc()
+            System.runFinalization()
+        }
+        assertTrue(
+            "A retained refill source must release its parent, index and mutable source list",
+            references.all {
+                it.get() ==
+                    null
+            }
+        )
+        assertEquals(
+            "retained",
+            (retained.materialize().blocks.single().inlines.single() as ViewerInline.Text).text
+        )
     }
 
     companion object {

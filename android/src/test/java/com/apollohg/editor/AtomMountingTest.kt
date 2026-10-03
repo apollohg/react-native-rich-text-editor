@@ -10,6 +10,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import com.facebook.react.R
+import com.facebook.react.internal.featureflags.ReactNativeFeatureFlagsForTests
 import com.facebook.react.uimanager.TouchTargetHelper
 import com.facebook.react.views.view.ReactViewGroup
 import expo.modules.core.ModuleRegistry
@@ -22,6 +23,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
@@ -33,6 +35,11 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class AtomMountingTest {
+    @Before
+    fun setUpReactFeatureFlags() {
+        ReactNativeFeatureFlagsForTests.setUp()
+    }
+
     @Test
     fun `atom spacing before following paragraph uses atom theme spacing`() {
         val editor = EditorEditText(RuntimeEnvironment.getApplication())
@@ -719,7 +726,10 @@ class AtomMountingTest {
 
     @Test
     fun `scrolling preserves content positions while publishing viewport changes`() {
-        val editor = nativeEditorView()
+        val controller = Robolectric.buildActivity(Activity::class.java).setup()
+        val activity = controller.get()
+        val editor = nativeEditorView(activity)
+        activity.setContentView(editor, FrameLayout.LayoutParams(320, 240))
         val events = mutableListOf<List<AtomLayoutPosition>>()
         editor.richTextView.onAtomLayoutChange = { _, positions -> events.add(positions) }
         installAtoms(editor.richTextView, listOf("first", "second", "third", "fourth"))
@@ -728,6 +738,7 @@ class AtomMountingTest {
         val initialCount = events.size
 
         editor.richTextView.editorScrollView.scrollTo(0, 100)
+        shadowOf(Looper.getMainLooper()).idle()
 
         val scrollY = editor.richTextView.editorScrollView.scrollY
         assertTrue(scrollY > 0)
@@ -736,6 +747,7 @@ class AtomMountingTest {
             events.last()
         )
         assertTrue(events.size > initialCount)
+        controller.pause().stop().destroy()
     }
 
     @Test
@@ -960,8 +972,9 @@ class AtomMountingTest {
         layoutParams = FrameLayout.LayoutParams(280, ViewGroup.LayoutParams.WRAP_CONTENT)
     }
 
-    private fun nativeEditorView(): NativeEditorExpoView {
-        val context = RuntimeEnvironment.getApplication() as Context
+    private fun nativeEditorView(
+        context: Context = RuntimeEnvironment.getApplication()
+    ): NativeEditorExpoView {
         val reactContext = Class
             .forName("com.facebook.react.bridge.BridgeReactContext")
             .getConstructor(Context::class.java)

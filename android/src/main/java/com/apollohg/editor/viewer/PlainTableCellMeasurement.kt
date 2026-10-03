@@ -39,7 +39,9 @@ internal object PlainTableCellMeasurer {
             val width = cells[start].key.widthPx
             var end = start
             var units = 0
-            while (end < cells.size && end - start < MAXIMUM_BATCH_CELLS && cells[end].key.widthPx == width) {
+            while (end < cells.size && end - start < MAXIMUM_BATCH_CELLS &&
+                cells[end].key.widthPx == width
+            ) {
                 val additional = cells[end].text.length + if (end == start) 0 else 1
                 if (additional > MAXIMUM_BATCH_UTF16_UNITS - units) break
                 units += additional
@@ -58,10 +60,20 @@ internal object PlainTableCellMeasurer {
             for (index in start until end) {
                 val cell = cells[index]
                 val firstLine = measured.getLineForOffset(offsets[index - start])
-                val endLine = if (index + 1 == end) measured.lineCount else measured.getLineForOffset(offsets[index + 1 - start])
-                result += PreparedTableCellContent.MeasuredPlain(cell.key, width,
+                val endLine = if (index + 1 ==
+                    end
+                ) {
+                    measured.lineCount
+                } else {
+                    measured.getLineForOffset(offsets[index + 1 - start])
+                }
+                result += PreparedTableCellContent.MeasuredPlain(
+                    cell.key,
+                    width,
                     maxOf(1, measured.getLineTop(endLine) - measured.getLineTop(firstLine)),
-                    TableAccessibility.plainText(cell.text), cell.prepare)
+                    TableAccessibility.plainText(cell.text),
+                    cell.prepare
+                )
             }
             start = end
         }

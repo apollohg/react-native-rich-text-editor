@@ -1,8 +1,8 @@
 package com.apollohg.editor
 
+import android.graphics.Color
 import android.text.Annotation
 import android.text.Spanned
-import android.graphics.Color
 import android.view.View
 import com.apollohg.editor.RenderBridge.RenderBuildState
 import org.json.JSONArray
@@ -30,7 +30,10 @@ internal fun RenderBridge.appendElements(
                 if (!state.isFirstBlock) {
                     val spacingPx = ((state.nextBlockSpacingBefore ?: 0f) * density).toInt()
                     appendInterBlockNewline(
-                        state.result, baseFontSize, textColor, spacingPx,
+                        state.result,
+                        baseFontSize,
+                        textColor,
+                        spacingPx,
                         topLevelChildIndex = topLevelChildIndex
                     )
                 }
@@ -40,17 +43,29 @@ internal fun RenderBridge.appendElements(
                 state.result.append('\u200B')
                 state.result.setSpan(
                     Annotation(NATIVE_ROOT_TABLE_MARKER_ANNOTATION, tableId),
-                    markerStart, markerStart + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                    markerStart,
+                    markerStart + 1,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
                 )
                 state.result.setSpan(
                     android.text.style.ForegroundColorSpan(Color.TRANSPARENT),
-                    markerStart, markerStart + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                    markerStart,
+                    markerStart + 1,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
                 )
                 state.result.setSpan(
                     android.text.style.AbsoluteSizeSpan(1),
-                    markerStart, markerStart + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                    markerStart,
+                    markerStart + 1,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
                 )
-                if (observeSourceElements) state.blockRangeObserver?.invoke(i, markerStart, markerStart + 1)
+                if (observeSourceElements) {
+                    state.blockRangeObserver?.invoke(
+                        i,
+                        markerStart,
+                        markerStart + 1
+                    )
+                }
             }
 
             "textRun" -> {
@@ -148,7 +163,13 @@ internal fun RenderBridge.appendElements(
                     state.blockStack.size,
                     state.blockStack.map { it.nodeType }
                 )
-                if (observeSourceElements) state.blockRangeObserver?.invoke(i, rangeStart, state.result.length)
+                if (observeSourceElements) {
+                    state.blockRangeObserver?.invoke(
+                        i,
+                        rangeStart,
+                        state.result.length
+                    )
+                }
             }
 
             "opaqueInlineAtom" -> {
@@ -211,7 +232,13 @@ internal fun RenderBridge.appendElements(
                     blockSpacing,
                     topLevelChildIndex
                 )
-                if (observeSourceElements) state.blockRangeObserver?.invoke(i, rangeStart, state.result.length)
+                if (observeSourceElements) {
+                    state.blockRangeObserver?.invoke(
+                        i,
+                        rangeStart,
+                        state.result.length
+                    )
+                }
             }
 
             "blockStart" -> {
@@ -313,7 +340,11 @@ internal fun RenderBridge.appendElements(
                     language = element.optNullableString("language"),
                     sourceElementIndex = if (observeSourceElements &&
                         !isListItemNodeType(nodeType) && !isTransparentContainer
-                    ) i else null
+                    ) {
+                        i
+                    } else {
+                        null
+                    }
                 )
                 state.blockStack.add(ctx)
 
@@ -647,7 +678,11 @@ internal fun RenderBridge.appendElements(
                         )
                     }
                     endedBlock.sourceElementIndex?.let { sourceIndex ->
-                        state.blockRangeObserver?.invoke(sourceIndex, endedBlock.contentStart, state.result.length)
+                        state.blockRangeObserver?.invoke(
+                            sourceIndex,
+                            endedBlock.contentStart,
+                            state.result.length
+                        )
                     }
                 }
             }

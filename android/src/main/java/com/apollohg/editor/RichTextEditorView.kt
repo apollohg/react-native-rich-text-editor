@@ -104,24 +104,40 @@ class RichTextEditorView @JvmOverloads constructor(
                 pendingAtomAnchor = null
             }
             if (ev.actionMasked != MotionEvent.ACTION_DOWN &&
-                editorTableSurface.resizeClaimsGesture(ev, ev.x - downX, ev.y - downY)) return false
+                editorTableSurface.resizeClaimsGesture(ev, ev.x - downX, ev.y - downY)
+            ) {
+                return false
+            }
             if (atomDown && ev.actionMasked == MotionEvent.ACTION_MOVE) {
                 val dx = kotlin.math.abs(ev.x - downX)
                 val dy = kotlin.math.abs(ev.y - downY)
                 if (dx > touchSlop && dx > dy) horizontalAtomGesture = true
             }
-            if (tableDown && !atomDown && ev.actionMasked == MotionEvent.ACTION_MOVE && !horizontalTableGesture) {
-                if (editorTableSurface.nativeTextSelectionActive()) nativeTableSelectionGesture = true
+            if (tableDown && !atomDown && ev.actionMasked == MotionEvent.ACTION_MOVE &&
+                !horizontalTableGesture
+            ) {
+                if (editorTableSurface.nativeTextSelectionActive()) {
+                    nativeTableSelectionGesture =
+                        true
+                }
                 val tableX = downX + scrollX - editorContentFrame.left
                 val tableY = downY + scrollY - editorContentFrame.top
-                if (!nativeTableSelectionGesture && editorTableSurface.hostGestureAxis(tableX, tableY,
-                        ev.x - downX, ev.y - downY) == TableGestureAxis.HORIZONTAL) {
+                if (!nativeTableSelectionGesture &&
+                    editorTableSurface.hostGestureAxis(
+                        tableX,
+                        tableY,
+                        ev.x - downX,
+                        ev.y - downY
+                    ) == TableGestureAxis.HORIZONTAL
+                ) {
                     horizontalTableGesture = true
                     parent?.requestDisallowInterceptTouchEvent(true)
                 }
             }
             if (horizontalAtomGesture || horizontalTableGesture) {
-                if (ev.actionMasked == MotionEvent.ACTION_UP || ev.actionMasked == MotionEvent.ACTION_CANCEL) {
+                if (ev.actionMasked == MotionEvent.ACTION_UP ||
+                    ev.actionMasked == MotionEvent.ACTION_CANCEL
+                ) {
                     parent?.requestDisallowInterceptTouchEvent(false)
                 }
                 return false
@@ -140,7 +156,10 @@ class RichTextEditorView @JvmOverloads constructor(
     private inner class EditorContentFrame(context: Context) : FrameLayout(context) {
         override fun addChildrenForAccessibility(outChildren: ArrayList<View>) {
             super.addChildrenForAccessibility(outChildren)
-            outChildren.removeAll { it is EditorEditText && it.tableCellAccessibility?.isPlacedInTable() == true }
+            outChildren.removeAll {
+                it is EditorEditText &&
+                    it.tableCellAccessibility?.isPlacedInTable() == true
+            }
         }
 
         private var tableDownX = 0f
@@ -155,7 +174,12 @@ class RichTextEditorView @JvmOverloads constructor(
             editorTableSurface.trackFrameGesture(event)
             if (editorTableSurface.dragActive()) return true
             if (event.actionMasked != MotionEvent.ACTION_DOWN &&
-                editorTableSurface.resizeClaimsGesture(event, event.x - tableDownX, event.y - tableDownY)) {
+                editorTableSurface.resizeClaimsGesture(
+                    event,
+                    event.x - tableDownX,
+                    event.y - tableDownY
+                )
+            ) {
                 return editorTableSurface.dragActive()
             }
             when (event.actionMasked) {
@@ -173,12 +197,21 @@ class RichTextEditorView @JvmOverloads constructor(
                                 event.x < atom.right && event.y >= atom.top && event.y < atom.bottom
                         }
                 }
+
                 MotionEvent.ACTION_MOVE -> {
-                    if (editorTableSurface.nativeTextSelectionActive()) nativeTableSelectionGesture = true
+                    if (editorTableSurface.nativeTextSelectionActive()) {
+                        nativeTableSelectionGesture =
+                            true
+                    }
                     if (!routingTableDrag && tableGestureEligible && !nativeTableSelectionGesture &&
-                    !editorTableSurface.drawingView.tracksTableGesture &&
-                    editorTableSurface.hostGestureAxis(tableDownX, tableDownY,
-                        event.x - tableDownX, event.y - tableDownY) == TableGestureAxis.HORIZONTAL) {
+                        !editorTableSurface.drawingView.tracksTableGesture &&
+                        editorTableSurface.hostGestureAxis(
+                            tableDownX,
+                            tableDownY,
+                            event.x - tableDownX,
+                            event.y - tableDownY
+                        ) == TableGestureAxis.HORIZONTAL
+                    ) {
                         routingTableDrag = true
                         parent?.requestDisallowInterceptTouchEvent(true)
                         forwardTableGesture(event)
@@ -191,14 +224,27 @@ class RichTextEditorView @JvmOverloads constructor(
 
         override fun onTouchEvent(event: MotionEvent): Boolean {
             if (event.actionMasked != MotionEvent.ACTION_DOWN &&
-                editorTableSurface.resizeClaimsGesture(event, event.x - tableDownX, event.y - tableDownY) &&
-                !editorTableSurface.dragActive()) return true
+                editorTableSurface.resizeClaimsGesture(
+                    event,
+                    event.x - tableDownX,
+                    event.y - tableDownY
+                ) &&
+                !editorTableSurface.dragActive()
+            ) {
+                return true
+            }
             if (editorTableSurface.dragActive()) return editorTableSurface.onDragTouch(event)
             if (routingTableDrag) {
                 val handled = if (event.actionMasked == MotionEvent.ACTION_MOVE &&
-                    event.eventTime == forwardedMoveTime) true else forwardTableGesture(event)
+                    event.eventTime == forwardedMoveTime
+                ) {
+                    true
+                } else {
+                    forwardTableGesture(event)
+                }
                 if (event.actionMasked == MotionEvent.ACTION_UP ||
-                    event.actionMasked == MotionEvent.ACTION_CANCEL) {
+                    event.actionMasked == MotionEvent.ACTION_CANCEL
+                ) {
                     routingTableDrag = false
                     drawingStreamStarted = false
                     parent?.requestDisallowInterceptTouchEvent(false)
@@ -206,7 +252,9 @@ class RichTextEditorView @JvmOverloads constructor(
                 return handled
             }
             editorTableSurface.onRootTouch(event)
-            if (editorTableSurface.activeInput == null && event.actionMasked == MotionEvent.ACTION_DOWN) {
+            if (editorTableSurface.activeInput == null &&
+                event.actionMasked == MotionEvent.ACTION_DOWN
+            ) {
                 editorEditText.isFocusableInTouchMode = true
                 editorEditText.requestFocus()
             }
@@ -219,13 +267,20 @@ class RichTextEditorView @JvmOverloads constructor(
                 val down = MotionEvent.obtain(event)
                 down.action = MotionEvent.ACTION_DOWN
                 down.setLocation(tableDownX - drawing.left, tableDownY - drawing.top)
-                try { drawing.dispatchTouchEvent(down) } finally { down.recycle() }
+                try {
+                    drawing.dispatchTouchEvent(down)
+                } finally {
+                    down.recycle()
+                }
                 drawingStreamStarted = true
             }
             val forwarded = MotionEvent.obtain(event)
             forwarded.offsetLocation(-drawing.left.toFloat(), -drawing.top.toFloat())
-            return try { drawing.dispatchTouchEvent(forwarded) }
-                finally { forwarded.recycle() }
+            return try {
+                drawing.dispatchTouchEvent(forwarded)
+            } finally {
+                forwarded.recycle()
+            }
         }
 
         override fun measureChildWithMargins(
@@ -278,12 +333,22 @@ class RichTextEditorView @JvmOverloads constructor(
 
         fun layoutChildInPlace(child: View) {
             if (!isLaidOut || child.parent !== this) return
-            measureChildWithMargins(child, MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY), 0,
-                MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY), 0)
+            measureChildWithMargins(
+                child,
+                MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY),
+                0,
+                MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY),
+                0
+            )
             val params = child.layoutParams as FrameLayout.LayoutParams
             val childLeft = paddingLeft + params.leftMargin
             val childTop = paddingTop + params.topMargin
-            child.layout(childLeft, childTop, childLeft + child.measuredWidth, childTop + child.measuredHeight)
+            child.layout(
+                childLeft,
+                childTop,
+                childLeft + child.measuredWidth,
+                childTop + child.measuredHeight
+            )
         }
 
         override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
@@ -336,7 +401,9 @@ class RichTextEditorView @JvmOverloads constructor(
     private var deferEditorUnbindOnDetach = false
     internal var onBeforeDetachedFromWindow: (() -> Unit)? = null
     private var scrollObserversPosted = false
-    private val scrollObservers = Runnable {
+    private val scrollObservers = Runnable(::notifyScrollObservers)
+
+    private fun notifyScrollObservers() {
         scrollObserversPosted = false
         if (isAttachedToWindow) {
             editorEditText.surfaceViewportChanged()
@@ -841,8 +908,9 @@ class RichTextEditorView @JvmOverloads constructor(
             editorTableSurface.onSelectionGeometryMayChange = value
         }
 
-    internal fun tableSelectionGeometry(obstructions: TableSelectionObstructions): TableSelectionGeometry? =
-        editorTableSurface.selectionGeometry(obstructions)
+    internal fun tableSelectionGeometry(
+        obstructions: TableSelectionObstructions
+    ): TableSelectionGeometry? = editorTableSurface.selectionGeometry(obstructions)
 
     internal var tableDirection: TableLayoutDirection? = null
         set(value) {

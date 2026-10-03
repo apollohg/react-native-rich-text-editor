@@ -229,9 +229,21 @@ internal fun NativeEditorExpoView.handleToolbarItemPress(
         val root = richTextView.editorEditText
         val activeInput = richTextView.activeTextInput
         val activeInputPreparation =
-            if (activeInput === root) null else activeInput.prepareForExternalEditorUpdateWithResult()
+            if (activeInput ===
+                root
+            ) {
+                null
+            } else {
+                activeInput.prepareForExternalEditorUpdateWithResult()
+            }
         val preparation =
-            if (activeInputPreparation?.ready != false) root.prepareForExternalEditorCommand() else null
+            if (activeInputPreparation?.ready !=
+                false
+            ) {
+                root.prepareForExternalEditorCommand()
+            } else {
+                null
+            }
         if (preparation == null || !preparation.ready) {
             if (allowPreflightRetry) {
                 schedulePendingNativeActionRetry(PendingNativeAction.ToolbarItemPress(item))
@@ -257,13 +269,9 @@ internal fun NativeEditorExpoView.handleToolbarItemPress(
 
         ToolbarItemKind.COMMAND -> when (item.command) {
             ToolbarCommand.INDENT_LIST -> input.performToolbarIndentListItem()
-
             ToolbarCommand.OUTDENT_LIST -> input.performToolbarOutdentListItem()
-
             ToolbarCommand.UNDO -> input.performToolbarUndo()
-
             ToolbarCommand.REDO -> input.performToolbarRedo()
-
             null -> Unit
         }
 

@@ -65,20 +65,26 @@ class EditorTableInputTest {
 
     @Test
     fun `position map rejects local holes and global discontinuities`() {
-        val continuous = map(segments = listOf(
-            TableCellPositionMap.Segment(4, 8, 14),
-            TableCellPositionMap.Segment(0, 4, 10)
-        ))
+        val continuous = map(
+            segments = listOf(
+                TableCellPositionMap.Segment(4, 8, 14),
+                TableCellPositionMap.Segment(0, 4, 10)
+            )
+        )
         assertEquals(TableCellPositionMap.ScalarRange(11, 17), continuous.globalScalarRange(1, 7))
 
-        val localHole = map(segments = listOf(
-            TableCellPositionMap.Segment(0, 3, 10),
-            TableCellPositionMap.Segment(4, 8, 14)
-        ))
-        val globalJump = map(segments = listOf(
-            TableCellPositionMap.Segment(0, 4, 10),
-            TableCellPositionMap.Segment(4, 8, 20)
-        ))
+        val localHole = map(
+            segments = listOf(
+                TableCellPositionMap.Segment(0, 3, 10),
+                TableCellPositionMap.Segment(4, 8, 14)
+            )
+        )
+        val globalJump = map(
+            segments = listOf(
+                TableCellPositionMap.Segment(0, 4, 10),
+                TableCellPositionMap.Segment(4, 8, 20)
+            )
+        )
 
         assertNull(localHole.globalScalarRange(0, 7))
         assertNull(globalJump.globalScalarRange(0, 7))
@@ -90,10 +96,12 @@ class EditorTableInputTest {
 
     @Test
     fun `position map rejects ambiguous inverse coordinates and stale versions`() {
-        val ambiguous = map(segments = listOf(
-            TableCellPositionMap.Segment(0, 3, 10),
-            TableCellPositionMap.Segment(3, 6, 11)
-        ))
+        val ambiguous = map(
+            segments = listOf(
+                TableCellPositionMap.Segment(0, 3, 10),
+                TableCellPositionMap.Segment(3, 6, 11)
+            )
+        )
 
         assertNull(ambiguous.localScalarForGlobalScalar(11))
         assertEquals(0, ambiguous.localScalarForGlobalScalar(10))
@@ -106,12 +114,17 @@ class EditorTableInputTest {
     @Test
     fun `coordinator accepts the last representable global caret`() {
         val target = binding()
-        val maximalCaret = map(target, listOf(
-            TableCellPositionMap.Segment(0, 1, Int.MAX_VALUE)
-        ))
+        val maximalCaret = map(
+            target,
+            listOf(
+                TableCellPositionMap.Segment(0, 1, Int.MAX_VALUE)
+            )
+        )
         val coordinator = EditorTableInputCoordinator(input())
 
-        assertTrue(coordinator.bind(EditorTableInputCoordinator.Target(target), maximalCaret, "4", "9"))
+        assertTrue(
+            coordinator.bind(EditorTableInputCoordinator.Target(target), maximalCaret, "4", "9")
+        )
         assertEquals(Int.MAX_VALUE, maximalCaret.globalScalarForLocalScalar(0))
         assertEquals(0, maximalCaret.localScalarForGlobalScalar(Int.MAX_VALUE))
         assertEquals(
@@ -128,13 +141,19 @@ class EditorTableInputTest {
         val first = binding(10)
         val second = binding(20)
 
-        assertTrue(coordinator.bind(EditorTableInputCoordinator.Target(first), map(first), "4", "9"))
+        assertTrue(
+            coordinator.bind(EditorTableInputCoordinator.Target(first), map(first), "4", "9")
+        )
         assertTrue(coordinator.beginComposition())
         assertEquals(TableInputPhase.Composing("table", 10, "4", "9"), coordinator.phase)
-        assertFalse(coordinator.bind(EditorTableInputCoordinator.Target(second), map(second), "4", "9"))
+        assertFalse(
+            coordinator.bind(EditorTableInputCoordinator.Target(second), map(second), "4", "9")
+        )
         assertEquals(TableInputPhase.Composing("table", 10, "4", "9"), coordinator.phase)
         assertTrue(coordinator.invalidateBinding())
-        assertTrue(coordinator.bind(EditorTableInputCoordinator.Target(second), map(second), "4", "9"))
+        assertTrue(
+            coordinator.bind(EditorTableInputCoordinator.Target(second), map(second), "4", "9")
+        )
 
         assertSame(input, coordinator.cellInput)
         assertEquals(1, coordinator.inputInstanceCountForTesting)
@@ -145,15 +164,34 @@ class EditorTableInputTest {
     fun `refresh preserves composing identity and rejects the same index in another table`() {
         val coordinator = EditorTableInputCoordinator(input())
         val original = binding()
-        assertTrue(coordinator.bind(EditorTableInputCoordinator.Target(original), map(original), "4", "9"))
+        assertTrue(
+            coordinator.bind(EditorTableInputCoordinator.Target(original), map(original), "4", "9")
+        )
         assertTrue(coordinator.beginComposition())
         val refreshed = original.copy(revision = "5", epoch = "10")
         val shifted = map(refreshed, listOf(TableCellPositionMap.Segment(0, 6, 43)))
-        assertTrue(coordinator.refreshBinding(EditorTableInputCoordinator.Target(refreshed), shifted, "5", "10"))
-        assertEquals(TableInputPhase.Composing("table", original.cellIndex, "5", "10"), coordinator.phase)
+        assertTrue(
+            coordinator.refreshBinding(
+                EditorTableInputCoordinator.Target(refreshed),
+                shifted,
+                "5",
+                "10"
+            )
+        )
+        assertEquals(
+            TableInputPhase.Composing("table", original.cellIndex, "5", "10"),
+            coordinator.phase
+        )
         assertEquals(43, requireNotNull(coordinator.positionMap).globalScalarForLocalScalar(0))
         val foreign = refreshed.copy(tableKey = "other")
-        assertFalse(coordinator.refreshBinding(EditorTableInputCoordinator.Target(foreign), map(foreign), "5", "10"))
+        assertFalse(
+            coordinator.refreshBinding(
+                EditorTableInputCoordinator.Target(foreign),
+                map(foreign),
+                "5",
+                "10"
+            )
+        )
         assertSame(shifted, coordinator.positionMap)
     }
 
@@ -162,12 +200,17 @@ class EditorTableInputTest {
         val input = input()
         val coordinator = EditorTableInputCoordinator(input)
         val target = binding(20)
-        val segmented = map(target, listOf(
-            TableCellPositionMap.Segment(0, 2, 50),
-            TableCellPositionMap.Segment(3, 5, 70)
-        ))
+        val segmented = map(
+            target,
+            listOf(
+                TableCellPositionMap.Segment(0, 2, 50),
+                TableCellPositionMap.Segment(3, 5, 70)
+            )
+        )
 
-        assertTrue(coordinator.bind(EditorTableInputCoordinator.Target(target), segmented, "4", "9"))
+        assertTrue(
+            coordinator.bind(EditorTableInputCoordinator.Target(target), segmented, "4", "9")
+        )
         assertNull(segmented.globalScalarRange(0, 4))
         assertSame(input, coordinator.cellInput)
         assertEquals(TableInputPhase.Bound("table", 20, "4", "9"), coordinator.phase)
@@ -184,7 +227,9 @@ class EditorTableInputTest {
         assertSame(staleConnection, input.activeInputConnection)
         val generationBeforeBind = input.inputConnectionGenerationForTesting()
 
-        assertTrue(coordinator.bind(EditorTableInputCoordinator.Target(target), map(target), "4", "9"))
+        assertTrue(
+            coordinator.bind(EditorTableInputCoordinator.Target(target), map(target), "4", "9")
+        )
         assertNull(input.composingTextForEditor())
         assertNull(input.activeInputConnection)
         val generationAfterBind = input.inputConnectionGenerationForTesting()
@@ -205,7 +250,9 @@ class EditorTableInputTest {
         val input = input()
         val coordinator = EditorTableInputCoordinator(input)
         val valid = binding(10)
-        assertTrue(coordinator.bind(EditorTableInputCoordinator.Target(valid), map(valid), "4", "9"))
+        assertTrue(
+            coordinator.bind(EditorTableInputCoordinator.Target(valid), map(valid), "4", "9")
+        )
         input.composingText = "retained"
         val retainedConnection = input.onCreateInputConnection(EditorInfo())
         assertNotNull(retainedConnection)
@@ -221,27 +268,85 @@ class EditorTableInputTest {
             assertSame(input, coordinator.cellInput)
         }
 
-        assertFalse(coordinator.bind(EditorTableInputCoordinator.Target(binding(20)), map(binding(20)), "5", "9"))
-        assertFalse(coordinator.bind(EditorTableInputCoordinator.Target(binding(20)), map(binding(20)), "4", "10"))
+        assertFalse(
+            coordinator.bind(
+                EditorTableInputCoordinator.Target(binding(20)),
+                map(binding(20)),
+                "5",
+                "9"
+            )
+        )
+        assertFalse(
+            coordinator.bind(
+                EditorTableInputCoordinator.Target(binding(20)),
+                map(binding(20)),
+                "4",
+                "10"
+            )
+        )
         val mismatched = map(binding(30))
-        assertFalse(coordinator.bind(EditorTableInputCoordinator.Target(binding(20)), mismatched, "4", "9"))
-        assertFalse(coordinator.bind(EditorTableInputCoordinator.Target(binding(20)), map(binding(20), emptyList()), "4", "9"))
-        val emptySegment = map(binding(20), listOf(
-            TableCellPositionMap.Segment(0, 0, 50)
-        ))
-        assertFalse(coordinator.bind(EditorTableInputCoordinator.Target(binding(20)), emptySegment, "4", "9"))
-        val negativeSegment = map(binding(20), listOf(
-            TableCellPositionMap.Segment(-1, 2, 50)
-        ))
-        assertFalse(coordinator.bind(EditorTableInputCoordinator.Target(binding(20)), negativeSegment, "4", "9"))
-        val negativeGlobal = map(binding(20), listOf(
-            TableCellPositionMap.Segment(0, 2, -1)
-        ))
-        assertFalse(coordinator.bind(EditorTableInputCoordinator.Target(binding(20)), negativeGlobal, "4", "9"))
-        val overflowing = map(binding(20), listOf(
-            TableCellPositionMap.Segment(0, 2, Int.MAX_VALUE)
-        ))
-        assertFalse(coordinator.bind(EditorTableInputCoordinator.Target(binding(20)), overflowing, "4", "9"))
+        assertFalse(
+            coordinator.bind(EditorTableInputCoordinator.Target(binding(20)), mismatched, "4", "9")
+        )
+        assertFalse(
+            coordinator.bind(
+                EditorTableInputCoordinator.Target(binding(20)),
+                map(binding(20), emptyList()),
+                "4",
+                "9"
+            )
+        )
+        val emptySegment = map(
+            binding(20),
+            listOf(
+                TableCellPositionMap.Segment(0, 0, 50)
+            )
+        )
+        assertFalse(
+            coordinator.bind(
+                EditorTableInputCoordinator.Target(binding(20)),
+                emptySegment,
+                "4",
+                "9"
+            )
+        )
+        val negativeSegment = map(
+            binding(20),
+            listOf(
+                TableCellPositionMap.Segment(-1, 2, 50)
+            )
+        )
+        assertFalse(
+            coordinator.bind(
+                EditorTableInputCoordinator.Target(binding(20)),
+                negativeSegment,
+                "4",
+                "9"
+            )
+        )
+        val negativeGlobal = map(
+            binding(20),
+            listOf(
+                TableCellPositionMap.Segment(0, 2, -1)
+            )
+        )
+        assertFalse(
+            coordinator.bind(
+                EditorTableInputCoordinator.Target(binding(20)),
+                negativeGlobal,
+                "4",
+                "9"
+            )
+        )
+        val overflowing = map(
+            binding(20),
+            listOf(
+                TableCellPositionMap.Segment(0, 2, Int.MAX_VALUE)
+            )
+        )
+        assertFalse(
+            coordinator.bind(EditorTableInputCoordinator.Target(binding(20)), overflowing, "4", "9")
+        )
         assertEquals(TableInputPhase.Bound("table", 10, "4", "9"), coordinator.phase)
         assertEquals(40, coordinator.positionMap?.globalScalarForLocalScalar(0))
         assertEquals("retained", input.composingTextForEditor())

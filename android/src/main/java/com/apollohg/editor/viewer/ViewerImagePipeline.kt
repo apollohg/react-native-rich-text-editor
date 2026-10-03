@@ -82,7 +82,9 @@ internal class ViewerImageIntrinsicStore(entryLimit: Int = 256) {
         // The global LRU is process-wide, but sidecar fallback must be the
         // measurement owner's explicit local state. Never scan another host.
         cached?.let { return it }
-        FabricAttachmentSidecars.currentMeasurementState?.intrinsicSizeForSourceQualifiedId(id)?.let {
+        FabricAttachmentSidecars.currentMeasurementState?.intrinsicSizeForSourceQualifiedId(
+            id
+        )?.let {
             return it
         }
         return id.substringAfter(':', missingDelimiterValue = "").takeIf(String::isNotEmpty)
@@ -354,10 +356,11 @@ internal class ViewerImagePipeline(
         enabled && this.generation.isNotEmpty() && this.generation == generation
     }
 
-    private fun acceptsCompletion(generation: String, ownerIdentity: String, id: String): Boolean = synchronized(lock) {
-        enabled && this.generation.isNotEmpty() && this.generation == generation &&
-            this.ownerIdentity == ownerIdentity && id in requested
-    }
+    private fun acceptsCompletion(generation: String, ownerIdentity: String, id: String): Boolean =
+        synchronized(lock) {
+            enabled && this.generation.isNotEmpty() && this.generation == generation &&
+                this.ownerIdentity == ownerIdentity && id in requested
+        }
 
     fun updateVisibleRect(visible: Rect, attachments: List<ViewerImageAttachment>) {
         val prefetched = if (visible.isEmpty) {
@@ -412,7 +415,14 @@ internal class ViewerImagePipeline(
         }
         if (released.isNotEmpty()) onPixelsReleased?.invoke(released)
         start.forEach { (attachment, requestGeneration, requestOwnerIdentity, priority) ->
-            if (!acceptsCompletion(requestGeneration, requestOwnerIdentity, attachment.id)) return@forEach
+            if (!acceptsCompletion(
+                    requestGeneration,
+                    requestOwnerIdentity,
+                    attachment.id
+                )
+            ) {
+                return@forEach
+            }
             val source = NativeImagePipeline.prepare(attachment.source, policy) ?: run {
                 reportFailure(attachment, requestGeneration)
                 return@forEach

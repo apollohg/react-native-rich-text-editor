@@ -1,20 +1,27 @@
 package com.apollohg.editor.viewer
 
-import com.apollohg.editor.tables.ViewerTablePresentedAccessibilityNode
 import com.apollohg.editor.tables.TableAccessibilityNodes
+import com.apollohg.editor.tables.ViewerTablePresentedAccessibilityNode
 
 internal class PreparedProseAccessibilityNodeRegistry {
     companion object {
         private const val FIRST_ANNOTATION_ID = 1
     }
 
-    private class Entry(val parentId: Int?, val resolve: () -> ViewerTablePresentedAccessibilityNode?)
+    private class Entry(
+        val parentId: Int?,
+        val resolve: () -> ViewerTablePresentedAccessibilityNode?
+    )
 
     private var nextId = FIRST_ANNOTATION_ID
     private val ids = mutableMapOf<String, Int>()
     private val entries = mutableMapOf<Int, Entry>()
 
-    fun idOf(identity: String, parentId: Int?, resolve: () -> ViewerTablePresentedAccessibilityNode?): Int? {
+    fun idOf(
+        identity: String,
+        parentId: Int?,
+        resolve: () -> ViewerTablePresentedAccessibilityNode?
+    ): Int? {
         ids[identity]?.let { return it }
         if (nextId >= TableAccessibilityNodes.FIRST_TABLE_NODE_ID) return null
         val id = nextId++
@@ -34,4 +41,3 @@ internal class PreparedProseAccessibilityNodeRegistry {
         entries.clear()
     }
 }
-

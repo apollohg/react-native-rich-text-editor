@@ -145,14 +145,19 @@ internal fun EditorEditText.handleCopy(): Boolean {
 
 internal fun EditorEditText.canPerformCellSelectionMenuItem(id: Int): Boolean = when (id) {
     android.R.id.copy -> authoritativeCellSelectionActive
+
     android.R.id.cut -> isEditable && canMutateSelectedTableCells()
-    android.R.id.paste -> isEditable && pasteMode != EditorPasteMode.DISABLED &&
-        canMutateSelectedTableCells() && hasPasteableClip()
+
+    android.R.id.paste ->
+        isEditable && pasteMode != EditorPasteMode.DISABLED &&
+            canMutateSelectedTableCells() && hasPasteableClip()
+
     else -> false
 }
 
 private fun EditorEditText.hasPasteableClip(): Boolean {
-    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return false
+    val clipboard =
+        context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return false
     return clipboard.primaryClipDescription?.let(EditorClipboard::isReadable) == true
 }
 

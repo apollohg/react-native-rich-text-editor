@@ -23,7 +23,9 @@ internal class TableCellLayoutStore(
         @Synchronized get
         private set
 
-    val residentLayouts: List<PreparedProseLayout> @Synchronized get() = entries.values.map { it.layout }
+    val residentLayouts: List<PreparedProseLayout> @Synchronized get() = entries.values.map {
+        it.layout
+    }
     val count: Int @Synchronized get() = entries.size
     val unmountedRetainedBytes: Long @Synchronized get() = bytes - pinnedBytes
 
@@ -32,11 +34,10 @@ internal class TableCellLayoutStore(
     @Synchronized fun peekAll(keys: Sequence<ProseLayoutKey>): List<PreparedProseLayout> =
         keys.mapNotNull { entries[it]?.layout }.toList()
 
-    @Synchronized fun retainedBytes(keys: Sequence<ProseLayoutKey>): Long =
-        keys.sumOf {
-            retainedByteLookupObserverForTesting?.invoke(it)
-            entries[it]?.layout?.retainedBytes ?: 0L
-        }
+    @Synchronized fun retainedBytes(keys: Sequence<ProseLayoutKey>): Long = keys.sumOf {
+        retainedByteLookupObserverForTesting?.invoke(it)
+        entries[it]?.layout?.retainedBytes ?: 0L
+    }
 
     @Synchronized fun retainedBytesMatching(containsKey: (ProseLayoutKey) -> Boolean): Long =
         entries.entries.sumOf { (key, entry) ->
@@ -44,7 +45,11 @@ internal class TableCellLayoutStore(
             if (containsKey(key)) entry.layout.retainedBytes else 0L
         }
 
-    @Synchronized fun value(key: ProseLayoutKey, build: () -> PreparedProseLayout): PreparedProseLayout {
+    @Synchronized fun value(
+        key: ProseLayoutKey,
+        build: () ->
+        PreparedProseLayout
+    ): PreparedProseLayout {
         entries.remove(key)?.let { entry ->
             entries[key] = entry
             return entry.layout
@@ -69,7 +74,10 @@ internal class TableCellLayoutStore(
 
     @Synchronized fun unpin(key: ProseLayoutKey) {
         val count = pins[key] ?: return
-        if (count > 1) { pins[key] = count - 1; return }
+        if (count > 1) {
+            pins[key] = count - 1
+            return
+        }
         pins.remove(key)
         pinnedBytes -= entries[key]?.bytes ?: 0L
         evict()
@@ -77,7 +85,9 @@ internal class TableCellLayoutStore(
 
     private fun evict() {
         val iterator = entries.iterator()
-        while ((bytes - pinnedBytes > byteBudget || entries.size > capacity) && iterator.hasNext()) {
+        while ((bytes - pinnedBytes > byteBudget || entries.size > capacity) &&
+            iterator.hasNext()
+        ) {
             val entry = iterator.next()
             if (pins.getOrDefault(entry.key, 0) == 0) {
                 removeCharge(entry.key, entry.value)

@@ -314,9 +314,12 @@ internal class EditorV2AdapterCollaborationTest : EditorV2AdapterTestFixture() {
         val errors = mutableListOf<EditorV2Error>()
         adapter.onAutonomousError = errors::add
         backend.nextRenderUpdateResult = EditorV2CallResult.Err(
-            EditorV2Error("operation", "REVISION_MISMATCH", "stale"))
+            EditorV2Error("operation", "REVISION_MISMATCH", "stale")
+        )
 
-        assertNull(adoptExternalRender(adapter, atomicRenderSnapshot("bb", (revision + 1u).toString())))
+        assertNull(
+            adoptExternalRender(adapter, atomicRenderSnapshot("bb", (revision + 1u).toString()))
+        )
 
         assertEquals(previous, adapter.cachedAtomicRenderJson)
         assertEquals(revision, adapter.baseDocumentRevision)

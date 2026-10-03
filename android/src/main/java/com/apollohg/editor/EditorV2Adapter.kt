@@ -1,7 +1,7 @@
 package com.apollohg.editor
 
-import com.apollohg.editor.tables.EditorTablePresentationSnapshot
 import com.apollohg.editor.tables.EditorTableIndex
+import com.apollohg.editor.tables.EditorTablePresentationSnapshot
 import org.json.JSONObject
 
 internal class EditorV2Adapter private constructor(
@@ -237,9 +237,16 @@ internal class EditorV2Adapter private constructor(
         releasedOwner?.let { backend.releaseNativeBinding(editorId, it) }
         val revision = installedFrameRevision ?: return
         if (!destroyed && revision == baseDocumentRevision) {
-            val error = backend.seedNativeRenderCursor(editorId, requireNotNull(nativeOwnerId), revision.toString())
-            if (error == null) pinCurrentPositionEpoch(revision)
-            else if (error.code != "REVISION_MISMATCH") emit(error)
+            val error = backend.seedNativeRenderCursor(
+                editorId,
+                requireNotNull(nativeOwnerId),
+                revision.toString()
+            )
+            if (error == null) {
+                pinCurrentPositionEpoch(revision)
+            } else if (error.code != "REVISION_MISMATCH") {
+                emit(error)
+            }
         }
     }
 
@@ -406,7 +413,9 @@ internal class EditorV2Adapter private constructor(
             return null
         }
         if (!validateExternalRender(renderJson)) return null
-        return refreshInternal(null, stripViewSelection = false)?.also { publishCollaborationCellsIfChanged() }
+        return refreshInternal(null, stripViewSelection = false)?.also {
+            publishCollaborationCellsIfChanged()
+        }
     }
 
     internal fun validateExternalRender(renderJson: String): Boolean {
@@ -416,7 +425,9 @@ internal class EditorV2Adapter private constructor(
         }
         val valid = try {
             canonicalV2U64(JSONObject(renderJson).opt("documentVersion") as? String) != null
-        } catch (_: org.json.JSONException) { false }
+        } catch (_: org.json.JSONException) {
+            false
+        }
         if (!valid) emit(contractError("external editor update notice is malformed"))
         return valid
     }
@@ -457,7 +468,8 @@ internal class EditorV2Adapter private constructor(
 
     private fun hasCurrentSelectionState(): Boolean =
         !destroyed && cachedAtomicRenderDocumentRevision == baseDocumentRevision &&
-            cachedAtomicRenderSelectionObject != null && cachedActiveState != null && cachedHistoryState != null
+            cachedAtomicRenderSelectionObject != null && cachedActiveState != null &&
+            cachedHistoryState != null
 
     override fun documentHtml(): String? {
         if (destroyed) return null
@@ -870,7 +882,10 @@ internal class EditorV2Adapter private constructor(
         movedCells?.let { (anchor, head) ->
             cellDrop.put(
                 TABLE_CELL_DROP_MOVED_KEY,
-                JSONObject().put(TABLE_CELL_DROP_ANCHOR_KEY, anchor).put(TABLE_CELL_DROP_HEAD_KEY, head)
+                JSONObject().put(
+                    TABLE_CELL_DROP_ANCHOR_KEY,
+                    anchor
+                ).put(TABLE_CELL_DROP_HEAD_KEY, head)
             )
         }
         return commandAdoptingEngineSelection(

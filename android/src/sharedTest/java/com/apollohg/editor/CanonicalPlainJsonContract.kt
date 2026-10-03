@@ -3,19 +3,32 @@ package com.apollohg.editor
 import kotlin.random.Random
 import org.json.JSONException
 import org.json.JSONObject
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 abstract class CanonicalPlainJsonContract {
     @Test fun compactPlainDocumentsAreAlreadyNormalized() {
         val documents = listOf(
-            "{}", """{"content":[]}""", """{"type":"doc","content":[]}""",
+            "{}",
+            """{"content":[]}""",
+            """{"type":"doc","content":[]}""",
             """{"content":[{"text":"a b!~","type":"text"}],"type":"doc"}""",
-            """{"type":"unknown","content":[{"type":"paragraph","content":[{"type":"text","text":"hello"}]}]}"""
+            """{"type":"unknown","content":[{"type":"paragraph",""" +
+                """"content":[{"type":"text","text":"hello"}]}]}"""
         )
         for (source in documents) {
-            assertTrue("Expected a normalization certificate: $source", CanonicalPlainJson.accepts(source))
-            assertEquals("Certificate must preserve every byte", source, JSONObject(source).toString())
+            assertTrue(
+                "Expected a normalization certificate: $source",
+                CanonicalPlainJson.accepts(source)
+            )
+            assertEquals(
+                "Certificate must preserve every byte",
+                source,
+                JSONObject(source).toString()
+            )
         }
     }
 
@@ -29,19 +42,31 @@ abstract class CanonicalPlainJsonContract {
             """{"content":{}}""", """{"type":true}""", """{"type":"doc",}""",
             """{"content":[{},]}""", """{'type':'doc'}""", """{type:doc}""",
             """{"type":"doc"""", """{"content":[{}]"""
-        )) assertFalse("Unsupported source was certified: $source", CanonicalPlainJson.accepts(source))
+        )) {
+            assertFalse(
+                "Unsupported source was certified: $source",
+                CanonicalPlainJson.accepts(source)
+            )
+        }
     }
 
     private fun referencePayload(source: String): String = JSONObject()
         .put("setJson", JSONObject(source)).put("history", "resetAndClear").toString()
 
     private fun assertPayloadParity(source: String) {
-        val expected = try { referencePayload(source) } catch (error: JSONException) {
-            val actual = assertThrows(JSONException::class.java) { prepareJsonReplacementPayload(source) }
+        val expected = try {
+            referencePayload(source)
+        } catch (error: JSONException) {
+            val actual =
+                assertThrows(JSONException::class.java) { prepareJsonReplacementPayload(source) }
             assertEquals("Parser error changed for $source", error.message, actual.message)
             return
         }
-        assertEquals("Payload changed for $source", expected, prepareJsonReplacementPayload(source)())
+        assertEquals(
+            "Payload changed for $source",
+            expected,
+            prepareJsonReplacementPayload(source)()
+        )
         if (CanonicalPlainJson.accepts(source)) {
             assertEquals("Invalid certificate for $source", source, JSONObject(source).toString())
         }
@@ -57,12 +82,18 @@ abstract class CanonicalPlainJsonContract {
             "{\"type\":\"text\",\"text\":\"a\\/b\\u0063\"}",
             "{\"attrs\":{\"negativeZero\":-0,\"scientific\":1e3,\"hex\":0x10,\"octal\":010}}",
             "{\"content\":[{},]}", "{\"content\":[;]}", "{\"type\":true}", "{", "[]", "null"
-        )) assertPayloadParity(source)
+        )) {
+            assertPayloadParity(source)
+        }
     }
 
     @Test fun mutationsAndDepthExhaustionAlwaysPreserveTheNormalizer() {
-        val seeds = listOf("{}", "{\"type\":\"doc\",\"content\":[{\"type\":\"text\",\"text\":\"abc\"}]}",
-            "{\"content\":[{},{},{}],\"type\":\"doc\"}")
+        val seeds =
+            listOf(
+                "{}",
+                "{\"type\":\"doc\",\"content\":[{\"type\":\"text\",\"text\":\"abc\"}]}",
+                "{\"content\":[{},{},{}],\"type\":\"doc\"}"
+            )
         val mutations = "{}[],:\" /\\\n\t0af"
         val random = Random(RANDOM_SEED)
         repeat(MUTATION_CASES) {
@@ -78,14 +109,21 @@ abstract class CanonicalPlainJsonContract {
         val deep = "{\"content\":[".repeat(DEEP_CONTAINERS) + "{}" + "]}".repeat(DEEP_CONTAINERS)
         assertFalse("Depth exhaustion must choose the old parser", CanonicalPlainJson.accepts(deep))
         assertPayloadParity(deep)
-        val excessive = "{\"content\":[".repeat(EXCESSIVE_CONTAINERS) + "{}" + "]}".repeat(EXCESSIVE_CONTAINERS)
-        assertFalse("Certification must have bounded stack use", CanonicalPlainJson.accepts(excessive))
+        val excessive =
+            "{\"content\":[".repeat(EXCESSIVE_CONTAINERS) + "{}" + "]}".repeat(EXCESSIVE_CONTAINERS)
+        assertFalse(
+            "Certification must have bounded stack use",
+            CanonicalPlainJson.accepts(excessive)
+        )
     }
 
     @Test fun largePlainTableUsesTheSamePayloadWithoutNormalization() {
         val fixture = com.apollohg.editor.tables.PlainTableFixture
         val source = fixture.document(fixture.LARGE_ROWS, fixture.LARGE_COLUMNS)
-        assertTrue("The ordinary 20,000-cell document must be certifiable", CanonicalPlainJson.accepts(source))
+        assertTrue(
+            "The ordinary 20,000-cell document must be certifiable",
+            CanonicalPlainJson.accepts(source)
+        )
         assertPayloadParity(source)
     }
 

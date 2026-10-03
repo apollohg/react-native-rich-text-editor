@@ -571,8 +571,11 @@ open class EditorTextSurface @JvmOverloads constructor(
     }
 
     override fun getFocusedRect(rect: Rect) {
-        if (selectionEnd < 0 || (width <= 0 && measuredWidth <= 0)) super.getFocusedRect(rect)
-        else textOffsetRect(selectionEnd, rect)
+        if (selectionEnd < 0 || (width <= 0 && measuredWidth <= 0)) {
+            super.getFocusedRect(rect)
+        } else {
+            textOffsetRect(selectionEnd, rect)
+        }
     }
 
     fun bringPointIntoView(offset: Int): Boolean {
@@ -683,9 +686,19 @@ open class EditorTextSurface @JvmOverloads constructor(
 
     override fun performAccessibilityAction(action: Int, arguments: Bundle?): Boolean {
         val focusedBefore = hasFocus()
-        if ((action == AccessibilityNodeInfo.ACTION_CLICK || action == AccessibilityNodeInfo.ACTION_FOCUS) &&
-            !onSurfaceGestureFocus()) return false
-        if (action == AccessibilityNodeInfo.ACTION_FOCUS && !focusedBefore && hasFocus()) return true
+        if ((
+                action == AccessibilityNodeInfo.ACTION_CLICK ||
+                    action == AccessibilityNodeInfo.ACTION_FOCUS
+                ) &&
+            !onSurfaceGestureFocus()
+        ) {
+            return false
+        }
+        if (action == AccessibilityNodeInfo.ACTION_FOCUS && !focusedBefore &&
+            hasFocus()
+        ) {
+            return true
+        }
         return interaction.performAccessibilityAction(action, arguments) ||
             super.performAccessibilityAction(action, arguments)
     }

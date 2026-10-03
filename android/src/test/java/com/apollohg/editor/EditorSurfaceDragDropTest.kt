@@ -62,7 +62,10 @@ internal class EditorSurfaceDragDropTest : EditorInputConnectionTestFixture() {
             assertTrue(sendTextDragEventForTest(editor, DragEvent.ACTION_DRAG_ENTERED, clip))
             assertFalse("hovering a drag over the prose must not focus it", editor.hasFocus())
             assertEquals("hovering must not consult the surface focus hook", 0, consulted)
-            assertFalse("a refused drop must report failure", sendTextDragEventForTest(editor, DragEvent.ACTION_DROP, clip, 2))
+            assertFalse(
+                "a refused drop must report failure",
+                sendTextDragEventForTest(editor, DragEvent.ACTION_DROP, clip, 2)
+            )
             assertEquals("the drop must consult the surface focus hook once", 1, consulted)
             assertFalse("a refused drop must not focus the prose", editor.hasFocus())
             assertEquals("<p>safe</p>", harness.adapter.documentHtml())
@@ -102,7 +105,9 @@ internal class EditorSurfaceDragDropTest : EditorInputConnectionTestFixture() {
             assertEquals("<p>abc tail</p>", harness.adapter.documentHtml())
             val clip = ClipData.newPlainText("external", "!")
             assertTrue(sendTextDragEventForTest(editor, DragEvent.ACTION_DRAG_STARTED, clip))
-            assertTrue(sendTextDragEventForTest(editor, DragEvent.ACTION_DROP, clip, editor.text.length))
+            assertTrue(
+                sendTextDragEventForTest(editor, DragEvent.ACTION_DROP, clip, editor.text.length)
+            )
             assertEquals("<p>日本 tail!</p>", harness.adapter.documentHtml())
             assertEquals(-1, BaseInputConnection.getComposingSpanStart(editor.editableText))
         } finally {
@@ -145,7 +150,11 @@ internal class EditorSurfaceDragDropTest : EditorInputConnectionTestFixture() {
             assertTrue(sendTextDragEventForTest(editor, DragEvent.ACTION_DRAG_STARTED, clip))
             editor.blockExternalEditorUpdatePreparationForTesting = true
             assertFalse(sendTextDragEventForTest(editor, DragEvent.ACTION_DROP, clip, 1))
-            assertEquals("a drop refused by its preflight must not release a bound cell", 0, consulted)
+            assertEquals(
+                "a drop refused by its preflight must not release a bound cell",
+                0,
+                consulted
+            )
             assertEquals("<p>safe</p>", harness.adapter.documentHtml())
         } finally {
             harness.adapter.destroy()

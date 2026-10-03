@@ -5,9 +5,9 @@ import android.content.ClipData
 import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
-import android.net.Uri
 import android.graphics.Point
 import android.graphics.RectF
+import android.net.Uri
 import android.os.Looper
 import android.view.DragEvent
 import android.view.KeyEvent
@@ -15,6 +15,12 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.widget.FrameLayout
+import com.apollohg.editor.tables.TableCellDragShadow
+import com.apollohg.editor.tables.TableCellDragState
+import com.apollohg.editor.tables.activeTableCellPosition
+import com.apollohg.editor.viewer.PreparedProseDrawingView
+import com.apollohg.editor.viewer.TableCellDropTarget
+import com.apollohg.editor.viewer.TableSelectionHandleRole
 import java.time.Duration
 import kotlin.math.ceil
 import org.json.JSONArray
@@ -31,12 +37,6 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowWindowManagerGlobal
 import org.robolectric.util.ReflectionHelpers
-import com.apollohg.editor.tables.activeTableCellPosition
-import com.apollohg.editor.tables.TableCellDragShadow
-import com.apollohg.editor.tables.TableCellDragState
-import com.apollohg.editor.viewer.PreparedProseDrawingView
-import com.apollohg.editor.viewer.TableCellDropTarget
-import com.apollohg.editor.viewer.TableSelectionHandleRole
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], qualifiers = "w960dp-h640dp")
@@ -44,7 +44,10 @@ internal class EditorTableClipboardTest {
     private class RecordingBackend : EditorV2Backend by UniffiEditorV2Backend {
         val mutations = mutableListOf<String>()
 
-        override fun applyCommand(editorId: String, requestJson: String): EditorV2CallResult<String> {
+        override fun applyCommand(
+            editorId: String,
+            requestJson: String
+        ): EditorV2CallResult<String> {
             mutations += "$APPLY_COMMAND:" +
                 JSONObject(requestJson).getJSONObject("command").getString("type")
             return UniffiEditorV2Backend.applyCommand(editorId, requestJson)
@@ -55,7 +58,10 @@ internal class EditorTableClipboardTest {
             return UniffiEditorV2Backend.applyInput(editorId, requestJson)
         }
 
-        override fun setSelection(editorId: String, requestJson: String): EditorV2CallResult<String> {
+        override fun setSelection(
+            editorId: String,
+            requestJson: String
+        ): EditorV2CallResult<String> {
             mutations += SET_SELECTION
             return UniffiEditorV2Backend.setSelection(editorId, requestJson)
         }
@@ -71,7 +77,9 @@ internal class EditorTableClipboardTest {
         val root: EditorEditText get() = view.editorEditText
 
         fun openings(tableIndex: Int = OUTER_TABLE): List<Int> {
-            val table = adapter.tableRecordsForTesting.values.sortedBy { it.getInt("tablePos") }[tableIndex]
+            val table = adapter.tableRecordsForTesting.values.sortedBy {
+                it.getInt("tablePos")
+            }[tableIndex]
             val cells = table.getJSONArray("cells")
             return (0 until cells.length()).map { cells.getJSONObject(it).getInt("sourcePos") }
         }
@@ -82,7 +90,10 @@ internal class EditorTableClipboardTest {
                 JSONObject().put("type", CELL_SELECTION)
                     .put("anchorCell", point(anchor)).put("headCell", point(head))
             )
-            assertTrue("root did not adopt the cell selection", root.authoritativeCellSelectionActive)
+            assertTrue(
+                "root did not adopt the cell selection",
+                root.authoritativeCellSelectionActive
+            )
             backend.mutations.clear()
             updates.clear()
         }
@@ -95,8 +106,14 @@ internal class EditorTableClipboardTest {
             target.layout(0, 0, VIEW_WIDTH, VIEW_HEIGHT)
             val drawing = target.editorTableSurface.drawingView
             drawing.measure(
-                View.MeasureSpec.makeMeasureSpec(target.editorEditText.width, View.MeasureSpec.EXACTLY),
-                View.MeasureSpec.makeMeasureSpec(target.editorEditText.height, View.MeasureSpec.EXACTLY)
+                View.MeasureSpec.makeMeasureSpec(
+                    target.editorEditText.width,
+                    View.MeasureSpec.EXACTLY
+                ),
+                View.MeasureSpec.makeMeasureSpec(
+                    target.editorEditText.height,
+                    View.MeasureSpec.EXACTLY
+                )
             )
             drawing.layout(0, 0, drawing.measuredWidth, drawing.measuredHeight)
             shadowOf(Looper.getMainLooper()).idle()
@@ -114,14 +131,21 @@ internal class EditorTableClipboardTest {
             val admitted = adapter.callWithEnvelope(JSONObject().put("selection", selection)) {
                 UniffiEditorV2Backend.setSelection(adapter.editorId, it)
             }
-            assertTrue("engine rejected the selection: $admitted", admitted is EditorV2CallResult.Ok)
+            assertTrue(
+                "engine rejected the selection: $admitted",
+                admitted is EditorV2CallResult.Ok
+            )
             assertTrue(root.applyUpdateJSON(requireNotNull(adapter.refreshFromRustState(null))))
         }
 
         fun nonOwnerView(): RichTextEditorView {
             val view = RichTextEditorView(RuntimeEnvironment.getApplication())
             view.editorId = token
-            assertTrue(view.editorEditText.applyUpdateJSON(requireNotNull(adapter.refreshFromRustState(null))))
+            assertTrue(
+                view.editorEditText.applyUpdateJSON(
+                    requireNotNull(adapter.refreshFromRustState(null))
+                )
+            )
             view.measure(
                 View.MeasureSpec.makeMeasureSpec(VIEW_WIDTH, View.MeasureSpec.EXACTLY),
                 View.MeasureSpec.makeMeasureSpec(VIEW_HEIGHT, View.MeasureSpec.EXACTLY)
@@ -157,7 +181,9 @@ internal class EditorTableClipboardTest {
         private fun cellText(node: JSONObject): String {
             node.optString("text").takeIf { node.optString("type") == TEXT_NODE }?.let { return it }
             val content = node.optJSONArray("content") ?: return ""
-            return (0 until content.length()).joinToString("") { cellText(content.getJSONObject(it)) }
+            return (0 until content.length()).joinToString("") {
+                cellText(content.getJSONObject(it))
+            }
         }
     }
 
@@ -174,13 +200,25 @@ internal class EditorTableClipboardTest {
         )
         val token = EditorV2Registry.register(adapter)
         try {
-            val activity = if (attached) Robolectric.buildActivity(Activity::class.java).setup() else null
+            val activity = if (attached) {
+                Robolectric.buildActivity(
+                    Activity::class.java
+                ).setup()
+            } else {
+                null
+            }
             val view = RichTextEditorView(activity?.get() ?: RuntimeEnvironment.getApplication())
-            activity?.get()?.setContentView(FrameLayout(activity.get()).apply {
-                addView(view, FrameLayout.LayoutParams(VIEW_WIDTH, VIEW_HEIGHT))
-            })
+            activity?.get()?.setContentView(
+                FrameLayout(activity.get()).apply {
+                    addView(view, FrameLayout.LayoutParams(VIEW_WIDTH, VIEW_HEIGHT))
+                }
+            )
             view.editorId = token
-            assertTrue(view.editorEditText.applyUpdateJSON(requireNotNull(adapter.setContentJson(document))))
+            assertTrue(
+                view.editorEditText.applyUpdateJSON(
+                    requireNotNull(adapter.setContentJson(document))
+                )
+            )
             view.measure(
                 View.MeasureSpec.makeMeasureSpec(VIEW_WIDTH, View.MeasureSpec.EXACTLY),
                 View.MeasureSpec.makeMeasureSpec(VIEW_HEIGHT, View.MeasureSpec.EXACTLY)
@@ -194,7 +232,10 @@ internal class EditorTableClipboardTest {
                 }
                 override fun onSelectionChanged(anchor: Int, head: Int) = Unit
             }
-            assertFalse("fixture must start without history", requireNotNull(adapter.historyCanUndo()))
+            assertFalse(
+                "fixture must start without history",
+                requireNotNull(adapter.historyCanUndo())
+            )
             if (attached) shadowOf(Looper.getMainLooper()).idle()
             try {
                 block(Fixture(token, view, adapter, backend, updates))
@@ -274,7 +315,10 @@ internal class EditorTableClipboardTest {
 
             assertTrue(fixture.root.onTextContextMenuItem(android.R.id.cut))
 
-            assertEquals(FIRST_ROW_TSV, requireNotNull(clipboard().primaryClip).getItemAt(0).text.toString())
+            assertEquals(
+                FIRST_ROW_TSV,
+                requireNotNull(clipboard().primaryClip).getItemAt(0).text.toString()
+            )
             assertEquals(listOf(listOf("", ""), listOf("C", "D")), fixture.cellTexts())
             assertEquals(CELL_SELECTION, fixture.engineSelection().getString("type"))
             assertOneUndoableMutation(fixture, DELETE_BACKWARD_COMMAND, before)
@@ -308,7 +352,10 @@ internal class EditorTableClipboardTest {
                 ClipData(
                     ClipDescription(
                         STALE_LABEL,
-                        arrayOf(ClipDescription.MIMETYPE_TEXT_HTML, ClipDescription.MIMETYPE_TEXT_PLAIN)
+                        arrayOf(
+                            ClipDescription.MIMETYPE_TEXT_HTML,
+                            ClipDescription.MIMETYPE_TEXT_PLAIN
+                        )
                     ),
                     ClipData.Item(PLAIN_ALTERNATIVE_TSV, HTML_TABLE)
                 )
@@ -333,7 +380,10 @@ internal class EditorTableClipboardTest {
             val notesBefore = fixture.adapter.debugNotes.size
 
             assertTrue(fixture.root.onTextContextMenuItem(android.R.id.copy))
-            assertEquals(NESTED_CELL_TEXT, requireNotNull(clipboard().primaryClip).getItemAt(0).text.toString())
+            assertEquals(
+                NESTED_CELL_TEXT,
+                requireNotNull(clipboard().primaryClip).getItemAt(0).text.toString()
+            )
             clipboard().setPrimaryClip(ClipData.newPlainText(STALE_LABEL, PASTED_GRID_TSV))
             assertTrue(fixture.root.onTextContextMenuItem(android.R.id.cut))
             assertEquals(
@@ -347,7 +397,9 @@ internal class EditorTableClipboardTest {
             assertEquals(
                 "a refused edit must not emit an error",
                 emptyList<String>(),
-                fixture.adapter.debugNotes.drop(notesBefore).filter { it.startsWith(EMITTED_ERROR_NOTE) }
+                fixture.adapter.debugNotes.drop(notesBefore).filter {
+                    it.startsWith(EMITTED_ERROR_NOTE)
+                }
             )
             assertEquals(0, fixture.updates.size)
             assertEquals(before, fixture.adapter.documentJson())
@@ -360,7 +412,10 @@ internal class EditorTableClipboardTest {
             val openings = fixture.openings()
             fixture.selectCells(openings[FIRST_CELL], openings[LAST_CELL])
             val stale = fixture.nonOwnerView().editorEditText
-            assertTrue("the stale view adopted the cell selection", stale.authoritativeCellSelectionActive)
+            assertTrue(
+                "the stale view adopted the cell selection",
+                stale.authoritativeCellSelectionActive
+            )
             val before = fixture.adapter.documentJson()
             clipboard().setPrimaryClip(ClipData.newPlainText(STALE_LABEL, PASTED_GRID_TSV))
 
@@ -368,7 +423,10 @@ internal class EditorTableClipboardTest {
             assertTrue(stale.dispatchKeyEvent(shortcut(KeyEvent.KEYCODE_V)))
 
             assertEquals(emptyList<String>(), fixture.backend.mutations)
-            assertEquals(PASTED_GRID_TSV, requireNotNull(clipboard().primaryClip).getItemAt(0).text.toString())
+            assertEquals(
+                PASTED_GRID_TSV,
+                requireNotNull(clipboard().primaryClip).getItemAt(0).text.toString()
+            )
             assertEquals(before, fixture.adapter.documentJson())
             assertFalse(requireNotNull(fixture.adapter.historyCanUndo()))
 
@@ -396,7 +454,9 @@ internal class EditorTableClipboardTest {
             assertTrue(fixture.root.onTextContextMenuItem(android.R.id.copy))
             assertTrue(
                 requireNotNull(clipboard().primaryClip).description.extras
-                    ?.getString(EditorClipboard.EXTRA_FRAGMENT).orEmpty().contains(ATOM_METADATA_KIND)
+                    ?.getString(
+                        EditorClipboard.EXTRA_FRAGMENT
+                    ).orEmpty().contains(ATOM_METADATA_KIND)
             )
 
             fixture.selectCells(openings[THIRD_CELL], openings[LAST_CELL])
@@ -411,7 +471,8 @@ internal class EditorTableClipboardTest {
             assertOneUndoableMutation(fixture, PASTE_COMMAND, before)
         }
 
-    private fun drawing(fixture: Fixture): PreparedProseDrawingView = fixture.view.editorTableSurface.drawingView
+    private fun drawing(fixture: Fixture): PreparedProseDrawingView =
+        fixture.view.editorTableSurface.drawingView
 
     private fun cellCenter(fixture: Fixture, cell: Int): Pair<Float, Float> {
         val drawing = drawing(fixture)
@@ -419,10 +480,24 @@ internal class EditorTableClipboardTest {
         return presented.bounds.centerX() + drawing.left to presented.bounds.centerY() + drawing.top
     }
 
-    private fun dispatchFrameTouches(fixture: Fixture, points: List<Pair<Int, Pair<Float, Float>>>) {
+    private fun dispatchFrameTouches(
+        fixture: Fixture,
+        points: List<Pair<Int, Pair<Float, Float>>>
+    ) {
         points.forEachIndexed { index, (action, point) ->
-            val event = MotionEvent.obtain(0, TOUCH_STEP_MS * index, action, point.first, point.second, 0)
-            try { fixture.view.editorContentFrame.dispatchTouchEvent(event) } finally { event.recycle() }
+            val event = MotionEvent.obtain(
+                0,
+                TOUCH_STEP_MS * index,
+                action,
+                point.first,
+                point.second,
+                0
+            )
+            try {
+                fixture.view.editorContentFrame.dispatchTouchEvent(event)
+            } finally {
+                event.recycle()
+            }
         }
     }
 
@@ -430,21 +505,34 @@ internal class EditorTableClipboardTest {
         val drawing = drawing(fixture)
         val head = drawing.selectionHandles().single { it.role == TableSelectionHandleRole.HEAD }
         val target = cellCenter(fixture, toCell)
-        dispatchFrameTouches(fixture, listOf(
-            MotionEvent.ACTION_DOWN to (head.x + drawing.left to head.y + drawing.top),
-            MotionEvent.ACTION_MOVE to target,
-            MotionEvent.ACTION_UP to target
-        ))
-        assertEquals("the drag must land on the target cell",
-            fixture.openings()[toCell], fixture.engineSelection().getInt("headCell"))
+        dispatchFrameTouches(
+            fixture,
+            listOf(
+                MotionEvent.ACTION_DOWN to (head.x + drawing.left to head.y + drawing.top),
+                MotionEvent.ACTION_MOVE to target,
+                MotionEvent.ACTION_UP to target
+            )
+        )
+        assertEquals(
+            "the drag must land on the target cell",
+            fixture.openings()[toCell],
+            fixture.engineSelection().getInt("headCell")
+        )
     }
 
-    private fun awaitDoubleTapTimeout() =
-        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(ViewConfiguration.getDoubleTapTimeout().toLong()))
+    private fun awaitDoubleTapTimeout() = shadowOf(
+        Looper.getMainLooper()
+    ).idleFor(Duration.ofMillis(ViewConfiguration.getDoubleTapTimeout().toLong()))
 
     private fun tapCell(fixture: Fixture, cell: Int) {
         val center = cellCenter(fixture, cell)
-        dispatchFrameTouches(fixture, listOf(MotionEvent.ACTION_DOWN to center, MotionEvent.ACTION_UP to center))
+        dispatchFrameTouches(
+            fixture,
+            listOf(
+                MotionEvent.ACTION_DOWN to center,
+                MotionEvent.ACTION_UP to center
+            )
+        )
     }
 
     private fun tapCellAndSettle(fixture: Fixture, cell: Int) {
@@ -461,9 +549,14 @@ internal class EditorTableClipboardTest {
     private fun showMenuByTappingSelection(fixture: Fixture, anchor: Int, head: Int) {
         selectCellsForMenu(fixture, anchor, head)
         tapCellAndSettle(fixture, anchor)
-        assertTrue("a tap inside the selection shows the cell menu",
-            fixture.view.editorTableSurface.isCellEditMenuVisible)
-        assertTrue("the tap keeps the cell selection", fixture.root.authoritativeCellSelectionActive)
+        assertTrue(
+            "a tap inside the selection shows the cell menu",
+            fixture.view.editorTableSurface.isCellEditMenuVisible
+        )
+        assertTrue(
+            "the tap keeps the cell selection",
+            fixture.root.authoritativeCellSelectionActive
+        )
         fixture.backend.mutations.clear()
         fixture.updates.clear()
     }
@@ -477,7 +570,10 @@ internal class EditorTableClipboardTest {
     private fun clickMenuItem(fixture: Fixture, id: Int) {
         val mode = requireNotNull(fixture.root.selectionActionMode)
         assertTrue("menu item $id was not handled", mode.menu.performIdentifierAction(id, 0))
-        assertFalse("an item closes the menu", fixture.view.editorTableSurface.isCellEditMenuVisible)
+        assertFalse(
+            "an item closes the menu",
+            fixture.view.editorTableSurface.isCellEditMenuVisible
+        )
     }
 
     private fun assertCellMenuReplacesTextMenu(clip: ClipData?, expected: List<Int>) =
@@ -493,13 +589,21 @@ internal class EditorTableClipboardTest {
 
             val openings = fixture.openings()
             fixture.selectCells(openings[FIRST_CELL], openings[SECOND_CELL])
-            assertTrue("the cell menu replaces the text menu", fixture.view.editorTableSurface.isCellEditMenuVisible)
+            assertTrue(
+                "the cell menu replaces the text menu",
+                fixture.view.editorTableSurface.isCellEditMenuVisible
+            )
             assertTrue(fixture.root.selectionActionMode !== textMenu)
             assertEquals(expected, menuItemIds(fixture))
 
             fixture.root.interaction.startSelectionActionMode()
-            assertFalse("a text menu closes the cell menu", fixture.view.editorTableSurface.isCellEditMenuVisible)
-            assertTrue(requireNotNull(fixture.root.selectionActionMode).tag === TextSelectionActionMode)
+            assertFalse(
+                "a text menu closes the cell menu",
+                fixture.view.editorTableSurface.isCellEditMenuVisible
+            )
+            assertTrue(
+                requireNotNull(fixture.root.selectionActionMode).tag === TextSelectionActionMode
+            )
         }
 
     @Test
@@ -508,13 +612,17 @@ internal class EditorTableClipboardTest {
             clipboard().setPrimaryClip(ClipData.newPlainText(STALE_LABEL, PASTED_GRID_TSV))
             selectCellsForMenu(fixture, FIRST_CELL, FIRST_CELL)
             dragHead(fixture, LAST_CELL)
-            assertFalse("a handle drag leaves the toolbar in charge",
-                fixture.view.editorTableSurface.isCellEditMenuVisible)
+            assertFalse(
+                "a handle drag leaves the toolbar in charge",
+                fixture.view.editorTableSurface.isCellEditMenuVisible
+            )
             assertEquals(null, fixture.root.selectionActionMode)
 
             tapCell(fixture, FIRST_CELL)
-            assertFalse("the menu waits for a possible double tap",
-                fixture.view.editorTableSurface.isCellEditMenuVisible)
+            assertFalse(
+                "the menu waits for a possible double tap",
+                fixture.view.editorTableSurface.isCellEditMenuVisible
+            )
             awaitDoubleTapTimeout()
             assertTrue(fixture.view.editorTableSurface.isCellEditMenuVisible)
             assertEquals(CELL_MENU_ITEMS, menuItemIds(fixture))
@@ -528,7 +636,10 @@ internal class EditorTableClipboardTest {
             showMenuByTappingSelection(fixture, FIRST_CELL, SECOND_CELL)
             val before = fixture.adapter.documentJson()
             clickMenuItem(fixture, android.R.id.copy)
-            assertEquals(FIRST_ROW_TSV, requireNotNull(clipboard().primaryClip).getItemAt(0).text.toString())
+            assertEquals(
+                FIRST_ROW_TSV,
+                requireNotNull(clipboard().primaryClip).getItemAt(0).text.toString()
+            )
             assertEquals("copy must not mutate", emptyList<String>(), fixture.backend.mutations)
             assertEquals(0, fixture.updates.size)
             assertEquals(before, fixture.adapter.documentJson())
@@ -540,7 +651,10 @@ internal class EditorTableClipboardTest {
             showMenuByTappingSelection(fixture, FIRST_CELL, SECOND_CELL)
             val before = fixture.adapter.documentJson()
             clickMenuItem(fixture, android.R.id.cut)
-            assertEquals(FIRST_ROW_TSV, requireNotNull(clipboard().primaryClip).getItemAt(0).text.toString())
+            assertEquals(
+                FIRST_ROW_TSV,
+                requireNotNull(clipboard().primaryClip).getItemAt(0).text.toString()
+            )
             assertEquals(listOf(listOf("", ""), listOf("C", "D")), fixture.cellTexts())
             assertOneUndoableMutation(fixture, DELETE_BACKWARD_COMMAND, before)
         }
@@ -567,8 +681,12 @@ internal class EditorTableClipboardTest {
     @Test
     fun `paste menu item is offered for a clip that only coerces to text`() =
         withTable(GRID_DOCUMENT, attached = true) { fixture ->
-            clipboard().setPrimaryClip(ClipData(ClipDescription(STALE_LABEL, arrayOf(IMAGE_MIME_TYPE)),
-                ClipData.Item(Uri.parse(CONTENT_URI))))
+            clipboard().setPrimaryClip(
+                ClipData(
+                    ClipDescription(STALE_LABEL, arrayOf(IMAGE_MIME_TYPE)),
+                    ClipData.Item(Uri.parse(CONTENT_URI))
+                )
+            )
             showMenuByTappingSelection(fixture, FIRST_CELL, SECOND_CELL)
             assertEquals(CELL_MENU_ITEMS, menuItemIds(fixture))
         }
@@ -582,18 +700,30 @@ internal class EditorTableClipboardTest {
             fixture.relayout()
             val before = fixture.adapter.documentJson()
             val drawing = drawing(fixture)
-            val selected = requireNotNull(drawing.selectedTableCellRects(
-                drawing.selectedTableCellSourceIndices.keys.single())).single()
+            val selected = requireNotNull(
+                drawing.selectedTableCellRects(drawing.selectedTableCellSourceIndices.keys.single())
+            ).single()
             val center = selected.centerX() + drawing.left to selected.centerY() + drawing.top
-            dispatchFrameTouches(fixture, listOf(MotionEvent.ACTION_DOWN to center, MotionEvent.ACTION_UP to center))
+            dispatchFrameTouches(
+                fixture,
+                listOf(
+                    MotionEvent.ACTION_DOWN to center,
+                    MotionEvent.ACTION_UP to center
+                )
+            )
             awaitDoubleTapTimeout()
-            assertTrue("a tap inside the read-only selection shows the menu",
-                fixture.view.editorTableSurface.isCellEditMenuVisible)
+            assertTrue(
+                "a tap inside the read-only selection shows the menu",
+                fixture.view.editorTableSurface.isCellEditMenuVisible
+            )
             assertEquals(listOf(android.R.id.copy), menuItemIds(fixture))
 
             clickMenuItem(fixture, android.R.id.copy)
 
-            assertEquals(NESTED_CELL_TEXT, requireNotNull(clipboard().primaryClip).getItemAt(0).text.toString())
+            assertEquals(
+                NESTED_CELL_TEXT,
+                requireNotNull(clipboard().primaryClip).getItemAt(0).text.toString()
+            )
             assertEquals("copy must not mutate", emptyList<String>(), fixture.backend.mutations)
             assertEquals(0, fixture.updates.size)
             assertEquals(before, fixture.adapter.documentJson())
@@ -606,7 +736,10 @@ internal class EditorTableClipboardTest {
             val openings = fixture.openings()
             fixture.selectCells(openings[FIRST_CELL], openings[LAST_CELL])
             val stale = fixture.nonOwnerView()
-            (fixture.view.parent as FrameLayout).addView(stale, FrameLayout.LayoutParams(VIEW_WIDTH, VIEW_HEIGHT))
+            (fixture.view.parent as FrameLayout).addView(
+                stale,
+                FrameLayout.LayoutParams(VIEW_WIDTH, VIEW_HEIGHT)
+            )
             fixture.relayout(stale)
             assertTrue(stale.editorEditText.requestFocus())
             assertTrue(stale.editorEditText.authoritativeCellSelectionActive)
@@ -615,18 +748,33 @@ internal class EditorTableClipboardTest {
 
             assertTrue(stale.editorTableSurface.isCellEditMenuVisible)
             val mode = requireNotNull(stale.editorEditText.selectionActionMode)
-            assertEquals(listOf(android.R.id.copy), (0 until mode.menu.size()).map { mode.menu.getItem(it).itemId })
+            assertEquals(
+                listOf(android.R.id.copy),
+                (0 until mode.menu.size()).map {
+                    mode.menu.getItem(it).itemId
+                }
+            )
             assertTrue(mode.menu.performIdentifierAction(android.R.id.copy, 0))
-            assertEquals(FIRST_ROW_TSV + "\n" + "C\tD", requireNotNull(clipboard().primaryClip).getItemAt(0).text.toString())
-            assertEquals("a non-owner copy never mutates", emptyList<String>(), fixture.backend.mutations)
+            assertEquals(
+                FIRST_ROW_TSV + "\n" + "C\tD",
+                requireNotNull(clipboard().primaryClip).getItemAt(0).text.toString()
+            )
+            assertEquals(
+                "a non-owner copy never mutates",
+                emptyList<String>(),
+                fixture.backend.mutations
+            )
         }
 
     @Test
     fun `a text action mode is replaced by the full cell menu when the clipboard has text`() =
-        assertCellMenuReplacesTextMenu(ClipData.newPlainText(STALE_LABEL, PASTED_GRID_TSV), CELL_MENU_ITEMS)
+        assertCellMenuReplacesTextMenu(
+            ClipData.newPlainText(STALE_LABEL, PASTED_GRID_TSV),
+            CELL_MENU_ITEMS
+        )
 
     @Test
-    fun `a text action mode is replaced by a cell menu without paste when the clipboard is empty`() =
+    fun `empty clipboard cell menu replaces text actions without paste`() =
         assertCellMenuReplacesTextMenu(null, listOf(android.R.id.cut, android.R.id.copy))
 
     @Test
@@ -641,10 +789,20 @@ internal class EditorTableClipboardTest {
             assertTrue(fixture.view.editorTableSurface.isCellEditMenuVisible)
 
             tapCellAndSettle(fixture, LAST_CELL)
-            assertFalse("a touch outside the selection closes the menu",
-                fixture.view.editorTableSurface.isCellEditMenuVisible)
-            assertTrue("the outside tap edits that cell", fixture.view.activeTextInput !== fixture.root)
-            assertEquals(emptyList<String>(), fixture.backend.mutations.filter { it.startsWith(APPLY_COMMAND) })
+            assertFalse(
+                "a touch outside the selection closes the menu",
+                fixture.view.editorTableSurface.isCellEditMenuVisible
+            )
+            assertTrue(
+                "the outside tap edits that cell",
+                fixture.view.activeTextInput !== fixture.root
+            )
+            assertEquals(
+                emptyList<String>(),
+                fixture.backend.mutations.filter {
+                    it.startsWith(APPLY_COMMAND)
+                }
+            )
         }
 
     @Test
@@ -652,9 +810,15 @@ internal class EditorTableClipboardTest {
         withTable(GRID_DOCUMENT, attached = true) { fixture ->
             showMenuByTappingSelection(fixture, FIRST_CELL, SECOND_CELL)
             val drawing = drawing(fixture)
-            val below = drawing.selectedTableCellRects(requireNotNull(drawing.selectedTableCellEndpoints).first)
-                .orEmpty().maxOf { it.bottom } + drawing.top + OUTSIDE_TOUCH_OFFSET
-            dispatchFrameTouches(fixture, listOf(MotionEvent.ACTION_DOWN to (cellCenter(fixture, FIRST_CELL).first to below)))
+            val below =
+                drawing.selectedTableCellRects(
+                    requireNotNull(drawing.selectedTableCellEndpoints).first
+                )
+                    .orEmpty().maxOf { it.bottom } + drawing.top + OUTSIDE_TOUCH_OFFSET
+            dispatchFrameTouches(
+                fixture,
+                listOf(MotionEvent.ACTION_DOWN to (cellCenter(fixture, FIRST_CELL).first to below))
+            )
             assertFalse(fixture.view.editorTableSurface.isCellEditMenuVisible)
         }
 
@@ -666,11 +830,16 @@ internal class EditorTableClipboardTest {
             tapCell(fixture, LAST_CELL)
             assertFalse(fixture.view.editorTableSurface.isCellEditMenuVisible)
             awaitDoubleTapTimeout()
-            assertFalse("the double tap never opens the menu", fixture.view.editorTableSurface.isCellEditMenuVisible)
+            assertFalse(
+                "the double tap never opens the menu",
+                fixture.view.editorTableSurface.isCellEditMenuVisible
+            )
             val input = fixture.view.activeTextInput
             assertTrue("the double tap edits a cell", input !== fixture.root)
-            assertEquals(fixture.openings()[LAST_CELL].toLong(),
-                fixture.view.activeTableCellPosition)
+            assertEquals(
+                fixture.openings()[LAST_CELL].toLong(),
+                fixture.view.activeTableCellPosition
+            )
         }
 
     @Test
@@ -679,18 +848,27 @@ internal class EditorTableClipboardTest {
             val openings = fixture.openings()
             showMenuByTappingSelection(fixture, FIRST_CELL, SECOND_CELL)
             fixture.selectCells(openings[FIRST_CELL], openings[LAST_CELL])
-            assertFalse("a different rectangle closes the menu", fixture.view.editorTableSurface.isCellEditMenuVisible)
+            assertFalse(
+                "a different rectangle closes the menu",
+                fixture.view.editorTableSurface.isCellEditMenuVisible
+            )
 
             fixture.view.editorTableSurface.presentCellEditMenu()
             assertTrue(fixture.view.editorTableSurface.isCellEditMenuVisible)
             fixture.root.clearFocus()
-            assertFalse("blur closes the menu", fixture.view.editorTableSurface.isCellEditMenuVisible)
+            assertFalse(
+                "blur closes the menu",
+                fixture.view.editorTableSurface.isCellEditMenuVisible
+            )
 
             assertTrue(fixture.root.requestFocus())
             fixture.view.editorTableSurface.presentCellEditMenu()
             assertTrue(fixture.view.editorTableSurface.isCellEditMenuVisible)
             fixture.view.editorId = 0
-            assertFalse("destroy closes the menu", fixture.view.editorTableSurface.isCellEditMenuVisible)
+            assertFalse(
+                "destroy closes the menu",
+                fixture.view.editorTableSurface.isCellEditMenuVisible
+            )
             assertEquals(null, fixture.root.selectionActionMode)
         }
 
@@ -700,17 +878,30 @@ internal class EditorTableClipboardTest {
         point: Pair<Float, Float>,
         clip: ClipData,
         localState: Any
-    ): DragEvent = ReflectionHelpers.callStaticMethod<DragEvent>(DragEvent::class.java, "obtain").also {
-        ReflectionHelpers.setField(it, "mAction", action)
-        ReflectionHelpers.setField(it, "mX", point.first - root.left)
-        ReflectionHelpers.setField(it, "mY", point.second - root.top)
-        ReflectionHelpers.setField(it, "mClipData", clip.takeIf { action == DragEvent.ACTION_DROP })
-        ReflectionHelpers.setField(it, "mClipDescription", clip.description)
-        ReflectionHelpers.setField(it, "mLocalState", localState)
-    }
+    ): DragEvent =
+        ReflectionHelpers.callStaticMethod<DragEvent>(DragEvent::class.java, "obtain").also {
+            ReflectionHelpers.setField(it, "mAction", action)
+            ReflectionHelpers.setField(it, "mX", point.first - root.left)
+            ReflectionHelpers.setField(it, "mY", point.second - root.top)
+            ReflectionHelpers.setField(
+                it,
+                "mClipData",
+                clip.takeIf {
+                    action ==
+                        DragEvent.ACTION_DROP
+                }
+            )
+            ReflectionHelpers.setField(it, "mClipDescription", clip.description)
+            ReflectionHelpers.setField(it, "mLocalState", localState)
+        }
 
-    private fun sendDrag(root: EditorEditText, action: Int, point: Pair<Float, Float>, clip: ClipData,
-                         localState: Any): Boolean {
+    private fun sendDrag(
+        root: EditorEditText,
+        action: Int,
+        point: Pair<Float, Float>,
+        clip: ClipData,
+        localState: Any
+    ): Boolean {
         val event = rootDragEvent(root, action, point, clip, localState)
         return try {
             root.onDragEvent(event)
@@ -723,21 +914,34 @@ internal class EditorTableClipboardTest {
         val drawing = drawing(fixture)
         val (x, y) = cellCenter(fixture, cell)
         ShadowWindowManagerGlobal.clearLastDragClipData()
-        return requireNotNull(fixture.view.editorTableSurface.startCellDrag(x - drawing.left, y - drawing.top)) {
+        return requireNotNull(
+            fixture.view.editorTableSurface.startCellDrag(
+                x - drawing.left,
+                y - drawing.top
+            )
+        ) {
             "a drag inside the cell selection must lift the cells"
         }
     }
 
-    private fun liftedClip(): ClipData = requireNotNull(ShadowWindowManagerGlobal.getLastDragClipData()) {
-        "no system drag was started"
-    }
+    private fun liftedClip(): ClipData =
+        requireNotNull(ShadowWindowManagerGlobal.getLastDragClipData()) {
+            "no system drag was started"
+        }
 
     private fun dropCells(fixture: Fixture, state: Any, clip: ClipData, cell: Int): Boolean {
         val target = cellCenter(fixture, cell)
         assertTrue(sendDrag(fixture.root, DragEvent.ACTION_DRAG_STARTED, target, clip, state))
-        assertTrue("hovering a real cell is handled", sendDrag(fixture.root, DragEvent.ACTION_DRAG_LOCATION, target, clip, state))
+        assertTrue(
+            "hovering a real cell is handled",
+            sendDrag(fixture.root, DragEvent.ACTION_DRAG_LOCATION, target, clip, state)
+        )
         return sendDrag(fixture.root, DragEvent.ACTION_DROP, target, clip, state).also {
-            assertEquals("the highlight ends with the drop", null, drawing(fixture).tableCellDropTarget)
+            assertEquals(
+                "the highlight ends with the drop",
+                null,
+                drawing(fixture).tableCellDropTarget
+            )
         }
     }
 
@@ -753,23 +957,54 @@ internal class EditorTableClipboardTest {
             ShadowWindowManagerGlobal.clearLastDragClipData()
             val center = cellCenter(fixture, FIRST_CELL)
 
-            val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, center.first, center.second, 0)
-            try { fixture.view.editorContentFrame.dispatchTouchEvent(down) } finally { down.recycle() }
-            assertEquals("nothing lifts before the long-press timeout", null,
-                ShadowWindowManagerGlobal.getLastDragClipData())
-            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(ViewConfiguration.getLongPressTimeout().toLong()))
-            val up = MotionEvent.obtain(0, ViewConfiguration.getLongPressTimeout().toLong(), MotionEvent.ACTION_UP,
-                center.first, center.second, 0)
-            try { fixture.view.editorContentFrame.dispatchTouchEvent(up) } finally { up.recycle() }
+            val down = MotionEvent.obtain(
+                0,
+                0,
+                MotionEvent.ACTION_DOWN,
+                center.first,
+                center.second,
+                0
+            )
+            try {
+                fixture.view.editorContentFrame.dispatchTouchEvent(down)
+            } finally {
+                down.recycle()
+            }
+            assertEquals(
+                "nothing lifts before the long-press timeout",
+                null,
+                ShadowWindowManagerGlobal.getLastDragClipData()
+            )
+            shadowOf(
+                Looper.getMainLooper()
+            ).idleFor(Duration.ofMillis(ViewConfiguration.getLongPressTimeout().toLong()))
+            val up = MotionEvent.obtain(
+                0,
+                ViewConfiguration.getLongPressTimeout().toLong(),
+                MotionEvent.ACTION_UP,
+                center.first,
+                center.second,
+                0
+            )
+            try {
+                fixture.view.editorContentFrame.dispatchTouchEvent(up)
+            } finally {
+                up.recycle()
+            }
             awaitDoubleTapTimeout()
 
             val lifted = liftedClip()
             assertEquals(FIRST_ROW_TSV, lifted.getItemAt(0).text.toString())
             assertEquals(copied.getItemAt(0).htmlText, lifted.getItemAt(0).htmlText)
-            assertEquals(copied.description.extras?.getString(EditorClipboard.EXTRA_FRAGMENT),
-                lifted.description.extras?.getString(EditorClipboard.EXTRA_FRAGMENT))
+            assertEquals(
+                copied.description.extras?.getString(EditorClipboard.EXTRA_FRAGMENT),
+                lifted.description.extras?.getString(EditorClipboard.EXTRA_FRAGMENT)
+            )
             assertTrue(lifted.description.hasMimeType(EditorClipboard.MIME_TYPE_FRAGMENT))
-            assertFalse("the lifting press is not a menu tap", fixture.view.editorTableSurface.isCellEditMenuVisible)
+            assertFalse(
+                "the lifting press is not a menu tap",
+                fixture.view.editorTableSurface.isCellEditMenuVisible
+            )
             assertEquals("lifting never mutates", emptyList<String>(), fixture.backend.mutations)
             assertEquals(0, fixture.updates.size)
         }
@@ -780,18 +1015,46 @@ internal class EditorTableClipboardTest {
             selectCellsForMenu(fixture, FIRST_CELL, SECOND_CELL)
             ShadowWindowManagerGlobal.clearLastDragClipData()
             val drawing = drawing(fixture)
-            val head = drawing.selectionHandles().single { it.role == TableSelectionHandleRole.HEAD }
+            val head = drawing.selectionHandles().single {
+                it.role == TableSelectionHandleRole.HEAD
+            }
             val handle = head.x + drawing.left to head.y + drawing.top
-            val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, handle.first, handle.second, 0)
-            try { fixture.view.editorContentFrame.dispatchTouchEvent(down) } finally { down.recycle() }
-            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(ViewConfiguration.getLongPressTimeout().toLong()))
-            assertEquals("the handle keeps precedence", null, ShadowWindowManagerGlobal.getLastDragClipData())
+            val down = MotionEvent.obtain(
+                0,
+                0,
+                MotionEvent.ACTION_DOWN,
+                handle.first,
+                handle.second,
+                0
+            )
+            try {
+                fixture.view.editorContentFrame.dispatchTouchEvent(down)
+            } finally {
+                down.recycle()
+            }
+            shadowOf(
+                Looper.getMainLooper()
+            ).idleFor(Duration.ofMillis(ViewConfiguration.getLongPressTimeout().toLong()))
+            assertEquals(
+                "the handle keeps precedence",
+                null,
+                ShadowWindowManagerGlobal.getLastDragClipData()
+            )
             fixture.view.editorTableSurface.cancelActiveDrag()
 
             tapCell(fixture, FIRST_CELL)
-            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(ViewConfiguration.getLongPressTimeout().toLong()))
-            assertEquals("a tap is not a long press", null, ShadowWindowManagerGlobal.getLastDragClipData())
-            assertTrue("the tap still toggles the menu", fixture.view.editorTableSurface.isCellEditMenuVisible)
+            shadowOf(
+                Looper.getMainLooper()
+            ).idleFor(Duration.ofMillis(ViewConfiguration.getLongPressTimeout().toLong()))
+            assertEquals(
+                "a tap is not a long press",
+                null,
+                ShadowWindowManagerGlobal.getLastDragClipData()
+            )
+            assertTrue(
+                "the tap still toggles the menu",
+                fixture.view.editorTableSurface.isCellEditMenuVisible
+            )
         }
 
     @Test
@@ -799,9 +1062,19 @@ internal class EditorTableClipboardTest {
         withTable(GRID_DOCUMENT, attached = true) { fixture ->
             selectCellsForMenu(fixture, FIRST_CELL, SECOND_CELL)
             val drawing = drawing(fixture)
-            val rects = requireNotNull(drawing.selectedTableCellRects(requireNotNull(drawing.selectedTableCellEndpoints).first))
+            val rects =
+                requireNotNull(
+                    drawing.selectedTableCellRects(
+                        requireNotNull(drawing.selectedTableCellEndpoints).first
+                    )
+                )
             val union = RectF(rects.first()).apply { rects.drop(1).forEach(::union) }
-            val shadow = TableCellDragShadow(drawing, rects, union.left + SHADOW_TOUCH_INSET, union.top + SHADOW_TOUCH_INSET)
+            val shadow = TableCellDragShadow(
+                drawing,
+                rects,
+                union.left + SHADOW_TOUCH_INSET,
+                union.top + SHADOW_TOUCH_INSET
+            )
             val size = Point()
             val touch = Point()
 
@@ -823,8 +1096,11 @@ internal class EditorTableClipboardTest {
             val clip = liftedClip()
             assertTrue(sendDrag(fixture.root, DragEvent.ACTION_DRAG_STARTED, target, clip, state))
             assertTrue(sendDrag(fixture.root, DragEvent.ACTION_DRAG_LOCATION, target, clip, state))
-            assertEquals("hovering highlights the real drop cell", dropTarget(fixture, THIRD_CELL),
-                drawing(fixture).tableCellDropTarget)
+            assertEquals(
+                "hovering highlights the real drop cell",
+                dropTarget(fixture, THIRD_CELL),
+                drawing(fixture).tableCellDropTarget
+            )
 
             assertTrue(sendDrag(fixture.root, DragEvent.ACTION_DROP, target, clip, state))
 
@@ -843,7 +1119,11 @@ internal class EditorTableClipboardTest {
             val clip = liftedClip()
             assertTrue(sendDrag(fixture.root, DragEvent.ACTION_DRAG_STARTED, target, clip, state))
             assertTrue(sendDrag(fixture.root, DragEvent.ACTION_DRAG_LOCATION, target, clip, state))
-            assertEquals("a self drop highlights nothing", null, drawing(fixture).tableCellDropTarget)
+            assertEquals(
+                "a self drop highlights nothing",
+                null,
+                drawing(fixture).tableCellDropTarget
+            )
 
             assertFalse(sendDrag(fixture.root, DragEvent.ACTION_DROP, target, clip, state))
 
@@ -868,7 +1148,11 @@ internal class EditorTableClipboardTest {
                 assertEquals(listOf(listOf("w", "x"), listOf("A", "B")), target.cellTexts())
                 assertOneUndoableMutation(target, PASTE_COMMAND, before)
             }
-            assertEquals("a copy never clears the source", sourceBefore, source.adapter.documentJson())
+            assertEquals(
+                "a copy never clears the source",
+                sourceBefore,
+                source.adapter.documentJson()
+            )
             assertEquals(emptyList<String>(), source.backend.mutations)
         }
 
@@ -878,7 +1162,14 @@ internal class EditorTableClipboardTest {
             fixture.relayout()
             val before = fixture.adapter.documentJson()
 
-            assertTrue(dropCells(fixture, Any(), ClipData.newPlainText(STALE_LABEL, EXTERNAL_TSV), LAST_CELL))
+            assertTrue(
+                dropCells(
+                    fixture,
+                    Any(),
+                    ClipData.newPlainText(STALE_LABEL, EXTERNAL_TSV),
+                    LAST_CELL
+                )
+            )
 
             assertEquals(listOf(listOf("w", "x", ""), listOf("y", "e1", "e2")), fixture.cellTexts())
             assertOneUndoableMutation(fixture, PASTE_COMMAND, before)
@@ -898,8 +1189,10 @@ internal class EditorTableClipboardTest {
             assertTrue(sendDrag(fixture.root, DragEvent.ACTION_DROP, prose, clip, state))
 
             assertEquals(listOf(listOf("A", "B"), listOf("C", "D")), fixture.cellTexts())
-            assertTrue("the plain text is inserted into the prose",
-                requireNotNull(fixture.adapter.documentHtml()).contains(FIRST_ROW_TSV + AFTER_TEXT))
+            assertTrue(
+                "the plain text is inserted into the prose",
+                requireNotNull(fixture.adapter.documentHtml()).contains(FIRST_ROW_TSV + AFTER_TEXT)
+            )
         }
 
     @Test
@@ -912,12 +1205,34 @@ internal class EditorTableClipboardTest {
             val end = start + AFTER_TEXT.length
             val clip = ClipData.newPlainText(STALE_LABEL, MOVED_PREFIX)
 
-            assertTrue("a root table no longer disables text drags",
-                sendDrag(fixture.root, DragEvent.ACTION_DRAG_STARTED, proseOffset(fixture, end), clip, fixture.root))
-            assertTrue(sendDrag(fixture.root, DragEvent.ACTION_DROP, proseOffset(fixture, end), clip, fixture.root))
+            assertTrue(
+                "a root table no longer disables text drags",
+                sendDrag(
+                    fixture.root,
+                    DragEvent.ACTION_DRAG_STARTED,
+                    proseOffset(fixture, end),
+                    clip,
+                    fixture.root
+                )
+            )
+            assertTrue(
+                sendDrag(
+                    fixture.root,
+                    DragEvent.ACTION_DROP,
+                    proseOffset(fixture, end),
+                    clip,
+                    fixture.root
+                )
+            )
 
-            assertTrue(requireNotNull(fixture.adapter.documentHtml()).contains("<p>ter$MOVED_PREFIX</p>"))
-            assertEquals("the table is untouched", listOf(listOf("A", "B"), listOf("C", "D")), fixture.cellTexts())
+            assertTrue(
+                requireNotNull(fixture.adapter.documentHtml()).contains("<p>ter$MOVED_PREFIX</p>")
+            )
+            assertEquals(
+                "the table is untouched",
+                listOf(listOf("A", "B"), listOf("C", "D")),
+                fixture.cellTexts()
+            )
         }
 
     @Test
@@ -945,20 +1260,37 @@ internal class EditorTableClipboardTest {
             val openings = fixture.openings()
             fixture.selectCells(openings[FIRST_CELL], openings[SECOND_CELL])
             val stale = fixture.nonOwnerView()
-            (fixture.view.parent as FrameLayout).addView(stale, FrameLayout.LayoutParams(VIEW_WIDTH, VIEW_HEIGHT))
+            (fixture.view.parent as FrameLayout).addView(
+                stale,
+                FrameLayout.LayoutParams(VIEW_WIDTH, VIEW_HEIGHT)
+            )
             fixture.relayout(stale)
             assertTrue(stale.editorEditText.requestFocus())
             val staleDrawing = stale.editorTableSurface.drawingView
-            val presented = staleDrawing.presentedTableCells().single { it.sourceIndex == FIRST_CELL }
+            val presented = staleDrawing.presentedTableCells().single {
+                it.sourceIndex == FIRST_CELL
+            }
             val before = fixture.adapter.documentJson()
 
-            val state = requireNotNull(stale.editorTableSurface.startCellDrag(
-                presented.bounds.centerX(), presented.bounds.centerY()))
+            val state =
+                requireNotNull(
+                    stale.editorTableSurface.startCellDrag(
+                        presented.bounds.centerX(),
+                        presented.bounds.centerY()
+                    )
+                )
             assertFalse("a non-owner can only copy", state.movable)
             val target = staleDrawing.presentedTableCells().single { it.sourceIndex == THIRD_CELL }
-            assertFalse(sendDrag(stale.editorEditText, DragEvent.ACTION_DROP,
-                target.bounds.centerX() + staleDrawing.left to target.bounds.centerY() + staleDrawing.top,
-                liftedClip(), state))
+            assertFalse(
+                sendDrag(
+                    stale.editorEditText,
+                    DragEvent.ACTION_DROP,
+                    target.bounds.centerX() + staleDrawing.left to
+                        target.bounds.centerY() + staleDrawing.top,
+                    liftedClip(),
+                    state
+                )
+            )
 
             assertEquals(emptyList<String>(), fixture.backend.mutations)
             assertEquals(before, fixture.adapter.documentJson())
@@ -972,19 +1304,44 @@ internal class EditorTableClipboardTest {
             val clip = liftedClip()
             val drawing = drawing(fixture)
             val openings = fixture.openings()
-            val wide = drawing.presentedTableCells().single { it.sourceIndex == IRREGULAR_WIDE_CELL }
-            val later = drawing.presentedTableCells().single { it.sourceIndex == IRREGULAR_LATER_CELL }
-            val gap = (later.bounds.right + wide.bounds.right) / 2f + drawing.left to later.bounds.centerY() + drawing.top
-            assertTrue("the gap lies inside the table", drawing.hasTableAt(gap.first - drawing.left, gap.second - drawing.top))
-            assertTrue("the gap holds no real cell", drawing.presentedTableCells().none {
-                it.bounds.contains(gap.first - drawing.left, gap.second - drawing.top)
-            })
+            val wide = drawing.presentedTableCells().single {
+                it.sourceIndex == IRREGULAR_WIDE_CELL
+            }
+            val later = drawing.presentedTableCells().single {
+                it.sourceIndex ==
+                    IRREGULAR_LATER_CELL
+            }
+            val gap =
+                (later.bounds.right + wide.bounds.right) / 2f + drawing.left to
+                    later.bounds.centerY() + drawing.top
+            assertTrue(
+                "the gap lies inside the table",
+                drawing.hasTableAt(
+                    gap.first - drawing.left,
+                    gap.second - drawing.top
+                )
+            )
+            assertTrue(
+                "the gap holds no real cell",
+                drawing.presentedTableCells().none {
+                    it.bounds.contains(gap.first - drawing.left, gap.second - drawing.top)
+                }
+            )
             val before = fixture.adapter.documentJson()
 
             for (localState in listOf(state, Any())) {
-                assertTrue(sendDrag(fixture.root, DragEvent.ACTION_DRAG_STARTED, gap, clip, localState))
-                assertTrue("the table claims the hover", sendDrag(fixture.root, DragEvent.ACTION_DRAG_LOCATION, gap, clip, localState))
-                assertEquals("a synthetic slot is never highlighted", null, drawing.tableCellDropTarget)
+                assertTrue(
+                    sendDrag(fixture.root, DragEvent.ACTION_DRAG_STARTED, gap, clip, localState)
+                )
+                assertTrue(
+                    "the table claims the hover",
+                    sendDrag(fixture.root, DragEvent.ACTION_DRAG_LOCATION, gap, clip, localState)
+                )
+                assertEquals(
+                    "a synthetic slot is never highlighted",
+                    null,
+                    drawing.tableCellDropTarget
+                )
                 assertFalse(sendDrag(fixture.root, DragEvent.ACTION_DROP, gap, clip, localState))
             }
 
@@ -1000,9 +1357,21 @@ internal class EditorTableClipboardTest {
             val state = startCellDrag(fixture, FIRST_CELL)
             assertTrue(state.movable)
             val clip = liftedClip()
-            val edit = requireNotNull(fixture.adapter.scalarPositionForDoc(fixture.openings()[LAST_CELL] + CELL_TEXT_OFFSET))
-            assertTrue(fixture.root.applyUpdateJSON(requireNotNull(fixture.adapter.replaceTextRange(edit, edit, STALE_EDIT))))
-            assertEquals(listOf(listOf("A", "B"), listOf("C", STALE_EDIT + "D")), fixture.cellTexts())
+            val edit =
+                requireNotNull(
+                    fixture.adapter.scalarPositionForDoc(
+                        fixture.openings()[LAST_CELL] + CELL_TEXT_OFFSET
+                    )
+                )
+            assertTrue(
+                fixture.root.applyUpdateJSON(
+                    requireNotNull(fixture.adapter.replaceTextRange(edit, edit, STALE_EDIT))
+                )
+            )
+            assertEquals(
+                listOf(listOf("A", "B"), listOf("C", STALE_EDIT + "D")),
+                fixture.cellTexts()
+            )
             fixture.relayout()
             fixture.backend.mutations.clear()
             val before = fixture.adapter.documentJson()
@@ -1013,7 +1382,11 @@ internal class EditorTableClipboardTest {
             assertFalse(sendDrag(fixture.root, DragEvent.ACTION_DROP, target, clip, state))
 
             assertEquals(emptyList<String>(), fixture.backend.mutations)
-            assertEquals("a stale move neither moves nor degrades to a copy", before, fixture.adapter.documentJson())
+            assertEquals(
+                "a stale move neither moves nor degrades to a copy",
+                before,
+                fixture.adapter.documentJson()
+            )
         }
 
     @Test
@@ -1025,13 +1398,26 @@ internal class EditorTableClipboardTest {
             fixture.root.beginExternalTextComposition(COMPOSITION_SESSION)
             assertTrue(fixture.root.hasPendingCompositionForExternalRefresh())
             selectCellsForMenu(fixture, FIRST_CELL, SECOND_CELL)
-            assertTrue("the composition outlives the cell selection", fixture.root.hasPendingCompositionForExternalRefresh())
+            assertTrue(
+                "the composition outlives the cell selection",
+                fixture.root.hasPendingCompositionForExternalRefresh()
+            )
             val drawing = drawing(fixture)
             val (x, y) = cellCenter(fixture, FIRST_CELL)
             ShadowWindowManagerGlobal.clearLastDragClipData()
 
-            assertEquals(null, fixture.view.editorTableSurface.startCellDrag(x - drawing.left, y - drawing.top))
-            assertEquals("no system drag starts", null, ShadowWindowManagerGlobal.getLastDragClipData())
+            assertEquals(
+                null,
+                fixture.view.editorTableSurface.startCellDrag(
+                    x - drawing.left,
+                    y - drawing.top
+                )
+            )
+            assertEquals(
+                "no system drag starts",
+                null,
+                ShadowWindowManagerGlobal.getLastDragClipData()
+            )
         }
 
     @Test
@@ -1045,12 +1431,33 @@ internal class EditorTableClipboardTest {
             val before = fixture.adapter.documentJson()
             val clip = ClipData.newPlainText(STALE_LABEL, EXTERNAL_TSV)
 
-            assertTrue(sendDrag(fixture.root, DragEvent.ACTION_DRAG_LOCATION, cellCenter(fixture, THIRD_CELL), clip, Any()))
+            assertTrue(
+                sendDrag(
+                    fixture.root,
+                    DragEvent.ACTION_DRAG_LOCATION,
+                    cellCenter(fixture, THIRD_CELL),
+                    clip,
+                    Any()
+                )
+            )
             assertEquals(null, drawing(fixture).tableCellDropTarget)
-            assertFalse(sendDrag(fixture.root, DragEvent.ACTION_DROP, cellCenter(fixture, THIRD_CELL), clip, Any()))
+            assertFalse(
+                sendDrag(
+                    fixture.root,
+                    DragEvent.ACTION_DROP,
+                    cellCenter(fixture, THIRD_CELL),
+                    clip,
+                    Any()
+                )
+            )
 
             assertEquals(before, fixture.adapter.documentJson())
-            assertEquals(emptyList<String>(), fixture.backend.mutations.filter { it.startsWith(APPLY_COMMAND) })
+            assertEquals(
+                emptyList<String>(),
+                fixture.backend.mutations.filter {
+                    it.startsWith(APPLY_COMMAND)
+                }
+            )
         }
 
     private fun proseOffset(fixture: Fixture, offset: Int): Pair<Float, Float> {
@@ -1058,25 +1465,49 @@ internal class EditorTableClipboardTest {
         val layout = requireNotNull(root.layout)
         val line = layout.getLineForOffset(offset)
         return layout.getPrimaryHorizontal(offset) + root.totalPaddingLeft + root.left to
-            layout.editorTextLineTop(line).toFloat() + root.totalPaddingTop + root.top + PROSE_LINE_INSET
+            layout.editorTextLineTop(line).toFloat() + root.totalPaddingTop + root.top +
+            PROSE_LINE_INSET
     }
 
     private fun proseStart(fixture: Fixture): Pair<Float, Float> =
         proseOffset(fixture, requireNotNull(fixture.root.text).toString().indexOf(AFTER_TEXT))
-
 
     private companion object {
         const val APPLY_COMMAND = "applyCommand"
         const val STALE_EDIT = "!"
         const val IRREGULAR_WIDE_CELL = 1
         const val IRREGULAR_LATER_CELL = 2
-        const val IRREGULAR_DOCUMENT = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"rowspan":2,"colwidth":[100]},"content":[{"type":"paragraph","content":[{"type":"text","text":"tall"}]}]},{"type":"table_cell","attrs":{"colspan":2,"colwidth":[100,100]},"content":[{"type":"paragraph","content":[{"type":"text","text":"wide"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[100]},"content":[{"type":"paragraph","content":[{"type":"text","text":"later"}]}]}]}]}]}"""
+        const val IRREGULAR_DOCUMENT = """{"type":"doc","content":[{"type":"table",""" +
+            """"content":[{"type":"table_row",""" +
+            """"content":[{"type":"table_cell","attrs":{"rowspan":2,""" +
+            """"colwidth":[100]},"content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"tall"}]}]},""" +
+            """{"type":"table_cell","attrs":{"colspan":2,""" +
+            """"colwidth":[100,100]},"content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"wide"}]}]}]},""" +
+            """{"type":"table_row","content":[{"type":"table_cell",""" +
+            """"attrs":{"colwidth":[100]},""" +
+            """"content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"later"}]}]}]}]}]}"""
         const val EXTERNAL_TSV = "e1\te2"
         const val MOVED_PREFIX = "af"
         const val COMPOSITION_SESSION = "cell-drag-composition"
         const val SHADOW_TOUCH_INSET = 4f
         const val PROSE_LINE_INSET = 1f
-        const val TARGET_GRID_DOCUMENT = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"w"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"x"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"y"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"z"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
+        const val TARGET_GRID_DOCUMENT = """{"type":"doc","content":[{"type":"table",""" +
+            """"content":[{"type":"table_row",""" +
+            """"content":[{"type":"table_cell",""" +
+            """"content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"w"}]}]},""" +
+            """{"type":"table_cell","content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"x"}]}]}]},""" +
+            """{"type":"table_row","content":[{"type":"table_cell",""" +
+            """"content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"y"}]}]},""" +
+            """{"type":"table_cell","content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"z"}]}]}]}]},""" +
+            """{"type":"paragraph","content":[{"type":"text",""" +
+            """"text":"after"}]}]}"""
         const val APPLY_INPUT = "applyInput"
         const val SET_SELECTION = "setSelection"
         const val PASTE_COMMAND = "paste"
@@ -1113,16 +1544,78 @@ internal class EditorTableClipboardTest {
         const val NESTED_CELL_TEXT = "Nested"
         const val ATOM_METADATA_KIND = "person"
         const val MERGED_RECTANGLE_TSV = "wide\t\nc0\tc1"
-        const val MERGED_RECTANGLE_HTML = "<table><tbody><tr><td colspan=\"2\" rowspan=\"1\"><p>wide</p></td></tr>" +
-            "<tr><td colspan=\"1\" rowspan=\"1\"><p>c0</p></td><td colspan=\"1\" rowspan=\"1\"><p>c1</p></td></tr></tbody></table>"
+        const val MERGED_RECTANGLE_HTML =
+            "<table><tbody><tr><td colspan=\"2\" rowspan=\"1\"><p>wide</p></td></tr>" +
+                "<tr><td colspan=\"1\" rowspan=\"1\"><p>c0</p></td><td colspan=\"1\" rowspan=\"1\"><p>c1</p></td></tr></tbody></table>"
 
-        const val TABLE_CONFIG = """{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock","htmlTag":"p"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table","htmlTag":"table"},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row","htmlTag":"tr"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","htmlTag":"td","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","htmlTag":"th","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"""
+        const val TABLE_CONFIG = """{"schema":{"nodes":[{"name":"doc","content":"block+",""" +
+            """"role":"doc"},{"name":"paragraph","content":"inline*",""" +
+            """"group":"block","role":"textBlock","htmlTag":"p"},""" +
+            """{"name":"text","content":"","group":"inline",""" +
+            """"role":"text"},{"name":"table","content":"table_row+",""" +
+            """"group":"block","role":"block","tableRole":"table",""" +
+            """"htmlTag":"table"},{"name":"table_row",""" +
+            """"content":"(table_cell | table_header)*",""" +
+            """"role":"block","tableRole":"row","htmlTag":"tr"},""" +
+            """{"name":"table_cell","content":"block+","role":"block",""" +
+            """"tableRole":"cell","htmlTag":"td",""" +
+            """"attrs":{"colspan":{"type":"number","default":1,""" +
+            """"min":1},"rowspan":{"type":"number","default":1,""" +
+            """"min":1},"colwidth":{"default":null}}},""" +
+            """{"name":"table_header","content":"block+",""" +
+            """"role":"block","tableRole":"header_cell",""" +
+            """"htmlTag":"th","attrs":{"colspan":{"type":"number",""" +
+            """"default":1,"min":1},"rowspan":{"type":"number",""" +
+            """"default":1,"min":1},"colwidth":{"default":null}}}],""" +
+            """"marks":[]},"initialization":{"type":"localEmpty"}}"""
         val ATOM_TABLE_CONFIG = TABLE_CONFIG.replace(
             """{"name":"text","content":"","group":"inline","role":"text"}""",
-            """{"name":"text","content":"","group":"inline","role":"text"},{"name":"mention","role":"inline","group":"inline","isVoid":true,"attrs":{"id":{},"label":{"default":""}},"allowUndeclaredAttrs":true}"""
+            """{"name":"text","content":"","group":"inline",""" +
+                """"role":"text"},{"name":"mention","role":"inline",""" +
+                """"group":"inline","isVoid":true,"attrs":{"id":{},""" +
+                """"label":{"default":""}},"allowUndeclaredAttrs":true}"""
         )
-        const val GRID_DOCUMENT = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"A"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"B"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"C"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"D"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
-        const val MERGED_DOCUMENT = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"colspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"wide"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"right"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"c0"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"c1"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"c2"}]}]}]}]}]}"""
-        const val ATOM_DOCUMENT = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"a"},{"type":"mention","attrs":{"id":"m1","label":"Sam","metadata":{"kind":"person"}}}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"b"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"c"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"d"}]}]}]}]}]}"""
+        const val GRID_DOCUMENT = """{"type":"doc","content":[{"type":"table",""" +
+            """"content":[{"type":"table_row",""" +
+            """"content":[{"type":"table_cell",""" +
+            """"content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"A"}]}]},""" +
+            """{"type":"table_cell","content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"B"}]}]}]},""" +
+            """{"type":"table_row","content":[{"type":"table_cell",""" +
+            """"content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"C"}]}]},""" +
+            """{"type":"table_cell","content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"D"}]}]}]}]},""" +
+            """{"type":"paragraph","content":[{"type":"text",""" +
+            """"text":"after"}]}]}"""
+        const val MERGED_DOCUMENT = """{"type":"doc","content":[{"type":"table",""" +
+            """"content":[{"type":"table_row",""" +
+            """"content":[{"type":"table_cell","attrs":{"colspan":2},""" +
+            """"content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"wide"}]}]},""" +
+            """{"type":"table_cell","content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"right"}]}]}]},""" +
+            """{"type":"table_row","content":[{"type":"table_cell",""" +
+            """"content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"c0"}]}]},""" +
+            """{"type":"table_cell","content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"c1"}]}]},""" +
+            """{"type":"table_cell","content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"c2"}]}]}]}]}]}"""
+        const val ATOM_DOCUMENT = """{"type":"doc","content":[{"type":"table",""" +
+            """"content":[{"type":"table_row",""" +
+            """"content":[{"type":"table_cell",""" +
+            """"content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"a"},""" +
+            """{"type":"mention","attrs":{"id":"m1","label":"Sam",""" +
+            """"metadata":{"kind":"person"}}}]}]},""" +
+            """{"type":"table_cell","content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"b"}]}]}]},""" +
+            """{"type":"table_row","content":[{"type":"table_cell",""" +
+            """"content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"c"}]}]},""" +
+            """{"type":"table_cell","content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"d"}]}]}]}]}]}"""
     }
 }

@@ -25,13 +25,15 @@ private fun EditorEditText.rootTableRenderForUpdate(
     blocks: org.json.JSONArray?
 ): RootTableRender? {
     val tableIds = buildSet {
-        if (blocks != null) for (blockIndex in 0 until blocks.length()) {
-            val block = blocks.optJSONArray(blockIndex) ?: continue
-            for (elementIndex in 0 until block.length()) {
-                val element = block.optJSONObject(elementIndex) ?: continue
-                if (element.optString("type") == "table") {
-                    val id = element.opt("tableId") as? String ?: return null
-                    add(id)
+        if (blocks != null) {
+            for (blockIndex in 0 until blocks.length()) {
+                val block = blocks.optJSONArray(blockIndex) ?: continue
+                for (elementIndex in 0 until block.length()) {
+                    val element = block.optJSONObject(elementIndex) ?: continue
+                    if (element.optString("type") == "table") {
+                        val id = element.opt("tableId") as? String ?: return null
+                        add(id)
+                    }
                 }
             }
         }
@@ -39,26 +41,47 @@ private fun EditorEditText.rootTableRenderForUpdate(
     if (tableIds.isEmpty()) {
         val elements = update.optJSONArray("renderElements")
         if (elements != null && (0 until elements.length()).any {
-            elements.optJSONObject(it)?.optString("type") == "table"
-        }) return null
+                elements.optJSONObject(it)?.optString("type") == "table"
+            }
+        ) {
+            return null
+        }
     }
     val adapter = v2Driver as? EditorV2Adapter
     val paired = if (adapter != null &&
-        (updateJSON == adapter.cachedViewUpdateJson || updateJSON == adapter.cachedAtomicRenderJson) &&
-        canonicalV2U64(update.opt("documentVersion") as? String)?.toULong() == adapter.cachedAtomicRenderDocumentRevision
-    ) adapter else null
+        (
+            updateJSON == adapter.cachedViewUpdateJson ||
+                updateJSON == adapter.cachedAtomicRenderJson
+            ) &&
+        canonicalV2U64(update.opt("documentVersion") as? String)?.toULong() ==
+        adapter.cachedAtomicRenderDocumentRevision
+    ) {
+        adapter
+    } else {
+        null
+    }
     if (tableIds.isEmpty()) {
-        return if ((rootTablePositionMap == null && !rootTableRenderNeedsRefresh) || paired != null) {
+        return if ((rootTablePositionMap == null && !rootTableRenderNeedsRefresh) ||
+            paired != null
+        ) {
             RootTableRender(emptyMap(), 0, emptySet())
-        } else null
+        } else {
+            null
+        }
     }
     if (adapter != null && paired == null) return null
     val index = paired?.tableIndex ?: return null
     val scalarLength = paired.cachedScalarLength ?: return null
     if (!index.tableKeys.containsAll(tableIds)) return null
-    return RootTableRender(index.rootExtents.filterValues { it.scalarEnd > it.scalarStart }.mapValues { (_, extent) ->
-        TableScalarExtent(extent.scalarStart.toInt(), extent.scalarEnd.toInt())
-    }, scalarLength, tableIds)
+    return RootTableRender(
+        index.rootExtents.filterValues {
+            it.scalarEnd > it.scalarStart
+        }.mapValues { (_, extent) ->
+            TableScalarExtent(extent.scalarStart.toInt(), extent.scalarEnd.toInt())
+        },
+        scalarLength,
+        tableIds
+    )
 }
 
 internal fun EditorEditText.applyUpdateJSONImpl(
@@ -68,7 +91,9 @@ internal fun EditorEditText.applyUpdateJSONImpl(
 ): Boolean {
     if (isTableCellInput) {
         return tableCellUpdateConsumer?.invoke(
-            updateJSON, notifyListener, refreshInputConnectionForExternalUpdate
+            updateJSON,
+            notifyListener,
+            refreshInputConnectionForExternalUpdate
         ) == true
     }
     throwOnNextApplyUpdateForTesting?.let { error ->
@@ -113,7 +138,10 @@ internal fun EditorEditText.applyUpdateJSONImpl(
                 currentRenderBlocksJson?.let { mergeRenderBlocks(it, patch) }
             }
     val rootRender = rootTableRenderForUpdate(updateJSON, update, resolvedRenderBlocks)
-        ?: run { recordImeTraceForTesting("rootTableRenderRejected", "admission"); return false }
+        ?: run {
+            recordImeTraceForTesting("rootTableRenderRejected", "admission")
+            return false
+        }
     val hasRootTable = rootRender.tableIds.isNotEmpty()
     val shouldSkipRender = !refreshInputConnectionForExternalUpdate &&
         rootTableMapTableIds == rootRender.tableIds &&
@@ -139,12 +167,22 @@ internal fun EditorEditText.applyUpdateJSONImpl(
             rootTableIds = rootRender.extents.keys,
             synthesizeTrailingHardBreakPlaceholders = false
         )
-    } else null
+    } else {
+        null
+    }
     val nextRootMap = if (hasRootTable) {
         RootTablePositionMap.fromRendered(
-            prebuiltRootRender ?: text ?: return false, rootRender.extents, rootRender.scalarLength
-        ) ?: run { recordImeTraceForTesting("rootTableRenderRejected", "coordinates"); return false }
-    } else null
+            prebuiltRootRender ?: text ?: return false,
+            rootRender.extents,
+            rootRender.scalarLength
+        )
+            ?: run {
+                recordImeTraceForTesting("rootTableRenderRejected", "coordinates")
+                return false
+            }
+    } else {
+        null
+    }
     if (tableSensitiveUpdate) advanceDeferred()
     val resolveRenderBlocksNanos = System.nanoTime() - resolveRenderBlocksStartedAt
     if (

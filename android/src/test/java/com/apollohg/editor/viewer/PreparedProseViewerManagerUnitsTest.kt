@@ -26,16 +26,27 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 class PreparedProseViewerManagerUnitsTest {
     @Test
-    fun `geometry revisions retain their policy through stale state and invalidate on font changes`() {
+    fun `geometry revisions retain stale policy and invalidate on font change`() {
         val state = PreparedProseViewerManager.ViewState(createStateMap = { JavaOnlyMap() })
         val publications = mutableListOf<com.facebook.react.bridge.WritableMap>()
-        val wrapper = Proxy.newProxyInstance(StateWrapper::class.java.classLoader,
-            arrayOf(StateWrapper::class.java)) { _, method, arguments ->
-            if (method.name == "updateState") publications += arguments!!.single() as com.facebook.react.bridge.WritableMap
+        val wrapper = Proxy.newProxyInstance(
+            StateWrapper::class.java.classLoader,
+            arrayOf(StateWrapper::class.java)
+        ) { _, method, arguments ->
+            if (method.name ==
+                "updateState"
+            ) {
+                publications +=
+                    arguments!!.single() as com.facebook.react.bridge.WritableMap
+            }
             null
         } as StateWrapper
-        val initial = PreparedProseViewerManager.FabricStateRevisions(0, 0, 4,
-            tableGeometryPolicy = TableGeometryPolicy.INITIAL)
+        val initial = PreparedProseViewerManager.FabricStateRevisions(
+            0,
+            0,
+            4,
+            tableGeometryPolicy = TableGeometryPolicy.INITIAL
+        )
         state.replaceStateWrapper(wrapper, initial)
         val revision = nextTableGeometryRevision()
         state.publishTableGeometryRevision(revision, TableGeometryPolicy.STAGED)
@@ -45,11 +56,23 @@ class PreparedProseViewerManagerUnitsTest {
         state.publishFontRevision(1)
         assertEquals(revision, state.requestOrNull()!!.tableGeometryRevision)
         assertEquals(TableGeometryPolicy.EAGER, state.requestOrNull()!!.tableGeometryPolicy)
-        state.replaceStateWrapper(wrapper, initial.copy(tableGeometryRevision = revision,
-            tableGeometryPolicy = TableGeometryPolicy.STAGED))
-        assertEquals("A stale same-revision policy cannot restore obsolete staged geometry",
-            TableGeometryPolicy.EAGER, state.requestOrNull()!!.tableGeometryPolicy)
-        assertEquals(TableGeometryPolicy.EAGER.stateValue.toDouble(), publications.last().getDouble("tableGeometryPolicy"), 0.0)
+        state.replaceStateWrapper(
+            wrapper,
+            initial.copy(
+                tableGeometryRevision = revision,
+                tableGeometryPolicy = TableGeometryPolicy.STAGED
+            )
+        )
+        assertEquals(
+            "A stale same-revision policy cannot restore obsolete staged geometry",
+            TableGeometryPolicy.EAGER,
+            state.requestOrNull()!!.tableGeometryPolicy
+        )
+        assertEquals(
+            TableGeometryPolicy.EAGER.stateValue.toDouble(),
+            publications.last().getDouble("tableGeometryPolicy"),
+            0.0
+        )
     }
 
     @Test
@@ -232,7 +255,9 @@ class PreparedProseViewerManagerUnitsTest {
         val view = PreparedProseDrawingView(RuntimeEnvironment.getApplication())
         val state = PreparedProseViewerManager.ViewState().apply {
             source = "compiler-backed-table-owner"
-            themeJson = """{"viewerAtoms":{"generation":"g1","revision":"r1","nodeTypes":["card"],"estimatedHeights":{"card":40}}}"""
+            themeJson =
+                """{"viewerAtoms":{"generation":"g1","revision":"r1",""" +
+                """"nodeTypes":["card"],"estimatedHeights":{"card":40}}}"""
             revisions = PreparedProseViewerManager.FabricStateRevisions(0, 0, 88)
         }
         val surface = FabricSurfaceToken(72, 20)
@@ -336,7 +361,11 @@ class PreparedProseViewerManagerUnitsTest {
         state: PreparedProseViewerManager.ViewState
     ) {
         val states = PreparedProseViewerManager::class.java.getDeclaredField("states")
-            .apply { isAccessible = true }.get(manager) as MutableMap<PreparedProseDrawingView, PreparedProseViewerManager.ViewState>
+            .apply {
+                isAccessible = true
+            }.get(
+                manager
+            ) as MutableMap<PreparedProseDrawingView, PreparedProseViewerManager.ViewState>
         states[view] = state
     }
 

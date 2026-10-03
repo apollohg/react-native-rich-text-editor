@@ -31,6 +31,8 @@ import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -43,6 +45,36 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 internal class PreparedProseLayoutTest : PreparedProseLayoutTestFixture() {
+    @Test
+    fun `plain layout reuse ignores table measurement viewport changes`() {
+        val engine = CountingLayoutEngine()
+        val registry = testRegistry(engine)
+        val request = request("plain content")
+        val initial = registry.measure(request, 320, 1f, tableMeasurementViewportHeightPx = 0)
+        val resized = registry.measure(request, 320, 1f, tableMeasurementViewportHeightPx = 120)
+        val nextRequest = request.copy(tableMeasurementViewportHeightPx = 240)
+        val requestViewport = registry.measure(nextRequest, 320, 1f)
+        val nextResized = registry.measure(
+            nextRequest,
+            320,
+            1f,
+            tableMeasurementViewportHeightPx = 120
+        )
+        assertSame("plain geometry is independent of the table viewport", initial, resized)
+        assertNotSame("a new request retains its own generation", initial, requestViewport)
+        assertEquals(0, requestViewport.key.tableMeasurementViewportHeightPx)
+        assertSame(
+            "request viewport must also be excluded for plain content",
+            nextResized,
+            requestViewport
+        )
+        assertEquals(
+            "viewport changes must not prepare plain content again",
+            2,
+            engine.preparationCount
+        )
+    }
+
     @Test
     fun `mention activation preserves attributes and rejects a non-object root`() {
         val viewer = ProseViewerView(context, testRegistry(CountingLayoutEngine()))

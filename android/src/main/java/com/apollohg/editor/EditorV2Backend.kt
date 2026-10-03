@@ -104,7 +104,11 @@ internal interface EditorV2Backend {
         mirrorAnchor: Int?,
         mirrorHead: Int?
     ): EditorV2CallResult<FfiNativeRenderFrame>
-    fun seedNativeRenderCursor(editorId: String, ownerId: String, documentRevision: String): EditorV2Error?
+    fun seedNativeRenderCursor(
+        editorId: String,
+        ownerId: String,
+        documentRevision: String
+    ): EditorV2Error?
     fun pinPositionEpoch(
         editorId: String,
         ownerId: String,

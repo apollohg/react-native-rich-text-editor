@@ -225,11 +225,17 @@ internal fun EditorEditText.toggleTaskItemCheckedAtSelectionScalarInRust(
     v2Driver?.let { driver ->
         val selection =
             currentLogicalScalarSelection() ?: rawScalarSelection(text?.toString().orEmpty())
-        driver.toggleTaskItemCheckedAtSelection(globalSelection.first, globalSelection.second)?.let { update ->
+        driver.toggleTaskItemCheckedAtSelection(
+            globalSelection.first,
+            globalSelection.second
+        )?.let { update ->
             applyRustUpdateJSON(update)
             if (selection != null) {
                 inputScalarSelection(selection.first, selection.second)?.let { mapped ->
-                    driver.syncSelectionQuiet(mapped.first, mapped.second)?.let(::applyRustUpdateJSON)
+                    driver.syncSelectionQuiet(
+                        mapped.first,
+                        mapped.second
+                    )?.let(::applyRustUpdateJSON)
                 }
                 val currentText = text?.toString().orEmpty()
                 setSelection(

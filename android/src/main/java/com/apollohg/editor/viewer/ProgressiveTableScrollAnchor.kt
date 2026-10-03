@@ -7,15 +7,17 @@ import androidx.core.widget.NestedScrollView
 
 internal fun progressiveTableViewportHeight(view: View): Int {
     if (!view.isAttachedToWindow) return 0
-    var parent = view.parent
+    var parent = view.parent as? View
     var height = 0
-    while (parent is View) {
+    while (parent != null) {
         if (parent is ScrollView || parent is NestedScrollView) {
             if (height == 0) height = parent.height.takeIf { it > 0 } ?: parent.measuredHeight
-        } else if (parent.scrollY != 0 || parent.canScrollVertically(-1) || parent.canScrollVertically(1)) {
+        } else if (parent.scrollY != 0 || parent.canScrollVertically(-1) ||
+            parent.canScrollVertically(1)
+        ) {
             return 0
         }
-        parent = parent.parent
+        parent = parent.parent as? View
     }
     return height.takeIf { it > 0 } ?: view.rootView.height.takeIf { it > 0 }
         ?: view.resources.displayMetrics.heightPixels.coerceAtLeast(0)
@@ -36,14 +38,22 @@ internal class ProgressiveTableScrollAnchor private constructor(
 
     companion object {
         fun capture(view: View, layout: PreparedProseLayout): ProgressiveTableScrollAnchor? {
-            var parent = view.parent
-            while (parent is View && parent !is ScrollView && parent !is NestedScrollView) parent = parent.parent
-            val scroll = parent as? View ?: return null
+            var parent = view.parent as? View
+            while (parent != null && parent !is ScrollView &&
+                parent !is NestedScrollView
+            ) {
+                parent = parent.parent as? View
+            }
+            val scroll = parent ?: return null
             val visible = Rect()
             if (!view.getLocalVisibleRect(visible)) return null
             val location = IntArray(2).also(view::getLocationOnScreen)
-            return ProgressiveTableScrollAnchor(view, scroll, ProgressiveTableAnchor.capture(layout, visible.top),
-                location[1] + visible.top)
+            return ProgressiveTableScrollAnchor(
+                view,
+                scroll,
+                ProgressiveTableAnchor.capture(layout, visible.top),
+                location[1] + visible.top
+            )
         }
     }
 }

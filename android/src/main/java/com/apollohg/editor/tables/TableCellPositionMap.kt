@@ -2,10 +2,7 @@ package com.apollohg.editor.tables
 
 import com.apollohg.editor.PositionBridge
 
-internal class TableCellPositionMap(
-    val binding: Binding,
-    segments: List<Segment>
-) {
+internal class TableCellPositionMap(val binding: Binding, segments: List<Segment>) {
     data class Binding(
         val tableKey: String,
         val cellIndex: Int,
@@ -31,7 +28,11 @@ internal class TableCellPositionMap(
         if (!matchesCurrent(currentRevision, currentEpoch)) return null
         var resolved: Int? = null
         for (segment in segments) {
-            if (localScalar < segment.localScalarStart || localScalar >= segment.localScalarEndExclusive) continue
+            if (localScalar < segment.localScalarStart ||
+                localScalar >= segment.localScalarEndExclusive
+            ) {
+                continue
+            }
             val candidate = add(
                 segment.globalScalarStart.toLong(),
                 localScalar.toLong() - segment.localScalarStart.toLong()
@@ -64,7 +65,11 @@ internal class TableCellPositionMap(
         if (fromLocalScalar > toLocalScalar) return null
         val globalStart = globalScalarForLocalScalar(fromLocalScalar) ?: return null
         val globalEnd = globalScalarForLocalScalar(toLocalScalar) ?: return null
-        if (globalEnd.toLong() - globalStart.toLong() != toLocalScalar.toLong() - fromLocalScalar.toLong()) return null
+        if (globalEnd.toLong() - globalStart.toLong() !=
+            toLocalScalar.toLong() - fromLocalScalar.toLong()
+        ) {
+            return null
+        }
 
         val rangeEndExclusive = toLocalScalar.toLong() + 1L
         var covered = fromLocalScalar.toLong()
@@ -73,7 +78,8 @@ internal class TableCellPositionMap(
             val upper = minOf(segment.localScalarEndExclusive.toLong(), rangeEndExclusive)
             if (lower >= upper) continue
             if (lower > covered) return null
-            val actual = segment.globalScalarStart.toLong() + lower - segment.localScalarStart.toLong()
+            val actual =
+                segment.globalScalarStart.toLong() + lower - segment.localScalarStart.toLong()
             val expected = globalStart.toLong() + lower - fromLocalScalar.toLong()
             if (actual != expected) return null
             covered = maxOf(covered, upper)

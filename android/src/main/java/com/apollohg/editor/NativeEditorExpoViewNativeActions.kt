@@ -61,7 +61,11 @@ internal fun NativeEditorExpoView.isPendingNativeActionScopeCurrent(
     }
     val input = richTextView.activeTextInput
     val binding = input.tableCellPositionMap?.binding
-    if (scope.cellTableKey != binding?.tableKey || scope.cellIndex != binding?.cellIndex) return false
+    if (scope.cellTableKey != binding?.tableKey ||
+        scope.cellIndex != binding?.cellIndex
+    ) {
+        return false
+    }
     val selection = input.currentScalarSelection()
     if (scope.selectionAnchor != selection?.first || scope.selectionHead != selection?.second) {
         return false

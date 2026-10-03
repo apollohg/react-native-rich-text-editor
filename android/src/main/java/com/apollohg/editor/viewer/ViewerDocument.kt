@@ -1,20 +1,20 @@
 package com.apollohg.editor.viewer
 
-import uniffi.editor_core.FfiTableRecord
-import com.apollohg.editor.tables.TableSurfaceCell
-import com.apollohg.editor.tables.TableSurfaceSource
-import com.apollohg.editor.tables.EditorTableIndex
 import com.apollohg.editor.ProseViewerConfiguration
 import com.apollohg.editor.ProseViewerError
 import com.apollohg.editor.ProseViewerSource
+import com.apollohg.editor.tables.EditorTableIndex
+import com.apollohg.editor.tables.TableSurfaceCell
+import com.apollohg.editor.tables.TableSurfaceSource
 import java.security.MessageDigest
 import org.json.JSONArray
 import org.json.JSONObject
+import uniffi.editor_core.FfiTableRecord
 import uniffi.editor_core.FfiViewerCompileRequest
 import uniffi.editor_core.FfiViewerElement
-import uniffi.editor_core.FfiViewerTable
 import uniffi.editor_core.FfiViewerMark
 import uniffi.editor_core.FfiViewerSourceKind
+import uniffi.editor_core.FfiViewerTable
 import uniffi.editor_core.viewerCompile
 
 internal data class ViewerListContext(
@@ -84,9 +84,8 @@ internal data class ViewerBlock(
     val frameRecord: FfiTableRecord? = null
 ) {
     val tableKey: String? get() = frameRecord?.tableKey ?: table?.let { "t${it.tablePos}" }
-    fun tableSource(): TableSurfaceSource? =
-        frameRecord?.let(TableSurfaceSource::from)
-            ?: table?.let(TableSurfaceSource::from)
+    fun tableSource(): TableSurfaceSource? = frameRecord?.let(TableSurfaceSource::from)
+        ?: table?.let(TableSurfaceSource::from)
 }
 
 /** Semantic positions live only in [ViewerInline.Atom], never in Android drawing spans. */
@@ -165,8 +164,17 @@ internal data class ProseViewerRequest(
 
 internal typealias DocumentCompiler = (ProseViewerRequest) -> ViewerDocument
 
-private fun validViewerTables(elements: List<FfiViewerElement>, tableRecords: Map<String, FfiViewerTable>, pool: Map<String, JSONObject>): Boolean {
-    data class Pending(val element: FfiViewerElement, val depth: Int, val start: Long, val end: Long)
+private fun validViewerTables(
+    elements: List<FfiViewerElement>,
+    tableRecords: Map<String, FfiViewerTable>,
+    pool: Map<String, JSONObject>
+): Boolean {
+    data class Pending(
+        val element: FfiViewerElement,
+        val depth: Int,
+        val start: Long,
+        val end: Long
+    )
     val pending = java.util.ArrayDeque<Pending>()
     elements.forEach { pending.add(Pending(it, 0, 0, 0xffff_ffffL)) }
     var records = 0L
@@ -182,41 +190,94 @@ private fun validViewerTables(elements: List<FfiViewerElement>, tableRecords: Ma
         val columns = table.columns.toLong()
         if (rows > 4_000_000 || columns > 4_000_000) return false
         slots += rows * columns
-        if (slots > 4_000_000 || table.tablePos.toLong() < entry.start || table.sourceEnd.toLong() > entry.end ||
+        if (slots > 4_000_000 || table.tablePos.toLong() < entry.start ||
+            table.sourceEnd.toLong() > entry.end ||
             table.sourceEnd <= table.tablePos || table.columnWidths.size.toLong() != columns ||
             table.columnWidths.any { it == 0u } || table.direction !in listOf(null, "ltr", "rtl") ||
-            table.readOnlyDescendants != (entry.depth > 0) || !pool.containsKey(table.attrsKey)) return false
+            table.readOnlyDescendants != (entry.depth > 0) ||
+            !pool.containsKey(table.attrsKey)
+        ) {
+            return false
+        }
         if (table.failure != null) {
-            if (rows != 0L || columns != 0L || table.cells.isNotEmpty() || table.sourceRows.isNotEmpty() ||
-                table.syntheticRegions.isNotEmpty() || table.compatibilityDiagnostic != null) return false
+            if (rows != 0L || columns != 0L || table.cells.isNotEmpty() ||
+                table.sourceRows.isNotEmpty() ||
+                table.syntheticRegions.isNotEmpty() ||
+                table.compatibilityDiagnostic != null
+            ) {
+                return false
+            }
             continue
         }
         records += table.cells.size + table.sourceRows.size + table.syntheticRegions.size
         if (records > 7_000_000) return false
         var previous = table.tablePos.toLong() + 1
         for (row in table.sourceRows) {
-            if (row.sourcePos.toLong() < previous || row.sourceEnd <= row.sourcePos || row.sourceEnd >= table.sourceEnd || !pool.containsKey(row.attrsKey)) return false
+            if (row.sourcePos.toLong() < previous || row.sourceEnd <= row.sourcePos ||
+                row.sourceEnd >= table.sourceEnd ||
+                !pool.containsKey(row.attrsKey)
+            ) {
+                return false
+            }
             previous = row.sourceEnd.toLong()
         }
         val occupied = mutableSetOf<Long>()
         fun region(row: UInt, column: UInt, rowspan: UInt, colspan: UInt, key: String): Boolean {
-            if (rowspan == 0u || colspan == 0u || row.toLong() + rowspan.toLong() > rows || column.toLong() + colspan.toLong() > columns || !pool.containsKey(key)) return false
-            for (r in row.toLong() until row.toLong() + rowspan.toLong()) for (c in column.toLong() until column.toLong() + colspan.toLong()) {
-                if (!occupied.add(r * columns + c)) return false
+            if (rowspan == 0u || colspan == 0u || row.toLong() + rowspan.toLong() > rows ||
+                column.toLong() + colspan.toLong() > columns ||
+                !pool.containsKey(key)
+            ) {
+                return false
+            }
+            for (r in row.toLong() until row.toLong() + rowspan.toLong()) {
+                for (c in column.toLong() until
+                    column.toLong() + colspan.toLong()) {
+                    if (!occupied.add(r * columns + c)) return false
+                }
             }
             return true
         }
         previous = table.tablePos.toLong() + 1
         var rowIndex = 0
         for (cell in table.cells) {
-            if (!region(cell.row, cell.column, cell.rowspan, cell.colspan, cell.attrsKey) || cell.sourcePos.toLong() < previous || cell.sourceEnd <= cell.sourcePos || cell.contentKey.isEmpty()) return false
-            while (rowIndex < table.sourceRows.size && table.sourceRows[rowIndex].sourceEnd <= cell.sourcePos) rowIndex++
+            if (!region(cell.row, cell.column, cell.rowspan, cell.colspan, cell.attrsKey) ||
+                cell.sourcePos.toLong() < previous ||
+                cell.sourceEnd <= cell.sourcePos ||
+                cell.contentKey.isEmpty()
+            ) {
+                return false
+            }
+            while (rowIndex < table.sourceRows.size &&
+                table.sourceRows[rowIndex].sourceEnd <= cell.sourcePos
+            ) {
+                rowIndex++
+            }
             val row = table.sourceRows.getOrNull(rowIndex) ?: return false
             if (row.sourcePos >= cell.sourcePos || row.sourceEnd <= cell.sourceEnd) return false
             previous = cell.sourceEnd.toLong()
-            cell.elements.forEach { pending.add(Pending(it, entry.depth + 1, cell.sourcePos.toLong() + 1, cell.sourceEnd.toLong() - 1)) }
+            cell.elements.forEach {
+                pending.add(
+                    Pending(
+                        it,
+                        entry.depth + 1,
+                        cell.sourcePos.toLong() + 1,
+                        cell.sourceEnd.toLong() - 1
+                    )
+                )
+            }
         }
-        for (gap in table.syntheticRegions) if (!region(gap.row, gap.column, gap.rowspan, gap.colspan, gap.attrsKey)) return false
+        for (gap in table.syntheticRegions) {
+            if (!region(
+                    gap.row,
+                    gap.column,
+                    gap.rowspan,
+                    gap.colspan,
+                    gap.attrsKey
+                )
+            ) {
+                return false
+            }
+        }
     }
     return referenced == tableRecords.keys
 }
@@ -224,7 +285,13 @@ private fun validViewerTables(elements: List<FfiViewerElement>, tableRecords: Ma
 internal fun compileWithRust(request: ProseViewerRequest): ViewerDocument {
     val result = viewerCompile(
         FfiViewerCompileRequest(
-            sourceKind = if (request.source is ProseViewerSource.Html) FfiViewerSourceKind.HTML else FfiViewerSourceKind.JSON,
+            sourceKind =
+                if (request.source is ProseViewerSource.Html) {
+                    FfiViewerSourceKind.HTML
+                } else {
+                    FfiViewerSourceKind.JSON
+                },
+
             source = request.source.value,
             configJson = request.configuration.configJson,
             imagesEnabled = request.configuration.imagesEnabled,
@@ -233,21 +300,41 @@ internal fun compileWithRust(request: ProseViewerRequest): ViewerDocument {
     )
     try {
         result.error?.let { throw ProseViewerError.compiler(it.domain, it.code, it.message) }
-        val compiled = result.value ?: throw ProseViewerError.compiler("viewer", "MISSING_COMPILED_DOCUMENT", "The compiler returned neither a document nor an error.")
+        val compiled =
+            result.value
+                ?: throw ProseViewerError.compiler(
+                    "viewer",
+                    "MISSING_COMPILED_DOCUMENT",
+                    "The compiler returned neither a document nor an error."
+                )
         val semanticKey = compiled.semanticKey()
         if (!semanticKey.matches(Regex("[0-9a-f]{64}"))) {
-            throw ProseViewerError.compiler("viewer", "INVALID_SEMANTIC_KEY", "The compiler returned an invalid semantic key.")
+            throw ProseViewerError.compiler(
+                "viewer",
+                "INVALID_SEMANTIC_KEY",
+                "The compiler returned an invalid semantic key."
+            )
         }
         val elements = compiled.elements()
         val tableRecords = mutableMapOf<String, FfiViewerTable>()
         for (record in compiled.tableRecords()) {
             if (tableRecords.put("t${record.tablePos}", record) != null) {
-                throw ProseViewerError.compiler("viewer", "INVALID_TABLE_RECORD", "The compiler returned duplicate semantic table records.")
+                throw ProseViewerError.compiler(
+                    "viewer",
+                    "INVALID_TABLE_RECORD",
+                    "The compiler returned duplicate semantic table records."
+                )
             }
         }
         val tableAttributes = parseTableAttributes(JSONObject(compiled.tableAttributes()))
-        if (tableAttributes == null || !validViewerTables(elements, tableRecords, tableAttributes)) {
-            throw ProseViewerError.compiler("viewer", "INVALID_TABLE_RECORD", "The compiler returned an invalid semantic record.")
+        if (tableAttributes == null ||
+            !validViewerTables(elements, tableRecords, tableAttributes)
+        ) {
+            throw ProseViewerError.compiler(
+                "viewer",
+                "INVALID_TABLE_RECORD",
+                "The compiler returned an invalid semantic record."
+            )
         }
         validateAdmittedAttachments(elements, tableRecords)
         val isEmpty = compiled.isEmpty()
@@ -275,7 +362,13 @@ private fun validateAdmittedAttachments(
     fun countAttachments(elements: List<FfiViewerElement>) {
         elements.forEach { element ->
             val atom = element as? FfiViewerElement.BlockAtom ?: return@forEach
-            if (ViewerImageAttachment.sourceAndDeclaredSize(atom.nodeType, u32(atom.docPos), atom.attrsJson) == null) {
+            if (ViewerImageAttachment.sourceAndDeclaredSize(
+                    atom.nodeType,
+                    u32(atom.docPos),
+                    atom.attrsJson
+                ) ==
+                null
+            ) {
                 return@forEach
             }
             count += 1
@@ -378,9 +471,26 @@ private fun lowerElements(
             is FfiViewerElement.Table -> {
                 val record = frameIndex?.record(element.tableId)
                 val table = tableRecords[element.tableId]
-                if (record == null && table == null) throw ProseViewerError.compiler("viewer", "INVALID_TABLE_RECORD", "The compiler returned a dangling semantic table reference.")
-                appendLeaf("table", stack.lastOrNull()?.depth ?: 0, emptyList(), stack, true, table, record)
+                if (record == null &&
+                    table == null
+                ) {
+                    throw ProseViewerError.compiler(
+                        "viewer",
+                        "INVALID_TABLE_RECORD",
+                        "The compiler returned a dangling semantic table reference."
+                    )
+                }
+                appendLeaf(
+                    "table",
+                    stack.lastOrNull()?.depth ?: 0,
+                    emptyList(),
+                    stack,
+                    true,
+                    table,
+                    record
+                )
             }
+
             is FfiViewerElement.BlockStart -> {
                 val context = listContext(element.listContextJson)
                 if (context?.isFirst == true) {
@@ -528,10 +638,12 @@ private fun lowerElements(
         )
     }
     return fallback
-
 }
 
-internal fun ViewerDocument.cellSupportsBackgroundPreparation(cell: TableSurfaceCell, tableId: String): Boolean {
+internal fun ViewerDocument.cellSupportsBackgroundPreparation(
+    cell: TableSurfaceCell,
+    tableId: String
+): Boolean {
     var depth = 0
     var plain = true
     for (element in cell.elements) {
@@ -540,15 +652,23 @@ internal fun ViewerDocument.cellSupportsBackgroundPreparation(cell: TableSurface
                 if (element.nodeType == "image") plain = false
                 depth++
             }
+
             FfiViewerElement.BlockEnd -> if (depth == 0) plain = false else depth--
+
             is FfiViewerElement.TextRun -> if (depth == 0) plain = false
-            is FfiViewerElement.InlineAtom, is FfiViewerElement.BlockAtom, is FfiViewerElement.Table -> plain = false
+
+            is FfiViewerElement.InlineAtom,
+            is FfiViewerElement.BlockAtom,
+            is FfiViewerElement.Table ->
+                plain =
+                    false
         }
         if (!plain) break
     }
     if (plain && depth == 0) return true
     return cellDocument(cell, tableId).blocks.all { block ->
-        !block.isBlockAtom && block.nodeType != "image" && block.tableKey == null && block.inlines.none { it is ViewerInline.Atom }
+        !block.isBlockAtom && block.nodeType != "image" && block.tableKey == null &&
+            block.inlines.none { it is ViewerInline.Atom }
     }
 }
 
@@ -573,32 +693,58 @@ internal class PlainTableCellDocument private constructor(
             originalText?.let { add(FfiViewerElement.TextRun(it, emptyList())) }
             add(FfiViewerElement.BlockEnd)
         }
-        return ViewerDocument(semanticKey,
+        return ViewerDocument(
+            semanticKey,
             lowerElements(elements, preferredTextBlockName, emptyMap(), false),
-            false, 0, preferredTextBlockName = preferredTextBlockName)
+            false,
+            0,
+            preferredTextBlockName = preferredTextBlockName
+        )
     }
 
     companion object {
         private const val EMPTY_PARAGRAPH_ELEMENTS = 2
         private const val TEXT_PARAGRAPH_ELEMENTS = 3
 
-        fun capture(parent: ViewerDocument, cell: TableSurfaceCell, tableId: String): PlainTableCellDocument? {
+        fun capture(
+            parent: ViewerDocument,
+            cell: TableSurfaceCell,
+            tableId: String
+        ): PlainTableCellDocument? {
             val elements = cell.elements
-            if (elements.size != EMPTY_PARAGRAPH_ELEMENTS && elements.size != TEXT_PARAGRAPH_ELEMENTS) return null
+            if (elements.size != EMPTY_PARAGRAPH_ELEMENTS &&
+                elements.size != TEXT_PARAGRAPH_ELEMENTS
+            ) {
+                return null
+            }
             val start = elements.first() as? FfiViewerElement.BlockStart ?: return null
-            if (start.nodeType != "paragraph" || start.listContextJson != null || elements.last() != FfiViewerElement.BlockEnd) return null
+            if (start.nodeType != "paragraph" || start.listContextJson != null ||
+                elements.last() != FfiViewerElement.BlockEnd
+            ) {
+                return null
+            }
             val text = if (elements.size == TEXT_PARAGRAPH_ELEMENTS) {
                 val run = elements[1] as? FfiViewerElement.TextRun ?: return null
                 if (run.marks.isNotEmpty()) return null
                 run.text
-            } else null
-            return PlainTableCellDocument(cellSemanticKey(parent.semanticKey, tableId, cell),
-                text, start.depth, start.language, parent.preferredTextBlockName)
+            } else {
+                null
+            }
+            return PlainTableCellDocument(
+                cellSemanticKey(parent.semanticKey, tableId, cell),
+                text,
+                start.depth,
+                start.language,
+                parent.preferredTextBlockName
+            )
         }
     }
 }
 
-internal fun cellSemanticSourceIndex(semanticKey: String, validateContentHash: Boolean = true): Int {
+internal fun cellSemanticSourceIndex(
+    semanticKey: String,
+    validateContentHash: Boolean = true
+): Int {
     val hashSeparator = semanticKey.length - CELL_CONTENT_HASH_LENGTH - 1
     if (hashSeparator <= 0 || semanticKey[hashSeparator] != ':') return INVALID_CELL_SOURCE_INDEX
     if (validateContentHash) {
@@ -609,7 +755,11 @@ internal fun cellSemanticSourceIndex(semanticKey: String, validateContentHash: B
     }
     val indexStart = semanticKey.lastIndexOf(':', hashSeparator - 1) + 1
     if (indexStart <= 0 || indexStart == hashSeparator) return INVALID_CELL_SOURCE_INDEX
-    if (semanticKey[indexStart] == '0' && indexStart + 1 != hashSeparator) return INVALID_CELL_SOURCE_INDEX
+    if (semanticKey[indexStart] == '0' &&
+        indexStart + 1 != hashSeparator
+    ) {
+        return INVALID_CELL_SOURCE_INDEX
+    }
     var sourceIndex = 0
     for (index in indexStart until hashSeparator) {
         val char = semanticKey[index]
@@ -622,15 +772,22 @@ internal fun cellSemanticSourceIndex(semanticKey: String, validateContentHash: B
 }
 
 internal fun ViewerDocument.cellDocument(cell: TableSurfaceCell, tableId: String): ViewerDocument {
-    val elements = if (frameIndex == null) cell.elements else cell.elements.map { element ->
-        fun absolute(relative: UInt): UInt = requireNotNull(frameIndex.absoluteDocPos(tableId, cell.sourceIndex, relative))
-        when (element) {
-            is FfiViewerElement.InlineAtom -> element.copy(docPos = absolute(element.docPos))
-            is FfiViewerElement.BlockAtom -> element.copy(docPos = absolute(element.docPos))
-            else -> element
+    val elements = if (frameIndex == null) {
+        cell.elements
+    } else {
+        cell.elements.map { element ->
+            fun absolute(relative: UInt): UInt =
+                requireNotNull(frameIndex.absoluteDocPos(tableId, cell.sourceIndex, relative))
+            when (element) {
+                is FfiViewerElement.InlineAtom -> element.copy(docPos = absolute(element.docPos))
+                is FfiViewerElement.BlockAtom -> element.copy(docPos = absolute(element.docPos))
+                else -> element
+            }
         }
     }
-    val nestedKeys = elements.filterIsInstance<FfiViewerElement.Table>().mapTo(mutableSetOf()) { it.tableId }
+    val nestedKeys = elements.filterIsInstance<FfiViewerElement.Table>().mapTo(mutableSetOf()) {
+        it.tableId
+    }
     val nestedIndex = if (nestedKeys.isEmpty()) null else frameIndex?.subtree(nestedKeys)
     val records = linkedMapOf<String, FfiViewerTable>()
     val pending = java.util.ArrayDeque(nestedKeys)
@@ -639,22 +796,38 @@ internal fun ViewerDocument.cellDocument(cell: TableSurfaceCell, tableId: String
         if (key in records) continue
         val record = tableRecords[key] ?: continue
         records[key] = record
-        record.cells.flatMap { it.elements }.filterIsInstance<FfiViewerElement.Table>().forEach { pending.add(it.tableId) }
+        record.cells.flatMap {
+            it.elements
+        }.filterIsInstance<FfiViewerElement.Table>().forEach { pending.add(it.tableId) }
     }
     val attributes = records.values.flatMapTo(mutableSetOf()) { record ->
-        listOf(record.attrsKey) + record.sourceRows.map { it.attrsKey } + record.cells.map { it.attrsKey }
+        listOf(record.attrsKey) + record.sourceRows.map { it.attrsKey } +
+            record.cells.map { it.attrsKey }
     } + nestedIndex?.attributeObjects.orEmpty().keys
     val identities = records.keys + nestedIndex?.tableKeys.orEmpty()
     return copy(
         semanticKey = cellSemanticKey(semanticKey, tableId, cell),
-        blocks = lowerElements(elements, preferredTextBlockName, tableRecords, elements.isEmpty(), frameIndex),
+        blocks = lowerElements(
+            elements,
+            preferredTextBlockName,
+            tableRecords,
+            elements.isEmpty(),
+            frameIndex
+        ),
         isEmpty = cell.elements.isEmpty(),
         retainedBytes = 0,
         trailingEmptyTextBlockCount = 0,
         tableRecords = records,
-        tableAttributes = attributes.mapNotNull { key -> tableAttributes[key]?.let { key to it } }.toMap(),
+        tableAttributes = attributes.mapNotNull { key ->
+            tableAttributes[key]?.let { key to it }
+        }.toMap(),
         frameIndex = nestedIndex,
-        tablePresentationIdentities = identities.mapNotNull { key -> tablePresentationIdentities[key]?.let { key to it } }.toMap()
+        tablePresentationIdentities = identities.mapNotNull { key ->
+            tablePresentationIdentities[key]?.let {
+                key to
+                    it
+            }
+        }.toMap()
     )
 }
 
@@ -723,8 +896,16 @@ private fun parseTableAttributes(value: Any?): Map<String, JSONObject>? {
         val json = raw.opt(key) as? String ?: return null
         entries++
         bytes += json.toByteArray(Charsets.UTF_8).size
-        if (!Regex("^[0-9a-f]{64}$").matches(key) || entries > 7_000_000 || !unique.add(json) || bytes > 192L * 1024 * 1024) return null
-        val root = try { JSONObject(json) } catch (_: Exception) { return null }
+        if (!Regex("^[0-9a-f]{64}$").matches(key) || entries > 7_000_000 || !unique.add(json) ||
+            bytes > 192L * 1024 * 1024
+        ) {
+            return null
+        }
+        val root = try {
+            JSONObject(json)
+        } catch (_: Exception) {
+            return null
+        }
         val pending = java.util.ArrayDeque<Pair<Any, Int>>()
         pending.add(root to 0)
         var work = 0
@@ -733,8 +914,12 @@ private fun parseTableAttributes(value: Any?): Map<String, JSONObject>? {
             if (++work > json.length || depth > 1024) return null
             when (item) {
                 is Number -> if (!item.toDouble().isFinite()) return null
+
                 is JSONObject -> item.keys().forEach { pending.add(item.get(it) to depth + 1) }
-                is JSONArray -> for (index in 0 until item.length()) pending.add(item.get(index) to depth + 1)
+
+                is JSONArray -> for (index in 0 until item.length()) {
+                    pending.add(item.get(index) to depth + 1)
+                }
             }
         }
         pool[key] = root

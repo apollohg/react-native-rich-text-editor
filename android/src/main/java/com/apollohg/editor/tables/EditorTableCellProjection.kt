@@ -5,8 +5,8 @@ import com.apollohg.editor.AtomRenderConfiguration
 import com.apollohg.editor.EditorTheme
 import com.apollohg.editor.PositionBridge
 import com.apollohg.editor.RenderBridge
-import uniffi.editor_core.FfiCellInputBlock
 import com.apollohg.editor.canonicalV2U64
+import uniffi.editor_core.FfiCellInputBlock
 
 internal object EditorTableCellProjection {
     data class Projection(
@@ -27,13 +27,29 @@ internal object EditorTableCellProjection {
         density: Float = 1f,
         atomConfiguration: AtomRenderConfiguration? = null
     ): Projection? {
-        if (cellIndex < 0 || canonicalV2U64(documentRevision) == null || canonicalV2U64(positionEpoch) == null) return null
+        if (cellIndex < 0 || canonicalV2U64(documentRevision) == null ||
+            canonicalV2U64(positionEpoch) == null
+        ) {
+            return null
+        }
         val table = index.record(tableKey) ?: return null
         val cell = table.cells.getOrNull(cellIndex) ?: return null
-        if (table.readOnlyDescendants || cell.nestedTables.isNotEmpty() || cell.inputBlocks.isEmpty()) return null
-        val elements = inputElements(cell.elements, cell.voidElementIndices) { relative -> index.absoluteDocPos(tableKey, cellIndex, relative) }
-            ?: return null
-        val binding = TableCellPositionMap.Binding(tableKey, cellIndex, documentRevision, positionEpoch)
+        if (table.readOnlyDescendants || cell.nestedTables.isNotEmpty() ||
+            cell.inputBlocks.isEmpty()
+        ) {
+            return null
+        }
+        val elements =
+            inputElements(cell.elements, cell.voidElementIndices) { relative ->
+                index.absoluteDocPos(tableKey, cellIndex, relative)
+            }
+                ?: return null
+        val binding = TableCellPositionMap.Binding(
+            tableKey,
+            cellIndex,
+            documentRevision,
+            positionEpoch
+        )
         val target = EditorTableInputCoordinator.Target(binding)
         if (!EditorTableInputCoordinator.canBind(target)) return null
         val ranges = mutableMapOf<Int, Pair<Int, Int>>()
@@ -58,7 +74,9 @@ internal object EditorTableCellProjection {
             if (range.first < 0 || range.second < range.first || range.second > text.length ||
                 block.contentScalarStart < block.scalarStart ||
                 block.scalarEnd < block.contentScalarStart
-            ) return null
+            ) {
+                return null
+            }
             val start = PositionBridge.utf16ToScalar(range.first, text)
             val end = PositionBridge.utf16ToScalar(range.second, text)
             val prefix = block.contentScalarStart.toLong() - block.scalarStart.toLong()
@@ -66,16 +84,24 @@ internal object EditorTableCellProjection {
             val localEndExclusive = end.toLong() + 1L
             if (localStart < 0 || localEndExclusive > Int.MAX_VALUE ||
                 end.toLong() - localStart != block.scalarEnd.toLong() - block.scalarStart.toLong()
-            ) return null
+            ) {
+                return null
+            }
             previousBlock?.let { previous ->
                 val renderedBreak = localStart - previousLocalEnd.toLong()
                 val mappedBreak = previous.breakScalarEnd.toLong() - previous.scalarEnd.toLong()
                 if (renderedBreak != mappedBreak ||
                     block.scalarStart != previous.breakScalarEnd
-                ) return null
+                ) {
+                    return null
+                }
             }
             val segment = segments[blockIndex]
-            if (segment.localScalarStart.toLong() != localStart || segment.localScalarEndExclusive.toLong() != localEndExclusive) return null
+            if (segment.localScalarStart.toLong() != localStart ||
+                segment.localScalarEndExclusive.toLong() != localEndExclusive
+            ) {
+                return null
+            }
             previousBlock = block
             previousLocalEnd = end
         }

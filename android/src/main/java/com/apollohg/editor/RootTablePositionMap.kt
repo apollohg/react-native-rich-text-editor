@@ -56,7 +56,9 @@ internal class RootTablePositionMap private constructor(
                 .sortedBy(content::getSpanStart)
             if (annotations.map { it.value }.toSet() != extents.keys ||
                 annotations.size != extents.size
-            ) return null
+            ) {
+                return null
+            }
             val text = content.toString()
             val markers = mutableListOf<Marker>()
             var delta = 0
@@ -64,13 +66,17 @@ internal class RootTablePositionMap private constructor(
                 val utf16Start = content.getSpanStart(annotation)
                 if (utf16Start < 0 || content.getSpanEnd(annotation) != utf16Start + 1 ||
                     text[utf16Start] != '\u200B'
-                ) return null
+                ) {
+                    return null
+                }
                 val localStart = PositionBridge.utf16ToScalar(utf16Start, text)
                 val extent = extents[annotation.value] ?: return null
                 if (extent.scalarStart != localStart + delta ||
                     extent.scalarEnd <= extent.scalarStart ||
                     markers.lastOrNull()?.localEnd?.let { it >= localStart } == true
-                ) return null
+                ) {
+                    return null
+                }
                 markers += Marker(localStart, extent.scalarStart, extent.scalarEnd)
                 delta += extent.scalarEnd - extent.scalarStart - 1
             }

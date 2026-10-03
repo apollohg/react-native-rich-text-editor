@@ -5,7 +5,9 @@ import java.nio.CharBuffer
 import java.nio.charset.CodingErrorAction
 import java.nio.charset.MalformedInputException
 import kotlin.random.Random
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Test
 import uniffi.editor_core.FfiConverterString
 
@@ -21,9 +23,17 @@ class UniffiStringEncodingTest {
                 FfiConverterString.toUtf8(value)
             }
             assertEquals(error.inputLength, actual.inputLength)
-            val destination = ByteBuffer.allocate(value.length * MAX_UTF8_BYTES_PER_UNIT + LENGTH_BYTES)
-            assertThrows(MalformedInputException::class.java) { FfiConverterString.write(value, destination) }
-            assertEquals("Malformed input must not partially write a record", 0, destination.position())
+            val destination = ByteBuffer.allocate(
+                value.length * MAX_UTF8_BYTES_PER_UNIT + LENGTH_BYTES
+            )
+            assertThrows(MalformedInputException::class.java) {
+                FfiConverterString.write(value, destination)
+            }
+            assertEquals(
+                "Malformed input must not partially write a record",
+                0,
+                destination.position()
+            )
             return
         }
         assertEquals(expected, FfiConverterString.toUtf8(value))
@@ -55,9 +65,11 @@ class UniffiStringEncodingTest {
         }
         val random = Random(RANDOM_SEED)
         repeat(RANDOM_CASES) {
-            verify(CharArray(random.nextInt(MAX_RANDOM_LENGTH)) {
-                random.nextInt(Char.MAX_VALUE.code + 1).toChar()
-            }.concatToString())
+            verify(
+                CharArray(random.nextInt(MAX_RANDOM_LENGTH)) {
+                    random.nextInt(Char.MAX_VALUE.code + 1).toChar()
+                }.concatToString()
+            )
         }
         verify("")
         verify("a😀e\u0301 العربية\n中\u0000".repeat(LONG_TEXT_REPEATS))

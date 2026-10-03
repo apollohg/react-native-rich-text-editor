@@ -5,10 +5,10 @@ import android.graphics.Path
 import android.graphics.Point
 import android.graphics.RectF
 import android.view.View
-import kotlin.math.ceil
-import kotlin.math.roundToInt
 import com.apollohg.editor.EditorClipboardPayload
 import com.apollohg.editor.EditorV2Adapter
+import kotlin.math.ceil
+import kotlin.math.roundToInt
 
 internal data class TableCellDragSource(
     val tableId: String,

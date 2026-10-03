@@ -230,5 +230,4 @@ internal object NativeEditorViewRegistry {
 
     private fun rustEditorExists(viewToken: Long): Boolean =
         EditorV2Registry.adapterForViewToken(viewToken) != null
-
 }

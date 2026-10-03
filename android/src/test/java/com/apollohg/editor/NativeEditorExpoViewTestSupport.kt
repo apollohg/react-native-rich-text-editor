@@ -15,28 +15,40 @@ abstract class NativeEditorExpoViewTestSupport {
             .map { view.richTextView.editorContentFrame.getChildAt(it) }
             .filterIsInstance<PreparedProseDrawingView>().single()
         val root = view.richTextView.editorEditText
-        canvas.measure(View.MeasureSpec.makeMeasureSpec(root.width, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(root.height, View.MeasureSpec.EXACTLY))
+        canvas.measure(
+            View.MeasureSpec.makeMeasureSpec(root.width, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(root.height, View.MeasureSpec.EXACTLY)
+        )
         canvas.layout(0, 0, canvas.measuredWidth, canvas.measuredHeight)
         val table = requireNotNull(canvas.preparedLayout?.blocks?.singleOrNull())
         val cell = requireNotNull(table.tableSurface?.cells?.get(index))
         val bounds = requireNotNull(table.tableBounds)
         val canvasOrigin = Rect(0, 0, 1, 1)
         view.richTextView.offsetDescendantRectToMyCoords(canvas, canvasOrigin)
-        val x = canvasOrigin.left + bounds.left + table.tableSurface!!.frameOfCell(cell).left + cell.contentOrigin.first + 8f
-        val y = canvasOrigin.top + bounds.top + table.tableSurface!!.frameOfCell(cell).top + cell.contentOrigin.second + 8f
+        val x =
+            canvasOrigin.left + bounds.left + table.tableSurface!!.frameOfCell(cell).left +
+                cell.contentOrigin.first +
+                8f
+        val y =
+            canvasOrigin.top + bounds.top + table.tableSurface!!.frameOfCell(cell).top +
+                cell.contentOrigin.second +
+                8f
         val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, x, y, 0)
         val up = MotionEvent.obtain(0, 10, MotionEvent.ACTION_UP, x, y, 0)
         try {
             assertTrue(view.richTextView.dispatchTouchEvent(down))
             val handled = view.richTextView.dispatchTouchEvent(up)
             val adapter = root.v2Driver as? EditorV2Adapter
-            assertTrue("root=${root.width}x${root.height} canvas=${canvas.width}x${canvas.height}" +
-                " origin=$canvasOrigin tap=$x,$y revision=${adapter?.baseDocumentRevision}" +
-                " applied=${root.lastAppliedDocumentVersion} epoch=${adapter?.positionEpoch}" +
-                " owns=${adapter?.let(root::ownsNativeBinding)} mappings=${adapter?.tableMappingsForTesting?.tables?.keys}" +
-                " rootMap=${root.rootTablePositionMap != null} rootTrace=${root.imeTraceSnapshotForTesting()}",
-                handled)
+            assertTrue(
+                "root=${root.width}x${root.height} canvas=${canvas.width}x${canvas.height}" +
+                    " origin=$canvasOrigin tap=$x,$y revision=${adapter?.baseDocumentRevision}" +
+                    " applied=${root.lastAppliedDocumentVersion} epoch=${adapter?.positionEpoch}" +
+                    " owns=${adapter?.let(
+                        root::ownsNativeBinding
+                    )} mappings=${adapter?.tableMappingsForTesting?.tables?.keys}" +
+                    " rootMap=${root.rootTablePositionMap != null} rootTrace=${root.imeTraceSnapshotForTesting()}",
+                handled
+            )
         } finally {
             down.recycle()
             up.recycle()

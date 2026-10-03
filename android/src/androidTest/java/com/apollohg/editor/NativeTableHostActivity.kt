@@ -8,9 +8,9 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
-import org.json.JSONObject
-import org.json.JSONArray
 import com.apollohg.editor.tables.PlainTableFixture
+import org.json.JSONArray
+import org.json.JSONObject
 
 class NativeTableHostActivity : Activity() {
     internal lateinit var richTextView: RichTextEditorView
@@ -30,19 +30,31 @@ class NativeTableHostActivity : Activity() {
 
         val created = when (val result = UniffiEditorV2Backend.create(CONFIG, null)) {
             is EditorV2CallResult.Ok -> result.value
-            is EditorV2CallResult.Err -> error("Table fixture create failed: ${result.error.code}: ${result.error.message}")
+
+            is EditorV2CallResult.Err -> error(
+                "Table fixture create failed: ${result.error.code}: ${result.error.message}"
+            )
         }
         val id = JSONObject(created).getString("editorId")
-        adapter = requireNotNull(EditorV2Adapter.attach(UniffiEditorV2Backend, id, roomBound = false))
+        adapter =
+            requireNotNull(EditorV2Adapter.attach(UniffiEditorV2Backend, id, roomBound = false))
         val plainRows = intent.getIntExtra(EXTRA_PLAIN_ROWS, 0)
-        requireNotNull(adapter.setContentJson(
-            when {
-                plainRows > 0 -> PlainTableFixture.document(plainRows, intent.getIntExtra(EXTRA_PLAIN_COLUMNS, 0), PlainTableFixture::coordinateText)
-                intent.getBooleanExtra(EXTRA_OVERFLOW, false) ->
-                    overflowingDocument(intent.getBooleanExtra(EXTRA_RTL, false))
-                else -> DOCUMENT
-            }
-        )) { "the fixture renders: ${adapter.debugNotes}" }
+        requireNotNull(
+            adapter.setContentJson(
+                when {
+                    plainRows > 0 -> PlainTableFixture.document(
+                        plainRows,
+                        intent.getIntExtra(EXTRA_PLAIN_COLUMNS, 0),
+                        PlainTableFixture::coordinateText
+                    )
+
+                    intent.getBooleanExtra(EXTRA_OVERFLOW, false) ->
+                        overflowingDocument(intent.getBooleanExtra(EXTRA_RTL, false))
+
+                    else -> DOCUMENT
+                }
+            )
+        ) { "the fixture renders: ${adapter.debugNotes}" }
         documentBeforeMount = requireNotNull(adapter.documentJson())
         historyBeforeMount = adapter.historyCanUndo() to adapter.historyCanRedo()
         revisionBeforeMount = adapter.baseDocumentRevision
@@ -56,18 +68,27 @@ class NativeTableHostActivity : Activity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(background)
-            addView(TextView(this@NativeTableHostActivity).apply {
-                text = "Native table host · ${if (dark) "dark" else "light"}"
-                textSize = 18f
-                setTextColor(foreground)
-                setPadding(0, 0, 0, padding)
-            })
-            addView(richTextView, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
-            ))
+            addView(
+                TextView(this@NativeTableHostActivity).apply {
+                    text = "Native table host · ${if (dark) "dark" else "light"}"
+                    textSize = 18f
+                    setTextColor(foreground)
+                    setPadding(0, 0, 0, padding)
+                }
+            )
+            addView(
+                richTextView,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    0,
+                    1f
+                )
+            )
         }
         ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
-            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            val bars = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.ime()
+            )
             view.setPadding(
                 padding + bars.left,
                 padding + bars.top,
@@ -87,9 +108,19 @@ class NativeTableHostActivity : Activity() {
     }
 
     private fun themeJson(dark: Boolean): String = if (dark) {
-        """{"text":{"fontSize":18,"color":"#ffffffff"},"backgroundColor":"#131b23ff","contentInsets":{"top":12,"right":12,"bottom":12,"left":12},"table":{"borderColor":"#71808fff","headerBackgroundColor":"#334252ff","minColumnWidth":72,"cellPadding":8}}"""
+        """{"text":{"fontSize":18,"color":"#ffffffff"},""" +
+            """"backgroundColor":"#131b23ff",""" +
+            """"contentInsets":{"top":12,"right":12,"bottom":12,""" +
+            """"left":12},"table":{"borderColor":"#71808fff",""" +
+            """"headerBackgroundColor":"#334252ff",""" +
+            """"minColumnWidth":72,"cellPadding":8}}"""
     } else {
-        """{"text":{"fontSize":18,"color":"#1d303aff"},"backgroundColor":"#ffffffff","contentInsets":{"top":12,"right":12,"bottom":12,"left":12},"table":{"borderColor":"#a0acb7ff","headerBackgroundColor":"#e8f0f5ff","minColumnWidth":72,"cellPadding":8}}"""
+        """{"text":{"fontSize":18,"color":"#1d303aff"},""" +
+            """"backgroundColor":"#ffffffff",""" +
+            """"contentInsets":{"top":12,"right":12,"bottom":12,""" +
+            """"left":12},"table":{"borderColor":"#a0acb7ff",""" +
+            """"headerBackgroundColor":"#e8f0f5ff",""" +
+            """"minColumnWidth":72,"cellPadding":8}}"""
     }
 
     companion object {
@@ -102,9 +133,47 @@ class NativeTableHostActivity : Activity() {
         private const val SCROLL_COLUMN_WIDTH = 140
         private const val SCROLL_FOLLOWING_PARAGRAPHS = 80
 
-        internal const val CONFIG = """{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table","attrs":{"dir":{"default":null}}},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"""
+        internal const val CONFIG = """{"schema":{"nodes":[{"name":"doc","content":"block+",""" +
+            """"role":"doc"},{"name":"paragraph","content":"inline*",""" +
+            """"group":"block","role":"textBlock"},{"name":"text",""" +
+            """"content":"","group":"inline","role":"text"},""" +
+            """{"name":"table","content":"table_row+","group":"block",""" +
+            """"role":"block","tableRole":"table",""" +
+            """"attrs":{"dir":{"default":null}}},{"name":"table_row",""" +
+            """"content":"(table_cell | table_header)*",""" +
+            """"role":"block","tableRole":"row"},{"name":"table_cell",""" +
+            """"content":"block+","role":"block","tableRole":"cell",""" +
+            """"attrs":{"colspan":{"type":"number","default":1,""" +
+            """"min":1},"rowspan":{"type":"number","default":1,""" +
+            """"min":1},"colwidth":{"default":null}}},""" +
+            """{"name":"table_header","content":"block+",""" +
+            """"role":"block","tableRole":"header_cell",""" +
+            """"attrs":{"colspan":{"type":"number","default":1,""" +
+            """"min":1},"rowspan":{"type":"number","default":1,""" +
+            """"min":1},"colwidth":{"default":null}}}],"marks":[]},""" +
+            """"initialization":{"type":"localEmpty"}}"""
 
-        private const val DOCUMENT = """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Before table."}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_header","attrs":{"colspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"Project"}]}]},{"type":"table_header","content":[{"type":"paragraph","content":[{"type":"text","text":"Status"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Alpha"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Owner"}]}]},{"type":"table_cell","attrs":{"rowspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"Ready"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","attrs":{"colspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"Beta"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"After table."}]}]}"""
+        private const val DOCUMENT = """{"type":"doc","content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"Before table."}]},""" +
+            """{"type":"table","content":[{"type":"table_row",""" +
+            """"content":[{"type":"table_header",""" +
+            """"attrs":{"colspan":2},"content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"Project"}]}]},""" +
+            """{"type":"table_header","content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"Status"}]}]}]},""" +
+            """{"type":"table_row","content":[{"type":"table_cell",""" +
+            """"content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"Alpha"}]}]},""" +
+            """{"type":"table_cell","content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"Owner"}]}]},""" +
+            """{"type":"table_cell","attrs":{"rowspan":2},""" +
+            """"content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"Ready"}]}]}]},""" +
+            """{"type":"table_row","content":[{"type":"table_cell",""" +
+            """"attrs":{"colspan":2},"content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"Beta"}]}]}]}]},""" +
+            """{"type":"paragraph","content":[{"type":"text",""" +
+            """"text":"After table."}]}]}"""
 
         internal fun overflowingDocument(rtl: Boolean = false): String {
             val document = JSONObject(DOCUMENT)
@@ -132,8 +201,10 @@ class NativeTableHostActivity : Activity() {
             repeat(SCROLL_EXTRA_COLUMNS) { nestedCells.put(wideCell("Nested $it")) }
             val nestedRow = JSONObject().put("type", "table_row")
                 .put("content", nestedCells)
-            outerCell.getJSONArray("content").put(JSONObject().put("type", "table")
-                .put("content", JSONArray().put(nestedRow)))
+            outerCell.getJSONArray("content").put(
+                JSONObject().put("type", "table")
+                    .put("content", JSONArray().put(nestedRow))
+            )
             return document.toString()
         }
 
@@ -142,8 +213,13 @@ class NativeTableHostActivity : Activity() {
             val paragraph = JSONObject().put("type", "paragraph")
                 .put("content", JSONArray().put(text))
             return JSONObject().put("type", "table_cell")
-                .put("attrs", JSONObject().put("colwidth",
-                    JSONArray().put(SCROLL_COLUMN_WIDTH)))
+                .put(
+                    "attrs",
+                    JSONObject().put(
+                        "colwidth",
+                        JSONArray().put(SCROLL_COLUMN_WIDTH)
+                    )
+                )
                 .put("content", JSONArray().put(paragraph))
         }
     }

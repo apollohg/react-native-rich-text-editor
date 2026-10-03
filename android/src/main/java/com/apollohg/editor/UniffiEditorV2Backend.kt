@@ -1,8 +1,8 @@
 package com.apollohg.editor
 
-import uniffi.editor_core.FfiNativeRenderFrame
 import uniffi.editor_core.FfiError
 import uniffi.editor_core.FfiJsonResult
+import uniffi.editor_core.FfiNativeRenderFrame
 import uniffi.editor_core.editorV2ApplyCommand
 import uniffi.editor_core.editorV2ApplyInput
 import uniffi.editor_core.editorV2ApplyLocalApi
@@ -30,11 +30,11 @@ import uniffi.editor_core.editorV2PinPositionEpoch
 import uniffi.editor_core.editorV2Redo
 import uniffi.editor_core.editorV2ReleaseNativeBinding
 import uniffi.editor_core.editorV2RenderNativeFrame
-import uniffi.editor_core.editorV2SeedNativeRenderCursor
 import uniffi.editor_core.editorV2RenderUpdate
 import uniffi.editor_core.editorV2ReplaceDocument
 import uniffi.editor_core.editorV2ResolveScalarSelection
 import uniffi.editor_core.editorV2ScalarToDoc
+import uniffi.editor_core.editorV2SeedNativeRenderCursor
 import uniffi.editor_core.editorV2SetSelection
 import uniffi.editor_core.editorV2SnapshotExport
 import uniffi.editor_core.editorV2Undo
@@ -227,12 +227,20 @@ internal object UniffiEditorV2Backend : EditorV2Backend {
         val error = result.error
         return when {
             frame != null && error == null -> EditorV2CallResult.Ok(frame)
+
             frame == null && error != null -> EditorV2CallResult.Err(error.toV2())
-            else -> EditorV2CallResult.Err(contractError("v2 result must carry exactly one of frame/error"))
+
+            else -> EditorV2CallResult.Err(
+                contractError("v2 result must carry exactly one of frame/error")
+            )
         }
     }
 
-    override fun seedNativeRenderCursor(editorId: String, ownerId: String, documentRevision: String): EditorV2Error? =
+    override fun seedNativeRenderCursor(
+        editorId: String,
+        ownerId: String,
+        documentRevision: String
+    ): EditorV2Error? =
         editorV2SeedNativeRenderCursor(editorId, ownerId, documentRevision).error?.toV2()
 
     override fun pinPositionEpoch(

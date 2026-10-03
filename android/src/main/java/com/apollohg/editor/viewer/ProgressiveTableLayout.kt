@@ -2,12 +2,14 @@ package com.apollohg.editor.viewer
 
 import android.graphics.Rect
 import android.view.View
-import java.util.concurrent.atomic.AtomicLong
 import com.apollohg.editor.ProseViewerError
 import com.apollohg.editor.tables.ViewerTableSurface
+import java.util.concurrent.atomic.AtomicLong
 
 internal enum class TableGeometryPolicy(val stateValue: Int) {
-    INITIAL(0), STAGED(1), EAGER(2)
+    INITIAL(0),
+    STAGED(1),
+    EAGER(2)
 }
 
 internal class TableGeometryRevisionRequired(val widthPx: Int, val heightPx: Int) :
@@ -34,7 +36,9 @@ internal class ProgressiveTableAnchor private constructor(
         val bounds = block.tableBounds
         return if (surface != null && bounds != null && surface.identity == tableIdentity) {
             bounds.top + (surface.layout.rowOffsets.getOrNull(row)?.toInt() ?: 0) + offset
-        } else block.bounds.top + offset
+        } else {
+            block.bounds.top + offset
+        }
     }
 
     companion object {
@@ -47,12 +51,22 @@ internal class ProgressiveTableAnchor private constructor(
                 val surface = requireNotNull(block.tableSurface)
                 val local = top - requireNotNull(block.tableBounds).top
                 val row = surface.layout.rowOffsets.indexOfLast { it <= local }.coerceAtLeast(0)
-                return ProgressiveTableAnchor(tableIndex, surface.identity, row,
-                    local - surface.layout.rowOffsets[row].toInt(), top)
+                return ProgressiveTableAnchor(
+                    tableIndex,
+                    surface.identity,
+                    row,
+                    local - surface.layout.rowOffsets[row].toInt(),
+                    top
+                )
             }
             val index = layout.blocks.indexOfLast { it.bounds.top <= top }.coerceAtLeast(0)
-            return ProgressiveTableAnchor(index, null, 0,
-                top - (layout.blocks.getOrNull(index)?.bounds?.top ?: 0), top)
+            return ProgressiveTableAnchor(
+                index,
+                null,
+                0,
+                top - (layout.blocks.getOrNull(index)?.bounds?.top ?: 0),
+                top
+            )
         }
     }
 }
@@ -66,9 +80,13 @@ internal fun reflowTableSurfaces(
     }
     val changes = layout.blocks.mapNotNull { block ->
         val previous = block.tableSurface ?: return@mapNotNull null
-        val next = replacements[previous.identity]?.takeIf { it !== previous } ?: return@mapNotNull null
+        val next =
+            replacements[previous.identity]?.takeIf { it !== previous } ?: return@mapNotNull null
         val bounds = requireNotNull(block.tableBounds)
-        require(next.identity == previous.identity && next.hostViewportWidth == previous.hostViewportWidth)
+        require(
+            next.identity == previous.identity &&
+                next.hostViewportWidth == previous.hostViewportWidth
+        )
         Change(bounds.top, bounds.bottom, next.layout.contentHeight.toInt())
     }.sortedBy { it.top }
     if (changes.isEmpty()) return layout
@@ -78,7 +96,9 @@ internal fun reflowTableSurfaces(
             if (value >= change.bottom) result += change.delta
         }
         if (result !in Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong()) {
-            throw ProseViewerError.layout("Deferred table geometry exceeds Android coordinate bounds.")
+            throw ProseViewerError.layout(
+                "Deferred table geometry exceeds Android coordinate bounds."
+            )
         }
         return result.toInt()
     }
@@ -88,21 +108,30 @@ internal fun reflowTableSurfaces(
         throw ProseViewerError.layout("Deferred document height exceeds Android layout bounds.")
     }
     val blocks = layout.blocks.map { block ->
-        block.copy(bounds = rect(block.bounds), tableBounds = block.tableBounds?.let(::rect),
+        block.copy(
+            bounds = rect(block.bounds),
+            tableBounds = block.tableBounds?.let(::rect),
             tableSurface = block.tableSurface?.let { replacements[it.identity] ?: it },
             imageAttachment = block.imageAttachment?.let { it.copy(bounds = rect(it.bounds)) },
             fragments = block.fragments.map { fragment ->
-                fragment.copy(bounds = rect(fragment.bounds), layoutY = y(fragment.layoutY), labelY = y(fragment.labelY),
-                    decorationBounds = fragment.decorationBounds?.let(::rect))
-            })
+                fragment.copy(
+                    bounds = rect(fragment.bounds),
+                    layoutY = y(fragment.layoutY),
+                    labelY = y(fragment.labelY),
+                    decorationBounds = fragment.decorationBounds?.let(::rect)
+                )
+            }
+        )
     }
     val nextTableBytes = blocks.sumOf { it.tableSurface?.retainedBytes ?: 0L }
-    return layout.copy(key = layout.key.copy(tableGeometryRevision = nextTableGeometryRevision()),
+    return layout.copy(
+        key = layout.key.copy(tableGeometryRevision = nextTableGeometryRevision()),
         heightPx = height, blocks = blocks,
         interactions = layout.interactions.map { it.copy(rects = it.rects.map(::rect)) },
         accessibilityNodes = layout.accessibilityNodes.map { it.copy(bounds = rect(it.bounds)) },
         imageAttachments = layout.imageAttachments.map { it.copy(bounds = rect(it.bounds)) },
         viewerAtoms = layout.viewerAtoms.map { it.copy(bounds = rect(it.bounds)) },
         retainedBytes = layout.nonTableRetainedBytes + nextTableBytes,
-        tableRetainedBytesAtPreparation = nextTableBytes)
+        tableRetainedBytesAtPreparation = nextTableBytes
+    )
 }

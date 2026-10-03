@@ -1,25 +1,33 @@
 package com.apollohg.editor
 
-import com.apollohg.editor.viewer.PreparedProseInstrumentation
-import com.apollohg.editor.tables.resolveEditorCellSelection
 import com.apollohg.editor.tables.EditorTablePresentationSnapshot
 import com.apollohg.editor.tables.TableFrameAdoption
-import uniffi.editor_core.FfiTableFrameKind
-import uniffi.editor_core.FfiNativeRenderFrame
+import com.apollohg.editor.tables.resolveEditorCellSelection
+import com.apollohg.editor.viewer.PreparedProseInstrumentation
 import org.json.JSONArray
 import org.json.JSONObject
+import uniffi.editor_core.FfiNativeRenderFrame
+import uniffi.editor_core.FfiTableFrameKind
 
 private fun EditorV2Adapter.adopt(
     frame: FfiNativeRenderFrame,
     stripViewSelection: Boolean,
     engineOwnedSelection: Boolean
 ): String? {
-    return PreparedProseInstrumentation.measureTableStage(PreparedProseInstrumentation.TableStage.ADAPTER_ADOPTION) {
+    return PreparedProseInstrumentation.measureTableStage(
+        PreparedProseInstrumentation.TableStage.ADAPTER_ADOPTION
+    ) {
         val snapshot = parseAtomicRenderSnapshot(frame.snapshotJson) ?: return null
         val nextIndex = tableIndex.copy()
-        val adoption = nextIndex.adopt(frame.tables, installedFrameRevision, snapshot.documentRevision)
-            as? TableFrameAdoption.Adopted ?: return null
-        if (nextIndex.rootExtents.values.any { it.scalarEnd.toLong() > snapshot.scalarLength }) return null
+        val adoption =
+            nextIndex.adopt(frame.tables, installedFrameRevision, snapshot.documentRevision)
+                as? TableFrameAdoption.Adopted ?: return null
+        if (nextIndex.rootExtents.values.any {
+                it.scalarEnd.toLong() > snapshot.scalarLength
+            }
+        ) {
+            return null
+        }
         fun blocks(value: JSONArray): List<List<Any?>> = (0 until value.length()).map { index ->
             val block = value.getJSONArray(index)
             (0 until block.length()).map { block.opt(it) }
@@ -30,9 +38,15 @@ private fun EditorV2Adapter.adopt(
             val retained = cachedSemanticRenderBlocks ?: return null
             val start = patch.optLong("startIndex", -1)
             val delete = patch.optLong("deleteCount", -1)
-            if (patch.optString("baseDocumentVersion").toULongOrNull() != cachedSemanticRenderBlocksRevision ||
-                start < 0 || delete < 0 || start + delete > retained.size) return null
-            candidate = retained.take(start.toInt()) + blocks(patch.getJSONArray("renderBlocks")) + retained.drop((start + delete).toInt())
+            if (patch.optString("baseDocumentVersion").toULongOrNull() !=
+                cachedSemanticRenderBlocksRevision ||
+                start < 0 || delete < 0 || start + delete > retained.size
+            ) {
+                return null
+            }
+            candidate =
+                retained.take(start.toInt()) + blocks(patch.getJSONArray("renderBlocks")) +
+                retained.drop((start + delete).toInt())
         }
         if (!validSemanticRenderElements(candidate.flatten(), nextIndex)) return null
         val roots = candidate.flatten().mapNotNull { element ->
@@ -40,20 +54,40 @@ private fun EditorV2Adapter.adopt(
         }.toSet()
         if (roots != nextIndex.rootExtents.keys) return null
         val selection = snapshot.renderObject.optJSONObject("selection")
-        if (selection?.opt("type") == "cell" && resolveEditorCellSelection(selection, nextIndex) == null) return null
-        val updateObject = if (stripViewSelection) JSONObject(snapshot.viewUpdateJson).apply { remove("selection") } else snapshot.renderObject
-        val updateJson = if (stripViewSelection) updateObject.toString() else snapshot.viewUpdateJson
+        if (selection?.opt("type") == "cell" &&
+            resolveEditorCellSelection(selection, nextIndex) == null
+        ) {
+            return null
+        }
+        val updateObject = if (stripViewSelection) {
+            JSONObject(snapshot.viewUpdateJson).apply {
+                remove("selection")
+            }
+        } else {
+            snapshot.renderObject
+        }
+        val updateJson =
+            if (stripViewSelection) updateObject.toString() else snapshot.viewUpdateJson
         tableIndex = nextIndex
         cachedTablePresentation = EditorTablePresentationSnapshot(
-            snapshot.documentRevision, if (adoption.changes.fullReset) null else installedFrameRevision,
-            snapshot.positionEpoch, nextIndex, adoption.changes)
+            snapshot.documentRevision,
+            if (adoption.changes.fullReset) null else installedFrameRevision,
+            snapshot.positionEpoch,
+            nextIndex,
+            adoption.changes
+        )
         installedFrameRevision = snapshot.documentRevision
-        if (adoption.changes.fullReset) fullFrameAdoptionCountForTesting++ else deltaFrameAdoptionCountForTesting++
+        if (adoption.changes.fullReset) {
+            fullFrameAdoptionCountForTesting++
+        } else {
+            deltaFrameAdoptionCountForTesting++
+        }
         baseDocumentRevision = snapshot.documentRevision
         stateRevision = snapshot.stateRevision
         cachedScalarLength = snapshot.scalarLength
         cachedAuthoritativeScalarSelection = snapshot.scalarSelection?.copyOf()
-        lastSyncedScalarSelection = if (engineOwnedSelection) snapshot.scalarSelection?.copyOf() else null
+        lastSyncedScalarSelection =
+            if (engineOwnedSelection) snapshot.scalarSelection?.copyOf() else null
         cachedActiveState = snapshot.activeState
         cachedHistoryState = snapshot.historyState
         cachedViewUpdateJson = updateJson
@@ -71,7 +105,14 @@ private fun EditorV2Adapter.adopt(
 internal fun EditorV2Adapter.initialUpdateJson(): String? {
     val update = refreshInternal(null, stripViewSelection = false) ?: return null
     val blocks = cachedSemanticRenderBlocks ?: return null
-    val objectValue = JSONObject(update).put("renderBlocks", JSONArray(blocks.map { JSONArray(it) }))
+    val objectValue = JSONObject(update).put(
+        "renderBlocks",
+        JSONArray(
+            blocks.map {
+                JSONArray(it)
+            }
+        )
+    )
         .put("renderPatch", JSONObject.NULL)
     val complete = objectValue.toString()
     cachedViewUpdateJson = complete
@@ -80,7 +121,8 @@ internal fun EditorV2Adapter.initialUpdateJson(): String? {
 }
 
 internal fun EditorV2Adapter?.readOnlyParsedUpdate(updateJson: String): JSONObject =
-    this?.cachedViewUpdateObject?.takeIf { updateJson === cachedViewUpdateJson } ?: parseSharedStringJsonObject(updateJson)
+    this?.cachedViewUpdateObject?.takeIf { updateJson === cachedViewUpdateJson }
+        ?: parseSharedStringJsonObject(updateJson)
 
 internal fun EditorV2Adapter?.updateSelection(updateJson: String): JSONObject? =
     readOnlyParsedUpdate(updateJson).optJSONObject("selection")?.let { JSONObject(it.toString()) }
@@ -106,9 +148,22 @@ internal fun EditorV2Adapter.refreshInternal(
     }
     fun fetch(): FfiNativeRenderFrame? {
         renderUpdateCallCountForTesting++
-        return PreparedProseInstrumentation.measureTableStage(PreparedProseInstrumentation.TableStage.NATIVE_FRAME_AND_FFI) {
-            when (val result = backend.renderNativeFrame(editorId, nativeOwnerId, mirrorSelection?.get(0), mirrorSelection?.get(1))) {
-                is EditorV2CallResult.Err -> { emit(result.error); null }
+        return PreparedProseInstrumentation.measureTableStage(
+            PreparedProseInstrumentation.TableStage.NATIVE_FRAME_AND_FFI
+        ) {
+            when (
+                val result = backend.renderNativeFrame(
+                    editorId,
+                    nativeOwnerId,
+                    mirrorSelection?.get(0),
+                    mirrorSelection?.get(1)
+                )
+            ) {
+                is EditorV2CallResult.Err -> {
+                    emit(result.error)
+                    null
+                }
+
                 is EditorV2CallResult.Ok -> result.value
             }
         }

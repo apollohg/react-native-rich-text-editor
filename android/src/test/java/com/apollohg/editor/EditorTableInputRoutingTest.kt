@@ -18,14 +18,23 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 class EditorTableInputRoutingTest {
     private fun withCellInput(
-        block: (EditorEditText, EditorTableInputCoordinator, EditorV2Adapter, FakeEditorV2Backend) -> Unit
+        block: (
+            EditorEditText,
+            EditorTableInputCoordinator,
+            EditorV2Adapter,
+            FakeEditorV2Backend
+        ) -> Unit
     ) {
         val backend = FakeEditorV2Backend()
         val created = backend.create("""{"initialization":{"type":"localEmpty"}}""", null)
             as EditorV2CallResult.Ok
-        val adapter = requireNotNull(EditorV2Adapter.attach(
-            backend, JSONObject(created.value).getString("editorId"), roomBound = false
-        ))
+        val adapter = requireNotNull(
+            EditorV2Adapter.attach(
+                backend,
+                JSONObject(created.value).getString("editorId"),
+                roomBound = false
+            )
+        )
         val token = EditorV2Registry.register(adapter)
         val input = EditorEditText(RuntimeEnvironment.getApplication())
         val coordinator = EditorTableInputCoordinator(input)
@@ -39,10 +48,16 @@ class EditorTableInputRoutingTest {
             adapter.positionEpoch = "9"
             val binding = TableCellPositionMap.Binding("table", 10, "4", "9")
             val map = TableCellPositionMap(binding, listOf(TableCellPositionMap.Segment(0, 5, 40)))
-            assertTrue(coordinator.bind(
-                EditorTableInputCoordinator.Target(binding), map, "4", "9",
-                authority = { true }, updateConsumer = { _, _, _ -> true }
-            ))
+            assertTrue(
+                coordinator.bind(
+                    EditorTableInputCoordinator.Target(binding),
+                    map,
+                    "4",
+                    "9",
+                    authority = { true },
+                    updateConsumer = { _, _, _ -> true }
+                )
+            )
             block(input, coordinator, adapter, backend)
         } finally {
             input.v2Driver = null
@@ -55,29 +70,49 @@ class EditorTableInputRoutingTest {
         withCellInput { input, coordinator, _, backend ->
             assertTrue(coordinator.invalidateBinding())
             val binding = TableCellPositionMap.Binding("table", 10, "4", "9")
-            val map = TableCellPositionMap(binding, listOf(
-                TableCellPositionMap.Segment(0, 2, 40),
-                TableCellPositionMap.Segment(2, 5, 50)
-            ))
-            assertTrue(coordinator.bind(
-                EditorTableInputCoordinator.Target(binding), map, "4", "9",
-                authority = { true }, updateConsumer = { _, _, _ -> true }
-            ))
+            val map = TableCellPositionMap(
+                binding,
+                listOf(
+                    TableCellPositionMap.Segment(0, 2, 40),
+                    TableCellPositionMap.Segment(2, 5, 50)
+                )
+            )
+            assertTrue(
+                coordinator.bind(
+                    EditorTableInputCoordinator.Target(binding),
+                    map,
+                    "4",
+                    "9",
+                    authority = { true },
+                    updateConsumer = { _, _, _ -> true }
+                )
+            )
             block(input, backend)
         }
 
     @Test
-    fun `cell input converts UTF-16 emoji coordinates and preserves reversed selection`() = withCellInput { input, _, _, _ ->
-        assertEquals(42, input.inputScalarAtLocalUtf16(3, "a😀bc"))
-        assertEquals(41 to 42, input.inputScalarRangeAtLocalUtf16(1, 3, "a😀bc"))
-        assertEquals(43 to 41, input.inputScalarSelection(3, 1))
-        assertEquals(3 to 1, input.localScalarSelection(43, 41))
-        assertNull(input.inputScalarRange(4, 5))
-        assertNull(input.inputScalar(-1))
-    }
+    fun `cell input converts UTF-16 emoji coordinates and preserves reversed selection`() =
+        withCellInput {
+                input,
+                _,
+                _,
+                _
+            ->
+            assertEquals(42, input.inputScalarAtLocalUtf16(3, "a😀bc"))
+            assertEquals(41 to 42, input.inputScalarRangeAtLocalUtf16(1, 3, "a😀bc"))
+            assertEquals(43 to 41, input.inputScalarSelection(3, 1))
+            assertEquals(3 to 1, input.localScalarSelection(43, 41))
+            assertNull(input.inputScalarRange(4, 5))
+            assertNull(input.inputScalar(-1))
+        }
 
     @Test
-    fun `cell typing uses global scalar and stale revision blocks the driver`() = withCellInput { input, _, adapter, backend ->
+    fun `cell typing uses global scalar and stale revision blocks the driver`() = withCellInput {
+            input,
+            _,
+            adapter,
+            backend
+        ->
         val inserts = mutableListOf<Int>()
         input.onInsertTextInRustForTesting = { _, scalar -> inserts += scalar }
         assertEquals(3, input.selectionStart)
@@ -96,7 +131,12 @@ class EditorTableInputRoutingTest {
     }
 
     @Test
-    fun `cell deletion and correction submit the global emoji range`() = withCellInput { input, _, _, _ ->
+    fun `cell deletion and correction submit the global emoji range`() = withCellInput {
+            input,
+            _,
+            _,
+            _
+        ->
         val deleted = mutableListOf<Pair<Int, Int>>()
         val replaced = mutableListOf<Triple<Int, Int, String>>()
         input.onDeleteRangeInRustForTesting = { from, to -> deleted += from to to }
@@ -111,7 +151,10 @@ class EditorTableInputRoutingTest {
     }
 
     @Test
-    fun `explicit correction rejects a cell range crossing a map gap`() = withGappedCellInput { input, backend ->
+    fun `explicit correction rejects a cell range crossing a map gap`() = withGappedCellInput {
+            input,
+            backend
+        ->
         val replaced = mutableListOf<Triple<Int, Int, String>>()
         input.onReplaceTextInRustForTesting = { from, to, value ->
             replaced += Triple(from, to, value)
@@ -125,7 +168,10 @@ class EditorTableInputRoutingTest {
     }
 
     @Test
-    fun `inferred correction rejects a cell range crossing a map gap`() = withGappedCellInput { input, backend ->
+    fun `inferred correction rejects a cell range crossing a map gap`() = withGappedCellInput {
+            input,
+            backend
+        ->
         val replaced = mutableListOf<Triple<Int, Int, String>>()
         input.onReplaceTextInRustForTesting = { from, to, value ->
             replaced += Triple(from, to, value)
@@ -147,7 +193,12 @@ class EditorTableInputRoutingTest {
     }
 
     @Test
-    fun `invalidated cell stays blocked until deliberate root bind`() = withCellInput { input, coordinator, _, backend ->
+    fun `invalidated cell stays blocked until deliberate root bind`() = withCellInput {
+            input,
+            coordinator,
+            _,
+            backend
+        ->
         val inserts = mutableListOf<Int>()
         input.onInsertTextInRustForTesting = { _, scalar -> inserts += scalar }
         input.setSelection(1)
@@ -168,20 +219,31 @@ class EditorTableInputRoutingTest {
     }
 
     @Test
-    fun `incoming global text selection maps to local UTF-16 without losing direction`() = withCellInput { input, _, _, _ ->
-        input.applySelectionFromJSON(
-            JSONObject().put("type", "text")
-                .put("anchor", 44).put("head", 42)
-                .put("anchorScalar", 43).put("headScalar", 41),
-            "4"
-        )
-        assertEquals(4, input.selectionStart)
-        assertEquals(1, input.selectionEnd)
-        assertEquals(3 to 1, input.currentLogicalScalarSelection())
-    }
+    fun `incoming global text selection maps to local UTF-16 without losing direction`() =
+        withCellInput {
+                input,
+                _,
+                _,
+                _
+            ->
+            input.applySelectionFromJSON(
+                JSONObject().put("type", "text")
+                    .put("anchor", 44).put("head", 42)
+                    .put("anchorScalar", 43).put("headScalar", 41),
+                "4"
+            )
+            assertEquals(4, input.selectionStart)
+            assertEquals(1, input.selectionEnd)
+            assertEquals(3 to 1, input.currentLogicalScalarSelection())
+        }
 
     @Test
-    fun `false authority and changed epoch reject coordinates`() = withCellInput { input, _, adapter, backend ->
+    fun `false authority and changed epoch reject coordinates`() = withCellInput {
+            input,
+            _,
+            adapter,
+            backend
+        ->
         input.tableCellInputAuthority = { false }
         assertNull(input.inputScalar(1))
         backend.calls.clear()
@@ -196,7 +258,12 @@ class EditorTableInputRoutingTest {
     }
 
     @Test
-    fun `stale cell connection cannot compose or receive a root render`() = withCellInput { input, _, adapter, backend ->
+    fun `stale cell connection cannot compose or receive a root render`() = withCellInput {
+            input,
+            _,
+            adapter,
+            backend
+        ->
         val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
         val initialText = input.text.toString()
         val rootUpdate = requireNotNull(adapter.currentStateJson())
@@ -227,18 +294,30 @@ class EditorTableInputRoutingTest {
     }
 
     @Test
-    fun `rebind clears the prior logical selection snapshot`() = withCellInput { input, coordinator, _, _ ->
+    fun `rebind clears the prior logical selection snapshot`() = withCellInput {
+            input,
+            coordinator,
+            _,
+            _
+        ->
         input.rememberLogicalSelection(100, 100, 3, 3, "4")
         assertEquals(100 to 100, input.currentScalarSelection())
         assertTrue(coordinator.invalidateBinding())
         val binding = TableCellPositionMap.Binding("table", 10, "4", "9")
         val reboundMap = TableCellPositionMap(
-            binding, listOf(TableCellPositionMap.Segment(0, 5, 80))
+            binding,
+            listOf(TableCellPositionMap.Segment(0, 5, 80))
         )
-        assertTrue(coordinator.bind(
-            EditorTableInputCoordinator.Target(binding), reboundMap, "4", "9",
-            authority = { true }, updateConsumer = { _, _, _ -> true }
-        ))
+        assertTrue(
+            coordinator.bind(
+                EditorTableInputCoordinator.Target(binding),
+                reboundMap,
+                "4",
+                "9",
+                authority = { true },
+                updateConsumer = { _, _, _ -> true }
+            )
+        )
         assertEquals(2 to 2, input.currentScalarSelection())
     }
 
@@ -247,9 +326,13 @@ class EditorTableInputRoutingTest {
         val backend = FakeEditorV2Backend()
         val created = backend.create("""{"initialization":{"type":"localEmpty"}}""", null)
             as EditorV2CallResult.Ok
-        val adapter = requireNotNull(EditorV2Adapter.attach(
-            backend, JSONObject(created.value).getString("editorId"), roomBound = false
-        ))
+        val adapter = requireNotNull(
+            EditorV2Adapter.attach(
+                backend,
+                JSONObject(created.value).getString("editorId"),
+                roomBound = false
+            )
+        )
         val prefix = "x".repeat(40)
         requireNotNull(adapter.setContentHtml("<p>${prefix}abcde</p>"))
         val token = EditorV2Registry.register(adapter)
@@ -267,16 +350,27 @@ class EditorTableInputRoutingTest {
             val map = TableCellPositionMap(binding, listOf(TableCellPositionMap.Segment(0, 6, 40)))
             val updates = mutableListOf<String>()
             val coordinator = EditorTableInputCoordinator(input)
-            assertTrue(coordinator.bind(
-                EditorTableInputCoordinator.Target(binding), map, revision, epoch,
-                authority = { true },
-                updateConsumer = { update, _, _ -> updates += update; true }
-            ))
+            assertTrue(
+                coordinator.bind(
+                    EditorTableInputCoordinator.Target(binding),
+                    map,
+                    revision,
+                    epoch,
+                    authority = { true },
+                    updateConsumer = { update, _, _ ->
+                        updates += update
+                        true
+                    }
+                )
+            )
 
             input.handleTextCommit("Q")
 
             val document = backend.getDocumentJson(adapter.editorId) as EditorV2CallResult.Ok
-            assertEquals("${prefix}abQcde", FakeEditorV2Backend.documentTextOf(JSONObject(document.value)))
+            assertEquals(
+                "${prefix}abQcde",
+                FakeEditorV2Backend.documentTextOf(JSONObject(document.value))
+            )
             assertEquals(1, updates.size)
             assertFalse(input.text.toString().startsWith(prefix))
         } finally {

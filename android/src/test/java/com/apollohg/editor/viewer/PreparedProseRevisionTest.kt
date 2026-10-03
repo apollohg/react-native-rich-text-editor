@@ -532,21 +532,31 @@ class PreparedProseRevisionTest {
                                 {"type":"text","text":"marked","marks":[{"type":"font","attrs":{"fontFamily":"$family"}}]}
                             ]}]}
                         ]}]}
-                    ]}""".trimIndent()
+                    ]}
+                    """.trimIndent()
                 ),
                 configuration
             )
             val preparations = mutableListOf<Int>()
             val engine = StaticLayoutAndroidProseLayoutEngine().apply {
-                tableCellPreparationObserver = { index, _ -> preparations.add(index); Unit }
+                tableCellPreparationObserver = { index, _ ->
+                    preparations.add(index)
+                    Unit
+                }
             }
-            val registry = PreparedProseLayoutRegistry(compiler = ::compileWithRust, layoutEngine = engine)
+            val registry =
+                PreparedProseLayoutRegistry(compiler = ::compileWithRust, layoutEngine = engine)
             val initialRequest = request("before")
             val initial = registry.measure(initialRequest, 320, 1f)
             val initialCell = requireNotNull(
                 initial.blocks.single { it.tableSurface != null }.tableSurface
             ).cells.single().content
-            assertFalse(ViewerFontEnvironment.warnOnceForMissingFamily(family, initialRequest.semanticGenerationIdentity))
+            assertFalse(
+                ViewerFontEnvironment.warnOnceForMissingFamily(
+                    family,
+                    initialRequest.semanticGenerationIdentity
+                )
+            )
 
             val replacementRequest = request("unrelated prose ".repeat(40))
             val replacement = registry.measure(replacementRequest, 320, 1f)
@@ -561,7 +571,12 @@ class PreparedProseRevisionTest {
                 replacementCell.blocks.flatMap { it.fragments }.mapNotNull { it.layout?.text }
                     .joinToString("")
             )
-            assertFalse(ViewerFontEnvironment.warnOnceForMissingFamily(family, replacementRequest.semanticGenerationIdentity))
+            assertFalse(
+                ViewerFontEnvironment.warnOnceForMissingFamily(
+                    family,
+                    replacementRequest.semanticGenerationIdentity
+                )
+            )
         } finally {
             ViewerFontEnvironment.resetMissingWarningsForTesting()
             ViewerFontEnvironment.resetFamilyRegistryForTesting()
@@ -760,8 +775,7 @@ class PreparedProseRevisionTest {
         assertFalse(state.recordResourceFailure(0))
     }
 
-    private fun tableFontMarkConfig(): String =
-        """{"schema":{"nodes":[
+    private fun tableFontMarkConfig(): String = """{"schema":{"nodes":[
             {"name":"doc","content":"block+","role":"doc"},
             {"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},
             {"name":"text","content":"","group":"inline","role":"text"},
@@ -770,5 +784,5 @@ class PreparedProseRevisionTest {
             {"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"class":{"default":null},"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},
             {"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"class":{"default":null},"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}
         ],"marks":[{"name":"font","attrs":{"fontFamily":{}}}]},"initialization":{"type":"localEmpty"}}"""
-            .trimIndent()
+        .trimIndent()
 }

@@ -34,7 +34,11 @@ internal fun EditorEditText.applyRustUpdateJSON(
     lineBoundaryRefreshSource: String? = null
 ) {
     if (isTableCellInput) {
-        if (externalUpdatePreparationCaptureDepth > 0) capturedExternalUpdatePreparationJSON = updateJSON
+        if (externalUpdatePreparationCaptureDepth >
+            0
+        ) {
+            capturedExternalUpdatePreparationJSON = updateJSON
+        }
         tableCellUpdateConsumer?.invoke(updateJSON, true, false)
         return
     }

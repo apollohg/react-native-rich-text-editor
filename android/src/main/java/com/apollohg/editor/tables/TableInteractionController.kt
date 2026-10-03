@@ -13,19 +13,25 @@ import kotlin.math.roundToInt
 internal enum class TableGestureAxis { UNDECIDED, HORIZONTAL, VERTICAL }
 
 internal class TableGestureAxisLock(context: Context) {
-    private companion object { const val HORIZONTAL_BIAS = 1.25f }
+    private companion object {
+        const val HORIZONTAL_BIAS = 1.25f
+    }
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
     var axis = TableGestureAxis.UNDECIDED
         private set
 
-    fun reset() { axis = TableGestureAxis.UNDECIDED }
+    fun reset() {
+        axis = TableGestureAxis.UNDECIDED
+    }
 
     fun update(dx: Float, dy: Float, canConsume: () -> Boolean): TableGestureAxis {
         if (axis != TableGestureAxis.UNDECIDED) return axis
         if (dx * dx + dy * dy <= touchSlop * touchSlop) return axis
         axis = if (abs(dx) > HORIZONTAL_BIAS * abs(dy) && canConsume()) {
             TableGestureAxis.HORIZONTAL
-        } else TableGestureAxis.VERTICAL
+        } else {
+            TableGestureAxis.VERTICAL
+        }
         return axis
     }
 }
@@ -86,11 +92,15 @@ internal class TableInteractionController(
                 velocity = VelocityTracker.obtain().also { it.addMovement(event) }
                 return true
             }
-            MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_CANCEL -> {
+
+            MotionEvent.ACTION_POINTER_DOWN,
+            MotionEvent.ACTION_POINTER_UP,
+            MotionEvent.ACTION_CANCEL -> {
                 val owned = ownsHorizontalGesture
                 resetGesture()
                 return owned
             }
+
             MotionEvent.ACTION_MOVE -> {
                 if (pointerId == MotionEvent.INVALID_POINTER_ID) return false
                 val generation = gestureGeneration
@@ -134,8 +144,13 @@ internal class TableInteractionController(
                 val remaining = delta - consumed[0] - local.roundToInt()
                 val postConsumed = IntArray(2)
                 val postOffset = IntArray(2)
-                postScroll(local.roundToInt(), remaining, postConsumed,
-                    postOffset, ViewCompat.TYPE_TOUCH)
+                postScroll(
+                    local.roundToInt(),
+                    remaining,
+                    postConsumed,
+                    postOffset,
+                    ViewCompat.TYPE_TOUCH
+                )
                 if (generation != gestureGeneration) return true
                 val windowShift = preOffset[0] + postOffset[0]
                 nestedWindowX += windowShift
@@ -143,6 +158,7 @@ internal class TableInteractionController(
                 addVelocity(event)
                 return true
             }
+
             MotionEvent.ACTION_UP -> {
                 val owned = ownsHorizontalGesture
                 if (owned) {
@@ -150,15 +166,27 @@ internal class TableInteractionController(
                     addVelocity(event)
                     velocity?.computeCurrentVelocity(VELOCITY_UNITS, maximumFlingVelocity.toFloat())
                     val horizontalVelocity = -(velocity?.getXVelocity(pointerId) ?: 0f)
-                    if (abs(horizontalVelocity) >= minimumFlingVelocity && !preFling(horizontalVelocity) &&
-                        generation == gestureGeneration) {
-                        val canConsume = surfaces.any { owner().canConsumePhysical(horizontalVelocity, it) }
+                    if (abs(horizontalVelocity) >= minimumFlingVelocity &&
+                        !preFling(horizontalVelocity) &&
+                        generation == gestureGeneration
+                    ) {
+                        val canConsume = surfaces.any {
+                            owner().canConsumePhysical(horizontalVelocity, it)
+                        }
                         fling(horizontalVelocity, canConsume)
                         if (generation != gestureGeneration) return true
                         if (canConsume) {
                             flingSurfaces = surfaces
-                            scroller.fling(0, 0, horizontalVelocity.roundToInt(), 0,
-                                -Int.MAX_VALUE, Int.MAX_VALUE, 0, 0)
+                            scroller.fling(
+                                0,
+                                0,
+                                horizontalVelocity.roundToInt(),
+                                0,
+                                -Int.MAX_VALUE,
+                                Int.MAX_VALUE,
+                                0,
+                                0
+                            )
                             lastFlingX = 0
                             startNested(ViewCompat.TYPE_NON_TOUCH)
                             if (generation != gestureGeneration) return true
@@ -194,8 +222,13 @@ internal class TableInteractionController(
         if (generation != gestureGeneration) return
         val remaining = delta - consumed[0] - local
         val postConsumed = IntArray(2)
-        postScroll(local, remaining, postConsumed, windowOffset,
-            ViewCompat.TYPE_NON_TOUCH)
+        postScroll(
+            local,
+            remaining,
+            postConsumed,
+            windowOffset,
+            ViewCompat.TYPE_NON_TOUCH
+        )
         if (generation != gestureGeneration) return
         if (remaining != 0 && postConsumed[0] == 0) {
             startNested(ViewCompat.TYPE_TOUCH)
@@ -203,7 +236,9 @@ internal class TableInteractionController(
             fling(scroller.currVelocity * remaining.sign(), false)
             stopNestedSafely(ViewCompat.TYPE_TOUCH)
             if (generation == gestureGeneration) finishFling()
-        } else view.postInvalidateOnAnimation()
+        } else {
+            view.postInvalidateOnAnimation()
+        }
     }
 
     fun cancel() {
@@ -233,7 +268,11 @@ internal class TableInteractionController(
 
     private fun stopNestedSafely(type: Int) {
         if (!stoppingNestedTypes.add(type)) return
-        try { stopNested(type) } finally { stoppingNestedTypes.remove(type) }
+        try {
+            stopNested(type)
+        } finally {
+            stoppingNestedTypes.remove(type)
+        }
     }
 
     private fun scrollLocal(delta: Float, targets: List<ViewerTableSurface> = surfaces): Float {

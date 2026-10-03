@@ -17,15 +17,15 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.LargeTest
 import androidx.test.platform.app.InstrumentationRegistry
-import com.apollohg.editor.tables.TableCollaborationRelay
-import com.apollohg.editor.tables.TableRoomSeed
-import com.apollohg.editor.tables.TableToolbarTestItems
-import com.apollohg.editor.tables.applyLocalSelection
 import com.apollohg.editor.tables.TableAccessibilityAction
 import com.apollohg.editor.tables.TableAccessibilityNodes
+import com.apollohg.editor.tables.TableCollaborationRelay
 import com.apollohg.editor.tables.TableLayoutDirection
+import com.apollohg.editor.tables.TableRoomSeed
+import com.apollohg.editor.tables.TableToolbarTestItems
 import com.apollohg.editor.tables.ViewerTablePresentedCell
 import com.apollohg.editor.tables.activeTableCellPosition
+import com.apollohg.editor.tables.applyLocalSelection
 import com.apollohg.editor.tables.documentCellSelection
 import com.apollohg.editor.tables.presentedRealCell
 import com.apollohg.editor.tables.pressKeyboardToolbarButton
@@ -64,7 +64,9 @@ class NativeTableAcceptanceTest {
         val colwidth: List<Int>?
     )
 
-    private inner class Harness(private val scenario: ActivityScenario<NativeEditorOutsideTapActivity>) {
+    private inner class Harness(
+        private val scenario: ActivityScenario<NativeEditorOutsideTapActivity>
+    ) {
         lateinit var adapter: EditorV2Adapter
         lateinit var expo: NativeEditorExpoView
         private var expoContext: TestExpoContext? = null
@@ -83,9 +85,13 @@ class NativeTableAcceptanceTest {
 
         fun create(document: String) = onMain { activity ->
             val created = UniffiEditorV2Backend.create(CONFIG, null).required("create")
-            adapter = requireNotNull(EditorV2Adapter.attach(
-                UniffiEditorV2Backend, JSONObject(created).getString("editorId"), roomBound = false
-            ))
+            adapter = requireNotNull(
+                EditorV2Adapter.attach(
+                    UniffiEditorV2Backend,
+                    JSONObject(created).getString("editorId"),
+                    roomBound = false
+                )
+            )
             requireNotNull(adapter.setContentJson(document))
             token = EditorV2Registry.register(adapter)
             mount(activity)
@@ -113,15 +119,24 @@ class NativeTableAcceptanceTest {
                 onTableSelectionGeometryForTesting = {}
                 setThemeJson(THEME)
             }
-            activity.setContentView(FrameLayout(activity).apply {
-                setBackgroundColor(Color.WHITE)
-                addView(expo, FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
-                ).apply {
-                    val margin = (EDITOR_MARGIN_DP * activity.resources.displayMetrics.density).toInt()
-                    setMargins(margin, margin * TOP_MARGIN_FACTOR, margin, margin)
-                })
-            })
+            activity.setContentView(
+                FrameLayout(activity).apply {
+                    setBackgroundColor(Color.WHITE)
+                    addView(
+                        expo,
+                        FrameLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        ).apply {
+                            val margin = (
+                                EDITOR_MARGIN_DP *
+                                    activity.resources.displayMetrics.density
+                                ).toInt()
+                            setMargins(margin, margin * TOP_MARGIN_FACTOR, margin, margin)
+                        }
+                    )
+                }
+            )
             expo.setEditorId(token)
         }
 
@@ -130,22 +145,31 @@ class NativeTableAcceptanceTest {
             if (token != 0L) releasePairedV2TestEditor(token)
         }
 
-        fun tableId(): String = requireNotNull(adapter.tableRecordsForTesting.entries.firstOrNull {
-            !it.value.optBoolean("readOnlyDescendants", true)
-        }?.key) { "no editable table is rendered" }
+        fun tableId(): String = requireNotNull(
+            adapter.tableRecordsForTesting.entries.firstOrNull {
+                !it.value.optBoolean("readOnlyDescendants", true)
+            }?.key
+        ) { "no editable table is rendered" }
 
         fun positions(): List<Int> = adapter.tableCellPositions(tableId())
 
-        fun cellsAt(vararg indices: Int): Set<Int> = positions().let { positions -> indices.map(positions::get).toSet() }
+        fun cellsAt(vararg indices: Int): Set<Int> = positions().let { positions ->
+            indices.map(positions::get).toSet()
+        }
 
         fun activeCell(): Long? = view.activeTableCellPosition
 
-        fun tableEnd(): Int = requireNotNull(adapter.tableRecordsForTesting[tableId()]).getInt("sourceEnd")
+        fun tableEnd(): Int =
+            requireNotNull(adapter.tableRecordsForTesting[tableId()]).getInt("sourceEnd")
 
-        fun engineSelection(): JSONObject {
-            return JSONObject(UniffiEditorV2Backend.renderUpdate(adapter.editorId, null, null).required("render update"))
-                .getJSONObject("selection")
-        }
+        fun engineSelection(): JSONObject = JSONObject(
+            UniffiEditorV2Backend.renderUpdate(
+                adapter.editorId,
+                null,
+                null
+            ).required("render update")
+        )
+            .getJSONObject("selection")
 
         fun rowWidths(): List<Int> = grid().map { row -> row.sumOf { it.colspan } }
 
@@ -156,11 +180,13 @@ class NativeTableAcceptanceTest {
             }.toSet()
         }
 
-        fun presentedCell(position: Int): ViewerTablePresentedCell = drawing.presentedRealCell(tableId(), position)
+        fun presentedCell(position: Int): ViewerTablePresentedCell =
+            drawing.presentedRealCell(tableId(), position)
 
         fun documentJson(): String = requireNotNull(adapter.documentJson())
 
-        fun blocks(): List<JSONObject> = JSONObject(documentJson()).getJSONArray("content").objects()
+        fun blocks(): List<JSONObject> =
+            JSONObject(documentJson()).getJSONArray("content").objects()
 
         fun grid(): List<List<Cell>> {
             val table = blocks().first { it.getString("type") == TABLE_NODE }
@@ -175,13 +201,23 @@ class NativeTableAcceptanceTest {
             val paragraphs = node.getJSONArray("content").objects().map { block ->
                 assertEquals(PARAGRAPH_NODE, block.getString("type"))
                 block.optJSONArray("content")?.objects().orEmpty().joinToString("") { run ->
-                    val marks = run.optJSONArray("marks")?.objects().orEmpty().map { it.getString("type") }
+                    val marks = run.optJSONArray("marks")?.objects().orEmpty().map {
+                        it.getString("type")
+                    }
                     val text = run.getString("text")
                     if (marks.isEmpty()) text else "<${marks.joinToString(",")}>$text</>"
                 }
             }
-            val widths = attrs.optJSONArray("colwidth")?.let { array -> (0 until array.length()).map(array::getInt) }
-            return Cell(node.getString("type"), paragraphs, attrs.optInt("colspan", 1), attrs.optInt("rowspan", 1), widths)
+            val widths = attrs.optJSONArray("colwidth")?.let { array ->
+                (0 until array.length()).map(array::getInt)
+            }
+            return Cell(
+                node.getString("type"),
+                paragraphs,
+                attrs.optInt("colspan", 1),
+                attrs.optInt("rowspan", 1),
+                widths
+            )
         }
 
         fun applyLocalCommand(command: JSONObject) {
@@ -196,7 +232,8 @@ class NativeTableAcceptanceTest {
         fun deliverRemoteCommit() {
             val preflight = view.activeTextInput.prepareForExternalEditorUpdateWithResult()
             assertTrue("the remote commit could not be prepared", preflight.ready)
-            val update = preflight.adoptedUpdateJSON ?: requireNotNull(adapter.refreshFromRustState(null))
+            val update =
+                preflight.adoptedUpdateJSON ?: requireNotNull(adapter.refreshFromRustState(null))
             assertTrue(root.applyUpdateJSON(update, refreshInputConnectionForExternalUpdate = true))
         }
 
@@ -210,10 +247,17 @@ class NativeTableAcceptanceTest {
         }
 
         fun actionIds(position: Int): List<Int> {
-            val info = requireNotNull(drawing.accessibilityNodeProvider.createAccessibilityNodeInfo(
-                cellNodeIds()[positions().indexOf(position)]
-            ))
-            return info.actionList.map { it.id }.filter { id -> TableAccessibilityAction.ALL.any { it.id == id } }
+            val info = requireNotNull(
+                drawing.accessibilityNodeProvider.createAccessibilityNodeInfo(
+                    cellNodeIds()[positions().indexOf(position)]
+                )
+            )
+            return info.actionList.map { it.id }.filter { id ->
+                TableAccessibilityAction.ALL.any {
+                    it.id ==
+                        id
+                }
+            }
         }
 
         fun remount() = onMain { activity ->
@@ -223,8 +267,10 @@ class NativeTableAcceptanceTest {
 
         fun perform(actionId: Int, position: Int) {
             val node = cellNodeIds()[positions().indexOf(position)]
-            assertTrue("action $actionId on cell $position was refused",
-                drawing.accessibilityNodeProvider.performAction(node, actionId, null))
+            assertTrue(
+                "action $actionId on cell $position was refused",
+                drawing.accessibilityNodeProvider.performAction(node, actionId, null)
+            )
         }
 
         fun screenPoint(position: Int, trailingEdge: Boolean): Pair<Float, Float> = onMain {
@@ -247,7 +293,8 @@ class NativeTableAcceptanceTest {
         fun drag(from: Pair<Float, Float>, to: Pair<Float, Float>, holdSteps: Int = 0) {
             val steps = (0..DRAG_STEPS).map { step ->
                 val fraction = step.toFloat() / DRAG_STEPS
-                from.first + (to.first - from.first) * fraction to from.second + (to.second - from.second) * fraction
+                from.first + (to.first - from.first) * fraction to
+                    from.second + (to.second - from.second) * fraction
             }
             gesture(listOf(from) + steps + List(holdSteps) { to } + listOf(to))
         }
@@ -277,8 +324,19 @@ class NativeTableAcceptanceTest {
                     points.lastIndex -> MotionEvent.ACTION_UP
                     else -> MotionEvent.ACTION_MOVE
                 }
-                val event = MotionEvent.obtain(start, start + index * GESTURE_STEP_MS, action, x, y, 0)
-                try { instrumentation.sendPointerSync(event) } finally { event.recycle() }
+                val event = MotionEvent.obtain(
+                    start,
+                    start + index * GESTURE_STEP_MS,
+                    action,
+                    x,
+                    y,
+                    0
+                )
+                try {
+                    instrumentation.sendPointerSync(event)
+                } finally {
+                    event.recycle()
+                }
             }
             instrumentation.waitForIdleSync()
         }
@@ -290,8 +348,10 @@ class NativeTableAcceptanceTest {
 
         fun commit(text: String) {
             val input = view.activeTextInput
-            assertTrue("commit '$text' refused",
-                requireNotNull(input.onCreateInputConnection(EditorInfo())).commitText(text, 1))
+            assertTrue(
+                "commit '$text' refused",
+                requireNotNull(input.onCreateInputConnection(EditorInfo())).commitText(text, 1)
+            )
         }
 
         fun screenshot(name: String) {
@@ -302,7 +362,9 @@ class NativeTableAcceptanceTest {
         }
 
         fun export() = onMain {
-            val (metadata, state) = UniffiEditorV2Backend.snapshotExport(adapter.editorId).required("snapshot export")
+            val (metadata, state) = UniffiEditorV2Backend.snapshotExport(
+                adapter.editorId
+            ).required("snapshot export")
             val payload = JSONObject()
                 .put("platform", PLATFORM)
                 .put("documentJson", JSONObject(documentJson()))
@@ -336,19 +398,26 @@ class NativeTableAcceptanceTest {
             val remote = room.makeAdapter()
             try {
                 harness.onMain {
-                    val relay = TableCollaborationRelay(listOf(harness.adapter.editorId, remote.editorId))
+                    val relay =
+                        TableCollaborationRelay(listOf(harness.adapter.editorId, remote.editorId))
                     relay.exchangeUntilIdle()
                     val rectangleCell = harness.positions()[REMOTE_GRID_COLUMNS + 1]
                     harness.selectCells(rectangleCell, rectangleCell)
                     assertTrue(harness.root.requestFocus())
                     assertEquals(setOf(rectangleCell), harness.selectedCells())
-                    assertSame("the rectangle lives on the root", harness.root, harness.view.activeTextInput)
+                    assertSame(
+                        "the rectangle lives on the root",
+                        harness.root,
+                        harness.view.activeTextInput
+                    )
                     assertNull(harness.activeCell())
 
                     requireNotNull(remote.refreshFromRustState(null))
                     remote.applyLocalSelection(documentCellSelection(rectangleCell, rectangleCell))
                         .required("remote row selection")
-                    remote.callWithEnvelope(JSONObject().put("command", JSONObject().put("type", DELETE_TABLE_ROWS))) {
+                    remote.callWithEnvelope(
+                        JSONObject().put("command", JSONObject().put("type", DELETE_TABLE_ROWS))
+                    ) {
                         UniffiEditorV2Backend.applyCommand(remote.editorId, it)
                     }.required("remote row delete")
                     assertEquals(setOf(harness.adapter.editorId), relay.exchangeUntilIdle())
@@ -359,11 +428,21 @@ class NativeTableAcceptanceTest {
                     val mappedCaret = mappedCell + CELL_TEXT_OFFSET
                     val resolved = harness.engineSelection()
                     assertEquals("$resolved", TEXT_SELECTION, resolved.getString("type"))
-                    assertEquals("the removed rectangle becomes a caret at the start of the next row like a local " +
-                        "row delete: $resolved", mappedCaret, resolved.getInt("anchor"))
+                    assertEquals(
+                        (
+                            "the removed rectangle becomes a caret " +
+                                "at the start of the next row like a local "
+                            ) +
+                            "row delete: $resolved",
+                        mappedCaret,
+                        resolved.getInt("anchor")
+                    )
                     assertEquals("$resolved", mappedCaret, resolved.getInt("head"))
-                    assertEquals("the cell holding the mapped caret takes the input",
-                        mappedCell.toLong(), harness.activeCell())
+                    assertEquals(
+                        "the cell holding the mapped caret takes the input",
+                        mappedCell.toLong(),
+                        harness.activeCell()
+                    )
                     val input = harness.view.activeTextInput
                     assertFalse(input === harness.root)
                     assertTrue("the focused editor keeps focus in the bound cell", input.hasFocus())
@@ -382,21 +461,37 @@ class NativeTableAcceptanceTest {
             val harness = Harness(scenario)
             harness.create(PARITY_DOCUMENT)
             try {
-                val document = compileWithRust(ProseViewerRequest(ProseViewerSource.Json(PARITY_DOCUMENT),
-                    ProseViewerConfiguration(CONFIG)))
+                val document =
+                    compileWithRust(
+                        ProseViewerRequest(
+                            ProseViewerSource.Json(PARITY_DOCUMENT),
+                            ProseViewerConfiguration(CONFIG)
+                        )
+                    )
                 for (direction in TableLayoutDirection.entries) {
-                    harness.onMain { harness.view.tableDirection = direction; harness.view.requestLayout() }
+                    harness.onMain {
+                        harness.view.tableDirection = direction
+                        harness.view.requestLayout()
+                    }
                     harness.onMain {
                         val editorCells = harness.drawing.presentedTableCells()
                             .associate { it.sourceIndex to it.bounds }
                         val viewerCells = viewerCellFrames(harness, document, direction)
-                        assertEquals("$direction", viewerCells.keys.sorted(), editorCells.keys.sorted())
+                        assertEquals(
+                            "$direction",
+                            viewerCells.keys.sorted(),
+                            editorCells.keys.sorted()
+                        )
                         val editorGeometry = normalized(editorCells)
                         normalized(viewerCells).forEach { (position, viewer) ->
                             val editor = requireNotNull(editorGeometry[position])
                             viewer.zip(editor).forEach { (viewerEdge, editorEdge) ->
-                                assertEquals("$direction cell $position: editor $editor viewer $viewer",
-                                    viewerEdge, editorEdge, PARITY_TOLERANCE_PX)
+                                assertEquals(
+                                    "$direction cell $position: editor $editor viewer $viewer",
+                                    viewerEdge,
+                                    editorEdge,
+                                    PARITY_TOLERANCE_PX
+                                )
                             }
                         }
                     }
@@ -415,17 +510,38 @@ class NativeTableAcceptanceTest {
             try {
                 val (raw, revision, shortRow) = harness.onMain {
                     val raw = harness.grid()
-                    assertEquals("the import keeps its raw row widths: $raw", RAW_ROW_WIDTHS, harness.rowWidths())
-                    val record = requireNotNull(harness.adapter.tableRecordsForTesting[harness.tableId()])
+                    assertEquals(
+                        "the import keeps its raw row widths: $raw",
+                        RAW_ROW_WIDTHS,
+                        harness.rowWidths()
+                    )
+                    val record =
+                        requireNotNull(harness.adapter.tableRecordsForTesting[harness.tableId()])
                     assertTrue(record.getBoolean("irregular"))
-                    assertTrue("the projection fills the raw gaps", requireNotNull(harness.adapter.tableIndex.record(harness.tableId())).syntheticRegions.isNotEmpty())
-                    Triple(raw, harness.adapter.baseDocumentRevision, harness.positions()[IRREGULAR_SHORT_ROW_CELL])
+                    assertTrue(
+                        "the projection fills the raw gaps",
+                        requireNotNull(
+                            harness.adapter.tableIndex.record(harness.tableId())
+                        ).syntheticRegions.isNotEmpty()
+                    )
+                    Triple(
+                        raw,
+                        harness.adapter.baseDocumentRevision,
+                        harness.positions()[IRREGULAR_SHORT_ROW_CELL]
+                    )
                 }
                 harness.onMain {
                     harness.selectCells(shortRow, shortRow)
-                    assertEquals("a real cell of the raw table offers exactly these actions", IRREGULAR_CELL_ACTIONS,
-                        harness.actionIds(shortRow))
-                    assertEquals("rendering and selecting never repair the raw table", raw, harness.grid())
+                    assertEquals(
+                        "a real cell of the raw table offers exactly these actions",
+                        IRREGULAR_CELL_ACTIONS,
+                        harness.actionIds(shortRow)
+                    )
+                    assertEquals(
+                        "rendering and selecting never repair the raw table",
+                        raw,
+                        harness.grid()
+                    )
                     assertEquals(revision, harness.adapter.baseDocumentRevision)
                 }
                 harness.remount()
@@ -433,8 +549,11 @@ class NativeTableAcceptanceTest {
                     assertEquals("rebinding never repairs the raw table", raw, harness.grid())
                     assertEquals(revision, harness.adapter.baseDocumentRevision)
                     harness.selectCells(shortRow, shortRow)
-                    assertEquals("the same actions are offered after the rebind", IRREGULAR_CELL_ACTIONS,
-                        harness.actionIds(shortRow))
+                    assertEquals(
+                        "the same actions are offered after the rebind",
+                        IRREGULAR_CELL_ACTIONS,
+                        harness.actionIds(shortRow)
+                    )
                 }
                 harness.tapCell(shortRow)
                 harness.onMain {
@@ -442,9 +561,16 @@ class NativeTableAcceptanceTest {
                     harness.view.activeTextInput.setSelection(0)
                     harness.commit(COMPOSED_TEXT)
                     val typed = harness.grid()
-                    assertEquals("a uniquely anchored real cell stays typeable: $typed",
-                        listOf(COMPOSED_TEXT + SHORT_ROW_TEXT), typed[1][1].paragraphs)
-                    assertEquals("typing never normalizes the grid", RAW_ROW_WIDTHS, harness.rowWidths())
+                    assertEquals(
+                        "a uniquely anchored real cell stays typeable: $typed",
+                        listOf(COMPOSED_TEXT + SHORT_ROW_TEXT),
+                        typed[1][1].paragraphs
+                    )
+                    assertEquals(
+                        "typing never normalizes the grid",
+                        RAW_ROW_WIDTHS,
+                        harness.rowWidths()
+                    )
                     assertEquals(revision + 1uL, harness.adapter.baseDocumentRevision)
                 }
             } finally {
@@ -461,44 +587,83 @@ class NativeTableAcceptanceTest {
         val input = harness.root
         val density = input.resources.displayMetrics.density
         val width = input.measuredWidth - input.compoundPaddingLeft - input.compoundPaddingRight
-        val theme = PreparedProseTheme.resolve(THEME, density).copy(insetTopPx = 0, insetRightPx = 0,
-            insetBottomPx = 0, insetLeftPx = 0, tableDirection = direction)
-        val key = ProseLayoutKey(document.semanticKey, width, PARITY_LAYOUT_KEY, 0, 0, density.toRawBits().toLong(), 0,
-            PARITY_LAYOUT_KEY, tableDirection = direction)
-        val layout = StaticLayoutAndroidProseLayoutEngine().prepare(document, key, theme, width, density, false)
+        val theme = PreparedProseTheme.resolve(THEME, density).copy(
+            insetTopPx = 0,
+            insetRightPx = 0,
+            insetBottomPx = 0,
+            insetLeftPx = 0,
+            tableDirection = direction
+        )
+        val key =
+            ProseLayoutKey(
+                document.semanticKey,
+                width,
+                PARITY_LAYOUT_KEY,
+                0,
+                0,
+                density.toRawBits().toLong(),
+                0,
+
+                PARITY_LAYOUT_KEY, tableDirection = direction
+            )
+        val layout = StaticLayoutAndroidProseLayoutEngine().prepare(
+            document,
+            key,
+            theme,
+            width,
+            density,
+            false
+        )
         val surface = requireNotNull(layout.blocks.firstNotNullOfOrNull { it.tableSurface })
         return surface.cells.associate { cell ->
             val frame = surface.frameOfCell(cell)
-            cell.sourceIndex to RectF(frame.left, frame.top, frame.left + frame.width, frame.top + frame.height)
+            cell.sourceIndex to
+                RectF(frame.left, frame.top, frame.left + frame.width, frame.top + frame.height)
         }
     }
 
     private fun normalized(cells: Map<Int, RectF>): Map<Int, List<Float>> {
         val left = cells.values.minOf { it.left }
         val top = cells.values.minOf { it.top }
-        return cells.mapValues { (_, rect) -> listOf(rect.left - left, rect.top - top, rect.width(), rect.height()) }
+        return cells.mapValues { (_, rect) ->
+            listOf(rect.left - left, rect.top - top, rect.width(), rect.height())
+        }
     }
 
     private fun runWorkflow(harness: Harness, room: TableRoomSeed) {
         val richCell = listOf(
-            "<${TableToolbarTestItems.STRONG_MARK}>${CELL_TEXT.take(BOLD_PREFIX_LENGTH)}</>${CELL_TEXT.drop(BOLD_PREFIX_LENGTH)}",
+            "<${TableToolbarTestItems.STRONG_MARK}>${CELL_TEXT.take(
+                BOLD_PREFIX_LENGTH
+            )}</>${CELL_TEXT.drop(BOLD_PREFIX_LENGTH)}",
             SECOND_PARAGRAPH
         )
         harness.onMain {
-            assertEquals("the room opens on its seed", TRAILING_PARAGRAPHS + 1, harness.blocks().size)
-            assertTrue("the seed holds no table yet", harness.adapter.tableRecordsForTesting.isEmpty())
+            assertEquals(
+                "the room opens on its seed",
+                TRAILING_PARAGRAPHS + 1,
+                harness.blocks().size
+            )
+            assertTrue(
+                "the seed holds no table yet",
+                harness.adapter.tableRecordsForTesting.isEmpty()
+            )
             harness.root.requestFocus()
             harness.root.setSelection(INTRO_TEXT.length)
-            harness.applyLocalCommand(JSONObject().put("type", INSERT_TABLE).put("rows", TABLE_ROWS)
-                .put("columns", TABLE_COLUMNS).put("withHeaderRow", true))
+            harness.applyLocalCommand(
+                JSONObject().put("type", INSERT_TABLE).put("rows", TABLE_ROWS)
+                    .put("columns", TABLE_COLUMNS).put("withHeaderRow", true)
+            )
             val grid = harness.grid()
             assertEquals("$grid", List(TABLE_ROWS) { TABLE_COLUMNS }, grid.map { it.size })
             assertEquals(List(TABLE_COLUMNS) { HEADER_NODE }, grid[0].map { it.type })
             assertEquals(setOf(CELL_NODE), grid.drop(1).flatten().map { it.type }.toSet())
             assertEquals(PARAGRAPH_NODE, harness.blocks().first().getString("type"))
             assertEquals(TABLE_ROWS * TABLE_COLUMNS, harness.positions().size)
-            assertEquals("an inserted table leaves a caret, not a cell rectangle", emptySet<Int>(),
-                harness.selectedCells())
+            assertEquals(
+                "an inserted table leaves a caret, not a cell rectangle",
+                emptySet<Int>(),
+                harness.selectedCells()
+            )
         }
 
         val bodyStart = harness.onMain {
@@ -509,7 +674,10 @@ class NativeTableAcceptanceTest {
         lateinit var cellInput: EditorEditText
         harness.onMain {
             cellInput = harness.view.activeTextInput
-            assertFalse("the tapped cell must own the reusable cell input", cellInput === harness.root)
+            assertFalse(
+                "the tapped cell must own the reusable cell input",
+                cellInput === harness.root
+            )
             assertEquals(bodyStart.toLong(), harness.activeCell())
             harness.commit(CELL_TEXT)
             cellInput.setSelection(0, BOLD_PREFIX_LENGTH)
@@ -519,24 +687,38 @@ class NativeTableAcceptanceTest {
             harness.commit(SECOND_PARAGRAPH)
             val grid = harness.grid()
             assertEquals("$grid", richCell, grid[1][0].paragraphs)
-            assertSame("typing keeps the single cell input", cellInput, harness.view.activeTextInput)
+            assertSame(
+                "typing keeps the single cell input",
+                cellInput,
+                harness.view.activeTextInput
+            )
             assertEquals(harness.positions()[TABLE_COLUMNS].toLong(), harness.activeCell())
         }
 
         val secondBody = harness.onMain { harness.positions()[TABLE_COLUMNS + 1] }
         harness.tapCell(secondBody)
         harness.onMain {
-            assertSame("rebinding reuses the single cell input", cellInput, harness.view.activeTextInput)
+            assertSame(
+                "rebinding reuses the single cell input",
+                cellInput,
+                harness.view.activeTextInput
+            )
             assertEquals(secondBody.toLong(), harness.activeCell())
             cellInput.setSelection(cellInput.text.length)
             harness.commit(BODY_TEXT)
             val positions = harness.positions()
             harness.selectCells(positions[TABLE_COLUMNS], positions[TABLE_COLUMNS + 1])
-            assertEquals(setOf(positions[TABLE_COLUMNS], positions[TABLE_COLUMNS + 1]), harness.selectedCells())
+            assertEquals(
+                setOf(positions[TABLE_COLUMNS], positions[TABLE_COLUMNS + 1]),
+                harness.selectedCells()
+            )
             assertTrue(harness.root.onTextContextMenuItem(android.R.id.copy))
             val clipboard = it.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            assertEquals("copy exports the real cell rectangle", PASTED_TSV_ROW,
-                clipboard.primaryClip?.getItemAt(0)?.coerceToText(it)?.toString())
+            assertEquals(
+                "copy exports the real cell rectangle",
+                PASTED_TSV_ROW,
+                clipboard.primaryClip?.getItemAt(0)?.coerceToText(it)?.toString()
+            )
             harness.perform(MERGE_CELLS, positions[TABLE_COLUMNS])
         }
         harness.screenshot("native-table-acceptance-merged.png")
@@ -546,24 +728,44 @@ class NativeTableAcceptanceTest {
             assertEquals(2, grid[1][0].colspan)
             assertEquals(richCell + BODY_TEXT, grid[1][0].paragraphs)
             val positions = harness.positions()
-            assertEquals("the merged cell is the only selected real cell", setOf(positions[TABLE_COLUMNS]),
-                harness.selectedCells())
+            assertEquals(
+                "the merged cell is the only selected real cell",
+                setOf(positions[TABLE_COLUMNS]),
+                harness.selectedCells()
+            )
             harness.perform(SPLIT_CELL, positions[TABLE_COLUMNS])
             val split = harness.grid()
             assertEquals("$split", List(TABLE_ROWS) { TABLE_COLUMNS }, split.map { it.size })
-            assertEquals("split keeps the content in the anchor", richCell + BODY_TEXT, split[1][0].paragraphs)
+            assertEquals(
+                "split keeps the content in the anchor",
+                richCell + BODY_TEXT,
+                split[1][0].paragraphs
+            )
             assertEquals(listOf(""), split[1][1].paragraphs)
             val afterSplit = harness.positions()
-            assertEquals("split selects the whole split rectangle, like prosemirror-tables splitCell from a cell selection",
-                harness.cellsAt(TABLE_COLUMNS, TABLE_COLUMNS + 1), harness.selectedCells())
+            assertEquals(
+                "split selects the whole split rectangle, like prosemirror-tables splitCell from a cell selection",
+                harness.cellsAt(TABLE_COLUMNS, TABLE_COLUMNS + 1),
+                harness.selectedCells()
+            )
 
             harness.selectCells(afterSplit[TABLE_COLUMNS * 2], afterSplit[TABLE_COLUMNS * 2 + 1])
             assertTrue(harness.root.onTextContextMenuItem(android.R.id.paste))
             val pasted = harness.grid()
-            assertEquals("paste keeps the copied rich content: $pasted", richCell, pasted[2][0].paragraphs)
+            assertEquals(
+                "paste keeps the copied rich content: $pasted",
+                richCell,
+                pasted[2][0].paragraphs
+            )
             assertEquals("$pasted", listOf(BODY_TEXT), pasted[2][1].paragraphs)
-            assertEquals("paste selects the pasted rectangle", harness.cellsAt(TABLE_COLUMNS * 2, TABLE_COLUMNS * 2 + 1),
-                harness.selectedCells())
+            assertEquals(
+                "paste selects the pasted rectangle",
+                harness.cellsAt(
+                    TABLE_COLUMNS * 2,
+                    TABLE_COLUMNS * 2 + 1
+                ),
+                harness.selectedCells()
+            )
 
             val rowAnchor = harness.positions()[TABLE_COLUMNS * 2]
             harness.selectCells(rowAnchor, rowAnchor)
@@ -571,39 +773,75 @@ class NativeTableAcceptanceTest {
             val grown = harness.grid()
             assertEquals("$grown", TABLE_ROWS + 1, grown.size)
             assertEquals(List(TABLE_COLUMNS) { listOf("") }, grown[3].map { it.paragraphs })
-            assertEquals("adding a row maps the selected cell onto itself", harness.cellsAt(TABLE_COLUMNS * 2),
-                harness.selectedCells())
+            assertEquals(
+                "adding a row maps the selected cell onto itself",
+                harness.cellsAt(TABLE_COLUMNS * 2),
+                harness.selectedCells()
+            )
             val added = harness.positions()[TABLE_COLUMNS * 3]
             harness.selectCells(added, added)
             harness.perform(DELETE_ROWS, added)
             assertEquals(pasted, harness.grid())
-            assertEquals("a deleted row takes its cell selection with it", emptySet<Int>(), harness.selectedCells())
+            assertEquals(
+                "a deleted row takes its cell selection with it",
+                emptySet<Int>(),
+                harness.selectedCells()
+            )
             val afterRowDelete = harness.engineSelection()
             assertEquals("$afterRowDelete", TEXT_SELECTION, afterRowDelete.getString("type"))
-            assertEquals("deleting the last row maps the selection forward into the paragraph after the table",
-                harness.tableEnd() + BLOCK_CONTENT_OFFSET, afterRowDelete.getInt("head"))
-            assertEquals("the mapped selection is a caret: $afterRowDelete", afterRowDelete.getInt("head"),
-                afterRowDelete.getInt("anchor"))
+            assertEquals(
+                "deleting the last row maps the selection forward into the paragraph after the table",
+                harness.tableEnd() + BLOCK_CONTENT_OFFSET,
+                afterRowDelete.getInt("head")
+            )
+            assertEquals(
+                "the mapped selection is a caret: $afterRowDelete",
+                afterRowDelete.getInt("head"),
+                afterRowDelete.getInt("anchor")
+            )
 
             val lastHeader = harness.positions()[TABLE_COLUMNS - 1]
             harness.selectCells(lastHeader, lastHeader)
             harness.perform(ADD_COLUMN_AFTER, lastHeader)
             val widened = harness.grid()
-            assertEquals("$widened", List(TABLE_ROWS) { TABLE_COLUMNS + 1 }, widened.map { it.size })
-            assertEquals("the header row stays a header row", HEADER_NODE, widened[0][TABLE_COLUMNS].type)
-            assertEquals("adding a column maps the selected cell onto itself", harness.cellsAt(TABLE_COLUMNS - 1),
-                harness.selectedCells())
+            assertEquals(
+                "$widened",
+                List(TABLE_ROWS) {
+                    TABLE_COLUMNS + 1
+                },
+                widened.map { it.size }
+            )
+            assertEquals(
+                "the header row stays a header row",
+                HEADER_NODE,
+                widened[0][TABLE_COLUMNS].type
+            )
+            assertEquals(
+                "adding a column maps the selected cell onto itself",
+                harness.cellsAt(TABLE_COLUMNS - 1),
+                harness.selectedCells()
+            )
             val addedHeader = harness.positions()[TABLE_COLUMNS]
             harness.selectCells(addedHeader, addedHeader)
             harness.perform(DELETE_COLUMNS, addedHeader)
             assertEquals(pasted, harness.grid())
-            assertEquals("a deleted last column takes its cell selection with it", emptySet<Int>(), harness.selectedCells())
+            assertEquals(
+                "a deleted last column takes its cell selection with it",
+                emptySet<Int>(),
+                harness.selectedCells()
+            )
             val afterColumnDelete = harness.engineSelection()
             assertEquals("$afterColumnDelete", TEXT_SELECTION, afterColumnDelete.getString("type"))
-            assertEquals("deleting the last column maps the selection forward to the start of the next row",
-                harness.positions()[TABLE_COLUMNS] + CELL_TEXT_OFFSET, afterColumnDelete.getInt("head"))
-            assertEquals("the mapped selection is a caret: $afterColumnDelete", afterColumnDelete.getInt("head"),
-                afterColumnDelete.getInt("anchor"))
+            assertEquals(
+                "deleting the last column maps the selection forward to the start of the next row",
+                harness.positions()[TABLE_COLUMNS] + CELL_TEXT_OFFSET,
+                afterColumnDelete.getInt("head")
+            )
+            assertEquals(
+                "the mapped selection is a caret: $afterColumnDelete",
+                afterColumnDelete.getInt("head"),
+                afterColumnDelete.getInt("anchor")
+            )
             val target = harness.positions()[TABLE_COLUMNS * 2]
             harness.selectCells(target, target)
         }
@@ -619,22 +857,44 @@ class NativeTableAcceptanceTest {
             val grid = harness.grid()
             val width = requireNotNull(grid[0][0].colwidth?.firstOrNull()) { "$grid" }
             assertTrue("the column grew: $grid", width >= MINIMUM_RESIZED_WIDTH)
-            assertEquals("every cell of the column carries the width", List(TABLE_ROWS) { listOf(width) },
-                grid.map { it[0].colwidth })
-            assertEquals(settled.map { row -> row.map { it.paragraphs } }, grid.map { row -> row.map { it.paragraphs } })
-            assertEquals("a resize keeps the selected real cell", setOf(resizeTarget), harness.selectedCells())
+            assertEquals(
+                "every cell of the column carries the width",
+                List(TABLE_ROWS) {
+                    listOf(width)
+                },
+                grid.map { it[0].colwidth }
+            )
+            assertEquals(
+                settled.map { row ->
+                    row.map { it.paragraphs }
+                },
+                grid.map { row -> row.map { it.paragraphs } }
+            )
+            assertEquals(
+                "a resize keeps the selected real cell",
+                setOf(resizeTarget),
+                harness.selectedCells()
+            )
             harness.expo.setToolbarItemsJson(TableToolbarTestItems.HISTORY_JSON)
             grid
         }
         harness.pressToolbarButtonAfterPendingUpdates(TableToolbarTestItems.UNDO_LABEL)
         harness.onMain {
             assertEquals("one undo removes the whole resize", settled, harness.grid())
-            assertEquals("undo keeps the selected real cell", setOf(resizeTarget), harness.selectedCells())
+            assertEquals(
+                "undo keeps the selected real cell",
+                setOf(resizeTarget),
+                harness.selectedCells()
+            )
         }
         harness.pressToolbarButtonAfterPendingUpdates(TableToolbarTestItems.REDO_LABEL)
         harness.onMain {
             assertEquals("redo restores the resize", resized, harness.grid())
-            assertEquals("redo keeps the selected real cell", setOf(resizeTarget), harness.selectedCells())
+            assertEquals(
+                "redo keeps the selected real cell",
+                setOf(resizeTarget),
+                harness.selectedCells()
+            )
         }
 
         val lastCell = harness.onMain { harness.positions().last() }
@@ -642,81 +902,173 @@ class NativeTableAcceptanceTest {
         val revisionBeforeScroll = harness.onMain {
             val input = harness.view.activeTextInput
             assertEquals(lastCell.toLong(), harness.activeCell())
-            assertTrue(requireNotNull(input.onCreateInputConnection(EditorInfo()))
-                .setComposingText(COMPOSED_TEXT, 1))
+            assertTrue(
+                requireNotNull(input.onCreateInputConnection(EditorInfo()))
+                    .setComposingText(COMPOSED_TEXT, 1)
+            )
             harness.adapter.baseDocumentRevision
         }
         val scrollBeforeSwipe = harness.onMain { harness.view.editorScrollView.scrollY }
         harness.swipeEditorVertically(upward = true)
         harness.onMain {
-            assertTrue("a real swipe must scroll the document",
-                harness.view.editorScrollView.scrollY > scrollBeforeSwipe)
+            assertTrue(
+                "a real swipe must scroll the document",
+                harness.view.editorScrollView.scrollY > scrollBeforeSwipe
+            )
             val viewLocation = IntArray(2)
             harness.view.getLocationOnScreen(viewLocation)
             val drawingLocation = IntArray(2)
             harness.drawing.getLocationOnScreen(drawingLocation)
-            val cell = harness.drawing.presentedTableCells().firstOrNull { harness.drawing.tableCellDocumentPosition?.invoke(it.surface.editorTableId!!, it.sourceIndex) == lastCell }
+            val cell = harness.drawing.presentedTableCells().firstOrNull {
+                harness.drawing.tableCellDocumentPosition?.invoke(
+                    it.surface.editorTableId!!,
+                    it.sourceIndex
+                ) ==
+                    lastCell
+            }
             val cellBottom = cell?.let { drawingLocation[1] + it.bounds.bottom }
-            assertTrue("the active cell must have scrolled out of the viewport: bottom $cellBottom, viewport top ${viewLocation[1]}",
-                cellBottom == null || cellBottom <= viewLocation[1])
-            assertEquals("the offscreen active input stays pinned", lastCell.toLong(), harness.activeCell())
+            assertTrue(
+                "the active cell must have scrolled out of the viewport: bottom $cellBottom, viewport top ${viewLocation[1]}",
+                cellBottom == null || cellBottom <= viewLocation[1]
+            )
+            assertEquals(
+                "the offscreen active input stays pinned",
+                lastCell.toLong(),
+                harness.activeCell()
+            )
             assertFalse(harness.view.activeTextInput === harness.root)
-            assertEquals("scrolling is not a mutation", revisionBeforeScroll, harness.adapter.baseDocumentRevision)
-            assertTrue(requireNotNull(harness.view.activeTextInput.onCreateInputConnection(EditorInfo()))
-                .finishComposingText())
+            assertEquals(
+                "scrolling is not a mutation",
+                revisionBeforeScroll,
+                harness.adapter.baseDocumentRevision
+            )
+            assertTrue(
+                requireNotNull(harness.view.activeTextInput.onCreateInputConnection(EditorInfo()))
+                    .finishComposingText()
+            )
             val grid = harness.grid()
-            assertEquals("the pinned composition lands in its cell: $grid", listOf(COMPOSED_TEXT), grid[2][2].paragraphs)
+            assertEquals(
+                "the pinned composition lands in its cell: $grid",
+                listOf(COMPOSED_TEXT),
+                grid[2][2].paragraphs
+            )
         }
         harness.swipeEditorVertically(upward = false)
         harness.onMain {
-            assertEquals("the reverse swipe returns to the table", scrollBeforeSwipe,
-                harness.view.editorScrollView.scrollY)
+            assertEquals(
+                "the reverse swipe returns to the table",
+                scrollBeforeSwipe,
+                harness.view.editorScrollView.scrollY
+            )
         }
 
         val remote = room.makeAdapter()
         try {
             harness.onMain {
-                val relay = TableCollaborationRelay(listOf(harness.adapter.editorId, remote.editorId))
-                assertEquals("catching up is a remote commit on the remote peer only, so its adapter must refresh " +
-                    "before editing", setOf(remote.editorId), relay.exchangeUntilIdle())
-                assertEquals("the remote peer catches up once", harness.documentJson(), remote.documentJson())
+                val relay =
+                    TableCollaborationRelay(listOf(harness.adapter.editorId, remote.editorId))
+                assertEquals(
+                    (
+                        "catching up is a remote commit on the " +
+                            "remote peer only, so its adapter must refresh "
+                        ) +
+                        "before editing",
+                    setOf(remote.editorId),
+                    relay.exchangeUntilIdle()
+                )
+                assertEquals(
+                    "the remote peer catches up once",
+                    harness.documentJson(),
+                    remote.documentJson()
+                )
                 val local = harness.engineSelection()
-                assertEquals("the local selection is the caret in the active cell: $local", TEXT_SELECTION,
-                    local.getString("type"))
+                assertEquals(
+                    "the local selection is the caret in the active cell: $local",
+                    TEXT_SELECTION,
+                    local.getString("type")
+                )
                 assertEquals(lastCell.toLong(), harness.activeCell())
                 val canRedoBefore = harness.adapter.historyCanRedo()
                 requireNotNull(remote.refreshFromRustState(null))
-                remote.applyLocalSelection(documentCellSelection(lastCell, lastCell)).required("remote row selection")
-                remote.callWithEnvelope(JSONObject().put("command", JSONObject().put("type", DELETE_TABLE_ROWS))) {
+                remote.applyLocalSelection(
+                    documentCellSelection(lastCell, lastCell)
+                ).required("remote row selection")
+                remote.callWithEnvelope(
+                    JSONObject().put("command", JSONObject().put("type", DELETE_TABLE_ROWS))
+                ) {
                     UniffiEditorV2Backend.applyCommand(remote.editorId, it)
                 }.required("remote row delete")
-                assertEquals("only the local editor receives a remote commit", setOf(harness.adapter.editorId),
-                    relay.exchangeUntilIdle())
+                assertEquals(
+                    "only the local editor receives a remote commit",
+                    setOf(harness.adapter.editorId),
+                    relay.exchangeUntilIdle()
+                )
                 harness.deliverRemoteCommit()
                 val grid = harness.grid()
-                assertEquals("the remote peer removed the active cell's row: $grid", TABLE_ROWS - 1, grid.size)
+                assertEquals(
+                    "the remote peer removed the active cell's row: $grid",
+                    TABLE_ROWS - 1,
+                    grid.size
+                )
                 assertEquals(resized.take(TABLE_ROWS - 1), grid)
                 assertEquals("both peers converge", remote.documentJson(), harness.documentJson())
-                assertSame("the dead cell releases the input", harness.root, harness.view.activeTextInput)
+                assertSame(
+                    "the dead cell releases the input",
+                    harness.root,
+                    harness.view.activeTextInput
+                )
                 assertNull(harness.activeCell())
                 val followingProseStart = harness.tableEnd() + BLOCK_CONTENT_OFFSET
                 val resolved = harness.engineSelection()
                 assertEquals("$resolved", TEXT_SELECTION, resolved.getString("type"))
-                assertEquals("the caret in the removed last row moves forward into the prose after the table like " +
-                    "a local row delete: $resolved before $local", followingProseStart, resolved.getInt("anchor"))
+                assertEquals(
+                    (
+                        "the caret in the removed last row moves " +
+                            "forward into the prose after the table like "
+                        ) +
+                        "a local row delete: $resolved before $local",
+                    followingProseStart,
+                    resolved.getInt("anchor")
+                )
                 assertEquals("$resolved", followingProseStart, resolved.getInt("head"))
-                assertEquals("no cell rectangle survives the remote deletion", emptySet<Int>(), harness.selectedCells())
-                assertEquals("the remote change adds no local history", canRedoBefore, harness.adapter.historyCanRedo())
-                assertEquals("the typing inside the removed row is dropped, but the earlier resize outlives it and " +
-                    "stays undoable", true, harness.adapter.historyCanUndo())
-                val undone = requireNotNull(harness.adapter.undo()) { "undo reverts the surviving resize" }
+                assertEquals(
+                    "no cell rectangle survives the remote deletion",
+                    emptySet<Int>(),
+                    harness.selectedCells()
+                )
+                assertEquals(
+                    "the remote change adds no local history",
+                    canRedoBefore,
+                    harness.adapter.historyCanRedo()
+                )
+                assertEquals(
+                    (
+                        "the typing inside the removed row is dropped, " +
+                            "but the earlier resize outlives it and "
+                        ) +
+                        "stays undoable",
+                    true,
+                    harness.adapter.historyCanUndo()
+                )
+                val undone =
+                    requireNotNull(harness.adapter.undo()) { "undo reverts the surviving resize" }
                 assertTrue(harness.root.applyUpdateJSON(undone))
-                assertEquals("undo reverts the resize and never restores the remote deletion",
-                    settled.take(TABLE_ROWS - 1), harness.grid())
+                assertEquals(
+                    "undo reverts the resize and never restores the remote deletion",
+                    settled.take(TABLE_ROWS - 1),
+                    harness.grid()
+                )
                 val restored = harness.engineSelection()
                 assertEquals("$restored", TEXT_SELECTION, restored.getString("type"))
-                assertEquals("the resize's cell selection in the removed row restores to the prose after the " +
-                    "table: $restored", followingProseStart, restored.getInt("anchor"))
+                assertEquals(
+                    (
+                        "the resize's cell selection in the " +
+                            "removed row restores to the prose after the "
+                        ) +
+                        "table: $restored",
+                    followingProseStart,
+                    restored.getInt("anchor")
+                )
                 assertEquals("$restored", followingProseStart, restored.getInt("head"))
             }
         } finally {
@@ -744,38 +1096,67 @@ class NativeTableAcceptanceTest {
             val positions = harness.positions()
             val rtlFirst = harness.presentedCell(positions[0]).bounds
             val rtlSecond = harness.presentedCell(positions[1]).bounds
-            assertTrue("right-to-left mirrors the logical columns: $rtlFirst $rtlSecond", rtlFirst.left > rtlSecond.left)
-            assertEquals("direction never changes the selected cells", rectangleBeforeDirection, harness.selectedCells())
+            assertTrue(
+                "right-to-left mirrors the logical columns: $rtlFirst $rtlSecond",
+                rtlFirst.left > rtlSecond.left
+            )
+            assertEquals(
+                "direction never changes the selected cells",
+                rectangleBeforeDirection,
+                harness.selectedCells()
+            )
         }
         harness.screenshot("native-table-acceptance-rtl.png")
 
         val beforeRemount = harness.onMain { harness.documentJson() }
         harness.remount()
         harness.onMain {
-            assertEquals("destroying the view never touches the document", beforeRemount, harness.documentJson())
+            assertEquals(
+                "destroying the view never touches the document",
+                beforeRemount,
+                harness.documentJson()
+            )
             assertEquals((TABLE_ROWS - 1) * TABLE_COLUMNS, harness.positions().size)
             assertSame(harness.root, harness.view.activeTextInput)
             assertNotNull(harness.presentedCell(harness.positions()[0]))
             val preTap = harness.engineSelection()
-            assertEquals("the engine keeps the pre-remount cell rectangle, so the tap must replace it", CELL_SELECTION,
-                preTap.getString("type"))
+            assertEquals(
+                "the engine keeps the pre-remount cell rectangle, so the tap must replace it",
+                CELL_SELECTION,
+                preTap.getString("type")
+            )
             assertEquals("$preTap", harness.positions()[0], preTap.getInt("anchorCell"))
             assertEquals("$preTap", harness.positions()[1], preTap.getInt("headCell"))
-            assertEquals("the remounted view draws the pre-remount rectangle", rectangleBeforeDirection,
-                harness.selectedCells())
+            assertEquals(
+                "the remounted view draws the pre-remount rectangle",
+                rectangleBeforeDirection,
+                harness.selectedCells()
+            )
         }
         val reboundCell = harness.onMain { harness.positions()[TABLE_COLUMNS] }
         harness.tapCell(reboundCell)
         harness.onMain {
             assertEquals(reboundCell.toLong(), harness.activeCell())
-            assertEquals("tapping a cell replaces the pre-remount cell rectangle with a caret", TEXT_SELECTION,
-                harness.engineSelection().getString("type"))
-            assertEquals("tapping a cell clears the drawn rectangle", emptySet<Int>(), harness.selectedCells())
-            assertEquals("a really tapped cell offers its single-cell table actions before any keystroke",
-                SINGLE_CELL_ACTIONS, harness.actionIds(reboundCell))
+            assertEquals(
+                "tapping a cell replaces the pre-remount cell rectangle with a caret",
+                TEXT_SELECTION,
+                harness.engineSelection().getString("type")
+            )
+            assertEquals(
+                "tapping a cell clears the drawn rectangle",
+                emptySet<Int>(),
+                harness.selectedCells()
+            )
+            assertEquals(
+                "a really tapped cell offers its single-cell table actions before any keystroke",
+                SINGLE_CELL_ACTIONS,
+                harness.actionIds(reboundCell)
+            )
             harness.commit(COMPOSED_TEXT)
-            assertTrue("table actions are available again after the rebind",
-                ADD_ROW_AFTER in harness.actionIds(reboundCell))
+            assertTrue(
+                "table actions are available again after the rebind",
+                ADD_ROW_AFTER in harness.actionIds(reboundCell)
+            )
             harness.perform(ADD_ROW_AFTER, reboundCell)
             val grid = harness.grid()
             assertEquals("$grid", TABLE_ROWS, grid.size)
@@ -795,8 +1176,32 @@ class NativeTableAcceptanceTest {
         .put("content", JSONArray().put(JSONObject().put("type", "text").put("text", text)))
 
     companion object {
-        private const val CONFIG = """{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table"},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[{"name":"strong"},{"name":"em"}]},"initialization":{"type":"localHtml","html":"","snapshotScope":{"documentId":"table-acceptance","lineageId":"native-editor|table-acceptance"}}}"""
-        private const val THEME = """{"text":{"fontSize":17,"color":"#1b1f2aff"},"backgroundColor":"#ffffffff","table":{"borderColor":"#a0acb7ff","headerBackgroundColor":"#e8f0f5ff","minColumnWidth":80,"cellPadding":8}}"""
+        private const val CONFIG = """{"schema":{"nodes":[{"name":"doc","content":"block+",""" +
+            """"role":"doc"},{"name":"paragraph","content":"inline*",""" +
+            """"group":"block","role":"textBlock"},{"name":"text",""" +
+            """"content":"","group":"inline","role":"text"},""" +
+            """{"name":"table","content":"table_row+","group":"block",""" +
+            """"role":"block","tableRole":"table"},""" +
+            """{"name":"table_row","content":"(table_cell | """ +
+            """table_header)*","role":"block","tableRole":"row"},""" +
+            """{"name":"table_cell","content":"block+","role":"block",""" +
+            """"tableRole":"cell","attrs":{"colspan":{"type":"number",""" +
+            """"default":1,"min":1},"rowspan":{"type":"number",""" +
+            """"default":1,"min":1},"colwidth":{"default":null}}},""" +
+            """{"name":"table_header","content":"block+",""" +
+            """"role":"block","tableRole":"header_cell",""" +
+            """"attrs":{"colspan":{"type":"number","default":1,""" +
+            """"min":1},"rowspan":{"type":"number","default":1,""" +
+            """"min":1},"colwidth":{"default":null}}}],""" +
+            """"marks":[{"name":"strong"},{"name":"em"}]},""" +
+            """"initialization":{"type":"localHtml","html":"",""" +
+            """"snapshotScope":{"documentId":"table-acceptance",""" +
+            """"lineageId":"native-editor|table-acceptance"}}}"""
+        private const val THEME = """{"text":{"fontSize":17,"color":"#1b1f2aff"},""" +
+            """"backgroundColor":"#ffffffff",""" +
+            """"table":{"borderColor":"#a0acb7ff",""" +
+            """"headerBackgroundColor":"#e8f0f5ff",""" +
+            """"minColumnWidth":80,"cellPadding":8}}"""
         private const val INTRO_TEXT = "Intro"
         private const val TRAILING_TEXT = "Trailing"
         private const val TRAILING_PARAGRAPHS = 150
@@ -820,9 +1225,73 @@ class NativeTableAcceptanceTest {
         private const val CELL_SELECTION = "cell"
         private const val BLOCK_CONTENT_OFFSET = 1
         private const val CELL_TEXT_OFFSET = 2
-        private const val PARITY_DOCUMENT = """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_header","attrs":{"colspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"Merged header across two columns"}]}]},{"type":"table_header","content":[{"type":"paragraph","content":[{"type":"text","text":"Status"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","attrs":{"rowspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"A tall cell whose text wraps over several lines"}]},{"type":"paragraph","content":[{"type":"text","text":"second"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"abcdefghijkl"}]}]},{"type":"table_cell","attrs":{"colwidth":[140]},"content":[{"type":"paragraph","content":[{"type":"text","text":"Ready"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"x"}]}]},{"type":"table_cell","content":[{"type":"paragraph"}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"After"}]}]}"""
-        private const val IRREGULAR_DOCUMENT = """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Raw"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_header","attrs":{"colspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"Wide header"}]}]},{"type":"table_header","content":[{"type":"paragraph","content":[{"type":"text","text":"Status"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","attrs":{"rowspan":3},"content":[{"type":"paragraph","content":[{"type":"text","text":"Overhang"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Short row"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"One"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Two"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Three"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Four"}]}]}]}]}]}"""
-        private const val REMOTE_GRID_DOCUMENT = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"a0"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"a1"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"b0"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"b1"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"c0"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"c1"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"After"}]}]}"""
+        private const val PARITY_DOCUMENT = """{"type":"doc","content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"Before"}]},""" +
+            """{"type":"table","content":[{"type":"table_row",""" +
+            """"content":[{"type":"table_header",""" +
+            """"attrs":{"colspan":2},"content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"Merged header across """ +
+            """two columns"}]}]},{"type":"table_header",""" +
+            """"content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"Status"}]}]}]},""" +
+            """{"type":"table_row","content":[{"type":"table_cell",""" +
+            """"attrs":{"rowspan":2},"content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"A tall cell whose """ +
+            """text wraps over several lines"}]},{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"second"}]}]},""" +
+            """{"type":"table_cell","content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"abcdefghijkl"}]}]},""" +
+            """{"type":"table_cell","attrs":{"colwidth":[140]},""" +
+            """"content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"Ready"}]}]}]},""" +
+            """{"type":"table_row","content":[{"type":"table_cell",""" +
+            """"content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"x"}]}]},""" +
+            """{"type":"table_cell",""" +
+            """"content":[{"type":"paragraph"}]}]}]},""" +
+            """{"type":"paragraph","content":[{"type":"text",""" +
+            """"text":"After"}]}]}"""
+        private const val IRREGULAR_DOCUMENT = """{"type":"doc","content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"Raw"}]},""" +
+            """{"type":"table","content":[{"type":"table_row",""" +
+            """"content":[{"type":"table_header",""" +
+            """"attrs":{"colspan":2},"content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"Wide header"}]}]},""" +
+            """{"type":"table_header","content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"Status"}]}]}]},""" +
+            """{"type":"table_row","content":[{"type":"table_cell",""" +
+            """"attrs":{"rowspan":3},"content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"Overhang"}]}]},""" +
+            """{"type":"table_cell","content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"Short row"}]}]}]},""" +
+            """{"type":"table_row","content":[{"type":"table_cell",""" +
+            """"content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"One"}]}]},""" +
+            """{"type":"table_cell","content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"Two"}]}]},""" +
+            """{"type":"table_cell","content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"Three"}]}]},""" +
+            """{"type":"table_cell","content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"Four"}]}]}]}]}]}"""
+        private const val REMOTE_GRID_DOCUMENT = """{"type":"doc","content":[{"type":"table",""" +
+            """"content":[{"type":"table_row",""" +
+            """"content":[{"type":"table_cell",""" +
+            """"content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"a0"}]}]},""" +
+            """{"type":"table_cell","content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"a1"}]}]}]},""" +
+            """{"type":"table_row","content":[{"type":"table_cell",""" +
+            """"content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"b0"}]}]},""" +
+            """{"type":"table_cell","content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"b1"}]}]}]},""" +
+            """{"type":"table_row","content":[{"type":"table_cell",""" +
+            """"content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"c0"}]}]},""" +
+            """{"type":"table_cell","content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"c1"}]}]}]}]},""" +
+            """{"type":"paragraph","content":[{"type":"text",""" +
+            """"text":"After"}]}]}"""
         private const val REMOTE_GRID_COLUMNS = 2
         private const val IRREGULAR_SHORT_ROW_CELL = 3
         private const val SHORT_ROW_TEXT = "Short row"

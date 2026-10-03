@@ -106,7 +106,11 @@ internal class PreparedProseLayoutCache(
                     completed[key] = layout
                     mountIndex[mountKey(key)] = key
                 }
-                createPendingLeaseIfActiveLocked(canonical, fabricGeneration, shouldCreateFabricLease)
+                createPendingLeaseIfActiveLocked(
+                    canonical,
+                    fabricGeneration,
+                    shouldCreateFabricLease
+                )
                 finishMutationLocked(fabricGeneration, cellContext)
                 fresh.complete(canonical)
                 return canonical
@@ -262,7 +266,8 @@ internal class PreparedProseLayoutCache(
     }
     internal val pendingLeaseCountForTesting: Int get() = synchronized(lock) { pendingLeases.size }
     internal val cellShapeCatalogCountForTesting: Int get() = cellShapeCatalog.countForTesting
-    internal val cellShapeCatalogRetainedBytesForTesting: Long get() = cellShapeCatalog.retainedBytes
+    internal val cellShapeCatalogRetainedBytesForTesting: Long get() =
+        cellShapeCatalog.retainedBytes
     internal fun beginBenchmarkCensus() = synchronized(lock) {
         benchmarkCensusKeys = linkedSetOf()
     }

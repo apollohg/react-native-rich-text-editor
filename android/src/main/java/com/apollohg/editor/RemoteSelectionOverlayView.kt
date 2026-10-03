@@ -1,6 +1,5 @@
 package com.apollohg.editor
 
-import com.apollohg.editor.tables.EditorTableIndex
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
@@ -11,6 +10,7 @@ import android.util.AttributeSet
 import android.util.TypedValue
 import androidx.appcompat.content.res.AppCompatResources
 import com.apollohg.editor.tables.EditorCellSelection
+import com.apollohg.editor.tables.EditorTableIndex
 import com.apollohg.editor.tables.resolveEditorCellSelection
 import com.apollohg.editor.viewer.RemoteTableCellSelection
 import org.json.JSONArray
@@ -80,7 +80,9 @@ data class RemoteSelectionDecoration(
                             color = color,
                             name = item.optString("name").takeIf { it.isNotBlank() },
                             isFocused = item.optBoolean("isFocused", false),
-                            cellRectangle = RemoteCellRectangle.fromJson(item.optJSONObject("cellRectangle")),
+                            cellRectangle = RemoteCellRectangle.fromJson(
+                                item.optJSONObject("cellRectangle")
+                            ),
                             resolvedAt = resolvedAt
                         )
                     )
@@ -198,16 +200,27 @@ class RemoteSelectionOverlayView @JvmOverloads constructor(
 
     private fun currentSelections(): List<RemoteSelectionDecoration> {
         val frame = installedFrame()
-        val presentedRevision = editorView?.editorTableSurface?.presentedDocumentRevision?.toString()
+        val presentedRevision =
+            editorView?.editorTableSurface?.presentedDocumentRevision?.toString()
         val hasTables = editorView?.let { view ->
-            EditorV2Registry.adapterForViewToken(resolvedEditorId(view))?.tableIndex?.tableKeys?.isNotEmpty()
+            EditorV2Registry.adapterForViewToken(
+                resolvedEditorId(view)
+            )?.tableIndex?.tableKeys?.isNotEmpty()
         } == true
         return remoteSelections.filter { selection ->
-            if (selection.resolvedAt == null && selection.cellRectangle == null) true
-            else (selection.resolvedAt ?: legacyFrame)?.let {
-                it == frame && editorView?.editorEditText?.lastAppliedDocumentVersion == it.documentRevision &&
-                    (selection.cellRectangle == null || !hasTables || it.documentRevision == presentedRevision)
-            } ?: false
+            if (selection.resolvedAt == null && selection.cellRectangle == null) {
+                true
+            } else {
+                (selection.resolvedAt ?: legacyFrame)?.let {
+                    it == frame &&
+                        editorView?.editorEditText?.lastAppliedDocumentVersion ==
+                        it.documentRevision &&
+                        (
+                            selection.cellRectangle == null || !hasTables ||
+                                it.documentRevision == presentedRevision
+                            )
+                } ?: false
+            }
         }
     }
 
@@ -222,15 +235,22 @@ class RemoteSelectionOverlayView @JvmOverloads constructor(
         val editorView = editorView ?: return
         val editorId = resolvedEditorId(editorView)
         val index = EditorV2Registry.adapterForViewToken(editorId)?.tableIndex ?: EditorTableIndex()
-        val drawable = if (editorId == 0L) emptyList() else currentSelections().mapNotNull { selection ->
-            val rectangle = selection.cellRectangle ?: return@mapNotNull null
-            val cells = resolveEditorCellSelection(rectangle.anchorCell, rectangle.headCell, index)
-                as? EditorCellSelection.Drawable ?: return@mapNotNull null
-            selection.clientId to RemoteTableCellSelection(
-                cells.tableId,
-                cells.sourceIndices,
-                withAlpha(selection.color, SELECTION_ALPHA)
-            )
+        val drawable = if (editorId ==
+            0L
+        ) {
+            emptyList()
+        } else {
+            currentSelections().mapNotNull { selection ->
+                val rectangle = selection.cellRectangle ?: return@mapNotNull null
+                val cells =
+                    resolveEditorCellSelection(rectangle.anchorCell, rectangle.headCell, index)
+                        as? EditorCellSelection.Drawable ?: return@mapNotNull null
+                selection.clientId to RemoteTableCellSelection(
+                    cells.tableId,
+                    cells.sourceIndices,
+                    withAlpha(selection.color, SELECTION_ALPHA)
+                )
+            }
         }
         cellSelectionClientIds = drawable.map { it.first }.toSet()
         editorView.editorTableSurface.presentRemoteCellSelections(drawable.map { it.second })
@@ -286,7 +306,10 @@ class RemoteSelectionOverlayView @JvmOverloads constructor(
 
         val text = context.snapshot.text
         val editorId = context.snapshot.editorId
-        val textSelections = context.snapshot.selections.filter { it.clientId !in context.snapshot.cellSelectionClientIds }
+        val textSelections = context.snapshot.selections.filter {
+            it.clientId !in
+                context.snapshot.cellSelectionClientIds
+        }
         val geometry = textSelections.map { selection ->
             val startDoc = minOf(selection.anchor, selection.head)
             val endDoc = maxOf(selection.anchor, selection.head)

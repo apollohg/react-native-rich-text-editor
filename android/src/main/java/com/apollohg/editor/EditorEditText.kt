@@ -317,7 +317,8 @@ class EditorEditText @JvmOverloads constructor(
     internal var v2Driver: EditorV2Driver? = null
         set(value) {
             if (field === value) return
-            rootTableRenderNeedsRefresh = rootTableRenderNeedsRefresh || rootTablePositionMap != null
+            rootTableRenderNeedsRefresh =
+                rootTableRenderNeedsRefresh || rootTablePositionMap != null
             (field as? EditorV2Adapter)?.releaseNativeBindingOwner(nativeBindingToken)
             field = value
             invalidateCurrentRenderBlocks()
@@ -411,21 +412,32 @@ class EditorEditText @JvmOverloads constructor(
         if (tableArrow && event.action == KeyEvent.ACTION_DOWN) {
             val signature = hardwareKeyEventSignature(event)
             if (lastHandledHardwareKeySignature == signature ||
-                didRecentlyHandleHardwareKeyDown(signature)) return true
+                didRecentlyHandleHardwareKeyDown(signature)
+            ) {
+                return true
+            }
         }
         val arrowStart = if (isTableCellInput && event.action == KeyEvent.ACTION_DOWN &&
             event.keyCode in KeyEvent.KEYCODE_DPAD_UP..KeyEvent.KEYCODE_DPAD_RIGHT &&
             !event.isShiftPressed && !event.isCtrlPressed && !event.isAltPressed &&
             !event.isMetaPressed && selectionStart == selectionEnd &&
             isAuthorizedForTableCellInput()
-        ) selectionStart else null
+        ) {
+            selectionStart
+        } else {
+            null
+        }
         val arrowBinding = if (arrowStart != null) tableCellPositionMap?.binding else null
         if (isTableCellInput && !canDispatchTableCellMutation() &&
             isReadOnlyTextMutationKeyEvent(event)
-        ) return true
+        ) {
+            return true
+        }
         if (isTableCellInput && !isAuthorizedForTableCellInput() && arrowStart == null &&
             event.keyCode in KeyEvent.KEYCODE_DPAD_UP..KeyEvent.KEYCODE_DPAD_RIGHT
-        ) return true
+        ) {
+            return true
+        }
         if (!isEditable && isReadOnlyTextMutationKeyEvent(event)) {
             return true
         }
@@ -452,7 +464,9 @@ class EditorEditText @JvmOverloads constructor(
             lastHandledHardwareKeySignature?.let {
                 it.keyCode == event.keyCode && it.downTime == event.downTime
             } == true
-        ) lastHandledHardwareKeySignature = null
+        ) {
+            lastHandledHardwareKeySignature = null
+        }
         return handled
     }
 
@@ -909,7 +923,9 @@ class EditorEditText @JvmOverloads constructor(
                 action == android.view.accessibility.AccessibilityNodeInfo.ACTION_PASTE ||
                     action == android.view.accessibility.AccessibilityNodeInfo.ACTION_CUT
                 )
-        ) return false
+        ) {
+            return false
+        }
         if (pasteMode == EditorPasteMode.DISABLED &&
             action == android.view.accessibility.AccessibilityNodeInfo.ACTION_PASTE
         ) {

@@ -233,7 +233,8 @@ internal fun EditorEditText.handleHardBreakImpl() {
     }
     if (discardTransientInputForDestroyedEditorIfNeeded()) return
 
-    val selection = currentScalarSelection()?.let { inputScalarSelection(it.first, it.second) } ?: return
+    val selection =
+        currentScalarSelection()?.let { inputScalarSelection(it.first, it.second) } ?: return
     v2Driver?.let { driver ->
         driver.insertNode(preferredHardBreakNodeType(), selection.first, selection.second)?.let {
             applyUpdateJSON(it)

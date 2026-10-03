@@ -316,7 +316,13 @@ internal fun EditorEditText.applyRenderJSONImpl(renderJSON: String) {
 
 internal fun renderedTextMatches(left: CharSequence?, right: CharSequence): Boolean {
     if (left?.toString() != right.toString()) return false
-    data class SpanValue(val type: Class<*>, val start: Int, val end: Int, val flags: Int, val value: Any)
+    data class SpanValue(
+        val type: Class<*>,
+        val start: Int,
+        val end: Int,
+        val flags: Int,
+        val value: Any
+    )
     fun values(text: CharSequence): List<SpanValue>? {
         val spanned = text as? Spanned ?: return emptyList()
         return spanned.getSpans(0, spanned.length, Any::class.java).filter {
@@ -329,13 +335,22 @@ internal fun renderedTextMatches(left: CharSequence?, right: CharSequence): Bool
                     try {
                         span.writeToParcel(parcel, 0)
                         parcel.marshall().toList()
-                    } finally { parcel.recycle() }
+                    } finally {
+                        parcel.recycle()
+                    }
                 }
+
                 is EditorResolvedTextSpan -> span.style to span.density
+
                 else -> return null
             }
-            SpanValue(span.javaClass, spanned.getSpanStart(span), spanned.getSpanEnd(span),
-                spanned.getSpanFlags(span), value)
+            SpanValue(
+                span.javaClass,
+                spanned.getSpanStart(span),
+                spanned.getSpanEnd(span),
+                spanned.getSpanFlags(span),
+                value
+            )
         }
     }
     val leftValues = values(left ?: return false) ?: return false

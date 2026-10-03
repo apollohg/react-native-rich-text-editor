@@ -41,7 +41,12 @@ internal fun EditorEditText.bindEditorImpl(
         if (!initialHTML.isNullOrEmpty()) {
             driver.setContentHtml(initialHTML)?.let { applyUpdateJSON(it, notifyListener = false) }
         } else {
-            val initial = if (driver is EditorV2Adapter) driver.initialUpdateJson() else driver.currentStateJson()
+            val initial =
+                if (driver is EditorV2Adapter) {
+                    driver.initialUpdateJson()
+                } else {
+                    driver.currentStateJson()
+                }
             initial?.let { applyUpdateJSON(it, notifyListener = notifyListener) }
         }
         return
@@ -158,7 +163,11 @@ internal fun EditorEditText.applyAtomRenderConfigurationImpl(
     } else {
         null
     }
-    if (stateJson == null && (rootTablePositionMap != null || rootTableRenderNeedsRefresh)) return false
+    if (stateJson == null &&
+        (rootTablePositionMap != null || rootTableRenderNeedsRefresh)
+    ) {
+        return false
+    }
     atomRenderConfiguration = configuration
     renderAppearanceRevision += 1L
 

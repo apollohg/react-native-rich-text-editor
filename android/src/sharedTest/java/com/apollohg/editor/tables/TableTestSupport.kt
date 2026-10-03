@@ -1,6 +1,5 @@
 package com.apollohg.editor.tables
 
-import com.apollohg.editor.tableRecordsForTesting
 import android.view.View
 import com.apollohg.editor.EditorEditText
 import com.apollohg.editor.EditorV2Adapter
@@ -9,6 +8,7 @@ import com.apollohg.editor.EditorV2LeaseResult
 import com.apollohg.editor.NativeEditorExpoView
 import com.apollohg.editor.RichTextEditorView
 import com.apollohg.editor.UniffiEditorV2Backend
+import com.apollohg.editor.tableRecordsForTesting
 import com.apollohg.editor.viewer.PreparedProseDrawingView
 import kotlin.math.ceil
 import org.json.JSONArray
@@ -25,7 +25,26 @@ private const val MAXIMUM_RELAY_ROUNDS = 64
 private const val ROOM_INITIALIZATION_TYPE = "room"
 
 internal object PlainTableFixture {
-    const val CONFIG = """{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock","htmlTag":"p"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table","htmlTag":"table"},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row","htmlTag":"tr"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","htmlTag":"td","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","htmlTag":"th","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"""
+    const val CONFIG = """{"schema":{"nodes":[{"name":"doc","content":"block+",""" +
+        """"role":"doc"},{"name":"paragraph","content":"inline*",""" +
+        """"group":"block","role":"textBlock","htmlTag":"p"},""" +
+        """{"name":"text","content":"","group":"inline",""" +
+        """"role":"text"},{"name":"table","content":"table_row+",""" +
+        """"group":"block","role":"block","tableRole":"table",""" +
+        """"htmlTag":"table"},{"name":"table_row",""" +
+        """"content":"(table_cell | table_header)*",""" +
+        """"role":"block","tableRole":"row","htmlTag":"tr"},""" +
+        """{"name":"table_cell","content":"block+","role":"block",""" +
+        """"tableRole":"cell","htmlTag":"td",""" +
+        """"attrs":{"colspan":{"type":"number","default":1,""" +
+        """"min":1},"rowspan":{"type":"number","default":1,""" +
+        """"min":1},"colwidth":{"default":null}}},""" +
+        """{"name":"table_header","content":"block+",""" +
+        """"role":"block","tableRole":"header_cell",""" +
+        """"htmlTag":"th","attrs":{"colspan":{"type":"number",""" +
+        """"default":1,"min":1},"rowspan":{"type":"number",""" +
+        """"default":1,"min":1},"colwidth":{"default":null}}}],""" +
+        """"marks":[]},"initialization":{"type":"localEmpty"}}"""
     const val CELL_TEXT = "abcdefghijkl"
     const val TYPING_PROBE_CHARACTERS = 20
     const val TYPING_HEAP_GROWTH_CEILING_BYTES = 32 * 1024 * 1024
@@ -52,14 +71,37 @@ internal object PlainTableFixture {
         document(rows, columns) { _, _ -> cellText }
 
     fun document(rows: Int, columns: Int, cellText: (Int, Int) -> String): String {
-        fun node(type: String, content: JSONArray) = JSONObject().put("type", type).put("content", content)
-        fun cell(type: String, row: Int, column: Int) = node(type, JSONArray().put(node("paragraph", JSONArray().put(
-            JSONObject().put("type", "text").put("text", cellText(row, column))
-        ))))
+        fun node(type: String, content: JSONArray) =
+            JSONObject().put("type", type).put("content", content)
+        fun cell(type: String, row: Int, column: Int) = node(
+            type,
+            JSONArray().put(
+                node(
+                    "paragraph",
+                    JSONArray().put(
+                        JSONObject().put("type", "text").put("text", cellText(row, column))
+                    )
+                )
+            )
+        )
         val tableRows = JSONArray()
         repeat(rows) { row ->
             val cells = JSONArray()
-            repeat(columns) { column -> cells.put(cell(if (row == HEADER_ROW) "table_header" else "table_cell", row, column)) }
+            repeat(columns) { column ->
+                cells.put(
+                    cell(
+                        if (row ==
+                            HEADER_ROW
+                        ) {
+                            "table_header"
+                        } else {
+                            "table_cell"
+                        },
+                        row,
+                        column
+                    )
+                )
+            }
             tableRows.put(node("table_row", cells))
         }
         return node("doc", JSONArray().put(node("table", tableRows))).toString()
@@ -70,20 +112,30 @@ internal object TableToolbarTestItems {
     const val STRONG_MARK = "strong"
     const val STRONG_LABEL = "Bold"
     const val STRONG_JSON =
-        """[{"type":"mark","mark":"$STRONG_MARK","label":"$STRONG_LABEL","icon":{"type":"default","id":"bold"}}]"""
+        """[{"type":"mark","mark":"$STRONG_MARK",""" +
+            """"label":"$STRONG_LABEL","icon":{"type":"default",""" +
+            """"id":"bold"}}]"""
     const val UNDO_LABEL = "Undo"
     const val REDO_LABEL = "Redo"
     const val HISTORY_JSON =
-        """[{"type":"command","command":"undo","label":"$UNDO_LABEL","icon":{"type":"default","id":"undo"}},""" +
-            """{"type":"command","command":"redo","label":"$REDO_LABEL","icon":{"type":"default","id":"redo"}}]"""
+        """[{"type":"command","command":"undo",""" +
+            """"label":"$UNDO_LABEL","icon":{"type":"default",""" +
+            """"id":"undo"}},""" +
+            """{"type":"command","command":"redo",""" +
+            """"label":"$REDO_LABEL","icon":{"type":"default",""" +
+            """"id":"redo"}}]"""
 }
 
 internal fun NativeEditorExpoView.pressKeyboardToolbarButton(label: String) {
     assertNotNull("the keyboard toolbar is not attached", keyboardToolbarView.parent)
     assertNotEquals("the keyboard toolbar is dismissed", View.GONE, keyboardToolbarView.visibility)
-    val button = requireNotNull((0 until keyboardToolbarView.buttonCountForTesting())
-        .mapNotNull(keyboardToolbarView::buttonAtForTesting)
-        .firstOrNull { it.contentDescription == label }) { "the keyboard toolbar has no $label button" }
+    val button = requireNotNull(
+        (0 until keyboardToolbarView.buttonCountForTesting())
+            .mapNotNull(keyboardToolbarView::buttonAtForTesting)
+            .firstOrNull {
+                it.contentDescription == label
+            }
+    ) { "the keyboard toolbar has no $label button" }
     assertTrue("the $label button is disabled", button.isEnabled)
     assertTrue("the $label button ignored the press", button.performClick())
 }
@@ -106,26 +158,43 @@ internal class RemoteTablePeer(private val adapter: EditorV2Adapter, requestIdBa
     }
 
     fun applyCommand(command: JSONObject) =
-        apply(JSONObject().put("command", command)) { id, request -> UniffiEditorV2Backend.applyCommand(id, request) }
+        apply(JSONObject().put("command", command)) { id, request ->
+            UniffiEditorV2Backend.applyCommand(id, request)
+        }
 
     fun applySelection(selection: JSONObject) =
-        apply(JSONObject().put("selection", selection)) { id, request -> UniffiEditorV2Backend.setSelection(id, request) }
+        apply(JSONObject().put("selection", selection)) { id, request ->
+            UniffiEditorV2Backend.setSelection(id, request)
+        }
 }
 
 internal fun documentCellSelection(anchor: Int, head: Int): JSONObject {
-    fun point(opening: Int) = JSONObject().put("kind", DOCUMENT_POSITION_KIND).put("offset", opening)
-    return JSONObject().put("type", CELL_SELECTION_TYPE).put("anchorCell", point(anchor)).put("headCell", point(head))
+    fun point(opening: Int) =
+        JSONObject().put("kind", DOCUMENT_POSITION_KIND).put("offset", opening)
+    return JSONObject().put(
+        "type",
+        CELL_SELECTION_TYPE
+    ).put("anchorCell", point(anchor)).put("headCell", point(head))
 }
 
 internal fun EditorV2Adapter.tableCellPositions(tableId: String): List<Int> {
-    val cells = requireNotNull(tableRecordsForTesting[tableId]) { "table $tableId is not rendered" }.getJSONArray("cells")
+    val cells = requireNotNull(tableRecordsForTesting[tableId]) {
+        "table $tableId is not rendered"
+    }.getJSONArray("cells")
     return (0 until cells.length()).map { cells.getJSONObject(it).getInt("sourcePos") }
 }
 
-internal fun PreparedProseDrawingView.presentedRealCell(tableId: String, position: Int): ViewerTablePresentedCell =
-    requireNotNull(presentedTableCell(tableId) { surface ->
-        surface.cells.firstOrNull { tableCellDocumentPosition?.invoke(tableId, it.sourceIndex) == position }
-    }) { "cell $position is not presented" }
+internal fun PreparedProseDrawingView.presentedRealCell(
+    tableId: String,
+    position: Int
+): ViewerTablePresentedCell = requireNotNull(
+    presentedTableCell(tableId) { surface ->
+        surface.cells.firstOrNull {
+            tableCellDocumentPosition?.invoke(tableId, it.sourceIndex) ==
+                position
+        }
+    }
+) { "cell $position is not presented" }
 
 internal val RichTextEditorView.activeTableCellPosition: Long?
     get() {
@@ -134,8 +203,11 @@ internal val RichTextEditorView.activeTableCellPosition: Long?
         return adapter.tableIndex.docStart(binding.tableKey, binding.cellIndex)?.toLong()
     }
 
-internal fun EditorV2Adapter.applyLocalSelection(selection: JSONObject): EditorV2CallResult<String> =
-    callWithEnvelope(JSONObject().put("selection", selection)) { UniffiEditorV2Backend.setSelection(editorId, it) }
+internal fun EditorV2Adapter.applyLocalSelection(
+    selection: JSONObject
+): EditorV2CallResult<String> = callWithEnvelope(JSONObject().put("selection", selection)) {
+    UniffiEditorV2Backend.setSelection(editorId, it)
+}
 
 internal fun EditorEditText.selectTableCells(adapter: EditorV2Adapter, anchor: Int, head: Int) {
     val admitted = adapter.applyLocalSelection(documentCellSelection(anchor, head))
@@ -145,15 +217,25 @@ internal fun EditorEditText.selectTableCells(adapter: EditorV2Adapter, anchor: I
 
 internal fun <T> EditorV2CallResult<T>.required(operation: String): T = when (this) {
     is EditorV2CallResult.Ok -> value
-    is EditorV2CallResult.Err -> throw AssertionError("$operation failed: ${error.code}: ${error.message}")
+
+    is EditorV2CallResult.Err -> throw AssertionError(
+        "$operation failed: ${error.code}: ${error.message}"
+    )
 }
 
 internal class TableCollaborationRelay(editorIds: List<String>) {
     private val generations = editorIds.associateWith { editorId ->
-        val driven = JSONObject(UniffiEditorV2Backend.collaborationDrive(editorId, COLLABORATION_NOW_MILLIS)
-            .required("drive"))
+        val driven =
+            JSONObject(
+                UniffiEditorV2Backend.collaborationDrive(editorId, COLLABORATION_NOW_MILLIS)
+                    .required("drive")
+            )
         val generation = driven.getString("generationToOpen")
-        UniffiEditorV2Backend.collaborationSocketOpen(editorId, generation, COLLABORATION_NOW_MILLIS)
+        UniffiEditorV2Backend.collaborationSocketOpen(
+            editorId,
+            generation,
+            COLLABORATION_NOW_MILLIS
+        )
             .required("socket open")
         generation
     }
@@ -163,18 +245,36 @@ internal class TableCollaborationRelay(editorIds: List<String>) {
         repeat(MAXIMUM_RELAY_ROUNDS) {
             var delivered = false
             generations.forEach { (from, fromGeneration) ->
-                val lease = when (val result = UniffiEditorV2Backend.collaborationLeaseOutbound(from, fromGeneration)) {
+                val lease = when (
+                    val result = UniffiEditorV2Backend.collaborationLeaseOutbound(
+                        from,
+                        fromGeneration
+                    )
+                ) {
                     is EditorV2LeaseResult.Value -> result.lease
+
                     EditorV2LeaseResult.Empty -> return@forEach
-                    is EditorV2LeaseResult.Err -> throw AssertionError("$from could not lease: ${result.error.code}")
+
+                    is EditorV2LeaseResult.Err -> throw AssertionError(
+                        "$from could not lease: ${result.error.code}"
+                    )
                 }
                 generations.filterKeys { it != from }.forEach { (to, toGeneration) ->
-                    val received = JSONObject(UniffiEditorV2Backend.collaborationReceive(
-                        to, toGeneration, lease.frame, COLLABORATION_NOW_MILLIS
-                    ).required("receive"))
+                    val received = JSONObject(
+                        UniffiEditorV2Backend.collaborationReceive(
+                            to,
+                            toGeneration,
+                            lease.frame,
+                            COLLABORATION_NOW_MILLIS
+                        ).required("receive")
+                    )
                     if (received.optBoolean("remoteCommitApplied", false)) committed += to
                 }
-                UniffiEditorV2Backend.collaborationAckOutbound(from, fromGeneration, lease.leaseId).required("ack")
+                UniffiEditorV2Backend.collaborationAckOutbound(
+                    from,
+                    fromGeneration,
+                    lease.leaseId
+                ).required("ack")
                 delivered = true
             }
             if (!delivered) return committed
@@ -189,18 +289,28 @@ internal class TableRoomSeed(localConfigJson: String, documentJson: String) {
     val encodedState: ByteArray
 
     init {
-        val builderId = JSONObject(UniffiEditorV2Backend.create(localConfigJson, null).required("create"))
+        val builderId = JSONObject(
+            UniffiEditorV2Backend.create(localConfigJson, null).required("create")
+        )
             .getString("editorId")
-        val builder = requireNotNull(EditorV2Adapter.attach(UniffiEditorV2Backend, builderId, roomBound = false))
+        val builder =
+            requireNotNull(
+                EditorV2Adapter.attach(UniffiEditorV2Backend, builderId, roomBound = false)
+            )
         try {
             requireNotNull(builder.setContentJson(documentJson))
-            val (metadataJson, state) = UniffiEditorV2Backend.snapshotExport(builderId).required("snapshot export")
+            val (metadataJson, state) = UniffiEditorV2Backend.snapshotExport(
+                builderId
+            ).required("snapshot export")
             val metadata = JSONObject(metadataJson)
-            configJson = JSONObject(localConfigJson).put("initialization", JSONObject()
-                .put("type", ROOM_INITIALIZATION_TYPE)
-                .put("documentId", metadata.getString("documentId"))
-                .put("lineageId", metadata.getString("lineageId"))
-                .put("snapshot", metadata)).toString()
+            configJson = JSONObject(localConfigJson).put(
+                "initialization",
+                JSONObject()
+                    .put("type", ROOM_INITIALIZATION_TYPE)
+                    .put("documentId", metadata.getString("documentId"))
+                    .put("lineageId", metadata.getString("lineageId"))
+                    .put("snapshot", metadata)
+            ).toString()
             encodedState = state
         } finally {
             builder.destroy()
@@ -208,8 +318,12 @@ internal class TableRoomSeed(localConfigJson: String, documentJson: String) {
     }
 
     fun makeAdapter(): EditorV2Adapter {
-        val editorId = JSONObject(UniffiEditorV2Backend.create(configJson, encodedState).required("room create"))
+        val editorId = JSONObject(
+            UniffiEditorV2Backend.create(configJson, encodedState).required("room create")
+        )
             .getString("editorId")
-        return requireNotNull(EditorV2Adapter.attach(UniffiEditorV2Backend, editorId, roomBound = true))
+        return requireNotNull(
+            EditorV2Adapter.attach(UniffiEditorV2Backend, editorId, roomBound = true)
+        )
     }
 }

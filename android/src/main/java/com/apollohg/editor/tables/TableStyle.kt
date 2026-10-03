@@ -15,5 +15,10 @@ data class TableStyle(
 
 internal fun TableStyle.physical(scale: Float): TableStyle {
     val unit = scale.takeIf { it.isFinite() && it > 0f } ?: 1f
-    return copy(minColumnWidth = minColumnWidth * unit, cellPadding = cellPadding * unit, borderWidth = borderWidth * unit)
+    return copy(
+        minColumnWidth = minColumnWidth * unit,
+        cellPadding = cellPadding * unit,
+        borderWidth =
+            borderWidth * unit
+    )
 }

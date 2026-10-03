@@ -15,6 +15,9 @@ import android.view.accessibility.AccessibilityManager
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityNodeProvider
 import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
+import com.apollohg.editor.tables.TableAccessibilityNodes
+import com.apollohg.editor.tables.TableLayoutDirection
+import com.apollohg.editor.tables.ViewerTablePresentedAccessibilityNode
 import com.apollohg.editor.viewer.PreparedProseAccessibilityNode
 import com.apollohg.editor.viewer.PreparedProseAccessibilityNodeRegistry
 import com.apollohg.editor.viewer.PreparedProseDrawingView
@@ -29,9 +32,7 @@ import com.apollohg.editor.viewer.ViewerFontEnvironment
 import com.apollohg.editor.viewer.ViewerImageAttachment
 import com.apollohg.editor.viewer.ViewerImagePipeline
 import com.apollohg.editor.viewer.accessibilityNodeVisibleOnScreen
-import com.apollohg.editor.tables.TableLayoutDirection
-import com.apollohg.editor.tables.TableAccessibilityNodes
-import com.apollohg.editor.tables.ViewerTablePresentedAccessibilityNode
+import com.apollohg.editor.viewer.progressiveTableViewportHeight
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -131,30 +132,44 @@ class ProseViewerView @JvmOverloads constructor(
         }
 
     private var layoutRegistry = PreparedProseLayoutRegistry.shared
-    private val preparedDrawingView = PreparedProseDrawingView(context).apply { preparesTableCellsBeforeDrawing = true }
+    private val preparedDrawingView = PreparedProseDrawingView(context).apply {
+        preparesTableCellsBeforeDrawing =
+            true
+    }
     private var preparedRequest: ProseViewerRequest? = null
     private var retainedDocument: ViewerDocument? = null
     private var preparedArtifact: PreparedProseLayout? = null
-    private var pendingTableScrollAnchor: com.apollohg.editor.viewer.ProgressiveTableScrollAnchor? = null
+    private var pendingTableScrollAnchor: com.apollohg.editor.viewer.ProgressiveTableScrollAnchor? =
+        null
     private var tableMeasurementStartPosted = false
     private val tableMeasurementStarter = Runnable {
         tableMeasurementStartPosted = false
         if (isAttachedToWindow) tableMeasurements.start()
     }
-    private val tableMeasurements = com.apollohg.editor.viewer.ProgressiveTableMeasurementController(
-        deliver = { action -> post { action() }; Unit },
-        publish = { artifact ->
-            preparedArtifact?.let { previous ->
-                if (pendingTableScrollAnchor == null) pendingTableScrollAnchor =
-                    com.apollohg.editor.viewer.ProgressiveTableScrollAnchor.capture(preparedDrawingView, previous)
+    private val tableMeasurements =
+        com.apollohg.editor.viewer.ProgressiveTableMeasurementController(
+            deliver = { action ->
+                post { action() }
+                Unit
+            },
+            publish = { artifact ->
+                preparedArtifact?.let { previous ->
+                    if (pendingTableScrollAnchor == null) {
+                        pendingTableScrollAnchor =
+                            com.apollohg.editor.viewer.ProgressiveTableScrollAnchor.capture(
+                                preparedDrawingView,
+                                previous
+                            )
+                    }
+                }
+                preparedArtifact = artifact
+                registerDirectMountedArtifactIfAttached(artifact)
+                preparedDrawingView.install(artifact)
+                preparedRequest?.let { reportDirectErrorIfNeeded(it, artifact.error) }
+                requestLayout()
+                invalidate()
             }
-            preparedArtifact = artifact
-            registerDirectMountedArtifactIfAttached(artifact)
-            preparedDrawingView.install(artifact)
-            preparedRequest?.let { reportDirectErrorIfNeeded(it, artifact.error) }
-            requestLayout()
-            invalidate()
-        })
+        )
 
     // Detach drops the direct registration but deliberately retains the
     // immutable artifact for exact, no-recompile reattachment.
@@ -168,10 +183,15 @@ class ProseViewerView @JvmOverloads constructor(
     private var accessibilityFocusedNode: FocusedVirtualNode? = null
     private val accessibilityNodeRegistry = PreparedProseAccessibilityNodeRegistry()
     private val tableAccessibility = TableAccessibilityNodes(
-        this, preparedDrawingView, preparedDrawingView::tableAccessibilityItems,
+        this,
+        preparedDrawingView,
+        preparedDrawingView::tableAccessibilityItems,
         { preparedDrawingView.tableAccessibilityGeneration },
         { preparedDrawingView.left to preparedDrawingView.top },
-        { bounds -> accessibilityVisibilityForTesting?.invoke(bounds) ?: accessibilityNodeVisibleOnScreen(bounds) },
+        { bounds ->
+            accessibilityVisibilityForTesting?.invoke(bounds)
+                ?: accessibilityNodeVisibleOnScreen(bounds)
+        },
         { clearVirtualAccessibilityFocus() }
     )
     private var preparedAccessibilityGeneration: String? = null
@@ -223,14 +243,21 @@ class ProseViewerView @JvmOverloads constructor(
                 preparedArtifact?.let(anchor::restore)
             }
             val changed = tableMeasurements.prepareViewport(viewport)
-            if (!changed && tableMeasurements.hasPendingMeasurements && !tableMeasurementStartPosted) {
+            if (!changed && tableMeasurements.hasPendingMeasurements &&
+                !tableMeasurementStartPosted
+            ) {
                 tableMeasurementStartPosted = true
                 post(tableMeasurementStarter)
             }
             changed
         }
         preparedDrawingView.onPrepareTableCellGeometry = { identity, index ->
-            tableMeasurements.prepareCell(identity, index)
+            tableMeasurements.prepareCell(
+                identity,
+                index,
+                progressiveTableViewportHeight(preparedDrawingView)
+            )
+            pendingTableScrollAnchor = null
             true
         }
         importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
@@ -370,7 +397,10 @@ class ProseViewerView @JvmOverloads constructor(
                 compiledDocument = retainedDocument,
                 fontScale = resources.configuration.fontScale,
                 measurementImageState = attachmentRevisions,
-                tableMeasurementViewportHeightPx = com.apollohg.editor.viewer.progressiveTableViewportHeight(this)
+                tableMeasurementViewportHeightPx =
+                    com.apollohg.editor.viewer.progressiveTableViewportHeight(
+                        this
+                    )
             )
             val artifactChanged = preparedArtifact !== artifact
             val accessibilityChanged =
@@ -690,7 +720,9 @@ class ProseViewerView @JvmOverloads constructor(
     private fun annotationId(presented: ViewerTablePresentedAccessibilityNode): Int? {
         val identity = presented.sourceIdentity
         return accessibilityNodeRegistry.idOf(identity, null) {
-            preparedDrawingView.rootAccessibilityNodes().firstOrNull { it.sourceIdentity == identity }
+            preparedDrawingView.rootAccessibilityNodes().firstOrNull {
+                it.sourceIdentity == identity
+            }
         }
     }
 
@@ -755,8 +787,11 @@ class ProseViewerView @JvmOverloads constructor(
             className = android.widget.Button::class.java.name
             setSource(this@ProseViewerView, virtualViewId)
             val parentId = accessibilityNodeRegistry.parentId(virtualViewId)
-            if (parentId == null) setParent(this@ProseViewerView)
-            else setParent(this@ProseViewerView, parentId)
+            if (parentId == null) {
+                setParent(this@ProseViewerView)
+            } else {
+                setParent(this@ProseViewerView, parentId)
+            }
             text = node.label
             contentDescription = node.label
             isClickable = true
@@ -849,26 +884,40 @@ class ProseViewerView @JvmOverloads constructor(
         tableAccessibility.reconcile()
         val focused = accessibilityFocusedNode ?: return
         val node = registeredAccessibilityNode(focused.virtualId)
-        if (node == null || accessibilityIdentity(node) != focused.identity || !preparedAccessibilityNodeVisible(node)) {
+        if (node == null || accessibilityIdentity(node) != focused.identity ||
+            !preparedAccessibilityNodeVisible(node)
+        ) {
             clearVirtualAccessibilityFocus(focused.virtualId)
         }
     }
 
-    private fun preparedAccessibilityNodeVisible(node: ViewerTablePresentedAccessibilityNode): Boolean {
+    private fun preparedAccessibilityNodeVisible(
+        node: ViewerTablePresentedAccessibilityNode
+    ): Boolean {
         if (preparedAccessibilityParentBounds(node).isEmpty) return false
         val bounds = preparedAccessibilityScreenBounds(node)
-        return accessibilityVisibilityForTesting?.invoke(bounds) ?: accessibilityNodeVisibleOnScreen(bounds)
+        return accessibilityVisibilityForTesting?.invoke(bounds)
+            ?: accessibilityNodeVisibleOnScreen(bounds)
     }
 
-    private fun preparedAccessibilityParentBounds(node: ViewerTablePresentedAccessibilityNode): Rect {
+    private fun preparedAccessibilityParentBounds(
+        node: ViewerTablePresentedAccessibilityNode
+    ): Rect {
         val bounds = RectF(node.bounds)
         if (!bounds.intersect(node.clip)) return Rect()
-        return Rect(bounds.left.toInt(), bounds.top.toInt(), bounds.right.toInt(), bounds.bottom.toInt()).apply {
+        return Rect(
+            bounds.left.toInt(),
+            bounds.top.toInt(),
+            bounds.right.toInt(),
+            bounds.bottom.toInt()
+        ).apply {
             offset(preparedDrawingView.left, preparedDrawingView.top)
         }
     }
 
-    private fun preparedAccessibilityScreenBounds(node: ViewerTablePresentedAccessibilityNode): Rect {
+    private fun preparedAccessibilityScreenBounds(
+        node: ViewerTablePresentedAccessibilityNode
+    ): Rect {
         val bounds = preparedAccessibilityParentBounds(node)
         val location = IntArray(2)
         getLocationOnScreen(location)

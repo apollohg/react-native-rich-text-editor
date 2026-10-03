@@ -6,7 +6,8 @@ import org.json.JSONObject
 internal sealed interface EditorCellSelection {
     val tableId: String
 
-    data class Drawable(override val tableId: String, val sourceIndices: Set<Int>) : EditorCellSelection
+    data class Drawable(override val tableId: String, val sourceIndices: Set<Int>) :
+        EditorCellSelection
     data class Unavailable(override val tableId: String) : EditorCellSelection
 }
 
@@ -16,7 +17,9 @@ internal fun resolveEditorCellSelection(
 ): EditorCellSelection? {
     if (selection.opt("type") != "cell" ||
         selection.keys().asSequence().toSet() != setOf("type", "anchorCell", "headCell")
-    ) return null
+    ) {
+        return null
+    }
     val anchor = exactV2U32(selection.opt("anchorCell") as? Number)?.toLong() ?: return null
     val head = exactV2U32(selection.opt("headCell") as? Number)?.toLong() ?: return null
     return resolveEditorCellSelection(anchor, head, index)
@@ -27,7 +30,14 @@ internal fun resolveEditorCellSelection(
     head: Long,
     index: EditorTableIndex
 ): EditorCellSelection? {
-    data class Cell(val sourceIndex: Int, val position: Int, val row: Int, val column: Int, val rowEnd: Int, val columnEnd: Int) {
+    data class Cell(
+        val sourceIndex: Int,
+        val position: Int,
+        val row: Int,
+        val column: Int,
+        val rowEnd: Int,
+        val columnEnd: Int
+    ) {
         fun intersects(top: Int, left: Int, bottom: Int, right: Int): Boolean =
             row < bottom && rowEnd > top && column < right && columnEnd > left
     }
@@ -37,14 +47,26 @@ internal fun resolveEditorCellSelection(
         val tableStart = index.tableDocStart(id)?.toLong() ?: return@mapNotNull null
         val tableEnd = tableStart + record.docSize.toLong()
         if (record.failure != null) {
-            return@mapNotNull if (anchor in tableStart until tableEnd && head in tableStart until tableEnd) {
+            return@mapNotNull if (anchor in tableStart until tableEnd &&
+                head in tableStart until tableEnd
+            ) {
                 (tableEnd - tableStart) to EditorCellSelection.Unavailable(id)
-            } else null
+            } else {
+                null
+            }
         }
         val cells = record.cells.mapIndexed { cellIndex, cell ->
-            val position = index.docStart(id, cellIndex)?.toLong()?.takeIf { it <= Int.MAX_VALUE } ?: return@mapNotNull null
-            Cell(cellIndex, position.toInt(), cell.row.toInt(), cell.column.toInt(),
-                (cell.row + cell.rowspan).toInt(), (cell.column + cell.colspan).toInt())
+            val position =
+                index.docStart(id, cellIndex)?.toLong()?.takeIf { it <= Int.MAX_VALUE }
+                    ?: return@mapNotNull null
+            Cell(
+                cellIndex,
+                position.toInt(),
+                cell.row.toInt(),
+                cell.column.toInt(),
+                (cell.row + cell.rowspan).toInt(),
+                (cell.column + cell.colspan).toInt()
+            )
         }
         val first = cells.singleOrNull { it.position.toLong() == anchor } ?: return@mapNotNull null
         val last = cells.singleOrNull { it.position.toLong() == head } ?: return@mapNotNull null

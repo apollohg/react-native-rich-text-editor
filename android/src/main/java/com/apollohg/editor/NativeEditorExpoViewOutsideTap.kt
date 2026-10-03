@@ -9,11 +9,11 @@ import android.graphics.RectF
 import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.View
-import com.facebook.react.uimanager.RootView
-import com.facebook.react.uimanager.RootViewUtil
 import com.apollohg.editor.NativeEditorExpoView.Companion.OUTSIDE_TAP_HANDLER_INSTALL_RETRY_DELAY_MS
 import com.apollohg.editor.NativeEditorExpoView.Companion.TOOLBAR_FOCUS_PRESERVE_MS
 import com.apollohg.editor.NativeEditorExpoView.Companion.TOOLBAR_HIT_SLOP_DP
+import com.facebook.react.uimanager.RootView
+import com.facebook.react.uimanager.RootViewUtil
 
 internal fun NativeEditorExpoView.installOutsideTapBlurHandlerIfNeeded() {
     val window = resolveActivity(context)?.window ?: return
@@ -149,7 +149,9 @@ internal fun NativeEditorExpoView.consumeToolbarFocusPreservationForBlur(): Bool
 }
 
 internal fun NativeEditorExpoView.isTouchInsideStandaloneToolbar(event: MotionEvent): Boolean {
-    val reactRoot = generateSequence(this as View) { it.parent as? View }.firstOrNull { it is RootView } ?: rootView
+    val reactRoot =
+        generateSequence(this as View) { it.parent as? View }.firstOrNull { it is RootView }
+            ?: rootView
     val reactRootOnScreen = IntArray(2).also(reactRoot::getLocationOnScreen)
     return isPointInsideStandaloneToolbar(
         event.rawX,

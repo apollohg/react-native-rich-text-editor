@@ -28,7 +28,10 @@ internal data class NativeToolbarState(
             canRedo = false
         )
 
-        fun fromUpdateJson(updateJson: String, adapter: EditorV2Adapter? = null): NativeToolbarState? {
+        fun fromUpdateJson(
+            updateJson: String,
+            adapter: EditorV2Adapter? = null
+        ): NativeToolbarState? {
             val root = try {
                 adapter.readOnlyParsedUpdate(updateJson)
             } catch (_: Exception) {

@@ -2,29 +2,29 @@ package com.apollohg.editor
 
 import android.content.Intent
 import android.graphics.Rect
-import android.view.accessibility.AccessibilityNodeInfo
-import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
 import android.os.SystemClock
 import android.text.Spanned
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
-import android.view.MotionEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.widget.LinearLayout
+import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.filters.SdkSuppress
+import androidx.test.platform.app.InstrumentationRegistry
+import com.apollohg.editor.tables.PlainTableFixture
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import org.json.JSONObject
-import com.apollohg.editor.tables.PlainTableFixture
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
-import org.junit.Assert.assertSame
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -44,20 +44,41 @@ class NativeTableHostTest {
             .putExtra(NativeTableHostActivity.EXTRA_PLAIN_ROWS, PlainTableFixture.LARGE_ROWS)
             .putExtra(NativeTableHostActivity.EXTRA_PLAIN_COLUMNS, PlainTableFixture.LARGE_COLUMNS)
         ActivityScenario.launch<NativeTableHostActivity>(intent).use { scenario ->
-            awaitTableLayout(scenario, "native-table-large-timeout.png", timeoutMs = LARGE_TABLE_LAYOUT_TIMEOUT_MS)
+            awaitTableLayout(
+                scenario,
+                "native-table-large-timeout.png",
+                timeoutMs = LARGE_TABLE_LAYOUT_TIMEOUT_MS
+            )
             scenario.onActivity { activity ->
-                val table = requireNotNull(tableHosts(activity.richTextView).single().preparedLayout)
+                val table = requireNotNull(
+                    tableHosts(activity.richTextView).single().preparedLayout
+                )
                     .blocks.mapNotNull { it.tableSurface }.single()
-                assertTrue("Cold prepared layouts remain bounded", table.cells.count { it.cachedContent != null } <=
-                    com.apollohg.editor.tables.TableCellLayoutStore.MAXIMUM_RESIDENT_LAYOUTS)
-                assertTrue("Unmounted bytes respect the production budget", table.layoutStore.unmountedRetainedBytes <=
-                    com.apollohg.editor.viewer.PREPARED_LAYOUT_UNMOUNTED_BYTE_BUDGET)
-                assertTrue("All cell accessibility text survives", table.cells.all { it.accessibilityText.isNotBlank() })
+                assertTrue(
+                    "Cold prepared layouts remain bounded",
+                    table.cells.count { it.cachedContent != null } <=
+                        com.apollohg.editor.tables.TableCellLayoutStore.MAXIMUM_RESIDENT_LAYOUTS
+                )
+                assertTrue(
+                    "Unmounted bytes respect the production budget",
+                    table.layoutStore.unmountedRetainedBytes <=
+                        com.apollohg.editor.viewer.PREPARED_LAYOUT_UNMOUNTED_BYTE_BUDGET
+                )
+                assertTrue(
+                    "All cell accessibility text survives",
+                    table.cells.all {
+                        it.accessibilityText.isNotBlank()
+                    }
+                )
             }
             listOf(0f, LARGE_TABLE_SCROLL_MIDDLE, 1f).forEach { fraction ->
                 val preparations = mutableListOf<Int>()
                 scenario.onActivity { activity ->
-                    activity.richTextView.editorTableSurface.onTableCellPreparedForTesting = { index, _ -> preparations.add(index); Unit }
+                    activity.richTextView.editorTableSurface.onTableCellPreparedForTesting =
+                        { index, _ ->
+                            preparations.add(index)
+                            Unit
+                        }
                     val scroll = activity.richTextView.editorScrollView
                     val bottom = (scroll.getChildAt(0).height - scroll.height).coerceAtLeast(0)
                     scroll.scrollTo(0, (bottom * fraction).toInt())
@@ -65,42 +86,84 @@ class NativeTableHostTest {
                 instrumentation.waitForIdleSync()
                 scenario.onActivity { activity ->
                     val drawing = tableHosts(activity.richTextView).single()
-                    val surface = requireNotNull(drawing.preparedLayout).blocks.mapNotNull { it.tableSurface }.single()
-                    assertEquals("every cell keeps measured metadata", PlainTableFixture.LARGE_ROWS * PlainTableFixture.LARGE_COLUMNS, surface.cells.size)
+                    val surface = requireNotNull(drawing.preparedLayout).blocks.mapNotNull {
+                        it.tableSurface
+                    }.single()
+                    assertEquals(
+                        "every cell keeps measured metadata",
+                        PlainTableFixture.LARGE_ROWS * PlainTableFixture.LARGE_COLUMNS,
+                        surface.cells.size
+                    )
                     val visible = android.graphics.Rect()
-                    assertTrue("the table is on screen at $fraction", drawing.getLocalVisibleRect(visible))
+                    assertTrue(
+                        "the table is on screen at $fraction",
+                        drawing.getLocalVisibleRect(visible)
+                    )
                     val presented = drawing.presentedTableCells()
-                    if (fraction == LARGE_TABLE_SCROLL_MIDDLE)
-                        assertTrue("Scrolling to an uncached region prepares entering cells", preparations.isNotEmpty())
+                    if (fraction == LARGE_TABLE_SCROLL_MIDDLE) {
+                        assertTrue(
+                            "Scrolling to an uncached region prepares entering cells",
+                            preparations.isNotEmpty()
+                        )
+                    }
                     preparations.clear()
                     drawing.presentedTableCells()
                     assertTrue("Repeated presentation reuses cells", preparations.isEmpty())
                     activity.richTextView.editorTableSurface.onTableCellPreparedForTesting = null
-                    println("large table at $fraction: ${presented.size} presented, visible $visible")
-                    val bound = PlainTableFixture.maximumPresentedCells(
-                        surface.style, visible.width().toFloat(), visible.height().toFloat()
+                    println(
+                        "large table at $fraction: ${presented.size} presented, visible $visible"
                     )
-                    assertTrue("the presentation stays within the viewport window bound $bound at $fraction: ${presented.size}",
-                        presented.size <= bound)
-                    assertTrue("the cell under the viewport centre is presented at $fraction",
-                        presented.any { it.bounds.contains(visible.exactCenterX(), visible.exactCenterY()) })
+                    val bound = PlainTableFixture.maximumPresentedCells(
+                        surface.style,
+                        visible.width().toFloat(),
+                        visible.height().toFloat()
+                    )
+                    assertTrue(
+                        "the presentation stays within the viewport window bound $bound at $fraction: ${presented.size}",
+                        presented.size <= bound
+                    )
+                    assertTrue(
+                        "the cell under the viewport centre is presented at $fraction",
+                        presented.any {
+                            it.bounds.contains(visible.exactCenterX(), visible.exactCenterY())
+                        }
+                    )
                     val canvasHeight = requireNotNull(drawing.preparedLayout).heightPx
-                    assertTrue("the drawn canvas reaches the visible rows at $fraction: $canvasHeight < ${visible.bottom}",
-                        canvasHeight >= visible.bottom)
+                    assertTrue(
+                        "the drawn canvas reaches the visible rows at $fraction: $canvasHeight < ${visible.bottom}",
+                        canvasHeight >= visible.bottom
+                    )
                 }
             }
             val cellIndex = PlainTableFixture.LARGE_ROWS * PlainTableFixture.LARGE_COLUMNS / 2
             var nodeId = 0
             scenario.onActivity { activity ->
                 val drawing = tableHosts(activity.richTextView).single()
-                val surface = requireNotNull(drawing.preparedLayout).blocks.mapNotNull { it.tableSurface }.single()
-                nodeId = requireNotNull(drawing.tableAccessibilityLocation(surface, cellIndex)).cellNodeId
-                assertTrue(drawing.accessibilityNodeProvider.performAction(nodeId, AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null))
+                val surface = requireNotNull(drawing.preparedLayout).blocks.mapNotNull {
+                    it.tableSurface
+                }.single()
+                nodeId =
+                    requireNotNull(
+                        drawing.tableAccessibilityLocation(surface, cellIndex)
+                    ).cellNodeId
+                assertTrue(
+                    drawing.accessibilityNodeProvider.performAction(
+                        nodeId,
+                        AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS,
+                        null
+                    )
+                )
             }
             instrumentation.waitForIdleSync()
             scenario.onActivity { activity ->
                 val drawing = tableHosts(activity.richTextView).single()
-                assertTrue(drawing.accessibilityNodeProvider.performAction(nodeId, AccessibilityNodeInfo.ACTION_CLICK, null))
+                assertTrue(
+                    drawing.accessibilityNodeProvider.performAction(
+                        nodeId,
+                        AccessibilityNodeInfo.ACTION_CLICK,
+                        null
+                    )
+                )
             }
             instrumentation.waitForIdleSync()
             var retainedNodeRecords = emptyMap<String, Int>()
@@ -108,19 +171,36 @@ class NativeTableHostTest {
                 val drawing = tableHosts(activity.richTextView).single()
                 val probe = android.graphics.RenderNode("typing-probe")
                 val canvas = probe.beginRecording(drawing.width, drawing.height)
-                try { drawing.draw(canvas) } finally { probe.endRecording(); probe.discardDisplayList() }
+                try {
+                    drawing.draw(canvas)
+                } finally {
+                    probe.endRecording()
+                    probe.discardDisplayList()
+                }
                 retainedNodeRecords = drawing.nodeRecordsForTesting.toMap()
             }
             repeat(PlainTableFixture.TYPING_PROBE_CHARACTERS) { keystroke ->
                 scenario.onActivity { activity ->
                     val view = activity.richTextView
                     val prepared = mutableListOf<Int>()
-                    view.editorTableSurface.onTableCellPreparedForTesting = { index, _ -> prepared.add(index); Unit }
+                    view.editorTableSurface.onTableCellPreparedForTesting =
+                        { index, _ ->
+                            prepared.add(index)
+                            Unit
+                        }
                     try {
                         val input = view.activeTextInput
                         assertTrue(input !== view.editorEditText)
-                        assertTrue(requireNotNull(input.onCreateInputConnection(EditorInfo())).commitText("x", 1))
-                        assertEquals("keystroke $keystroke prepares only its cell", listOf(cellIndex), prepared)
+                        assertTrue(
+                            requireNotNull(
+                                input.onCreateInputConnection(EditorInfo())
+                            ).commitText("x", 1)
+                        )
+                        assertEquals(
+                            "keystroke $keystroke prepares only its cell",
+                            listOf(cellIndex),
+                            prepared
+                        )
                     } finally {
                         view.editorTableSurface.onTableCellPreparedForTesting = null
                     }
@@ -131,23 +211,45 @@ class NativeTableHostTest {
                 val drawing = tableHosts(activity.richTextView).single()
                 val probe = android.graphics.RenderNode("typing-probe")
                 val canvas = probe.beginRecording(drawing.width, drawing.height)
-                try { drawing.draw(canvas) } finally { probe.endRecording(); probe.discardDisplayList() }
-                for (name in listOf("above", "below")) {
-                    assertEquals("$name is retained over ${PlainTableFixture.TYPING_PROBE_CHARACTERS} keystrokes",
-                        retainedNodeRecords[name], drawing.nodeRecordsForTesting[name])
+                try {
+                    drawing.draw(canvas)
+                } finally {
+                    probe.endRecording()
+                    probe.discardDisplayList()
                 }
-                assertTrue("the bound node actually recorded typing",
-                    drawing.nodeRecordsForTesting.getValue("boundCell") > retainedNodeRecords.getValue("boundCell"))
+                for (name in listOf("above", "below")) {
+                    assertEquals(
+                        "$name is retained over ${PlainTableFixture.TYPING_PROBE_CHARACTERS} keystrokes",
+                        retainedNodeRecords[name],
+                        drawing.nodeRecordsForTesting[name]
+                    )
+                }
+                assertTrue(
+                    "the bound node actually recorded typing",
+                    drawing.nodeRecordsForTesting.getValue("boundCell") >
+                        retainedNodeRecords.getValue("boundCell")
+                )
                 val activeInput = activity.richTextView.activeTextInput
                 activity.richTextView.editorScrollView.scrollTo(0, 0)
                 drawing.presentedTableCells()
-                val surface = requireNotNull(drawing.preparedLayout).blocks.mapNotNull { it.tableSurface }.single()
+                val surface = requireNotNull(drawing.preparedLayout).blocks.mapNotNull {
+                    it.tableSurface
+                }.single()
                 val active = requireNotNull(surface.cell(cellIndex))
                 val visible = Rect()
                 assertTrue(drawing.getLocalVisibleRect(visible))
-                assertTrue("The bound cell is outside the presentation window", surface.frameOfCell(active).top > visible.bottom)
-                assertNotNull("The active input cell stays prepared offscreen", active.cachedContent)
-                assertTrue("Scrolling preserves the input binding", activeInput === activity.richTextView.activeTextInput)
+                assertTrue(
+                    "The bound cell is outside the presentation window",
+                    surface.frameOfCell(active).top > visible.bottom
+                )
+                assertNotNull(
+                    "The active input cell stays prepared offscreen",
+                    active.cachedContent
+                )
+                assertTrue(
+                    "Scrolling preserves the input binding",
+                    activeInput === activity.richTextView.activeTextInput
+                )
             }
             instrumentation.saveDeviceScreenshot("native-table-large-scrolled.png")
         }
@@ -159,33 +261,70 @@ class NativeTableHostTest {
             .putExtra(NativeTableHostActivity.EXTRA_PLAIN_ROWS, PlainTableFixture.LARGE_ROWS)
             .putExtra(NativeTableHostActivity.EXTRA_PLAIN_COLUMNS, PlainTableFixture.LARGE_COLUMNS)
         ActivityScenario.launch<NativeTableHostActivity>(intent).use { scenario ->
-            awaitTableLayout(scenario, "native-table-large-a11y-timeout.png", timeoutMs = LARGE_TABLE_LAYOUT_TIMEOUT_MS)
+            awaitTableLayout(
+                scenario,
+                "native-table-large-a11y-timeout.png",
+                timeoutMs = LARGE_TABLE_LAYOUT_TIMEOUT_MS
+            )
             PlainTableFixture.ACCESSIBILITY_WALK_ROWS.forEach { row ->
                 val column = row % PlainTableFixture.LARGE_COLUMNS
                 var id = 0
                 scenario.onActivity { activity ->
                     val drawing = tableHosts(activity.richTextView).single()
-                    val surface = requireNotNull(drawing.preparedLayout).blocks.mapNotNull { it.tableSurface }.single()
-                    id = requireNotNull(drawing.tableAccessibilityLocation(surface, row * PlainTableFixture.LARGE_COLUMNS + column)) {
-                        "cell $row,$column has an accessibility node"
-                    }.cellNodeId
-                    assertTrue("focus reaches row $row",
-                        drawing.accessibilityNodeProvider.performAction(id, AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null))
+                    val surface = requireNotNull(drawing.preparedLayout).blocks.mapNotNull {
+                        it.tableSurface
+                    }.single()
+                    id =
+                        requireNotNull(
+                            drawing.tableAccessibilityLocation(
+                                surface,
+                                row * PlainTableFixture.LARGE_COLUMNS + column
+                            )
+                        ) {
+                            "cell $row,$column has an accessibility node"
+                        }.cellNodeId
+                    assertTrue(
+                        "focus reaches row $row",
+                        drawing.accessibilityNodeProvider.performAction(
+                            id,
+                            AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS,
+                            null
+                        )
+                    )
                 }
                 instrumentation.waitForIdleSync()
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                    awaitCommittedFrame(scenario)
+                }
                 scenario.onActivity { activity ->
                     val drawing = tableHosts(activity.richTextView).single()
-                    val info = requireNotNull(drawing.accessibilityNodeProvider.createAccessibilityNodeInfo(id))
-                    val item = requireNotNull(AccessibilityNodeInfoCompat.wrap(info).collectionItemInfo)
+                    val info =
+                        requireNotNull(
+                            drawing.accessibilityNodeProvider.createAccessibilityNodeInfo(id)
+                        )
+                    val item =
+                        requireNotNull(AccessibilityNodeInfoCompat.wrap(info).collectionItemInfo)
                     val bounds = Rect().also(info::getBoundsInScreen)
                     val metrics = activity.resources.displayMetrics
                     val screen = Rect(0, 0, metrics.widthPixels, metrics.heightPixels)
-                    println("row $row column $column: focused ${info.isAccessibilityFocused} rowIndex ${item.rowIndex} " +
-                        "title '${item.columnTitle}' screen $bounds of $screen")
-                    assertTrue("row $row is revealed on screen: $bounds", Rect.intersects(bounds, screen))
+                    println(
+                        (
+                            "row $row column $column: focused " +
+                                "${info.isAccessibilityFocused} rowIndex ${item.rowIndex} "
+                            ) +
+                            "title '${item.columnTitle}' screen $bounds of $screen"
+                    )
+                    assertTrue(
+                        "row $row is revealed on screen: $bounds",
+                        Rect.intersects(bounds, screen)
+                    )
                     assertTrue("row $row keeps focus after its reveal", info.isAccessibilityFocused)
                     assertEquals(row, item.rowIndex)
-                    assertEquals("row $row announces its column header", PlainTableFixture.coordinateText(0, column), item.columnTitle)
+                    assertEquals(
+                        "row $row announces its column header",
+                        PlainTableFixture.coordinateText(0, column),
+                        item.columnTitle
+                    )
                 }
             }
         }
@@ -220,13 +359,18 @@ class NativeTableHostTest {
                 val admitted = adapter.callWithEnvelope(JSONObject().put("selection", selection)) {
                     UniffiEditorV2Backend.setSelection(adapter.editorId, it)
                 }
-                assertTrue("device selection admission=$admitted", admitted is EditorV2CallResult.Ok)
+                assertTrue(
+                    "device selection admission=$admitted",
+                    admitted is EditorV2CallResult.Ok
+                )
                 assertTrue(root.applyUpdateJSON(requireNotNull(adapter.refreshFromRustState(null))))
                 val drawing = tableHosts(activity.richTextView).single()
                 val handles = drawing.selectionHandles()
                 assertEquals(2, handles.size)
-                val head = handles.single { it.role ==
-                    com.apollohg.editor.viewer.TableSelectionHandleRole.HEAD }
+                val head = handles.single {
+                    it.role ==
+                        com.apollohg.editor.viewer.TableSelectionHandleRole.HEAD
+                }
                 targetOpening = cells.getJSONObject(4).getInt("sourcePos")
                 val target = drawing.presentedTableCells().single { it.sourceIndex == 4 }
                 val location = IntArray(2)
@@ -247,8 +391,11 @@ class NativeTableHostTest {
                 MotionEvent.obtain(start, start + 30, MotionEvent.ACTION_MOVE, toX, toY, 0),
                 MotionEvent.obtain(start, start + 60, MotionEvent.ACTION_UP, toX, toY, 0)
             ).forEach { event ->
-                try { instrumentation.sendPointerSync(event) }
-                finally { event.recycle() }
+                try {
+                    instrumentation.sendPointerSync(event)
+                } finally {
+                    event.recycle()
+                }
             }
             instrumentation.waitForIdleSync()
             scenario.onActivity { activity ->
@@ -281,14 +428,27 @@ class NativeTableHostTest {
             lateinit var firstConnection: InputConnection
             scenario.onActivity { activity ->
                 val root = activity.richTextView.editorEditText
-                assertEquals("tapping must not mutate the document", activity.documentBeforeMount,
-                    activity.adapter.documentJson())
-                assertTrue("focus=${activity.currentFocus} active=${activity.richTextView.activeTextInput} " +
-                    "inputs=${countEditorInputs(activity.richTextView)} rootFocused=${root.hasFocus()} " +
-                    "hosts=${tableHosts(activity.richTextView).size} rootText=${root.text} " +
-                    "revision=${activity.adapter.baseDocumentRevision} applied=${root.lastAppliedDocumentVersion} " +
-                    "tables=${activity.adapter.tableRecordsForTesting.keys} maps=${root.rootTableMapTableIds}",
-                    activity.currentFocus is EditorEditText)
+                assertEquals(
+                    "tapping must not mutate the document",
+                    activity.documentBeforeMount,
+                    activity.adapter.documentJson()
+                )
+                assertTrue(
+                    (
+                        "focus=${activity.currentFocus} " +
+                            "active=${activity.richTextView.activeTextInput} "
+                        ) +
+                        "inputs=${countEditorInputs(
+                            activity.richTextView
+                        )} rootFocused=${root.hasFocus()} " +
+                        "hosts=${tableHosts(activity.richTextView).size} rootText=${root.text} " +
+                        (
+                            "revision=${activity.adapter.baseDocumentRevision} " +
+                                "applied=${root.lastAppliedDocumentVersion} "
+                            ) +
+                        "tables=${activity.adapter.tableRecordsForTesting.keys} maps=${root.rootTableMapTableIds}",
+                    activity.currentFocus is EditorEditText
+                )
                 cellInput = activity.currentFocus as EditorEditText
                 assertTrue("cell tap must focus the reusable cell input", cellInput !== root)
                 assertEquals("Alpha", cellInput.text.toString())
@@ -336,7 +496,12 @@ class NativeTableHostTest {
                     width = reflowWidth
                 }
             }
-            awaitTableLayout(scenario, "native-table-cell-composition-timeout.png", reflowWidth, beforeReflow)
+            awaitTableLayout(
+                scenario,
+                "native-table-cell-composition-timeout.png",
+                reflowWidth,
+                beforeReflow
+            )
             scenario.onActivity { activity ->
                 assertSame(cellInput, activity.currentFocus)
                 assertEquals("Ownerpending", cellInput.text.toString())
@@ -388,36 +553,42 @@ class NativeTableHostTest {
     }
 
     private fun tapCell(scenario: ActivityScenario<NativeTableHostActivity>, cellIndex: Int) {
-        var x = 0f
-        var y = 0f
-        instrumentation.waitForIdleSync()
-        scenario.onActivity { activity ->
-            val host = tableHosts(activity.richTextView).single()
-            val block = requireNotNull(host.preparedLayout).blocks.single { it.tableSurface != null }
-            val table = requireNotNull(block.tableSurface)
-            val frame = requireNotNull(table.frameOfCell(cellIndex))
-            val origin = requireNotNull(block.tableBounds)
-            val location = IntArray(2)
-            host.getLocationOnScreen(location)
-            x = location[0] + origin.left + frame.left + frame.width / 2f
-            y = location[1] + origin.top + frame.top + frame.height / 2f
-        }
-        tap(x, y)
+        val point = instrumentation.tableCellScreenPoint(scenario, cellIndex)
+        tap(point.x, point.y)
     }
 
     private fun tapFollowingProse(scenario: ActivityScenario<NativeTableHostActivity>) {
-        var x = 0f
-        var y = 0f
-        instrumentation.waitForIdleSync()
-        scenario.onActivity { activity ->
-            val input = activity.richTextView.editorEditText
+        fun target(input: EditorEditText): Rect {
             val offset = input.text.indexOf("After table.") + 4
             val layout = requireNotNull(input.layout)
             val line = layout.getLineForOffset(offset)
-            val location = IntArray(2)
-            input.getLocationOnScreen(location)
-            x = location[0] + input.totalPaddingLeft + layout.getPrimaryHorizontal(offset)
-            y = location[1] + input.totalPaddingTop + (layout.getLineTop(line) + layout.getLineBottom(line)) / 2f
+            val x = input.totalPaddingLeft + layout.getPrimaryHorizontal(offset).toInt()
+            return Rect(
+                x,
+                input.totalPaddingTop + layout.getLineTop(line),
+                x + 1,
+                input.totalPaddingTop + layout.getLineBottom(line)
+            )
+        }
+        scenario.onActivity { activity ->
+            val input = activity.richTextView.editorEditText
+            input.requestRectangleOnScreen(target(input), true)
+        }
+        instrumentation.waitForIdleSync()
+        var x = 0f
+        var y = 0f
+        scenario.onActivity { activity ->
+            val input = activity.richTextView.editorEditText
+            val bounds = target(input)
+            val viewport = Rect()
+            assertTrue(input.getLocalVisibleRect(viewport))
+            assertTrue(
+                "following prose must be visible: $bounds in $viewport",
+                bounds.intersect(viewport)
+            )
+            val location = IntArray(2).also(input::getLocationOnScreen)
+            x = location[0] + bounds.exactCenterX()
+            y = location[1] + bounds.exactCenterY()
         }
         tap(x, y)
     }
@@ -467,7 +638,10 @@ class NativeTableHostTest {
                     val after = widths(activity.richTextView)
                     assertEquals(targetWidth, after.editor)
                     assertTrue("table host width did not reflow", after.host != before.host)
-                    assertTrue("prepared table width did not reflow", after.prepared != before.prepared)
+                    assertTrue(
+                        "prepared table width did not reflow",
+                        after.prepared != before.prepared
+                    )
                 }
             }
         }
@@ -495,19 +669,29 @@ class NativeTableHostTest {
                     prepared != null && input.layout != null &&
                     !editor.isLayoutRequested && !host.isLayoutRequested &&
                     (expectedEditorWidth == null || editor.width == expectedEditorWidth) &&
-                    (previous == null ||
-                        (host.width != previous.host && prepared.widthPx != previous.prepared))
+                    (
+                        previous == null ||
+                            (host.width != previous.host && prepared.widthPx != previous.prepared)
+                        )
                 lastReadinessState = buildString {
                     append("editor=${editor.width}x${editor.height}")
                     append(" expectedEditorWidth=$expectedEditorWidth previous=$previous")
-                    append(" frame=${editor.editorContentFrame.width}x${editor.editorContentFrame.height}")
-                    append(" input=${input.width}x${input.height} inputLayout=${input.layout != null}")
-                    append(" hostCount=${tableHosts(editor).size} host=${host?.width}x${host?.height}")
+                    append(
+                        " frame=${editor.editorContentFrame.width}x${editor.editorContentFrame.height}"
+                    )
+                    append(
+                        " input=${input.width}x${input.height} inputLayout=${input.layout != null}"
+                    )
+                    append(
+                        " hostCount=${tableHosts(editor).size} host=${host?.width}x${host?.height}"
+                    )
                     append(" prepared=${prepared?.widthPx}x${prepared?.heightPx}")
                     append(" preparedBlocks=${prepared?.blocks?.size}")
                     append(" preparedTables=${prepared?.blocks?.count { it.tableSurface != null }}")
                     append(" layoutRequested(editor/frame/input/host)=")
-                    append("${editor.isLayoutRequested}/${editor.editorContentFrame.isLayoutRequested}/")
+                    append(
+                        "${editor.isLayoutRequested}/${editor.editorContentFrame.isLayoutRequested}/"
+                    )
                     append("${input.isLayoutRequested}/${host?.isLayoutRequested}")
                     append(" rootText=${JSONObject.quote(input.text.toString().take(180))}")
                     append(" cachedRevision=${adapter.cachedAtomicRenderDocumentRevision}")
@@ -524,7 +708,9 @@ class NativeTableHostTest {
         } while (SystemClock.uptimeMillis() < deadline)
         val screenshot = runCatching { instrumentation.saveDeviceScreenshot(timeoutScreenshotName) }
             .fold(onSuccess = { it.absolutePath }, onFailure = { "failed: $it" })
-        error("Native table host did not finish layout: $lastReadinessState; screenshot=$screenshot")
+        error(
+            "Native table host did not finish layout: $lastReadinessState; screenshot=$screenshot"
+        )
     }
 
     private fun assertTableLayout(activity: NativeTableHostActivity) {
@@ -544,8 +730,10 @@ class NativeTableHostTest {
         val afterLine = layout.getLineForOffset(afterOffset)
         val tableLineHeight = layout.getLineBottom(tableLine) - layout.getLineTop(tableLine)
         val proseLineHeight = layout.getLineBottom(beforeLine) - layout.getLineTop(beforeLine)
-        assertTrue("table marker line must reserve grid height: $tableLineHeight <= $proseLineHeight",
-            tableLineHeight > proseLineHeight)
+        assertTrue(
+            "table marker line must reserve grid height: $tableLineHeight <= $proseLineHeight",
+            tableLineHeight > proseLineHeight
+        )
 
         val host = tableHosts(editor).single()
         assertTrue(host.isShown)
@@ -575,19 +763,25 @@ class NativeTableHostTest {
         }
         val followingTop = input.top + input.totalPaddingTop + layout.getLineTop(afterLine)
         val tableBottom = host.top + requireNotNull(tableBlock.tableBounds).bottom
-        assertTrue("following prose overlaps the table: $tableBottom > $followingTop",
-            tableBottom <= followingTop)
+        assertTrue(
+            "following prose overlaps the table: $tableBottom > $followingTop",
+            tableBottom <= followingTop
+        )
 
         val extent = requireNotNull(
             activity.adapter.tableMappingsForTesting?.tables?.values?.single()?.extent
         )
-        assertEquals(extent.scalarEnd + 1,
-            input.inputScalarAtLocalUtf16(afterOffset, content.toString()))
+        assertEquals(
+            extent.scalarEnd + 1,
+            input.inputScalarAtLocalUtf16(afterOffset, content.toString())
+        )
         assertEquals(1, countEditorInputs(editor))
         assertFalse(editor.editorContentFrame.getChildAt(0) === host)
         assertEquals(activity.documentBeforeMount, activity.adapter.documentJson())
-        assertEquals(activity.historyBeforeMount,
-            activity.adapter.historyCanUndo() to activity.adapter.historyCanRedo())
+        assertEquals(
+            activity.historyBeforeMount,
+            activity.adapter.historyCanUndo() to activity.adapter.historyCanRedo()
+        )
         assertEquals(activity.revisionBeforeMount, activity.adapter.baseDocumentRevision)
     }
 
@@ -599,9 +793,9 @@ class NativeTableHostTest {
     private fun countEditorInputs(view: View): Int {
         val self = if (view is EditorEditText) 1 else 0
         val children = view as? ViewGroup ?: return self
-        return self + (0 until children.childCount).sumOf { countEditorInputs(children.getChildAt(it)) }
+        return self +
+            (0 until children.childCount).sumOf { countEditorInputs(children.getChildAt(it)) }
     }
-
 
     private companion object {
         const val TABLE_LAYOUT_TIMEOUT_MS = 5_000L

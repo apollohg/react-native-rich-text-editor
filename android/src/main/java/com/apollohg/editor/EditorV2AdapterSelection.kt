@@ -19,8 +19,13 @@ internal data class TableMutationAdmission(
 )
 
 internal fun EditorV2Adapter.tableMutationAdmission(tableId: String): TableMutationAdmission =
-    TableMutationAdmission(tableId, baseDocumentRevision, tablePresentationDocumentGeneration,
-        nativeOwnerId, currentNativeOwnerToken)
+    TableMutationAdmission(
+        tableId,
+        baseDocumentRevision,
+        tablePresentationDocumentGeneration,
+        nativeOwnerId,
+        currentNativeOwnerToken
+    )
 
 internal fun EditorV2Adapter.admitsTableMutation(admission: TableMutationAdmission): Boolean =
     !destroyed && baseDocumentRevision == admission.documentRevision &&
@@ -75,7 +80,10 @@ internal fun EditorV2Adapter.selectExactTableCells(
     val admitted = runCatching { updateSelection(update) }.getOrNull()
         ?: return null
     if (cellSelectionEndpoints(admitted) != anchorCell to headCell ||
-        !admitsTableMutation(admission) || positionEpoch == null) return null
+        !admitsTableMutation(admission) || positionEpoch == null
+    ) {
+        return null
+    }
     publishCollaborationCellsIfChanged()
     return update
 }
@@ -87,8 +95,11 @@ private fun EditorV2Adapter.applyAdmittedTableCommand(
 ): String? {
     if (!admitsTableMutation(admission)) return null
     if (targetsTable) {
-        val tablePos = tableIndex.tableDocStart(admission.tableId)?.toLong()?.takeIf { it <= Int.MAX_VALUE }?.toInt()
-            ?: return null
+        val tablePos =
+            tableIndex.tableDocStart(admission.tableId)?.toLong()?.takeIf {
+                it <= Int.MAX_VALUE
+            }?.toInt()
+                ?: return null
         command.put("tablePos", tablePos)
     }
     return performMutation(adoptEngineSelection = true) {
@@ -112,7 +123,11 @@ internal fun EditorV2Adapter.resizeTableColumn(
 }
 
 internal fun EditorV2Adapter.deleteTable(admission: TableMutationAdmission): String? =
-    applyAdmittedTableCommand(JSONObject().put("type", "deleteTable"), admission, targetsTable = true)
+    applyAdmittedTableCommand(
+        JSONObject().put("type", "deleteTable"),
+        admission,
+        targetsTable = true
+    )
 
 internal fun EditorV2Adapter.applyTableCommandAtSelection(
     command: JSONObject,

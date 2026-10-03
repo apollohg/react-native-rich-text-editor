@@ -1,6 +1,5 @@
 package com.apollohg.editor.tables
 
-import uniffi.editor_core.FfiViewerElement
 import com.apollohg.editor.canonicalV2U64
 import org.json.JSONException
 import org.json.JSONObject
@@ -11,9 +10,12 @@ import uniffi.editor_core.FfiTableFrame
 import uniffi.editor_core.FfiTableFrameKind
 import uniffi.editor_core.FfiTableHost
 import uniffi.editor_core.FfiTableRecord
+import uniffi.editor_core.FfiViewerElement
 
 internal data class TableFrameChanges(
-    val fullReset: Boolean, val replacedTables: Set<String>, val removedTables: Set<String>,
+    val fullReset: Boolean,
+    val replacedTables: Set<String>,
+    val removedTables: Set<String>,
     val changedCells: Map<String, Set<Int>>
 )
 
@@ -22,8 +24,10 @@ internal sealed class TableFrameRejection : Exception() {
     data class UnknownTable(val key: String) : TableFrameRejection()
     data class CellIndexOutOfRange(val key: String, val index: Int) : TableFrameRejection()
     data class CellStructureChanged(val key: String, val index: Int) : TableFrameRejection()
-    data class DocSizeMismatch(val key: String, val expected: UInt, val actual: UInt) : TableFrameRejection()
-    data class ScalarSizeMismatch(val key: String, val expected: UInt, val actual: UInt) : TableFrameRejection()
+    data class DocSizeMismatch(val key: String, val expected: UInt, val actual: UInt) :
+        TableFrameRejection()
+    data class ScalarSizeMismatch(val key: String, val expected: UInt, val actual: UInt) :
+        TableFrameRejection()
     data class InputBlockOutOfStride(val key: String, val index: Int) : TableFrameRejection()
     data class MissingAttribute(val key: String) : TableFrameRejection()
     data class DuplicateTableKey(val key: String) : TableFrameRejection()
@@ -39,8 +43,11 @@ internal sealed class TableFrameAdoption {
 @OptIn(ExperimentalUnsignedTypes::class)
 internal class EditorTableIndex {
     private data class Entry(
-        val record: FfiTableRecord, val docPrefix: UIntArray, val scalarPrefix: UIntArray,
-        val attributeCounts: Map<String, Int>, val nestedCells: Map<String, Int>
+        val record: FfiTableRecord,
+        val docPrefix: UIntArray,
+        val scalarPrefix: UIntArray,
+        val attributeCounts: Map<String, Int>,
+        val nestedCells: Map<String, Int>
     ) {
         val scalarSize: UInt get() = scalarPrefix.last()
     }
@@ -55,18 +62,29 @@ internal class EditorTableIndex {
     private var origins: Map<String, Origin> = emptyMap()
     private var roots: List<String> = emptyList()
 
-    fun adopt(frame: FfiTableFrame, installedRevision: ULong?, frameRevision: ULong): TableFrameAdoption = try {
+    fun adopt(
+        frame: FfiTableFrame,
+        installedRevision: ULong?,
+        frameRevision: ULong
+    ): TableFrameAdoption = try {
         TableFrameAdoption.Adopted(stage(frame, installedRevision, frameRevision))
     } catch (rejection: TableFrameRejection) {
         TableFrameAdoption.Rejected(rejection)
     }
 
-    private fun stage(frame: FfiTableFrame, installedRevision: ULong?, frameRevision: ULong): TableFrameChanges {
+    private fun stage(
+        frame: FfiTableFrame,
+        installedRevision: ULong?,
+        frameRevision: ULong
+    ): TableFrameChanges {
         val full = frame.kind == FfiTableFrameKind.FULL
         if (!full) {
             val base = canonicalV2U64(frame.baseDocumentRevision)?.toULong()
             if (base == null || base != installedRevision) {
-                throw TableFrameRejection.BaseRevisionMismatch(installedRevision, base ?: frameRevision)
+                throw TableFrameRejection.BaseRevisionMismatch(
+                    installedRevision,
+                    base ?: frameRevision
+                )
             }
         }
         val next = if (full) mutableMapOf() else entries.toMutableMap()
@@ -76,7 +94,10 @@ internal class EditorTableIndex {
         val removed = mutableSetOf<String>()
         val replaced = mutableSetOf<String>()
         val changed = mutableMapOf<String, Set<Int>>()
-        frame.removedAttributeKeys.forEach { key -> pool.remove(key); objects.remove(key) }
+        frame.removedAttributeKeys.forEach { key ->
+            pool.remove(key)
+            objects.remove(key)
+        }
         frame.attributes.forEach { attribute ->
             val parsed = try {
                 JSONObject(attribute.json)
@@ -92,7 +113,11 @@ internal class EditorTableIndex {
         }
         frame.tables.forEach { table ->
             val key = table.tableKey
-            if (!replaced.add(key) || key in removed) throw TableFrameRejection.DuplicateTableKey(key)
+            if (!replaced.add(key) ||
+                key in removed
+            ) {
+                throw TableFrameRejection.DuplicateTableKey(key)
+            }
             next[key] = entry(table, pool)
         }
         frame.cellUpdates.groupBy { it.tableKey }.forEach { (key, updates) ->
@@ -100,14 +125,22 @@ internal class EditorTableIndex {
             val indexes = sortedSetOf<Int>()
             updates.forEach { update ->
                 val index = update.cellIndex.toInt()
-                if (index !in prior.record.cells.indices) throw TableFrameRejection.CellIndexOutOfRange(key, index)
-                if (key in replaced || !indexes.add(index) || !sameStructure(prior.record.cells[index], update.cell)) {
+                if (index !in
+                    prior.record.cells.indices
+                ) {
+                    throw TableFrameRejection.CellIndexOutOfRange(key, index)
+                }
+                if (key in replaced || !indexes.add(index) ||
+                    !sameStructure(prior.record.cells[index], update.cell)
+                ) {
                     throw TableFrameRejection.CellStructureChanged(key, index)
                 }
                 validate(update.cell, key, index, pool)
             }
             val nestedCells = prior.nestedCells.toMutableMap()
-            indexes.forEach { index -> prior.record.cells[index].nestedTables.forEach { nestedCells.remove(it.tableKey) } }
+            indexes.forEach { index ->
+                prior.record.cells[index].nestedTables.forEach { nestedCells.remove(it.tableKey) }
+            }
             val cells = prior.record.cells.toMutableList()
             val counts = prior.attributeCounts.toMutableMap()
             var docSize = prior.record.docSize
@@ -115,9 +148,19 @@ internal class EditorTableIndex {
                 val index = update.cellIndex.toInt()
                 val old = cells[index]
                 val size = docSize.toLong() - old.docSize.toLong() + update.cell.docSize.toLong()
-                docSize = checkedUInt(size) ?: throw TableFrameRejection.DocSizeMismatch(key, docSize, update.cell.docSize)
+                docSize =
+                    checkedUInt(size)
+                        ?: throw TableFrameRejection.DocSizeMismatch(
+                            key,
+                            docSize,
+                            update.cell.docSize
+                        )
                 update.cell.nestedTables.forEach { nested ->
-                    if (nestedCells.put(nested.tableKey, index) != null) throw TableFrameRejection.DuplicateTableKey(nested.tableKey)
+                    if (nestedCells.put(nested.tableKey, index) !=
+                        null
+                    ) {
+                        throw TableFrameRejection.DuplicateTableKey(nested.tableKey)
+                    }
                 }
                 cells[index] = update.cell
                 val oldCount = counts.getValue(old.attrsKey) - 1
@@ -126,10 +169,27 @@ internal class EditorTableIndex {
             }
             val first = indexes.first()
             // Exposed FFI lists can be resized independently of their installed prefixes.
-            val rebuildsEntireSuffix = prior.docPrefix.size == cells.size + 1 && prior.scalarPrefix.size == cells.size + 1
-            val updated = Entry(prior.record.copy(docSize = docSize, cells = cells),
-                if (rebuildsEntireSuffix) UIntArray(prior.docPrefix.size) else prior.docPrefix.copyOf(),
-                if (rebuildsEntireSuffix) UIntArray(prior.scalarPrefix.size) else prior.scalarPrefix.copyOf(), counts, nestedCells)
+            val rebuildsEntireSuffix =
+                prior.docPrefix.size == cells.size + 1 && prior.scalarPrefix.size == cells.size + 1
+            val updated = Entry(
+                prior.record.copy(docSize = docSize, cells = cells),
+                if (rebuildsEntireSuffix) {
+                    UIntArray(
+                        prior.docPrefix.size
+                    )
+                } else {
+                    prior.docPrefix.copyOf()
+                },
+                if (rebuildsEntireSuffix) {
+                    UIntArray(
+                        prior.scalarPrefix.size
+                    )
+                } else {
+                    prior.scalarPrefix.copyOf()
+                },
+                counts,
+                nestedCells
+            )
             if (rebuildsEntireSuffix) {
                 prior.docPrefix.copyInto(updated.docPrefix, endIndex = first + 1)
                 prior.scalarPrefix.copyInto(updated.scalarPrefix, endIndex = first + 1)
@@ -139,27 +199,48 @@ internal class EditorTableIndex {
             changed[key] = indexes
         }
         frame.removedAttributeKeys.filter { it !in pool }.forEach { key ->
-            if (next.values.any { key in it.attributeCounts }) throw TableFrameRejection.MissingAttribute(key)
+            if (next.values.any {
+                    key in it.attributeCounts
+                }
+            ) {
+                throw TableFrameRejection.MissingAttribute(key)
+            }
         }
         if (full || installedRevision != frameRevision || frame.extents.isNotEmpty()) {
             nextExtents = mutableMapOf()
             frame.extents.forEach { extent ->
-                if (nextExtents.put(extent.tableKey, extent) != null) throw TableFrameRejection.DuplicateTableKey(extent.tableKey)
+                if (nextExtents.put(extent.tableKey, extent) !=
+                    null
+                ) {
+                    throw TableFrameRejection.DuplicateTableKey(extent.tableKey)
+                }
             }
         }
         next.forEach { (key, entry) ->
             val host = entry.record.host
             if (host != null) {
                 val parent = next[host.tableKey] ?: throw TableFrameRejection.HostMissing(key)
-                val cell = parent.record.cells.getOrNull(host.cellIndex.toInt()) ?: throw TableFrameRejection.HostMissing(key)
-                val nested = cell.nestedTables.firstOrNull { it.tableKey == key } ?: throw TableFrameRejection.HostMissing(key)
+                val cell =
+                    parent.record.cells.getOrNull(host.cellIndex.toInt())
+                        ?: throw TableFrameRejection.HostMissing(key)
+                val nested =
+                    cell.nestedTables.firstOrNull { it.tableKey == key }
+                        ?: throw TableFrameRejection.HostMissing(key)
                 validateNested(nested, entry, cell)
             } else {
                 val extent = nextExtents[key] ?: throw TableFrameRejection.ExtentsIncomplete
                 if (extent.docSize != entry.record.docSize) {
-                    throw TableFrameRejection.DocSizeMismatch(key, entry.record.docSize, extent.docSize)
+                    throw TableFrameRejection.DocSizeMismatch(
+                        key,
+                        entry.record.docSize,
+                        extent.docSize
+                    )
                 }
-                if (extent.scalarEnd < extent.scalarStart) throw TableFrameRejection.ScalarSizeMismatch(key, entry.scalarSize, 0u)
+                if (extent.scalarEnd <
+                    extent.scalarStart
+                ) {
+                    throw TableFrameRejection.ScalarSizeMismatch(key, entry.scalarSize, 0u)
+                }
                 val width = extent.scalarEnd - extent.scalarStart
                 if (entry.record.failure == null && width != entry.scalarSize) {
                     throw TableFrameRejection.ScalarSizeMismatch(key, entry.scalarSize, width)
@@ -172,7 +253,11 @@ internal class EditorTableIndex {
         next.forEach { (key, entry) ->
             entry.nestedCells.forEach { (childKey, index) ->
                 val child = next[childKey] ?: throw TableFrameRejection.UnknownTable(childKey)
-                if (child.record.host != FfiTableHost(key, index.toUInt())) throw TableFrameRejection.HostMissing(childKey)
+                if (child.record.host !=
+                    FfiTableHost(key, index.toUInt())
+                ) {
+                    throw TableFrameRejection.HostMissing(childKey)
+                }
             }
         }
         val rootKeys = next.filterValues { it.record.host == null }.keys
@@ -182,7 +267,9 @@ internal class EditorTableIndex {
         var previousScalarEnd = 0u
         orderedRoots.forEach { key ->
             val extent = nextExtents.getValue(key)
-            if (extent.docStart.toLong() < previousDocEnd || extent.scalarStart < previousScalarEnd) {
+            if (extent.docStart.toLong() < previousDocEnd ||
+                extent.scalarStart < previousScalarEnd
+            ) {
                 throw TableFrameRejection.ExtentsIncomplete
             }
             previousDocEnd = extent.docStart.toLong() + extent.docSize.toLong()
@@ -210,12 +297,20 @@ internal class EditorTableIndex {
                 val parent = next.getValue(host.tableKey)
                 val origin = nextOrigins.getValue(host.tableKey)
                 val index = host.cellIndex.toInt()
-                val nested = parent.record.cells[index].nestedTables.first { it.tableKey == childKey }
-                val doc = origin.doc.toLong() + relativeDocStart(parent, index) + nested.docOffset.toLong()
+                val nested = parent.record.cells[index].nestedTables.first {
+                    it.tableKey == childKey
+                }
+                val doc =
+                    origin.doc.toLong() + relativeDocStart(parent, index) +
+                        nested.docOffset.toLong()
                 val docStart = checkedUInt(doc) ?: throw TableFrameRejection.HostMissing(childKey)
-                val scalar = origin.scalar?.let { start -> nested.scalarStart?.let {
-                    checkedUInt(start.toLong() + parent.scalarPrefix[index].toLong() + it.toLong())
-                } }
+                val scalar = origin.scalar?.let { start ->
+                    nested.scalarStart?.let {
+                        checkedUInt(
+                            start.toLong() + parent.scalarPrefix[index].toLong() + it.toLong()
+                        )
+                    }
+                }
                 nextOrigins[childKey] = Origin(docStart, scalar)
             }
         }
@@ -253,9 +348,12 @@ internal class EditorTableIndex {
         val keys = selected.values.flatMapTo(mutableSetOf()) { it.attributeCounts.keys }
         return EditorTableIndex().also { result ->
             result.entries = selected
-            result.attributes = keys.mapNotNull { key -> attributes[key]?.let { key to it } }.toMap()
-            result.attributeObjects = keys.mapNotNull { key -> attributeObjects[key]?.let { key to it } }.toMap()
-            result.origins = selected.keys.mapNotNull { key -> origins[key]?.let { key to it } }.toMap()
+            result.attributes =
+                keys.mapNotNull { key -> attributes[key]?.let { key to it } }.toMap()
+            result.attributeObjects =
+                keys.mapNotNull { key -> attributeObjects[key]?.let { key to it } }.toMap()
+            result.origins =
+                selected.keys.mapNotNull { key -> origins[key]?.let { key to it } }.toMap()
         }
     }
 
@@ -281,8 +379,13 @@ internal class EditorTableIndex {
         val origin = origins[tableKey] ?: return null
         if (position < origin.doc) return null
         val relative = position.toLong() - origin.doc.toLong()
-        val index = precedingIndex(entry.record.cells.size) { relativeDocStart(entry, it) <= relative } ?: return null
-        return index.takeIf { relative < relativeDocStart(entry, it) + entry.record.cells[it].docSize.toLong() }
+        val index =
+            precedingIndex(entry.record.cells.size) { relativeDocStart(entry, it) <= relative }
+                ?: return null
+        return index.takeIf {
+            relative <
+                relativeDocStart(entry, it) + entry.record.cells[it].docSize.toLong()
+        }
     }
 
     fun cellIndexContainingScalar(tableKey: String, position: UInt): Int? {
@@ -290,9 +393,16 @@ internal class EditorTableIndex {
         val start = origins[tableKey]?.scalar ?: return null
         if (position < start) return null
         val relative = position.toLong() - start.toLong()
-        val index = precedingIndex(entry.record.cells.size) { entry.scalarPrefix[it].toLong() <= relative } ?: return null
-        return index.takeIf { relative < entry.scalarPrefix[it + 1].toLong() ||
-            (it == entry.record.cells.lastIndex && relative == entry.scalarPrefix[it + 1].toLong()) }
+        val index =
+            precedingIndex(entry.record.cells.size) { entry.scalarPrefix[it].toLong() <= relative }
+                ?: return null
+        return index.takeIf {
+            relative < entry.scalarPrefix[it + 1].toLong() ||
+                (
+                    it == entry.record.cells.lastIndex &&
+                        relative == entry.scalarPrefix[it + 1].toLong()
+                    )
+        }
     }
 
     fun tableKeyContainingDoc(position: UInt): String? = containingTable(position, false)
@@ -300,23 +410,48 @@ internal class EditorTableIndex {
 
     private fun containingTable(position: UInt, scalar: Boolean): String? {
         val rootIndex = precedingIndex(roots.size) {
-            extents.getValue(roots[it]).let { extent -> (if (scalar) extent.scalarStart else extent.docStart) <= position }
+            extents.getValue(roots[it]).let { extent ->
+                (if (scalar) extent.scalarStart else extent.docStart) <=
+                    position
+            }
         } ?: return null
         var key = roots[rootIndex]
         val extent = extents.getValue(key)
-        if (if (scalar) position > extent.scalarEnd else position.toLong() >= extent.docStart.toLong() + extent.docSize.toLong()) return null
+        if (if (scalar) {
+                position > extent.scalarEnd
+            } else {
+                position.toLong() >=
+                    extent.docStart.toLong() + extent.docSize.toLong()
+            }
+        ) {
+            return null
+        }
         while (true) {
-            val index = if (scalar) cellIndexContainingScalar(key, position) else cellIndexContainingDoc(key, position)
+            val index = if (scalar) {
+                cellIndexContainingScalar(
+                    key,
+                    position
+                )
+            } else {
+                cellIndexContainingDoc(key, position)
+            }
             if (index == null) break
-            val nested = entries.getValue(key).record.cells[index].nestedTables.firstOrNull { nested ->
-                val origin = origins[nested.tableKey]
-                val child = entries[nested.tableKey]
-                if (origin == null || child == null) false
-                else if (scalar) origin.scalar?.let { start ->
-                    start <= position && position.toLong() <= start.toLong() + child.scalarSize.toLong()
-                } == true
-                else origin.doc <= position && position.toLong() < origin.doc.toLong() + child.record.docSize.toLong()
-            } ?: break
+            val nested =
+                entries.getValue(key).record.cells[index].nestedTables.firstOrNull { nested ->
+                    val origin = origins[nested.tableKey]
+                    val child = entries[nested.tableKey]
+                    if (origin == null || child == null) {
+                        false
+                    } else if (scalar) {
+                        origin.scalar?.let { start ->
+                            start <= position &&
+                                position.toLong() <= start.toLong() + child.scalarSize.toLong()
+                        } == true
+                    } else {
+                        origin.doc <= position &&
+                            position.toLong() < origin.doc.toLong() + child.record.docSize.toLong()
+                    }
+                } ?: break
             key = nested.tableKey
         }
         return key
@@ -333,7 +468,9 @@ internal class EditorTableIndex {
         val cell = entries[tableKey]?.record?.cells?.getOrNull(cellIndex) ?: return null
         val start = scalarStart(tableKey, cellIndex) ?: return null
         return cell.inputBlocks.map { block ->
-            val collapsed = cell.nestedTables.filter { it.elementIndex < block.elementIndex }.sumOf { nested ->
+            val collapsed = cell.nestedTables.filter {
+                it.elementIndex < block.elementIndex
+            }.sumOf { nested ->
                 val lower = nested.scalarStart
                 val upper = nested.scalarEnd
                 if (lower != null && upper != null) upper.toLong() - lower.toLong() - 1 else 0L
@@ -350,43 +487,73 @@ internal class EditorTableIndex {
 
         fun fitsUInt(value: Long): Boolean = value in 0..UInt.MAX_VALUE.toLong()
         fun checkedUInt(value: Long): UInt? = if (fitsUInt(value)) value.toUInt() else null
-        fun checkedInt(value: Long): Int? = value.takeIf { it in 0..Int.MAX_VALUE.toLong() }?.toInt()
+        fun checkedInt(value: Long): Int? =
+            value.takeIf { it in 0..Int.MAX_VALUE.toLong() }?.toInt()
 
         fun entry(record: FfiTableRecord, pool: Map<String, String>): Entry {
             val key = record.tableKey
             val counts = mutableMapOf<String, Int>()
             val nestedCells = mutableMapOf<String, Int>()
-            (listOf(record.attrsKey) + record.sourceRows.map { it.attrsKey } + record.syntheticRegions.map { it.attrsKey }).forEach {
+            (
+                listOf(record.attrsKey) + record.sourceRows.map { it.attrsKey } +
+                    record.syntheticRegions.map { it.attrsKey }
+                ).forEach {
                 if (it !in pool) throw TableFrameRejection.MissingAttribute(it)
                 counts[it] = (counts[it] ?: 0) + 1
             }
             var sourceRow = 0
             var rowCellCount = 0u
             record.cells.forEachIndexed { index, cell ->
-                while (sourceRow < record.sourceRows.size && rowCellCount == record.sourceRows[sourceRow].cellCount) {
+                while (sourceRow < record.sourceRows.size &&
+                    rowCellCount == record.sourceRows[sourceRow].cellCount
+                ) {
                     sourceRow++
                     rowCellCount = 0u
                 }
                 if (sourceRow >= record.sourceRows.size || cell.sourceRow != sourceRow.toUInt() ||
-                    cell.rowspan == 0u || cell.colspan == 0u || cell.row >= record.rows || cell.column >= record.columns ||
-                    cell.rowspan > record.rows - cell.row || cell.colspan > record.columns - cell.column) {
+                    cell.rowspan == 0u || cell.colspan == 0u || cell.row >= record.rows ||
+                    cell.column >= record.columns ||
+                    cell.rowspan > record.rows - cell.row ||
+                    cell.colspan > record.columns - cell.column
+                ) {
                     throw TableFrameRejection.CellStructureChanged(key, index)
                 }
                 rowCellCount++
                 validate(cell, key, index, pool)
                 counts[cell.attrsKey] = (counts[cell.attrsKey] ?: 0) + 1
                 cell.nestedTables.forEach { nested ->
-                    if (nestedCells.put(nested.tableKey, index) != null) throw TableFrameRejection.DuplicateTableKey(nested.tableKey)
+                    if (nestedCells.put(nested.tableKey, index) !=
+                        null
+                    ) {
+                        throw TableFrameRejection.DuplicateTableKey(nested.tableKey)
+                    }
                 }
             }
-            if (record.failure == null && record.sourceRows.sumOf { it.cellCount.toLong() } != record.cells.size.toLong()) {
+            if (record.failure == null &&
+                record.sourceRows.sumOf { it.cellCount.toLong() } != record.cells.size.toLong()
+            ) {
                 throw TableFrameRejection.CellIndexOutOfRange(key, record.cells.size)
             }
-            val entry = Entry(record, UIntArray(record.cells.size + 1), UIntArray(record.cells.size + 1), counts, nestedCells)
+            val entry =
+                Entry(
+                    record,
+                    UIntArray(record.cells.size + 1),
+                    UIntArray(record.cells.size + 1),
+                    counts,
+                    nestedCells
+                )
             rebuildPrefixes(entry, 0)
-            val expected = NODE_BOUNDARY_SIZE * (record.sourceRows.size.toLong() + 1) + entry.docPrefix.last().toLong()
-            if ((record.failure == null && expected != record.docSize.toLong()) || (record.failure != null && record.cells.isNotEmpty())) {
-                throw TableFrameRejection.DocSizeMismatch(key, expected.coerceAtMost(UInt.MAX_VALUE.toLong()).toUInt(), record.docSize)
+            val expected =
+                NODE_BOUNDARY_SIZE * (record.sourceRows.size.toLong() + 1) +
+                    entry.docPrefix.last().toLong()
+            if ((record.failure == null && expected != record.docSize.toLong()) ||
+                (record.failure != null && record.cells.isNotEmpty())
+            ) {
+                throw TableFrameRejection.DocSizeMismatch(
+                    key,
+                    expected.coerceAtMost(UInt.MAX_VALUE.toLong()).toUInt(),
+                    record.docSize
+                )
             }
             return entry
         }
@@ -398,11 +565,19 @@ internal class EditorTableIndex {
                 val cell = entry.record.cells[index]
                 val nextDoc = doc + cell.docSize.toLong()
                 if (!fitsUInt(nextDoc)) {
-                    throw TableFrameRejection.DocSizeMismatch(entry.record.tableKey, entry.record.docSize, cell.docSize)
+                    throw TableFrameRejection.DocSizeMismatch(
+                        entry.record.tableKey,
+                        entry.record.docSize,
+                        cell.docSize
+                    )
                 }
                 val nextScalar = scalar + cell.scalarStride.toLong()
                 if (!fitsUInt(nextScalar)) {
-                    throw TableFrameRejection.ScalarSizeMismatch(entry.record.tableKey, scalar.toUInt(), cell.scalarStride)
+                    throw TableFrameRejection.ScalarSizeMismatch(
+                        entry.record.tableKey,
+                        scalar.toUInt(),
+                        cell.scalarStride
+                    )
                 }
                 entry.docPrefix[index + 1] = nextDoc.toUInt()
                 entry.scalarPrefix[index + 1] = nextScalar.toUInt()
@@ -412,27 +587,41 @@ internal class EditorTableIndex {
         }
 
         fun sameStructure(first: FfiTableCellRecord, second: FfiTableCellRecord): Boolean =
-            first.sourceRow == second.sourceRow && first.row == second.row && first.column == second.column &&
-                first.rowspan == second.rowspan && first.colspan == second.colspan && first.header == second.header
+            first.sourceRow == second.sourceRow && first.row == second.row &&
+                first.column == second.column &&
+                first.rowspan == second.rowspan && first.colspan == second.colspan &&
+                first.header == second.header
 
-        fun validate(cell: FfiTableCellRecord, tableKey: String, index: Int, pool: Map<String, String>) {
+        fun validate(
+            cell: FfiTableCellRecord,
+            tableKey: String,
+            index: Int,
+            pool: Map<String, String>
+        ) {
             if (cell.attrsKey !in pool) throw TableFrameRejection.MissingAttribute(cell.attrsKey)
             val voidIndices = mutableSetOf<UInt>()
             cell.voidElementIndices.forEach { elementIndex ->
                 val element = cell.elements.getOrNull(elementIndex.toInt())
-                if (!voidIndices.add(elementIndex) || element !is FfiViewerElement.InlineAtom &&
-                    element !is FfiViewerElement.BlockAtom) {
+                if (!voidIndices.add(elementIndex) || (
+                        element !is FfiViewerElement.InlineAtom &&
+                            element !is FfiViewerElement.BlockAtom
+                        )
+                ) {
                     throw TableFrameRejection.InputBlockOutOfStride(tableKey, index)
                 }
             }
             var previousDoc = 0u
             var previousScalar = 0u
             cell.inputBlocks.forEach { block ->
-                if (block.elementIndex.toLong() >= cell.elements.size || previousDoc > block.docStart ||
+                if (block.elementIndex.toLong() >= cell.elements.size ||
+                    previousDoc > block.docStart ||
                     block.docStart > block.docEnd || block.docEnd > cell.docSize ||
-                    previousScalar > block.scalarStart || block.scalarStart > block.contentScalarStart ||
-                    block.contentScalarStart > block.scalarEnd || block.scalarEnd > block.breakScalarEnd ||
-                    block.breakScalarEnd > cell.scalarStride) {
+                    previousScalar > block.scalarStart ||
+                    block.scalarStart > block.contentScalarStart ||
+                    block.contentScalarStart > block.scalarEnd ||
+                    block.scalarEnd > block.breakScalarEnd ||
+                    block.breakScalarEnd > cell.scalarStride
+                ) {
                     throw TableFrameRejection.InputBlockOutOfStride(tableKey, index)
                 }
                 previousDoc = block.docEnd
@@ -442,22 +631,41 @@ internal class EditorTableIndex {
 
         fun validateNested(nested: FfiCellNestedTable, child: Entry, parent: FfiTableCellRecord) {
             val key = child.record.tableKey
-            if (nested.elementIndex.toLong() >= parent.elements.size || nested.docOffset.toLong() + nested.docSize.toLong() > parent.docSize.toLong()) {
+            if (nested.elementIndex.toLong() >= parent.elements.size ||
+                nested.docOffset.toLong() + nested.docSize.toLong() > parent.docSize.toLong()
+            ) {
                 throw TableFrameRejection.HostMissing(key)
             }
-            if (nested.docSize != child.record.docSize) throw TableFrameRejection.DocSizeMismatch(key, child.record.docSize, nested.docSize)
+            if (nested.docSize !=
+                child.record.docSize
+            ) {
+                throw TableFrameRejection.DocSizeMismatch(
+                    key,
+                    child.record.docSize,
+                    nested.docSize
+                )
+            }
             val lower = nested.scalarStart
             val upper = nested.scalarEnd
             val width = when {
-                lower != null && upper != null && lower <= upper && upper <= parent.scalarStride -> upper - lower
+                lower != null && upper != null && lower <= upper && upper <= parent.scalarStride ->
+                    upper -
+                        lower
+
                 lower == null && upper == null -> 0u
+
                 else -> throw TableFrameRejection.ScalarSizeMismatch(key, child.scalarSize, 0u)
             }
-            if (child.record.failure == null && width != child.scalarSize) throw TableFrameRejection.ScalarSizeMismatch(key, child.scalarSize, width)
+            if (child.record.failure == null &&
+                width != child.scalarSize
+            ) {
+                throw TableFrameRejection.ScalarSizeMismatch(key, child.scalarSize, width)
+            }
         }
 
         fun relativeDocStart(entry: Entry, index: Int): Long =
-            NODE_BOUNDARY_SIZE * (entry.record.cells[index].sourceRow.toLong() + 1) + entry.docPrefix[index].toLong()
+            NODE_BOUNDARY_SIZE * (entry.record.cells[index].sourceRow.toLong() + 1) +
+                entry.docPrefix[index].toLong()
 
         fun precedingIndex(count: Int, before: (Int) -> Boolean): Int? {
             var low = 0

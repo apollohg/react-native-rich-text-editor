@@ -180,16 +180,26 @@ internal class NativeEditorExpoViewLifecycleTest : NativeEditorExpoViewTestFixtu
             view.onEditorReadyForTesting = {}
             view.onSelectionChangeForTesting = {}
             view.setEditorId(viewToken)
-            assertNull("a detached view must not own the adapter", view.editorErrorCallbackTokenForTesting())
+            assertNull(
+                "a detached view must not own the adapter",
+                view.editorErrorCallbackTokenForTesting()
+            )
 
             view.handleAttachedToWindowForTesting()
 
-            assertEquals("attach must bind the editor text to the view token",
-                viewToken, view.richTextView.editorEditText.editorId)
-            assertNotNull("attach must claim error ownership after binding the editor",
-                view.editorErrorCallbackTokenForTesting())
-            assertTrue("the attached view must hold table owner authority",
-                view.hasTableRootNativeOwnerAuthority(adapter))
+            assertEquals(
+                "attach must bind the editor text to the view token",
+                viewToken,
+                view.richTextView.editorEditText.editorId
+            )
+            assertNotNull(
+                "attach must claim error ownership after binding the editor",
+                view.editorErrorCallbackTokenForTesting()
+            )
+            assertTrue(
+                "the attached view must hold table owner authority",
+                view.hasTableRootNativeOwnerAuthority(adapter)
+            )
             adapter.destroy()
             assertTrue(commitBoundText(view, "x"))
             shadowOf(Looper.getMainLooper()).idle()

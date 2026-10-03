@@ -189,7 +189,9 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
     internal var onTableSelectionGeometryForTesting: ((Map<String, Any>) -> Unit)? = null
     internal var rootWindowInsetsForTesting: WindowInsetsCompat? = null
     internal val tableSelectionGeometryPublisher = TableSelectionGeometryPublisher(
-        this, this::currentTableSelectionGeometry, this::dispatchTableSelectionGeometry
+        this,
+        this::currentTableSelectionGeometry,
+        this::dispatchTableSelectionGeometry
     )
     internal var onOutsideTapTraceForTesting: ((String) -> Unit)? = null
     internal var onRefreshToolbarStateFromEditorSelectionForTesting: (() -> String?)? = null
@@ -308,9 +310,11 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
     init {
         addView(richTextView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         richTextView.onAtomLayoutChange = ::emitAtomLayout
-        richTextView.onTableSelectionGeometryMayChange = tableSelectionGeometryPublisher::scheduleFlush
+        richTextView.onTableSelectionGeometryMayChange =
+            tableSelectionGeometryPublisher::scheduleFlush
         richTextView.editorEditText.editorListener = this
-        richTextView.editorEditText.rootTableNativeOwnerAuthority = ::hasTableRootNativeOwnerAuthority
+        richTextView.editorEditText.rootTableNativeOwnerAuthority =
+            ::hasTableRootNativeOwnerAuthority
         richTextView.onTableCellInputCreated = { input ->
             tableCellTextInput = input
             input.editorListener = this
@@ -598,7 +602,6 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
     internal fun applyRemoteCommitRefresh(expectedEditorId: Long) =
         applyRemoteCommitRefreshImpl(expectedEditorId)
 
-
     override fun onSelectionChanged(anchor: Int, head: Int) {
         val stateJson = refreshToolbarStateFromEditorSelection()
         refreshMentionQuery()
@@ -666,7 +669,9 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
         if (pending != null) {
             if (pending.atomicUpdateJSON == event.atomicUpdateJSON) return
             pendingEditorUpdateEvents.remove(pending)
-        } else if (!pendingEditorUpdateKeys.add(key)) return
+        } else if (!pendingEditorUpdateKeys.add(key)) {
+            return
+        }
         pendingEditorUpdateEvents.addLast(event)
         richTextView.editorEditText.recordImeTraceForTesting(
             "nativeViewEditorUpdateQueued",
@@ -868,7 +873,8 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
         rawY: Float,
         reactRootOnScreen: Point,
         viewportOffset: Point
-    ): Boolean = isPointInsideStandaloneToolbarForTestingImpl(rawX, rawY, reactRootOnScreen, viewportOffset)
+    ): Boolean =
+        isPointInsideStandaloneToolbarForTestingImpl(rawX, rawY, reactRootOnScreen, viewportOffset)
 
     internal companion object {
         internal const val TOOLBAR_HIT_SLOP_DP = 8f

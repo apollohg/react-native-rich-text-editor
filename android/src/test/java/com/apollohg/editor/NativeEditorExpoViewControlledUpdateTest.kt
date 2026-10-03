@@ -41,9 +41,17 @@ internal class NativeEditorExpoViewControlledUpdateTest :
         val (adapterB, tokenB) = registerAdapter()
         val payloads = mutableListOf<Map<String, Any>>()
         try {
-            backend.sessions.getValue(adapterA.editorId).apply { text = StringBuilder("A"); revision = 7uL }
+            backend.sessions.getValue(adapterA.editorId).apply {
+                text = StringBuilder("A")
+                revision =
+                    7uL
+            }
             assertNotNull(adapterA.refreshFromRustState(null))
-            backend.sessions.getValue(adapterB.editorId).apply { text = StringBuilder("B"); revision = 8uL }
+            backend.sessions.getValue(adapterB.editorId).apply {
+                text = StringBuilder("B")
+                revision =
+                    8uL
+            }
             assertNotNull(adapterB.refreshFromRustState(null))
             view.onEditorUpdateForTesting = { payloads += it }
             view.onAddonEventForTesting = {}
@@ -99,7 +107,11 @@ internal class NativeEditorExpoViewControlledUpdateTest :
         val (adapterB, tokenB) = registerAdapter()
         val payloads = mutableListOf<Map<String, Any>>()
         try {
-            backend.sessions.getValue(adapterA.editorId).apply { text = StringBuilder("stale A"); revision = 7uL }
+            backend.sessions.getValue(adapterA.editorId).apply {
+                text = StringBuilder("stale A")
+                revision =
+                    7uL
+            }
             assertNotNull(adapterA.refreshFromRustState(null))
             view.onEditorUpdateForTesting = { payloads += it }
             view.onAddonEventForTesting = {}
@@ -261,6 +273,4 @@ internal class NativeEditorExpoViewControlledUpdateTest :
         assertEquals("second", editText.text?.toString())
         assertNull(view.pendingViewCommandUpdateJsonForTesting())
     }
-
-
 }

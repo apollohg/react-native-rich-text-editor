@@ -1,6 +1,5 @@
 package com.apollohg.editor
 
-
 internal fun EditorEditText.isAuthorizedForTableCellInput(): Boolean {
     if (!isTableCellInput) return true
     val map = tableCellPositionMap ?: return false
@@ -14,13 +13,12 @@ internal fun EditorEditText.canDispatchTableCellMutation(): Boolean =
     (!isTableCellInput && !rootTableSelectionInputBlocked && isAuthorizedForRootTableInput()) ||
         (isTableCellInput && tableCellUpdateConsumer != null && isAuthorizedForTableCellInput())
 
-internal fun EditorEditText.isAuthorizedForHistoryCommand(): Boolean =
-    if (isTableCellInput) {
-        tableCellUpdateConsumer != null && tableCellInputAuthority?.invoke() == true
-    } else {
-        rootTablePositionMap == null ||
-            (v2Driver as? EditorV2Adapter)?.let(::hasAuthorizedNativeTableOwner) == true
-    }
+internal fun EditorEditText.isAuthorizedForHistoryCommand(): Boolean = if (isTableCellInput) {
+    tableCellUpdateConsumer != null && tableCellInputAuthority?.invoke() == true
+} else {
+    rootTablePositionMap == null ||
+        (v2Driver as? EditorV2Adapter)?.let(::hasAuthorizedNativeTableOwner) == true
+}
 
 internal fun EditorEditText.hasAuthorizedNativeTableOwner(adapter: EditorV2Adapter): Boolean =
     rootTableNativeOwnerAuthority?.invoke(adapter) ?: ownsNativeBinding(adapter)
@@ -36,8 +34,13 @@ internal fun EditorEditText.adoptCurrentRootTableMapEpoch(adapter: EditorV2Adapt
     if (rootTableMapDocumentVersion != adapter.baseDocumentRevision.toString()) return false
     val currentEpoch = adapter.positionEpoch ?: return false
     if (adapter.cachedAtomicRenderDocumentRevision != adapter.baseDocumentRevision) return false
-    val currentRootIds = adapter.tableIndex.tableKeys.filter { adapter.tableIndex.record(it)?.host == null }.toSet()
-    val extents = adapter.tableIndex.rootExtents.filterValues { it.scalarEnd > it.scalarStart }.mapValues { (_, extent) ->
+    val currentRootIds = adapter.tableIndex.tableKeys.filter {
+        adapter.tableIndex.record(it)?.host ==
+            null
+    }.toSet()
+    val extents = adapter.tableIndex.rootExtents.filterValues {
+        it.scalarEnd > it.scalarStart
+    }.mapValues { (_, extent) ->
         TableScalarExtent(extent.scalarStart.toInt(), extent.scalarEnd.toInt())
     }
     if (currentRootIds != rootTableMapTableIds || extents != rootTableMapExtents) return false
@@ -78,7 +81,13 @@ internal fun EditorEditText.inputScalarAtLocalUtf16(offset: Int, text: String): 
     if (offset in 0..text.length) inputScalar(PositionBridge.utf16ToScalar(offset, text)) else null
 
 internal fun EditorEditText.inputPositionScalarAtLocalUtf16(offset: Int, text: String): Int? =
-    if (offset in 0..text.length) inputPositionScalar(PositionBridge.utf16ToScalar(offset, text)) else null
+    if (offset in
+        0..text.length
+    ) {
+        inputPositionScalar(PositionBridge.utf16ToScalar(offset, text))
+    } else {
+        null
+    }
 
 internal fun EditorEditText.inputScalarRangeAtLocalUtf16(
     start: Int,
@@ -89,7 +98,9 @@ internal fun EditorEditText.inputScalarRangeAtLocalUtf16(
         PositionBridge.utf16ToScalar(start, text),
         PositionBridge.utf16ToScalar(end, text)
     )
-} else null
+} else {
+    null
+}
 
 internal fun EditorEditText.inputScalarSelection(anchor: Int, head: Int): Pair<Int, Int>? {
     val range = inputScalarRange(minOf(anchor, head), maxOf(anchor, head)) ?: return null

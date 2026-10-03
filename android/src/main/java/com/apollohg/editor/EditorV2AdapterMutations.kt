@@ -4,7 +4,8 @@ import com.apollohg.editor.viewer.PreparedProseInstrumentation
 import org.json.JSONArray
 import org.json.JSONObject
 
-internal val STALE_POSITION_EPOCH_CODES = setOf("POSITION_EPOCH_INVALID", "POSITION_EPOCH_CELL_REMOVED")
+internal val STALE_POSITION_EPOCH_CODES =
+    setOf("POSITION_EPOCH_INVALID", "POSITION_EPOCH_CELL_REMOVED")
 
 internal sealed interface MutationOutcome {
     data class Transaction(val changed: Boolean, val revision: ULong) : MutationOutcome
@@ -65,7 +66,9 @@ internal fun EditorV2Adapter.performNativeIntent(
             .put("intent", intent),
         includeBaseRevision = false
     ) { requestJson ->
-        PreparedProseInstrumentation.measureTableStage(PreparedProseInstrumentation.TableStage.NATIVE_INPUT_AND_FFI) {
+        PreparedProseInstrumentation.measureTableStage(
+            PreparedProseInstrumentation.TableStage.NATIVE_INPUT_AND_FFI
+        ) {
             backend.applyNativeIntent(editorId, requestJson)
         }
     }

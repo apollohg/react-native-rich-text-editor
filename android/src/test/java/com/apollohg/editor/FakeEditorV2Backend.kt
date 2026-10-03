@@ -772,24 +772,56 @@ internal class FakeEditorV2Backend : EditorV2Backend {
         if (rendered is EditorV2CallResult.Err) return rendered
         val json = (rendered as EditorV2CallResult.Ok).value
         val base = ownerId?.let { session.nativeCursors[it] }
-        val snapshot = if (ownerId == null) json else {
+        val snapshot = if (ownerId == null) {
+            json
+        } else {
             val epoch = session.nextPositionEpoch++.toString()
             session.positionEpochs[ownerId] = epoch
             session.positionEpochTexts[ownerId] = session.text.toString()
             session.nativeCursors[ownerId] = session.revision.toString()
-            try { JSONObject(json).put("positionEpoch", epoch).toString() }
-            catch (_: org.json.JSONException) { json }
+            try {
+                JSONObject(json).put("positionEpoch", epoch).toString()
+            } catch (
+                _: org.json.JSONException
+            ) {
+                json
+            }
         }
-        return EditorV2CallResult.Ok(uniffi.editor_core.FfiNativeRenderFrame(snapshot,
-            uniffi.editor_core.FfiTableFrame(
-                if (base == null) uniffi.editor_core.FfiTableFrameKind.FULL else uniffi.editor_core.FfiTableFrameKind.DELTA,
-                base, emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), emptyList())))
+        return EditorV2CallResult.Ok(
+            uniffi.editor_core.FfiNativeRenderFrame(
+                snapshot,
+                uniffi.editor_core.FfiTableFrame(
+                    if (base ==
+                        null
+                    ) {
+                        uniffi.editor_core.FfiTableFrameKind.FULL
+                    } else {
+                        uniffi.editor_core.FfiTableFrameKind.DELTA
+                    },
+                    base,
+                    emptyList(),
+                    emptyList(),
+                    emptyList(),
+                    emptyList(),
+                    emptyList(),
+                    emptyList()
+                )
+            )
+        )
     }
 
-    override fun seedNativeRenderCursor(editorId: String, ownerId: String, documentRevision: String): EditorV2Error? {
+    override fun seedNativeRenderCursor(
+        editorId: String,
+        ownerId: String,
+        documentRevision: String
+    ): EditorV2Error? {
         calls.add("seedNativeRenderCursor")
         val session = liveSession(editorId) ?: return destroyedError()
-        if (session.revision.toString() != documentRevision) return EditorV2Error("revision", "REVISION_MISMATCH", "stale frame revision")
+        if (session.revision.toString() !=
+            documentRevision
+        ) {
+            return EditorV2Error("revision", "REVISION_MISMATCH", "stale frame revision")
+        }
         session.nativeCursors[ownerId] = documentRevision
         return null
     }

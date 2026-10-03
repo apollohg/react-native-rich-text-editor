@@ -1,13 +1,13 @@
 package com.apollohg.editor.viewer
 
-import java.util.Collections
-import java.util.IdentityHashMap
-import com.apollohg.editor.tables.TableCellLayoutStore
-import com.apollohg.editor.tables.ViewerTableSurface
 import android.graphics.Rect
 import android.text.StaticLayout
 import com.apollohg.editor.ProseViewerError
+import com.apollohg.editor.tables.TableCellLayoutStore
 import com.apollohg.editor.tables.TableLayoutDirection
+import com.apollohg.editor.tables.ViewerTableSurface
+import java.util.Collections
+import java.util.IdentityHashMap
 
 internal data class ProseLayoutKey(
     val semanticKey: String,
@@ -141,7 +141,8 @@ internal data class PreparedProseAccessibilityNode(
     val sourceBlockIndex: Int? = null
 ) {
     enum class Role { LINK, MENTION }
-    val retainedBytes: Long get() = 96L + label.length * 2L + if (sourceBlockIndex == null) 0L else 8L
+    val retainedBytes: Long get() = 96L + label.length * 2L +
+        if (sourceBlockIndex == null) 0L else 8L
 }
 
 internal fun Collection<PreparedProseLayout>.forEachRetainedLayout(
@@ -157,7 +158,12 @@ internal fun Collection<PreparedProseLayout>.forEachRetainedLayout(
         layout.blocks.forEach { block ->
             block.tableSurface?.let { surface ->
                 if (surfaces.add(surface)) table(surface)
-                if (stores.add(surface.layoutStore)) surface.layoutStore.residentLayouts.forEach(::walk)
+                if (stores.add(
+                        surface.layoutStore
+                    )
+                ) {
+                    surface.layoutStore.residentLayouts.forEach(::walk)
+                }
             }
         }
     }
@@ -183,25 +189,35 @@ internal data class PreparedProseLayout(
     /** Present only on a bound table cell; parent cache ownership reaches it recursively. */
     internal val cellShape: PreparedCellShape? = null,
     internal val cellPreparation: (() -> PreparedProseLayout)? = null,
-    private val tableRetainedBytesAtPreparation: Long = blocks.sumOf { it.tableSurface?.retainedBytes ?: 0L }
+    private val tableRetainedBytesAtPreparation: Long = blocks.sumOf {
+        it.tableSurface?.retainedBytes
+            ?: 0L
+    }
 ) {
     internal val nonTableRetainedBytes: Long get() = retainedBytes - tableRetainedBytesAtPreparation
 
     internal val currentRetainedBytes: Long
         get() {
             var bytes = 0L
-            forEachRetainedLayout({ bytes += it.retainedBytes - it.tableRetainedBytesAtPreparation },
-                { bytes += it.metadataRetainedBytes })
+            forEachRetainedLayout(
+                {
+                    bytes += it.retainedBytes - it.tableRetainedBytesAtPreparation
+                },
+                { bytes += it.metadataRetainedBytes }
+            )
             return bytes
         }
 
-    internal fun forEachRetainedLayout(visit: (PreparedProseLayout) -> Unit,
-                                      table: (ViewerTableSurface) -> Unit = {}) {
+    internal fun forEachRetainedLayout(
+        visit: (PreparedProseLayout) -> Unit,
+        table: (ViewerTableSurface) -> Unit = {}
+    ) {
         listOf(this).forEachRetainedLayout(visit, table)
     }
 
-    internal fun replacingTableSurfaces(surfaces: Map<String, ViewerTableSurface>): PreparedProseLayout =
-        reflowTableSurfaces(this, surfaces)
+    internal fun replacingTableSurfaces(
+        surfaces: Map<String, ViewerTableSurface>
+    ): PreparedProseLayout = reflowTableSurfaces(this, surfaces)
 
     val hasMonotonicBlockBounds = (1 until blocks.size).all {
         blocks[it - 1].topPx <= blocks[it].topPx && blocks[it - 1].bottomPx <= blocks[it].bottomPx

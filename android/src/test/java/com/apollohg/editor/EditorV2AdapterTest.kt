@@ -507,18 +507,26 @@ internal class EditorV2AdapterTest : EditorV2AdapterTestFixture() {
         assertEquals(ULong.MAX_VALUE.toString(), errors.last().requestId)
         assertEquals("max", documentText(adapter))
     }
+
     @Test fun `JSON replacement preserves exact envelopes on certified and normalized inputs`() {
         val adapter = makeAdapter()
         for (source in listOf(
-            """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"plain"}]}]}""",
-            """ { 'type':'doc', 'content':[{'type':'paragraph','content':[{'type':'text','text':'a/b é'}]}] } """
+            """{"type":"doc","content":[{"type":"paragraph",""" +
+                """"content":[{"type":"text","text":"plain"}]}]}""",
+            """ { 'type':'doc', 'content':[{'type':'paragraph',""" +
+                """'content':[{'type':'text','text':'a/b é'}]}] } """
         )) {
             val requestId = (adapter.lastRequestIdForTesting ?: 0uL) + 1u
             val baseRevision = adapter.baseDocumentRevision
             val calls = adapter.backendEnvelopeCallCountForTesting
-            val payload = JSONObject().put("setJson", JSONObject(source)).put("history", "resetAndClear").toString()
-            val expected = "{\"version\":1,\"requestId\":\"$requestId\",\"baseDocumentRevision\":\"$baseRevision\"," +
-                payload.substring(1)
+            val payload = JSONObject().put(
+                "setJson",
+                JSONObject(source)
+            ).put("history", "resetAndClear").toString()
+            val expected =
+                "{\"version\":1,\"requestId\":\"$requestId\"," +
+                    "\"baseDocumentRevision\":\"$baseRevision\"," +
+                    payload.substring(1)
             assertNotNull(adapter.setContentJson(source))
             assertEquals(expected, backend.lastLocalApiRequestJson)
             assertEquals(requestId, adapter.lastRequestIdForTesting)
@@ -543,5 +551,4 @@ internal class EditorV2AdapterTest : EditorV2AdapterTestFixture() {
         assertEquals(lastRequest, adapter.lastRequestIdForTesting)
         assertNull(backend.lastLocalApiRequestJson)
     }
-
 }

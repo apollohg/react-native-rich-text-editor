@@ -72,7 +72,11 @@ internal class EditorAtomSelectionEventRegressionTest : NativeEditorExpoViewTest
             val event = selections.single()
             assertEquals(documentVersion, event["documentVersion"])
             val state = JSONObject(event.getValue("stateJson") as String)
-            assertEquals("the selection event carries only what JS reads", SELECTION_STATE_KEYS, state.keys().asSequence().toSet())
+            assertEquals(
+                "the selection event carries only what JS reads",
+                SELECTION_STATE_KEYS,
+                state.keys().asSequence().toSet()
+            )
             assertEquals("node", state.getJSONObject("selection").getString("type"))
             assertEquals(state.getJSONObject("selection").getInt("pos"), event["anchor"])
             assertEquals((event["anchor"] as Int) + 1, event["head"])
@@ -84,6 +88,7 @@ internal class EditorAtomSelectionEventRegressionTest : NativeEditorExpoViewTest
     }
 
     private companion object {
-        val SELECTION_STATE_KEYS = setOf("documentVersion", "selection", "activeState", "historyState")
+        val SELECTION_STATE_KEYS =
+            setOf("documentVersion", "selection", "activeState", "historyState")
     }
 }

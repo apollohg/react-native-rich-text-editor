@@ -1,10 +1,10 @@
 package com.apollohg.editor.viewer
 
-import java.util.WeakHashMap
-import java.util.Collections
-import java.util.IdentityHashMap
 import com.apollohg.editor.tables.TableCellLayoutStore
 import java.lang.ref.WeakReference
+import java.util.Collections
+import java.util.IdentityHashMap
+import java.util.WeakHashMap
 
 /** A source-neutral local shape. Parent artifacts remain the only persistent owners. */
 internal data class PreparedCellShapeKey(
@@ -26,21 +26,39 @@ internal fun cellShapeStyleDigest(
     theme: PreparedProseTheme,
     nativeFontRevision: Long,
     fontEnvironmentRevision: Long
-): String = sha256(listOf(
-    theme.density, theme.fontDensity, theme.text, theme.paragraph, theme.headings,
-    theme.blockquote, theme.code, theme.insetTopPx, theme.insetRightPx, theme.insetBottomPx,
-    theme.insetLeftPx, theme.listIndentPx, theme.listBaseIndentMultiplier, theme.listItemSpacingPx,
-    theme.listSpacingAfterPx, theme.listMarkerColor, theme.listMarkerScale, theme.listMarkerGapPx,
-    theme.quoteIndentPx, theme.quoteBorderColor, theme.quoteBorderWidthPx, theme.quoteMarkerGapPx,
-    theme.codeBackground, theme.codeRadiusPx, theme.codePaddingHorizontalPx, theme.codePaddingVerticalPx,
-    theme.ruleColor, theme.ruleThicknessPx, theme.ruleMarginPx, theme.link, theme.mention,
-    theme.atomPaddingHorizontalPx, theme.atomPaddingVerticalPx,
-    theme.orderedListMarker?.let { marker ->
-        marker.schemes.joinToString(",") { it.name } + ":${marker.suffix}"
-    },
-    theme.sourceTheme?.styleSheet?.shapingDigest(),
-    theme.tableDirection
-).joinToString("|") + "|$nativeFontRevision|$fontEnvironmentRevision")
+): String = sha256(
+    listOf(
+        theme.density, theme.fontDensity, theme.text, theme.paragraph, theme.headings,
+        theme.blockquote, theme.code, theme.insetTopPx, theme.insetRightPx, theme.insetBottomPx,
+        theme.insetLeftPx,
+        theme.listIndentPx,
+        theme.listBaseIndentMultiplier,
+        theme.listItemSpacingPx,
+
+        theme.listSpacingAfterPx,
+        theme.listMarkerColor,
+        theme.listMarkerScale,
+        theme.listMarkerGapPx,
+
+        theme.quoteIndentPx,
+        theme.quoteBorderColor,
+        theme.quoteBorderWidthPx,
+        theme.quoteMarkerGapPx,
+
+        theme.codeBackground,
+        theme.codeRadiusPx,
+        theme.codePaddingHorizontalPx,
+        theme.codePaddingVerticalPx,
+
+        theme.ruleColor, theme.ruleThicknessPx, theme.ruleMarginPx, theme.link, theme.mention,
+        theme.atomPaddingHorizontalPx, theme.atomPaddingVerticalPx,
+        theme.orderedListMarker?.let { marker ->
+            marker.schemes.joinToString(",") { it.name } + ":${marker.suffix}"
+        },
+        theme.sourceTheme?.styleSheet?.shapingDigest(),
+        theme.tableDirection
+    ).joinToString("|") + "|$nativeFontRevision|$fontEnvironmentRevision"
+)
 
 internal fun cellShapeKey(
     contentKey: String,
@@ -54,9 +72,12 @@ internal fun cellShapeKey(
     fun atomGeometry(current: ViewerDocument): List<String> = buildList {
         current.blocks.forEach { block ->
             val custom = block.inlines.singleOrNull() as? ViewerInline.Atom
-            if (block.isBlockAtom && custom != null && theme.viewerAtoms?.nodeTypes?.contains(custom.nodeType) == true) {
+            if (block.isBlockAtom && custom != null &&
+                theme.viewerAtoms?.nodeTypes?.contains(custom.nodeType) == true
+            ) {
                 add(
-                    "${custom.nodeType}:${theme.viewerAtoms.measurements[custom.docPos.toString()]}:" +
+                    "${custom.nodeType}:" +
+                        "${theme.viewerAtoms.measurements[custom.docPos.toString()]}:" +
                         theme.viewerAtoms.estimatedHeights[custom.nodeType]
                 )
             }
@@ -130,7 +151,8 @@ internal class PreparedCellShapeBuildContext internal constructor(
         bind: (PreparedCellShape) -> PreparedProseLayout?
     ): PreparedProseLayout? {
         if (closed) return null
-        val shape = resolved[key]?.get() ?: catalog.acquireForBuild(key)?.also(::remember) ?: return null
+        val shape =
+            resolved[key]?.get() ?: catalog.acquireForBuild(key)?.also(::remember) ?: return null
         return bind(shape)?.copy(cellShape = shape)
     }
 
@@ -211,15 +233,18 @@ internal fun PreparedProseLayout.cellShapeCatalogBytes(): Long {
     return shapes.sumOf { it.key.catalogMetadataBytes() + it.retainedBytes }
 }
 
-private fun PreparedProseLayout.sourceNeutralWrapperBytes(): Long =
-    256L + blocks.sumOf { block ->
-        224L + block.fragments.size * 48L +
-            if (block.imageAttachment == null) 0L else 128L
-    } + interactions.size * 192L + imageAttachments.size * 128L + viewerAtoms.size * 128L
+private fun PreparedProseLayout.sourceNeutralWrapperBytes(): Long = 256L + blocks.sumOf { block ->
+    224L + block.fragments.size * 48L +
+        if (block.imageAttachment == null) 0L else 128L
+} + interactions.size * 192L + imageAttachments.size * 128L + viewerAtoms.size * 128L
 
 /** Remove all source-qualified metadata before retaining a local shape. */
 private fun PreparedProseLayout.localShape(): PreparedProseLayout = copy(
-    key = key.copy(semanticKey = "cell-shape", generationIdentity = "cell-shape", semanticGenerationIdentity = "cell-shape"),
+    key = key.copy(
+        semanticKey = "cell-shape",
+        generationIdentity = "cell-shape",
+        semanticGenerationIdentity = "cell-shape"
+    ),
     blocks = blocks.map { block ->
         block.copy(
             fragments = block.fragments.map { fragment ->

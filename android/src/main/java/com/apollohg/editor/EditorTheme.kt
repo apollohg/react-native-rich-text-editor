@@ -539,10 +539,18 @@ data class EditorTheme(
                         minColumnWidth = table.optNullableFloat("minColumnWidth") ?: 80f,
                         cellPadding = table.optNullableFloat("cellPadding") ?: 8f,
                         borderWidth = table.optNullableFloat("borderWidth") ?: 1f,
-                        borderColor = parseColor(table.optNullableString("borderColor")) ?: android.graphics.Color.rgb(0xD1, 0xD5, 0xDB),
-                        headerBackgroundColor = parseColor(table.optNullableString("headerBackgroundColor")) ?: android.graphics.Color.rgb(0xF3, 0xF4, 0xF6),
-                        selectionColor = parseColor(table.optNullableString("selectionColor")) ?: android.graphics.Color.argb(0x33, 0x3B, 0x82, 0xF6),
-                        resizeHandleColor = parseColor(table.optNullableString("resizeHandleColor")) ?: android.graphics.Color.rgb(0x3B, 0x82, 0xF6)
+                        borderColor =
+                            parseColor(table.optNullableString("borderColor"))
+                                ?: android.graphics.Color.rgb(0xD1, 0xD5, 0xDB),
+                        headerBackgroundColor =
+                            parseColor(table.optNullableString("headerBackgroundColor"))
+                                ?: android.graphics.Color.rgb(0xF3, 0xF4, 0xF6),
+                        selectionColor =
+                            parseColor(table.optNullableString("selectionColor"))
+                                ?: android.graphics.Color.argb(0x33, 0x3B, 0x82, 0xF6),
+                        resizeHandleColor =
+                            parseColor(table.optNullableString("resizeHandleColor"))
+                                ?: android.graphics.Color.rgb(0x3B, 0x82, 0xF6)
                     ).takeIf { it.isValid() }
                 }
             )

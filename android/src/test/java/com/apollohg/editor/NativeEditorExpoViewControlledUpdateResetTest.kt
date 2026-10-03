@@ -239,7 +239,9 @@ internal class NativeEditorExpoViewControlledUpdateResetTest :
         val viewToken = EditorV2Registry.register(adapter)
         val errors = mutableListOf<EditorV2Error>()
         val ordinaryUpdateJson = atomicRenderUpdateJson("ordinary", "1")
-        val malformedResetUpdateJson = JSONObject(renderUpdateJson("malformed reset")).put("documentVersion", "invalid").toString()
+        val malformedResetUpdateJson = JSONObject(
+            renderUpdateJson("malformed reset")
+        ).put("documentVersion", "invalid").toString()
         try {
             adapter.onAutonomousError = { errors += it }
             view.richTextView.setEditorIdWhileDetached(viewToken)
@@ -275,7 +277,9 @@ internal class NativeEditorExpoViewControlledUpdateResetTest :
         val adapter = attachAdapterForViewTest(backend)
         val viewToken = EditorV2Registry.register(adapter)
         val errors = mutableListOf<EditorV2Error>()
-        val malformedUpdateJson = JSONObject(renderUpdateJson("malformed reset")).put("documentVersion", "invalid").toString()
+        val malformedUpdateJson = JSONObject(
+            renderUpdateJson("malformed reset")
+        ).put("documentVersion", "invalid").toString()
         try {
             adapter.onAutonomousError = { errors += it }
             view.onAddonEventForTesting = {}

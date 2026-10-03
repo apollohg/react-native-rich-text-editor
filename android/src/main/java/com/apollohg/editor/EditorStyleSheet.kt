@@ -79,7 +79,9 @@ class EditorStyleSheet private constructor(
 ) {
     /** Stable private serialization for prepared-layout eligibility. */
     internal fun shapingDigest(): String = buildString {
-        styles.toSortedMap().forEach { (name, style) -> append(name).append('=').append(style).append(';') }
+        styles.toSortedMap().forEach { (name, style) ->
+            append(name).append('=').append(style).append(';')
+        }
         rules.forEach { rule ->
             append(rule.path.joinToString(">"))
                 .append('=').append(canonicalJson(rule.style)).append(';')
@@ -161,16 +163,22 @@ class EditorStyleSheet private constructor(
         }
     }
 
-    private fun canonicalJson(value: JSONObject): String = value.keys().asSequence().toList().sorted().joinToString(
-        prefix = "{",
-        postfix = "}"
-    ) { key -> "$key:${canonicalJsonValue(value.get(key))}" }
+    private fun canonicalJson(value: JSONObject): String =
+        value.keys().asSequence().toList().sorted().joinToString(
+            prefix = "{",
+            postfix = "}"
+        ) { key -> "$key:${canonicalJsonValue(value.get(key))}" }
 
     private fun canonicalJsonValue(value: Any?): String = when (value) {
         is JSONObject -> canonicalJson(value)
-        is org.json.JSONArray -> (0 until value.length()).joinToString(prefix = "[", postfix = "]") {
+
+        is org.json.JSONArray -> (0 until value.length()).joinToString(
+            prefix = "[",
+            postfix = "]"
+        ) {
             canonicalJsonValue(value.get(it))
         }
+
         else -> value.toString()
     }
 

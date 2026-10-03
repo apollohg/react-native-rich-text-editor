@@ -17,7 +17,8 @@ internal fun EditorEditText.localTextDragFor(event: DragEvent): LocalTextDrag? {
         currentText
     )
     if (start >= end || containsInterBlockBoundary(start, end)) return null
-    val (scalarFrom, scalarTo) = inputScalarRangeAtLocalUtf16(start, end, currentText) ?: return null
+    val (scalarFrom, scalarTo) = inputScalarRangeAtLocalUtf16(start, end, currentText)
+        ?: return null
     return LocalTextDrag(scalarFrom, scalarTo, lastAppliedDocumentVersion, editorId)
 }
 

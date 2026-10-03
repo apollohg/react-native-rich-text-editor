@@ -33,7 +33,9 @@ internal object CanonicalPlainJson {
                 fields = fields or field
                 if (field == CONTENT_FIELD) {
                     if (!content(depth)) return false
-                } else if (!string()) return false
+                } else if (!string()) {
+                    return false
+                }
                 if (take('}')) return true
                 if (!take(',')) return false
             }
@@ -86,5 +88,10 @@ internal fun prepareJsonReplacementPayload(source: String): () -> String {
         return { "$JSON_REPLACEMENT_PREFIX$source$JSON_REPLACEMENT_SUFFIX" }
     }
     val document = JSONObject(source)
-    return { JSONObject().put(JSON_REPLACEMENT_FIELD, document).put(HISTORY_FIELD, RESET_HISTORY).toString() }
+    return {
+        JSONObject().put(
+            JSON_REPLACEMENT_FIELD,
+            document
+        ).put(HISTORY_FIELD, RESET_HISTORY).toString()
+    }
 }

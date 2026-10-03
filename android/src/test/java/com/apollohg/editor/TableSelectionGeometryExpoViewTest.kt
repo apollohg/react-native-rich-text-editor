@@ -36,7 +36,14 @@ internal class TableSelectionGeometryExpoViewTest : NativeEditorExpoViewTestSupp
         const val RECT_TOLERANCE = 0.01
         val FRAME: Duration = Duration.ofMillis(50)
         val GEOMETRY_KEYS = setOf(
-            "editorId", "documentRevision", "layoutEpoch", "tablePos", "coordinateSpace", "rects", "viewport",
+            "editorId",
+            "documentRevision",
+            "layoutEpoch",
+            "tablePos",
+            "coordinateSpace",
+            "rects",
+            "viewport",
+
             "safeArea", "editMenuVisible"
         )
         const val STATUS_BAR_PX = 48
@@ -45,9 +52,47 @@ internal class TableSelectionGeometryExpoViewTest : NativeEditorExpoViewTestSupp
         const val OUTSIDE_TOUCH_INSET = 4f
     }
 
-    private val config = """{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table"},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"""
-    private val fourCellTable = """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"three"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"four"}]}]}]}]}]}"""
-    private val wideTwoCellTable = """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[500]},"content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"table_cell","attrs":{"colwidth":[500]},"content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]}]}]}"""
+    private val config = """{"schema":{"nodes":[{"name":"doc","content":"block+",""" +
+        """"role":"doc"},{"name":"paragraph","content":"inline*",""" +
+        """"group":"block","role":"textBlock"},{"name":"text",""" +
+        """"content":"","group":"inline","role":"text"},""" +
+        """{"name":"table","content":"table_row+","group":"block",""" +
+        """"role":"block","tableRole":"table"},""" +
+        """{"name":"table_row","content":"(table_cell | """ +
+        """table_header)*","role":"block","tableRole":"row"},""" +
+        """{"name":"table_cell","content":"block+","role":"block",""" +
+        """"tableRole":"cell","attrs":{"colspan":{"type":"number",""" +
+        """"default":1,"min":1},"rowspan":{"type":"number",""" +
+        """"default":1,"min":1},"colwidth":{"default":null}}},""" +
+        """{"name":"table_header","content":"block+",""" +
+        """"role":"block","tableRole":"header_cell",""" +
+        """"attrs":{"colspan":{"type":"number","default":1,""" +
+        """"min":1},"rowspan":{"type":"number","default":1,""" +
+        """"min":1},"colwidth":{"default":null}}}],"marks":[]},""" +
+        """"initialization":{"type":"localEmpty"}}"""
+    private val fourCellTable = """{"type":"doc","content":[{"type":"paragraph",""" +
+        """"content":[{"type":"text","text":"before"}]},""" +
+        """{"type":"table","content":[{"type":"table_row",""" +
+        """"content":[{"type":"table_cell",""" +
+        """"content":[{"type":"paragraph",""" +
+        """"content":[{"type":"text","text":"one"}]}]},""" +
+        """{"type":"table_cell","content":[{"type":"paragraph",""" +
+        """"content":[{"type":"text","text":"two"}]}]}]},""" +
+        """{"type":"table_row","content":[{"type":"table_cell",""" +
+        """"content":[{"type":"paragraph",""" +
+        """"content":[{"type":"text","text":"three"}]}]},""" +
+        """{"type":"table_cell","content":[{"type":"paragraph",""" +
+        """"content":[{"type":"text","text":"four"}]}]}]}]}]}"""
+    private val wideTwoCellTable = """{"type":"doc","content":[{"type":"paragraph",""" +
+        """"content":[{"type":"text","text":"before"}]},""" +
+        """{"type":"table","content":[{"type":"table_row",""" +
+        """"content":[{"type":"table_cell",""" +
+        """"attrs":{"colwidth":[500]},""" +
+        """"content":[{"type":"paragraph",""" +
+        """"content":[{"type":"text","text":"one"}]}]},""" +
+        """{"type":"table_cell","attrs":{"colwidth":[500]},""" +
+        """"content":[{"type":"paragraph",""" +
+        """"content":[{"type":"text","text":"two"}]}]}]}]}]}"""
 
     private inner class Fixture(
         val view: NativeEditorExpoView,
@@ -69,18 +114,36 @@ internal class TableSelectionGeometryExpoViewTest : NativeEditorExpoViewTestSupp
             val admitted = adapter.callWithEnvelope(JSONObject().put("selection", selection)) {
                 UniffiEditorV2Backend.setSelection(adapter.editorId, it)
             }
-            assertTrue("engine rejected selection $selection: $admitted", admitted is EditorV2CallResult.Ok)
-            assertTrue(view.richTextView.editorEditText.applyUpdateJSON(requireNotNull(adapter.refreshFromRustState(null))))
+            assertTrue(
+                "engine rejected selection $selection: $admitted",
+                admitted is EditorV2CallResult.Ok
+            )
+            assertTrue(
+                view.richTextView.editorEditText.applyUpdateJSON(
+                    requireNotNull(adapter.refreshFromRustState(null))
+                )
+            )
         }
 
         fun selectCells(anchor: Int, head: Int) {
-            fun point(index: Int) = JSONObject().put("kind", "document").put("offset", positions[index])
-            select(JSONObject().put("type", "cell").put("anchorCell", point(anchor)).put("headCell", point(head)))
+            fun point(index: Int) =
+                JSONObject().put("kind", "document").put("offset", positions[index])
+            select(
+                JSONObject().put(
+                    "type",
+                    "cell"
+                ).put("anchorCell", point(anchor)).put("headCell", point(head))
+            )
         }
 
         fun selectText(anchor: Int, head: Int) {
             fun point(offset: Int) = JSONObject().put("kind", "scalar").put("offset", offset)
-            select(JSONObject().put("type", "text").put("anchor", point(anchor)).put("head", point(head)))
+            select(
+                JSONObject().put(
+                    "type",
+                    "text"
+                ).put("anchor", point(anchor)).put("head", point(head))
+            )
         }
 
         private fun windowRect(drawingRect: RectF): RectF {
@@ -89,31 +152,46 @@ internal class TableSelectionGeometryExpoViewTest : NativeEditorExpoViewTestSupp
             val host = IntArray(2).also(view::getLocationInWindow)
             val dx = drawingOrigin.left + host[0]
             val dy = drawingOrigin.top + host[1]
-            return RectF((drawingRect.left + dx) / density, (drawingRect.top + dy) / density,
-                (drawingRect.right + dx) / density, (drawingRect.bottom + dy) / density)
+            return RectF(
+                (drawingRect.left + dx) / density,
+                (drawingRect.top + dy) / density,
+                (drawingRect.right + dx) / density,
+                (drawingRect.bottom + dy) / density
+            )
         }
 
         fun expectedViewport(): RectF {
             val visible = Rect()
             assertTrue(drawing.getGlobalVisibleRect(visible))
-            return RectF(visible.left / density, visible.top / density, visible.right / density,
-                visible.bottom / density)
+            return RectF(
+                visible.left / density,
+                visible.top / density,
+                visible.right / density,
+                visible.bottom / density
+            )
         }
 
         fun expectedRects(sourceIndices: Set<Int>? = null): List<RectF> {
             val visible = Rect()
             assertTrue(drawing.getLocalVisibleRect(visible))
-            val selected = sourceIndices ?: requireNotNull(drawing.selectedTableCellSourceIndices[tableId])
+            val selected =
+                sourceIndices ?: requireNotNull(drawing.selectedTableCellSourceIndices[tableId])
             return drawing.presentedTableCells().filter {
                 it.surface.editorTableId == tableId && it.sourceIndex in selected
             }.mapNotNull { cell ->
-                RectF(cell.bounds).takeIf { it.intersect(cell.clip) && it.intersect(RectF(visible)) }
+                RectF(cell.bounds).takeIf {
+                    it.intersect(cell.clip) && it.intersect(RectF(visible))
+                }
             }.map(::windowRect)
         }
 
-        fun cellWindowRect(index: Int): RectF = windowRect(RectF(drawing.presentedTableCells().first {
-            it.surface.editorTableId == tableId && it.sourceIndex == index
-        }.bounds))
+        fun cellWindowRect(index: Int): RectF = windowRect(
+            RectF(
+                drawing.presentedTableCells().first {
+                    it.surface.editorTableId == tableId && it.sourceIndex == index
+                }.bounds
+            )
+        )
     }
 
     @Suppress("UNCHECKED_CAST")
@@ -122,7 +200,12 @@ internal class TableSelectionGeometryExpoViewTest : NativeEditorExpoViewTestSupp
         assertEquals(setOf("x", "y", "width", "height"), values.keys)
         val x = requireNotNull(values["x"]).toFloat()
         val y = requireNotNull(values["y"]).toFloat()
-        return RectF(x, y, x + requireNotNull(values["width"]).toFloat(), y + requireNotNull(values["height"]).toFloat())
+        return RectF(
+            x,
+            y,
+            x + requireNotNull(values["width"]).toFloat(),
+            y + requireNotNull(values["height"]).toFloat()
+        )
     }
 
     @Suppress("UNCHECKED_CAST")
@@ -131,7 +214,12 @@ internal class TableSelectionGeometryExpoViewTest : NativeEditorExpoViewTestSupp
 
     private fun assertRects(message: String, expected: List<RectF>, actual: List<RectF>) {
         val matches = expected.size == actual.size && expected.zip(actual).all { (lhs, rhs) ->
-            listOf(lhs.left - rhs.left, lhs.top - rhs.top, lhs.right - rhs.right, lhs.bottom - rhs.bottom)
+            listOf(
+                lhs.left - rhs.left,
+                lhs.top - rhs.top,
+                lhs.right - rhs.right,
+                lhs.bottom - rhs.bottom
+            )
                 .all { kotlin.math.abs(it) <= RECT_TOLERANCE }
         }
         assertTrue("$message expected=$expected actual=$actual", matches)
@@ -140,8 +228,14 @@ internal class TableSelectionGeometryExpoViewTest : NativeEditorExpoViewTestSupp
     private fun withFocusedTable(document: String, block: (Fixture) -> Unit) {
         val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
         val created = UniffiEditorV2Backend.create(config, null) as EditorV2CallResult.Ok
-        val adapter = requireNotNull(EditorV2Adapter.attach(
-            UniffiEditorV2Backend, JSONObject(created.value).getString("editorId"), false))
+        val adapter =
+            requireNotNull(
+                EditorV2Adapter.attach(
+                    UniffiEditorV2Backend,
+                    JSONObject(created.value).getString("editorId"),
+                    false
+                )
+            )
         val update = requireNotNull(adapter.setContentJson(document))
         val token = EditorV2Registry.register(adapter)
         try {
@@ -158,10 +252,13 @@ internal class TableSelectionGeometryExpoViewTest : NativeEditorExpoViewTestSupp
             view.onTableSelectionGeometryForTesting = { payloads += it }
             val host = FrameLayout(activity)
             activity.setContentView(host)
-            host.addView(view, FrameLayout.LayoutParams(HOST_WIDTH, HOST_HEIGHT).apply {
-                leftMargin = HOST_LEFT
-                topMargin = HOST_TOP
-            })
+            host.addView(
+                view,
+                FrameLayout.LayoutParams(HOST_WIDTH, HOST_HEIGHT).apply {
+                    leftMargin = HOST_LEFT
+                    topMargin = HOST_TOP
+                }
+            )
             view.setAttachedToNativeWindowForTesting(true)
             view.setEditorId(token)
             assertTrue(view.richTextView.editorEditText.applyUpdateJSON(update))
@@ -169,8 +266,17 @@ internal class TableSelectionGeometryExpoViewTest : NativeEditorExpoViewTestSupp
             assertTrue(view.richTextView.editorEditText.requestFocus())
             val root = adapter.tableRecordsForTesting.values.minBy { it.getInt("tablePos") }
             val cells = root.getJSONArray("cells")
-            val fixture = Fixture(view, adapter, root.getString("sourceId"), root.getInt("tablePos"),
-                (0 until cells.length()).map { cells.getJSONObject(it).getInt("sourcePos") }, payloads)
+            val fixture =
+                Fixture(
+                    view,
+                    adapter,
+                    root.getString("sourceId"),
+                    root.getInt("tablePos"),
+                    (0 until cells.length()).map {
+                        cells.getJSONObject(it).getInt("sourcePos")
+                    },
+                    payloads
+                )
             fixture.nextFrame()
             block(fixture)
         } finally {
@@ -180,34 +286,58 @@ internal class TableSelectionGeometryExpoViewTest : NativeEditorExpoViewTestSupp
     }
 
     @Test
-    fun `cell selection publishes window geometry on the next frame`() = withFocusedTable(fourCellTable) { fixture ->
-        assertEquals("a caret selection has no geometry", emptyList<Map<String, Any>>(), fixture.payloads)
-        fixture.selectCells(0, 3)
-        assertEquals("emission waits for the next frame", 0, fixture.payloads.size)
-        fixture.nextFrame()
+    fun `cell selection publishes window geometry on the next frame`() =
+        withFocusedTable(fourCellTable) { fixture ->
+            assertEquals(
+                "a caret selection has no geometry",
+                emptyList<Map<String, Any>>(),
+                fixture.payloads
+            )
+            fixture.selectCells(0, 3)
+            assertEquals("emission waits for the next frame", 0, fixture.payloads.size)
+            fixture.nextFrame()
 
-        assertEquals("${fixture.payloads}", 1, fixture.payloads.size)
-        val payload = fixture.payloads.single()
-        assertEquals(GEOMETRY_KEYS, payload.keys)
-        assertEquals(fixture.adapter.editorId, payload["editorId"])
-        assertEquals(fixture.adapter.baseDocumentRevision.toString(), payload["documentRevision"])
-        assertEquals(fixture.adapter.positionEpoch, payload["layoutEpoch"])
-        assertEquals(fixture.tablePos.toLong(), payload["tablePos"])
-        assertEquals("window", payload["coordinateSpace"])
-        val rects = rects(payload)
-        assertEquals("all four selected cells are visible", 4, rects.size)
-        assertRects("rects are dp window rects of the drawn selection", fixture.expectedRects(), rects)
-        val viewport = rect(payload["viewport"])
-        assertRects("viewport is the visible editor in window space", listOf(fixture.expectedViewport()),
-            listOf(viewport))
-        assertTrue("the host offset reaches window space: $viewport", viewport.left >= HOST_LEFT / 2f &&
-            viewport.top >= HOST_TOP / 2f)
-        rects.forEach { assertTrue("$it lies inside $viewport", viewport.contains(it)) }
-        val safeArea = rect(payload["safeArea"])
-        assertTrue("the visible editor lies inside the window safe area $safeArea", safeArea.contains(viewport))
-        assertFalse("no keyboard is reported while the IME is hidden", payload.containsKey("keyboard"))
-        assertEquals("no native edit menu is showing", false, payload["editMenuVisible"])
-    }
+            assertEquals("${fixture.payloads}", 1, fixture.payloads.size)
+            val payload = fixture.payloads.single()
+            assertEquals(GEOMETRY_KEYS, payload.keys)
+            assertEquals(fixture.adapter.editorId, payload["editorId"])
+            assertEquals(
+                fixture.adapter.baseDocumentRevision.toString(),
+                payload["documentRevision"]
+            )
+            assertEquals(fixture.adapter.positionEpoch, payload["layoutEpoch"])
+            assertEquals(fixture.tablePos.toLong(), payload["tablePos"])
+            assertEquals("window", payload["coordinateSpace"])
+            val rects = rects(payload)
+            assertEquals("all four selected cells are visible", 4, rects.size)
+            assertRects(
+                "rects are dp window rects of the drawn selection",
+                fixture.expectedRects(),
+                rects
+            )
+            val viewport = rect(payload["viewport"])
+            assertRects(
+                "viewport is the visible editor in window space",
+                listOf(fixture.expectedViewport()),
+                listOf(viewport)
+            )
+            assertTrue(
+                "the host offset reaches window space: $viewport",
+                viewport.left >= HOST_LEFT / 2f &&
+                    viewport.top >= HOST_TOP / 2f
+            )
+            rects.forEach { assertTrue("$it lies inside $viewport", viewport.contains(it)) }
+            val safeArea = rect(payload["safeArea"])
+            assertTrue(
+                "the visible editor lies inside the window safe area $safeArea",
+                safeArea.contains(viewport)
+            )
+            assertFalse(
+                "no keyboard is reported while the IME is hidden",
+                payload.containsKey("keyboard")
+            )
+            assertEquals("no native edit menu is showing", false, payload["editMenuVisible"])
+        }
 
     @Test
     fun `a window touch outside the editor closes the cell edit menu`() =
@@ -224,15 +354,21 @@ internal class TableSelectionGeometryExpoViewTest : NativeEditorExpoViewTestSupp
                     val decision = fixture.view.prepareOutsideTapDecisionForWindowEvent(event)
                     fixture.view.handleOutsideTapDecisionFromWindowDispatcher(decision)
                     return decision
-                } finally { event.recycle() }
+                } finally {
+                    event.recycle()
+                }
             }
             val inside = IntArray(2).also(fixture.view.richTextView::getLocationOnScreen)
-            assertEquals(NativeEditorOutsideTapDecision.PRESERVE_FOCUS,
-                windowTouch(inside[0] + OUTSIDE_TOUCH_INSET, inside[1] + OUTSIDE_TOUCH_INSET))
+            assertEquals(
+                NativeEditorOutsideTapDecision.PRESERVE_FOCUS,
+                windowTouch(inside[0] + OUTSIDE_TOUCH_INSET, inside[1] + OUTSIDE_TOUCH_INSET)
+            )
             assertTrue("a touch inside the editor keeps the menu", surface.isCellEditMenuVisible)
 
-            assertEquals(NativeEditorOutsideTapDecision.OUTSIDE_EDITOR,
-                windowTouch(OUTSIDE_TOUCH_INSET, OUTSIDE_TOUCH_INSET))
+            assertEquals(
+                NativeEditorOutsideTapDecision.OUTSIDE_EDITOR,
+                windowTouch(OUTSIDE_TOUCH_INSET, OUTSIDE_TOUCH_INSET)
+            )
             assertFalse("a touch outside the editor closes the menu", surface.isCellEditMenuVisible)
             fixture.view.cancelOutsideTapBlurFromWindowDispatcher()
         }
@@ -246,17 +382,31 @@ internal class TableSelectionGeometryExpoViewTest : NativeEditorExpoViewTestSupp
             val surface = fixture.view.richTextView.editorTableSurface
 
             surface.presentCellEditMenu()
-            assertTrue("the menu presents over the focused cell selection", surface.isCellEditMenuVisible)
+            assertTrue(
+                "the menu presents over the focused cell selection",
+                surface.isCellEditMenuVisible
+            )
             fixture.nextFrame()
-            assertEquals("showing the menu republishes once: ${fixture.payloads}", 2, fixture.payloads.size)
+            assertEquals(
+                "showing the menu republishes once: ${fixture.payloads}",
+                2,
+                fixture.payloads.size
+            )
             assertEquals(true, fixture.payloads[1]["editMenuVisible"])
-            assertRects("the menu does not move the selection geometry", rects(fixture.payloads[0]),
-                rects(fixture.payloads[1]))
+            assertRects(
+                "the menu does not move the selection geometry",
+                rects(fixture.payloads[0]),
+                rects(fixture.payloads[1])
+            )
 
             surface.dismissCellEditMenu()
             fixture.nextFrame()
             assertEquals("${fixture.payloads}", 3, fixture.payloads.size)
-            assertEquals("the toolbar returns once the menu closes", false, fixture.payloads[2]["editMenuVisible"])
+            assertEquals(
+                "the toolbar returns once the menu closes",
+                false,
+                fixture.payloads[2]["editMenuVisible"]
+            )
         }
 
     @Test
@@ -275,20 +425,38 @@ internal class TableSelectionGeometryExpoViewTest : NativeEditorExpoViewTestSupp
 
             fixture.view.rootWindowInsetsForTesting = withKeyboard
             fixture.view.dispatchApplyWindowInsets(requireNotNull(withKeyboard.toWindowInsets()))
-            assertTrue("an insets change schedules a geometry frame",
-                fixture.view.tableSelectionGeometryPublisher.hasScheduledFlushForTesting)
+            assertTrue(
+                "an insets change schedules a geometry frame",
+                fixture.view.tableSelectionGeometryPublisher.hasScheduledFlushForTesting
+            )
             fixture.nextFrame()
 
             assertEquals("${fixture.payloads}", 2, fixture.payloads.size)
             val shown = fixture.payloads[1]
-            assertRects("the safe area excludes the system bars",
-                listOf(RectF(0f, STATUS_BAR_PX / density, window.width / density,
-                    (window.height - NAVIGATION_BAR_PX) / density)),
-                listOf(rect(shown["safeArea"])))
-            assertRects("the keyboard is the IME rectangle at the window bottom",
-                listOf(RectF(0f, (window.height - KEYBOARD_PX) / density, window.width / density,
-                    window.height / density)),
-                listOf(rect(shown["keyboard"])))
+            assertRects(
+                "the safe area excludes the system bars",
+                listOf(
+                    RectF(
+                        0f,
+                        STATUS_BAR_PX / density,
+                        window.width / density,
+                        (window.height - NAVIGATION_BAR_PX) / density
+                    )
+                ),
+                listOf(rect(shown["safeArea"]))
+            )
+            assertRects(
+                "the keyboard is the IME rectangle at the window bottom",
+                listOf(
+                    RectF(
+                        0f,
+                        (window.height - KEYBOARD_PX) / density,
+                        window.width / density,
+                        window.height / density
+                    )
+                ),
+                listOf(rect(shown["keyboard"]))
+            )
 
             val withoutKeyboard = WindowInsetsCompat.Builder()
                 .setInsets(WindowInsetsCompat.Type.systemBars(), bars)
@@ -298,7 +466,10 @@ internal class TableSelectionGeometryExpoViewTest : NativeEditorExpoViewTestSupp
             fixture.nextFrame()
 
             assertEquals("${fixture.payloads}", 3, fixture.payloads.size)
-            assertFalse("a hidden IME no longer obstructs", fixture.payloads[2].containsKey("keyboard"))
+            assertFalse(
+                "a hidden IME no longer obstructs",
+                fixture.payloads[2].containsKey("keyboard")
+            )
             assertEquals(GEOMETRY_KEYS, fixture.payloads[2].keys)
         }
 
@@ -311,8 +482,11 @@ internal class TableSelectionGeometryExpoViewTest : NativeEditorExpoViewTestSupp
             val before = rects(fixture.payloads[0])
             val density = fixture.view.resources.displayMetrics.density
             repeat(3) {
-                assertEquals(100f * density,
-                    fixture.drawing.scrollSelectedTablePhysical(fixture.tableId, 100f * density), 0.01f)
+                assertEquals(
+                    100f * density,
+                    fixture.drawing.scrollSelectedTablePhysical(fixture.tableId, 100f * density),
+                    0.01f
+                )
             }
             assertEquals("scroll steps inside one frame stay queued", 1, fixture.payloads.size)
             fixture.nextFrame()
@@ -321,105 +495,127 @@ internal class TableSelectionGeometryExpoViewTest : NativeEditorExpoViewTestSupp
             val after = rects(fixture.payloads[1])
             assertRects("rects follow the scrolled table", fixture.expectedRects(), after)
             assertNotEquals(before, after)
-            assertEquals("the first cell's trailing edge is reported where the scrolled table draws it",
-                fixture.cellWindowRect(0).right, after.first().right, 0.01f)
+            assertEquals(
+                "the first cell's trailing edge is reported where the scrolled table draws it",
+                fixture.cellWindowRect(0).right,
+                after.first().right,
+                0.01f
+            )
             assertEquals(fixture.payloads[0]["tablePos"], fixture.payloads[1]["tablePos"])
         }
 
     @Test
-    fun `parent moving the host republishes shifted rects once`() = withFocusedTable(fourCellTable) { fixture ->
-        fixture.selectCells(0, 3)
-        fixture.nextFrame()
-        assertEquals(1, fixture.payloads.size)
-        val before = rects(fixture.payloads[0])
-        val shiftPx = 40
-        val density = fixture.view.resources.displayMetrics.density
+    fun `parent moving the host republishes shifted rects once`() =
+        withFocusedTable(fourCellTable) { fixture ->
+            fixture.selectCells(0, 3)
+            fixture.nextFrame()
+            assertEquals(1, fixture.payloads.size)
+            val before = rects(fixture.payloads[0])
+            val shiftPx = 40
+            val density = fixture.view.resources.displayMetrics.density
 
-        val params = fixture.view.layoutParams as FrameLayout.LayoutParams
-        params.topMargin += shiftPx
-        fixture.view.layoutParams = params
-        fixture.nextFrame()
+            val params = fixture.view.layoutParams as FrameLayout.LayoutParams
+            params.topMargin += shiftPx
+            fixture.view.layoutParams = params
+            fixture.nextFrame()
 
-        assertEquals("${fixture.payloads}", 2, fixture.payloads.size)
-        val after = rects(fixture.payloads[1])
-        assertRects("rects follow the moved host",
-            before.map { RectF(it).apply { offset(0f, shiftPx / density) } }, after)
-        assertRects("rects match the drawn selection", fixture.expectedRects(), after)
-        assertRects("viewport follows the moved host", listOf(fixture.expectedViewport()),
-            listOf(rect(fixture.payloads[1]["viewport"])))
-    }
-
-    @Test
-    fun `detached host stops observing window layout`() = withFocusedTable(fourCellTable) { fixture ->
-        fixture.selectCells(0, 3)
-        fixture.nextFrame()
-        val parent = fixture.view.parent as FrameLayout
-        val tree = parent.viewTreeObserver
-
-        parent.removeView(fixture.view)
-        assertEquals(mapOf("editorId" to fixture.adapter.editorId), fixture.payloads.last())
-        val published = fixture.payloads.size
-        tree.dispatchOnGlobalLayout()
-
-        assertFalse(fixture.view.tableSelectionGeometryPublisher.hasScheduledFlushForTesting)
-        fixture.nextFrame()
-        assertEquals(published, fixture.payloads.size)
-    }
-
-    @Test
-    fun `unchanged geometry is never published twice`() = withFocusedTable(fourCellTable) { fixture ->
-        fixture.selectCells(0, 1)
-        fixture.nextFrame()
-        assertEquals(1, fixture.payloads.size)
-
-        fixture.view.tableSelectionGeometryPublisher.flush()
-        fixture.view.richTextView.requestLayout()
-        shadowOf(Looper.getMainLooper()).idle()
-        fixture.view.tableSelectionGeometryPublisher.scheduleFlush()
-        fixture.nextFrame()
-
-        assertEquals("${fixture.payloads}", 1, fixture.payloads.size)
-    }
-
-    @Test
-    fun `blur clears geometry and suppresses it until refocus`() = withFocusedTable(wideTwoCellTable) { fixture ->
-        fixture.selectCells(0, 1)
-        fixture.nextFrame()
-        assertEquals(1, fixture.payloads.size)
-
-        val outside = View(fixture.view.context).apply {
-            isFocusable = true
-            isFocusableInTouchMode = true
+            assertEquals("${fixture.payloads}", 2, fixture.payloads.size)
+            val after = rects(fixture.payloads[1])
+            assertRects(
+                "rects follow the moved host",
+                before.map { RectF(it).apply { offset(0f, shiftPx / density) } },
+                after
+            )
+            assertRects("rects match the drawn selection", fixture.expectedRects(), after)
+            assertRects(
+                "viewport follows the moved host",
+                listOf(fixture.expectedViewport()),
+                listOf(rect(fixture.payloads[1]["viewport"]))
+            )
         }
-        (fixture.view.parent as FrameLayout).addView(outside, FrameLayout.LayoutParams(HOST_LEFT, HOST_LEFT))
-        assertTrue(outside.requestFocus())
-        assertFalse(fixture.view.richTextView.editorEditText.hasFocus())
-        assertEquals("blur clears synchronously", 2, fixture.payloads.size)
-        assertEquals(mapOf("editorId" to fixture.adapter.editorId), fixture.payloads[1])
-        fixture.drawing.scrollSelectedTablePhysical(fixture.tableId, 120f)
-        fixture.nextFrame()
-        assertEquals("a blurred editor publishes no geometry", 2, fixture.payloads.size)
-
-        assertTrue(fixture.view.richTextView.editorEditText.requestFocus())
-        fixture.nextFrame()
-        assertEquals(3, fixture.payloads.size)
-        assertRects("refocus republishes the current geometry", fixture.expectedRects(), rects(fixture.payloads[2]))
-    }
 
     @Test
-    fun `binding change clears geometry under the previous editor`() = withFocusedTable(fourCellTable) { fixture ->
-        fixture.selectCells(0, 3)
-        fixture.nextFrame()
-        assertEquals(1, fixture.payloads.size)
+    fun `detached host stops observing window layout`() =
+        withFocusedTable(fourCellTable) { fixture ->
+            fixture.selectCells(0, 3)
+            fixture.nextFrame()
+            val parent = fixture.view.parent as FrameLayout
+            val tree = parent.viewTreeObserver
 
-        fixture.view.setEditorId(0L)
+            parent.removeView(fixture.view)
+            assertEquals(mapOf("editorId" to fixture.adapter.editorId), fixture.payloads.last())
+            val published = fixture.payloads.size
+            tree.dispatchOnGlobalLayout()
 
-        assertEquals(2, fixture.payloads.size)
-        assertEquals(mapOf("editorId" to fixture.adapter.editorId), fixture.payloads[1])
-        assertFalse(fixture.view.tableSelectionGeometryPublisher.hasScheduledFlushForTesting)
-        fixture.nextFrame()
-        assertEquals(2, fixture.payloads.size)
-    }
+            assertFalse(fixture.view.tableSelectionGeometryPublisher.hasScheduledFlushForTesting)
+            fixture.nextFrame()
+            assertEquals(published, fixture.payloads.size)
+        }
+
+    @Test
+    fun `unchanged geometry is never published twice`() =
+        withFocusedTable(fourCellTable) { fixture ->
+            fixture.selectCells(0, 1)
+            fixture.nextFrame()
+            assertEquals(1, fixture.payloads.size)
+
+            fixture.view.tableSelectionGeometryPublisher.flush()
+            fixture.view.richTextView.requestLayout()
+            shadowOf(Looper.getMainLooper()).idle()
+            fixture.view.tableSelectionGeometryPublisher.scheduleFlush()
+            fixture.nextFrame()
+
+            assertEquals("${fixture.payloads}", 1, fixture.payloads.size)
+        }
+
+    @Test
+    fun `blur clears geometry and suppresses it until refocus`() =
+        withFocusedTable(wideTwoCellTable) { fixture ->
+            fixture.selectCells(0, 1)
+            fixture.nextFrame()
+            assertEquals(1, fixture.payloads.size)
+
+            val outside = View(fixture.view.context).apply {
+                isFocusable = true
+                isFocusableInTouchMode = true
+            }
+            (fixture.view.parent as FrameLayout).addView(
+                outside,
+                FrameLayout.LayoutParams(HOST_LEFT, HOST_LEFT)
+            )
+            assertTrue(outside.requestFocus())
+            assertFalse(fixture.view.richTextView.editorEditText.hasFocus())
+            assertEquals("blur clears synchronously", 2, fixture.payloads.size)
+            assertEquals(mapOf("editorId" to fixture.adapter.editorId), fixture.payloads[1])
+            fixture.drawing.scrollSelectedTablePhysical(fixture.tableId, 120f)
+            fixture.nextFrame()
+            assertEquals("a blurred editor publishes no geometry", 2, fixture.payloads.size)
+
+            assertTrue(fixture.view.richTextView.editorEditText.requestFocus())
+            fixture.nextFrame()
+            assertEquals(3, fixture.payloads.size)
+            assertRects(
+                "refocus republishes the current geometry",
+                fixture.expectedRects(),
+                rects(fixture.payloads[2])
+            )
+        }
+
+    @Test
+    fun `binding change clears geometry under the previous editor`() =
+        withFocusedTable(fourCellTable) { fixture ->
+            fixture.selectCells(0, 3)
+            fixture.nextFrame()
+            assertEquals(1, fixture.payloads.size)
+
+            fixture.view.setEditorId(0L)
+
+            assertEquals(2, fixture.payloads.size)
+            assertEquals(mapOf("editorId" to fixture.adapter.editorId), fixture.payloads[1])
+            assertFalse(fixture.view.tableSelectionGeometryPublisher.hasScheduledFlushForTesting)
+            fixture.nextFrame()
+            assertEquals(2, fixture.payloads.size)
+        }
 
     @Test
     fun `editor destruction clears geometry`() = withFocusedTable(fourCellTable) { fixture ->
@@ -453,44 +649,67 @@ internal class TableSelectionGeometryExpoViewTest : NativeEditorExpoViewTestSupp
         }
 
     @Test
-    fun `caret in a tapped cell publishes the active cell geometry`() = withFocusedTable(fourCellTable) { fixture ->
-        assertEquals("a prose caret has no geometry", emptyList<Map<String, Any>>(), fixture.payloads)
-        tapCell(fixture.view, 1)
-        val input = fixture.view.richTextView.activeTextInput
-        assertNotSame("the tapped cell owns the cell input", fixture.view.richTextView.editorEditText, input)
-        assertTrue(input.hasFocus())
-        assertEquals("activation leaves a caret", input.selectionStart, input.selectionEnd)
-        assertTrue("a caret draws no cell rectangle", fixture.drawing.selectedTableCellSourceIndices.isEmpty())
-        fixture.nextFrame()
+    fun `caret in a tapped cell publishes the active cell geometry`() =
+        withFocusedTable(fourCellTable) { fixture ->
+            assertEquals(
+                "a prose caret has no geometry",
+                emptyList<Map<String, Any>>(),
+                fixture.payloads
+            )
+            tapCell(fixture.view, 1)
+            val input = fixture.view.richTextView.activeTextInput
+            assertNotSame(
+                "the tapped cell owns the cell input",
+                fixture.view.richTextView.editorEditText,
+                input
+            )
+            assertTrue(input.hasFocus())
+            assertEquals("activation leaves a caret", input.selectionStart, input.selectionEnd)
+            assertTrue(
+                "a caret draws no cell rectangle",
+                fixture.drawing.selectedTableCellSourceIndices.isEmpty()
+            )
+            fixture.nextFrame()
 
-        assertEquals("${fixture.payloads}", 1, fixture.payloads.size)
-        val payload = fixture.payloads.single()
-        assertEquals(fixture.adapter.editorId, payload["editorId"])
-        assertEquals(fixture.tablePos.toLong(), payload["tablePos"])
-        assertRects("the active cell anchors the table toolbar",
-            fixture.expectedRects(setOf(1)), rects(payload))
+            assertEquals("${fixture.payloads}", 1, fixture.payloads.size)
+            val payload = fixture.payloads.single()
+            assertEquals(fixture.adapter.editorId, payload["editorId"])
+            assertEquals(fixture.tablePos.toLong(), payload["tablePos"])
+            assertRects(
+                "the active cell anchors the table toolbar",
+                fixture.expectedRects(setOf(1)),
+                rects(payload)
+            )
 
-        fixture.view.richTextView.editorTableSurface.invalidateCell()
-        fixture.nextFrame()
-        assertEquals("${fixture.payloads}", 2, fixture.payloads.size)
-        assertEquals("releasing the cell clears its geometry", mapOf("editorId" to fixture.adapter.editorId),
-            fixture.payloads[1])
-    }
+            fixture.view.richTextView.editorTableSurface.invalidateCell()
+            fixture.nextFrame()
+            assertEquals("${fixture.payloads}", 2, fixture.payloads.size)
+            assertEquals(
+                "releasing the cell clears its geometry",
+                mapOf("editorId" to fixture.adapter.editorId),
+                fixture.payloads[1]
+            )
+        }
 
     @Test
-    fun `blur clears the active cell geometry and keeps the cell bound`() = withFocusedTable(fourCellTable) { fixture ->
-        tapCell(fixture.view, 1)
-        val input = fixture.view.richTextView.activeTextInput
-        assertTrue(input.hasFocus())
-        fixture.nextFrame()
-        assertEquals("${fixture.payloads}", 1, fixture.payloads.size)
+    fun `blur clears the active cell geometry and keeps the cell bound`() =
+        withFocusedTable(fourCellTable) { fixture ->
+            tapCell(fixture.view, 1)
+            val input = fixture.view.richTextView.activeTextInput
+            assertTrue(input.hasFocus())
+            fixture.nextFrame()
+            assertEquals("${fixture.payloads}", 1, fixture.payloads.size)
 
-        fixture.view.blur()
-        assertFalse(input.hasFocus())
-        assertEquals("blur clears synchronously: ${fixture.payloads}", 2, fixture.payloads.size)
-        assertEquals(mapOf("editorId" to fixture.adapter.editorId), fixture.payloads[1])
-        assertSame("blur keeps the cell bound", input, fixture.view.richTextView.activeTextInput)
-        fixture.nextFrame()
-        assertEquals("a blurred cell publishes no geometry", 2, fixture.payloads.size)
-    }
+            fixture.view.blur()
+            assertFalse(input.hasFocus())
+            assertEquals("blur clears synchronously: ${fixture.payloads}", 2, fixture.payloads.size)
+            assertEquals(mapOf("editorId" to fixture.adapter.editorId), fixture.payloads[1])
+            assertSame(
+                "blur keeps the cell bound",
+                input,
+                fixture.view.richTextView.activeTextInput
+            )
+            fixture.nextFrame()
+            assertEquals("a blurred cell publishes no geometry", 2, fixture.payloads.size)
+        }
 }

@@ -2,11 +2,12 @@ package com.apollohg.editor
 
 import android.content.Intent
 import android.graphics.Rect
+import android.graphics.RectF
 import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.View
-import android.view.ViewGroup
 import android.view.ViewConfiguration
+import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.widget.FrameLayout
@@ -22,13 +23,13 @@ import com.apollohg.editor.viewer.ProseLayoutKey
 import com.apollohg.editor.viewer.ProseViewerRequest
 import com.apollohg.editor.viewer.StaticLayoutAndroidProseLayoutEngine
 import com.apollohg.editor.viewer.compileWithRust
+import kotlin.math.hypot
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import kotlin.math.hypot
 
 @RunWith(AndroidJUnit4::class)
 @LargeTest
@@ -47,8 +48,10 @@ class NativeDeviceTableScrollTest {
                 val surface = host.preparedLayout!!.blocks.single { it.tableSurface != null }
                     .tableSurface!!
                 identity = surface.identity
-                assertTrue("fixture must overflow on this device",
-                    surface.bounds.width() > surface.hostViewportWidth)
+                assertTrue(
+                    "fixture must overflow on this device",
+                    surface.bounds.width() > surface.hostViewportWidth
+                )
                 initialVertical = activity.richTextView.editorScrollView.scrollY
                 assertEquals(0f, host.tablePhysicalOffsetForTesting(identity), OFFSET_TOLERANCE_PX)
             }
@@ -56,8 +59,12 @@ class NativeDeviceTableScrollTest {
             drag(start, -distance, 0f)
             scenario.onActivity { activity ->
                 val host = editorTableHost(activity)
-                assertEquals("the table must follow the whole ${distance}px drag", distance,
-                    host.tablePhysicalOffsetForTesting(identity), DRAG_ROUNDING_TOLERANCE_PX)
+                assertEquals(
+                    "the table must follow the whole ${distance}px drag",
+                    distance,
+                    host.tablePhysicalOffsetForTesting(identity),
+                    DRAG_ROUNDING_TOLERANCE_PX
+                )
                 assertEquals(initialVertical, activity.richTextView.editorScrollView.scrollY)
                 assertUnchanged(activity)
             }
@@ -79,8 +86,12 @@ class NativeDeviceTableScrollTest {
         scenario.onActivity { activity ->
             val host = editorTableHost(activity)
             assertNull("a body-row edge drag must not start a resize", host.activeTableResizeEdge)
-            assertEquals("the table must follow the whole ${distance}px drag from a body-row column edge",
-                distance, host.tablePhysicalOffsetForTesting(identity), DRAG_ROUNDING_TOLERANCE_PX)
+            assertEquals(
+                "the table must follow the whole ${distance}px drag from a body-row column edge",
+                distance,
+                host.tablePhysicalOffsetForTesting(identity),
+                DRAG_ROUNDING_TOLERANCE_PX
+            )
             assertUnchanged(activity)
         }
     }
@@ -93,8 +104,10 @@ class NativeDeviceTableScrollTest {
             val host = editorTableHost(activity)
             identity = host.preparedLayout!!.blocks.single { it.tableSurface != null }
                 .tableSurface!!.identity
-            assertTrue("fixture must permit vertical host movement",
-                activity.richTextView.editorScrollView.canScrollVertically(1))
+            assertTrue(
+                "fixture must permit vertical host movement",
+                activity.richTextView.editorScrollView.canScrollVertically(1)
+            )
         }
         var distance = 0f
         scenario.onActivity { activity ->
@@ -102,10 +115,15 @@ class NativeDeviceTableScrollTest {
         }
         drag(start, -distance * VERTICAL_DRAG_X_FRACTION, -distance)
         scenario.onActivity { activity ->
-            assertTrue("vertical drag did not scroll the editor host",
-                activity.richTextView.editorScrollView.scrollY > 0)
-            assertEquals(0f, editorTableHost(activity).tablePhysicalOffsetForTesting(identity),
-                OFFSET_TOLERANCE_PX)
+            assertTrue(
+                "vertical drag did not scroll the editor host",
+                activity.richTextView.editorScrollView.scrollY > 0
+            )
+            assertEquals(
+                0f,
+                editorTableHost(activity).tablePhysicalOffsetForTesting(identity),
+                OFFSET_TOLERANCE_PX
+            )
             assertUnchanged(activity)
         }
     }
@@ -136,31 +154,43 @@ class NativeDeviceTableScrollTest {
             val active = input!!
             assertSame(active, activity.currentFocus)
             assertTrue("active input did not follow its scrolled cell", active.left < oldLeft)
-            assertTrue("active input lost its visible clip", requireNotNull(active.clipBounds).width() > 0)
+            assertTrue(
+                "active input lost its visible clip",
+                requireNotNull(active.clipBounds).width() > 0
+            )
             val host = editorTableHost(activity)
             assertTrue(host.tablePhysicalOffsetForTesting(identity) > 0f)
             val alpha = presentedCell(host, EDITABLE_ROW, ALPHA_COLUMN)
-            assertTrue("active cell should be partially clipped after the drag",
-                alpha.bounds.left < alpha.clip.left && alpha.bounds.right > alpha.clip.left)
+            assertTrue(
+                "active cell should be partially clipped after the drag",
+                alpha.bounds.left < alpha.clip.left && alpha.bounds.right > alpha.clip.left
+            )
             assertUnchanged(activity)
             assertEquals("Alphapending", active.text.toString())
             assertTrue(compositionConnection.finishComposingText())
             active.setSelection(active.text.length)
-            assertTrue(requireNotNull(active.onCreateInputConnection(EditorInfo())).commitText("!", 1))
+            assertTrue(
+                requireNotNull(active.onCreateInputConnection(EditorInfo())).commitText("!", 1)
+            )
             val document = org.json.JSONObject(requireNotNull(activity.adapter.documentJson()))
             val cell = document.getJSONArray("content").getJSONObject(TABLE_BLOCK_INDEX)
                 .getJSONArray("content").getJSONObject(EDITABLE_ROW)
                 .getJSONArray("content").getJSONObject(0)
-            assertEquals("Alphapending!", cell.getJSONArray("content").getJSONObject(0)
-                .getJSONArray("content").getJSONObject(0).getString("text"))
+            assertEquals(
+                "Alphapending!",
+                cell.getJSONArray("content").getJSONObject(0)
+                    .getJSONArray("content").getJSONObject(0).getString("text")
+            )
         }
         instrumentation.saveDeviceScreenshot("native-table-scroll-active-input.png")
         tap(editorCellPoint(scenario, EDITABLE_ROW, OWNER_COLUMN))
         scenario.onActivity { activity ->
             assertSame("cell switch must reuse the native input", input, activity.currentFocus)
             assertEquals("Owner", input!!.text.toString())
-            assertTrue("new cell binding must accept keyboard input",
-                input!!.onCreateInputConnection(EditorInfo()) != null)
+            assertTrue(
+                "new cell binding must accept keyboard input",
+                input!!.onCreateInputConnection(EditorInfo()) != null
+            )
         }
     }
 
@@ -179,23 +209,38 @@ class NativeDeviceTableScrollTest {
                 scenario.onActivity { activity ->
                     val input = activity.currentFocus as EditorEditText
                     assertTrue(input !== activity.richTextView.editorEditText)
-                    assertTrue("native long press did not select text",
-                        input.selectionEnd > input.selectionStart)
+                    assertTrue(
+                        "native long press did not select text",
+                        input.selectionEnd > input.selectionStart
+                    )
                     identity = editorTableHost(activity).preparedLayout!!.blocks
                         .single { it.tableSurface != null }.tableSurface!!.identity
                 }
-                moveAndRelease(downTime, textPoint,
-                    -SELECTION_DRAG_DP * instrumentation.targetContext.resources.displayMetrics.density,
-                    0f)
+                moveAndRelease(
+                    downTime,
+                    textPoint,
+                    -SELECTION_DRAG_DP *
+                        instrumentation.targetContext.resources.displayMetrics.density,
+                    0f
+                )
                 released = true
             } finally {
-                if (!released) send(downTime, SystemClock.uptimeMillis(),
-                    MotionEvent.ACTION_CANCEL, textPoint)
+                if (!released) {
+                    send(
+                        downTime,
+                        SystemClock.uptimeMillis(),
+                        MotionEvent.ACTION_CANCEL,
+                        textPoint
+                    )
+                }
             }
             scenario.onActivity { activity ->
-                assertEquals("selected text must own the drag", 0f,
+                assertEquals(
+                    "selected text must own the drag",
+                    0f,
                     editorTableHost(activity).tablePhysicalOffsetForTesting(identity),
-                    OFFSET_TOLERANCE_PX)
+                    OFFSET_TOLERANCE_PX
+                )
                 assertUnchanged(activity)
             }
             instrumentation.saveDeviceScreenshot("native-table-scroll-selection.png")
@@ -219,9 +264,12 @@ class NativeDeviceTableScrollTest {
             val distance = dragDistance(scenario)
             drag(start, distance, 0f)
             scenario.onActivity { activity ->
-                assertEquals("a ${distance}px right drag must move the RTL table as far toward its physical left",
-                    initial - distance, editorTableHost(activity).tablePhysicalOffsetForTesting(identity),
-                    DRAG_ROUNDING_TOLERANCE_PX)
+                assertEquals(
+                    "a ${distance}px right drag must move the RTL table as far toward its physical left",
+                    initial - distance,
+                    editorTableHost(activity).tablePhysicalOffsetForTesting(identity),
+                    DRAG_ROUNDING_TOLERANCE_PX
+                )
                 assertUnchanged(activity)
             }
             instrumentation.saveDeviceScreenshot("native-table-scroll-editor-rtl-dark.png")
@@ -241,7 +289,10 @@ class NativeDeviceTableScrollTest {
             }
             drag(start, -viewerDragDistance(viewer), 0f)
             scenario.onActivity {
-                assertTrue("viewer table did not move", viewer.tablePhysicalOffsetForTesting(identity) > 0f)
+                assertTrue(
+                    "viewer table did not move",
+                    viewer.tablePhysicalOffsetForTesting(identity) > 0f
+                )
                 assertEquals(0, scroll.scrollY)
             }
             instrumentation.saveDeviceScreenshot("native-table-scroll-viewer-light.png")
@@ -285,16 +336,24 @@ class NativeDeviceTableScrollTest {
                 val bottom = minOf(cell.bounds.bottom, cell.clip.bottom)
                 val location = IntArray(2)
                 viewer.getLocationOnScreen(location)
-                nestedPoint = Point(location[0] + left +
-                    (right - left) * NESTED_START_FRACTION,
-                    location[1] + (top + bottom) / 2f)
+                nestedPoint = Point(
+                    location[0] + left +
+                        (right - left) * NESTED_START_FRACTION,
+                    location[1] + (top + bottom) / 2f
+                )
             }
             drag(nestedPoint, -innerWidth * NESTED_DRAG_FRACTION, 0f)
             scenario.onActivity {
-                assertTrue("nested table did not consume the drag",
-                    viewer.tablePhysicalOffsetForTesting(innerIdentity) > 0f)
-                assertEquals("outer table moved before nested table reached its edge", 0f,
-                    viewer.tablePhysicalOffsetForTesting(outerIdentity), OFFSET_TOLERANCE_PX)
+                assertTrue(
+                    "nested table did not consume the drag",
+                    viewer.tablePhysicalOffsetForTesting(innerIdentity) > 0f
+                )
+                assertEquals(
+                    "outer table moved before nested table reached its edge",
+                    0f,
+                    viewer.tablePhysicalOffsetForTesting(outerIdentity),
+                    OFFSET_TOLERANCE_PX
+                )
             }
             instrumentation.saveDeviceScreenshot("native-table-scroll-viewer-nested.png")
         }
@@ -316,26 +375,53 @@ class NativeDeviceTableScrollTest {
 
     private fun withViewer(
         source: String = NativeTableHostActivity.overflowingDocument(),
-        test: (ActivityScenario<NativeTableHostActivity>, PreparedProseDrawingView, ScrollView) -> Unit
+        test: (
+            ActivityScenario<NativeTableHostActivity>,
+            PreparedProseDrawingView,
+            ScrollView
+        ) -> Unit
     ) = withEditor { scenario ->
         lateinit var viewer: PreparedProseDrawingView
         lateinit var scroll: ScrollView
         scenario.onActivity { activity ->
-            val document = compileWithRust(ProseViewerRequest(ProseViewerSource.Json(source),
-                ProseViewerConfiguration(NativeTableHostActivity.CONFIG)))
+            val document = compileWithRust(
+                ProseViewerRequest(
+                    ProseViewerSource.Json(source),
+                    ProseViewerConfiguration(NativeTableHostActivity.CONFIG)
+                )
+            )
             val width = activity.richTextView.width
             val density = activity.resources.displayMetrics.density
-            val key = ProseLayoutKey(document.semanticKey, width, "device-table-scroll", 0, 0,
-                density.toBits().toLong(), 0, "device-table-scroll")
-            val layout = StaticLayoutAndroidProseLayoutEngine().prepare(document, key,
-                PreparedProseTheme.resolve(null, density), width, density, false)
+            val key = ProseLayoutKey(
+                document.semanticKey,
+                width,
+                "device-table-scroll",
+                0,
+                0,
+                density.toBits().toLong(),
+                0,
+                "device-table-scroll"
+            )
+            val layout = StaticLayoutAndroidProseLayoutEngine().prepare(
+                document,
+                key,
+                PreparedProseTheme.resolve(null, density),
+                width,
+                density,
+                false
+            )
             viewer = PreparedProseDrawingView(activity).apply {
                 minimumHeight = layout.heightPx
                 install(layout)
             }
             scroll = ScrollView(activity).apply {
-                addView(viewer, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                    layout.heightPx))
+                addView(
+                    viewer,
+                    FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        layout.heightPx
+                    )
+                )
             }
             val root = activity.richTextView.parent as LinearLayout
             val slot = root.indexOfChild(activity.richTextView)
@@ -355,11 +441,13 @@ class NativeDeviceTableScrollTest {
             SystemClock.sleep(FRAME_WAIT_MS)
         } while (SystemClock.uptimeMillis() < deadline)
         scenario.onActivity {
-            assertTrue("viewer did not attach: ${viewer.width}x${viewer.height} " +
-                "scroll=${scroll.width}x${scroll.height} child=${scroll.childCount} " +
-                "shown=${viewer.isShown} attached=${viewer.isAttachedToWindow} " +
-                "layout=${viewer.preparedLayout?.widthPx}x${viewer.preparedLayout?.heightPx}",
-                ready)
+            assertTrue(
+                "viewer did not attach: ${viewer.width}x${viewer.height} " +
+                    "scroll=${scroll.width}x${scroll.height} child=${scroll.childCount} " +
+                    "shown=${viewer.isShown} attached=${viewer.isAttachedToWindow} " +
+                    "layout=${viewer.preparedLayout?.widthPx}x${viewer.preparedLayout?.heightPx}",
+                ready
+            )
         }
         instrumentation.saveDeviceScreenshot("native-table-scroll-viewer-before.png")
         test(scenario, viewer, scroll)
@@ -397,34 +485,59 @@ class NativeDeviceTableScrollTest {
                     presented.clip.contains(center.x - location[0], y)
             }
             val x = cell.bounds.centerX()
-            assertNull("the drag must start on the table body, away from every column resize edge",
-                host.hitResizeEdge(x, y))
+            assertNull(
+                "the drag must start on the table body, away from every column resize edge",
+                host.hitResizeEdge(x, y)
+            )
             point = Point(location[0] + x, center.y)
         }
         return point
     }
 
-    private fun editorBodyRowColumnEdgePoint(scenario: ActivityScenario<NativeTableHostActivity>): Point {
+    private fun editorBodyRowColumnEdgePoint(
+        scenario: ActivityScenario<NativeTableHostActivity>
+    ): Point {
         var point = Point(0f, 0f)
         scenario.onActivity { activity ->
             val host = editorTableHost(activity)
-            val visible = Rect()
-            assertTrue(host.getLocalVisibleRect(visible))
-            val columns = requireNotNull(host.preparedLayout!!.blocks.single { it.tableSurface != null }
-                .tableSurface!!.sourceTable).columns.toInt()
-            val column = (0 until columns).last { column ->
-                val cell = presentedCell(host, EDITABLE_ROW, column)
-                cell.bounds.right < minOf(cell.clip.right, visible.right.toFloat())
+            val visible = host.unobstructedTableViewport()
+            val cells = host.presentedTableCells()
+            fun visibleBounds(cell: com.apollohg.editor.tables.ViewerTablePresentedCell): RectF? {
+                val bounds = RectF(cell.bounds)
+                return bounds.takeIf { it.intersect(cell.clip) && it.intersect(visible) }
             }
-            val body = presentedCell(host, EDITABLE_ROW, column)
-            val firstRow = presentedCell(host, HANDLE_ROW, column)
-            assertEquals("the same edge in the first row must be a resize handle", column,
-                host.hitResizeEdge(body.bounds.right, firstRow.bounds.centerY())?.column)
-            assertNull("the body-row edge must not be a resize handle",
-                host.hitResizeEdge(body.bounds.right, body.bounds.centerY()))
+            val edges = cells.filter { it.cell.row == EDITABLE_ROW }.mapNotNull { body ->
+                visibleBounds(body) ?: return@mapNotNull null
+                if (body.bounds.right >=
+                    minOf(body.clip.right, visible.right)
+                ) {
+                    return@mapNotNull null
+                }
+                val column = body.cell.column + body.cell.colspan - 1
+                val header = cells.firstOrNull {
+                    it.cell.row == HANDLE_ROW && it.cell.column + it.cell.colspan - 1 == column &&
+                        visibleBounds(it) != null
+                } ?: return@mapNotNull null
+                body to header
+            }
+            val (body, firstRow) = requireNotNull(edges.maxByOrNull { it.first.cell.column }) {
+                "no visible body/header edge pair in $visible"
+            }
+            val column = body.cell.column + body.cell.colspan - 1
+            val bodyBounds = requireNotNull(visibleBounds(body))
+            val headerBounds = requireNotNull(visibleBounds(firstRow))
+            assertEquals(
+                "the same edge in the first row must be a resize handle",
+                column,
+                host.hitResizeEdge(body.bounds.right, headerBounds.centerY())?.column
+            )
+            assertNull(
+                "the body-row edge must not be a resize handle",
+                host.hitResizeEdge(body.bounds.right, bodyBounds.centerY())
+            )
             val location = IntArray(2)
             host.getLocationOnScreen(location)
-            point = Point(location[0] + body.bounds.right, location[1] + body.bounds.centerY())
+            point = Point(location[0] + body.bounds.right, location[1] + bodyBounds.centerY())
         }
         return point
     }
@@ -434,19 +547,14 @@ class NativeDeviceTableScrollTest {
         row: Int,
         column: Int
     ): Point {
-        var point = Point(0f, 0f)
+        var sourceIndex = 0
         scenario.onActivity { activity ->
-            val host = editorTableHost(activity)
-            val cell = presentedCell(host, row, column)
-            val visibleLeft = maxOf(cell.bounds.left, cell.clip.left)
-            val visibleRight = minOf(cell.bounds.right, cell.clip.right)
-            assertTrue("target cell is outside the table clip", visibleRight > visibleLeft)
-            val location = IntArray(2)
-            host.getLocationOnScreen(location)
-            point = Point(location[0] + (visibleLeft + visibleRight) / 2f,
-                location[1] + cell.bounds.centerY())
+            val surface = editorTableHost(activity).preparedLayout!!.blocks
+                .mapNotNull { it.tableSurface }.single()
+            sourceIndex = surface.cells.single { it.row == row && it.column == column }.sourceIndex
         }
-        return point
+        val point = instrumentation.tableCellScreenPoint(scenario, sourceIndex)
+        return Point(point.x, point.y)
     }
 
     private fun viewerTablePoint(
@@ -466,7 +574,8 @@ class NativeDeviceTableScrollTest {
         return distance
     }
 
-    private fun activityWidth(activity: NativeTableHostActivity) = activity.richTextView.width.toFloat()
+    private fun activityWidth(activity: NativeTableHostActivity) =
+        activity.richTextView.width.toFloat()
 
     private fun viewerDragDistance(viewer: PreparedProseDrawingView) =
         viewer.width * DRAG_WIDTH_FRACTION
@@ -475,16 +584,19 @@ class NativeDeviceTableScrollTest {
         val location = IntArray(2)
         scroll.getLocationOnScreen(location)
         val density = scroll.resources.displayMetrics.density
-        val distance = minOf(VERTICAL_DRAG_DP * density,
-            start.y - location[1] - VERTICAL_END_MARGIN_DP * density)
-        assertTrue("table did not leave a usable vertical gesture path", distance >
-            ViewConfiguration.get(scroll.context).scaledTouchSlop * 2)
+        val distance = minOf(
+            VERTICAL_DRAG_DP * density,
+            start.y - location[1] - VERTICAL_END_MARGIN_DP * density
+        )
+        assertTrue(
+            "table did not leave a usable vertical gesture path",
+            distance >
+                ViewConfiguration.get(scroll.context).scaledTouchSlop * 2
+        )
         return distance
     }
 
-    private fun activeCellDragDistance(
-        scenario: ActivityScenario<NativeTableHostActivity>
-    ): Float {
+    private fun activeCellDragDistance(scenario: ActivityScenario<NativeTableHostActivity>): Float {
         var distance = 0f
         scenario.onActivity { activity ->
             distance = presentedCell(editorTableHost(activity), EDITABLE_ROW, ALPHA_COLUMN)
@@ -493,8 +605,11 @@ class NativeDeviceTableScrollTest {
         return distance
     }
 
-    private fun presentedCell(host: PreparedProseDrawingView, row: Int, column: Int):
-        com.apollohg.editor.tables.ViewerTablePresentedCell {
+    private fun presentedCell(
+        host: PreparedProseDrawingView,
+        row: Int,
+        column: Int
+    ): com.apollohg.editor.tables.ViewerTablePresentedCell {
         val surface = host.preparedLayout!!.blocks.single { it.tableSurface != null }
             .tableSurface!!
         val source = requireNotNull(surface.sourceTable).cells.single {
@@ -508,15 +623,28 @@ class NativeDeviceTableScrollTest {
         val surface = requireNotNull(block.tableSurface)
         val table = requireNotNull(block.tableBounds)
         val visible = Rect()
-        assertTrue("host has no visible rectangle: ${host.width}x${host.height} " +
-            "shown=${host.isShown} attached=${host.isAttachedToWindow}",
-            host.getLocalVisibleRect(visible))
-        assertTrue("table viewport is not visible", visible.intersect(Rect(table.left, table.top,
-            table.left + surface.hostViewportWidth.toInt(), table.bottom)))
+        assertTrue(
+            "host has no visible rectangle: ${host.width}x${host.height} " +
+                "shown=${host.isShown} attached=${host.isAttachedToWindow}",
+            host.getLocalVisibleRect(visible)
+        )
+        assertTrue(
+            "table viewport is not visible",
+            visible.intersect(
+                Rect(
+                    table.left,
+                    table.top,
+                    table.left + surface.hostViewportWidth.toInt(),
+                    table.bottom
+                )
+            )
+        )
         val location = IntArray(2)
         host.getLocationOnScreen(location)
-        return Point(location[0] + visible.exactCenterX(),
-            location[1] + visible.exactCenterY())
+        return Point(
+            location[0] + visible.exactCenterX(),
+            location[1] + visible.exactCenterY()
+        )
     }
 
     private fun tap(point: Point) {
@@ -526,9 +654,7 @@ class NativeDeviceTableScrollTest {
         instrumentation.waitForIdleSync()
     }
 
-    private fun activeInputTextPoint(
-        scenario: ActivityScenario<NativeTableHostActivity>
-    ): Point {
+    private fun activeInputTextPoint(scenario: ActivityScenario<NativeTableHostActivity>): Point {
         var point = Point(0f, 0f)
         scenario.onActivity { activity ->
             val input = activity.currentFocus as EditorEditText
@@ -537,9 +663,12 @@ class NativeDeviceTableScrollTest {
             input.getLocationOnScreen(location)
             val offset = minOf(TEXT_SELECTION_OFFSET, input.text.length)
             val line = layout.getLineForOffset(offset)
-            point = Point(location[0] + input.totalPaddingLeft + layout.getPrimaryHorizontal(offset),
-                location[1] + input.totalPaddingTop +
-                    (layout.getLineTop(line) + layout.getLineBottom(line)) / 2f)
+            point =
+                Point(
+                    location[0] + input.totalPaddingLeft + layout.getPrimaryHorizontal(offset),
+                    location[1] + input.totalPaddingTop +
+                        (layout.getLineTop(line) + layout.getLineBottom(line)) / 2f
+                )
         }
         return point
     }
@@ -557,8 +686,12 @@ class NativeDeviceTableScrollTest {
         val begin = SystemClock.uptimeMillis()
         for (step in 1..DRAG_STEPS) {
             val fraction = firstFraction + (1f - firstFraction) * (step - 1) / (DRAG_STEPS - 1)
-            sendAt(downTime, begin + step * DRAG_STEP_MS, MotionEvent.ACTION_MOVE,
-                Point(start.x + deltaX * fraction, start.y + deltaY * fraction))
+            sendAt(
+                downTime,
+                begin + step * DRAG_STEP_MS,
+                MotionEvent.ACTION_MOVE,
+                Point(start.x + deltaX * fraction, start.y + deltaY * fraction)
+            )
         }
         val end = Point(start.x + deltaX, start.y + deltaY)
         val settled = begin + DRAG_STEPS * DRAG_STEP_MS + RELEASE_SETTLE_MS
@@ -575,8 +708,10 @@ class NativeDeviceTableScrollTest {
     private fun send(downTime: Long, eventTime: Long, action: Int, point: Point) {
         val event = MotionEvent.obtain(downTime, eventTime, action, point.x, point.y, 0)
         try {
-            assertTrue("UiAutomation rejected ${MotionEvent.actionToString(action)}",
-                instrumentation.uiAutomation.injectInputEvent(event, false))
+            assertTrue(
+                "UiAutomation rejected ${MotionEvent.actionToString(action)}",
+                instrumentation.uiAutomation.injectInputEvent(event, false)
+            )
         } finally {
             event.recycle()
         }
@@ -585,8 +720,10 @@ class NativeDeviceTableScrollTest {
     private fun assertUnchanged(activity: NativeTableHostActivity) {
         assertEquals(activity.documentBeforeMount, activity.adapter.documentJson())
         assertEquals(activity.revisionBeforeMount, activity.adapter.baseDocumentRevision)
-        assertEquals(activity.historyBeforeMount,
-            activity.adapter.historyCanUndo() to activity.adapter.historyCanRedo())
+        assertEquals(
+            activity.historyBeforeMount,
+            activity.adapter.historyCanUndo() to activity.adapter.historyCanRedo()
+        )
     }
 
     private companion object {

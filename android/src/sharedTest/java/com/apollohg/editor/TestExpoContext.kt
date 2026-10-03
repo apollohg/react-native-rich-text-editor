@@ -29,7 +29,10 @@ internal fun testExpoContext(
     val modulesProvider = object : ModulesProvider {
         override fun getModulesMap(): Map<Class<out Module>, String?> = emptyMap()
     }
-    val constructor = AppContext::class.java.constructors.first { it.parameterTypes.size == APP_CONTEXT_ARITY }
+    val constructor = AppContext::class.java.constructors.first {
+        it.parameterTypes.size ==
+            APP_CONTEXT_ARITY
+    }
     val appContext = constructor.newInstance(
         modulesProvider,
         ModuleRegistry(emptyList(), emptyList()),

@@ -75,13 +75,15 @@ internal class NativeEditorExpoViewToolbarTest : NativeEditorExpoViewTestFixture
     }
 
     @Test
-    fun `standalone toolbar hit testing follows the React viewport offset with and without edge to edge`() {
+    fun `toolbar hits follow React viewport with and without edge to edge`() {
         val expoContext = testExpoContext(RuntimeEnvironment.getApplication())
         val view = NativeEditorExpoView(expoContext.context, expoContext.appContext)
         val density = expoContext.context.resources.displayMetrics.density
         val statusBarPx = STATUS_BAR_DP * density
-        view.setToolbarFrameJson(JSONObject().put("x", TOOLBAR_X_DP).put("y", TOOLBAR_Y_DP)
-            .put("width", TOOLBAR_WIDTH_DP).put("height", TOOLBAR_HEIGHT_DP).toString())
+        view.setToolbarFrameJson(
+            JSONObject().put("x", TOOLBAR_X_DP).put("y", TOOLBAR_Y_DP)
+                .put("width", TOOLBAR_WIDTH_DP).put("height", TOOLBAR_HEIGHT_DP).toString()
+        )
         val toolbarCenterX = (TOOLBAR_X_DP + TOOLBAR_WIDTH_DP / 2) * density
         val toolbarCenterFromContentTop = (TOOLBAR_Y_DP + TOOLBAR_HEIGHT_DP / 2) * density
         val edgeToEdge = Point(0, 0) to Point(0, 0)
@@ -95,11 +97,24 @@ internal class NativeEditorExpoViewToolbarTest : NativeEditorExpoViewTestFixture
             val (origin, contentTop) = layout
             val (rootOnScreen, viewportOffset) = origin
             val rawY = contentTop + toolbarCenterFromContentTop
-            assertTrue("$label: the toolbar center must hit",
-                view.isPointInsideStandaloneToolbarForTesting(toolbarCenterX, rawY, rootOnScreen, viewportOffset))
-            assertFalse("$label: a point one toolbar height below must miss",
-                view.isPointInsideStandaloneToolbarForTesting(toolbarCenterX, rawY + TOOLBAR_HEIGHT_DP * density,
-                    rootOnScreen, viewportOffset))
+            assertTrue(
+                "$label: the toolbar center must hit",
+                view.isPointInsideStandaloneToolbarForTesting(
+                    toolbarCenterX,
+                    rawY,
+                    rootOnScreen,
+                    viewportOffset
+                )
+            )
+            assertFalse(
+                "$label: a point one toolbar height below must miss",
+                view.isPointInsideStandaloneToolbarForTesting(
+                    toolbarCenterX,
+                    rawY + TOOLBAR_HEIGHT_DP * density,
+                    rootOnScreen,
+                    viewportOffset
+                )
+            )
         }
     }
 

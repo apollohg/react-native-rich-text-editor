@@ -241,12 +241,16 @@ private fun validRenderElement(value: Any?): Boolean {
     }
 }
 
-internal fun validSemanticRenderElements(elements: List<Any?>, index: EditorTableIndex? = null): Boolean {
+internal fun validSemanticRenderElements(
+    elements: List<Any?>,
+    index: EditorTableIndex? = null
+): Boolean {
     val keys = mutableSetOf<String>()
     return elements.all { raw ->
         val element = raw as? JSONObject ?: return@all false
-        if (element.opt("type") != "table") validRenderElement(element)
-        else {
+        if (element.opt("type") != "table") {
+            validRenderElement(element)
+        } else {
             val key = element.opt("tableId") as? String
             exactKeys(element, setOf("type", "tableId")) && !key.isNullOrEmpty() && keys.add(key) &&
                 (index == null || index.record(key) != null)
@@ -267,7 +271,10 @@ private fun validRenderBlocks(value: Any?): Boolean {
 private fun validRenderPatch(value: Any?): Boolean {
     if (value === JSONObject.NULL) return true
     val patch = value as? JSONObject ?: return false
-    return exactKeys(patch, setOf("baseDocumentVersion", "startIndex", "deleteCount", "renderBlocks")) &&
+    return exactKeys(
+        patch,
+        setOf("baseDocumentVersion", "startIndex", "deleteCount", "renderBlocks")
+    ) &&
         canonicalV2U64(patch.opt("baseDocumentVersion") as? String) != null &&
         scalarField(patch, "startIndex") != null && scalarField(patch, "deleteCount") != null &&
         validRenderBlocks(patch.opt("renderBlocks"))
@@ -360,7 +367,8 @@ internal data class TableScalarExtent(val scalarStart: Int, val scalarEnd: Int)
 internal fun parseSharedStringJsonObject(json: String): JSONObject {
     val strings = HashMap<String, String>()
     return JSONObject(object : JSONTokener(json) {
-        override fun nextString(quote: Char): String = super.nextString(quote).let { strings.getOrPut(it) { it } }
+        override fun nextString(quote: Char): String =
+            super.nextString(quote).let { strings.getOrPut(it) { it } }
     })
 }
 

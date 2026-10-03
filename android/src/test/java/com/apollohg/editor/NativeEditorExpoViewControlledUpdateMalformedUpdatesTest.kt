@@ -27,7 +27,9 @@ internal class NativeEditorExpoViewControlledUpdateMalformedUpdatesTest :
         val adapter = attachAdapterForViewTest(backend)
         val viewToken = EditorV2Registry.register(adapter)
         val errors = mutableListOf<EditorV2Error>()
-        val malformedUpdateJson = JSONObject(renderUpdateJson("malformed")).put("documentVersion", "invalid").toString()
+        val malformedUpdateJson = JSONObject(
+            renderUpdateJson("malformed")
+        ).put("documentVersion", "invalid").toString()
         try {
             adapter.onAutonomousError = { errors += it }
             view.onAddonEventForTesting = {}
@@ -61,7 +63,9 @@ internal class NativeEditorExpoViewControlledUpdateMalformedUpdatesTest :
         val adapter = attachAdapterForViewTest(backend)
         val viewToken = EditorV2Registry.register(adapter)
         val errors = mutableListOf<EditorV2Error>()
-        val malformedUpdateJson = JSONObject(renderUpdateJson("malformed")).put("documentVersion", "invalid").toString()
+        val malformedUpdateJson = JSONObject(
+            renderUpdateJson("malformed")
+        ).put("documentVersion", "invalid").toString()
         try {
             adapter.onAutonomousError = { errors += it }
             view.onAddonEventForTesting = {}
@@ -97,7 +101,9 @@ internal class NativeEditorExpoViewControlledUpdateMalformedUpdatesTest :
         val adapter = attachAdapterForViewTest(backend)
         val viewToken = EditorV2Registry.register(adapter)
         val errors = mutableListOf<EditorV2Error>()
-        val malformedUpdateJson = JSONObject(renderUpdateJson("malformed")).put("documentVersion", "invalid").toString()
+        val malformedUpdateJson = JSONObject(
+            renderUpdateJson("malformed")
+        ).put("documentVersion", "invalid").toString()
         try {
             adapter.onAutonomousError = { errors += it }
             view.onAddonEventForTesting = {}

@@ -164,13 +164,20 @@ class EditorClipboardRealEngineTest {
 
             assertTrue(
                 requireNotNull(
-                    clipboard().primaryClip?.description?.extras?.getString(EditorClipboard.EXTRA_FRAGMENT)
+                    clipboard().primaryClip?.description?.extras?.getString(
+                        EditorClipboard.EXTRA_FRAGMENT
+                    )
                 ).contains("\"type\":\"image\"")
             )
-            val content = JSONObject(requireNotNull(source.adapter.documentJson())).getJSONArray("content")
+            val content = JSONObject(
+                requireNotNull(source.adapter.documentJson())
+            ).getJSONArray("content")
             assertTrue(
                 "the cut must remove the selected image: $content",
-                (0 until content.length()).none { content.getJSONObject(it).getString("type") == "image" }
+                (0 until content.length()).none {
+                    content.getJSONObject(it).getString("type") ==
+                        "image"
+                }
             )
         } finally {
             source.adapter.destroy()
