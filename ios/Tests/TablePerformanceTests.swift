@@ -375,9 +375,9 @@ final class TablePerformanceTests: XCTestCase {
             Benchmark.baselineSamples
         )
         XCTAssertTrue(samples.allSatisfy { $0.counters.unchangedCellRemeasurements == 0 })
-        let typing = try XCTUnwrap(samples.first { $0.metric == "typing" })
-        XCTAssertGreaterThan(try XCTUnwrap(typing.wrapCount), 0)
-        XCTAssertGreaterThan(try XCTUnwrap(typing.nonWrapCount), 0)
+        let typingSample = try XCTUnwrap(samples.first { $0.metric == "typing" })
+        XCTAssertGreaterThan(try XCTUnwrap(typingSample.wrapCount), 0)
+        XCTAssertGreaterThan(try XCTUnwrap(typingSample.nonWrapCount), 0)
     }
 
     func testLargeTableHorizontalScrollPresentation() throws {
