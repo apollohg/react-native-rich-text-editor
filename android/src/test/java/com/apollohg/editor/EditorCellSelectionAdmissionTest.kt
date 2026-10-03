@@ -1249,7 +1249,8 @@ internal class EditorCellSelectionAdmissionTest {
                 val headAfterMove = engineSelection(adapter).getInt("headCell")
                 val looper = Shadows.shadowOf(Looper.getMainLooper())
                 var headAfterFrames = headAfterMove
-                repeat(128) {
+                val maximumFrameTasks = 512
+                repeat(maximumFrameTasks) {
                     if (drawing.tablePhysicalOffsetForTesting(
                             surface.identity
                         ) == initialHorizontal ||

@@ -315,3 +315,51 @@ final class TableInteractionController: NSObject, UIGestureRecognizerDelegate {
         if abs(velocity) < Constants.minimumVelocity { cancelMotion() }
     }
 }
+
+final class TableTextSelectionGestureRecognizer: UIGestureRecognizer {
+    var crossesCellBoundary: ((CGPoint) -> Bool)?
+    var trackingDidReset: (() -> Void)?
+    private var primaryTouch: UITouch?
+
+    override func location(in view: UIView?) -> CGPoint {
+        primaryTouch?.location(in: view) ?? super.location(in: view)
+    }
+
+    override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool {
+        preventingGestureRecognizer is UIScreenEdgePanGestureRecognizer
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard primaryTouch == nil, touches.count == 1, event.allTouches?.count == 1 else {
+            state = state == .possible ? .failed : .cancelled
+            return
+        }
+        primaryTouch = touches.first
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard let primaryTouch, touches.contains(primaryTouch), event.allTouches?.count == 1 else {
+            state = state == .possible ? .failed : .cancelled
+            return
+        }
+        if state == .possible {
+            if crossesCellBoundary?(primaryTouch.location(in: view)) == true { state = .began }
+        } else {
+            state = .changed
+        }
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+        state = state == .possible ? .failed : (primaryTouch.map(touches.contains) == true ? .ended : .cancelled)
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+        state = state == .possible ? .failed : .cancelled
+    }
+
+    override func reset() {
+        super.reset()
+        primaryTouch = nil
+        trackingDidReset?()
+    }
+}

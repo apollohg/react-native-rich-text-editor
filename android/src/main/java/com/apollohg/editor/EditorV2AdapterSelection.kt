@@ -64,6 +64,24 @@ internal fun EditorV2Adapter.selectExactTableCells(
     if (!admitsTableMutation(admission) || positionEpoch != expectedEpoch) return null
     val current = cachedAtomicRenderSelection() ?: return null
     if (cellSelectionEndpoints(current) != expectedAnchor to expectedHead) return null
+    return applyExactTableCellSelection(anchorCell, headCell, admission)
+}
+
+internal fun EditorV2Adapter.selectTableCell(
+    cellIndex: Int,
+    admission: TableMutationAdmission
+): String? {
+    if (!admitsTableMutation(admission)) return null
+    val position = tableIndex.docStart(admission.tableId, cellIndex)?.toLong()
+        ?.takeIf { it <= Int.MAX_VALUE }?.toInt() ?: return null
+    return applyExactTableCellSelection(position, position, admission)
+}
+
+private fun EditorV2Adapter.applyExactTableCellSelection(
+    anchorCell: Int,
+    headCell: Int,
+    admission: TableMutationAdmission
+): String? {
     fun point(opening: Int) = JSONObject().put("kind", "document").put("offset", opening)
     val selection = JSONObject().put("type", "cell")
         .put("anchorCell", point(anchorCell)).put("headCell", point(headCell))
@@ -85,6 +103,11 @@ internal fun EditorV2Adapter.selectExactTableCells(
         return null
     }
     publishCollaborationCellsIfChanged()
+    if (!admitsTableMutation(admission) ||
+        cachedAtomicRenderSelection()?.let(::cellSelectionEndpoints) != anchorCell to headCell
+    ) {
+        return null
+    }
     return update
 }
 

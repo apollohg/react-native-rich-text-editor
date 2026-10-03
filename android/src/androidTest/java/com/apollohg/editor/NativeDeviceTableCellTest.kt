@@ -1,10 +1,12 @@
 package com.apollohg.editor
 
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.Instrumentation
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.os.SystemClock
+import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.ViewConfiguration
@@ -12,6 +14,8 @@ import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.widget.FrameLayout
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.LargeTest
@@ -34,6 +38,235 @@ import org.junit.runner.RunWith
 @LargeTest
 class NativeDeviceTableCellTest {
     private val instrumentation: Instrumentation = InstrumentationRegistry.getInstrumentation()
+
+    @Test
+    fun nativeTableMenuFollowsLongPressAndCrossCellSelectionHandles() {
+        val text = "Alpha Beta Gamma"
+        val document = com.apollohg.editor.tables.PlainTableFixture.document(2, 2, text)
+        withEditor(document) { fixture ->
+            val before = fixture.adapter.documentJson()
+            val first = fixture.cellPoint(0)
+            gesture(
+                listOf(first, first),
+                ViewConfiguration.getLongPressTimeout() * LONG_PRESS_HOLD_FACTOR
+            )
+            fixture.onActivity {
+                val root = fixture.editor.richTextView.editorEditText
+                assertTrue(
+                    "long press opens table actions",
+                    fixture.editor.richTextView.editorTableSurface.isCellEditMenuVisible
+                )
+                val menu = requireNotNull(root.selectionActionMode).menu
+                assertTrue(menu.performIdentifierAction(R.id.table_accessibility_add_row_after, 0))
+                assertTrue(root.applyUpdateJSON(requireNotNull(fixture.adapter.undo())))
+                assertEquals(before, fixture.adapter.documentJson())
+            }
+            fixture.tapCell(0)
+            waitUntil("keyboard is visible before selection gestures") {
+                var visible = false
+                fixture.onActivity {
+                    visible = ViewCompat.getRootWindowInsets(fixture.cellInput())
+                        ?.isVisible(WindowInsetsCompat.Type.ime()) == true
+                }
+                visible
+            }
+            fixture.awaitCommittedFrame()
+            var handle = first
+            var middle = first
+            fixture.onActivity {
+                val input = fixture.cellInput()
+                input.setSelection(0, text.length)
+                input.syncCurrentSelectionToRust()
+                handle = textHandlePoint(input)
+                middle =
+                    handle.first - input.layout.getPrimaryHorizontal(text.length) / 2 to
+                    handle.second
+            }
+            gesture(interpolate(handle, middle), SWIPE_STEP_MS)
+            fixture.onActivity {
+                val input = fixture.cellInput()
+                assertTrue(
+                    "in-cell selection shortened: ${input.selectionStart}..${input.selectionEnd}",
+                    input.selectionEnd in 1 until text.length
+                )
+                assertFalse(fixture.editor.richTextView.editorTableSurface.isCellEditMenuVisible)
+                input.interaction.endSelectionActionMode()
+                input.setSelection(0, text.length)
+                input.syncCurrentSelectionToRust()
+                handle = textHandlePoint(input)
+            }
+            val last = fixture.cellPoint(3)
+            gesture(interpolate(handle, last), SWIPE_STEP_MS)
+            fixture.onActivity {
+                val surface = fixture.editor.richTextView.editorTableSurface
+                assertTrue(
+                    "cross-cell handle release opens table menu: selection=${fixture.adapter.cachedAtomicRenderSelection()} drag=${surface.dragActive()} ${fixture.diagnostics()}",
+                    surface.isCellEditMenuVisible
+                )
+                val table = fixture.adapter.tableIndex
+                val selection = requireNotNull(fixture.adapter.cachedAtomicRenderSelection())
+                val resolved = com.apollohg.editor.tables.resolveEditorCellSelection(
+                    selection,
+                    table
+                )
+                    as com.apollohg.editor.tables.EditorCellSelection.Drawable
+                assertEquals(
+                    setOf(0, 1, 2, 3),
+                    surface.drawingView.selectedTableCellSourceIndices[resolved.tableId]
+                )
+                assertEquals(before, fixture.adapter.documentJson())
+            }
+            try {
+                awaitNativeMenu()
+            } finally {
+                fixture.awaitCommittedFrame()
+                fixture.captureScreenshot("native-android-table-selection-menu.png")
+            }
+            var cellHandle = last
+            fixture.onActivity {
+                val surface = fixture.editor.richTextView.editorTableSurface
+                surface.dismissCellEditMenu()
+                val drawing = surface.drawingView
+                val position = drawing.selectionHandles().single {
+                    it.role == com.apollohg.editor.viewer.TableSelectionHandleRole.HEAD
+                }
+                val location = IntArray(2).also(drawing::getLocationOnScreen)
+                cellHandle = location[0] + position.x to location[1] + position.y
+            }
+            gesture(interpolate(cellHandle, fixture.cellPoint(1)), SWIPE_STEP_MS)
+            fixture.onActivity {
+                assertTrue(
+                    "adjusting cell rectangle reopens menu: from=$cellHandle selection=${fixture.adapter.cachedAtomicRenderSelection()} ${fixture.diagnostics()}",
+                    fixture.editor.richTextView.editorTableSurface.isCellEditMenuVisible
+                )
+                val surface = fixture.editor.richTextView.editorTableSurface
+                assertEquals(
+                    "the adjusted rectangle contains only the first row",
+                    setOf(0, 1),
+                    surface.drawingView.selectedTableCellSourceIndices.values.single()
+                )
+                assertEquals(before, fixture.adapter.documentJson())
+            }
+        }
+    }
+
+    private fun awaitNativeMenu() {
+        val automation = instrumentation.uiAutomation
+        val originalFlags = automation.serviceInfo.flags
+        automation.serviceInfo = automation.serviceInfo.apply {
+            flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+        }
+        try {
+            val label = instrumentation.targetContext.getString(android.R.string.cut)
+            fun containsLabel(node: android.view.accessibility.AccessibilityNodeInfo): Boolean {
+                if (node.isVisibleToUser &&
+                    (node.text?.toString() == label || node.contentDescription?.toString() == label)
+                ) {
+                    return true
+                }
+                return (0 until node.childCount).any { index ->
+                    node.getChild(index)?.let(::containsLabel) == true
+                }
+            }
+            waitUntil("native floating menu is rendered") {
+                automation.windows.any { it.root?.let(::containsLabel) == true }
+            }
+        } finally {
+            automation.serviceInfo = automation.serviceInfo.apply { flags = originalFlags }
+        }
+    }
+
+    private fun interpolate(from: Pair<Float, Float>, to: Pair<Float, Float>) =
+        (0..SWIPE_STEPS).map { step ->
+            val fraction = step.toFloat() / SWIPE_STEPS
+            from.first + (to.first - from.first) * fraction to
+                from.second + (to.second - from.second) * fraction
+        }
+
+    private fun textHandlePoint(input: EditorEditText): Pair<Float, Float> {
+        val method = input.interaction.javaClass.getDeclaredMethod(
+            "handleGeometry",
+            Int::class.javaPrimitiveType
+        )
+            .apply { isAccessible = true }
+        val geometry = method.invoke(input.interaction, input.selectionEnd) as Pair<*, *>
+        val bounds = geometry.second as android.graphics.Rect
+        val location = IntArray(2).also(input::getLocationOnScreen)
+        return location[0] + input.totalPaddingLeft - input.scrollX + bounds.exactCenterX() to
+            location[1] + input.totalPaddingTop - input.scrollY + bounds.exactCenterY()
+    }
+
+    @Test
+    fun multiRowSelectionScrollsGentlyAtTheEdgeAndStopsInTheCenter() {
+        val document = com.apollohg.editor.tables.PlainTableFixture.document(
+            SELECTION_SCROLL_ROWS,
+            2,
+            "Select rows"
+        )
+        withEditor(document) { fixture ->
+            val before = fixture.adapter.documentJson()
+            val first = fixture.cellPoint(0)
+            gesture(
+                listOf(first, first),
+                ViewConfiguration.getLongPressTimeout() * LONG_PRESS_HOLD_FACTOR
+            )
+            var head = first
+            var edge = first
+            var center = first
+            fixture.onActivity {
+                val view = fixture.editor.richTextView
+                view.editorTableSurface.dismissCellEditMenu()
+                val drawing = view.editorTableSurface.drawingView
+                val handle = drawing.selectionHandles().single {
+                    it.role == com.apollohg.editor.viewer.TableSelectionHandleRole.HEAD
+                }
+                val origin = IntArray(2).also(drawing::getLocationOnScreen)
+                head = origin[0] + handle.x to origin[1] + handle.y
+                val visible = android.graphics.Rect()
+                assertTrue(view.editorScrollView.getGlobalVisibleRect(visible))
+                center = visible.exactCenterX() to visible.exactCenterY()
+                edge =
+                    center.first to
+                    (visible.bottom - dp(view.context, SELECTION_EDGE_INSET_DP)).toFloat()
+            }
+            var edgeScroll = 0
+            var centerScroll = 0
+            gesture(
+                listOf(head, edge, edge, edge, center, center, center),
+                SELECTION_HOLD_STEP_MS
+            ) { index ->
+                instrumentation.runOnMainSync {
+                    val view = fixture.editor.richTextView
+                    when (index) {
+                        3 -> {
+                            edgeScroll = view.editorScrollView.scrollY
+                            assertTrue(
+                                "held edge scroll=$edgeScroll must remain controllable",
+                                edgeScroll in 1..dp(view.context, SELECTION_SHALLOW_MAX_SCROLL_DP)
+                            )
+                            assertTrue(view.editorTableSurface.dragActive())
+                        }
+
+                        4 -> centerScroll = view.editorScrollView.scrollY
+
+                        6 -> {
+                            assertEquals(
+                                "returning to center stops autoscroll immediately",
+                                centerScroll,
+                                view.editorScrollView.scrollY
+                            )
+                            assertTrue(view.editorTableSurface.isCellEditMenuVisible)
+                            assertTrue(
+                                view.editorTableSurface.drawingView
+                                    .selectedTableCellSourceIndices.values.single().size > 2
+                            )
+                            assertEquals(before, fixture.adapter.documentJson())
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     @Test
     fun rejectedCellTypingRestoresTheCaretAndKeepsTheConnectionUsable() {
@@ -567,7 +800,16 @@ class NativeDeviceTableCellTest {
                     initializeSoLoaderIfAvailable(activity)
                     val expo = testExpoContext(activity)
                     val root = FrameLayout(activity).apply { setBackgroundColor(Color.WHITE) }
+                    ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
+                        val bars = insets.getInsets(
+                            WindowInsetsCompat.Type.systemBars() or
+                                WindowInsetsCompat.Type.displayCutout()
+                        )
+                        view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+                        insets
+                    }
                     val editor = NativeEditorExpoView(expo.context, expo.appContext).apply {
+                        keepScreenOn = true
                         clipToPadding = false
                         setShowToolbar(showToolbar)
                         onFocusChangeForTesting = {}
@@ -733,6 +975,11 @@ class NativeDeviceTableCellTest {
         }
 
         fun tapCell(index: Int) {
+            val (x, y) = cellPoint(index)
+            tap(x, y)
+        }
+
+        fun cellPoint(index: Int): Pair<Float, Float> {
             instrumentation.waitForIdleSync()
             var x = 0f
             var y = 0f
@@ -750,7 +997,7 @@ class NativeDeviceTableCellTest {
                 x = location[0] + bounds.left + frame.left + frame.width / 2f
                 y = location[1] + bounds.top + frame.top + frame.height / 2f
             }
-            tap(x, y)
+            return x to y
         }
 
         fun tapFollowingProse() {
@@ -841,24 +1088,52 @@ class NativeDeviceTableCellTest {
 
     private fun tap(x: Float, y: Float) = gesture(listOf(x to y, x to y), TAP_DURATION_MS)
 
-    private fun gesture(points: List<Pair<Float, Float>>, stepMs: Long) {
+    private fun gesture(
+        points: List<Pair<Float, Float>>,
+        stepMs: Long,
+        afterEvent: ((Int) -> Unit)? = null
+    ) {
         val start = SystemClock.uptimeMillis()
-        points.forEachIndexed { index, (x, y) ->
-            val action = when (index) {
-                0 -> MotionEvent.ACTION_DOWN
-                points.lastIndex -> MotionEvent.ACTION_UP
-                else -> MotionEvent.ACTION_MOVE
+        var released = false
+        try {
+            points.forEachIndexed { index, (x, y) ->
+                val action = when (index) {
+                    0 -> MotionEvent.ACTION_DOWN
+                    points.lastIndex -> MotionEvent.ACTION_UP
+                    else -> MotionEvent.ACTION_MOVE
+                }
+                val eventTime = start + index * stepMs
+                SystemClock.sleep((eventTime - SystemClock.uptimeMillis()).coerceAtLeast(0))
+                val event = MotionEvent.obtain(start, eventTime, action, x, y, 0).apply {
+                    source = InputDevice.SOURCE_TOUCHSCREEN
+                }
+                try {
+                    assertTrue(
+                        "UiAutomation rejected ${MotionEvent.actionToString(action)}",
+                        instrumentation.uiAutomation.injectInputEvent(event, afterEvent != null)
+                    )
+                } finally {
+                    event.recycle()
+                }
+                released = action == MotionEvent.ACTION_UP
+                afterEvent?.invoke(index)
             }
-            val eventTime = start + index * stepMs
-            SystemClock.sleep((eventTime - SystemClock.uptimeMillis()).coerceAtLeast(0))
-            val event = MotionEvent.obtain(start, eventTime, action, x, y, 0)
-            try {
-                assertTrue(
-                    "UiAutomation rejected ${MotionEvent.actionToString(action)}",
-                    instrumentation.uiAutomation.injectInputEvent(event, false)
-                )
-            } finally {
-                event.recycle()
+        } finally {
+            if (!released) {
+                val (x, y) = points.last()
+                val cancel = MotionEvent.obtain(
+                    start,
+                    SystemClock.uptimeMillis(),
+                    MotionEvent.ACTION_CANCEL,
+                    x,
+                    y,
+                    0
+                ).apply { source = InputDevice.SOURCE_TOUCHSCREEN }
+                try {
+                    instrumentation.uiAutomation.injectInputEvent(cancel, true)
+                } finally {
+                    cancel.recycle()
+                }
             }
         }
         instrumentation.waitForIdleSync()
@@ -878,6 +1153,10 @@ class NativeDeviceTableCellTest {
         (value * context.resources.displayMetrics.density).toInt()
 
     companion object {
+        private const val SELECTION_SCROLL_ROWS = 80
+        private const val SELECTION_EDGE_INSET_DP = 44
+        private const val SELECTION_SHALLOW_MAX_SCROLL_DP = 32
+        private const val SELECTION_HOLD_STEP_MS = 120L
         private const val COMPOSED_TEXT = "Z"
         private const val SWIPE_STEPS = 4
         private const val SWIPE_STEP_SLOP_FACTOR = 1.5f

@@ -76,8 +76,16 @@ extension RichTextEditorViewTests {
         flushMainQueue()
         textView.layoutIfNeeded()
         if afterScrolling {
+            let contentLaidOut = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                textView.contentSize.height >= textView.layoutManager.usedRect(for: textView.textContainer).maxY
+                    + textView.textContainerInset.top
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [contentLaidOut], timeout: 2), .completed,
+                "UIKit must publish the laid-out content extent before scrolling")
             let marker = taskMarkerTightRect(forCharacterIndex: start, in: textView)
-            textView.setContentOffset(CGPoint(x: 0, y: marker.midY - 100), animated: false)
+            let maximumOffset = textView.contentSize.height - textView.bounds.height + textView.adjustedContentInset.bottom
+            let targetOffset = marker.midY + textView.contentOffset.y - textView.bounds.height / 2
+            textView.setContentOffset(CGPoint(x: 0, y: min(targetOffset, maximumOffset)), animated: false)
             XCTAssertGreaterThan(textView.contentOffset.y, 0)
         }
         for checked in [true, false] {
@@ -89,7 +97,8 @@ extension RichTextEditorViewTests {
                 ),
                 to: view
             )
-            XCTAssertTrue(view.bounds.contains(point))
+            XCTAssertTrue(view.bounds.contains(point),
+                "checked=\(checked) point=\(point) marker=\(marker) bounds=\(view.bounds) offset=\(textView.contentOffset) inset=\(textView.adjustedContentInset)")
             XCTAssertFalse(textView.canPlaceCaret(at: view.convert(point, to: textView)))
             XCTAssertTrue(view.taskListMarkerTapOverlayInterceptsPointForTesting(point))
             XCTAssertTrue(view.tapTaskListMarkerOverlayForTesting(at: point))

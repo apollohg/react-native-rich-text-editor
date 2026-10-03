@@ -8,6 +8,7 @@ import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.RenderNode
+import android.os.Build
 import android.os.Bundle
 import android.util.AttributeSet
 import android.view.MotionEvent
@@ -45,6 +46,8 @@ import com.apollohg.editor.tables.ViewerTablePresentedSurface
 import com.apollohg.editor.tables.ViewerTableSurface
 import java.util.Collections
 import java.util.IdentityHashMap
+import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.math.pow
 import org.json.JSONArray
 import org.json.JSONObject
@@ -89,6 +92,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
             false
         } else {
             preparePresentedTableCells()
+            updateSelectionGestureExclusionRects()
             true
         }
     }
@@ -723,6 +727,26 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
                 (visible == null || visible.contains(it.x.toInt(), it.y.toInt())) &&
                 cells.any { cell -> cell.bounds.contains(it.x, it.y) }
         }
+    }
+
+    private fun updateSelectionGestureExclusionRects() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        val radius = HANDLE_HIT_SIZE_DP * resources.displayMetrics.density / 2f
+        val rects = if (visibility != VISIBLE || width == 0 || height == 0 ||
+            selectedTableCellEndpoints == null
+        ) {
+            emptyList()
+        } else {
+            selectionHandles().map { handle ->
+                Rect(
+                    floor(handle.x - radius).toInt().coerceIn(0, width),
+                    floor(handle.y - radius).toInt().coerceIn(0, height),
+                    ceil(handle.x + radius).toInt().coerceIn(0, width),
+                    ceil(handle.y + radius).toInt().coerceIn(0, height)
+                )
+            }
+        }
+        if (systemGestureExclusionRects != rects) systemGestureExclusionRects = rects
     }
 
     internal fun hitSelectionHandle(x: Float, y: Float): TableSelectionHandle? {

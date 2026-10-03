@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RectF
+import android.os.SystemClock
 import android.text.Annotation
 import android.text.SpannableStringBuilder
 import android.text.Spanned
@@ -51,6 +52,7 @@ import com.apollohg.editor.renderedTextMatches
 import com.apollohg.editor.resizeTableColumn
 import com.apollohg.editor.retireInputConnectionForEditor
 import com.apollohg.editor.selectExactTableCells
+import com.apollohg.editor.selectTableCell
 import com.apollohg.editor.syncCurrentSelectionToRust
 import com.apollohg.editor.tableMutationAdmission
 import com.apollohg.editor.updateAtomBoundaryCursorVisibility
@@ -145,7 +147,9 @@ internal class EditorTableSurface(private val host: RichTextEditorView) :
     TableAccessibilityEditing {
     private companion object {
         const val HANDLE_EDGE_BAND_DP = 48f
-        const val HANDLE_SCROLL_STEP_DP = 12f
+        const val HANDLE_SCROLL_SPEED_DP_PER_SECOND = 320f
+        const val HANDLE_SCROLL_MAX_FRAME_MS = 32L
+        const val MILLIS_PER_SECOND = 1000f
         const val MAXIMUM_COLUMN_WIDTH = 10_000
     }
     private data class Entry(
@@ -271,15 +275,19 @@ internal class EditorTableSurface(private val host: RichTextEditorView) :
         }
         onTableTap = { downX, downY, upX, upY ->
             val target = hitCell(downX, downY)?.takeIf { it == hitCell(upX, upY) }
-            cellDragLifted || tapCellSelection(target, upX, upY) ||
+            cellDragLifted || cellMenuLongPressed || tapCellSelection(target, upX, upY) ||
                 (target != null && activateCell(target.first, target.second, upX, upY))
         }
     }
     private val cellEditMenu by lazy {
-        TableCellEditMenu(host.editorEditText, ::cellEditMenuAnchor) {
-            onSelectionGeometryMayChange?.invoke()
-        }
+        TableCellEditMenu(
+            host.editorEditText,
+            ::cellEditMenuAnchor,
+            { onSelectionGeometryMayChange?.invoke() },
+            ::cellMenuActions
+        )
     }
+    private var presentedCellEditMenuAdmission: TableMutationAdmission? = null
     private var presentedCellEditMenuSelection: Triple<String, Int, Int>? = null
     private val doubleTapTimeoutMs = ViewConfiguration.getDoubleTapTimeout().toLong()
     private var pendingCellEditMenuToggle: Runnable? = null
@@ -288,6 +296,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) :
     private data class PendingCellDrag(val start: Runnable, val downX: Float, val downY: Float)
     private var pendingCellDrag: PendingCellDrag? = null
     private var cellDragLifted = false
+    private var cellMenuLongPressed = false
     val isCellEditMenuVisible: Boolean get() = cellEditMenu.isVisible
     internal var incrementalRelayoutsForTesting = 0
         private set
@@ -452,12 +461,24 @@ internal class EditorTableSurface(private val host: RichTextEditorView) :
         val screenX: Float,
         val screenY: Float
     )
+    private data class TextSelectionOrigin(
+        val input: EditorEditText,
+        val cell: ActiveCell,
+        val adapter: EditorV2Adapter,
+        val admission: TableMutationAdmission,
+        val role: TableSelectionHandleRole,
+        val pointerId: Int
+    )
+    private var textSelectionOrigin: TextSelectionOrigin? = null
+
     private var activeDrag: TableDrag? = null
     private var resizeCandidate: ResizeCandidate? = null
     private val resizeGestureAxis = TableGestureAxisLock(host.context)
     private var resizePreview: TableResizePreview? = null
     private var dragFramePosted = false
     private var runningDragFrame = false
+    private var lastDragFrameTimeMs: Long? = null
+    private var verticalDragScrollRemainder = 0f
     private val dragFrame = object : Runnable {
         override fun run() {
             dragFramePosted = false
@@ -470,21 +491,24 @@ internal class EditorTableSurface(private val host: RichTextEditorView) :
             try {
                 val density = host.resources.displayMetrics.density
                 val band = HANDLE_EDGE_BAND_DP * density
-                val step = HANDLE_SCROLL_STEP_DP * density
+                val now = SystemClock.uptimeMillis()
+                val elapsed = (now - (lastDragFrameTimeMs ?: now))
+                    .coerceIn(0L, HANDLE_SCROLL_MAX_FRAME_MS)
+                lastDragFrameTimeMs = now
+                val step = HANDLE_SCROLL_SPEED_DP_PER_SECOND * density * elapsed / MILLIS_PER_SECOND
                 val tableId = drag.admission.tableId
                 val viewport = drawingView.selectedTableViewport(tableId)
                 var scrolled = false
+                var canContinue = false
                 if (viewport != null) {
                     val x = drag.screenX - drawingView.left
-                    val horizontal = when {
-                        x < viewport.left + band -> -step
-                        x > viewport.right - band -> step
-                        else -> 0f
-                    }
-                    if (horizontal != 0f) {
+                    val fraction = edgeScrollFraction(x, viewport.left, viewport.right, band)
+                    if (fraction != 0f) {
+                        val horizontal = step * fraction
                         val before = drawingView.tableLogicalOffset(tableId)
                         scrolled =
                             drawingView.scrollSelectedTablePhysical(tableId, horizontal) != 0f
+                        canContinue = scrolled || elapsed == 0L
                         if (scrolled && drag is ResizeDrag && before != null) {
                             drag.scrolledLogical +=
                                 (drawingView.tableLogicalOffset(tableId) ?: before) - before
@@ -510,19 +534,37 @@ internal class EditorTableSurface(private val host: RichTextEditorView) :
                         visible.bottom.toFloat() - scroll.scrollY,
                         (scroll.height - scroll.paddingBottom).toFloat()
                     )
-                    val vertical = when {
-                        drag.screenY < viewportTop + band -> -step
-                        drag.screenY > viewportBottom - band -> step
-                        else -> 0f
-                    }
-                    if (vertical != 0f) {
+                    val fraction = edgeScrollFraction(
+                        drag.screenY,
+                        viewportTop,
+                        viewportBottom,
+                        band
+                    )
+                    if (fraction != 0f &&
+                        scroll.canScrollVertically(if (fraction < 0f) -1 else 1)
+                    ) {
+                        if (verticalDragScrollRemainder * fraction <
+                            0f
+                        ) {
+                            verticalDragScrollRemainder = 0f
+                        }
+                        val requested = step * fraction + verticalDragScrollRemainder
+                        val pixels = requested.toInt()
+                        verticalDragScrollRemainder = requested - pixels
                         val prior = scroll.scrollY
-                        scroll.scrollBy(0, vertical.roundToInt())
+                        scroll.scrollBy(0, pixels)
                         scrolled = scrolled || scroll.scrollY != prior
+                        canContinue = true
+                    } else {
+                        verticalDragScrollRemainder = 0f
                     }
                 }
                 if (scrolled && validDrag(drag)) retargetDrag(drag)
-                if (scrolled && activeDrag === drag) scheduleDragFrame()
+                if (canContinue && activeDrag === drag) {
+                    scheduleDragFrame()
+                } else {
+                    lastDragFrameTimeMs = null
+                }
             } finally {
                 runningDragFrame = false
             }
@@ -554,6 +596,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) :
         resizeGestureAxis.reset()
         cancelPendingCellDrag()
         cellDragLifted = false
+        cellMenuLongPressed = false
         if (event.actionMasked == MotionEvent.ACTION_DOWN &&
             !cellSelectionContains(event.x - drawingView.left, event.y - drawingView.top)
         ) {
@@ -562,9 +605,71 @@ internal class EditorTableSurface(private val host: RichTextEditorView) :
         }
         if (event.actionMasked != MotionEvent.ACTION_DOWN || event.pointerCount != 1) return false
         if (startHandleDrag(event)) return true
+        trackTextSelectionDrag(event)
         armResize(event)
         armCellDrag(event)
         return false
+    }
+
+    private fun trackTextSelectionDrag(event: MotionEvent) {
+        textSelectionOrigin = null
+        val cell = activeCell ?: return
+        val input = activeInput?.takeIf { it.hasFocus() } ?: return
+        val (adapter, admission) = tableMutationContext(cell.tableId) ?: return
+        val role =
+            input.interaction.selectionHandleRoleAt(event.x - input.left, event.y - input.top)
+                ?: return
+        textSelectionOrigin =
+            TextSelectionOrigin(input, cell, adapter, admission, role, event.getPointerId(0))
+    }
+
+    fun beginTextSelectionDrag(event: MotionEvent): Boolean {
+        val origin = textSelectionOrigin ?: return false
+        if (event.actionMasked != MotionEvent.ACTION_MOVE || event.pointerCount != 1 ||
+            event.getPointerId(0) != origin.pointerId
+        ) {
+            if (event.actionMasked != MotionEvent.ACTION_DOWN) textSelectionOrigin = null
+            return false
+        }
+        if (activeInput !== origin.input || activeCell != origin.cell || !origin.input.hasFocus() ||
+            tableMutationContext(origin.cell.tableId) != origin.adapter to origin.admission
+        ) {
+            textSelectionOrigin = null
+            return false
+        }
+        val target = hitCell(event.x - drawingView.left, event.y - drawingView.top) ?: return false
+        if (target.first != origin.cell.tableId ||
+            target.second == origin.cell.cellIndex
+        ) {
+            return false
+        }
+        textSelectionOrigin = null
+        val update =
+            origin.adapter.selectTableCell(origin.cell.cellIndex, origin.admission) ?: return false
+        if (!host.editorEditText.applyUpdateJSON(update) ||
+            !host.editorEditText.requestFocus()
+        ) {
+            return false
+        }
+        if (tableInteractionAdapter(origin.adapter) == null ||
+            !origin.adapter.admitsTableMutation(origin.admission)
+        ) {
+            return false
+        }
+        val selection =
+            origin.adapter.cachedAtomicRenderSelection()?.let(::cellSelectionEndpoints)
+                ?: return false
+        val epoch = origin.adapter.positionEpoch ?: return false
+        dismissCellEditMenu()
+        drawingView.cancelTableInteraction()
+        activeDrag = HandleDrag(
+            origin.adapter, origin.admission, origin.role, origin.pointerId,
+            epoch, 0f, 0f, selection.first, selection.second, event.x, viewportY(event.y)
+        )
+        host.editorContentFrame.parent?.requestDisallowInterceptTouchEvent(true)
+        (activeDrag as? HandleDrag)?.let(::updateHandleTarget)
+        if (activeDrag != null) scheduleDragFrame()
+        return activeDrag != null
     }
 
     fun trackFrameGesture(event: MotionEvent) {
@@ -579,10 +684,23 @@ internal class EditorTableSurface(private val host: RichTextEditorView) :
         if (resizeCandidate != null) return
         val x = event.x - drawingView.left
         val y = event.y - drawingView.top
-        if (cellDragSource(x, y) == null) return
+        val target = hitCell(x, y)
+        val context = target?.let { tableMutationContext(it.first) }
+        val nativeMenu =
+            host.tableEditMenuEnabled && activeCell == null && target != null && context != null
+        if (!nativeMenu && cellDragSource(x, y) == null) return
         val start = Runnable {
             pendingCellDrag = null
-            startCellDrag(x, y)
+            if (nativeMenu && target != null && context != null) {
+                if (!host.tableEditMenuEnabled ||
+                    tableMutationContext(target.first) != context
+                ) {
+                    return@Runnable
+                }
+                cellMenuLongPressed = presentCellEditMenuAt(target, x, y)
+            } else {
+                startCellDrag(x, y)
+            }
         }
         pendingCellDrag = PendingCellDrag(start, event.x, event.y)
         drawingView.postDelayed(start, longPressTimeoutMs)
@@ -911,7 +1029,10 @@ internal class EditorTableSurface(private val host: RichTextEditorView) :
                 if (completes && drag is ResizeDrag && activeDrag === drag) {
                     commitResizeDrag(drag)
                 } else {
+                    val showsMenu =
+                        completes && drag is HandleDrag && activeDrag === drag && validDrag(drag)
                     cancelActiveDrag()
+                    if (showsMenu && host.tableEditMenuEnabled) presentCellEditMenu()
                 }
                 return true
             }
@@ -1020,8 +1141,24 @@ internal class EditorTableSurface(private val host: RichTextEditorView) :
         refresh()
     }
 
+    private fun edgeScrollFraction(
+        position: Float,
+        start: Float,
+        end: Float,
+        edgeBand: Float
+    ): Float {
+        val band = minOf(edgeBand, (end - start) / 2f)
+        if (band <= 0f) return 0f
+        return when {
+            position < start + band -> -((start + band - position) / band).coerceIn(0f, 1f)
+            position > end - band -> ((position - end + band) / band).coerceIn(0f, 1f)
+            else -> 0f
+        }
+    }
+
     private fun scheduleDragFrame() {
         if (dragFramePosted || activeDrag == null) return
+        if (lastDragFrameTimeMs == null) lastDragFrameTimeMs = SystemClock.uptimeMillis()
         dragFramePosted = true
         host.editorContentFrame.postOnAnimation(dragFrame)
     }
@@ -1029,6 +1166,8 @@ internal class EditorTableSurface(private val host: RichTextEditorView) :
     private fun discardActiveDrag() {
         val held = activeDrag != null
         activeDrag = null
+        lastDragFrameTimeMs = null
+        verticalDragScrollRemainder = 0f
         resizePreview = null
         drawingView.activeTableResizeEdge = null
         if (dragFramePosted) host.editorContentFrame.removeCallbacks(dragFrame)
@@ -1148,7 +1287,11 @@ internal class EditorTableSurface(private val host: RichTextEditorView) :
     private fun refreshCellEditMenu() {
         if (!cellEditMenu.isVisible) return
         val selection = cellEditMenuSelection()
-        if (selection == null || selection != presentedCellEditMenuSelection) {
+        val adapter = host.editorEditText.v2Driver as? EditorV2Adapter
+        val admission = presentedCellEditMenuAdmission
+        if (selection == null || selection != presentedCellEditMenuSelection ||
+            (admission != null && adapter?.admitsTableMutation(admission) != true)
+        ) {
             dismissCellEditMenu()
             return
         }
@@ -1159,7 +1302,47 @@ internal class EditorTableSurface(private val host: RichTextEditorView) :
         if (activeDrag != null) return
         val selection = cellEditMenuSelection() ?: return
         presentedCellEditMenuSelection = selection
+        presentedCellEditMenuAdmission = tableMutationContext(selection.first)?.second
         cellEditMenu.present()
+    }
+
+    private fun presentCellEditMenuAt(target: Pair<String, Int>, x: Float, y: Float): Boolean {
+        val (adapter, admission) = tableMutationContext(target.first) ?: return false
+        if (!cellSelectionContains(x, y)) {
+            val update = adapter.selectTableCell(target.second, admission) ?: return false
+            if (!host.editorEditText.applyUpdateJSON(update)) return false
+        }
+        host.editorEditText.requestFocus()
+        drawingView.cancelTableInteraction()
+        cancelPendingCellEditMenuToggle()
+        presentCellEditMenu()
+        return cellEditMenu.isVisible
+    }
+
+    private fun cellMenuActions(): Map<TableAccessibilityAction, () -> Boolean> {
+        if (!host.tableEditMenuEnabled) return emptyMap()
+        val selection = cellEditMenuSelection() ?: return emptyMap()
+        val (adapter, admission) = tableMutationContext(selection.first) ?: return emptyMap()
+        val epoch = adapter.positionEpoch ?: return emptyMap()
+        val commands = adapter.cachedActiveState?.optJSONObject("commands") ?: return emptyMap()
+        return TableAccessibilityAction.ALL.filter { commands.optBoolean(it.applicability) }
+            .associateWith { action ->
+                {
+                    if (!host.tableEditMenuEnabled || cellEditMenuSelection() != selection ||
+                        tableMutationContext(selection.first) != adapter to admission ||
+                        adapter.positionEpoch != epoch ||
+                        adapter.cachedActiveState?.optJSONObject(
+                            "commands"
+                        )?.optBoolean(action.applicability) !=
+                        true
+                    ) {
+                        false
+                    } else {
+                        adapter.applyTableCommandAtSelection(action.commandJson(), admission)
+                            ?.let(::applyTableMutationUpdate) ?: false
+                    }
+                }
+            }
     }
 
     fun dismissCellEditMenu() = cellEditMenu.dismiss()
@@ -1171,6 +1354,10 @@ internal class EditorTableSurface(private val host: RichTextEditorView) :
 
     private fun tapCellSelection(target: Pair<String, Int>?, x: Float, y: Float): Boolean {
         if (!cellSelectionContains(x, y)) return false
+        if (host.tableEditMenuEnabled) {
+            dismissCellEditMenu()
+            return target?.let { activateCell(it.first, it.second, x, y) } ?: false
+        }
         if (pendingCellEditMenuToggle != null) {
             cancelPendingCellEditMenuToggle()
             dismissCellEditMenu()
@@ -2178,6 +2365,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) :
     }
 
     fun invalidateCell() {
+        textSelectionOrigin = null
         pinnedInputCell?.let { it.layoutStore.unpin(it.contentKey) }
         pinnedInputCell = null
         activeCell = null

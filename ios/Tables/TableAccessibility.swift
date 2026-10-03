@@ -50,17 +50,28 @@ enum TableAccessibilityText {
     }
 }
 
+enum TableActionMenuGroup: String, CaseIterable {
+    case row = "Row"
+    case column = "Column"
+    case header = "Header"
+    case more = "More"
+
+    var label: String { TableAccessibilityText.string("table.menu.\(rawValue.lowercased())", rawValue) }
+}
+
 struct TableAccessibilityAction: Equatable {
     let key: String
     let applicability: String
     let command: [String: String]
     let defaultLabel: String
+    var menuGroup: TableActionMenuGroup?
+    var isDestructive = false
 
     var label: String { TableAccessibilityText.string("table.accessibility.action.\(key)", defaultLabel) }
 
     static let deleteTable = TableAccessibilityAction(
         key: "deleteTable", applicability: "deleteTable", command: ["type": "deleteTable"],
-        defaultLabel: "Delete table"
+        defaultLabel: "Delete table", menuGroup: .more, isDestructive: true
     )
 
     static let all: [TableAccessibilityAction] = [
@@ -68,67 +79,67 @@ struct TableAccessibilityAction: Equatable {
             key: "addRowBefore",
             applicability: "addTableRowBefore",
             command: ["type": "addTableRow", "side": "before"],
-            defaultLabel: "Insert row above"
+            defaultLabel: "Insert row above", menuGroup: .row
         ),
         TableAccessibilityAction(
             key: "addRowAfter",
             applicability: "addTableRowAfter",
             command: ["type": "addTableRow", "side": "after"],
-            defaultLabel: "Insert row below"
+            defaultLabel: "Insert row below", menuGroup: .row
         ),
         TableAccessibilityAction(
             key: "deleteRows",
             applicability: "deleteTableRows",
             command: ["type": "deleteTableRows"],
-            defaultLabel: "Delete row"
+            defaultLabel: "Delete row", menuGroup: .row, isDestructive: true
         ),
         TableAccessibilityAction(
             key: "selectRows",
             applicability: "selectTableRows",
             command: ["type": "selectTableRows"],
-            defaultLabel: "Select row"
+            defaultLabel: "Select row", menuGroup: .row
         ),
         TableAccessibilityAction(
             key: "addColumnBefore",
             applicability: "addTableColumnBefore",
             command: ["type": "addTableColumn", "side": "before"],
-            defaultLabel: "Insert column before"
+            defaultLabel: "Insert column before", menuGroup: .column
         ),
         TableAccessibilityAction(
             key: "addColumnAfter",
             applicability: "addTableColumnAfter",
             command: ["type": "addTableColumn", "side": "after"],
-            defaultLabel: "Insert column after"
+            defaultLabel: "Insert column after", menuGroup: .column
         ),
         TableAccessibilityAction(
             key: "deleteColumns",
             applicability: "deleteTableColumns",
             command: ["type": "deleteTableColumns"],
-            defaultLabel: "Delete column"
+            defaultLabel: "Delete column", menuGroup: .column, isDestructive: true
         ),
         TableAccessibilityAction(
             key: "selectColumns",
             applicability: "selectTableColumns",
             command: ["type": "selectTableColumns"],
-            defaultLabel: "Select column"
+            defaultLabel: "Select column", menuGroup: .column
         ),
         TableAccessibilityAction(
             key: "toggleHeaderRow",
             applicability: "toggleTableHeaderRow",
             command: ["type": "toggleTableHeader", "target": "row"],
-            defaultLabel: "Toggle header row"
+            defaultLabel: "Toggle header row", menuGroup: .header
         ),
         TableAccessibilityAction(
             key: "toggleHeaderColumn",
             applicability: "toggleTableHeaderColumn",
             command: ["type": "toggleTableHeader", "target": "column"],
-            defaultLabel: "Toggle header column"
+            defaultLabel: "Toggle header column", menuGroup: .header
         ),
         TableAccessibilityAction(
             key: "toggleHeaderCell",
             applicability: "toggleTableHeaderCell",
             command: ["type": "toggleTableHeader", "target": "cell"],
-            defaultLabel: "Toggle header cell"
+            defaultLabel: "Toggle header cell", menuGroup: .header
         ),
         TableAccessibilityAction(
             key: "mergeCells",
@@ -146,7 +157,7 @@ struct TableAccessibilityAction: Equatable {
             key: "clearCells",
             applicability: "clearTableCells",
             command: ["type": "clearTableCells"],
-            defaultLabel: "Clear cells"
+            defaultLabel: "Clear cells", menuGroup: .more, isDestructive: true
         ),
         deleteTable
     ]
@@ -425,6 +436,35 @@ struct TableAccessibilityDetachedFrame {
 
 final class TableCellInputTextView: EditorTextView, UIAccessibilityContainerDataTableCell {
     var tableAccessibilityCell: TableAccessibilityActiveCell?
+
+    func selectionHandleRole(at point: CGPoint) -> TableSelectionHandleRole? {
+        guard isFirstResponder, let range = selectedTextRange, !range.isEmpty else { return nil }
+        let start = caretRect(for: range.start)
+        let end = caretRect(for: range.end)
+        let endpoints: [(TableSelectionHandleRole, CGPoint)] = [
+            (.anchor, CGPoint(x: start.midX, y: start.minY)),
+            (.head, CGPoint(x: end.midX, y: end.maxY))
+        ]
+        let hitRadius = PreparedProseDrawingView.TableHandleMetrics.hitDiameter / 2
+        return endpoints.filter {
+            abs($0.1.x - point.x) <= hitRadius && abs($0.1.y - point.y) <= hitRadius
+        }.min {
+            hypot($0.1.x - point.x, $0.1.y - point.y) < hypot($1.1.x - point.x, $1.1.y - point.y)
+        }?.0
+    }
+
+    func selectionHandleHitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        guard selectionHandleRole(at: point) != nil else { return nil }
+        // UIKit's grabbers extend beyond the tight cell input frame.
+        func hit(_ view: UIView, at point: CGPoint) -> UIView? {
+            guard !view.isHidden, view.alpha > 0, view.isUserInteractionEnabled else { return nil }
+            for child in view.subviews.reversed() {
+                if let target = hit(child, at: view.convert(point, to: child)) { return target }
+            }
+            return view.point(inside: point, with: event) ? view : nil
+        }
+        return hit(self, at: point) ?? self
+    }
 
     override func becomeFirstResponder() -> Bool {
         let focused = super.becomeFirstResponder()

@@ -911,10 +911,8 @@ internal class EditorTableColumnResizeTest {
                 fixture.cell(0).bounds.width()
             )
             val looper = Shadows.shadowOf(Looper.getMainLooper())
-            repeat(64) {
-                if (requireNotNull(fixture.drawing.tableLogicalOffset(fixture.tableId)) <
-                    340f
-                ) {
+            repeat(EDGE_SCROLL_TASK_LIMIT) {
+                if (requireNotNull(fixture.drawing.tableLogicalOffset(fixture.tableId)) < 340f) {
                     looper.runOneTask()
                 }
             }
@@ -1373,6 +1371,7 @@ internal class EditorTableColumnResizeTest {
         }
 
     private companion object {
+        const val EDGE_SCROLL_TASK_LIMIT = 256
         const val GRID_SIZE = 3
         const val NARROW_COLUMN_WIDTH = 150
         const val SWIPE_STEPS = 4

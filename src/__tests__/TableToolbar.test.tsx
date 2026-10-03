@@ -7,7 +7,7 @@ import {
 import { installTableEngine, type EngineEffect } from './helpers/TableEngineFixture';
 import { operationError } from './helpers/nativeEditorV2FakeRecords';
 import { createRef } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import {
     act,
     fireEvent,
@@ -105,6 +105,7 @@ let pendingHostMeasurements: MeasureCallback[] = [];
 let measureInWindow: jest.SpyInstance;
 
 beforeEach(() => {
+    jest.replaceProperty(Platform, 'OS', 'web');
     deferHostMeasurements = false;
     pendingHostMeasurements = [];
 
@@ -131,6 +132,7 @@ beforeEach(() => {
 
 afterEach(() => {
     measureInWindow.mockRestore();
+    jest.restoreAllMocks();
 });
 
 function engineEffects(): Map<string, EngineEffect> {
@@ -267,6 +269,7 @@ function renderTableEditor(props: Partial<RichTextEditorProps> = {}) {
         <NativeRichTextEditor
             ref={ref}
             documentHandle={handle}
+            showToolbar={false}
             onContentChangeJSON={onContentChangeJSON}
             onHistoryStateChange={onHistoryStateChange}
             onSelectionChange={onSelectionChange}
@@ -312,6 +315,27 @@ function press(view: RenderResult, label: string) {
 }
 
 describe('RichTextEditor table toolbar', () => {
+    it.each([ 'ios', 'android' ] as const)('uses a native long-press menu on %s without mounting a floating toolbar', platform => {
+        jest.replaceProperty(Platform, 'OS', platform);
+        const editor = renderTableEditor();
+        editor.driver.focus();
+        editor.driver.selectCells();
+        editor.driver.emitGeometry({});
+        expect(editor.view.queryByTestId(HOST_TEST_ID)).toBeNull();
+        expect(editor.view.getByTestId('native-editor-view').props.tableEditMenuEnabled).toBe(true);
+    });
+
+    it.each([ 'ios', 'android' ] as const)('honours disabled and custom table toolbars on %s', platform => {
+        jest.replaceProperty(Platform, 'OS', platform);
+        const disabled = renderTableEditor({ tableToolbar: false });
+        expect(disabled.view.getByTestId('native-editor-view').props.tableEditMenuEnabled).toBe(false);
+        disabled.view.unmount();
+        const custom = renderTableEditor({ tableToolbar: () => <Text>Custom table tools</Text> });
+        showToolbar(custom);
+        expect(custom.view.getByText('Custom table tools')).toBeTruthy();
+        expect(custom.view.getByTestId('native-editor-view').props.tableEditMenuEnabled).toBe(false);
+    });
+
     it('anchors the default toolbar above the selection in host space and preserves focus over it', () => {
         const editor = renderTableEditor();
 

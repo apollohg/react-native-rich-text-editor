@@ -169,6 +169,21 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         recognizer.cancelsTouchesInView = true
         return recognizer
     }()
+    private lazy var textSelectionGesture: TableTextSelectionGestureRecognizer = {
+        let recognizer = TableTextSelectionGestureRecognizer(target: self, action: #selector(handleTextSelectionGesture(_:)))
+        recognizer.delegate = self
+        recognizer.crossesCellBoundary = { [weak self] in self?.textSelectionDragTarget(at: $0) != nil }
+        recognizer.trackingDidReset = { [weak self] in self?.textSelectionOrigin = nil }
+        return recognizer
+    }()
+    private struct TextSelectionOrigin {
+        let adapter: EditorV2Adapter
+        let admission: EditorV2Adapter.TableMutationAdmission
+        let cellIndex: UInt32
+        let role: TableSelectionHandleRole
+    }
+    private var textSelectionOrigin: TextSelectionOrigin?
+
     private lazy var cellDragInteraction: UIDragInteraction = {
         let interaction = UIDragInteraction(delegate: self)
         interaction.isEnabled = true
@@ -254,9 +269,11 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     var onTableCellPreparedForTesting: ((Int, String) -> Void)?
     private lazy var cellEditMenu = TableCellEditMenu(
         anchor: { [weak self] in self?.cellEditMenuAnchor() },
-        visibilityChanged: { [weak self] in self?.onSelectionGeometryMayChange?() }
+        visibilityChanged: { [weak self] in self?.onSelectionGeometryMayChange?() },
+        tableActions: { [weak self] in self?.cellEditMenuActions() ?? [] }
     )
     private var cellEditMenuEndpoints: TableSelectionEndpoints?
+    private var cellEditMenuDocumentRevision: UInt64?
     private var accessibilityDocumentRevision: UInt64?
     private var accessibilityUnanchoredTables: Set<String> = []
     var isCellEditMenuVisible: Bool { cellEditMenu.isVisible }
@@ -321,6 +338,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         if let pinnedInputCell { pinnedInputCell.layoutStore.unpin(pinnedInputCell.contentKey) }
         discardActiveDrag()
         selectionGesture.view?.removeGestureRecognizer(selectionGesture)
+        textSelectionGesture.view?.removeGestureRecognizer(textSelectionGesture)
         resizeGesture.view?.removeGestureRecognizer(resizeGesture)
         cellEditMenu.interaction.view?.removeInteraction(cellEditMenu.interaction)
         cellDragInteraction.view?.removeInteraction(cellDragInteraction)
@@ -336,6 +354,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     func installTableInteraction(on host: UIView) {
         interactionHost = host as? RichTextEditorView
         host.addGestureRecognizer(selectionGesture)
+        host.addGestureRecognizer(textSelectionGesture)
         host.addGestureRecognizer(resizeGesture)
         interactionHost?.textView.addInteraction(cellEditMenu.interaction)
         interactionHost?.textView.addInteraction(cellDragInteraction)
@@ -620,7 +639,8 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     private func refreshCellEditMenu() {
         guard cellEditMenu.isVisible else { return }
         guard cellEditMenuTextView() != nil,
-              cellEditMenuEndpoints == drawingView.selectedTableCellEndpoints
+              cellEditMenuEndpoints == drawingView.selectedTableCellEndpoints,
+              cellEditMenuDocumentRevision == latestPresentation?.documentRevision
         else {
             dismissCellEditMenu()
             return
@@ -631,7 +651,44 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     func presentCellEditMenu() {
         guard activeDrag == nil, cellEditMenuTextView() != nil else { return }
         cellEditMenuEndpoints = drawingView.selectedTableCellEndpoints
+        cellEditMenuDocumentRevision = latestPresentation?.documentRevision
         cellEditMenu.present()
+    }
+
+    func presentCellEditMenu(at point: CGPoint) {
+        guard let host = interactionHost, host.tableEditMenuEnabled,
+              !host.hasPendingCompositionForExternalRefresh,
+              !hasSelectionHandle(at: point), let hit = cellHit(at: point),
+              let context = tableMutationContext(tableID: hit.tableID) else { return }
+        drawingView.cancelTableMotion()
+        if !cellSelectionContains(point) {
+            guard let update = context.adapter.selectTableCell(cellIndex: Int(hit.cellIndex), admission: context.admission),
+                  let current = tableMutationContext(tableID: hit.tableID),
+                  current.adapter === context.adapter, current.admission == context.admission,
+                  host.activeTextInput.applyUpdateJSON(update) else { return }
+        }
+        guard host.textView.becomeFirstResponder() else { return }
+        presentCellEditMenu()
+    }
+
+    private func cellEditMenuActions() -> [UIMenuElement] {
+        guard interactionHost?.tableEditMenuEnabled == true, cellEditMenuTextView() != nil,
+              let endpoints = drawingView.selectedTableCellEndpoints,
+              let index = drawingView.selectedTableCellSourceIndices[endpoints.tableID]?.min(),
+              let cell = drawingView.tableAccessibilityCell(tableID: endpoints.tableID, sourceIndex: index),
+              let context = tableMutationContext(tableID: endpoints.tableID),
+              let admission = context.adapter.tableCellSelectionAdmission(tableID: endpoints.tableID),
+              admission.anchor == endpoints.anchor, admission.head == endpoints.head else { return [] }
+        let actions = tableAccessibilityActions(for: cell, tableID: endpoints.tableID)
+        return TableCellEditMenu.groupedActions(actions) { [weak self] action in
+            guard let self, self.interactionHost?.tableEditMenuEnabled == true,
+                  self.cellEditMenuTextView() != nil,
+                  self.drawingView.selectedTableCellEndpoints == endpoints,
+                  let current = self.tableMutationContext(tableID: endpoints.tableID),
+                  current.adapter.admitsTableCellSelection(admission) else { return }
+            self.dismissCellEditMenu()
+            _ = self.performTableAccessibilityAction(action, for: cell, tableID: endpoints.tableID)
+        }
     }
 
     func dismissCellEditMenu() {
@@ -897,25 +954,13 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     private func actionableHandle(at point: CGPoint) -> ActionableHandle? {
         guard let (host, adapter) = hostAllowsTableInteraction(),
               activeCell == nil, host.activeTextInput === host.textView,
-              let ownerID = adapter.nativeOwnerId,
-              let ownerToken = adapter.nativeOwnerToken,
-              let epoch = adapter.positionEpoch,
               let viewport = interactionViewport(),
               let handle = drawingView.hitSelectionHandle(at: point, visibleIn: viewport),
               let endpoints = drawingView.selectedTableCellEndpoints,
-              endpoints.tableID == handle.tableID
+              endpoints.tableID == handle.tableID,
+              let admission = adapter.tableCellSelectionAdmission(tableID: endpoints.tableID),
+              admission.anchor == endpoints.anchor, admission.head == endpoints.head
         else { return nil }
-        let admission = EditorV2Adapter.TableCellSelectionAdmission(
-            tableID: endpoints.tableID,
-            documentRevision: adapter.baseDocumentRevision,
-            positionEpoch: epoch,
-            presentationGeneration: adapter.tableResetGeneration,
-            ownerID: ownerID,
-            ownerToken: ownerToken,
-            anchor: endpoints.anchor,
-            head: endpoints.head
-        )
-        guard adapter.admitsTableCellSelection(admission) else { return nil }
         return ActionableHandle(handle: handle, adapter: adapter, admission: admission)
     }
 
@@ -951,6 +996,9 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         guard touch.tapCount == 1,
               touch.view?.window === interactionHost?.window
         else { return false }
+        if gestureRecognizer === textSelectionGesture, let host = interactionHost {
+            return trackTextSelectionDrag(at: touch.location(in: host))
+        }
         let point = touch.location(in: drawingView)
         if gestureRecognizer === selectionGesture {
             return actionableHandle(at: point) != nil
@@ -964,6 +1012,9 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     }
 
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        if gestureRecognizer === textSelectionGesture, let host = interactionHost {
+            return textSelectionDragTarget(at: gestureRecognizer.location(in: host)) != nil
+        }
         if gestureRecognizer === selectionGesture {
             return actionableHandle(at: gestureRecognizer.location(in: drawingView)) != nil
         }
@@ -1002,13 +1053,78 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         case .changed:
             updateHandleDrag(at: point)
         case .ended:
-            updateHandleDrag(at: point)
-            cancelHandleDrag()
+            endHandleDrag(at: point)
         case .cancelled, .failed:
             cancelHandleDrag()
         default:
             break
         }
+    }
+
+    @objc private func handleTextSelectionGesture(_ recognizer: TableTextSelectionGestureRecognizer) {
+        guard let host = interactionHost else { return }
+        let point = recognizer.location(in: host)
+        switch recognizer.state {
+        case .began:
+            _ = beginTextSelectionDrag(at: point)
+        case .changed:
+            updateHandleDrag(at: point)
+        case .ended:
+            endHandleDrag(at: point)
+        case .cancelled, .failed:
+            cancelHandleDrag()
+        default:
+            break
+        }
+    }
+
+    @discardableResult
+    func trackTextSelectionDrag(at hostPoint: CGPoint) -> Bool {
+        textSelectionOrigin = nil
+        guard activeDrag == nil, let host = interactionHost,
+              let cell = activeCell, let context = tableMutationContext(tableID: cell.tableID),
+              host.activeTextInput === inputCoordinator.cellInput,
+              let map = inputCoordinator.cellInput.tableCellPositionMap,
+              map.binding.tableKey == cell.tableID, map.binding.cellIndex == cell.cellIndex,
+              map.binding.documentRevision == context.admission.documentRevision,
+              inputCoordinator.cellInput.isFirstResponder,
+              let range = inputCoordinator.cellInput.selectedTextRange, !range.isEmpty else { return false }
+        let input = inputCoordinator.cellInput
+        let point = host.convert(hostPoint, to: input)
+        guard let role = input.selectionHandleRole(at: point) else { return false }
+        textSelectionOrigin = TextSelectionOrigin(
+            adapter: context.adapter, admission: context.admission, cellIndex: cell.cellIndex, role: role
+        )
+        return true
+    }
+
+    private func textSelectionDragTarget(at hostPoint: CGPoint) -> RootTableCellHit? {
+        guard let origin = textSelectionOrigin, let host = interactionHost,
+              host.activeTextInput === inputCoordinator.cellInput,
+              activeCell?.tableID == origin.admission.tableID, activeCell?.cellIndex == origin.cellIndex,
+              let context = tableMutationContext(tableID: origin.admission.tableID),
+              context.adapter === origin.adapter, context.admission == origin.admission,
+              let target = cellHit(at: host.convert(hostPoint, to: self)),
+              target.tableID == origin.admission.tableID, target.cellIndex != origin.cellIndex else { return nil }
+        return target
+    }
+
+    @discardableResult
+    func beginTextSelectionDrag(at hostPoint: CGPoint) -> Bool {
+        guard textSelectionDragTarget(at: hostPoint) != nil,
+              let origin = textSelectionOrigin, let host = interactionHost, let window = host.window,
+              let update = origin.adapter.selectTableCell(cellIndex: Int(origin.cellIndex), admission: origin.admission),
+              let context = tableMutationContext(tableID: origin.admission.tableID),
+              context.adapter === origin.adapter, context.admission == origin.admission,
+              host.textView.applyUpdateJSON(update), host.textView.becomeFirstResponder(),
+              let admission = origin.adapter.tableCellSelectionAdmission(tableID: origin.admission.tableID)
+        else { return false }
+        dismissCellEditMenu()
+        drawingView.cancelTableMotion()
+        activeDrag = HandleDrag(adapter: origin.adapter, admission: admission, role: origin.role,
+            touchOffset: .zero, windowPoint: host.convert(hostPoint, to: window))
+        updateHandleDrag(at: hostPoint)
+        return handleDrag != nil
     }
 
     @objc private func handleResizeGesture(_ recognizer: TableHorizontalPanGestureRecognizer) {
@@ -1283,6 +1399,14 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         return nil
     }
 
+    func endHandleDrag(at hostPoint: CGPoint) {
+        updateHandleDrag(at: hostPoint)
+        guard let drag = handleDrag else { return }
+        let valid = validHandleDrag(drag)
+        discardActiveDrag()
+        if valid, interactionHost?.tableEditMenuEnabled == true { presentCellEditMenu() }
+    }
+
     func cancelHandleDrag() {
         guard handleDrag != nil else { return }
         discardActiveDrag()
@@ -1305,10 +1429,12 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     }
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        if !inputCoordinator.cellInput.isHidden,
-           activeCellClipView.frame.contains(point),
-           inputCoordinator.cellInput.frame.contains(convert(point, to: activeCellClipView)) {
-            return super.hitTest(point, with: event)
+        let input = inputCoordinator.cellInput
+        if !input.isHidden, activeCellClipView.frame.contains(point) {
+            if input.frame.contains(convert(point, to: activeCellClipView)) {
+                return super.hitTest(point, with: event)
+            }
+            return input.selectionHandleHitTest(convert(point, to: input), with: event)
         }
         return nil
     }

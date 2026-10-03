@@ -53,6 +53,7 @@ export interface NativeEditorViewProps {
     toolbarFrameJson?: string;
     remoteSelectionsJson?: string;
     tableDirection?: TableDirection;
+    tableEditMenuEnabled?: boolean;
     editorUpdateJson?: string;
     editorUpdateResetJson?: string;
     editorUpdateEditorId?: string;

@@ -560,6 +560,9 @@ class NativeEditorModule : Module() {
             Prop("allowImageResizing") { view: NativeEditorExpoView, allowImageResizing: Boolean ->
                 view.setAllowImageResizing(allowImageResizing)
             }
+            Prop("tableEditMenuEnabled") { view: NativeEditorExpoView, enabled: Boolean ->
+                view.setTableEditMenuEnabled(enabled)
+            }
             Prop("tableDirection") { view: NativeEditorExpoView, tableDirection: String? ->
                 view.setTableDirection(tableDirection)
             }

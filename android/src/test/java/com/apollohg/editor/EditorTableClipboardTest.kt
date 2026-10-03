@@ -6,7 +6,9 @@ import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Point
+import android.graphics.Rect
 import android.graphics.RectF
+import android.graphics.drawable.Drawable
 import android.net.Uri
 import android.os.Looper
 import android.view.DragEvent
@@ -35,6 +37,8 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
+import org.robolectric.shadows.ShadowSystemClock
 import org.robolectric.shadows.ShadowWindowManagerGlobal
 import org.robolectric.util.ReflectionHelpers
 
@@ -191,6 +195,7 @@ internal class EditorTableClipboardTest {
         document: String,
         schemaConfig: String = TABLE_CONFIG,
         attached: Boolean = false,
+        nativeMenu: Boolean = false,
         block: (Fixture) -> Unit
     ) {
         val created = UniffiEditorV2Backend.create(schemaConfig, null) as EditorV2CallResult.Ok
@@ -208,6 +213,7 @@ internal class EditorTableClipboardTest {
                 null
             }
             val view = RichTextEditorView(activity?.get() ?: RuntimeEnvironment.getApplication())
+            view.tableEditMenuEnabled = nativeMenu
             activity?.get()?.setContentView(
                 FrameLayout(activity.get()).apply {
                     addView(view, FrameLayout.LayoutParams(VIEW_WIDTH, VIEW_HEIGHT))
@@ -604,6 +610,421 @@ internal class EditorTableClipboardTest {
             assertTrue(
                 requireNotNull(fixture.root.selectionActionMode).tag === TextSelectionActionMode
             )
+        }
+
+    @Test
+    fun `cell handle gesture exclusions follow selection and clear when editing`() = withTable(
+        GRID_DOCUMENT,
+        attached = true,
+        nativeMenu = true
+    ) { fixture ->
+        selectCellsForMenu(fixture, FIRST_CELL, SECOND_CELL)
+        val drawing = drawing(fixture)
+        drawing.viewTreeObserver.dispatchOnPreDraw()
+        val handles = drawing.selectionHandles()
+        assertEquals(2, handles.size)
+        assertEquals(handles.size, drawing.systemGestureExclusionRects.size)
+        handles.forEach { handle ->
+            assertTrue(
+                drawing.systemGestureExclusionRects.any {
+                    it.contains(handle.x.toInt(), handle.y.toInt())
+                }
+            )
+        }
+        tapCell(fixture, FIRST_CELL)
+        assertTrue(fixture.view.editorTableSurface.activeInput != null)
+        drawing.viewTreeObserver.dispatchOnPreDraw()
+        assertTrue(drawing.systemGestureExclusionRects.isEmpty())
+    }
+
+    private fun selectCellText(fixture: Fixture): Pair<EditorEditText, Pair<Float, Float>> {
+        tapCell(fixture, FIRST_CELL)
+        val input = requireNotNull(fixture.view.editorTableSurface.activeInput)
+        input.setSelection(0, input.text.toString().trimEnd('\n').length)
+        input.syncCurrentSelectionToRust()
+        return input to textSelectionHandlePoint(input)
+    }
+
+    private fun textSelectionHandlePoint(
+        input: EditorEditText,
+        role: TableSelectionHandleRole = TableSelectionHandleRole.HEAD
+    ): Pair<Float, Float> {
+        val offset = if (role ==
+            TableSelectionHandleRole.HEAD
+        ) {
+            input.selectionEnd
+        } else {
+            input.selectionStart
+        }
+        val geometry = ReflectionHelpers.callInstanceMethod<Pair<Drawable, Rect>>(
+            input.interaction,
+            "handleGeometry",
+            ReflectionHelpers.ClassParameter.from(Int::class.javaPrimitiveType, offset)
+        )
+        val bounds = geometry.second
+        return input.left + bounds.exactCenterX() + input.totalPaddingLeft - input.scrollX to
+            input.top + bounds.exactCenterY() + input.totalPaddingTop - input.scrollY
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `text selection handle crossing cells opens rectangle actions on release`() = withTable(
+        GRID_DOCUMENT.replace("\"text\":\"A\"", "\"text\":\"Alpha Beta Gamma\""),
+        attached = true,
+        nativeMenu = true
+    ) { fixture ->
+        val (input, handle) = selectCellText(fixture)
+        val before = fixture.adapter.documentJson()
+        val target = cellCenter(fixture, LAST_CELL)
+        dispatchFrameTouches(
+            fixture,
+            listOf(
+                MotionEvent.ACTION_DOWN to handle,
+                MotionEvent.ACTION_MOVE to target
+            )
+        )
+        assertTrue(
+            "crossing a cell boundary hands off to whole cells",
+            fixture.root.authoritativeCellSelectionActive
+        )
+        assertEquals(
+            fixture.openings()[FIRST_CELL],
+            fixture.engineSelection().getInt("anchorCell")
+        )
+        assertEquals(
+            fixture.openings()[LAST_CELL],
+            fixture.engineSelection().getInt("headCell")
+        )
+        assertFalse(fixture.view.editorTableSurface.isCellEditMenuVisible)
+        assertFalse(input.hasFocus())
+        dispatchFrameTouches(fixture, listOf(MotionEvent.ACTION_UP to target))
+        assertTrue(fixture.view.editorTableSurface.isCellEditMenuVisible)
+        assertEquals(before, fixture.adapter.documentJson())
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `text selection handle stays native inside its cell`() = withTable(
+        GRID_DOCUMENT.replace("\"text\":\"A\"", "\"text\":\"Alpha Beta Gamma\""),
+        attached = true,
+        nativeMenu = true
+    ) { fixture ->
+        val (input, handle) = selectCellText(fixture)
+        val length = input.selectionEnd
+        val target =
+            handle.first - input.layout.getPrimaryHorizontal(length) / 2 to handle.second
+        dispatchFrameTouches(
+            fixture,
+            listOf(
+                MotionEvent.ACTION_DOWN to handle,
+                MotionEvent.ACTION_MOVE to target,
+                MotionEvent.ACTION_UP to target
+            )
+        )
+        assertTrue(
+            "in-cell handle must shorten native selection: ${input.selectionStart}..${input.selectionEnd}",
+            input.selectionEnd in 1 until length
+        )
+        assertTrue(input === fixture.view.editorTableSurface.activeInput)
+        assertFalse(fixture.root.authoritativeCellSelectionActive)
+        assertFalse(fixture.view.editorTableSurface.isCellEditMenuVisible)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `composing text selection cannot turn into a cell rectangle`() =
+        withTable(GRID_DOCUMENT, attached = true, nativeMenu = true) { fixture ->
+            tapCell(fixture, FIRST_CELL)
+            val input = requireNotNull(fixture.view.editorTableSurface.activeInput)
+            val connection =
+                requireNotNull(input.onCreateInputConnection(android.view.inputmethod.EditorInfo()))
+            assertTrue(connection.setComposingText("Alpha Beta Gamma", 1))
+            input.setSelection(0, input.text.length)
+            assertTrue(input.hasPendingCompositionForExternalRefresh())
+            val handle = textSelectionHandlePoint(input)
+            val target = cellCenter(fixture, LAST_CELL)
+            dispatchFrameTouches(
+                fixture,
+                listOf(
+                    MotionEvent.ACTION_DOWN to handle,
+                    MotionEvent.ACTION_MOVE to target,
+                    MotionEvent.ACTION_CANCEL to target
+                )
+            )
+            assertFalse(fixture.root.authoritativeCellSelectionActive)
+            assertFalse(fixture.view.editorTableSurface.isCellEditMenuVisible)
+            assertTrue(input === fixture.view.editorTableSurface.activeInput)
+            connection.finishComposingText()
+        }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `anchor text handle crosses cells without opening disabled native tools`() = withTable(
+        GRID_DOCUMENT.replace("\"text\":\"A\"", "\"text\":\"Alpha Beta Gamma\""),
+        attached = true
+    ) { fixture ->
+        val (input) = selectCellText(fixture)
+        val handle = textSelectionHandlePoint(input, TableSelectionHandleRole.ANCHOR)
+        val target = cellCenter(fixture, LAST_CELL)
+        dispatchFrameTouches(
+            fixture,
+            listOf(
+                MotionEvent.ACTION_DOWN to handle,
+                MotionEvent.ACTION_MOVE to target,
+                MotionEvent.ACTION_UP to target
+            )
+        )
+        assertEquals(
+            fixture.openings()[LAST_CELL],
+            fixture.engineSelection().getInt("anchorCell")
+        )
+        assertEquals(
+            fixture.openings()[FIRST_CELL],
+            fixture.engineSelection().getInt("headCell")
+        )
+        assertFalse(fixture.view.editorTableSurface.isCellEditMenuVisible)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `text handle handoff rejects a stale document touch`() = withTable(
+        GRID_DOCUMENT.replace("\"text\":\"A\"", "\"text\":\"Alpha Beta Gamma\""),
+        attached = true,
+        nativeMenu = true
+    ) { fixture ->
+        val (_, handle) = selectCellText(fixture)
+        val target = cellCenter(fixture, LAST_CELL)
+        dispatchFrameTouches(fixture, listOf(MotionEvent.ACTION_DOWN to handle))
+        assertTrue(fixture.view.editorTableSurface.nativeTextSelectionActive())
+        assertTrue(
+            fixture.root.applyUpdateJSON(
+                requireNotNull(fixture.adapter.setContentJson(GRID_DOCUMENT))
+            )
+        )
+        val before = fixture.adapter.documentJson()
+        dispatchFrameTouches(
+            fixture,
+            listOf(
+                MotionEvent.ACTION_MOVE to target,
+                MotionEvent.ACTION_UP to target
+            )
+        )
+        assertFalse(fixture.root.authoritativeCellSelectionActive)
+        assertFalse(fixture.view.editorTableSurface.isCellEditMenuVisible)
+        assertEquals(before, fixture.adapter.documentJson())
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `crossing a text handle to an edge starts autoscroll without another move`() {
+        val columnWidth = VIEW_WIDTH * 3 / 4
+        val document = GRID_DOCUMENT.replace(
+            "\"type\":\"table_cell\"",
+            "\"type\":\"table_cell\",\"attrs\":{\"colwidth\":[$columnWidth]}"
+        )
+            .replace("\"text\":\"A\"", "\"text\":\"Alpha Beta Gamma\"")
+        withTable(document, attached = true, nativeMenu = true) { fixture ->
+            val (_, handle) = selectCellText(fixture)
+            val drawing = drawing(fixture)
+            val tableId = fixture.adapter.tableIndex.tableKeys.single()
+            val edge = drawing.left + drawing.width - 1f to cellCenter(fixture, SECOND_CELL).second
+            val before = requireNotNull(drawing.tableLogicalOffset(tableId))
+            dispatchFrameTouches(
+                fixture,
+                listOf(
+                    MotionEvent.ACTION_DOWN to handle,
+                    MotionEvent.ACTION_MOVE to edge
+                )
+            )
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(TOUCH_STEP_MS * 2))
+            assertTrue(
+                "holding at the edge must scroll after the first crossing MOVE",
+                requireNotNull(drawing.tableLogicalOffset(tableId)) > before
+            )
+            dispatchFrameTouches(fixture, listOf(MotionEvent.ACTION_CANCEL to edge))
+        }
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `row selection scroll eases in near the viewport edge`() {
+        val shallow =
+            measureSelectionScroll(edgeDepthDp = SHALLOW_EDGE_DP, frameMillis = STANDARD_FRAME_MS)
+        val deep =
+            measureSelectionScroll(edgeDepthDp = DEEP_EDGE_DP, frameMillis = STANDARD_FRAME_MS)
+        assertTrue(
+            "shallow=$shallow deep=$deep: entering the edge must not jump to full speed",
+            shallow > 0 && shallow < deep / 3
+        )
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `row selection scroll speed is independent of display refresh rate`() {
+        val standard =
+            measureSelectionScroll(edgeDepthDp = DEEP_EDGE_DP, frameMillis = STANDARD_FRAME_MS)
+        val highRefresh =
+            measureSelectionScroll(edgeDepthDp = DEEP_EDGE_DP, frameMillis = HIGH_REFRESH_FRAME_MS)
+        assertEquals(
+            "same held pointer and elapsed time: standard=$standard highRefresh=$highRefresh",
+            standard.toFloat(),
+            highRefresh.toFloat(),
+            2f
+        )
+    }
+
+    private fun measureSelectionScroll(edgeDepthDp: Float, frameMillis: Long): Int {
+        var distance = 0
+        withTable(
+            com.apollohg.editor.tables.PlainTableFixture.document(
+                SELECTION_SCROLL_ROWS,
+                2,
+                "Select rows"
+            ),
+            attached = true,
+            nativeMenu = true
+        ) { fixture ->
+            selectCellsForMenu(fixture, FIRST_CELL, FIRST_CELL)
+            val drawing = drawing(fixture)
+            val surface = fixture.view.editorTableSurface
+            val scroll = fixture.view.editorScrollView
+            fixture.view.forceLayout()
+            fixture.relayout()
+            val head = drawing.selectionHandles().single {
+                it.role == TableSelectionHandleRole.HEAD
+            }
+            val density = fixture.view.resources.displayMetrics.density
+            val target = VIEW_WIDTH / 2f to
+                (
+                    scroll.height - (SELECTION_EDGE_BAND_DP - edgeDepthDp) * density +
+                        scroll.scrollY -
+                        fixture.view.editorContentFrame.top
+                    )
+            dispatchFrameTouches(
+                fixture,
+                listOf(
+                    MotionEvent.ACTION_DOWN to (head.x + drawing.left to head.y + drawing.top),
+                    MotionEvent.ACTION_MOVE to target
+                )
+            )
+            assertTrue("selection drag must be active before measuring", surface.dragActive())
+            assertTrue(
+                "scroll=${scroll.height} child=${fixture.view.editorContentFrame.height} root=${fixture.root.height} layout=${fixture.root.layout.height} table=${drawing.preparedLayout?.blocks?.firstOrNull()?.tableBounds} y=${scroll.scrollY} target=$target",
+                scroll.canScrollVertically(1)
+            )
+            val before = scroll.scrollY
+            val frame = ReflectionHelpers.getField<Runnable>(surface, "dragFrame")
+            repeat((SELECTION_HOLD_MS / frameMillis).toInt()) {
+                fixture.view.editorContentFrame.removeCallbacks(frame)
+                ShadowSystemClock.advanceBy(Duration.ofMillis(frameMillis))
+                frame.run()
+            }
+            distance = scroll.scrollY - before
+            fixture.view.editorContentFrame.removeCallbacks(frame)
+            val beforeStall = scroll.scrollY
+            ShadowSystemClock.advanceBy(Duration.ofSeconds(1))
+            frame.run()
+            assertTrue(
+                "a delayed frame must not catch up in one large jump",
+                scroll.scrollY - beforeStall <= MAX_SELECTION_FRAME_DP * density
+            )
+            val center = target.first to (
+                scroll.height / 2f + scroll.scrollY -
+                    fixture.view.editorContentFrame.top
+                )
+            dispatchFrameTouches(fixture, listOf(MotionEvent.ACTION_MOVE to center))
+            val stopped = scroll.scrollY
+            repeat((SELECTION_HOLD_MS / frameMillis).toInt()) {
+                fixture.view.editorContentFrame.removeCallbacks(frame)
+                ShadowSystemClock.advanceBy(Duration.ofMillis(frameMillis))
+                frame.run()
+            }
+            assertEquals(
+                "moving away from the edge must stop the viewport",
+                stopped,
+                scroll.scrollY
+            )
+            dispatchFrameTouches(fixture, listOf(MotionEvent.ACTION_CANCEL to center))
+            val afterCancel = scroll.scrollY
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(SELECTION_HOLD_MS))
+            assertEquals("cancel must not leave scrolling callbacks", afterCancel, scroll.scrollY)
+            assertTrue(
+                "held edge must extend beyond the initially visible rows",
+                fixture.engineSelection().getInt("headCell") > fixture.openings()[SECOND_CELL]
+            )
+        }
+        return distance
+    }
+
+    @Test
+    fun `native menu actions reject replaced document`() =
+        withTable(GRID_DOCUMENT, attached = true, nativeMenu = true) { fixture ->
+            selectCellsForMenu(fixture, FIRST_CELL, SECOND_CELL)
+            fixture.view.editorTableSurface.presentCellEditMenu()
+            val mode = requireNotNull(fixture.root.selectionActionMode)
+            assertTrue(
+                fixture.root.applyUpdateJSON(
+                    requireNotNull(fixture.adapter.setContentJson(GRID_DOCUMENT))
+                )
+            )
+            val before = fixture.adapter.documentJson()
+            fixture.backend.mutations.clear()
+            mode.menu.performIdentifierAction(R.id.table_accessibility_delete_table, 0)
+            assertEquals(before, fixture.adapter.documentJson())
+            assertEquals(emptyList<String>(), fixture.backend.mutations)
+            assertFalse(fixture.view.editorTableSurface.isCellEditMenuVisible)
+        }
+
+    @Test
+    fun `native table menu opens on long press and includes admitted table commands`() =
+        withTable(GRID_DOCUMENT, attached = true, nativeMenu = true) { fixture ->
+            val center = cellCenter(fixture, FIRST_CELL)
+            dispatchFrameTouches(fixture, listOf(MotionEvent.ACTION_DOWN to center))
+            shadowOf(Looper.getMainLooper()).idleFor(
+                Duration.ofMillis(ViewConfiguration.getLongPressTimeout().toLong())
+            )
+            assertTrue(
+                "long press selects the cell and opens native actions",
+                fixture.view.editorTableSurface.isCellEditMenuVisible
+            )
+            dispatchFrameTouches(fixture, listOf(MotionEvent.ACTION_UP to center))
+            val commands = requireNotNull(
+                fixture.adapter.cachedActiveState
+            ).getJSONObject("commands")
+            val expected = com.apollohg.editor.tables.TableAccessibilityAction.ALL
+                .filter { commands.optBoolean(it.applicability) }.map { it.id }
+            assertEquals(expected, menuItemIds(fixture).filter { it !in CELL_MENU_ITEMS })
+            val before = fixture.adapter.documentJson()
+            fixture.backend.mutations.clear()
+            clickMenuItem(fixture, R.id.table_accessibility_add_row_after)
+            assertEquals(listOf("$APPLY_COMMAND:addTableRow"), fixture.backend.mutations)
+            assertTrue(fixture.root.applyUpdateJSON(requireNotNull(fixture.adapter.undo())))
+            assertEquals(before, fixture.adapter.documentJson())
+        }
+
+    @Test
+    fun `native table menu opens on handle release but not cancellation`() =
+        withTable(GRID_DOCUMENT, attached = true, nativeMenu = true) { fixture ->
+            selectCellsForMenu(fixture, FIRST_CELL, FIRST_CELL)
+            dragHead(fixture, LAST_CELL)
+            assertTrue(
+                "release opens native actions",
+                fixture.view.editorTableSurface.isCellEditMenuVisible
+            )
+            fixture.view.editorTableSurface.dismissCellEditMenu()
+            val head = drawing(fixture).selectionHandles().single {
+                it.role ==
+                    TableSelectionHandleRole.HEAD
+            }
+            val point = head.x + drawing(fixture).left to head.y + drawing(fixture).top
+            dispatchFrameTouches(
+                fixture,
+                listOf(
+                    MotionEvent.ACTION_DOWN to point,
+                    MotionEvent.ACTION_CANCEL to point
+                )
+            )
+            assertFalse(fixture.view.editorTableSurface.isCellEditMenuVisible)
         }
 
     @Test
@@ -1513,6 +1934,14 @@ internal class EditorTableClipboardTest {
         const val PASTE_COMMAND = "paste"
         const val DELETE_BACKWARD_COMMAND = "deleteBackward"
         const val CELL_SELECTION = "cell"
+        const val SELECTION_SCROLL_ROWS = 80
+        const val SELECTION_EDGE_BAND_DP = 48f
+        const val SHALLOW_EDGE_DP = 4f
+        const val DEEP_EDGE_DP = 40f
+        const val STANDARD_FRAME_MS = 16L
+        const val HIGH_REFRESH_FRAME_MS = 8L
+        const val SELECTION_HOLD_MS = 480L
+        const val MAX_SELECTION_FRAME_DP = 12f
         const val TOUCH_STEP_MS = 20L
         const val AFTER_TEXT = "after"
         const val IMAGE_MIME_TYPE = "image/png"

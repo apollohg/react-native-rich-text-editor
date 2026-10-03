@@ -793,6 +793,9 @@ public class NativeEditorModule: BaseModule, @preconcurrency AnyModule {
             Prop("tableDirection") { (view: NativeEditorExpoView, tableDirection: String?) in
                 view.setTableDirection(tableDirection)
             }
+            Prop("tableEditMenuEnabled") { (view: NativeEditorExpoView, enabled: Bool) in
+                view.richTextView.tableEditMenuEnabled = enabled
+            }
             Prop("imageLoadingPolicyJson") { (view: NativeEditorExpoView, json: String?) in
                 view.setImageLoadingPolicyJson(json)
             }

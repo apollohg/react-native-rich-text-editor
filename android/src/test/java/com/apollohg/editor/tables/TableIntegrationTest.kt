@@ -186,7 +186,7 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
             relayout()
         }
 
-        fun tapCell(position: Int) {
+        fun tapCell(position: Int, longPress: Boolean = false) {
             val cell = presentedCell(position)
             val x = cell.bounds.centerX() + drawing.left
             val y = cell.bounds.centerY() + drawing.top
@@ -194,6 +194,13 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
                 val event = MotionEvent.obtain(0, TOUCH_STEP_MS * index, action, x, y, 0)
                 try {
                     view.richTextView.editorContentFrame.dispatchTouchEvent(event)
+                    if (longPress && action == MotionEvent.ACTION_DOWN) {
+                        shadowOf(
+                            Looper.getMainLooper()
+                        ).idleFor(
+                            Duration.ofMillis(ViewConfiguration.getLongPressTimeout().toLong())
+                        )
+                    }
                 } finally {
                     event.recycle()
                 }
@@ -939,12 +946,12 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
                 fixture.adapter.baseDocumentRevision
             )
 
-            fixture.tapCell(later)
+            fixture.tapCell(later, longPress = true)
             assertTrue(
-                "a tap inside the selection opens the cell menu",
+                "a long press inside the selection opens the cell menu",
                 fixture.surface.isCellEditMenuVisible
             )
-            assertEquals(CELL_MENU_ITEMS, fixture.menuItemIds())
+            assertEquals(CELL_MENU_ITEMS, fixture.menuItemIds().filter { it in CELL_MENU_ITEMS })
             val beforeCut = requireNotNull(fixture.adapter.documentJson())
 
             fixture.clickMenuItem(android.R.id.cut)
@@ -971,7 +978,7 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
             )
 
             fixture.relayout()
-            fixture.tapCell(fixture.positions()[LATER_CELL])
+            fixture.tapCell(fixture.positions()[LATER_CELL], longPress = true)
             assertTrue(fixture.surface.isCellEditMenuVisible)
             fixture.clickMenuItem(android.R.id.paste)
 

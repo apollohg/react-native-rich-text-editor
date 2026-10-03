@@ -213,6 +213,7 @@ export interface RichTextEditorProps {
     /** Remote awareness selections rendered as native overlays. */
     remoteSelections?: readonly RemoteSelectionDecoration[];
     tableDirection?: TableDirection;
+    /** Defaults to a native long-press menu on iOS and Android. */
     tableToolbar?: false | ((state: TableToolbarState) => ReactNode);
     /**
      * Shared v2 document session : the only construction path. The native

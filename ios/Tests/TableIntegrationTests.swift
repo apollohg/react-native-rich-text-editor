@@ -606,12 +606,12 @@ final class TableIntegrationTests: XCTestCase {
             XCTAssertEqual(UIPasteboard.general.string, Integration.irregularRectangleTSV)
             XCTAssertEqual(fixture.adapter.baseDocumentRevision, composedRevision, "copy never mutates")
 
-            let tapPoint = fixture.drawing.convert(
+            let pressPoint = fixture.drawing.convert(
                 CGPoint(x: laterCell.bounds.midX, y: laterCell.bounds.midY),
                 to: fixture.surface
             )
-            fixture.view.tapTableCell(at: tapPoint, touchedAt: ProcessInfo.processInfo.systemUptime)
-            XCTAssertTrue(fixture.surface.isCellEditMenuVisible, "a tap inside the selection opens the cell menu")
+            fixture.surface.presentCellEditMenu(at: pressPoint)
+            XCTAssertTrue(fixture.surface.isCellEditMenuVisible, "a long press inside the selection opens the cell menu")
             XCTAssertEqual(
                 TableCellEditMenu.commands(in: standardMenuCommands(), performableBy: root).map(\.action),
                 Integration.cellMenuItems

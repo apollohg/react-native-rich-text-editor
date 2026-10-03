@@ -170,6 +170,40 @@ class RichTextEditorView @JvmOverloads constructor(
         private var tableGestureEligible = false
         private var nativeTableSelectionGesture = false
 
+        private var routingTextSelectionDrag = false
+
+        override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) routingTextSelectionDrag = false
+            if (routingTextSelectionDrag) {
+                editorTableSurface.onDragTouch(event)
+                if (event.actionMasked == MotionEvent.ACTION_UP ||
+                    event.actionMasked == MotionEvent.ACTION_CANCEL
+                ) {
+                    routingTextSelectionDrag = false
+                }
+                return true
+            }
+            val input = editorTableSurface.activeInput
+            if (editorTableSurface.beginTextSelectionDrag(event)) {
+                routingTextSelectionDrag = true
+                if (input != null) {
+                    val cancel = MotionEvent.obtain(event).apply {
+                        action = MotionEvent.ACTION_CANCEL
+                        offsetLocation(-input.left.toFloat(), -input.top.toFloat())
+                    }
+                    try {
+                        input.dispatchTouchEvent(cancel)
+                    } finally {
+                        cancel.recycle()
+                    }
+                }
+                // The retired text gesture releases interception when it receives cancellation.
+                parent?.requestDisallowInterceptTouchEvent(true)
+                return true
+            }
+            return super.dispatchTouchEvent(event)
+        }
+
         override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
             editorTableSurface.trackFrameGesture(event)
             if (editorTableSurface.dragActive()) return true
@@ -911,6 +945,13 @@ class RichTextEditorView @JvmOverloads constructor(
     internal fun tableSelectionGeometry(
         obstructions: TableSelectionObstructions
     ): TableSelectionGeometry? = editorTableSurface.selectionGeometry(obstructions)
+
+    internal var tableEditMenuEnabled: Boolean = true
+        set(value) {
+            if (field == value) return
+            field = value
+            editorTableSurface.dismissCellEditMenu()
+        }
 
     internal var tableDirection: TableLayoutDirection? = null
         set(value) {

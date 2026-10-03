@@ -10,14 +10,20 @@ final class TableCellEditMenu: NSObject, UIEditMenuInteractionDelegate {
     private(set) lazy var interaction = UIEditMenuInteraction(delegate: self)
     private let anchor: () -> CGRect?
     private let visibilityChanged: () -> Void
+    private let tableActions: () -> [UIMenuElement]
     private var visibleIdentifier: NSString?
     private var dismissedAt = -TimeInterval.infinity
 
     var isVisible: Bool { visibleIdentifier != nil }
 
-    init(anchor: @escaping () -> CGRect?, visibilityChanged: @escaping () -> Void) {
+    init(
+        anchor: @escaping () -> CGRect?,
+        visibilityChanged: @escaping () -> Void,
+        tableActions: @escaping () -> [UIMenuElement]
+    ) {
         self.anchor = anchor
         self.visibilityChanged = visibilityChanged
+        self.tableActions = tableActions
         super.init()
     }
 
@@ -60,6 +66,23 @@ final class TableCellEditMenu: NSObject, UIEditMenuInteractionDelegate {
         return (element as? UICommand).map { [$0] } ?? []
     }
 
+    static func groupedActions(_ actions: [TableAccessibilityAction], perform: @escaping (TableAccessibilityAction) -> Void) -> [UIMenuElement] {
+        func item(_ action: TableAccessibilityAction) -> UIAction {
+            UIAction(
+                title: action.label, identifier: UIAction.Identifier(action.key),
+                attributes: action.isDestructive ? .destructive : []
+            ) { _ in perform(action) }
+        }
+        var items: [UIMenuElement] = TableActionMenuGroup.allCases.filter { $0 != .more }.compactMap { group in
+            let children = actions.filter { $0.menuGroup == group }.map(item)
+            return children.isEmpty ? nil : UIMenu(title: group.label, children: children)
+        }
+        items.append(contentsOf: actions.filter { $0.menuGroup == nil }.map(item))
+        let more = actions.filter { $0.menuGroup == .more }.map(item)
+        if !more.isEmpty { items.append(UIMenu(title: TableActionMenuGroup.more.label, children: more)) }
+        return items
+    }
+
     private func markDismissed() {
         visibleIdentifier = nil
         dismissedAt = ProcessInfo.processInfo.systemUptime
@@ -73,7 +96,9 @@ final class TableCellEditMenu: NSObject, UIEditMenuInteractionDelegate {
     ) -> UIMenu? {
         guard let responder = interaction.view else { return nil }
         let commands = Self.commands(in: suggestedActions, performableBy: responder)
-        return commands.isEmpty ? nil : UIMenu(children: commands)
+        let actions = tableActions()
+        let clipboard: [UIMenuElement] = commands.isEmpty ? [] : [UIMenu(options: .displayInline, children: commands)]
+        return UIMenu(children: clipboard + actions)
     }
 
     func editMenuInteraction(

@@ -292,7 +292,7 @@ public final class PreparedProseDrawingView: UIView {
         }
     }
 
-    private enum TableHandleMetrics {
+    enum TableHandleMetrics {
         static let radius: CGFloat = 8
         static let hitDiameter: CGFloat = 44
     }

@@ -129,6 +129,14 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         return recognizer
     }()
     private var tableCellTapTimestamp: TimeInterval = 0
+    private lazy var tableCellLongPressRecognizer: UILongPressGestureRecognizer = {
+        let recognizer = UILongPressGestureRecognizer(target: self, action: #selector(handleTableCellLongPress(_:)))
+        recognizer.delegate = self
+        return recognizer
+    }()
+    var tableEditMenuEnabled = true {
+        didSet { if !tableEditMenuEnabled { tableSurface.dismissCellEditMenu() } }
+    }
     var tableCellBindingAuthority: ((EditorV2Adapter) -> Bool)?
 
     var activeTextInput: EditorTextView {
@@ -791,6 +799,7 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         }
         addSubview(textView)
         textView.addGestureRecognizer(tableCellTapRecognizer)
+        addGestureRecognizer(tableCellLongPressRecognizer)
         textView.addGestureRecognizer(tableCellDoubleTapRecognizer)
         addSubview(tableSurface)
         tableSurface.installTableInteraction(on: self)
@@ -1363,6 +1372,9 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         let point = touch.location(in: tableSurface)
         guard !tableSurface.hasSelectionHandle(at: point) else { return false }
+        if gestureRecognizer === tableCellLongPressRecognizer {
+            return canPresentTableMenu(at: point, touchedView: touch.view)
+        }
         if gestureRecognizer === tableCellDoubleTapRecognizer {
             return tableSurface.cellSelectionContains(point)
         }
@@ -1379,6 +1391,18 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer
     ) -> Bool {
         gestureRecognizer === tableCellTapRecognizer && otherGestureRecognizer === tableCellDoubleTapRecognizer
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        guard gestureRecognizer === tableCellLongPressRecognizer else { return false }
+        return otherGestureRecognizer === tableCellTapRecognizer
+            || otherGestureRecognizer === tableCellDoubleTapRecognizer
+            || textView.interactions.compactMap { $0 as? UITextInteraction }.contains {
+                $0.gesturesForFailureRequirements.contains(otherGestureRecognizer)
+            }
     }
 
     @objc
@@ -1399,8 +1423,23 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
     }
 
     func tapTableCell(at point: CGPoint, touchedAt timestamp: TimeInterval) {
-        guard !tableSurface.toggleCellEditMenu(at: point, touchedAt: timestamp) else { return }
+        if !tableEditMenuEnabled,
+           tableSurface.toggleCellEditMenu(at: point, touchedAt: timestamp) { return }
+        tableSurface.dismissCellEditMenu()
         _ = activateTableCell(at: point)
+    }
+
+    func canPresentTableMenu(at point: CGPoint, touchedView: UIView?) -> Bool {
+        guard tableEditMenuEnabled, !hasPendingCompositionForExternalRefresh,
+              let touchedView, touchedView === textView || touchedView.isDescendant(of: textView),
+              !tableSurface.hasSelectionHandle(at: point), let hit = tableSurface.cellHit(at: point),
+              tableSurface.tableMutationContext(tableID: hit.tableID) != nil else { return false }
+        return true
+    }
+
+    @objc private func handleTableCellLongPress(_ recognizer: UILongPressGestureRecognizer) {
+        guard recognizer.state == .began else { return }
+        tableSurface.presentCellEditMenu(at: recognizer.location(in: tableSurface))
     }
 
     @discardableResult

@@ -216,6 +216,8 @@ extension EditorTextView {
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         if gestureRecognizer === caretPlacementTapRecognizer {
+            if let input = self as? TableCellInputTextView,
+               input.selectionHandleRole(at: touch.location(in: self)) != nil { return false }
             return touch.tapCount == 1 && canPlaceCaret(at: touch.location(in: self))
         }
         guard gestureRecognizer === imageSelectionTapRecognizer,

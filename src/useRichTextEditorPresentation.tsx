@@ -433,7 +433,10 @@ export function useRichTextEditorPresentation(
 
     const [ tableToolbarSize, setTableToolbarSize ] = useState<Size | null>(null);
 
-    const tableToolbarEnabled = tableToolbar !== false && editable && isFocused;
+    const usesNativeTableEditMenu = Platform.OS === 'ios' || Platform.OS === 'android';
+    const nativeTableEditMenuEnabled = usesNativeTableEditMenu && tableToolbar === undefined && editable;
+    const tableToolbarEnabled = tableToolbar !== false && editable && isFocused &&
+        (!usesNativeTableEditMenu || typeof tableToolbar === 'function');
 
     const measureTableToolbarHost = useCallback(() => {
         const measurement = ++tableToolbarHostMeasurementRef.current;
@@ -668,6 +671,7 @@ export function useRichTextEditorPresentation(
                 toolbarFrameJson={toolbarFrameJson}
                 remoteSelectionsJson={remoteSelectionsJson}
                 tableDirection={tableDirection}
+                {...(usesNativeTableEditMenu ? { tableEditMenuEnabled: nativeTableEditMenuEnabled } : {})}
                 editorUpdateJson={currentPushedUpdate?.json}
                 editorUpdateResetJson={currentPushedUpdate?.resetJson}
                 editorUpdateEditorId={currentPushedUpdate?.editorId}

@@ -12,7 +12,8 @@ import com.apollohg.editor.canPerformCellSelectionMenuItem
 internal class TableCellEditMenu(
     private val root: EditorEditText,
     private val anchor: () -> Rect?,
-    private val visibilityChanged: () -> Unit
+    private val visibilityChanged: () -> Unit,
+    private val tableActions: () -> Map<TableAccessibilityAction, () -> Boolean>
 ) {
     private companion object {
         val ITEMS = listOf(
@@ -23,6 +24,7 @@ internal class TableCellEditMenu(
     }
 
     private var mode: ActionMode? = null
+    private var actions: Map<TableAccessibilityAction, () -> Boolean> = emptyMap()
     private var observedTree: ViewTreeObserver? = null
     private val scrollListener = ViewTreeObserver.OnScrollChangedListener { reanchor() }
 
@@ -40,20 +42,28 @@ internal class TableCellEditMenu(
                     ).setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
                 }
             }
+            actions = tableActions()
+            actions.keys.forEach { action ->
+                menu.add(Menu.NONE, action.id, Menu.NONE, action.label)
+                    .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
+            }
             return menu.size() > 0
         }
 
         override fun onPrepareActionMode(mode: ActionMode, menu: Menu) = false
 
         override fun onActionItemClicked(mode: ActionMode, item: MenuItem): Boolean {
-            val handled = root.onTextContextMenuItem(item.itemId)
-            mode.finish()
+            if (this@TableCellEditMenu.mode !== mode) return false
+            val action = actions.entries.firstOrNull { it.key.id == item.itemId }?.value
+            val handled = action?.invoke() ?: root.onTextContextMenuItem(item.itemId)
+            if (this@TableCellEditMenu.mode === mode) mode.finish()
             return handled
         }
 
         override fun onDestroyActionMode(mode: ActionMode) {
             if (this@TableCellEditMenu.mode !== mode) return
             this@TableCellEditMenu.mode = null
+            actions = emptyMap()
             if (root.selectionActionMode === mode) root.selectionActionMode = null
             observedTree?.takeIf { it.isAlive }?.removeOnScrollChangedListener(scrollListener)
             observedTree = null

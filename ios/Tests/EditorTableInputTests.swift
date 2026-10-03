@@ -282,7 +282,7 @@ final class EditorTableInputTests: XCTestCase {
         XCTAssertTrue(input.isFirstResponder)
         input.layoutManager.ensureLayout(for: input.textContainer)
         XCTAssertEqual(try XCTUnwrap(backgroundPixel()), backgroundBeforeFocus,
-                       "the editing overlay must preserve the painted cell background")
+            "the editing overlay must preserve the painted cell background")
         for fragment in cell.content.blocks.flatMap(\.fragments).filter({ $0.kind == .text }) {
             let line = try XCTUnwrap(fragment.line)
             let characterIndex = CTLineGetStringRange(line).location
@@ -299,7 +299,7 @@ final class EditorTableInputTests: XCTestCase {
             XCTAssertEqual(inputColor.resolvedColor(with: input.traitCollection), UIColor(cgColor: preparedColor))
             let editingBaseline = input.convert(CGPoint(x: 0, y: try XCTUnwrap(input.baselineY(forCharacterAt: characterIndex))), to: fixture.view)
             XCTAssertEqual(editingBaseline.y, preparedBaseline.y, accuracy: 0.5 / input.traitCollection.displayScale,
-                           "focusing must preserve the painted glyph baseline at character \(characterIndex)")
+                "focusing must preserve the painted glyph baseline at character \(characterIndex)")
         }
     }
 

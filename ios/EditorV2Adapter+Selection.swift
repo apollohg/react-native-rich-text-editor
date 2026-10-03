@@ -64,6 +64,20 @@ extension EditorV2Adapter {
         return admitsTableMutation(admission) ? admission : nil
     }
 
+    func tableCellSelectionAdmission(tableID: String) -> TableCellSelectionAdmission? {
+        guard let selection = cachedAtomicRenderSelection(),
+              let endpoints = EditorCellSelection.endpointPositions(selection),
+              let mutation = tableMutationAdmission(tableID: tableID),
+              let epoch = positionEpoch else { return nil }
+        let admission = TableCellSelectionAdmission(
+            tableID: tableID, documentRevision: mutation.documentRevision,
+            positionEpoch: epoch, presentationGeneration: mutation.presentationGeneration,
+            ownerID: mutation.ownerID, ownerToken: mutation.ownerToken,
+            anchor: endpoints.anchor, head: endpoints.head
+        )
+        return admitsTableCellSelection(admission) ? admission : nil
+    }
+
     private func cachedSelectionIsExactCells(anchor: UInt32, head: UInt32, tableID: String) -> Bool {
         guard let selection = cachedAtomicRenderSelection(),
               let endpoints = EditorCellSelection.endpointPositions(selection),
@@ -123,6 +137,20 @@ extension EditorV2Adapter {
               admitsTableMutation(admission.mutation),
               positionEpoch != nil,
               cachedSelectionIsExactCells(anchor: anchor, head: head, tableID: admission.tableID)
+        else { return nil }
+        return update
+    }
+
+    func selectTableCell(cellIndex: Int, admission: TableMutationAdmission) -> String? {
+        guard beginRuntimeOperation() else { return nil }
+        defer { endRuntimeOperation() }
+        guard admitsTableMutation(admission),
+              let position = tableIndex.docStart(tableKey: admission.tableID, cellIndex: cellIndex),
+              let update = applySelectionEnvelope(Self.exactCellSelectionEnvelope(anchor: position, head: position))
+        else { return nil }
+        publishCollaborationCellsIfChanged()
+        guard admitsTableMutation(admission), positionEpoch != nil,
+              cachedSelectionIsExactCells(anchor: position, head: position, tableID: admission.tableID)
         else { return nil }
         return update
     }
