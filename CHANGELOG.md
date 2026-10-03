@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.0.12] - 2026-09-28
+
+### Changed
+
+- Replaced `@expo/vector-icons` with `@react-native-vector-icons/material-design-icons` and updated the toolbar icons and bundled Android font. Thanks to [@mathers101](https://github.com/mathers101) for contributing [#5](https://github.com/apollohg/react-native-rich-text-editor/pull/5).
+
+### Fixed
+
+- Built Android Rust libraries before packaging the release consumer in CI.
+
 ## [2.0.11] - 2026-09-24
 
 ### Added
@@ -703,6 +713,7 @@ This is a hard cutover to shared native document, collaboration, and viewer boun
 - Controlled and uncontrolled content modes (HTML and JSON).
 - Undo/redo history.
 
+[2.0.12]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.11...2.0.12
 [2.0.11]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.10...2.0.11
 [2.0.10]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.9...2.0.10
 [2.0.9]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.8...2.0.9

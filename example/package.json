@@ -1,6 +1,6 @@
 {
   "name": "native-editor-example",
-  "version": "2.0.11",
+  "version": "2.0.12",
   "private": true,
   "main": "expo/AppEntry",
   "scripts": {
@@ -15,7 +15,7 @@
   "dependencies": {
     "@apollohg/react-native-rich-text-editor": "file:..",
     "@apollohg/react-native-rich-text-editor-code-highlighting": "file:../packages/code-highlighting",
-    "@expo/vector-icons": "^15.0.3",
+    "@react-native-vector-icons/material-design-icons": "^13.1.4",
     "expo": "^58.0.0-preview.6",
     "expo-font": "~58.0.2",
     "expo-image-manipulator": "~58.0.7",

@@ -20,7 +20,7 @@ module.exports = {
         '^react-native$': REACT_NATIVE,
         '^react-native/(.*)$': path.join(REACT_NATIVE, '$1'),
         '^expo-modules-core$': EXPO_MODULES_CORE,
-        '^@expo/vector-icons$': '<rootDir>/test/mocks/expoVectorIcons.js',
+        '^@react-native-vector-icons/material-design-icons$': '<rootDir>/test/mocks/expoVectorIcons.js',
     },
     transform: {
         '^.+\\.[jt]sx?$': 'babel-jest',

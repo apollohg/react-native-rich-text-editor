@@ -1,6 +1,6 @@
 import type { MentionSuggestion } from './addons';
 import { StyleSheet, Text, View } from 'react-native';
-import { MaterialIcons } from '@expo/vector-icons';
+import { MaterialDesignIcons } from '@react-native-vector-icons/material-design-icons';
 import {
     type EditorToolbarDefaultIconId,
     type EditorToolbarIcon,
@@ -71,26 +71,26 @@ export const DEFAULT_GLYPH_ICONS: Record<EditorToolbarDefaultIconId, string> = {
     redo: '↪',
 };
 
-export const DEFAULT_MATERIAL_ICONS: Partial<Record<EditorToolbarDefaultIconId, string>> = {
+export const DEFAULT_MATERIAL_DESIGN_ICONS: Partial<Record<EditorToolbarDefaultIconId, string>> = {
     bold: 'format-bold',
     italic: 'format-italic',
-    underline: 'format-underlined',
-    strike: 'strikethrough-s',
+    underline: 'format-underline',
+    strike: 'format-strikethrough-variant',
     link: 'link',
     image: 'image',
-    h1: 'title',
-    h2: 'title',
-    h3: 'title',
-    h4: 'title',
-    h5: 'title',
-    h6: 'title',
-    blockquote: 'format-quote',
+    h1: 'format-title',
+    h2: 'format-title',
+    h3: 'format-title',
+    h4: 'format-title',
+    h5: 'format-title',
+    h6: 'format-title',
+    blockquote: 'format-quote-close',
     bulletList: 'format-list-bulleted',
     orderedList: 'format-list-numbered',
     indentList: 'format-indent-increase',
     outdentList: 'format-indent-decrease',
     lineBreak: 'keyboard-return',
-    horizontalRule: 'horizontal-rule',
+    horizontalRule: 'minus',
     undo: 'undo',
     redo: 'redo',
 };
@@ -181,7 +181,7 @@ export function ToolbarIcon({
     if (materialIconName) {
         return (
             <View style={styles.iconContainer}>
-                <MaterialIcons name={materialIconName as never} size={size ?? 20} color={color} />
+                <MaterialDesignIcons name={materialIconName as never} size={size ?? 20} color={color} />
             </View>
         );
     }
@@ -200,7 +200,7 @@ export function ToolbarIcon({
 export function resolveMaterialIconName(icon: EditorToolbarIcon): string | undefined {
     switch (icon.type) {
         case 'default':
-            return DEFAULT_MATERIAL_ICONS[icon.id];
+            return DEFAULT_MATERIAL_DESIGN_ICONS[icon.id];
         case 'platform':
             return icon.android?.type === 'material' ? icon.android.name : undefined;
         case 'glyph':

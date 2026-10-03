@@ -17,7 +17,7 @@
             "./example/node_modules/@types"
         ],
         "paths": {
-            "@expo/vector-icons": ["./example/node_modules/@expo/vector-icons"],
+            "@react-native-vector-icons/material-design-icons": ["./example/node_modules/@react-native-vector-icons/material-design-icons"],
             "expo-modules-core": ["./node_modules/expo-modules-core"],
             "react-native": ["./node_modules/react-native"]
         },
