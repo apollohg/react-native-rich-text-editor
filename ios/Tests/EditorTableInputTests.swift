@@ -2609,18 +2609,19 @@ final class EditorTableInputTests: XCTestCase {
     func testADockedKeyboardPublishesOnlyTheEditorBandItCovers() throws {
         try withExpoTableGeometry(document: fourCellDocument) { fixture in
             let docked = CGRect(x: 0, y: 180, width: 340, height: 200)
-            let stub = StubKeyboardGuide(in: fixture.host, window: try XCTUnwrap(fixture.host.window), frame: docked)
+            let window = try XCTUnwrap(fixture.host.window)
+            let stub = StubKeyboardGuide(in: fixture.host, window: window, frame: docked)
             fixture.host.trackKeyboardOcclusion(of: stub.guide)
             try fixture.selectCells(anchor: 0, head: 3)
-            let geometryTimeout: TimeInterval = 2
-            let publication = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-                !fixture.recorder.payloads.isEmpty
-            }, object: nil)
-            XCTAssertEqual(
-                XCTWaiter.wait(for: [publication], timeout: geometryTimeout),
-                .completed,
-                "The scheduled geometry frame must publish before its payload is inspected"
+            // The stub's constraints are installed on the window.
+            window.layoutIfNeeded()
+            XCTAssertTrue(fixture.host.richTextView.activeTextInput.isFirstResponder)
+            _ = try XCTUnwrap(
+                fixture.host.currentTableSelectionGeometry(),
+                "keyWindow=\(window.isKeyWindow), guide=\(stub.guide.layoutFrame), "
+                    + "occlusion=\(fixture.host.keyboardOcclusionView.frame)"
             )
+            fixture.host.tableSelectionGeometryPublisher.flush()
 
             let payload = try XCTUnwrap(fixture.recorder.payloads.last)
             XCTAssertEqual(
