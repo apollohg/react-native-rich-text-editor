@@ -8,8 +8,9 @@ pub(crate) use apply::DocumentStats;
 pub use apply::DocumentValidator;
 pub(crate) use apply::{
     apply_step_canonical_marks, canonicalize_yrs_document, canonicalize_yrs_document_with_evidence,
-    validate_canonical_marks, validate_importable_marks_with_evidence, validate_input_mark_set,
-    CanonicalMarksEvidence,
+    document_validation_work_limit, validate_canonical_marks,
+    validate_importable_marks_with_evidence, validate_input_mark_set, validate_subtree_marks,
+    CanonicalMarksEvidence, DOCUMENT_ROOT_DEPTH,
 };
 pub(crate) use apply::{DocumentValidationMetrics, DocumentValidationReport};
 
@@ -201,11 +202,14 @@ impl Transaction {
         let mut composed_map = StepMap::empty();
 
         for step in &self.steps {
-            let (new_doc, step_map) = apply::apply_step(&current, step, schema)?;
-            composed_map = composed_map.compose(&step_map);
+            let (new_doc, step_map) = apply::apply_owned_step(current, step, schema)?;
+            composed_map.append(&step_map);
             current = new_doc;
         }
 
         Ok((current, composed_map))
     }
 }
+
+#[cfg(test)]
+mod owned_replacement_tests;

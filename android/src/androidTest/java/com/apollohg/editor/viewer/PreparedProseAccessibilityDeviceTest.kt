@@ -37,20 +37,15 @@ class PreparedProseAccessibilityDeviceTest {
                     listContext = null,
                     listItemBoundary = null,
                     inlines = listOf(
-                        // The link is one contiguous logical range across the
-                        // first level-0 Latin and level-1 Hebrew runs. The
-                        // unlinked suffix supplies nested level-2 Latin and
-                        // level-1 Hebrew runs before the final level-0 tail.
-                        // Unicode Bidi reorders logical levels [0, 1, 2, 1,
-                        // 0] as visual runs [0, 3, 2, 1, 4], leaving the
-                        // selected level-0 and level-1 runs genuinely gapped.
+                        // The link ends inside the RTL run. Its unlinked Hebrew
+                        // suffix is displayed between the two selected pieces.
                         ViewerInline.Text(
-                            "Latin \u05d0\u05d1\u05d2",
+                            "Latin \u05d0",
                             listOf(
                                 FfiViewerMark("link", "{\"href\":\"https://example.test/bidi\"}")
                             )
                         ),
-                        ViewerInline.Text(" ABC \u05d3\u05d4\u05d5 tail", emptyList())
+                        ViewerInline.Text("\u05d1\u05d2 ABC \u05d3\u05d4\u05d5 tail", emptyList())
                     )
                 )
             ),

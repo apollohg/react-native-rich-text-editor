@@ -1,4 +1,5 @@
 import CoreText
+import CryptoKit
 import UIKit
 
 enum PreparedProseInteractionGeometry {
@@ -60,12 +61,31 @@ func preparedAtomDelegate(_ metrics: PreparedAtomMetrics) -> CTRunDelegate {
     return CTRunDelegateCreate(&callbacks, Unmanaged.passRetained(metrics).toOpaque())!
 }
 
+private struct PreparedListSpacing {
+    let before: CGFloat?
+    let after: CGFloat?
+    let enabled: Bool
+}
+
+struct PreparedParagraphSpacing {
+    let plain: CGFloat
+    let list: CGFloat
+    let quote: CGFloat
+    let quotedList: CGFloat
+}
+
 struct PreparedTextPaint {
     let font: UIFont
     let color: UIColor
     let lineHeight: CGFloat?
     let spacingAfter: CGFloat
     var textValues: [String: Any] = [:]
+    var internalParagraphSpacing = PreparedParagraphSpacing(plain: 0, list: 0, quote: 0, quotedList: 0)
+
+    func paragraphSpacing(inBlockquote: Bool, inList: Bool) -> CGFloat {
+        if inBlockquote { return inList ? internalParagraphSpacing.quotedList : internalParagraphSpacing.quote }
+        return inList ? internalParagraphSpacing.list : internalParagraphSpacing.plain
+    }
 }
 
 struct PreparedViewerAtoms {
@@ -106,6 +126,8 @@ struct PreparedViewerAtoms {
 /// Theme parsing is deliberately outside the drawing path. A registry stores
 /// this value once per generation and every width-specific artifact reuses it.
 struct PreparedProseTheme {
+    let tableStyle: TableStyle
+    let cellShapeStyleDigest: String
     var codeHighlighting: NativeCodeHighlightConfiguration?
     let styleSheet: EditorStyleSheet?
     let viewerAtoms: PreparedViewerAtoms?
@@ -115,11 +137,12 @@ struct PreparedProseTheme {
     let headings: [String: PreparedTextPaint]
     let blockquote: PreparedTextPaint
     let code: PreparedTextPaint
-    let contentInsets: UIEdgeInsets
+    var contentInsets: UIEdgeInsets
     let listIndent: CGFloat
     let listBaseIndentMultiplier: CGFloat
-    let listItemSpacing: CGFloat
-    let listSpacingAfter: CGFloat
+    let listItemSpacing: CGFloat?
+    let listSpacingAfter: CGFloat?
+    let usesEditorParagraphSpacing: Bool
     let listMarkerColor: UIColor
     let listMarkerScale: CGFloat
     let listMarkerGap: CGFloat
@@ -139,6 +162,7 @@ struct PreparedProseTheme {
     let link: EditorLinkTheme?
     let mention: EditorMentionTheme?
     let mentionOverrides: [String: Any]?
+    var tableDirection: TableLayoutDirection?
 
     static func resolve(
         themeJSON: String?,
@@ -148,21 +172,78 @@ struct PreparedProseTheme {
         let theme = EditorTheme.from(json: themeJSON) ?? EditorTheme(dictionary: [:])
         let resolvedScale = fontScale.isFinite && fontScale > 0 ? fontScale : 1
         let baseFont = UIFont.systemFont(ofSize: 17 * resolvedScale)
-        func paint(_ style: EditorTextStyle?, fallback: PreparedTextPaint? = nil) -> PreparedTextPaint {
-            let fallback = fallback ?? PreparedTextPaint(font: baseFont, color: .label, lineHeight: nil, spacingAfter: 0)
-            guard let style else { return fallback }
+        return resolve(
+            theme: theme,
+            baseFont: baseFont,
+            defaultTextColor: .label,
+            fontScale: resolvedScale,
+            semanticGeneration: semanticGeneration,
+            themeJSON: themeJSON
+        )
+    }
+
+    static func resolve(
+        editorTheme: EditorTheme?,
+        baseFont: UIFont,
+        textColor: UIColor,
+        semanticGeneration: String,
+        styleIdentity: String
+    ) -> PreparedProseTheme {
+        resolve(
+            theme: editorTheme ?? EditorTheme(dictionary: [:]),
+            baseFont: baseFont,
+            defaultTextColor: textColor,
+            fontScale: 1,
+            semanticGeneration: semanticGeneration,
+            themeJSON: nil,
+            styleIdentity: styleIdentity,
+            usesEditorParagraphSpacing: true
+        )
+    }
+
+    private static func resolve(
+        theme: EditorTheme,
+        baseFont: UIFont,
+        defaultTextColor: UIColor,
+        fontScale resolvedScale: CGFloat,
+        semanticGeneration: String,
+        themeJSON: String?,
+        styleIdentity: String? = nil,
+        usesEditorParagraphSpacing: Bool = false
+    ) -> PreparedProseTheme {
+        func paint(
+            _ style: EditorTextStyle?,
+            fallback: PreparedTextPaint? = nil,
+            nodeType: String = "paragraph"
+        ) -> PreparedTextPaint {
+            let fallback = fallback ?? PreparedTextPaint(
+                font: baseFont,
+                color: defaultTextColor,
+                lineHeight: nil,
+                spacingAfter: usesEditorParagraphSpacing ? LayoutConstants.paragraphSpacing : 0
+            )
+            let style = style ?? EditorTextStyle()
             let resolvedFont = ViewerFontEnvironment.shared.resolveFont(
                 style: style,
                 fallback: fallback.font,
                 fontScale: resolvedScale,
                 semanticGeneration: semanticGeneration
             )
-            return PreparedTextPaint(
+            var resolved = PreparedTextPaint(
                 font: resolvedFont,
                 color: style.color ?? fallback.color,
                 lineHeight: style.lineHeight.map { $0 * resolvedScale } ?? fallback.lineHeight,
                 spacingAfter: style.spacingAfter.map { $0 * resolvedScale } ?? fallback.spacingAfter
             )
+            if usesEditorParagraphSpacing {
+                resolved.internalParagraphSpacing = PreparedParagraphSpacing(
+                    plain: RenderBridge.paragraphSpacing(nodeType: nodeType, inBlockquote: false, inList: false, theme: theme),
+                    list: RenderBridge.paragraphSpacing(nodeType: nodeType, inBlockquote: false, inList: true, theme: theme),
+                    quote: RenderBridge.paragraphSpacing(nodeType: nodeType, inBlockquote: true, inList: false, theme: theme),
+                    quotedList: RenderBridge.paragraphSpacing(nodeType: nodeType, inBlockquote: true, inList: true, theme: theme)
+                )
+            }
+            return resolved
         }
         let text = paint(theme.text)
         if let link = theme.links {
@@ -190,14 +271,30 @@ struct PreparedProseTheme {
         var headings: [String: PreparedTextPaint] = [:]
         let defaults: [(String, CGFloat)] = [("h1", 32), ("h2", 28), ("h3", 24), ("h4", 21), ("h5", 19), ("h6", 17)]
         for (name, size) in defaults {
-            let defaultHeading = EditorTextStyle(fontSize: size, fontWeight: "700", spacingAfter: 10)
+            let defaultHeading = EditorTextStyle(
+                fontSize: size,
+                fontWeight: "700",
+                spacingAfter: usesEditorParagraphSpacing ? nil : 10
+            )
             headings[name] = paint(
                 theme.effectiveTextStyle(for: name, defaultStyle: defaultHeading),
-                fallback: paragraph
+                fallback: usesEditorParagraphSpacing ? text : paragraph, nodeType: name
             )
         }
-        let listItemSpacing = theme.list?.itemSpacing ?? 4
+        let listItemSpacing = theme.list?.itemSpacing ?? (usesEditorParagraphSpacing ? nil : 4)
+        var cellShapeTheme: [String: Any] = [:]
+        if let data = themeJSON?.data(using: .utf8),
+           let values = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            cellShapeTheme = values
+        }
+        cellShapeTheme.removeValue(forKey: "viewerAtoms")
+        let styleData = (try? JSONSerialization.data(withJSONObject: cellShapeTheme, options: [.sortedKeys]))
+            ?? Data((themeJSON ?? "").utf8)
+        let cellShapeStyleDigest = (styleIdentity ?? SHA256.hash(data: styleData).map { String(format: "%02x", $0) }.joined())
+            + ":" + ProseViewerAppearance.current.identity
         return PreparedProseTheme(
+            tableStyle: TableStyle(theme: theme) ?? TableStyle(),
+            cellShapeStyleDigest: cellShapeStyleDigest,
             styleSheet: theme.styleSheet,
             viewerAtoms: PreparedViewerAtoms.resolve(themeJSON),
             fontScale: resolvedScale,
@@ -205,7 +302,7 @@ struct PreparedProseTheme {
             paragraph: paragraph,
             headings: headings,
             blockquote: quote,
-            code: paint(codeStyle, fallback: codeFallback),
+            code: paint(codeStyle, fallback: codeFallback, nodeType: "codeBlock"),
             contentInsets: theme.styleSheet?.box("content").inset ?? UIEdgeInsets(
                 top: theme.contentInsets?.top ?? 0,
                 left: theme.contentInsets?.left ?? 0,
@@ -216,6 +313,7 @@ struct PreparedProseTheme {
             listBaseIndentMultiplier: theme.list?.baseIndentMultiplier ?? 1,
             listItemSpacing: listItemSpacing,
             listSpacingAfter: theme.list?.spacingAfter ?? listItemSpacing,
+            usesEditorParagraphSpacing: usesEditorParagraphSpacing,
             listMarkerColor: theme.list?.markerColor ?? text.color,
             listMarkerScale: theme.list?.markerScale ?? 1,
             listMarkerGap: theme.list?.markerGap ?? PreparedProseTheme.defaultListMarkerGap,
@@ -258,7 +356,12 @@ struct PreparedProseTheme {
     /// UIFont/UIColor bridge objects and the resolved heading dictionary are
     /// retained by each cached generation theme. Keep the LRU's accounting
     /// deliberately conservative; paint values themselves are immutable.
-    var estimatedRetainedBytes: Int { 3_072 + headings.count * 384 + (viewerAtoms?.retainedBytes ?? 0) }
+    var estimatedRetainedBytes: Int {
+        let nonHeadingPaintCount = 4
+        let spacingBytes = (nonHeadingPaintCount + headings.count) * MemoryLayout.size(ofValue: text.internalParagraphSpacing)
+        let listSpacingBytes = MemoryLayout<PreparedListSpacing>.stride - 2 * MemoryLayout<CGFloat>.stride
+        return 3_072 + headings.count * 384 + spacingBytes + listSpacingBytes + (viewerAtoms?.retainedBytes ?? 0)
+    }
 }
 
 struct PreparedAtomAppearance {

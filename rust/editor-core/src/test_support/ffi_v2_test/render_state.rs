@@ -17,14 +17,459 @@ fn local_json_config(document: &str) -> Value {
     })
 }
 
-const FIXTURE_MULTI_BLOCK: &str = r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"ab"}]},{"type":"paragraph","content":[{"type":"text","text":"cd"}]}]}"#;
-const ORDERED_LIST_START_MISSING: &str = r#"{"type":"doc","content":[{"type":"orderedList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]}]}]}]}"#;
-const ORDERED_LIST_START_MAX: &str = r#"{"type":"doc","content":[{"type":"orderedList","attrs":{"start":4294967295},"content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"last"}]}]}]}]}"#;
-const ORDERED_LIST_START_ABOVE_U32: &str = r#"{"type":"doc","content":[{"type":"orderedList","attrs":{"start":4294967296},"content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"overflow"}]}]}]}]}"#;
-const ORDERED_LIST_INDEX_ABOVE_U32: &str = r#"{"type":"doc","content":[{"type":"orderedList","attrs":{"start":4294967295},"content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"last"}]}]},{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"overflow"}]}]}]}]}"#;
+fn exact_cell_fixture_with_policy(read_only: bool) -> (String, [u64; 4], Value) {
+    let source = json!({ "type": "doc", "content": [{
+        "type": "table", "content": [{ "type": "table_row", "content": [
+            { "type": "table_cell", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "😀first" }] }] },
+            { "type": "table_cell", "content": [{ "type": "table", "content": [{ "type": "table_row", "content": [
+                { "type": "table_cell", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "nested" }] }] }
+            ] }] }] },
+            { "type": "table_cell", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "last" }] }] }
+        ] }] }] });
+    let mut config = json!({
+        "schema": crate::tables::tests::tabled_schema_json(crate::tables::tests::PROSEMIRROR_TABLE_NAMES),
+        "initialization": { "type": "localJson", "json": source.clone() }
+    });
+    if read_only {
+        config["policy"] = json!({ "readOnly": true });
+    }
+    let id = create_handle(config);
+    let records = table_records_by_position(&id);
+    let inner_table = records.last().expect("nested table");
+    let outer_openings = outer_cell_openings(&id);
+    (
+        id,
+        [
+            outer_openings[0],
+            outer_openings[1],
+            outer_openings[2],
+            inner_table.cell_openings[0],
+        ],
+        source,
+    )
+}
+
+fn exact_cell_fixture() -> (String, [u64; 4], Value) {
+    exact_cell_fixture_with_policy(false)
+}
+
+fn exact_cell_request(revision: u64, anchor: Value, head: Value) -> Value {
+    json!({
+        "version": 1, "requestId": "1",
+        "baseDocumentRevision": revision.to_string(),
+        "selection": { "type": "cell", "anchorCell": anchor, "headCell": head }
+    })
+}
+
+fn document_cell_point(opening: u64) -> Value {
+    json!({ "kind": "document", "offset": opening })
+}
+
+fn outer_cell_openings(id: &str) -> Vec<u64> {
+    table_records_by_position(id)
+        .first()
+        .expect("outer table")
+        .cell_openings
+        .clone()
+}
 
 #[test]
-fn render_update_ordered_list_u32_boundary_is_exact_or_rejected() {
+fn exact_document_cell_endpoint_selects_nested_only_outer_cell() {
+    let (id, [first, outer, _, _], _) = exact_cell_fixture();
+    let before_document = document_json_of(&id);
+    let before_state = state_of(&id);
+    let request = exact_cell_request(
+        revision_of(&id),
+        document_cell_point(first),
+        document_cell_point(outer),
+    );
+    ok_json(&v2::editor_v2_set_selection(
+        id.clone(),
+        request.to_string(),
+    ));
+    let after_render = ok_json(&v2_render::editor_v2_render_update(id.clone(), None, None));
+    assert_eq!(after_render["selection"]["type"], "cell");
+    assert_eq!(after_render["selection"]["anchorCell"], first);
+    assert_eq!(after_render["selection"]["headCell"], outer);
+    assert_eq!(document_json_of(&id), before_document);
+    assert_eq!(
+        state_of(&id)["documentRevision"],
+        before_state["documentRevision"]
+    );
+    assert_eq!(state_of(&id)["canUndo"], before_state["canUndo"]);
+    assert_eq!(state_of(&id)["canRedo"], before_state["canRedo"]);
+    destroy_handle(&id);
+}
+
+#[test]
+fn exact_cell_endpoints_reject_non_openings_and_cross_table_pairs_atomically() {
+    let (id, [first, outer, sibling, inner], _) = exact_cell_fixture();
+    let revision = revision_of(&id);
+    let before = state_of(&id);
+    let before_document = document_json_of(&id);
+    let table_end = table_records_by_position(&id)
+        .first()
+        .expect("outer table")
+        .source_end;
+    for (label, head) in [
+        ("inside first cell", first + 1),
+        ("outer cell child boundary", outer + 1),
+        ("before first cell", first - 1),
+        ("document start", 0),
+        ("table end", table_end),
+        ("beyond document", u32::MAX as u64),
+        ("nested table cell", inner),
+    ] {
+        let request = exact_cell_request(
+            revision,
+            document_cell_point(first),
+            document_cell_point(head),
+        );
+        let error = err_json(&v2::editor_v2_set_selection(
+            id.clone(),
+            request.to_string(),
+        ));
+        assert_eq!(error.code, "POSITION_INVALID", "{label}: {error:?}");
+        assert_eq!(state_of(&id), before, "{label} must not change state");
+        assert_eq!(
+            document_json_of(&id),
+            before_document,
+            "{label} must not change document"
+        );
+    }
+    for (anchor, head) in [(sibling, outer), (outer, outer)] {
+        let request = exact_cell_request(
+            revision,
+            document_cell_point(anchor),
+            document_cell_point(head),
+        );
+        ok_json(&v2::editor_v2_set_selection(
+            id.clone(),
+            request.to_string(),
+        ));
+        let rendered = ok_json(&v2_render::editor_v2_render_update(id.clone(), None, None));
+        assert_eq!(rendered["selection"]["anchorCell"], anchor);
+        assert_eq!(rendered["selection"]["headCell"], head);
+    }
+    destroy_handle(&id);
+}
+
+#[test]
+fn exact_cell_wire_is_strict_and_legacy_or_mixed_points_still_work() {
+    let (id, [first, outer, sibling, _], _) = exact_cell_fixture();
+    let revision = revision_of(&id);
+    let base = exact_cell_request(
+        revision,
+        document_cell_point(first),
+        document_cell_point(outer),
+    );
+    for (label, point) in [
+        (
+            "unknown key",
+            json!({ "kind": "document", "offset": outer, "extra": true }),
+        ),
+        ("negative", json!({ "kind": "document", "offset": -1 })),
+        ("fraction", json!({ "kind": "document", "offset": 1.5 })),
+        (
+            "overflow",
+            json!({ "kind": "document", "offset": u64::MAX }),
+        ),
+        ("missing kind", json!({ "offset": outer })),
+        ("unknown kind", json!({ "kind": "row", "offset": outer })),
+        (
+            "invalid affinity",
+            json!({ "kind": "document", "offset": outer, "affinity": "middle" }),
+        ),
+    ] {
+        let mut request = base.clone();
+        request["selection"]["headCell"] = point;
+        let error = err_json(&v2::editor_v2_set_selection(
+            id.clone(),
+            request.to_string(),
+        ));
+        assert_eq!(error.code, "CONFIG_INVALID", "{label}: {error:?}");
+    }
+    let mut text_request = base.clone();
+    text_request["selection"] = json!({ "type": "text",
+        "anchor": document_cell_point(first), "head": document_cell_point(first) });
+    assert_eq!(
+        err_json(&v2::editor_v2_set_selection(
+            id.clone(),
+            text_request.to_string()
+        ))
+        .code,
+        "CONFIG_INVALID"
+    );
+
+    let scalar = ok_json(&v2_render::editor_v2_doc_to_scalar(
+        id.clone(),
+        (first + 3) as u32,
+    ))["scalar"]
+        .as_u64()
+        .unwrap();
+    let utf16 = scalar + "😀".encode_utf16().count() as u64 - "😀".chars().count() as u64;
+    for kind in ["scalar", "utf16"] {
+        let offset = if kind == "utf16" { utf16 } else { scalar };
+        let request = exact_cell_request(
+            revision,
+            json!({ "kind": kind, "offset": offset }),
+            document_cell_point(outer),
+        );
+        let outcome = v2::editor_v2_set_selection(id.clone(), request.to_string());
+        assert!(
+            outcome.error.is_none(),
+            "{kind} offset={offset}: {:?}",
+            outcome.error
+        );
+        ok_json(&outcome);
+        let rendered = ok_json(&v2_render::editor_v2_render_update(id.clone(), None, None));
+        assert_eq!(rendered["selection"]["anchorCell"], first, "{kind}");
+        assert_eq!(rendered["selection"]["headCell"], outer, "{kind}");
+    }
+    let sibling_scalar = ok_json(&v2_render::editor_v2_doc_to_scalar(
+        id.clone(),
+        (sibling + 2) as u32,
+    ))["scalar"]
+        .as_u64()
+        .unwrap();
+    let legacy = exact_cell_request(
+        revision,
+        json!({ "kind": "scalar", "offset": scalar }),
+        json!({ "kind": "utf16", "offset": sibling_scalar + utf16 - scalar }),
+    );
+    ok_json(&v2::editor_v2_set_selection(id.clone(), legacy.to_string()));
+    let rendered = ok_json(&v2_render::editor_v2_render_update(id.clone(), None, None));
+    assert_eq!(rendered["selection"]["anchorCell"], first);
+    assert_eq!(rendered["selection"]["headCell"], sibling);
+    destroy_handle(&id);
+}
+
+#[test]
+fn exact_cell_endpoint_rejects_stale_revision_even_when_opening_is_reused() {
+    let (id, [first, outer, _, _], source) = exact_cell_fixture();
+    let stale_revision = revision_of(&id);
+    let stale_request = exact_cell_request(
+        stale_revision,
+        document_cell_point(first),
+        document_cell_point(outer),
+    );
+    let before_render = ok_json(&v2_render::editor_v2_render_update(id.clone(), None, None));
+    let replacement = source.to_string().replace("first", "other");
+    ok_json(&v2::editor_v2_apply_local_api(
+        id.clone(),
+        replace_envelope(2, stale_revision, &replacement, "resetAndClear"),
+    ));
+    assert!(revision_of(&id) > stale_revision);
+    let after_replace_render = ok_json(&v2_render::editor_v2_render_update(id.clone(), None, None));
+    let replacement_openings = outer_cell_openings(&id);
+    assert_eq!(replacement_openings[0], first);
+    assert_eq!(replacement_openings[1], outer);
+    let after_replace = document_json_of(&id);
+    let error = err_json(&v2::editor_v2_set_selection(
+        id.clone(),
+        stale_request.to_string(),
+    ));
+    assert_eq!(error.code, "REVISION_MISMATCH");
+    assert_eq!(document_json_of(&id), after_replace);
+    assert_eq!(
+        ok_json(&v2_render::editor_v2_render_update(id.clone(), None, None))["selection"],
+        after_replace_render["selection"]
+    );
+    assert_ne!(
+        before_render["documentVersion"],
+        after_replace_render["documentVersion"]
+    );
+    destroy_handle(&id);
+}
+
+#[test]
+fn exact_cell_selection_preserves_document_edit_history_and_redo() {
+    let (id, [first, outer, _, _], _) = exact_cell_fixture();
+    let original = document_json_of(&id);
+    let scalar = ok_json(&v2_render::editor_v2_doc_to_scalar(
+        id.clone(),
+        (first + 3) as u32,
+    ))["scalar"]
+        .as_u64()
+        .unwrap() as u32;
+    ok_json(&v2::editor_v2_set_selection(
+        id.clone(),
+        selection_envelope(1, revision_of(&id), scalar, scalar),
+    ));
+    ok_json(&v2::editor_v2_apply_input(
+        id.clone(),
+        input_envelope(2, revision_of(&id), "Z"),
+    ));
+    let edited = document_json_of(&id);
+    assert_ne!(edited, original);
+    assert_eq!(state_of(&id)["canUndo"], true);
+
+    let edited_openings = outer_cell_openings(&id);
+    let exact = exact_cell_request(
+        revision_of(&id),
+        document_cell_point(edited_openings[0]),
+        document_cell_point(edited_openings[1]),
+    );
+    ok_json(&v2::editor_v2_set_selection(id.clone(), exact.to_string()));
+    assert_eq!(document_json_of(&id), edited);
+    ok_json(&v2::editor_v2_undo(id.clone(), history_envelope(3)));
+    assert_eq!(
+        document_json_of(&id),
+        original,
+        "one undo after exact selection must undo the user edit"
+    );
+    assert_eq!(state_of(&id)["canRedo"], true);
+
+    let exact = exact_cell_request(
+        revision_of(&id),
+        document_cell_point(first),
+        document_cell_point(outer),
+    );
+    ok_json(&v2::editor_v2_set_selection(id.clone(), exact.to_string()));
+    assert_eq!(
+        state_of(&id)["canRedo"],
+        true,
+        "exact selection after undo must preserve redo"
+    );
+    ok_json(&v2::editor_v2_redo(id.clone(), history_envelope(4)));
+    assert_eq!(document_json_of(&id), edited);
+    destroy_handle(&id);
+}
+
+#[test]
+fn exact_cell_selection_is_admitted_under_read_only_policy() {
+    let (id, [first, outer, _, _], _) = exact_cell_fixture_with_policy(true);
+    let before = document_json_of(&id);
+    let request = exact_cell_request(
+        revision_of(&id),
+        document_cell_point(first),
+        document_cell_point(outer),
+    );
+    ok_json(&v2::editor_v2_set_selection(
+        id.clone(),
+        request.to_string(),
+    ));
+    let rendered = ok_json(&v2_render::editor_v2_render_update(id.clone(), None, None));
+    assert_eq!(rendered["selection"]["anchorCell"], first);
+    assert_eq!(rendered["selection"]["headCell"], outer);
+    assert_eq!(document_json_of(&id), before);
+    destroy_handle(&id);
+}
+
+const FIXTURE_MULTI_BLOCK: &str = r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"ab"}]},{"type":"paragraph","content":[{"type":"text","text":"cd"}]}]}"#;
+const ORDERED_LIST_START_MISSING: &str = r#"{"type":"doc","content":[{"type":"orderedList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]}]}]}]}"#;
+const ORDERED_LIST_START_NULL: &str = r#"{"type":"doc","content":[{"type":"orderedList","attrs":{"start":null},"content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]}]}]}]}"#;
+
+#[test]
+fn semantic_table_render_read_is_session_pure_and_matches_viewer_flat_records() {
+    let schema_json =
+        crate::tables::tests::tabled_schema_json(crate::tables::tests::PROSEMIRROR_TABLE_NAMES);
+    let schema = crate::schema::Schema::from_json(&schema_json).unwrap();
+    let source = json!({ "type": "doc", "content": [{
+        "type": "table", "content": [{ "type": "table_row", "content": [
+            { "type": "table_header", "attrs": { "colspan": 2 }, "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "header" }] }] },
+            { "type": "table_cell", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "body" }] }] }
+        ] }]
+    }] });
+    let source_engine = YrsDocumentEngine::new(YrsEngineConfig {
+        schema,
+        fragment_name: FRAGMENT_NAME.into(),
+        initialization_mode: InitializationMode::LocalEmpty,
+        resource_limits: ResourceLimits::default(),
+        editing_limits: EditingLimits::default(),
+        max_length: None,
+        scope: Some(DocumentScope {
+            document_id: DOCUMENT_ID.into(),
+            lineage_id: LINEAGE_ID.into(),
+        }),
+    })
+    .unwrap();
+    let mut source_engine = source_engine;
+    source_engine
+        .import_json(&source.to_string(), TransactionOrigin::DocumentImport)
+        .unwrap();
+    let snapshot = source_engine.export_snapshot().unwrap();
+    let mut config = room_config(Some(&snapshot));
+    config["schema"] = schema_json.clone();
+    let id = create_handle_with_state(config, Some(snapshot.encoded_state));
+    let state_before = state_of(&id);
+    let outbox_before =
+        crate::native_bridge_test_support::outbox_pending(id.parse().unwrap()).unwrap();
+    assert_eq!(outbox_before, Some((0, 0)));
+
+    let editor = ok_json(&v2_render::editor_v2_render_update(id.clone(), None, None));
+    let repeated = ok_json(&v2_render::editor_v2_render_update(id.clone(), None, None));
+    assert_eq!(editor, repeated);
+    assert_eq!(
+        state_of(&id),
+        state_before,
+        "render reads must not mutate document or history state"
+    );
+    assert_eq!(
+        crate::native_bridge_test_support::outbox_pending(id.parse().unwrap()).unwrap(),
+        outbox_before,
+        "render reads must not enqueue outgoing document updates"
+    );
+
+    let viewer = crate::viewer::viewer_compile(crate::viewer::FfiViewerCompileRequest {
+        source_kind: crate::viewer::FfiViewerSourceKind::Json,
+        source: source.to_string(),
+        config_json: json!({ "schema": schema_json, "initialization": { "type": "localEmpty" } })
+            .to_string(),
+        images_enabled: true,
+        mention_prefix: None,
+    })
+    .value
+    .unwrap();
+    let mirror = native_table_mirror(&id);
+    let viewer_records = viewer.table_records();
+    assert_eq!(mirror.tables.len(), viewer_records.len());
+    assert_eq!(mirror.attributes.len(), viewer.table_attributes().len());
+    let root_id = editor["renderBlocks"][0][0]["tableId"].as_str().unwrap();
+    let native = &mirror.tables[root_id];
+    let (position, _) = mirror.table_start(root_id).unwrap();
+    let record = &viewer_records[0];
+    assert_eq!(position, record.table_pos);
+    assert_eq!(position + native.doc_size, record.source_end);
+    assert_eq!(native.cells.len(), record.cells.len());
+    assert_eq!(
+        state_of(&id),
+        state_before,
+        "native frame reads preserve session state"
+    );
+    assert_eq!(
+        crate::native_bridge_test_support::outbox_pending(id.parse().unwrap()).unwrap(),
+        outbox_before
+    );
+    destroy_handle(&id);
+}
+
+fn ordered_list_document_with_start(start: Value, labels: &[&str]) -> String {
+    let items = labels
+        .iter()
+        .map(|label| {
+            json!({
+                "type": "listItem",
+                "content": [{
+                    "type": "paragraph",
+                    "content": [{ "type": "text", "text": label }],
+                }],
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "type": "doc",
+        "content": [{
+            "type": "orderedList",
+            "attrs": { "start": start },
+            "content": items,
+        }],
+    })
+    .to_string()
+}
+
+#[test]
+fn render_update_ordered_list_start_bound_is_exact_or_rejected_at_validation() {
     let id = create_handle(local_json_config(ORDERED_LIST_START_MISSING));
     let update = ok_json(&v2_render::editor_v2_render_update(id.clone(), None, None));
     assert_eq!(
@@ -34,52 +479,67 @@ fn render_update_ordered_list_u32_boundary_is_exact_or_rejected() {
     );
     destroy_handle(&id);
 
-    let id = create_handle(local_json_config(ORDERED_LIST_START_MAX));
+    let id = create_handle(local_json_config(ORDERED_LIST_START_NULL));
     let update = ok_json(&v2_render::editor_v2_render_update(id.clone(), None, None));
     assert_eq!(
         update["renderBlocks"][0][0]["listContext"]["index"],
-        json!(u32::MAX),
-        "the v2 render accessor must preserve u32::MAX exactly"
+        json!(1),
+        "a null ordered-list start means absent and must default to one"
+    );
+    destroy_handle(&id);
+
+    let id = create_handle(local_json_config(&ordered_list_document_with_start(
+        json!(MAX_ORDERED_LIST_START),
+        &["last"],
+    )));
+    let update = ok_json(&v2_render::editor_v2_render_update(id.clone(), None, None));
+    assert_eq!(
+        update["renderBlocks"][0][0]["listContext"]["index"],
+        json!(MAX_ORDERED_LIST_START),
+        "the v2 render accessor must preserve the largest admitted start exactly"
     );
     destroy_handle(&id);
 
     let malformed_starts = [
         json!(-1),
         json!(1.5),
-        Value::Null,
         json!("1"),
+        json!(u64::from(MAX_ORDERED_LIST_START) + 1),
         json!(u64::from(u32::MAX) + 1),
+        json!(1e30),
     ];
-    let malformed_documents = malformed_starts.into_iter().map(|start| {
-        json!({
-            "type": "doc",
-            "content": [{
-                "type": "orderedList",
-                "attrs": { "start": start },
-                "content": [{
-                    "type": "listItem",
-                    "content": [{
-                        "type": "paragraph",
-                        "content": [{ "type": "text", "text": "bad" }],
-                    }],
-                }],
-            }],
-        })
-        .to_string()
-    });
+    let malformed_documents = malformed_starts
+        .into_iter()
+        .map(|start| ordered_list_document_with_start(start, &["bad"]));
 
-    for document in [
-        ORDERED_LIST_START_ABOVE_U32.to_string(),
-        ORDERED_LIST_INDEX_ABOVE_U32.to_string(),
-    ]
-    .into_iter()
-    .chain(malformed_documents)
-    {
+    let id = create_handle(local_json_config(&ordered_list_document_with_start(
+        json!(MAX_ORDERED_LIST_START),
+        &["last", "headroom"],
+    )));
+    let update = ok_json(&v2_render::editor_v2_render_update(id.clone(), None, None));
+    let indexes = update["renderBlocks"]
+        .as_array()
+        .expect("render blocks is an array")
+        .iter()
+        .flat_map(|block| block.as_array().expect("each render block is an array"))
+        .filter_map(|element| element["listContext"]["index"].as_u64())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        indexes,
+        vec![
+            u64::from(MAX_ORDERED_LIST_START),
+            u64::from(MAX_ORDERED_LIST_START) + 1
+        ],
+        "the admitted start bound must leave headroom for every item index a document can hold"
+    );
+    destroy_handle(&id);
+
+    for document in malformed_documents {
         let error = err_json(&v2::editor_v2_create(
             local_json_config(&document).to_string(),
             None,
         ));
-        assert_error(&error, "boundary", "CODEC_INVARIANT_FAILED", None);
+        assert_error(&error, "document", "DOCUMENT_INVALID", None);
     }
 }
 
@@ -207,6 +667,46 @@ fn render_update_cannot_mix_fields_with_a_concurrent_mutation() {
 const ACTIVE_STATE_DOC: &str = r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"plain "},{"type":"text","text":"bold","marks":[{"type":"bold"}]}]}]}"#;
 
 #[test]
+fn identical_selection_mirror_reuses_table_active_state_without_mutating_the_engine() {
+    use crate::yrs_engine::observability::{
+        reset_full_pass_counts_for_test, take_full_pass_counts_for_test,
+    };
+
+    let (id, [first, _, _, _], _) = exact_cell_fixture();
+    let scalar = ok_json(&v2_render::editor_v2_doc_to_scalar(
+        id.clone(),
+        (first + 3) as u32,
+    ))["scalar"]
+        .as_u64()
+        .unwrap() as u32;
+    ok_json(&v2::editor_v2_set_selection(
+        id.clone(),
+        selection_envelope(64, revision_of(&id), scalar, scalar),
+    ));
+    let expected = ok_json(&v2_render::editor_v2_render_update(id.clone(), None, None));
+    let state = state_of(&id);
+    let document = document_json_of(&id);
+    reset_full_pass_counts_for_test();
+    let mirrored = ok_json(&v2_render::editor_v2_render_update(
+        id.clone(),
+        Some(scalar),
+        Some(scalar),
+    ));
+    let passes = take_full_pass_counts_for_test();
+    assert_eq!(
+        mirrored, expected,
+        "the identical mirror must preserve every snapshot field"
+    );
+    assert_eq!(
+        passes.table_command_availability_plans, 0,
+        "an identical mirror must reuse admitted active state: {passes:#?}"
+    );
+    assert_eq!(state_of(&id), state);
+    assert_eq!(document_json_of(&id), document);
+    destroy_handle(&id);
+}
+
+#[test]
 fn render_update_active_state_uses_authoritative_or_explicit_mirror_selection() {
     let id = create_handle(local_json_config(ACTIVE_STATE_DOC));
 
@@ -266,6 +766,22 @@ fn render_update_active_state_no_mirror_uses_engine_stored_marks() {
     // stored marks together.
     let update = ok_json(&v2_render::editor_v2_render_update(id.clone(), None, None));
     assert_eq!(update["activeState"]["marks"]["bold"], json!(true));
+
+    let mirrored = ok_json(&v2_render::editor_v2_render_update(
+        id.clone(),
+        Some(3),
+        Some(3),
+    ));
+    assert_eq!(
+        mirrored["activeState"]["marks"]["bold"],
+        json!(false),
+        "an explicit mirror ignores stored marks even at the installed selection"
+    );
+    assert_eq!(
+        ok_json(&v2_render::editor_v2_render_update(id.clone(), None, None)),
+        update,
+        "reading a mirror must preserve the engine's stored marks"
+    );
 
     destroy_handle(&id);
 }
@@ -656,15 +1172,21 @@ fn code_block_return_adds_line_then_exits_on_extra_return() {
         r#"{"type":"doc","content":[{"type":"codeBlock","attrs":{"language":"rust"},"content":[{"type":"text","text":"code"}]}]}"#,
     ));
     ok_json(&v2::editor_v2_set_selection(
-        id.clone(), selection_envelope_with_affinity(1, revision_of(&id), 4, 4, "before"),
+        id.clone(),
+        selection_envelope_with_affinity(1, revision_of(&id), 4, 4, "before"),
     ));
     ok_json(&v2::editor_v2_apply_command(
-        id.clone(), command_envelope(2, revision_of(&id), json!({"type":"splitBlock"})),
+        id.clone(),
+        command_envelope(2, revision_of(&id), json!({"type":"splitBlock"})),
     ));
-    assert_eq!(document_json_of(&id)["content"][0]["content"][0]["text"], "code\n");
+    assert_eq!(
+        document_json_of(&id)["content"][0]["content"][0]["text"],
+        "code\n"
+    );
     assert_eq!(caret_scalar(&id), 5);
     ok_json(&v2::editor_v2_apply_command(
-        id.clone(), command_envelope(3, revision_of(&id), json!({"type":"splitBlock"})),
+        id.clone(),
+        command_envelope(3, revision_of(&id), json!({"type":"splitBlock"})),
     ));
     let document = document_json_of(&id);
     assert_eq!(document["content"].as_array().unwrap().len(), 2);

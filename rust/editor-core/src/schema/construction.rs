@@ -405,6 +405,9 @@ impl Schema {
             text_node_name: text_names.into_iter().next().expect("one text role"),
         };
         schema.validate_constructibility(budget)?;
+        TableRoles::resolve(&schema).map_err(|error| {
+            SchemaValidationError::semantic(format!("schema table roles are invalid: {error}"))
+        })?;
         schema
             .default_document()
             .map_err(SchemaValidationError::semantic)?;

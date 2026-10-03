@@ -4,9 +4,7 @@ import android.os.Handler
 import android.os.Looper
 import android.view.inputmethod.EditorInfo
 import java.time.Duration
-import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicReference
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -94,7 +92,7 @@ internal class NativeEditorExpoViewControlledUpdateReconciliationTest :
     }
 
     @Test
-    fun `pending controlled update blocks command preflight`() {
+    fun `pending controlled update blocks toolbar action`() {
         val expoContext = testExpoContext(RuntimeEnvironment.getApplication())
         val view = NativeEditorExpoView(expoContext.context, expoContext.appContext)
         val editorId = 77884L
@@ -107,10 +105,14 @@ internal class NativeEditorExpoViewControlledUpdateReconciliationTest :
         view.setPendingEditorUpdateEditorId(editorId)
         view.setPendingEditorUpdateRevision(1)
 
-        val preparation = JSONObject(view.prepareForEditorCommandJSON())
-
-        assertFalse(preparation.getBoolean("ready"))
-        assertEquals("pendingUpdate", preparation.getString("blockedReason"))
+        var actionDispatched = false
+        view.onToolbarActionForTesting = { actionDispatched = true }
+        val action = NativeToolbarItem(type = ToolbarItemKind.ACTION, key = "pending-action")
+        view.handleToolbarItemPress(action, allowPreflightRetry = false)
+        assertFalse("Pending controlled content must prevent toolbar dispatch", actionDispatched)
+        view.clearPendingEditorUpdateState()
+        view.handleToolbarItemPress(action, allowPreflightRetry = false)
+        assertTrue("The same action must dispatch once pending content clears", actionDispatched)
 
         NativeEditorViewRegistry.unregister(editorId, view)
     }
@@ -317,7 +319,7 @@ internal class NativeEditorExpoViewControlledUpdateReconciliationTest :
 
             assertEquals(
                 "backend calls=${backend.calls}",
-                renderCallsBeforeControlledUpdate + 2,
+                renderCallsBeforeControlledUpdate + 1,
                 adapter.renderUpdateCallCountForTesting
             )
             assertEquals("native", editText.text?.toString())

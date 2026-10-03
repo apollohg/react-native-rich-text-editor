@@ -1,16 +1,10 @@
 package com.apollohg.editor
 import android.app.Activity
-import android.graphics.Point
 import android.os.Looper
 import android.view.MotionEvent
 import android.view.Window
-import android.view.inputmethod.EditorInfo
 import android.widget.FrameLayout
-import android.widget.ScrollView
 import java.time.Duration
-import java.util.concurrent.atomic.AtomicBoolean
-import org.json.JSONArray
-import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -173,6 +167,50 @@ internal class NativeEditorExpoViewLifecycleTest : NativeEditorExpoViewTestFixtu
     }
 
     @Test
+    fun `editor id set before attach claims error ownership once the view attaches`() {
+        val expoContext = testExpoContext(RuntimeEnvironment.getApplication())
+        val view = NativeEditorExpoView(expoContext.context, expoContext.appContext)
+        val adapter = attachAdapterForViewTest(FakeEditorV2Backend())
+        val viewToken = EditorV2Registry.register(adapter)
+        val errors = mutableListOf<Map<String, Any>>()
+        try {
+            view.onEditorErrorForTesting = { errors += it }
+            view.onEditorUpdateForTesting = {}
+            view.onAddonEventForTesting = {}
+            view.onEditorReadyForTesting = {}
+            view.onSelectionChangeForTesting = {}
+            view.setEditorId(viewToken)
+            assertNull(
+                "a detached view must not own the adapter",
+                view.editorErrorCallbackTokenForTesting()
+            )
+
+            view.handleAttachedToWindowForTesting()
+
+            assertEquals(
+                "attach must bind the editor text to the view token",
+                viewToken,
+                view.richTextView.editorEditText.editorId
+            )
+            assertNotNull(
+                "attach must claim error ownership after binding the editor",
+                view.editorErrorCallbackTokenForTesting()
+            )
+            assertTrue(
+                "the attached view must hold table owner authority",
+                view.hasTableRootNativeOwnerAuthority(adapter)
+            )
+            adapter.destroy()
+            assertTrue(commitBoundText(view, "x"))
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals("errors: $errors", 1, errors.size)
+        } finally {
+            EditorV2Registry.remove(adapter.editorId)
+            NativeEditorViewRegistry.unregister(viewToken, view)
+        }
+    }
+
+    @Test
     fun `cleared bound view references are pruned without retaining editor history`() {
         val expoContext = testExpoContext(RuntimeEnvironment.getApplication())
         val view = NativeEditorExpoView(expoContext.context, expoContext.appContext)
@@ -182,10 +220,9 @@ internal class NativeEditorExpoViewLifecycleTest : NativeEditorExpoViewTestFixtu
         assertEquals(1, NativeEditorViewRegistry.boundViewReferenceCountForTests(editorId))
 
         NativeEditorViewRegistry.forceRegisteredViewsClearedForTesting(editorId)
-        assertTrue(
-            JSONObject(NativeEditorViewRegistry.prepareForCommandJSON(editorId))
-                .getBoolean("ready")
-        )
+        assertTrue(NativeEditorViewRegistry.register(editorId, view))
+        assertEquals(1, NativeEditorViewRegistry.boundViewReferenceCountForTests(editorId))
+        NativeEditorViewRegistry.unregister(editorId, view)
         assertEquals(0, NativeEditorViewRegistry.boundViewReferenceCountForTests(editorId))
 
         NativeEditorViewRegistry.invalidateDestroyedEditor(editorId)

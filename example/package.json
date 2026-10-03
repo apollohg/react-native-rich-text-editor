@@ -16,19 +16,19 @@
     "@apollohg/react-native-rich-text-editor": "file:..",
     "@apollohg/react-native-rich-text-editor-code-highlighting": "file:../packages/code-highlighting",
     "@react-native-vector-icons/material-design-icons": "^13.1.4",
-    "expo": "^57.0.18",
-    "expo-font": "~57.0.1",
-    "expo-image-manipulator": "~57.0.14",
-    "expo-image-picker": "~57.0.14",
-    "expo-status-bar": "~57.0.1",
-    "react": "19.2.3",
-    "react-dom": "19.2.3",
-    "react-native": "0.86.3",
-    "react-native-safe-area-context": "~5.7.0"
+    "expo": "^58.0.0-preview.6",
+    "expo-font": "~58.0.2",
+    "expo-image-manipulator": "~58.0.7",
+    "expo-image-picker": "~58.0.6",
+    "expo-status-bar": "~58.0.1",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-native": "0.88.0-rc.1",
+    "react-native-safe-area-context": "~5.9.1"
   },
   "devDependencies": {
-    "@types/react": "~19.2.4",
-    "babel-preset-expo": "~57.0.0",
+    "@types/react": "~19.3.0",
+    "babel-preset-expo": "~58.0.0",
     "typescript": "~6.0.3"
   }
 }

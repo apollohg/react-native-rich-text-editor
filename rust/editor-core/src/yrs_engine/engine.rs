@@ -8,6 +8,7 @@ mod history_state;
 mod imports;
 mod mutation_context;
 mod outbound;
+mod position_epoch_cells;
 mod remote;
 mod selection_commit;
 mod snapshots;
@@ -48,25 +49,25 @@ use candidate_cache::{
 #[cfg(test)]
 use history_state::history_metadata_bytes;
 pub(crate) use imports::admit_local_import_document;
-#[cfg(test)]
-use imports::ValidatedImportDocument;
+pub(in crate::yrs_engine) use imports::ValidatedImportDocument;
 #[cfg(test)]
 use outbound::OutboundUpdateSink;
 #[cfg(test)]
 use remote::admit_max_encoded_state_len;
 pub use remote::PreparedRemoteUpdate;
 use serde_json::json;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 #[cfg(test)]
 use test_hooks::{
     check_compiled_commit_preparation_stage_for_test, mark_compiled_commit_durable_write_for_test,
-    reset_encoded_state_reuse_counts_for_test, reset_import_receipt_sha256_counts_for_test,
-    reset_import_receipt_state_decodings_for_test, reset_import_state_encoding_counts_for_test,
-    reset_prepared_candidate_cache_counts_for_test, set_compiled_commit_stage_failpoint_for_test,
-    set_outbound_staging_copy_failure_for_test,
+    reset_encoded_state_reuse_counts_for_test, reset_history_replay_guard_encodings_for_test,
+    reset_import_receipt_sha256_counts_for_test, reset_import_receipt_state_decodings_for_test,
+    reset_import_state_encoding_counts_for_test, reset_prepared_candidate_cache_counts_for_test,
+    set_compiled_commit_stage_failpoint_for_test, set_outbound_staging_copy_failure_for_test,
     set_quarantined_update_reservation_failure_for_test,
-    take_compiled_commit_authority_counts_for_test, take_encoded_state_reuse_counts_for_test,
+    set_replay_candidate_perturbation_for_test, take_compiled_commit_authority_counts_for_test,
+    take_encoded_state_reuse_counts_for_test, take_history_replay_guard_encodings_for_test,
     take_import_receipt_sha256_counts_for_test, take_import_receipt_state_decodings_for_test,
     take_import_state_encoding_counts_for_test, take_prepared_candidate_cache_counts_for_test,
     CompiledCommitPreparationStage,
@@ -104,6 +105,14 @@ pub struct EngineCommit {
     pub revision: u64,
 }
 
+const DOCUMENT_CHANGE_SCOPE_LOG_CAPACITY: usize = 64;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DocumentChangeScope {
+    Textblock { block_index: usize },
+    Document,
+}
+
 pub struct YrsDocumentEngine {
     doc: Doc,
     fragment_name: String,
@@ -114,8 +123,16 @@ pub struct YrsDocumentEngine {
     scope: Option<DocumentScope>,
     schema_fingerprint: String,
     canonical_schema: CanonicalSchemaContext,
+    canonical_splice_cache: Option<super::canonical::CanonicalSpliceCache>,
     derived_state: Option<DerivedStateCache>,
     revision: u64,
+    encoded_state_upper_bound: usize,
+    document_scope_revision: u64,
+    last_recorded_revision: u64,
+    last_change_scope: DocumentChangeScope,
+    change_scopes: VecDeque<(u64, DocumentChangeScope)>,
+    #[cfg(test)]
+    recorded_change_count: u64,
     state_revision: u64,
     yrs_state_epoch: u64,
     last_committed_origin: Option<TransactionOrigin>,
@@ -231,6 +248,7 @@ impl YrsDocumentEngine {
         );
 
         Ok(Self {
+            encoded_state_upper_bound: candidate.encoded_state_bytes,
             doc: candidate.doc,
             fragment_name,
             schema,
@@ -240,8 +258,15 @@ impl YrsDocumentEngine {
             scope,
             schema_fingerprint,
             canonical_schema,
+            canonical_splice_cache: None,
             derived_state,
             revision: 0,
+            document_scope_revision: 0,
+            last_recorded_revision: 0,
+            last_change_scope: DocumentChangeScope::Document,
+            change_scopes: VecDeque::with_capacity(DOCUMENT_CHANGE_SCOPE_LOG_CAPACITY),
+            #[cfg(test)]
+            recorded_change_count: 0,
             state_revision: 0,
             yrs_state_epoch: 0,
             last_committed_origin: None,
@@ -255,8 +280,59 @@ impl YrsDocumentEngine {
         })
     }
 
+    fn record_document_change(&mut self, scope: DocumentChangeScope) {
+        debug_assert!(self.revision > self.last_recorded_revision);
+        self.last_recorded_revision = self.revision;
+        self.last_change_scope = scope;
+        if self.change_scopes.len() == DOCUMENT_CHANGE_SCOPE_LOG_CAPACITY {
+            self.change_scopes.pop_front();
+        }
+        self.change_scopes.push_back((self.revision, scope));
+        if scope == DocumentChangeScope::Document {
+            self.document_scope_revision = self.revision;
+        }
+        #[cfg(test)]
+        {
+            self.recorded_change_count += 1;
+        }
+    }
+
+    pub(crate) fn change_scopes_since(&self, revision: u64) -> Option<Vec<DocumentChangeScope>> {
+        if revision > self.revision {
+            return None;
+        }
+        let mut expected = revision;
+        let mut scopes = Vec::new();
+        for &(changed, scope) in self
+            .change_scopes
+            .iter()
+            .filter(|(changed, _)| *changed > revision)
+        {
+            expected = expected.checked_add(1)?;
+            if changed != expected {
+                return None;
+            }
+            scopes.push(scope);
+        }
+        (expected == self.revision).then_some(scopes)
+    }
+
+    pub(crate) fn document_scope_revision(&self) -> u64 {
+        self.document_scope_revision
+    }
+
     pub fn is_ready(&self) -> bool {
         self.derived_state.is_some()
+    }
+
+    pub(crate) fn active_state(&self) -> Option<crate::editor_state::ActiveState> {
+        let state = self.derived_state.as_ref()?;
+        Some(state.render_active_state(
+            &self.schema,
+            &self.resource_limits,
+            &self.editing_limits,
+            self.document_scope_revision(),
+        ))
     }
 
     pub fn render_state(&self) -> EngineRenderState {
@@ -320,12 +396,77 @@ impl YrsDocumentEngine {
         Some(serde_json::json!({ "anchor": anchor, "head": head }))
     }
 
+    pub(crate) fn awareness_cell_rectangle(
+        &self,
+        anchor: u32,
+        head: u32,
+    ) -> Option<serde_json::Value> {
+        crate::tables::selection::cell_pair_is_usable(
+            self.table_projection_index()?,
+            anchor,
+            head,
+            crate::tables::selection::CellSelectionOrigin::Minted,
+        )
+        .then_some(())?;
+        let txn = self.doc.transact();
+        let fragment = txn.get_xml_fragment(self.fragment_name.as_str())?;
+        let sticky = |position| cell_opening_sticky_index(&txn, &fragment, position, &self.schema);
+        Some(super::awareness::encode_relative_cell_rectangle(
+            &super::awareness::RelativeCellRectangle {
+                anchor: sticky(anchor)?,
+                head: sticky(head)?,
+            },
+        ))
+    }
+
+    pub fn resolve_awareness_cell_rectangle(
+        &self,
+        state: &serde_json::Value,
+    ) -> Option<(u32, u32)> {
+        let rectangle = super::awareness::decode_relative_cell_rectangle(state)?;
+        let txn = self.doc.transact();
+        let fragment = txn.get_xml_fragment(self.fragment_name.as_str())?;
+        let live_opening = |sticky: &yrs::StickyIndex| {
+            let position =
+                super::position::sticky_index_to_doc_pos(&txn, &fragment, sticky, &self.schema)?;
+            let current = cell_opening_sticky_index(&txn, &fragment, position, &self.schema)?;
+            (current.id() == sticky.id()).then_some(position)
+        };
+        let anchor = live_opening(&rectangle.anchor)?;
+        let head = live_opening(&rectangle.head)?;
+        crate::tables::selection::cell_pair_is_usable(
+            self.table_projection_index()?,
+            anchor,
+            head,
+            crate::tables::selection::CellSelectionOrigin::Minted,
+        )
+        .then_some((anchor, head))
+    }
+
     pub(crate) fn clipboard(&self) -> Option<serde_json::Value> {
         let document = self.document()?;
         let selection = super::derived_state::resolved_to_legacy(self.resolved_selection()?);
+        if let Some(reason) = crate::clipboard::unsupported_selection(&selection) {
+            let index = self.table_projection_index()?;
+            return Some(
+                match crate::clipboard::export_cells(document, &selection, index, &self.schema) {
+                    Ok(copied) => copied,
+                    Err(crate::tables::interchange::InterchangeFailure::NotACellRectangle) => {
+                        serde_json::json!({ crate::clipboard::CLIPBOARD_UNSUPPORTED_KEY: reason })
+                    }
+                    Err(crate::tables::interchange::InterchangeFailure::UnreadableGrid) => {
+                        serde_json::json!({
+                            crate::clipboard::CLIPBOARD_UNSUPPORTED_KEY:
+                                crate::clipboard::CLIPBOARD_UNSUPPORTED_TABLE_GRID
+                        })
+                    }
+                },
+            );
+        }
         Some(
-            crate::clipboard::export(document, &selection, &self.schema)
-                .unwrap_or_else(|| serde_json::json!({"empty": true})),
+            crate::clipboard::export(document, &selection, &self.schema).unwrap_or_else(
+                || serde_json::json!({ crate::clipboard::CLIPBOARD_EMPTY_KEY: true }),
+            ),
         )
     }
 
@@ -344,10 +485,11 @@ impl YrsDocumentEngine {
             .map(|state| Arc::clone(&state.render_blocks))
     }
 
-    pub(crate) fn block_atom_ids(&self) -> Option<HashMap<u32, String>> {
-        let txn = self.doc.transact();
-        let fragment = txn.get_xml_fragment(self.fragment_name.as_str())?;
-        super::position::block_atom_ids(&txn, &fragment, &self.schema)
+    pub(crate) fn block_branch_index(
+        &self,
+    ) -> Option<&super::block_branch_index::BlockBranchIndex> {
+        self.debug_assert_derived_revision_keys();
+        self.derived_state.as_ref()?.block_branch_index.as_deref()
     }
 
     pub fn document_json(&self) -> Option<serde_json::Value> {
@@ -366,6 +508,14 @@ impl YrsDocumentEngine {
             ))
             .expect("serialized JSON is UTF-8")
         })
+    }
+
+    pub(crate) fn table_projection_index(
+        &self,
+    ) -> Option<&crate::tables::admission::TableProjectionIndex> {
+        self.derived_state
+            .as_ref()
+            .map(|state| &state.table_projection_index)
     }
 
     pub fn document_html(&self) -> Option<String> {
@@ -393,6 +543,40 @@ impl YrsDocumentEngine {
         self.state_revision
     }
 
+    #[cfg(feature = "table-interop")]
+    pub(crate) fn availability_history_audit(
+        &self,
+    ) -> Option<super::history::AvailabilityHistoryAudit> {
+        self.history.availability_audit()
+    }
+
+    #[cfg(feature = "table-interop")]
+    pub(crate) fn availability_content_audit(&self) -> Option<Vec<u8>> {
+        let state = self.derived_state.as_ref()?;
+        if state.canonical_artifact.serialized_len() > crate::availability_audit::MAX_BYTES {
+            return None;
+        }
+        crate::availability_audit::freeze_json(
+            state.canonical_artifact.value(),
+            crate::availability_audit::MAX_BYTES,
+        )
+    }
+
+    #[cfg(feature = "table-interop")]
+    pub(crate) fn availability_encoded_audit(&self) -> Option<Vec<u8>> {
+        self.doc.transact().encode_state_for_history_audit(
+            crate::availability_audit::MAX_BYTES,
+            crate::availability_audit::MAX_ITEMS,
+        )
+    }
+
+    #[cfg(feature = "table-interop")]
+    pub(crate) fn availability_history_metadata_audit(
+        &self,
+    ) -> Option<Vec<yrs::HistoryMetadataAuditItem>> {
+        self.doc.transact().store().history_metadata_audit(65_536)
+    }
+
     /// Production audit surface: the Yrs state epoch, so full before/after
     /// session audits can pin epoch stability across atomic rejections.
     #[allow(dead_code)]
@@ -405,90 +589,301 @@ impl YrsDocumentEngine {
         self.derived_state.as_ref().map(|state| &state.position_map)
     }
 
-    pub(crate) fn build_position_epoch_boundaries(
+    pub(crate) fn build_position_epoch_snapshot(
         &self,
-    ) -> Option<Vec<crate::position_epoch::BoundaryAnchors>> {
+    ) -> Option<crate::position_epoch::EpochSnapshot> {
         self.debug_assert_derived_revision_keys();
         let state = self.derived_state.as_ref()?;
         let txn = self.doc.transact();
         let fragment = txn.get_xml_fragment(self.fragment_name.as_str())?;
-        let count = usize::try_from(state.position_map.total_scalars())
-            .ok()?
-            .checked_add(1)?;
-        let mut boundaries = Vec::new();
-        boundaries.try_reserve_exact(count).ok()?;
-        let mut previous: Option<(u32, crate::position_epoch::BoundaryAnchors)> = None;
-        for scalar_offset in 0..=state.position_map.total_scalars() {
-            let doc_pos = state
-                .position_map
-                .scalar_to_doc(scalar_offset, &state.document);
-            let anchors = if let Some((previous_doc_pos, previous_anchors)) = &previous {
-                if *previous_doc_pos == doc_pos {
-                    previous_anchors.clone()
-                } else {
-                    super::position::boundary_anchors_from_doc_pos(
-                        &txn,
-                        &fragment,
-                        doc_pos,
-                        &self.schema,
-                    )?
+        let doc_positions = if state.position_map.block_count() == 0 {
+            vec![vec![0]]
+        } else {
+            (0..state.position_map.block_count())
+                .map(|index| {
+                    state
+                        .position_map
+                        .block_doc_positions(index, &state.document)
+                })
+                .collect::<Option<Vec<_>>>()?
+        };
+        let mut chunks = super::position::boundary_chunks_at_doc_positions(
+            &txn,
+            &fragment,
+            &doc_positions,
+            &self.schema,
+        )?;
+        #[cfg(test)]
+        (0..state.position_map.block_count())
+            .for_each(|_| super::observability::record_epoch_block_rebuild());
+        let spans = self.cell_pinning(state).spans(&doc_positions);
+        let scalar_starts = crate::position_epoch::EpochSnapshot::scalar_starts(&chunks)?;
+        crate::position_epoch::EpochSnapshot::attach_cells(
+            &mut chunks,
+            &scalar_starts,
+            spans.iter().enumerate(),
+        )?;
+        crate::position_epoch::EpochSnapshot::new(
+            self.yrs_state_epoch,
+            self.revision,
+            chunks,
+            spans,
+        )
+    }
+
+    pub(crate) fn prepare_position_epoch_update(
+        &self,
+        previous: &crate::position_epoch::EpochSnapshot,
+    ) -> Option<crate::position_epoch::EpochSnapshotUpdate> {
+        use std::collections::BTreeSet;
+        use yrs::types::xml::XmlElementRef;
+        let scopes = self.change_scopes_since(previous.document_revision)?;
+        if scopes.is_empty() {
+            return None;
+        }
+        let state = self.derived_state.as_ref()?;
+        if state.position_map.block_count() != previous.chunks.len() {
+            return None;
+        }
+        let mut blocks = BTreeSet::new();
+        let mut cells = BTreeSet::new();
+        for scope in scopes {
+            let DocumentChangeScope::Textblock { block_index } = scope else {
+                return None;
+            };
+            let path = state.position_map.block_path(block_index)?;
+            let outer = (1..path.len()).find_map(|depth| {
+                let prefix = &path[..depth];
+                let node = state.document.node_at(prefix)?;
+                matches!(
+                    self.schema.node(node.node_type())?.table_role,
+                    Some(crate::tables::TableRole::Cell | crate::tables::TableRole::HeaderCell)
+                )
+                .then_some(prefix)
+            });
+            if let Some(path) = outer {
+                let first = previous
+                    .cells
+                    .partition_point(|span| span.node_path.as_slice() < path);
+                let outer = previous
+                    .cells
+                    .get(first)
+                    .filter(|span| span.node_path == path)?;
+                blocks.extend(outer.block_range.clone());
+                for index in first..previous.cells.len() {
+                    if !previous.cells[index].node_path.starts_with(path) {
+                        break;
+                    }
+                    cells.insert(index);
                 }
             } else {
-                super::position::boundary_anchors_from_doc_pos(
-                    &txn,
-                    &fragment,
-                    doc_pos,
-                    &self.schema,
-                )?
-            };
-            previous = Some((doc_pos, anchors.clone()));
-            boundaries.push(anchors);
+                blocks.insert(block_index);
+            }
         }
-        Some(boundaries)
+        let blocks: Vec<_> = blocks.into_iter().collect();
+        let cell_indexes: Vec<_> = cells.into_iter().collect();
+        let positions = blocks
+            .iter()
+            .map(|index| {
+                Some((
+                    *index,
+                    state
+                        .position_map
+                        .block_doc_positions(*index, &state.document)?,
+                ))
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let updated_cells = self.cell_pinning(state).rebuild_spans(
+            &cell_indexes
+                .iter()
+                .map(|index| previous.cells[*index].as_ref())
+                .collect::<Vec<_>>(),
+            &positions,
+        )?;
+        let mut chunks = Vec::with_capacity(blocks.len());
+        let txn = self.doc.transact();
+        let branches = state.block_branch_index.as_ref()?;
+        for (index, positions) in positions {
+            if state.position_map.block(index)?.is_void_block {
+                let mut anchors = previous.chunks[index].anchors.to_dense();
+                for boundary in &mut anchors {
+                    boundary.pinned_cell = None;
+                }
+                chunks.push(Arc::new(crate::position_epoch::EpochBlockChunk::new(
+                    anchors,
+                )?));
+                #[cfg(test)]
+                super::observability::record_epoch_block_rebuild();
+                continue;
+            }
+            let block = branches.block_branches(index)?;
+            let element = XmlElementRef::from(block.element.get_branch(&txn)?);
+            chunks.push(super::position::boundary_chunk_for_block(
+                &txn,
+                &element,
+                state.position_map.effective_doc_start(index),
+                positions,
+                &self.schema,
+                previous.chunks[index].ancestor(),
+            )?);
+            #[cfg(test)]
+            super::observability::record_epoch_block_rebuild();
+        }
+        crate::position_epoch::EpochSnapshotUpdate::new(
+            previous,
+            self.yrs_state_epoch,
+            self.revision,
+            chunks,
+            updated_cells,
+            blocks,
+            cell_indexes,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn mutation_lookup_matches_fresh_for_test(&self) -> bool {
+        let Some(state) = self.derived_state.as_ref() else {
+            return false;
+        };
+        self.read_fragment_for_test(|txn, fragment| {
+            let fresh = super::mutation::MutationLookupSeed::build(
+                0,
+                txn,
+                fragment,
+                &self.schema,
+                &state.document,
+                &self.resource_limits,
+                &self.editing_limits,
+                self.max_length,
+                &self.schema_fingerprint,
+                self.yrs_state_epoch,
+                self.revision,
+            )
+            .expect("ready document lookup builds");
+            state
+                .mutation_lookup_seed
+                .has_same_ready_payload_for_test(&fresh)
+        })
+        .unwrap_or(false)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn block_branch_index_for_test(
+        &self,
+    ) -> Option<&super::block_branch_index::BlockBranchIndex> {
+        self.derived_state.as_ref()?.block_branch_index.as_deref()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn read_fragment_for_test<R>(
+        &self,
+        read: impl FnOnce(&yrs::Transaction<'_>, &yrs::XmlFragmentRef) -> R,
+    ) -> Option<R> {
+        let txn = self.doc.transact();
+        let fragment = txn.get_xml_fragment(self.fragment_name.as_str())?;
+        Some(read(&txn, &fragment))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn drop_localized_text_index_for_test(&mut self) {
+        if let Some(state) = self.derived_state.as_mut() {
+            state.localized_text_index = None;
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn retained_history_for_test(&self) -> (u64, usize) {
+        (
+            self.history
+                .retained_units(0)
+                .expect("retained history units fit their limit"),
+            self.history.replay_metadata_bytes_for_test(),
+        )
+    }
+
+    fn cell_pinning<'state>(
+        &'state self,
+        state: &'state super::derived_state::DerivedStateCache,
+    ) -> position_epoch_cells::CellPinning<'state> {
+        position_epoch_cells::CellPinning {
+            document: &state.document,
+            schema: &self.schema,
+            index: &state.table_projection_index,
+            position_map: &state.position_map,
+            render_blocks: &state.render_blocks,
+            schema_fingerprint: &self.schema_fingerprint,
+        }
     }
 
     pub(crate) fn resolve_position_epoch_boundary(
         &self,
-        boundary: &crate::position_epoch::BoundaryAnchors,
+        boundary: &crate::position_epoch::EpochBoundary<'_>,
         affinity: super::Affinity,
         original_offset: u32,
-    ) -> Option<(u32, bool)> {
+    ) -> Option<crate::position_epoch::ResolvedBoundary> {
         self.debug_assert_derived_revision_keys();
         let state = self.derived_state.as_ref()?;
         let txn = self.doc.transact();
         let fragment = txn.get_xml_fragment(self.fragment_name.as_str())?;
-        let (leaf, ancestors, opposite_leaf, opposite_ancestors) = match affinity {
-            super::Affinity::Before => (
-                &boundary.before,
-                &boundary.ancestor_before,
-                &boundary.after,
-                &boundary.ancestor_after,
-            ),
-            super::Affinity::After => (
-                &boundary.after,
-                &boundary.ancestor_after,
-                &boundary.before,
-                &boundary.ancestor_before,
-            ),
+        let anchors = &boundary.anchors;
+        let chain = boundary.ancestor_chain();
+        let table_cell_ancestors = chain.clone().position(|ancestor| ancestor.table_cell);
+        let side = |before: bool| {
+            chain.clone().enumerate().map(move |(depth, ancestor)| {
+                let sticky = if before {
+                    &ancestor.before
+                } else {
+                    &ancestor.after
+                };
+                (true, Some(depth), sticky)
+            })
         };
-        for (fallback, sticky) in std::iter::once((false, leaf))
-            .chain(ancestors.iter().map(|sticky| (true, sticky)))
-            .chain(std::iter::once((true, opposite_leaf)))
-            .chain(opposite_ancestors.iter().map(|sticky| (true, sticky)))
+        let leading_before = matches!(affinity, super::Affinity::Before);
+        let (leaf, opposite_leaf) = if leading_before {
+            (&anchors.before, &anchors.after)
+        } else {
+            (&anchors.after, &anchors.before)
+        };
+        for (fallback, ancestor_depth, sticky) in std::iter::once((false, None, leaf))
+            .chain(side(leading_before))
+            .chain(std::iter::once((true, None, opposite_leaf)))
+            .chain(side(!leading_before))
         {
-            if let Some(doc_pos) =
+            let Some(doc_pos) =
                 super::position::sticky_index_to_doc_pos(&txn, &fragment, sticky, &self.schema)
-            {
-                return Some((
-                    state.position_map.doc_to_scalar(doc_pos, &state.document),
+            else {
+                continue;
+            };
+            let pinning = self.cell_pinning(state);
+            let resolved =
+                |offset: u32, left_table_cell: bool| crate::position_epoch::ResolvedBoundary {
+                    offset,
                     fallback,
-                ));
+                    left_table_cell,
+                };
+            let unmapped = state.position_map.doc_to_scalar(doc_pos, &state.document);
+            let Some((depth, cell_depth)) = ancestor_depth.zip(table_cell_ancestors) else {
+                return Some(resolved(unmapped, false));
+            };
+            if depth < cell_depth {
+                let surviving = boundary.pinned_cell.and_then(|pinned| {
+                    pinning.reanchor_in_surviving_cell(doc_pos, pinned, affinity)
+                });
+                return Some(resolved(surviving.unwrap_or(unmapped), false));
             }
+            let retyped = boundary
+                .pinned_cell
+                .filter(|_| depth == cell_depth)
+                .and_then(|pinned| pinning.reanchor_in_retyped_cell(doc_pos, pinned));
+            return Some(
+                retyped.map_or(resolved(unmapped, true), |offset| resolved(offset, false)),
+            );
         }
-        Some((
-            original_offset.min(state.position_map.total_scalars()),
-            true,
-        ))
+        Some(crate::position_epoch::ResolvedBoundary {
+            offset: original_offset.min(state.position_map.total_scalars()),
+            fallback: true,
+            left_table_cell: table_cell_ancestors.is_some(),
+        })
     }
 
     pub fn relative_selection(&self) -> Option<&super::RelativeSelection> {
@@ -519,6 +914,11 @@ impl YrsDocumentEngine {
     #[allow(dead_code)]
     pub fn fragment_name(&self) -> &str {
         &self.fragment_name
+    }
+
+    #[allow(dead_code)]
+    pub fn schema(&self) -> &Schema {
+        &self.schema
     }
 
     #[allow(dead_code)]
@@ -583,12 +983,13 @@ impl YrsDocumentEngine {
     }
 
     fn reset_history_binding(&mut self) {
+        self.canonical_splice_cache = None;
         let fragment = {
             let txn = self.doc.transact();
             txn.get_xml_fragment(self.fragment_name.as_str())
                 .expect("ready Yrs document retains the history fragment")
         };
-        self.history.rebind(&self.doc, &fragment);
+        self.encoded_state_upper_bound = self.history.rebind(&self.doc, &fragment);
         // Rebinding rebuilds the bounded replay chain (and, on the unchanged
         // restore/import fast paths, accompanies a quarantine clear) without
         // any revision/epoch change. Invalidate every outstanding prepared
@@ -674,6 +1075,15 @@ fn validate_config_metadata(
         );
     }
     Ok(())
+}
+
+fn cell_opening_sticky_index<T: ReadTxn>(
+    txn: &T,
+    fragment: &yrs::XmlFragmentRef,
+    position: u32,
+    schema: &Schema,
+) -> Option<yrs::StickyIndex> {
+    super::position::doc_pos_to_sticky_index(txn, fragment, position, yrs::Assoc::After, schema)
 }
 
 #[cfg(test)]

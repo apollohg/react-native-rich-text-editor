@@ -193,7 +193,7 @@ assert.match(
     /s\.private_header_files\s*=\s*\[\s*'ios\/Viewer\/Fabric\/PREPPreparedProseViewerComponentView\.h',\s*'common\/cpp\/react\/renderer\/components\/PreparedProseViewer\/\*\*\/\*\.h',\s*\]/,
     'all Fabric implementation headers must remain private to the pod implementation',
 );
-assert.match(viewerPodspec, /s\.source_files\s*=\s*\['ios\/\*\.swift', 'ios\/Viewer\/\*\*\/\*\.\{swift,h,mm\}', 'common\/cpp\/\*\*\/\*\.\{h,cpp\}'\]/);
+assert.match(viewerPodspec, /s\.source_files\s*=\s*\['ios\/\*\.swift', 'ios\/Viewer\/\*\*\/\*\.\{swift,h,mm\}', 'ios\/Tables\/\*\*\/\*\.swift', 'common\/cpp\/\*\*\/\*\.\{h,cpp\}'\]/);
 assert.match(
     viewerPodspec,
     /s\.header_dir\s*=\s*'react\/renderer\/components\/PreparedProseViewer'/,

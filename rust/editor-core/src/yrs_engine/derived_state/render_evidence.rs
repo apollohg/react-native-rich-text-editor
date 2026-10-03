@@ -24,14 +24,16 @@ pub(super) struct LocalizedRenderTransitionProof {
     pub(super) max_length: Option<u32>,
     pub(super) derivation_identity_seal: Arc<()>,
     pub(super) target_top_level_index: usize,
-    pub(super) inserted_scalar_delta: u32,
+    pub(super) document_scalar_delta: i32,
+    pub(super) rendered_scalar_delta: i32,
     pub(super) top_level_cardinality: usize,
     pub(super) operation_kind: LocalizedRenderOperationKind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum LocalizedRenderOperationKind {
-    ExistingTextInsert,
+    TextblockInsert,
+    ReplaceText,
     #[cfg(test)]
     Unsupported,
 }
@@ -55,7 +57,7 @@ pub(crate) struct PreparedDerivedEvidence {
     pub(super) preview_document_node_count: usize,
     pub(super) preview_position_total_scalars: u32,
     pub(super) preview_position_block_count: usize,
-    pub(super) canonical_fingerprint: [u8; 32],
+    pub(super) canonical_artifact: CanonicalArtifact,
     pub(super) canonical_serialized_len: usize,
     pub(super) validation_certificate: DocumentValidationCertificate,
     pub(super) localized_text_index: Option<LocalizedTextLeafIndex>,
@@ -66,6 +68,12 @@ pub(crate) struct PreparedDerivedEvidence {
 pub(crate) struct FinalizedDerivedEvidence {
     pub(super) validation_certificate: DocumentValidationCertificate,
     pub(super) localized_text_index: Option<LocalizedTextLeafIndex>,
+}
+
+impl FinalizedDerivedEvidence {
+    pub(crate) fn validation_depth_slots(&self) -> usize {
+        self.validation_certificate.depth_counts.len()
+    }
 }
 
 impl PreparedDerivedEvidence {
@@ -86,6 +94,7 @@ impl PreparedDerivedEvidence {
             "derivationIdentity",
             "targetIndex",
             "scalarDelta",
+            "renderedDelta",
             "cardinality",
             "operationKind",
         ]
@@ -127,7 +136,10 @@ impl PreparedDerivedEvidence {
                 proof.target_top_level_index = proof.target_top_level_index.saturating_add(1)
             }
             "scalarDelta" => {
-                proof.inserted_scalar_delta = proof.inserted_scalar_delta.saturating_add(1)
+                proof.document_scalar_delta = proof.document_scalar_delta.saturating_add(1)
+            }
+            "renderedDelta" => {
+                proof.rendered_scalar_delta = proof.rendered_scalar_delta.saturating_add(1)
             }
             "cardinality" => {
                 proof.top_level_cardinality = proof.top_level_cardinality.saturating_add(1)
@@ -158,10 +170,10 @@ impl PreparedDerivedEvidence {
         let proof = self.localized_render_transition_proof.as_ref()?;
         let base_raw_scalars = state.validation_certificate.raw_text_scalars;
         let expected_raw_scalars =
-            base_raw_scalars.checked_add(u64::from(proof.inserted_scalar_delta))?;
+            base_raw_scalars.checked_add_signed(i64::from(proof.document_scalar_delta))?;
         let expected_rendered_scalars = state
             .rendered_scalars
-            .checked_add(proof.inserted_scalar_delta)?;
+            .checked_add_signed(proof.rendered_scalar_delta)?;
         let expected_affected_start = proof.target_top_level_index.saturating_sub(1);
         let expected_affected_len = proof
             .top_level_cardinality
@@ -190,8 +202,13 @@ impl PreparedDerivedEvidence {
             || proof.max_undo_retained_units != editing_limits.max_undo_retained_units
             || proof.max_length != max_length
             || !Arc::ptr_eq(&proof.derivation_identity_seal, &derivations.identity_seal)
-            || proof.operation_kind != LocalizedRenderOperationKind::ExistingTextInsert
-            || proof.inserted_scalar_delta == 0
+            || !matches!(
+                proof.operation_kind,
+                LocalizedRenderOperationKind::TextblockInsert
+                    | LocalizedRenderOperationKind::ReplaceText
+            )
+            || (proof.operation_kind == LocalizedRenderOperationKind::TextblockInsert
+                && proof.document_scalar_delta <= 0)
             || state.document.root().child_count() != proof.top_level_cardinality
             || preview.root().child_count() != proof.top_level_cardinality
             || !affected_range_matches
@@ -211,12 +228,12 @@ impl PreparedDerivedEvidence {
         {
             return None;
         }
-        Some(state.render_blocks.transition_localized_insert(
+        Some(state.render_blocks.transition_localized_textblock(
             &state.document,
             preview,
             schema,
             proof.target_top_level_index,
-            proof.inserted_scalar_delta,
+            proof.document_scalar_delta,
             resource_limits,
         ))
     }
@@ -259,17 +276,17 @@ impl PreparedDerivedEvidence {
             || editing_limits.max_undo_retained_units != self.max_undo_retained_units
             || max_length != self.max_length
             || !Arc::ptr_eq(&derivations.identity_seal, &self.derivation_identity_seal)
-            || canonical_artifact.sha256() != self.canonical_fingerprint
+            || !canonical_artifact.ptr_eq(&self.canonical_artifact)
             || canonical_artifact.serialized_len() != self.canonical_serialized_len
             || canonical_artifact.schema_fingerprint() != schema_fingerprint
             || !self
                 .validation_certificate
                 .canonical_artifact
                 .ptr_eq(canonical_artifact)
-            || !self
+            || (self
                 .validation_certificate
                 .canonical_fingerprint_materialized
-            || self.validation_certificate.canonical_fingerprint != canonical_artifact.sha256()
+                && self.validation_certificate.canonical_fingerprint != canonical_artifact.sha256())
             || self.validation_certificate.canonical_serialized_len
                 != canonical_artifact.serialized_len()
             || self.validation_certificate.raw_text_scalars != canonical_artifact.text_scalar_len()
@@ -292,7 +309,10 @@ impl PreparedDerivedEvidence {
         self.validation_certificate.yrs_state_epoch = next_yrs_state_epoch;
         if let Some(index) = self.localized_text_index.as_mut() {
             index.document_revision = next_document_revision;
-            index.canonical_fingerprint = canonical_artifact.sha256();
+            index.canonical_fingerprint = self.validation_certificate.canonical_fingerprint;
+            index.canonical_fingerprint_materialized = self
+                .validation_certificate
+                .canonical_fingerprint_materialized;
             index.schema_fingerprint = Arc::clone(&self.validation_certificate.schema_fingerprint);
         }
         Some(FinalizedDerivedEvidence {
@@ -370,13 +390,22 @@ impl PreparedDerivedEvidence {
                 self.preview_position_block_count =
                     self.preview_position_block_count.saturating_add(1)
             }
-            "canonicalFingerprint" => self.canonical_fingerprint[0] ^= 1,
+            "canonicalFingerprint" => {
+                self.canonical_artifact = self.base_validation.canonical_artifact.clone()
+            }
             "canonicalLength" => {
                 self.canonical_serialized_len = self.canonical_serialized_len.saturating_add(1)
             }
-            "promotedValidation" => self.validation_certificate.canonical_fingerprint[0] ^= 1,
+            "promotedValidation" => {
+                self.validation_certificate
+                    .canonical_fingerprint_materialized = true;
+                self.validation_certificate.canonical_fingerprint =
+                    self.canonical_artifact.sha256();
+                self.validation_certificate.canonical_fingerprint[0] ^= 1;
+            }
             "promotedIndex" => {
                 if let Some(index) = self.localized_text_index.as_mut() {
+                    index.canonical_fingerprint_materialized = true;
                     index.canonical_fingerprint[0] ^= 1;
                 }
             }

@@ -34,7 +34,7 @@ fn indent_list_item_creates_a_direct_nested_list_and_matches_replica() {
         "type": "doc",
         "content": [{
             "type": "orderedList",
-            "attrs": { "start": 3 },
+            "attrs": { "start": 3.0 },
             "content": [
                 { "type": "listItem", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "one" }] }] },
                 { "type": "listItem", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "two" }] }] },
@@ -55,7 +55,7 @@ fn indent_list_item_creates_a_direct_nested_list_and_matches_replica() {
     assert_eq!(outer["content"].as_array().unwrap().len(), 2);
     let nested = &outer["content"][0]["content"][1];
     assert_eq!(nested["type"], "orderedList");
-    assert_eq!(nested["attrs"]["start"], 3);
+    assert_eq!(nested["attrs"]["start"], 3.0);
     assert_eq!(
         nested["content"][0]["content"][0]["content"][0]["text"],
         "two"
@@ -195,7 +195,7 @@ fn indent_respects_different_and_nonfinal_nested_lists() {
             "type": "doc",
             "content": [{
                 "type": "orderedList",
-                "attrs": { "start": 4 },
+                "attrs": { "start": 4.0 },
                 "content": [
                     { "type": "listItem", "content": previous_content },
                     { "type": "listItem", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "two" }] }] }
@@ -216,7 +216,7 @@ fn indent_respects_different_and_nonfinal_nested_lists() {
             .unwrap();
         let appended = children.last().unwrap();
         assert_eq!(appended["type"], "orderedList");
-        assert_eq!(appended["attrs"]["start"], 4);
+        assert_eq!(appended["attrs"]["start"], 4.0);
         assert_eq!(
             appended["content"][0]["content"][0]["content"][0]["text"],
             "two"

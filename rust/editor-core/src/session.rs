@@ -66,6 +66,7 @@ pub(crate) struct EditorSession {
     pub(crate) document_state: DocumentState,
     pub(crate) collaboration: CollaborationLifecycle,
     position_epochs: crate::position_epoch::PositionEpochStore,
+    latest_epoch_snapshot: Option<std::sync::Arc<crate::position_epoch::EpochSnapshot>>,
     native_request_ledgers: std::collections::BTreeMap<u64, NativeRequestLedger>,
     native_render_cursors: std::collections::BTreeMap<u64, NativeRenderCursor>,
 }
@@ -81,6 +82,9 @@ struct NativeRequestLedger {
 
 #[derive(Clone)]
 pub(crate) struct NativeRenderCursor {
+    pub(crate) schema_fingerprint: String,
+    pub(crate) table_keys: std::collections::BTreeMap<u32, String>,
+    pub(crate) root_projection: Vec<serde_json::Value>,
     pub(crate) document_revision: u64,
     pub(crate) render_blocks: std::sync::Arc<crate::render::incremental::CachedRenderBlocks>,
 }
@@ -191,7 +195,7 @@ fn minimum_deadline(left: Option<u64>, right: Option<u64>) -> Option<u64> {
     }
 }
 
-fn outbound_lease_session_error(
+pub(crate) fn outbound_lease_session_error(
     error: crate::collaboration_runtime::outbox::OutboundLeaseError,
     request_id: u64,
     action: &'static str,

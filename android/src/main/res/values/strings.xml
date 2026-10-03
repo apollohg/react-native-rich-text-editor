@@ -1,0 +1,23 @@
+<resources>
+    <string name="table_accessibility_table">Table</string>
+    <string name="table_accessibility_empty_cell">Empty cell</string>
+    <string name="table_accessibility_empty_table">Empty table</string>
+    <string name="table_accessibility_failed_table">Table could not be displayed</string>
+    <string name="table_accessibility_row_span">Spans %1$d rows</string>
+    <string name="table_accessibility_column_span">Spans %1$d columns</string>
+    <string name="table_accessibility_add_row_before">Insert row above</string>
+    <string name="table_accessibility_add_row_after">Insert row below</string>
+    <string name="table_accessibility_delete_rows">Delete row</string>
+    <string name="table_accessibility_select_rows">Select row</string>
+    <string name="table_accessibility_add_column_before">Insert column before</string>
+    <string name="table_accessibility_add_column_after">Insert column after</string>
+    <string name="table_accessibility_delete_columns">Delete column</string>
+    <string name="table_accessibility_select_columns">Select column</string>
+    <string name="table_accessibility_toggle_header_row">Toggle header row</string>
+    <string name="table_accessibility_toggle_header_column">Toggle header column</string>
+    <string name="table_accessibility_toggle_header_cell">Toggle header cell</string>
+    <string name="table_accessibility_merge_cells">Merge cells</string>
+    <string name="table_accessibility_split_cell">Split cell</string>
+    <string name="table_accessibility_clear_cells">Clear cells</string>
+    <string name="table_accessibility_delete_table">Delete table</string>
+</resources>

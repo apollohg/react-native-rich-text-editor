@@ -291,3 +291,46 @@ fn test_to_html_multiple_paragraphs() {
     let html = to_html(&d, &schema());
     assert_eq!(html, "<p>First</p><p>Second</p>");
 }
+
+#[test]
+fn to_html_omits_a_web_authored_float_ordered_list_start_of_one() {
+    let json = serde_json::json!({
+        "type": "doc",
+        "content": [{
+            "type": "orderedList",
+            "attrs": { "start": 1.0 },
+            "content": [{
+                "type": "listItem",
+                "content": [{
+                    "type": "paragraph",
+                    "content": [{ "type": "text", "text": "A" }],
+                }],
+            }],
+        }],
+    });
+    let document = from_prosemirror_json(&json, &schema(), UnknownTypeMode::Error)
+        .expect("web-authored ordered list must import");
+
+    assert_eq!(
+        to_html(&document, &schema()),
+        "<ol><li><p>A</p></li></ol>",
+        "a float-valued start of 1.0 is still the default start and must not be emitted"
+    );
+}
+
+#[test]
+fn to_html_treats_a_null_ordered_list_start_as_absent() {
+    let mut attrs = HashMap::new();
+    attrs.insert("start".to_string(), serde_json::Value::Null);
+    let document = doc(vec![Node::element(
+        "orderedList".to_string(),
+        attrs,
+        Fragment::from(vec![list_item(vec![paragraph(vec![text("A")])])]),
+    )]);
+
+    assert_eq!(
+        to_html(&document, &schema()),
+        "<ol><li><p>A</p></li></ol>",
+        "a null start means absent in this codebase and must not be emitted"
+    );
+}

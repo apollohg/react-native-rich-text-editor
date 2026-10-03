@@ -87,8 +87,8 @@ impl ImportElementAttributeWork {
             .and_then(|work| {
                 work.checked_add(
                     self.attr_count
-                .checked_mul(partitions)?
-                .checked_add(self.key_bytes.checked_mul(partitions)?)?,
+                        .checked_mul(partitions)?
+                        .checked_add(self.key_bytes.checked_mul(partitions)?)?,
                 )
             })
             .ok_or("XML attribute sort work overflow")
@@ -220,7 +220,8 @@ impl ImportLookupMaterializationCollector {
         target_capacity_hint: Option<usize>,
     ) -> Self {
         let seed_capacity = root_width_hint.saturating_mul(2).saturating_add(1);
-        let target_capacity = target_capacity_hint.map_or(seed_capacity, |hint| hint.max(seed_capacity));
+        let target_capacity =
+            target_capacity_hint.map_or(seed_capacity, |hint| hint.max(seed_capacity));
         let force_map_growth = lookup_seed_hydration_should_fail("mapGrowth");
         let initial_target_capacity = if force_map_growth { 0 } else { target_capacity };
         let initial_width_capacity = if force_map_growth { 0 } else { seed_capacity };
@@ -255,6 +256,20 @@ impl ImportLookupMaterializationCollector {
                 branch_depth: 0,
             },
         });
+        collector
+    }
+
+    fn for_subtree(
+        request_id: u64,
+        element: BranchID,
+        ancestor_depth: usize,
+        width: usize,
+    ) -> Self {
+        let mut collector = Self::new(request_id, element, width, None);
+        if let Some(frame) = collector.frames.first_mut() {
+            frame.ancestor_depth = ancestor_depth;
+            frame.kind = ImportLookupFrameKind::Fragment;
+        }
         collector
     }
 
@@ -296,9 +311,8 @@ impl ImportLookupMaterializationCollector {
             return Ok(());
         }
         #[cfg(test)]
-        LOOKUP_SEED_MAP_GROWTH_ATTEMPT_COUNT.set(
-            LOOKUP_SEED_MAP_GROWTH_ATTEMPT_COUNT.get().saturating_add(1),
-        );
+        LOOKUP_SEED_MAP_GROWTH_ATTEMPT_COUNT
+            .set(LOOKUP_SEED_MAP_GROWTH_ATTEMPT_COUNT.get().saturating_add(1));
         if lookup_seed_hydration_should_fail("mapGrowth") {
             return Err(lookup_seed_allocation_error(request_id, "mapGrowth"));
         }
@@ -351,10 +365,7 @@ impl ImportLookupMaterializationCollector {
             return None;
         }
         if let Some(missing_gap_work) = missing_gap_work {
-            self.add_work(
-                missing_gap_work,
-                "Yrs missing-gap signature work overflow",
-            );
+            self.add_work(missing_gap_work, "Yrs missing-gap signature work overflow");
             self.target_count = match self.target_count.checked_add(1) {
                 Some(value) => value,
                 None => {
@@ -369,11 +380,7 @@ impl ImportLookupMaterializationCollector {
         Some(path_len)
     }
 
-    pub(crate) fn observe_text(
-        &mut self,
-        target_id: BranchID,
-        capture: ImportTextCaptureWork,
-    ) {
+    pub(crate) fn observe_text(&mut self, target_id: BranchID, capture: ImportTextCaptureWork) {
         let Some(path_len) = self.before_child(true) else {
             return;
         };
@@ -392,11 +399,17 @@ impl ImportLookupMaterializationCollector {
         if self.failed.is_some() {
             return;
         }
-        if let Err(error) = Self::reserve_entry(self.request_id, &mut self.target_materialization_work) {
+        if let Err(error) =
+            Self::reserve_entry(self.request_id, &mut self.target_materialization_work)
+        {
             self.failed = Some(error);
             return;
         }
-        if self.target_materialization_work.insert(target_id, capture_work).is_some() {
+        if self
+            .target_materialization_work
+            .insert(target_id, capture_work)
+            .is_some()
+        {
             self.invariant("duplicate Yrs text materialization");
             return;
         }
@@ -497,7 +510,10 @@ impl ImportLookupMaterializationCollector {
             } => {
                 self.add_work(1, "structural parent traversal work overflow");
                 self.add_work(branch_depth, "structural parent traversal work overflow");
-                self.add_work(frame.structural_child_count, "structural parent traversal work overflow");
+                self.add_work(
+                    frame.structural_child_count,
+                    "structural parent traversal work overflow",
+                );
                 if self.failed.is_none() {
                     self.publish_width(parent_id, frame.structural_child_count);
                 }
@@ -507,8 +523,14 @@ impl ImportLookupMaterializationCollector {
                 path_len,
                 previous_was_text,
             } => {
-                self.add_work(frame.structural_child_count, "Yrs textblock materialization work overflow");
-                self.add_work(frame.structural_child_count, "Yrs textblock materialization work overflow");
+                self.add_work(
+                    frame.structural_child_count,
+                    "Yrs textblock materialization work overflow",
+                );
+                self.add_work(
+                    frame.structural_child_count,
+                    "Yrs textblock materialization work overflow",
+                );
                 self.add_work(path_len, "Yrs textblock materialization work overflow");
                 if self.failed.is_some() {
                     return;
@@ -528,7 +550,10 @@ impl ImportLookupMaterializationCollector {
                 }
                 self.add_work(1, "structural parent traversal work overflow");
                 self.add_work(path_len, "structural parent traversal work overflow");
-                self.add_work(frame.structural_child_count, "structural parent traversal work overflow");
+                self.add_work(
+                    frame.structural_child_count,
+                    "structural parent traversal work overflow",
+                );
                 if self.failed.is_none() {
                     self.publish_width(parent_id, frame.structural_child_count);
                 }
@@ -555,7 +580,8 @@ impl ImportLookupMaterializationCollector {
             "mapPublication",
             std::mem::size_of::<HashMap<BranchID, usize>>(),
         )?;
-        let target_materialization_work = Arc::new(self.target_materialization_work);
+        let target_materialization_work =
+            TargetMaterializationWork::new(self.target_materialization_work);
         Ok(MutationLookupPayload {
             target_count: self.target_count,
             pending_traversal_work: self.pending_traversal_work,

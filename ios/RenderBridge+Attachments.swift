@@ -11,6 +11,7 @@ struct BlockContext {
     var markerPending: Bool = false
     var styleStart: Int = 0
     var language: String?
+    var sourceElementIndex: Int?
 }
 
 // MARK: - HorizontalRuleAttachment

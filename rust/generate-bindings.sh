@@ -9,46 +9,10 @@ TARGET_DIR="${CARGO_TARGET_DIR:-$CRATE_DIR/target}"
 STATICLIB_PATH="$TARGET_DIR/release/libeditor_core.a"
 CDYLIB_PATH="$TARGET_DIR/release/libeditor_core.dylib"
 
-V2_SYMBOLS=(
-    editor_v2_create
-    editor_v2_destroy
-    editor_v2_get_state
-    editor_v2_get_document_json
-    editor_v2_get_document_html
-    editor_v2_get_clipboard
-    editor_v2_get_content_snapshot
-    editor_v2_replace_document
-    editor_v2_apply_input
-    editor_v2_apply_command
-    editor_v2_apply_local_api
-    editor_v2_set_selection
-    editor_v2_pin_position_epoch
-    editor_v2_apply_native_intent
-    editor_v2_release_native_binding
-    editor_v2_undo
-    editor_v2_redo
-    editor_v2_collaboration_drive
-    editor_v2_collaboration_socket_open
-    editor_v2_collaboration_receive
-    editor_v2_collaboration_socket_close
-    editor_v2_collaboration_lease_outbound
-    editor_v2_collaboration_ack_outbound
-    editor_v2_collaboration_nack_outbound
-    editor_v2_collaboration_set_awareness
-    editor_v2_collaboration_set_awareness_selection
-    editor_v2_collaboration_peers
-    editor_v2_collaboration_detach
-    editor_v2_collaboration_reattach
-    editor_v2_snapshot_export
-    editor_v2_snapshot_restore
-    editor_v2_render_update
-    editor_v2_render_native
-    editor_v2_resolve_scalar_selection
-    editor_v2_doc_to_scalar
-    editor_v2_scalar_to_doc
-)
+source "$SCRIPT_DIR/v2-symbols.sh"
 
 OBSOLETE_V2_SYMBOLS=(
+    editor_v2_render_native
     editor_v2_collaboration_begin_connect
     editor_v2_collaboration_take_outbound
     editor_v2_collaboration_tick
@@ -97,28 +61,29 @@ echo "==> Building editor-core for host target..."
     --target-dir "$TARGET_DIR"
 
 echo "==> Verifying the dylib exposes exactly the ${#V2_SYMBOLS[@]} editor_v2_* symbols..."
+DYLIB_SYMBOLS="$(nm -gU "$CDYLIB_PATH")"
 for symbol in "${V2_SYMBOLS[@]}"; do
-    nm -gU "$CDYLIB_PATH" | grep -q "uniffi_editor_core_fn_func_${symbol}" || {
+    grep -q "uniffi_editor_core_fn_func_${symbol}" <<< "$DYLIB_SYMBOLS" || {
         echo "error: dylib is missing uniffi_editor_core_fn_func_${symbol}" >&2
         exit 1
     }
 done
 for symbol in "${OBSOLETE_V2_SYMBOLS[@]}"; do
-    if nm -gU "$CDYLIB_PATH" | grep -q "uniffi_editor_core_fn_func_${symbol}"; then
+    if grep -Eq "uniffi_editor_core_fn_func_${symbol}([^[:alnum:]_]|$)" <<< "$DYLIB_SYMBOLS"; then
         echo "error: dylib still exposes obsolete uniffi_editor_core_fn_func_${symbol}" >&2
         exit 1
     fi
 done
-nm -gU "$CDYLIB_PATH" | grep -q "uniffi_editor_core_fn_func_editor_core_version" || {
+grep -q "uniffi_editor_core_fn_func_editor_core_version" <<< "$DYLIB_SYMBOLS" || {
     echo "error: dylib is missing the editor_core_version query" >&2
     exit 1
 }
-nm -gU "$CDYLIB_PATH" | grep -q "uniffi_editor_core_fn_func_viewer_compile" || {
+grep -q "uniffi_editor_core_fn_func_viewer_compile" <<< "$DYLIB_SYMBOLS" || {
     echo "error: dylib is missing uniffi_editor_core_fn_func_viewer_compile" >&2
     exit 1
 }
-for method in semantic_key elements is_empty preferred_text_block_name trailing_empty_text_block_count retained_bytes_decimal; do
-    nm -gU "$CDYLIB_PATH" | grep -q "uniffi_editor_core_fn_method_viewercompileddocument_${method}" || {
+for method in "${VIEWER_METHODS[@]}"; do
+    grep -q "uniffi_editor_core_fn_method_viewercompileddocument_${method}" <<< "$DYLIB_SYMBOLS" || {
         echo "error: dylib is missing ViewerCompiledDocument.${method}" >&2
         exit 1
     }
@@ -143,6 +108,7 @@ mkdir -p "$OUT_DIR/swift"
     generate --library "$STATICLIB_PATH" \
     --language swift \
     --out-dir "$OUT_DIR/swift"
+python3 "$SCRIPT_DIR/optimize-swift-bindings.py" "$OUT_DIR/swift/editor_core.swift"
 normalize_header "$OUT_DIR/swift/editor_coreFFI.h"
 normalize_header "$OUT_DIR/swift/editor_core.swift"
 
@@ -156,6 +122,7 @@ mkdir -p "$OUT_DIR/kotlin"
     --language kotlin \
     --no-format \
     --out-dir "$OUT_DIR/kotlin"
+python3 "$SCRIPT_DIR/optimize-kotlin-bindings.py" "$OUT_DIR/kotlin/uniffi/editor_core/editor_core.kt"
 normalize_header "$OUT_DIR/kotlin/uniffi/editor_core/editor_core.kt"
 
 echo "==> Verifying the generated bindings expose the v2 symbols..."
@@ -178,7 +145,7 @@ for artifact in \
         echo "error: generated binding $artifact is missing viewer_compile" >&2
         exit 1
     }
-    for method in semantic_key elements is_empty preferred_text_block_name trailing_empty_text_block_count retained_bytes_decimal; do
+    for method in "${VIEWER_METHODS[@]}"; do
         grep -q "uniffi_editor_core_fn_method_viewercompileddocument_${method}" "$artifact" || {
             echo "error: generated binding $artifact is missing ViewerCompiledDocument.${method}" >&2
             exit 1
@@ -201,7 +168,7 @@ for symbol in "${OBSOLETE_V2_SYMBOLS[@]}"; do
         "$OUT_DIR/swift/editor_coreFFI.h" \
         "$OUT_DIR/swift/editor_core.swift" \
         "$OUT_DIR/kotlin/uniffi/editor_core/editor_core.kt"; do
-        if grep -q "uniffi_editor_core_\(fn\|checksum\)_func_${symbol}" "$artifact"; then
+        if grep -Eq "uniffi_editor_core_(fn|checksum)_func_${symbol}([^[:alnum:]_]|$)" "$artifact"; then
             echo "error: generated binding $artifact still exposes obsolete ${symbol}" >&2
             exit 1
         fi

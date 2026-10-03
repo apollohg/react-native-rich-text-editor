@@ -12,9 +12,10 @@ use crate::transform::DocumentValidator;
 use crate::yrs_engine;
 use crate::yrs_engine::compiler::{
     compile_prepared_transaction_with_yrs_and_stored_marks,
-    compile_transaction_with_yrs_and_stored_marks, CompilationContext, CompiledTransaction,
-    EngineCompilationView, PreparedSemanticAdmission, PreparedSemanticContext,
-    RelativeSelectionPlan, SelectionPlan, StoredMarksCompilationContext, StoredMarksPlan,
+    compile_transaction_with_yrs_and_stored_marks, CompilationContext, CompilationReadTransaction,
+    CompilationReadView, CompiledTransaction, EngineCompilationView, PreparedSemanticAdmission,
+    PreparedSemanticContext, RelativeSelectionPlan, SelectionPlan, StoredMarksCompilationContext,
+    StoredMarksPlan,
 };
 use crate::yrs_engine::derived_state::{exact_point_is_representable, FinalizedSelectionState};
 use crate::yrs_engine::mutation::{YrsMutationAction, YrsMutationPlan};
@@ -34,6 +35,10 @@ fn selection_requires_fallback_proof<T: ReadTxn>(
         }
         yrs_engine::RelativeSelection::Node { point } => {
             plan.removes_sticky_branch(txn, fragment, &point.sticky)
+        }
+        yrs_engine::RelativeSelection::Cell { anchor, head } => {
+            plan.removes_sticky_branch(txn, fragment, &anchor.sticky)
+                || plan.removes_sticky_branch(txn, fragment, &head.sticky)
         }
         yrs_engine::RelativeSelection::All => false,
     }
@@ -76,6 +81,13 @@ fn required_fallbacks_are_representable<Current: ReadTxn, Proof: ReadTxn>(
         (Selection::Node { pos }, yrs_engine::RelativeSelection::Node { point }) => {
             point_is_valid(*pos, point)
         }
+        (
+            Selection::Cell { anchor, head },
+            yrs_engine::RelativeSelection::Cell {
+                anchor: relative_anchor,
+                head: relative_head,
+            },
+        ) => point_is_valid(*anchor, relative_anchor) && point_is_valid(*head, relative_head),
         (Selection::All, yrs_engine::RelativeSelection::All) => true,
         _ => false,
     }
@@ -105,7 +117,8 @@ impl YrsDocumentEngine {
                 "ready Yrs engine has no derived state",
             )
         })?;
-        let txn = self.doc.transact();
+        let read_transaction = CompilationReadTransaction::new(self.doc.transact());
+        let txn = read_transaction.view();
         let fragment = txn
             .get_xml_fragment(self.fragment_name.as_str())
             .ok_or_else(|| {
@@ -137,7 +150,7 @@ impl YrsDocumentEngine {
         proof_selection: &Selection,
         candidate_derivations: Option<&yrs_engine::compiler::CompiledDocumentDerivations>,
         authority: &dyn yrs_engine::prepared_admission::DerivedStateAuthority,
-        txn: &T,
+        txn: &CompilationReadView<'_, T>,
         fragment: &XmlFragmentRef,
     ) -> yrs_engine::OperationResult<CompiledTransaction> {
         let mut compiled = self.compile_typed_transaction_with_read_view(
@@ -159,56 +172,64 @@ impl YrsDocumentEngine {
             compiled.preview_derivations = Some(derivations.clone());
         }
         let state = authority.installed();
-        let eligible_admission = compiled
-            .localized_insert_admission
-            .as_ref()
-            .filter(|admission| {
-                let current_at_insertion = matches!(
-                    &state.resolved_selection,
-                    yrs_engine::ResolvedSelection::Text { anchor, head }
-                        if anchor == head
-                            && anchor.document == admission.inserted_document_position()
-                );
-                let operation_result = admission.operation_result_selection();
-                let operation_result_legacy =
-                    yrs_engine::derived_state::resolved_to_legacy(operation_result);
-                compiled.origin == yrs_engine::TransactionOrigin::LocalCommand
-                    && compiled.history_policy == yrs_engine::HistoryPolicy::Boundary
-                    && compiled.history_class == yrs_engine::compiler::HistoryClass::Insert
-                    && compiled.localized_semantic_used
-                    && admission.inserted_scalars() > 0
-                    && current_at_insertion
-                    && matches!(
-                        &compiled.selection_plan,
-                        SelectionPlan::Explicit(selection)
-                            if *selection == operation_result_legacy
-                                && *selection == *proof_selection
-                    )
-                    && compiled.relative_selection_plan == RelativeSelectionPlan::OperationResult
-                    && matches!(
-                        &compiled.stored_marks_plan,
-                        StoredMarksPlan::Set(stored_marks)
-                            if *stored_marks == state.stored_marks
-                    )
-                    && compiled.preview == *proof_document
-                    && *operation_result
-                        == yrs_engine::derived_state::resolved_from_legacy_with_view(
-                            &compiled.preview,
-                            &operation_result_legacy,
-                            &self.schema,
-                            compiled
-                                .preview_derivations
-                                .as_ref()
-                                .map(|derivations| &derivations.position_map)
-                                .unwrap_or(&state.position_map),
-                            compiled
-                                .preview_derivations
-                                .as_ref()
-                                .map(|derivations| derivations.rendered_text.as_str())
-                                .unwrap_or(state.rendered_text.as_str()),
+        let eligible_admission =
+            compiled
+                .localized_textblock_edit_admission
+                .as_ref()
+                .filter(|admission| {
+                    let current_at_insertion = matches!(
+                        &state.resolved_selection,
+                        yrs_engine::ResolvedSelection::Text { anchor, head }
+                            if anchor == head
+                                && anchor.document == admission.inserted_document_position()
+                    );
+                    let operation_result = admission.operation_result_selection();
+                    let operation_result_legacy =
+                        yrs_engine::derived_state::resolved_to_legacy(operation_result);
+                    compiled.origin == yrs_engine::TransactionOrigin::LocalCommand
+                        && compiled.history_policy == yrs_engine::HistoryPolicy::Boundary
+                        && compiled.history_class == yrs_engine::compiler::HistoryClass::Insert
+                        && compiled.localized_semantic_used
+                        && admission.inserted_scalars() > 0
+                        && current_at_insertion
+                        && matches!(
+                            &compiled.selection_plan,
+                            SelectionPlan::Explicit(selection)
+                                if *selection == operation_result_legacy
+                                    && *selection == *proof_selection
                         )
-                        .unwrap_or(yrs_engine::ResolvedSelection::All)
-            });
+                        && compiled.relative_selection_plan
+                            == RelativeSelectionPlan::OperationResult
+                        && matches!(
+                            &compiled.stored_marks_plan,
+                            StoredMarksPlan::Set(stored_marks)
+                                if *stored_marks == state.stored_marks
+                        )
+                        && compiled.preview == *proof_document
+                        && *operation_result
+                            == yrs_engine::derived_state::resolved_from_legacy_with_view(
+                                &compiled.preview,
+                                &operation_result_legacy,
+                                &self.schema,
+                                compiled
+                                    .preview_derivations
+                                    .as_ref()
+                                    .map(|derivations| &derivations.position_map)
+                                    .unwrap_or(&state.position_map),
+                                compiled
+                                    .preview_derivations
+                                    .as_ref()
+                                    .map(|derivations| derivations.rendered_text.as_str())
+                                    .unwrap_or(state.rendered_text.as_str()),
+                                &yrs_engine::derived_state::selection_table_index(
+                                    &compiled.preview,
+                                    &operation_result_legacy,
+                                    &self.schema,
+                                    &self.resource_limits,
+                                ),
+                            )
+                            .unwrap_or(yrs_engine::ResolvedSelection::All)
+                });
         let transition = eligible_admission
             .map(|admission| {
                 let StoredMarksPlan::Set(stored_marks) = &compiled.stored_marks_plan else {
@@ -277,7 +298,7 @@ impl YrsDocumentEngine {
     pub(super) fn materialize_prewrite_selection_state<T: ReadTxn>(
         &self,
         compiled: &CompiledTransaction,
-        admission: &yrs_engine::derived_state::LocalizedInsertAdmission,
+        admission: &yrs_engine::derived_state::LocalizedTextblockEditAdmission,
         txn: &T,
     ) -> Option<FinalizedSelectionState> {
         let state = self.derived_state.as_ref()?;
@@ -354,6 +375,12 @@ impl YrsDocumentEngine {
                 &self.schema,
                 &preview_derivations.position_map,
                 &preview_derivations.rendered_text,
+                &yrs_engine::derived_state::selection_table_index(
+                    &compiled.preview,
+                    &legacy,
+                    &self.schema,
+                    &self.resource_limits,
+                ),
             )?
         {
             return None;
@@ -373,7 +400,8 @@ impl YrsDocumentEngine {
                 "ready Yrs engine has no derived state",
             )
         })?;
-        let txn = self.doc.transact();
+        let read_transaction = CompilationReadTransaction::new(self.doc.transact());
+        let txn = read_transaction.view();
         let fragment = txn
             .get_xml_fragment(self.fragment_name.as_str())
             .ok_or_else(|| {
@@ -399,7 +427,7 @@ impl YrsDocumentEngine {
         transaction: yrs_engine::TypedTransaction,
         prepared_semantics: Option<(&PreparedSemanticAdmission, &Document)>,
         authority: &dyn yrs_engine::prepared_admission::DerivedStateAuthority,
-        txn: &T,
+        txn: &CompilationReadView<'_, T>,
         fragment: &XmlFragmentRef,
     ) -> yrs_engine::OperationResult<CompiledTransaction> {
         let state = authority.installed();
@@ -502,6 +530,7 @@ impl YrsDocumentEngine {
                     )?,
                     validation: RootBoundValidationReport {
                         source_root: compiled.preview.root().clone(),
+                        table_projection: None,
                         report: DocumentValidator::validate_report(
                             &compiled.preview,
                             &self.schema,
@@ -564,9 +593,10 @@ impl YrsDocumentEngine {
         &self,
         request_id: u64,
         context: Option<&yrs_engine::prepared_admission::PreparedMutationContext>,
+        read_transaction: &CompilationReadTransaction<'_>,
         use_authority: impl FnOnce(
             &dyn yrs_engine::prepared_admission::DerivedStateAuthority,
-            &yrs::Transaction<'_>,
+            &CompilationReadView<'_, yrs::Transaction<'_>>,
             &XmlFragmentRef,
         ) -> yrs_engine::OperationResult<R>,
     ) -> yrs_engine::OperationResult<R> {
@@ -576,7 +606,7 @@ impl YrsDocumentEngine {
             .ok_or_else(|| yrs_engine::OperationError::engine_not_ready(request_id))?;
         #[cfg(test)]
         record_compiled_commit_live_view_for_test();
-        let txn = self.doc.transact();
+        let txn = read_transaction.view();
         let fragment = txn
             .get_xml_fragment(self.fragment_name.as_str())
             .ok_or_else(|| {

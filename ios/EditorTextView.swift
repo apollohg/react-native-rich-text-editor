@@ -12,7 +12,7 @@ import UIKit
 ///
 /// Every UITextView method runs on the main thread, and the UniFFI calls are
 /// synchronous.
-final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegate, UITextDropDelegate {
+class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegate, UITextDropDelegate {
     static let emptyBlockPlaceholderScalar = UnicodeScalar(0x200B)!
 
     lazy var internalTextViewDelegate = EditorTextViewInternalDelegate(editor: self)
@@ -73,6 +73,7 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
     /// Optional render theme supplied by React.
     lazy var styleContentView: EditorStyleBoxView = {
         let view = EditorStyleBoxView()
+        view.isOpaque = false
         view.isUserInteractionEnabled = false
         view.backgroundColor = .clear
         insertSubview(view, at: 0)
@@ -143,6 +144,7 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
     var onHeightMayChange: ((CGFloat) -> Void)?
     var onViewportMayChange: (() -> Void)?
     var onSelectionOrContentMayChange: (() -> Void)?
+    var onAuthoritativeTextSelectionSynced: (() -> Void)?
     var onExternalUpdateReadinessMayChange: (() -> Void)?
     var lastAutoGrowMeasuredHeight: CGFloat = 0
     var lastAutoGrowMeasuredWidth: CGFloat = 0
@@ -160,6 +162,7 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
 
     /// The plain text from the last Rust render, used by the reconciliation
     /// fallback to detect unauthorized text storage mutations.
+    var inputRerendersForTesting = 0
     var lastAuthorizedTextStorage = NSMutableString()
     var lastAuthorizedAttributedTextStorage = NSMutableAttributedString()
     var lastAuthorizedText: String {
@@ -173,6 +176,17 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
     var currentRenderBlocksDocumentVersion: UInt64?
     var recoveringRenderPatchBaseMismatch = false
     var currentTopLevelChildMetadata: [TopLevelChildMetadata]?
+    var tableCellPositionMap: TableCellPositionMap?
+    var rootTableSelectionInputBlocked = false
+    var authoritativeCellSelectionActive = false
+    var tableCellInputAuthority: (() -> Bool)?
+    var rootTableNativeOwnerAuthority: ((EditorV2Adapter) -> Bool)?
+    var onTableCellTab: ((Bool) -> Void)?
+    var onTableCellArrow: ((TableCellArrowDirection) -> Void)?
+    var onProjectedUpdate: ((String, Bool) -> Bool)?
+    var onAuthoritativeRenderApplied: ((String) -> Void)?
+    var onFirstResponderResigned: (() -> Void)?
+    weak var tableCellDropHandler: TableCellDropHandling?
     var renderAppearanceRevision: UInt64 = 1
     var lastAppliedRenderAppearanceRevision: UInt64 = 0
 
@@ -200,6 +214,7 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
 
     /// Tracks whether we're in a composition session (CJK / IME input).
     var isComposing = false
+    var blockExternalEditorUpdatePreparationForTesting = false
     var hasPendingCompositionForExternalRefresh: Bool { isComposing }
     lazy var caretPlacementTapRecognizer: CaretPlacementTapRecognizer = {
         let recognizer = CaretPlacementTapRecognizer(target: self, action: #selector(handleCaretPlacementTap(_:)))
@@ -390,7 +405,7 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
     override func layoutSubviews() {
         super.layoutSubviews()
         updateKeyboardInset()
-        styleContentView.frame = CGRect(x: 0, y: 0, width: bounds.width, height: max(bounds.height, contentSize.height))
+        styleContentView.documentBounds = CGRect(x: 0, y: 0, width: bounds.width, height: max(bounds.height, contentSize.height))
         let placeholderX = textContainerInset.left + textContainer.lineFragmentPadding
         let placeholderY = textContainerInset.top
         let placeholderWidth = max(
@@ -441,6 +456,8 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
 
     var keyboardFrameInScreen: CGRect?
     var keyboardBottomInset: CGFloat = 0
+    var focusedTableCellInput: (() -> EditorTextView?)?
+    var rootTableContains: ((CGPoint) -> Bool)?
 
     override var contentOffset: CGPoint {
         didSet {
@@ -477,6 +494,7 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
         }
 
         let didResignFirstResponder = super.resignFirstResponder()
+        if didResignFirstResponder { onFirstResponderResigned?() }
         if wasFirstResponder || didResignFirstResponder {
             _ = drainPendingNativeTextMutation(allowAfterBlur: true, allowWhileIntercepting: true)
             DispatchQueue.main.async { [weak self] in
@@ -530,24 +548,21 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
     }
 
     override func closestPosition(to point: CGPoint) -> UITextPosition? {
-        if atomAttachmentRange(at: point) != nil,
-           let selectedTextRange,
-           selectedTextRange.isEmpty {
-            return selectedTextRange.start
-        }
-        return super.closestPosition(to: point)
+        heldCaretPosition(at: point) ?? super.closestPosition(to: point)
     }
 
     override func closestPosition(
         to point: CGPoint,
         within range: UITextRange
     ) -> UITextPosition? {
-        if atomAttachmentRange(at: point) != nil,
-           let selectedTextRange,
-           selectedTextRange.isEmpty {
-            return selectedTextRange.start
-        }
-        return super.closestPosition(to: point, within: range)
+        heldCaretPosition(at: point) ?? super.closestPosition(to: point, within: range)
+    }
+
+    private func heldCaretPosition(at point: CGPoint) -> UITextPosition? {
+        guard let selectedTextRange, selectedTextRange.isEmpty,
+              atomAttachmentRange(at: point) != nil || rootTableContains?(point) == true
+        else { return nil }
+        return selectedTextRange.start
     }
 
     // MARK: - Input Interception: Text Insertion
@@ -570,6 +585,7 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
             super.insertText(text)
             return
         }
+        guard isAuthorizedForTableCellInput() else { return }
         guard finishExternalTextCompositionBeforeInteractionIfNeeded() else { return }
         guard flushPendingNativeTextMutationCommitIfNeeded() else { return }
         if !isReplayingDeferredInsertText, !deferredInsertTexts.isEmpty {
@@ -587,18 +603,18 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
             return
         }
 
-        let scalarPos = PositionBridge.cursorScalarOffset(in: self)
+        guard let scalarPos = currentLogicalScalarSelection()?.head else { return }
         Self.inputLog.debug(
             "[insertText] text=\(self.preview(text), privacy: .public) scalarPos=\(scalarPos) selection=\(self.selectionSummary(), privacy: .public) textState=\(self.textSnapshotSummary(), privacy: .public)"
         )
 
         if let selectedRange = selectedTextRange, !selectedRange.isEmpty {
-            let range = PositionBridge.textRangeToScalarRange(selectedRange, in: self)
+            guard let range = currentLogicalScalarSelection() else { return }
             performInterceptedInput {
                 let updateJSON = EditorV2Shadow.replaceTextScalar(
                     id: editorId,
-                    scalarFrom: range.from,
-                    scalarTo: range.to,
+                    scalarFrom: range.anchor,
+                    scalarTo: range.head,
                     text: text
                 )
                 applyUpdateJSON(updateJSON)
@@ -611,7 +627,7 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
     }
 
     override var keyCommands: [UIKeyCommand]? {
-        [
+        var commands = [
             UIKeyCommand(
                 input: "\r",
                 modifierFlags: [.shift],
@@ -633,6 +649,18 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
                 action: #selector(pasteAndMatchStyle(_:))
             )
         ]
+        if tableCellPositionMap != nil {
+            for direction in TableCellArrowDirection.allCases where isAtTableCellArrowBoundary(direction) {
+                let command = UIKeyCommand(
+                    input: direction.keyInput,
+                    modifierFlags: [],
+                    action: direction.action
+                )
+                command.wantsPriorityOverSystemBehavior = true
+                commands.append(command)
+            }
+        }
+        return commands
     }
 
     // MARK: - Input Interception: Deletion
@@ -651,6 +679,7 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
             super.deleteBackward()
             return
         }
+        guard isAuthorizedForTableCellInput() else { return }
         guard finishExternalTextCompositionBeforeInteractionIfNeeded() else { return }
         guard flushPendingNativeTextMutationCommitIfNeeded() else { return }
         guard !isCollapsedAtomBoundary(selectedUtf16Range()) else { return }
@@ -670,17 +699,16 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
         )
 
         if !selectedRange.isEmpty {
-            let range = PositionBridge.textRangeToScalarRange(selectedRange, in: self)
+            guard let range = currentLogicalScalarSelection() else { return }
             performInterceptedInput {
-                deleteScalarRangeInRust(from: range.from, to: range.to)
+                deleteScalarRangeInRust(from: range.anchor, to: range.head)
             }
         } else {
             // Cursor: delete one grapheme cluster backward. The engine's caret
             // is the authority — in an empty block UIKit's own caret is parked
             // ahead of the block placeholder for autocapitalization and does
             // not address the same position.
-            let cursorPos = currentLogicalScalarSelection()?.head
-                ?? PositionBridge.cursorScalarOffset(in: self)
+            guard let cursorPos = currentLogicalScalarSelection()?.head else { return }
             if cursorPos == 0 {
                 performInterceptedInput {
                     deleteBackwardAtSelectionScalarInRust(anchor: cursorPos, head: cursorPos)
@@ -736,7 +764,8 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
             // We need to figure out how many scalars the previous grapheme occupies.
             // Use UITextView's tokenizer to find the previous grapheme boundary.
             guard let prevPos = position(from: selectedRange.start, offset: -1) else { return }
-            let prevScalar = PositionBridge.textViewToScalar(prevPos, in: self)
+            let prevLocalScalar = PositionBridge.textViewToScalar(prevPos, in: self)
+            guard let prevScalar = inputScalar(atLocalScalar: prevLocalScalar) else { return }
 
             performInterceptedInput {
                 if prevScalar < cursorPos {
@@ -766,6 +795,7 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
             super.replace(range, withText: text)
             return
         }
+        guard isAuthorizedForTableCellInput() else { return }
         guard finishExternalTextCompositionBeforeInteractionIfNeeded() else { return }
         guard flushPendingNativeTextMutationCommitIfNeeded() else { return }
         let replacementUtf16Range = NSRange(
@@ -783,7 +813,11 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
             return
         }
 
-        let scalarRange = PositionBridge.textRangeToScalarRange(range, in: self)
+        let localScalarRange = PositionBridge.textRangeToScalarRange(range, in: self)
+        guard let scalarRange = inputScalarRange(
+            fromLocal: localScalarRange.from,
+            toLocal: localScalarRange.to
+        ) else { return }
         let replacementStartUtf16 = replacementUtf16Range.location
         let replacementEndUtf16 = NSMaxRange(replacementUtf16Range)
         let preservesAcceptedSpace = textStorage.string == lastAuthorizedText
@@ -821,6 +855,9 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
     /// decoration). The text is NOT sent to Rust during composition.
     override func setMarkedText(_ markedText: String?, selectedRange: NSRange) {
         ensureInternalTextViewDelegate()
+        if markedText != nil {
+            guard isAuthorizedForTableCellInput() else { return }
+        }
         guard finishExternalTextCompositionBeforeInteractionIfNeeded() else { return }
         if markedText != nil {
             guard flushPendingNativeTextMutationCommitIfNeeded() else { return }
@@ -892,11 +929,14 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
         }
         switch action {
         case #selector(copy(_:)):
-            return selectedTextRange?.isEmpty == false
+            return authoritativeCellSelectionActive || selectedTextRange?.isEmpty == false
         case #selector(cut(_:)):
-            return isEditable && selectedTextRange?.isEmpty == false
+            return authoritativeCellSelectionActive
+                ? canMutateSelectedTableCells()
+                : isEditable && selectedTextRange?.isEmpty == false
         case #selector(paste(_:)), #selector(pasteAndMatchStyle(_:)):
             return isEditable
+                && (!authoritativeCellSelectionActive || canMutateSelectedTableCells())
                 && pasteMode != .disabled
                 && EditorClipboardPaste.hasSupportedContent(in: .general)
         default:
@@ -917,10 +957,15 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
             super.cut(sender)
             return
         }
-        guard isEditable, exportSelectionToPasteboard() else { return }
-        performInterceptedInput {
-            applyClipboardCommand(["type": "paste", "text": "", "plainText": true])
-        }
+        guard isEditable,
+              !authoritativeCellSelectionActive || canMutateSelectedTableCells(),
+              exportSelectionToPasteboard()
+        else { return }
+        applyClipboardMutation(
+            authoritativeCellSelectionActive
+                ? EditorClipboardCut.cellSelectionCommand
+                : EditorClipboardCut.textSelectionCommand
+        )
     }
 
     override func paste(_ sender: Any?) {
@@ -942,15 +987,33 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
             return
         }
         guard isEditable, pasteMode != .disabled else { return }
+        guard !authoritativeCellSelectionActive || canMutateSelectedTableCells() else { return }
         guard finishExternalTextCompositionBeforeInteractionIfNeeded() else { return }
         guard prepareForExternalEditorUpdate() else { return }
-        guard syncClipboardSelectionToRust() != nil else { return }
+        guard authoritativeCellSelectionActive || syncClipboardSelectionToRust() != nil else { return }
         let mode: EditorPasteMode = forcePlainText ? .plainText : pasteMode
         guard let command = EditorClipboardPaste.command(from: .general, mode: mode) else { return }
 
         Self.inputLog.debug(
             "[paste] selection=\(self.selectionSummary(), privacy: .public) textState=\(self.textSnapshotSummary(), privacy: .public)"
         )
+        applyClipboardMutation(command)
+    }
+
+    func canMutateSelectedTableCells() -> Bool {
+        guard isEditable,
+              authoritativeCellSelectionActive,
+              let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
+              hasAuthorizedRootNativeOwner(adapter)
+        else { return false }
+        return adapter.selectedTableCellsMutationAdmission() != nil
+    }
+
+    private func applyClipboardMutation(_ command: [String: Any]) {
+        guard !authoritativeCellSelectionActive else {
+            applyClipboardCommand(command)
+            return
+        }
         performInterceptedInput {
             applyClipboardCommand(command)
         }

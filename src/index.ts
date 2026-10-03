@@ -29,6 +29,18 @@ export {
     type NativeRichTextEditorFocusPreservingElement,
     type NativeRichTextEditorFocusPreservingRef,
     type NativeRichTextEditorFocusPreservingRefs,
+    TableToolbar,
+    type TableToolbarProps,
+    TABLE_TOOLBAR_ACTIONS,
+    useTableToolbar,
+    type TableToolbarAction,
+    type TableToolbarActionSpec,
+    type TableToolbarIdentity,
+    type TableToolbarOptions,
+    type TableToolbarState,
+    placeTableToolbar,
+    type TableToolbarRect,
+    type TableToolbarSize,
 } from './NativeRichTextEditor';
 
 export type {
@@ -185,6 +197,8 @@ export {
     IMAGE_NODE_NAME,
     imageNodeSpec,
     withImagesSchema,
+    TABLE_NODE_NAMES,
+    withTablesSchema,
     buildDocumentFragmentJson,
     buildImageFragmentJson,
     resolveDocumentDescriptor,
@@ -202,6 +216,10 @@ export {
     type DOMOutputSpec,
     type AttributeDOMOutputSpec,
     type ImageNodeAttributes,
+    type TableNamingPreset,
+    type TableNodeNames,
+    type TableRole,
+    type TablesSchemaOptions,
 } from './schemas';
 
 export {
@@ -237,6 +255,7 @@ export type {
 
 export {
     createNativeEditorDocumentHandle,
+    createNativeEditorLocalAwarenessCellSelection,
     createNativeEditorLocalAwarenessSelection,
     type NativeEditorDocumentHandle,
     type NativeCollaborationProtocolAdapter,
@@ -270,6 +289,8 @@ export {
 export {
     DEFAULT_EDITOR_RESOURCE_LIMITS,
     HARD_EDITOR_RESOURCE_LIMITS,
+    DEFAULT_MAX_TABLE_GRID_SLOTS,
+    HARD_MAX_TABLE_GRID_SLOTS,
     resolveEditorResourceLimits,
     type EditorCollaborationLimits,
     type EditorEditingLimits,
@@ -278,6 +299,7 @@ export {
 } from './ResourceLimits';
 
 export {
+    COMMAND_NOT_APPLICABLE_ERROR_CODE,
     NATIVE_EDITOR_BOUNDARY_ERROR_CODES,
     NATIVE_EDITOR_NON_RETRYABLE_CODES,
     NativeEditorBoundaryError,
@@ -294,6 +316,16 @@ export {
     type NativeEditorErrorDomain,
     type NativeEditorError,
 } from './NativeEditorBoundaryError';
+
+export type {
+    TableCellSelection,
+    TableCellStep,
+    TableCommand,
+    TableDirection,
+    TableEdge,
+    TableHeaderTarget,
+    TableSelectionGeometry,
+} from './TableTypes';
 
 export type { AtomViewport } from './AtomHost';
 

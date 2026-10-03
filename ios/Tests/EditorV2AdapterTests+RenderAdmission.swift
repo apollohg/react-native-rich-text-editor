@@ -2,6 +2,158 @@ import UIKit
 import XCTest
 
 extension EditorV2AdapterTests {
+    func testReplacingNativeOwnerDoesNotRefreshBeforeNewErrorCallbackIsInstalled() {
+        let adapter = makeAdapter()
+        let firstOwner = UUID()
+        let secondOwner = UUID()
+        var firstErrors: [FfiError] = []
+        var secondErrors: [FfiError] = []
+        adapter.bindAutonomousErrorOwner(token: firstOwner) { firstErrors.append($0) }
+        let renderCalls = adapter.renderUpdateCallCountForTesting
+
+        adapter.bindAutonomousErrorOwner(token: secondOwner) { secondErrors.append($0) }
+
+        XCTAssertEqual(adapter.renderUpdateCallCountForTesting, renderCalls)
+        XCTAssertTrue(firstErrors.isEmpty)
+        XCTAssertTrue(secondErrors.isEmpty)
+        XCTAssertTrue(adapter.isAutonomousErrorOwner(token: secondOwner))
+    }
+
+    func testDestroyReleasesTheRetainedFrameIndex() throws {
+        let adapter = makeAdapter(configJson: TableInputTestSchema.tableConfig)
+        XCTAssertNotNil(adapter.setContentJson(TableInputTestSchema.twoCellDocument))
+        XCTAssertFalse(adapter.tableIndex.tableKeys.isEmpty)
+        XCTAssertNil(adapter.destroy())
+        XCTAssertTrue(adapter.tableIndex.tableKeys.isEmpty)
+        XCTAssertNil(adapter.installedFrameRevision)
+        XCTAssertNil(adapter.cachedTablePresentation)
+        XCTAssertNil(adapter.cachedSemanticRenderBlocks)
+    }
+
+    func testClaimWithAStaleCachedFrameDefersToTheNextFullRefresh() throws {
+        let adapter = makeAdapter(configJson: TableInputTestSchema.tableConfig)
+        XCTAssertNotNil(adapter.setContentJson(TableInputTestSchema.twoCellDocument))
+        var oldErrors: [FfiError] = []
+        var newErrors: [FfiError] = []
+        adapter.bindAutonomousErrorOwner(token: UUID()) { oldErrors.append($0) }
+        let mutation = adapter.callWithEnvelope(["text": "X"]) { editorV2ApplyInput(editorId: adapter.editorId, requestJson: $0) }
+        XCTAssertNil(mutation.error)
+        let owner = UUID()
+        adapter.bindAutonomousErrorOwner(token: owner) { newErrors.append($0) }
+        defer { adapter.releaseNativeBindingOwner(token: owner) }
+        XCTAssertTrue(oldErrors.isEmpty)
+        XCTAssertTrue(newErrors.isEmpty)
+        let calls = adapter.renderUpdateCallCountForTesting
+        XCTAssertNotNil(adapter.initialUpdateJSON())
+        XCTAssertEqual(adapter.renderUpdateCallCountForTesting, calls + 1)
+        XCTAssertTrue(oldErrors.isEmpty)
+        XCTAssertTrue(newErrors.isEmpty)
+    }
+
+    func testMatchingExternalResetAdoptsTheSingleFetchedFrame() throws {
+        let adapter = makeAdapter(configJson: TableInputTestSchema.tableConfig)
+        XCTAssertNotNil(adapter.setContentJson(TableInputTestSchema.twoCellDocument))
+        let owner = UUID()
+        adapter.claimNativeBindingIfUnowned(token: owner)
+        defer { adapter.releaseNativeBindingOwner(token: owner) }
+        let reset = "{\"history\":\"resetAndClear\",\"documentRevision\":\"\(adapter.baseDocumentRevision)\",\"setJson\":\(TableInputTestSchema.twoCellDocument)}"
+        let notice = try XCTUnwrap(adapter.cachedAtomicRenderJSON)
+        let calls = adapter.renderUpdateCallCountForTesting
+        XCTAssertNotNil(adapter.adoptExternalReset(notice, resetJSON: reset))
+        XCTAssertEqual(adapter.renderUpdateCallCountForTesting, calls + 1)
+    }
+
+    func testStaleFrameBaseRecoversWithExactlyOneFullFrame() throws {
+        let adapter = makeAdapter(configJson: TableInputTestSchema.tableConfig)
+        XCTAssertNotNil(adapter.setContentJson(TableInputTestSchema.twoCellDocument))
+        let owner = UUID()
+        adapter.claimNativeBindingIfUnowned(token: owner)
+        defer { adapter.releaseNativeBindingOwner(token: owner) }
+        var observed: [FfiTableFrameKind] = []
+        adapter.transformNativeFrameForTesting = { incoming in
+            var frame = incoming
+            observed.append(frame.tables.kind)
+            if observed.count == 1 { frame.tables.baseDocumentRevision = "0" }
+            return frame
+        }
+        let before = adapter.fullFrameAdoptionCountForTesting
+        XCTAssertNotNil(adapter.initialUpdateJSON())
+        XCTAssertEqual(observed, [.delta, .full])
+        XCTAssertEqual(adapter.fullFrameAdoptionCountForTesting, before + 1)
+    }
+
+    func testCorruptFullSnapshotKeepsRootAndIndexWithOneError() throws {
+        let adapter = makeAdapter(configJson: TableInputTestSchema.tableConfig)
+        XCTAssertNotNil(adapter.setContentJson(TableInputTestSchema.twoCellDocument))
+        let key = try XCTUnwrap(adapter.tableIndex.tableKeys.first)
+        let original = adapter.tableIndex.record(tableKey: key)
+        let root = adapter.cachedViewUpdateJSON
+        let spy = ErrorSpy()
+        adapter.onAutonomousError = spy.record
+        var calls = 0
+        adapter.transformNativeFrameForTesting = { incoming in
+            calls += 1
+            var frame = incoming
+            frame.snapshotJson = "{"
+            frame.tables.tables[0].cells[0].contentKey = "must-not-install"
+            return frame
+        }
+        XCTAssertNil(adapter.initialUpdateJSON())
+        XCTAssertEqual(calls, 1)
+        XCTAssertEqual(spy.errors.count, 1)
+        XCTAssertEqual(spy.last?.message, "native table frame violates the frozen shape")
+        XCTAssertEqual(adapter.cachedViewUpdateJSON, root)
+        XCTAssertEqual(adapter.tableIndex.record(tableKey: key), original)
+    }
+
+    func testReclaimedOwnerAndRefusedCellBackspaceUseDeltaFrames() throws {
+        let adapter = makeAdapter(configJson: TableInputTestSchema.tableConfig)
+        XCTAssertNotNil(adapter.setContentJson(TableInputTestSchema.twoCellDocument))
+        let first = UUID()
+        adapter.claimNativeBindingIfUnowned(token: first)
+        adapter.releaseNativeBindingOwner(token: first)
+        let second = UUID()
+        adapter.claimNativeBindingIfUnowned(token: second)
+        defer { adapter.releaseNativeBindingOwner(token: second) }
+        let fullBefore = adapter.fullFrameAdoptionCountForTesting
+        XCTAssertNotNil(adapter.initialUpdateJSON())
+        let key = try XCTUnwrap(adapter.tableIndex.tableKeys.first)
+        let start = try XCTUnwrap(adapter.tableIndex.scalarStart(tableKey: key, cellIndex: 0))
+        XCTAssertNotNil(adapter.syncSelection(anchor: start, head: start))
+        let before = adapter.documentJson()
+        _ = adapter.deleteBackward(anchor: start, head: start)
+        XCTAssertEqual(adapter.documentJson(), before)
+        XCTAssertEqual(adapter.fullFrameAdoptionCountForTesting, fullBefore)
+    }
+
+    func testExternalRenderNoticeNeverInstallsJavascriptTableContent() throws {
+        let adapter = makeAdapter(configJson: TableInputTestSchema.tableConfig)
+        XCTAssertNotNil(adapter.setContentJson(TableInputTestSchema.twoCellDocument))
+        let key = try XCTUnwrap(adapter.tableIndex.tableKeys.first)
+        let original = adapter.tableIndex.record(tableKey: key)
+        let notice = "{\"documentVersion\":\"\(adapter.baseDocumentRevision)\",\"tableRecords\":{\"forged\":false},\"renderBlocks\":[[{}]]}"
+        XCTAssertNotNil(adapter.adoptExternalRender(notice))
+        XCTAssertEqual(adapter.tableIndex.record(tableKey: key), original)
+        XCTAssertEqual(adapter.tableIndex.tableKeys, [key])
+        XCTAssertNil(parseObject(adapter.cachedAtomicRenderJSON)["tableRecords"])
+    }
+
+    func testFailedTableFullFrameAdoptsWithoutCells() throws {
+        let adapter = makeAdapter(configJson: TableInputTestSchema.tableConfig)
+        XCTAssertNotNil(adapter.setContentJson(TableInputTestSchema.twoCellDocument))
+        adapter.transformNativeFrameForTesting = { incoming in
+            var frame = incoming
+            frame.tables.tables[0].failure = .gridLimit
+            frame.tables.tables[0].cells = []
+            frame.tables.tables[0].sourceRows = []
+            return frame
+        }
+        XCTAssertNotNil(adapter.initialUpdateJSON())
+        let key = try XCTUnwrap(adapter.tableIndex.tableKeys.first)
+        XCTAssertEqual(adapter.tableIndex.record(tableKey: key)?.failure, .gridLimit)
+        XCTAssertTrue(try XCTUnwrap(adapter.tableIndex.record(tableKey: key)).cells.isEmpty)
+    }
+
     func testRevisionMismatchRefusesSelectionRelativeInputWithoutReplay() {
         let adapter = makeAdapter()
         _ = adapter.setContentHtml("<p>base</p>")
@@ -119,7 +271,7 @@ extension EditorV2AdapterTests {
             ]
         }
 
-        XCTAssertNotNil(adapter.adoptExternalRender(withPatch))
+        XCTAssertNotNil(EditorV2Adapter.parseAtomicRenderSnapshot(withPatch))
     }
 
     /// Rust emits `attrs` on every void/opaque element, so an inserted mention
@@ -152,7 +304,7 @@ extension EditorV2AdapterTests {
             ]]
         }
 
-        XCTAssertNotNil(adapter.adoptExternalRender(withMention))
+        XCTAssertNotNil(EditorV2Adapter.parseAtomicRenderSnapshot(withMention))
     }
 
     func testAtomicRenderValidationAcceptsAtomIdOnlyOnVoidBlock() {
@@ -167,7 +319,7 @@ extension EditorV2AdapterTests {
             let snapshot = mutatedObjectJSON(raw) { object in
                 object["renderBlocks"] = [[element]]
             }
-            return adapter.adoptExternalRender(snapshot)
+            return EditorV2Adapter.parseAtomicRenderSnapshot(snapshot)?.viewUpdateJSON
         }
 
         XCTAssertNotNil(adopt([
@@ -202,7 +354,6 @@ extension EditorV2AdapterTests {
         ).value!
         XCTAssertNotNil(adapter.adoptExternalRender(raw))
         let baseline = adapter.cacheStateForTesting
-        let baselineDebugNotes = adapter.debugNotes
 
         let variants: [(String, (inout [String: Any]) throws -> Void)] = [
             ("extra top-level field", { $0["legacyRevision"] = 1 }),
@@ -362,9 +513,13 @@ extension EditorV2AdapterTests {
         for (name, mutate) in variants {
             let errorsBefore = spy.errors.count
             let malformed = try mutatedObjectJSON(raw, mutate)
-            XCTAssertNil(adapter.adoptExternalRender(malformed), name)
+            adapter.transformNativeFrameForTesting = { incoming in
+                var frame = incoming
+                frame.snapshotJson = malformed
+                return frame
+            }
+            XCTAssertNil(adapter.initialUpdateJSON(), name)
             XCTAssertEqual(adapter.cacheStateForTesting, baseline, name)
-            XCTAssertEqual(adapter.debugNotes, baselineDebugNotes, name)
             XCTAssertEqual(spy.errors.count, errorsBefore + 1, name)
             XCTAssertEqual(spy.last?.domain, "boundary", name)
             XCTAssertEqual(spy.last?.code, "FFI_RESULT_INVALID", name)

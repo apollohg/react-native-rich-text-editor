@@ -2,7 +2,8 @@ use super::candidate_cache::{seal_candidate_state_vector, PreparedCandidateCache
 use super::commit_installation::{PreparedCompiledCommit, PreparedCompiledHistory};
 use super::compilation::validate_compiled_selection_plans;
 use super::history_state::{
-    history_document_snapshots_fit, history_local_state, history_snapshot_template,
+    history_document_snapshots_fit, history_local_state, history_metadata_bytes,
+    history_snapshot_template,
 };
 use super::outbound::OutboundUpdateSink;
 use super::selection_commit::SelectionCommitContext;
@@ -18,15 +19,16 @@ use super::transaction_result::cached_transition_render_update;
 use super::{checked_operation_increment, YrsDocumentEngine};
 use crate::yrs_engine;
 use crate::yrs_engine::compiler::{
-    CompiledTransaction, RelativeSelectionPlan, SelectionPlan, StoredMarksPlan,
+    CompilationReadTransaction, CompiledTransaction, RelativeSelectionPlan, SelectionPlan,
+    StoredMarksPlan,
 };
 use crate::yrs_engine::derived_state::operation_result_to_relative;
-use crate::yrs_engine::mutation::{execute_mutation_plan, preflight_mutation_plan};
+use crate::yrs_engine::mutation::{execute_mutation_plan, preflight_mutation_plan_with_read_scope};
 use std::sync::Arc;
 use yrs::branch::Branch;
 use yrs::types::xml::XmlFragmentRef;
 use yrs::updates::decoder::Decode;
-use yrs::{ReadTxn, StateVector, Transact, Transaction, Update};
+use yrs::{ReadTxn, StateVector, Transact, Update};
 
 enum CompiledCommitDerivedAuthority<'a> {
     Staged(yrs_engine::prepared_admission::StagedDerivedStateAuthority<'a>),
@@ -35,7 +37,7 @@ enum CompiledCommitDerivedAuthority<'a> {
 
 pub(super) struct CompiledCommitAuthority<'a, 'doc> {
     derived: CompiledCommitDerivedAuthority<'a>,
-    txn: &'a Transaction<'doc>,
+    txn: &'a CompilationReadTransaction<'doc>,
     fragment: &'a XmlFragmentRef,
     state_vector: std::cell::OnceCell<StateVector>,
 }
@@ -48,7 +50,7 @@ impl CompiledCommitAuthority<'_, '_> {
         }
     }
 
-    pub(super) fn txn(&self) -> &Transaction<'_> {
+    pub(super) fn txn(&self) -> &CompilationReadTransaction<'_> {
         self.txn
     }
 
@@ -68,6 +70,7 @@ impl YrsDocumentEngine {
         with_result: bool,
         prepared_history: Option<yrs_engine::prepared_admission::PreparedCommandHistoryAdmission>,
         prepared_context: Option<yrs_engine::prepared_admission::PreparedMutationContext>,
+        read_transaction: Option<CompilationReadTransaction<'_>>,
         outbound: &mut OutboundUpdateSink<'_>,
     ) -> yrs_engine::OperationResult<(
         yrs_engine::TransactionCommit,
@@ -75,9 +78,8 @@ impl YrsDocumentEngine {
     )> {
         #[cfg(test)]
         begin_compiled_commit_preparation_for_test();
-        // A compiled plan owns Yrs handles after its original read transaction
-        // closes. Reject a stale plan in O(1) before no-op classification or
-        // any state-vector/snapshot traversal.
+        // Split compiled plans can outlive their original read transaction.
+        // Reject stale revisions before no-op classification or store scans.
         if compiled.yrs_state_epoch != self.yrs_state_epoch
             || compiled.base_state_revision != self.state_revision
         {
@@ -87,6 +89,7 @@ impl YrsDocumentEngine {
                 "compiled Yrs transaction is stale",
             ));
         }
+        let mut previous_canonical_cache = self.canonical_splice_cache.take();
         let installed = self
             .derived_state
             .as_ref()
@@ -94,7 +97,8 @@ impl YrsDocumentEngine {
         let authority_doc = self.doc.clone();
         #[cfg(test)]
         record_compiled_commit_live_view_for_test();
-        let authority_txn = authority_doc.transact();
+        let authority_txn = read_transaction
+            .unwrap_or_else(|| CompilationReadTransaction::new(authority_doc.transact()));
         let authority_fragment = authority_txn
             .get_xml_fragment(self.fragment_name.as_str())
             .ok_or_else(|| {
@@ -181,18 +185,29 @@ impl YrsDocumentEngine {
         } else {
             Some(self.prepare_commit_render_transition(&compiled)?)
         };
-        let render_update = render_transition
-            .as_ref()
-            .map(|transition| cached_transition_render_update(&transition.update))
-            .unwrap_or(yrs_engine::RenderUpdate::None);
+        let (render_update, render_cache) = match render_transition {
+            Some(transition) => (
+                cached_transition_render_update(transition.update),
+                Some(transition.cache),
+            ),
+            None => (yrs_engine::RenderUpdate::None, None),
+        };
         let prepared_result = with_result
-            .then(|| self.prepare_typed_result(&compiled, render_update, &commit_authority))
+            .then(|| {
+                self.prepare_typed_result(
+                    &compiled,
+                    render_update,
+                    render_cache.as_ref().unwrap_or(&installed.render_blocks),
+                    &commit_authority,
+                )
+            })
             .transpose()?;
         let (mut result, prepared_active_cache) = match prepared_result {
             Some((result, cache)) => (Some(result), cache),
             None => (None, None),
         };
         if preview_is_unchanged {
+            authority_txn.clear_snapshot_memo();
             let prepared = Self::prepare_selection_commit(
                 SelectionCommitContext {
                     current: self.derived_state.as_ref(),
@@ -225,7 +240,7 @@ impl YrsDocumentEngine {
         })?;
 
         // Revalidate sealed signatures against one final stable read view.
-        let current_encoded_state = {
+        {
             #[cfg(test)]
             yrs_engine::compiler::check_atomic_failpoint(
                 compiled.request_id,
@@ -243,17 +258,16 @@ impl YrsDocumentEngine {
                             "prepared selection core seal does not match compiled transaction",
                         ));
                     }
-                    let rematerialized =
-                        compiled
-                            .localized_insert_admission
-                            .as_ref()
-                            .and_then(|admission| {
-                                self.materialize_prewrite_selection_state(
-                                    &compiled,
-                                    admission,
-                                    commit_authority.txn(),
-                                )
-                            });
+                    let rematerialized = compiled
+                        .localized_textblock_edit_admission
+                        .as_ref()
+                        .and_then(|admission| {
+                            self.materialize_prewrite_selection_state(
+                                &compiled,
+                                admission,
+                                commit_authority.txn(),
+                            )
+                        });
                     if rematerialized.as_ref() != Some(prepared) {
                         compiled.prepared_selection_state = None;
                         compiled.prepared_selection_mutation_seal = None;
@@ -269,63 +283,54 @@ impl YrsDocumentEngine {
                 }
                 (None, None) => {}
             }
-            preflight_mutation_plan(
+            preflight_mutation_plan_with_read_scope(
                 compiled.request_id,
                 &compiled.mutation_plan,
                 commit_authority.txn(),
+                authority_txn.scope(),
             )?;
             #[cfg(test)]
             yrs_engine::compiler::check_atomic_failpoint(
                 compiled.request_id,
                 yrs_engine::compiler::AtomicFailpoint::EncodedAdmission,
             )?;
-            if commit_authority.state_vector().is_empty() {
-                Vec::new()
-            } else if let Some(encoded_state) =
-                self.prepared_candidate_cache.as_mut().and_then(|cache| {
-                    cache.take_matching_encoded_state(
-                        &self.doc,
-                        commit_authority.fragment(),
-                        &compiled.mutation_plan,
-                        self.revision,
-                        self.yrs_state_epoch,
-                        self.resource_limits.max_encoded_state_bytes,
-                    )
-                })
-            {
-                #[cfg(test)]
-                COMMIT_SEALED_STATE_REUSES.set(COMMIT_SEALED_STATE_REUSES.get().saturating_add(1));
-                encoded_state
-            } else {
+        }
+        let encoded_state = std::cell::OnceCell::new();
+        if let Some(encoded) = self.prepared_candidate_cache.as_mut().and_then(|cache| {
+            cache.take_matching_encoded_state(
+                &self.doc,
+                commit_authority.fragment(),
+                &compiled.mutation_plan,
+                &authority_txn,
+                authority_txn.scope(),
+                self.revision,
+                self.yrs_state_epoch,
+                self.resource_limits.max_encoded_state_bytes,
+            )
+        }) {
+            #[cfg(test)]
+            COMMIT_SEALED_STATE_REUSES.set(COMMIT_SEALED_STATE_REUSES.get().saturating_add(1));
+            let _ = encoded_state.set(encoded);
+        }
+        authority_txn.clear_snapshot_memo();
+        let current_encoded_state = || -> &[u8] {
+            encoded_state.get_or_init(|| {
+                if commit_authority.state_vector().is_empty() {
+                    return Vec::new();
+                }
                 #[cfg(test)]
                 COMMIT_CURRENT_STATE_ENCODINGS
                     .set(COMMIT_CURRENT_STATE_ENCODINGS.get().saturating_add(1));
+                #[cfg(test)]
+                crate::yrs_engine::observability::record_whole_state_encoding();
                 commit_authority
                     .txn()
                     .encode_state_as_update_v1(&StateVector::default())
-            }
+            })
         };
-        let admitted_encoded_bytes = current_encoded_state
-            .len()
-            .checked_add(compiled.encoded_growth_bound)
-            .ok_or_else(|| {
-                yrs_engine::OperationError::document_limit_exceeded(
-                    compiled.request_id,
-                    None,
-                    "maxEncodedStateBytes",
-                    u64::try_from(self.resource_limits.max_encoded_state_bytes).unwrap_or(u64::MAX),
-                    u64::MAX,
-                )
-            })?;
-        if admitted_encoded_bytes > self.resource_limits.max_encoded_state_bytes {
-            return Err(yrs_engine::OperationError::document_limit_exceeded(
-                compiled.request_id,
-                None,
-                "maxEncodedStateBytes",
-                u64::try_from(self.resource_limits.max_encoded_state_bytes).unwrap_or(u64::MAX),
-                u64::try_from(admitted_encoded_bytes).unwrap_or(u64::MAX),
-            ));
-        }
+        let mut encoded_state_upper_bound = self
+            .encoded_state_upper_bound
+            .saturating_add(compiled.encoded_growth_bound);
 
         #[cfg(test)]
         yrs_engine::compiler::check_atomic_failpoint(
@@ -397,7 +402,7 @@ impl YrsDocumentEngine {
                             &compiled.preview,
                             &canonical_artifact,
                             compiled.preview_derivations.as_ref()?,
-                            &render_transition.as_ref()?.cache,
+                            render_cache.as_ref()?,
                             &self.resource_limits,
                             &self.editing_limits,
                             self.max_length,
@@ -453,6 +458,13 @@ impl YrsDocumentEngine {
         }
         let captures_history = compiled.history_policy != yrs_engine::HistoryPolicy::Skip
             && compiled.history_class != yrs_engine::compiler::HistoryClass::Skip;
+        let mut next_canonical_cache = None;
+        if !captures_history
+            || prepared_history_before.is_some()
+            || prepared_history_after.is_some()
+        {
+            previous_canonical_cache = None;
+        }
         let (history_before, history_after_template) = if captures_history {
             if let (Some(before), Some(after)) = (
                 prepared_history_before.take(),
@@ -462,9 +474,13 @@ impl YrsDocumentEngine {
                     .derived_state
                     .as_ref()
                     .expect("captured history has a current derived state");
-                if before.canonical_fingerprint != current.canonical_artifact.sha256()
+                if !before
+                    .canonical_fingerprint
+                    .matches_artifact(&current.canonical_artifact)
                     || before.derived_output_bytes != current.canonical_artifact.serialized_len()
-                    || after.canonical_fingerprint != canonical_artifact.sha256()
+                    || !after
+                        .canonical_fingerprint
+                        .matches_artifact(&canonical_artifact)
                     || after.derived_output_bytes != canonical_artifact.serialized_len()
                 {
                     return Err(yrs_engine::OperationError::engine_invariant_failed(
@@ -494,8 +510,11 @@ impl YrsDocumentEngine {
                             before,
                             &compiled.preview,
                             &canonical_artifact,
+                            finalized_derived_evidence
+                                .as_ref()
+                                .map(|evidence| evidence.validation_depth_slots()),
                             after_derivations,
-                            &render_transition.as_ref()?.cache,
+                            render_cache.as_ref()?,
                             stored_marks.as_deref(),
                             &self.schema_fingerprint,
                             &self.fragment_name,
@@ -503,6 +522,38 @@ impl YrsDocumentEngine {
                             self.editing_limits.max_derived_output_bytes,
                         )
                     });
+                if document_snapshot_retained_bytes.is_none() {
+                    let pending =
+                        history_metadata_bytes(before.stored_marks.as_deref(), &self.fragment_name)
+                            .checked_add(history_metadata_bytes(
+                                stored_marks.as_deref(),
+                                &self.fragment_name,
+                            ));
+                    let path = compiled
+                        .localized_textblock_edit_admission
+                        .as_ref()
+                        .and_then(|admission| {
+                            before.position_map.block_path(admission.block_index())
+                        });
+                    if let (Some(budget), Some(path)) = (
+                        pending.and_then(|pending| {
+                            self.history
+                                .cache_metadata_headroom(compiled.request_id, pending)
+                        }),
+                        path,
+                    ) {
+                        next_canonical_cache = yrs_engine::canonical::CanonicalSpliceCache::prepare(
+                            previous_canonical_cache.take(),
+                            &before.canonical_artifact,
+                            &canonical_artifact,
+                            path,
+                            self.revision,
+                            next_document_revision,
+                            budget,
+                        );
+                    }
+                }
+                drop(previous_canonical_cache.take());
                 let prepared = (
                     Some(history_local_state(
                         before,
@@ -541,6 +592,10 @@ impl YrsDocumentEngine {
             .unwrap_or(0);
 
         let outbound_update_upper_bound = compiled.outbound_update_upper_bound();
+        let localized_block_index = compiled
+            .localized_textblock_edit_admission
+            .as_ref()
+            .map(|admission| admission.block_index());
         let CompiledTransaction {
             request_id,
             origin,
@@ -589,11 +644,8 @@ impl YrsDocumentEngine {
             request_id,
             CompiledCommitPreparationStage::AllocationProbe,
         )?;
-        let next_render_blocks = Arc::new(
-            render_transition
-                .expect("changed transaction has a prepared render transition")
-                .cache,
-        );
+        let next_render_blocks =
+            Arc::new(render_cache.expect("changed transaction has a prepared render cache"));
         #[cfg(test)]
         check_compiled_commit_preparation_stage_for_test(
             request_id,
@@ -610,7 +662,7 @@ impl YrsDocumentEngine {
                 undo_units_bound,
                 history_before,
                 history_after_metadata_bytes,
-                &current_encoded_state,
+                current_encoded_state,
                 encoded_growth_bound,
                 prepared_history_limits,
             )?)
@@ -619,7 +671,7 @@ impl YrsDocumentEngine {
                 request_id,
                 origin,
                 replay_work_units_bound,
-                &current_encoded_state,
+                current_encoded_state,
                 encoded_growth_bound,
             )?)
         };
@@ -655,17 +707,15 @@ impl YrsDocumentEngine {
                     "prepared commit candidate root identity does not match the live store",
                 ));
             }
+            let current_encoded_state = current_encoded_state();
             if !current_encoded_state.is_empty() {
-                let current_update =
-                    Update::decode_v1(&current_encoded_state).map_err(|error| {
-                        yrs_engine::OperationError::engine_invariant_failed(
-                            request_id,
-                            None,
-                            format!(
-                                "admitted current Yrs state cannot seed commit candidate: {error}"
-                            ),
-                        )
-                    })?;
+                let current_update = Update::decode_v1(current_encoded_state).map_err(|error| {
+                    yrs_engine::OperationError::engine_invariant_failed(
+                        request_id,
+                        None,
+                        format!("admitted current Yrs state cannot seed commit candidate: {error}"),
+                    )
+                })?;
                 candidate_doc
                     .transact_mut()
                     .apply_update(current_update)
@@ -713,16 +763,25 @@ impl YrsDocumentEngine {
                     CompiledCommitPreparationStage::DocumentValidation,
                 )?;
                 let txn = candidate_doc.transact();
-                let candidate_plan = mutation_plan
+                mutation_plan
                     .clone()
-                    .rebind_to_equivalent_store(request_id, &txn)?;
-                preflight_mutation_plan(request_id, &candidate_plan, &txn)?;
-                candidate_plan
+                    .rebind_and_preflight_equivalent_store(
+                        request_id,
+                        &txn,
+                        authority_txn.scope(),
+                    )?
             };
-            {
+            let history_update = {
                 let mut txn = candidate_doc.transact_mut();
                 execute_mutation_plan(candidate_plan, &mut txn);
-            }
+                txn.commit();
+                #[cfg(test)]
+                check_compiled_commit_preparation_stage_for_test(
+                    request_id,
+                    CompiledCommitPreparationStage::HistoryUpdateEncoding,
+                )?;
+                txn.encode_update_v1()
+            };
             let txn = candidate_doc.transact();
             let fragment = txn
                 .get_xml_fragment(self.fragment_name.as_str())
@@ -733,12 +792,17 @@ impl YrsDocumentEngine {
                         "prepared commit candidate lost its configured Yrs fragment",
                     )
                 })?;
-            #[cfg(test)]
-            check_compiled_commit_preparation_stage_for_test(
-                request_id,
-                CompiledCommitPreparationStage::HistoryUpdateEncoding,
-            )?;
-            let history_update = txn.encode_state_as_update_v1(&candidate_state_vector);
+            if encoded_state_upper_bound > self.resource_limits.max_encoded_state_bytes {
+                #[cfg(test)]
+                crate::yrs_engine::observability::record_whole_state_encoding();
+                let exact = txn.encode_state_as_update_v1(&StateVector::default()).len();
+                super::remote::admit_max_encoded_state_len(
+                    request_id,
+                    exact,
+                    self.resource_limits.max_encoded_state_bytes,
+                )?;
+                encoded_state_upper_bound = exact;
+            }
             if history_update.len() > encoded_growth_bound {
                 return Err(yrs_engine::OperationError::engine_invariant_failed(
                     request_id,
@@ -757,21 +821,70 @@ impl YrsDocumentEngine {
                 self.doc.client_id(),
                 authored_clock_bound,
             )?;
+            if let (Some(block_index), Some(next_seed)) = (
+                localized_block_index,
+                prepared_mutation_lookup_seed.as_ref(),
+            ) {
+                if next_seed.is_unavailable() {
+                    if let Some((state, block)) = self.derived_state.as_ref().and_then(|state| {
+                        if state.mutation_lookup_seed.is_unavailable() {
+                            return None;
+                        }
+                        Some((
+                            state,
+                            state
+                                .block_branch_index
+                                .as_ref()?
+                                .block_branches(block_index)?,
+                        ))
+                    }) {
+                        let path_len = state
+                            .position_map
+                            .block(block_index)
+                            .ok_or_else(|| {
+                                yrs_engine::OperationError::engine_invariant_failed(
+                                    request_id,
+                                    None,
+                                    "localized lookup block is absent",
+                                )
+                            })?
+                            .node_path
+                            .len();
+                        prepared_mutation_lookup_seed = Some(Arc::new(
+                            state.mutation_lookup_seed.with_textblock_replaced(
+                                request_id,
+                                commit_authority.txn(),
+                                &txn,
+                                &block.element,
+                                path_len,
+                                &self.schema,
+                                next_seed,
+                            )?,
+                        ));
+                    }
+                }
+            }
+            let mut captured_branch_index = None;
             if prepared_mutation_lookup_seed.is_none() {
-                let candidate_seed = yrs_engine::mutation::MutationLookupSeed::build(
-                    request_id,
-                    &txn,
-                    &fragment,
-                    &self.schema,
-                    &preview,
-                    &self.resource_limits,
-                    &self.editing_limits,
-                    self.max_length,
-                    &self.schema_fingerprint,
-                    next_yrs_state_epoch,
-                    next_document_revision,
-                )?
-                .with_canonical_artifact(&canonical_artifact);
+                let (candidate_seed, branch_index) =
+                    yrs_engine::mutation::MutationLookupSeed::build_with_branch_index(
+                        request_id,
+                        &txn,
+                        &fragment,
+                        &self.schema,
+                        &preview,
+                        &self.resource_limits,
+                        &self.editing_limits,
+                        self.max_length,
+                        &self.schema_fingerprint,
+                        next_yrs_state_epoch,
+                        next_document_revision,
+                        preview_derivations
+                            .as_ref()
+                            .map(|derivations| &derivations.position_map),
+                    )?;
+                captured_branch_index = branch_index.map(|index| index.map(Arc::new));
+                let candidate_seed = candidate_seed.with_canonical_artifact(&canonical_artifact);
                 prepared_mutation_lookup_seed =
                     Some(Arc::new(candidate_seed.rebind_authoritative_store(
                         commit_authority.txn(),
@@ -786,6 +899,28 @@ impl YrsDocumentEngine {
                 request_id,
                 CompiledCommitPreparationStage::DerivedStateBuild,
             )?;
+            let next_block_branch_index = localized_block_index
+                .and_then(|block_index| {
+                    self.derived_state
+                        .as_ref()?
+                        .block_branch_index
+                        .as_ref()?
+                        .with_block_replaced(&txn, block_index, &self.schema)
+                })
+                .map(Some)
+                .or(captured_branch_index)
+                .or_else(|| {
+                    let derivations = preview_derivations.as_ref()?;
+                    Some(
+                        yrs_engine::block_branch_index::BlockBranchIndex::build(
+                            &txn,
+                            &fragment,
+                            &self.schema,
+                            &derivations.position_map,
+                        )
+                        .map(Arc::new),
+                    )
+                });
             let explicit_relative_selection = match (&selection_plan, &prepared_selection_state) {
                 (SelectionPlan::Explicit(_), Some(prepared)) => Some(prepared.relative().clone()),
                 (SelectionPlan::Explicit(_), None)
@@ -806,6 +941,11 @@ impl YrsDocumentEngine {
                     &fragment,
                     selection,
                     &self.schema,
+                    next_block_branch_index
+                        .as_ref()
+                        .and_then(|index| index.as_deref())
+                        .zip(preview_derivations.as_ref())
+                        .map(|(index, derivations)| (index, &derivations.position_map, &preview)),
                 )),
                 (SelectionPlan::Mapped(_), _) | (SelectionPlan::Preserve, _) => None,
             };
@@ -817,7 +957,9 @@ impl YrsDocumentEngine {
             let preserved_fallback = match &relative_selection_plan {
                 RelativeSelectionPlan::PreserveWithFallback(selection) => Some(selection),
                 RelativeSelectionPlan::Precomputed { fallback, .. } => Some(fallback),
-                _ => None,
+                RelativeSelectionPlan::Unsealed
+                | RelativeSelectionPlan::Preserve
+                | RelativeSelectionPlan::OperationResult => None,
             };
             let strict_fallback_affinity = matches!(
                 relative_selection_plan,
@@ -851,6 +993,7 @@ impl YrsDocumentEngine {
                         next_document_revision,
                         next_state_revision,
                         next_yrs_state_epoch,
+                        next_block_branch_index,
                     )
                 })
                 .ok_or_else(|| {
@@ -866,6 +1009,13 @@ impl YrsDocumentEngine {
             unreachable!()
         };
         next_derived_state.stored_marks = stored_marks;
+        if let Some(result) = &result {
+            next_derived_state.cache_render_active_state(
+                result.active_state.clone(),
+                &self.resource_limits,
+                &self.editing_limits,
+            );
+        }
         let prepared_active_state_certificate = prepared_active_state_install.and_then(|install| {
             let authority = yrs_engine::prepared_admission::InstalledDerivedStateAuthority::new(
                 &next_derived_state,
@@ -939,6 +1089,10 @@ impl YrsDocumentEngine {
             yrs_state_epoch: next_yrs_state_epoch,
             encoded_state_seal: None,
         });
+        let change_scope = localized_block_index
+            .map_or(super::DocumentChangeScope::Document, |block_index| {
+                super::DocumentChangeScope::Textblock { block_index }
+            });
         let mut prepared = PreparedCompiledCommit {
             request_id,
             origin,
@@ -948,7 +1102,9 @@ impl YrsDocumentEngine {
             history_update,
             history_after,
             next_derived_state: Some(next_derived_state),
+            change_scope,
             next_durable_client_ids,
+            encoded_state_upper_bound,
             next_document_revision,
             next_state_revision,
             next_yrs_state_epoch,
@@ -956,6 +1112,7 @@ impl YrsDocumentEngine {
             publish_active_state_drop,
             result,
             next_candidate_cache,
+            next_canonical_cache,
         };
         // Frozen local mutation flow: reserve bounded outbox count/bytes and
         // stage the candidate-captured Update-v1 from the compiler's

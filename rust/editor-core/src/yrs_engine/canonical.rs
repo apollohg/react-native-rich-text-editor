@@ -3,9 +3,15 @@ use std::sync::{Arc, OnceLock};
 use sha2::{Digest, Sha256};
 
 use crate::boundary::{serialize_json_value_stack_safe, StackSafeJsonValue};
-use crate::model::Document;
+use crate::model::{Document, Node};
 use crate::schema::{schema_fingerprint, Schema};
 use crate::serialize::to_prosemirror_json;
+
+mod hash_prefix;
+mod splice_cache;
+#[cfg(test)]
+pub(crate) use splice_cache::CacheAllocation;
+pub(crate) use splice_cache::CanonicalSpliceCache;
 
 pub(crate) const CANONICAL_ARTIFACT_FORMAT_VERSION: u8 = 1;
 
@@ -13,6 +19,22 @@ const MIN_CANONICAL_JSON_INITIAL_CAPACITY: usize = 128;
 const SMALL_CANONICAL_JSON_INITIAL_CAPACITY: usize = 64 * 1024;
 const LARGE_CANONICAL_JSON_THRESHOLD: usize = 128 * 1024;
 const LARGE_CANONICAL_JSON_INITIAL_CAPACITY: usize = 96 * 1024;
+
+struct CanonicalJsonLength(usize);
+
+impl std::io::Write for CanonicalJsonLength {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0 = self
+            .0
+            .checked_add(bytes.len())
+            .ok_or_else(|| std::io::Error::other("canonical JSON length overflow"))?;
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
 
 fn bounded_canonical_json_initial_capacity(admitted_upper_bound: usize) -> usize {
     if admitted_upper_bound == usize::MAX {
@@ -72,22 +94,8 @@ impl CanonicalSchemaContext {
         CanonicalArtifact::derive_with_context_and_admission(
             document,
             self,
-            None,
             Some(serialized_len),
             Some(serialized_len),
-        )
-    }
-
-    pub(crate) fn derive_with_known_text_metrics(
-        &self,
-        document: &Document,
-        text_scalar_len: u64,
-        text_utf8_bytes: usize,
-    ) -> Result<CanonicalArtifact, serde_json::Error> {
-        CanonicalArtifact::derive_with_context_and_text_metrics(
-            document,
-            self,
-            Some((text_scalar_len, text_utf8_bytes)),
         )
     }
 
@@ -102,7 +110,6 @@ impl CanonicalSchemaContext {
         CanonicalArtifact::derive_with_context_and_admission(
             document,
             self,
-            None,
             None,
             admission_upper_bound,
         )
@@ -188,7 +195,8 @@ fn validated_json_admission_upper_bound(
 #[derive(Debug)]
 struct CanonicalArtifactInner {
     source_document: Document,
-    value: StackSafeJsonValue,
+    value: OnceLock<StackSafeJsonValue>,
+    retained_charge: OnceLock<Option<CanonicalHistorySnapshotRetainedCharge>>,
     serialized_len: OnceLock<usize>,
     sha256: OnceLock<[u8; 32]>,
     admission_upper_bound: usize,
@@ -210,6 +218,7 @@ pub(crate) struct CanonicalHistorySnapshotRetainedCharge {
 pub(crate) struct PreparedCanonicalCandidate {
     source_document: Document,
     value: StackSafeJsonValue,
+    retained_charge: OnceLock<Option<CanonicalHistorySnapshotRetainedCharge>>,
     serialized_len: OnceLock<usize>,
     sha256: OnceLock<[u8; 32]>,
     sha256_provenance: OnceLock<[u8; 32]>,
@@ -261,37 +270,28 @@ impl CanonicalArtifact {
         document: &Document,
         schema_context: &CanonicalSchemaContext,
     ) -> Result<Self, serde_json::Error> {
-        Self::derive_with_context_and_text_metrics(document, schema_context, None)
-    }
-
-    fn derive_with_context_and_text_metrics(
-        document: &Document,
-        schema_context: &CanonicalSchemaContext,
-        known_text_metrics: Option<(u64, usize)>,
-    ) -> Result<Self, serde_json::Error> {
-        Self::derive_with_context_and_admission(
-            document,
-            schema_context,
-            known_text_metrics,
-            None,
-            None,
-        )
+        Self::derive_with_context_and_admission(document, schema_context, None, None)
     }
 
     fn derive_with_context_and_admission(
         document: &Document,
         schema_context: &CanonicalSchemaContext,
-        known_text_metrics: Option<(u64, usize)>,
         known_serialized_len: Option<usize>,
         admission_upper_bound: Option<usize>,
     ) -> Result<Self, serde_json::Error> {
         #[cfg(test)]
         DERIVATION_COUNT.set(DERIVATION_COUNT.get().saturating_add(1));
 
-        #[cfg(test)]
-        super::observability::record_canonical_projection();
-        let value =
-            StackSafeJsonValue::new(to_prosemirror_json(document, &schema_context.0.schema));
+        let deferred = known_serialized_len.is_none() && admission_upper_bound.is_some();
+        let value = OnceLock::new();
+        if !deferred {
+            #[cfg(test)]
+            super::observability::record_canonical_projection();
+            let _ = value.set(StackSafeJsonValue::new(to_prosemirror_json(
+                document,
+                &schema_context.0.schema,
+            )));
+        }
         let serialized_len = OnceLock::new();
         let exact_len = if let Some(len) = known_serialized_len {
             let _ = serialized_len.set(len);
@@ -299,7 +299,14 @@ impl CanonicalArtifact {
         } else if admission_upper_bound.is_none() {
             #[cfg(test)]
             super::observability::record_canonical_serialization();
-            let len = serialize_json_value_stack_safe(value.as_value(), 0).len();
+            let len = serialize_json_value_stack_safe(
+                value
+                    .get()
+                    .expect("unbounded canonical source is projected")
+                    .as_value(),
+                0,
+            )
+            .len();
             let _ = serialized_len.set(len);
             #[cfg(test)]
             SERIALIZATION_COUNT.set(SERIALIZATION_COUNT.get().saturating_add(1));
@@ -307,29 +314,128 @@ impl CanonicalArtifact {
         } else {
             None
         };
-        let (text_scalar_len, text_utf8_bytes) =
-            known_text_metrics.unwrap_or_else(|| raw_text_metrics(document));
-        Ok(Self(Arc::new(CanonicalArtifactInner {
+        let (text_scalar_len, text_utf8_bytes) = raw_text_metrics(document);
+        let artifact = Self(Arc::new(CanonicalArtifactInner {
             source_document: document.clone(),
             value,
+            retained_charge: OnceLock::new(),
             serialized_len,
             sha256: OnceLock::new(),
             admission_upper_bound: admission_upper_bound.or(exact_len).unwrap_or(usize::MAX),
             text_scalar_len,
             text_utf8_bytes,
             schema_context: schema_context.clone(),
+        }));
+        if !deferred {
+            artifact.history_snapshot_retained_charge();
+        }
+        Ok(artifact)
+    }
+
+    pub(crate) fn derive_localized(
+        previous: &Self,
+        document: &Document,
+        old_block: &Node,
+        new_block: &Node,
+    ) -> Option<Self> {
+        let schema = &previous.0.schema_context.0.schema;
+        let old_json = StackSafeJsonValue::new(crate::serialize::node_to_prosemirror_json(
+            old_block, schema,
+        ));
+        let new_json = StackSafeJsonValue::new(crate::serialize::node_to_prosemirror_json(
+            new_block, schema,
+        ));
+        let serialized_len = previous
+            .serialized_len()
+            .checked_sub(serialize_json_value_stack_safe(old_json.as_value(), 0).len())?
+            .checked_add(serialize_json_value_stack_safe(new_json.as_value(), 0).len())?;
+        let old_text = old_block.text_content();
+        let new_text = new_block.text_content();
+        let text_scalar_len = previous
+            .text_scalar_len()
+            .checked_sub(u64::try_from(old_text.chars().count()).ok()?)?
+            .checked_add(u64::try_from(new_text.chars().count()).ok()?)?;
+        let text_utf8_bytes = previous
+            .text_utf8_bytes()
+            .checked_sub(old_text.len())?
+            .checked_add(new_text.len())?;
+        let retained_charge = previous
+            .history_snapshot_retained_charge()
+            .and_then(|charge| {
+                let old_document_bytes = old_block.history_snapshot_retained_bytes()?;
+                let new_document_bytes = new_block.history_snapshot_retained_bytes()?;
+                Some(CanonicalHistorySnapshotRetainedCharge {
+                    source_document_retained_bytes: charge
+                        .source_document_retained_bytes
+                        .checked_sub(old_document_bytes)?
+                        .checked_add(new_document_bytes)?,
+                    canonical_retained_bytes: charge
+                        .canonical_retained_bytes
+                        .checked_sub(old_document_bytes)?
+                        .checked_add(new_document_bytes)?
+                        .checked_sub(crate::model::json_value_retained_bytes(
+                            old_json.as_value(),
+                        )?)?
+                        .checked_add(crate::model::json_value_retained_bytes(
+                            new_json.as_value(),
+                        )?)?,
+                })
+            });
+        Some(Self(Arc::new(CanonicalArtifactInner {
+            source_document: document.clone(),
+            value: OnceLock::new(),
+            retained_charge: OnceLock::from(retained_charge),
+            serialized_len: OnceLock::from(serialized_len),
+            sha256: OnceLock::new(),
+            admission_upper_bound: serialized_len,
+            text_scalar_len,
+            text_utf8_bytes,
+            schema_context: previous.0.schema_context.clone(),
         })))
     }
 
     pub(crate) fn value(&self) -> &serde_json::Value {
-        self.0.value.as_value()
+        self.0
+            .value
+            .get_or_init(|| {
+                #[cfg(test)]
+                super::observability::record_canonical_projection();
+                StackSafeJsonValue::new(to_prosemirror_json(
+                    &self.0.source_document,
+                    &self.0.schema_context.0.schema,
+                ))
+            })
+            .as_value()
+    }
+
+    pub(crate) fn materialized_content_for(
+        &self,
+        document: &Document,
+        content: &crate::model::Fragment,
+    ) -> Option<&[serde_json::Value]> {
+        if !self.matches_exact_source_document(document)
+            || document.root().node_type() == "__opaque_json"
+            || document.root().content() != Some(content)
+        {
+            return None;
+        }
+        self.0
+            .value
+            .get()?
+            .as_value()
+            .get("content")?
+            .as_array()
+            .map(Vec::as_slice)
     }
 
     pub(crate) fn serialized_len(&self) -> usize {
         *self.0.serialized_len.get_or_init(|| {
             #[cfg(test)]
             super::observability::record_canonical_serialization();
-            let len = serialize_json_value_stack_safe(self.0.value.as_value(), 0).len();
+            let mut counter = CanonicalJsonLength(0);
+            self.write_canonical_json(&mut counter)
+                .expect("canonical JSON length fits in memory");
+            let len = counter.0;
             #[cfg(test)]
             SERIALIZATION_COUNT.set(SERIALIZATION_COUNT.get().saturating_add(1));
             len
@@ -338,10 +444,11 @@ impl CanonicalArtifact {
 
     pub(crate) fn sha256(&self) -> [u8; 32] {
         *self.0.sha256.get_or_init(|| {
-            let serialized = serialize_canonical_json_with_hint(
-                self.0.value.as_value(),
+            let mut serialized = Vec::with_capacity(bounded_canonical_json_initial_capacity(
                 self.0.admission_upper_bound,
-            );
+            ));
+            self.write_canonical_json(&mut serialized)
+                .expect("canonical nodes always serialize to an in-memory buffer");
             #[cfg(test)]
             super::observability::record_canonical_serialization();
             #[cfg(test)]
@@ -351,6 +458,18 @@ impl CanonicalArtifact {
             super::observability::record_canonical_hash();
             canonical_sha256(&serialized)
         })
+    }
+
+    fn write_canonical_json(&self, output: &mut impl std::io::Write) -> std::io::Result<()> {
+        if let Some(value) = self.0.value.get() {
+            crate::boundary::write_json_value_stack_safe(output, value.as_value())
+        } else {
+            crate::serialize::json_out::write_node_json(
+                output,
+                self.0.source_document.root(),
+                &self.0.schema_context.0.schema,
+            )
+        }
     }
 
     pub(crate) fn admitted_serialized_upper_bound(&self) -> usize {
@@ -367,6 +486,7 @@ impl CanonicalArtifact {
         Self(Arc::new(CanonicalArtifactInner {
             source_document: self.0.source_document.clone(),
             value: self.0.value.clone(),
+            retained_charge: self.0.retained_charge.clone(),
             serialized_len: self.0.serialized_len.clone(),
             sha256: self.0.sha256.clone(),
             admission_upper_bound,
@@ -400,6 +520,9 @@ impl CanonicalArtifact {
     /// its sealed schema context. Callers must not combine independently
     /// supplied documents and artifacts without this check.
     pub(crate) fn matches_document(&self, document: &Document) -> bool {
+        if self.matches_exact_source_document(document) {
+            return true;
+        }
         #[cfg(test)]
         super::observability::record_canonical_projection();
         let value = StackSafeJsonValue::new(to_prosemirror_json(
@@ -422,6 +545,7 @@ impl CanonicalArtifact {
         Arc::ptr_eq(&self.0, &other.0)
     }
 
+    #[cfg(test)]
     pub(crate) fn history_snapshot_retained_bytes(&self) -> Option<usize> {
         self.history_snapshot_retained_charge()
             .map(|charge| charge.canonical_retained_bytes)
@@ -430,22 +554,26 @@ impl CanonicalArtifact {
     pub(crate) fn history_snapshot_retained_charge(
         &self,
     ) -> Option<CanonicalHistorySnapshotRetainedCharge> {
-        // The engine permanently owns the canonical schema context. The source
-        // document normally aliases the separately metered snapshot Document,
-        // but counting it again keeps this helper conservative even if a future
-        // caller loses that identity invariant.
-        let source_document_retained_bytes =
-            self.0.source_document.history_snapshot_retained_bytes()?;
-        let canonical_retained_bytes = crate::model::arc_allocation_retained_bytes(
-            std::mem::size_of::<CanonicalArtifactInner>(),
-        )?
-        .checked_add(source_document_retained_bytes)?
-        .checked_add(crate::model::json_value_retained_bytes(
-            self.0.value.as_value(),
-        )?)?;
-        Some(CanonicalHistorySnapshotRetainedCharge {
-            canonical_retained_bytes,
-            source_document_retained_bytes,
+        *self.0.retained_charge.get_or_init(|| {
+            let source_document_retained_bytes =
+                self.0.source_document.history_snapshot_retained_bytes()?;
+            let canonical_retained_bytes =
+                crate::model::arc_allocation_retained_bytes(std::mem::size_of::<
+                    CanonicalArtifactInner,
+                >())?
+                .checked_add(source_document_retained_bytes)?
+                .checked_add(if let Some(value) = self.0.value.get() {
+                    crate::model::json_value_retained_bytes(value.as_value())?
+                } else {
+                    crate::serialize::json_out::projected_node_retained_bytes(
+                        self.0.source_document.root(),
+                        &self.0.schema_context.0.schema,
+                    )?
+                })?;
+            Some(CanonicalHistorySnapshotRetainedCharge {
+                canonical_retained_bytes,
+                source_document_retained_bytes,
+            })
         })
     }
 }
@@ -467,6 +595,7 @@ impl PreparedCanonicalCandidate {
         Self {
             source_document: document.clone(),
             value,
+            retained_charge: OnceLock::new(),
             serialized_len: OnceLock::new(),
             sha256: OnceLock::new(),
             sha256_provenance: OnceLock::new(),
@@ -531,6 +660,7 @@ impl PreparedCanonicalCandidate {
         self.source_document.shares_root_storage_with(document)
     }
 
+    #[cfg(test)]
     pub(crate) fn history_snapshot_retained_bytes(&self) -> Option<usize> {
         self.history_snapshot_retained_charge()
             .map(|charge| charge.canonical_retained_bytes)
@@ -539,20 +669,21 @@ impl PreparedCanonicalCandidate {
     pub(crate) fn history_snapshot_retained_charge(
         &self,
     ) -> Option<CanonicalHistorySnapshotRetainedCharge> {
-        // Finalization moves these exact owned fields into a CanonicalArtifact.
-        // Charge the future Arc payload now without copying or sealing it.
-        let source_document_retained_bytes =
-            self.source_document.history_snapshot_retained_bytes()?;
-        let canonical_retained_bytes = crate::model::arc_allocation_retained_bytes(
-            std::mem::size_of::<CanonicalArtifactInner>(),
-        )?
-        .checked_add(source_document_retained_bytes)?
-        .checked_add(crate::model::json_value_retained_bytes(
-            self.value.as_value(),
-        )?)?;
-        Some(CanonicalHistorySnapshotRetainedCharge {
-            canonical_retained_bytes,
-            source_document_retained_bytes,
+        *self.retained_charge.get_or_init(|| {
+            let source_document_retained_bytes =
+                self.source_document.history_snapshot_retained_bytes()?;
+            let canonical_retained_bytes =
+                crate::model::arc_allocation_retained_bytes(std::mem::size_of::<
+                    CanonicalArtifactInner,
+                >())?
+                .checked_add(source_document_retained_bytes)?
+                .checked_add(crate::model::json_value_retained_bytes(
+                    self.value.as_value(),
+                )?)?;
+            Some(CanonicalHistorySnapshotRetainedCharge {
+                canonical_retained_bytes,
+                source_document_retained_bytes,
+            })
         })
     }
 
@@ -575,7 +706,8 @@ impl PreparedCanonicalCandidate {
         let _ = self.serialized_len.set(exact_len);
         Some(CanonicalArtifact(Arc::new(CanonicalArtifactInner {
             source_document: self.source_document,
-            value: self.value,
+            value: OnceLock::from(self.value),
+            retained_charge: self.retained_charge,
             serialized_len: self.serialized_len,
             sha256: self.sha256,
             admission_upper_bound: self.admission_upper_bound,
@@ -668,6 +800,52 @@ mod tests {
     use crate::serialize::{from_prosemirror_json, to_prosemirror_json, UnknownTypeMode};
 
     #[test]
+    fn materialized_children_require_exact_source_and_matching_fragment_without_forcing_json() {
+        let schema = tiptap_schema();
+        let context = CanonicalSchemaContext::new(&schema);
+        let source = serde_json::json!({"type":"doc","content":[
+            {"type":"heading","attrs":{"level":1},"content":[{"type":"text","text":"hé🙂"}]},
+            {"type":"unknown","attrs":{"nested":[true,null]}}
+        ]});
+        let document = from_prosemirror_json(&source, &schema, UnknownTypeMode::Preserve).unwrap();
+        let independently_parsed =
+            from_prosemirror_json(&source, &schema, UnknownTypeMode::Preserve).unwrap();
+        let content = document.root().content().unwrap();
+        let artifact = context
+            .derive_validated_json(&document, source.to_string().len(), 0)
+            .unwrap();
+        assert!(artifact.0.value.get().is_none());
+        assert!(artifact
+            .materialized_content_for(&document, content)
+            .is_none());
+        assert!(
+            artifact.0.value.get().is_none(),
+            "lookup must not materialize an absent JSON tree"
+        );
+        let expected = content
+            .iter()
+            .map(|node| crate::serialize::node_to_prosemirror_json(node, &schema))
+            .collect::<Vec<_>>();
+        artifact.value();
+        assert_eq!(
+            artifact.materialized_content_for(&document, content),
+            Some(expected.as_slice())
+        );
+        assert!(
+            artifact
+                .materialized_content_for(&independently_parsed, content)
+                .is_none(),
+            "equal documents cannot confer source identity"
+        );
+        assert!(
+            artifact
+                .materialized_content_for(&document, &crate::model::Fragment::empty())
+                .is_none(),
+            "different replacement children cannot reuse a root artifact"
+        );
+    }
+
+    #[test]
     fn artifact_metrics_are_from_the_exact_canonical_projection() {
         let schema = tiptap_schema();
         let context = CanonicalSchemaContext::new(&schema);
@@ -700,6 +878,61 @@ mod tests {
         assert_eq!(artifact.format_version(), CANONICAL_ARTIFACT_FORMAT_VERSION);
         assert!(context.ptr_eq(artifact.schema_context()));
         assert_eq!(take_canonical_artifact_counts_for_test(), (1, 2));
+    }
+
+    #[test]
+    fn deferred_history_charge_and_hash_match_materialized_canonical_output() {
+        let schema = tiptap_schema();
+        let context = CanonicalSchemaContext::new(&schema);
+        let source = serde_json::json!({
+            "type": "doc",
+            "content": [
+                {"type": "paragraph", "content": [
+                    {"type": "text", "text": "escaped\n\"雪🙂", "marks": [{"type": "bold"}]},
+                    {"type": "hardBreak"}
+                ]},
+                {"type": "unknown", "attrs": {"number": 1.5, "nested": [null, true]}}
+            ]
+        });
+        let document = from_prosemirror_json(&source, &schema, UnknownTypeMode::Preserve).unwrap();
+        let projected =
+            crate::boundary::StackSafeJsonValue::new(to_prosemirror_json(&document, &schema));
+        let expected = serde_json::to_vec(projected.as_value()).unwrap();
+        let document_bytes = document.history_snapshot_retained_bytes().unwrap();
+        let canonical_bytes = crate::model::arc_allocation_retained_bytes(std::mem::size_of::<
+            CanonicalArtifactInner,
+        >())
+        .unwrap()
+            + document_bytes
+            + crate::model::json_value_retained_bytes(projected.as_value()).unwrap();
+        let artifact = context
+            .derive_validated_json(&document, expected.len(), 0)
+            .unwrap();
+        assert!(artifact.0.value.get().is_none(), "fixture starts deferred");
+
+        let charge = artifact.history_snapshot_retained_charge().unwrap();
+        assert_eq!(charge.source_document_retained_bytes, document_bytes);
+        assert_eq!(charge.canonical_retained_bytes, canonical_bytes);
+        assert!(
+            artifact.0.value.get().is_none(),
+            "history accounting must not materialize canonical JSON"
+        );
+        assert_eq!(artifact.serialized_len(), expected.len());
+        assert!(
+            artifact.0.value.get().is_none(),
+            "length must leave the canonical tree deferred"
+        );
+        assert_eq!(artifact.sha256(), canonical_sha256(&expected));
+        assert_eq!(artifact.serialized_len(), expected.len());
+        assert!(
+            artifact.0.value.get().is_none(),
+            "hashing must not retain a second whole-document tree"
+        );
+        assert_eq!(
+            artifact.sha256(),
+            canonical_sha256(&expected),
+            "cached digest remains identical"
+        );
     }
 
     #[test]
@@ -805,6 +1038,52 @@ mod tests {
             assert_eq!(actual, expected);
             assert_eq!(canonical_sha256(&actual), canonical_sha256(&expected));
         }
+    }
+
+    #[test]
+    #[ignore = "release-mode canonical buffer hash lower-bound probe"]
+    fn canonical_buffer_hash_budget_probe() {
+        const FIXTURE_ROWS: usize = 1_000;
+        const FIXTURE_COLUMNS: usize = 20;
+        const SAMPLES: usize = 50;
+        const WARMUP: usize = 5;
+        const MILLISECONDS_PER_SECOND: f64 = 1_000.0;
+        let schema = crate::schema::presets::prosemirror_table_schema();
+        let input = crate::test_support::large_table_fixture::plain_table_document(
+            FIXTURE_ROWS,
+            FIXTURE_COLUMNS,
+        );
+        let document = from_prosemirror_json(&input, &schema, UnknownTypeMode::Error).unwrap();
+        let expected = crate::boundary::serialize_json_value_stack_safe(
+            &to_prosemirror_json(&document, &schema),
+            0,
+        );
+        let fingerprint = canonical_sha256(&expected);
+        let mut hash_samples = Vec::with_capacity(SAMPLES);
+        let mut copy_hash_samples = Vec::with_capacity(SAMPLES);
+        for iteration in 0..(WARMUP + SAMPLES) {
+            let started = std::time::Instant::now();
+            let hash = canonical_sha256(std::hint::black_box(&expected));
+            let hash_ms = started.elapsed().as_secs_f64() * MILLISECONDS_PER_SECOND;
+            assert_eq!(hash, fingerprint);
+            let started = std::time::Instant::now();
+            let candidate = std::hint::black_box(expected.clone());
+            let hash = canonical_sha256(std::hint::black_box(&candidate));
+            let copy_hash_ms = started.elapsed().as_secs_f64() * MILLISECONDS_PER_SECOND;
+            assert_eq!(hash, fingerprint);
+            if iteration >= WARMUP {
+                hash_samples.push(hash_ms);
+                copy_hash_samples.push(copy_hash_ms);
+            }
+        }
+        hash_samples.sort_by(f64::total_cmp);
+        copy_hash_samples.sort_by(f64::total_cmp);
+        eprintln!(
+            "CANONICAL_BUFFER_PROBE bytes={} hash_median_ms={:.3} copy_hash_median_ms={:.3}",
+            expected.len(),
+            hash_samples[SAMPLES / 2],
+            copy_hash_samples[SAMPLES / 2]
+        );
     }
 
     #[test]

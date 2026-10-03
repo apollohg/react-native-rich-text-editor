@@ -73,6 +73,28 @@ impl DeltaTree {
         (doc_delta, scalar_delta)
     }
 
+    pub(super) fn ranges(
+        &self,
+        block_count: usize,
+    ) -> impl Iterator<Item = (std::ops::Range<usize>, i32, i32)> + '_ {
+        self.deltas
+            .iter()
+            .enumerate()
+            .take_while(move |(_, &(start, _, _))| start < block_count)
+            .scan(
+                (0i32, 0i32),
+                move |(doc, scalar), (index, &(start, dd, sd))| {
+                    *doc += dd;
+                    *scalar += sd;
+                    let end = self
+                        .deltas
+                        .get(index + 1)
+                        .map_or(block_count, |next| next.0.min(block_count));
+                    Some((start..end, *doc, *scalar))
+                },
+            )
+    }
+
     /// Clear all deltas (after folding them into BlockMappings).
     pub fn clear(&mut self) {
         self.deltas.clear();

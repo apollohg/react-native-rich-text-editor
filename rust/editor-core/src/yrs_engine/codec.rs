@@ -16,6 +16,7 @@ use crate::schema::{json_projection_values_equal, NodeJsonProjection, NodeRole, 
 use super::mutation::{
     ImportElementAttributeWork, ImportLookupMaterializationCollector, ImportTextCaptureWork,
 };
+use super::wire_number::{wire_number_to_any, WireNumberError};
 use super::{raw_storage_work_limit, YrsEngineError, YrsEngineResult};
 
 const RECURSION_RED_ZONE_BYTES: usize = 64 * 1024;
@@ -157,7 +158,7 @@ impl<'a> YrsDocumentCodec<'a> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum PreparedXmlNode {
     Text {
         runs: Vec<PreparedTextRun>,
@@ -176,7 +177,7 @@ pub(crate) struct PreparedTextRun {
     pub(crate) attrs: Attrs,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PreparedXmlChild {
     pub(crate) index: u32,
     pub(crate) node: PreparedXmlNode,
@@ -194,18 +195,27 @@ pub(crate) fn prepare_xml_nodes(
     depth: usize,
 ) -> YrsEngineResult<PreparedXmlBatch> {
     let mut budget = ConversionBudget::new(limits);
-    let mut prepared = Vec::with_capacity(nodes.len());
-    for (index, node) in nodes.iter().enumerate() {
-        prepared.push(PreparedXmlChild {
-            index: u32::try_from(index).map_err(|_| {
-                YrsEngineError::new(
-                    "DOCUMENT_LIMIT_EXCEEDED",
-                    "prepared XML child index exceeds u32",
-                )
-            })?,
-            node: prepare_json_node(node, depth, &mut budget)?,
-        });
-    }
+    let prepared = prepare_xml_children(nodes, depth, &mut budget, prepare_json_node)?;
+    finish_prepared_batch(prepared, budget)
+}
+
+pub(crate) fn prepare_model_nodes(
+    nodes: &[crate::model::Node],
+    schema: &Schema,
+    limits: &ResourceLimits,
+    depth: usize,
+) -> YrsEngineResult<PreparedXmlBatch> {
+    let mut budget = ConversionBudget::new(limits);
+    let prepared = prepare_xml_children(nodes, depth, &mut budget, |node, depth, budget| {
+        prepare_model_node(node, schema, depth, budget)
+    })?;
+    finish_prepared_batch(prepared, budget)
+}
+
+fn finish_prepared_batch(
+    prepared: Vec<PreparedXmlChild>,
+    budget: ConversionBudget<'_>,
+) -> YrsEngineResult<PreparedXmlBatch> {
     let work = budget
         .nodes
         .checked_add(budget.any_work)
@@ -400,19 +410,7 @@ pub(crate) fn normalized_wire_element_node_type<T: ReadTxn>(
     if tag != "heading" {
         return tag.to_string();
     }
-    let level = match element.get_attribute(txn, "level") {
-        Some(yrs::Out::Any(Any::BigInt(value))) => u8::try_from(value).ok(),
-        Some(yrs::Out::Any(Any::Number(value))) => (value.is_finite() && value.fract() == 0.0)
-            .then(|| u8::try_from(value as i64).ok())
-            .flatten(),
-        Some(yrs::Out::Any(Any::String(value))) => {
-            crate::serialize::parse_wire_heading_level_str(&value)
-        }
-        _ => None,
-    };
-    level
-        .filter(|level| (1..=6).contains(level))
-        .map_or_else(|| tag.to_string(), |level| format!("h{level}"))
+    heading_level(element, txn).map_or_else(|| tag.to_string(), |level| format!("h{level}"))
 }
 
 pub(crate) struct WireAttributeJsonBudget<'a> {
@@ -468,10 +466,7 @@ fn marks_to_attrs(marks: Option<&Vec<Value>>) -> Attrs {
         let Some(mark_type) = mark.get("type").and_then(Value::as_str) else {
             continue;
         };
-        let value = mark
-            .get("attrs")
-            .map(json_to_any)
-            .unwrap_or_else(|| Any::Bool(true));
+        let value = json_to_any(mark.get("attrs").unwrap_or(&Value::Object(Map::new())));
         attrs.insert(mark_type.into(), value);
     }
     attrs
@@ -494,7 +489,7 @@ fn nodes_are_compatible(old_node: &Value, new_node: &Value) -> bool {
     }
 }
 
-fn json_to_any(value: &Value) -> Any {
+pub(crate) fn json_to_any(value: &Value) -> Any {
     stacker::maybe_grow(
         RECURSION_RED_ZONE_BYTES,
         RECURSION_STACK_SEGMENT_BYTES,
@@ -506,17 +501,7 @@ fn json_to_any_inner(value: &Value) -> Any {
     match value {
         Value::Null => Any::Null,
         Value::Bool(value) => Any::Bool(*value),
-        Value::Number(number) => {
-            if let Some(value) = number.as_i64() {
-                Any::BigInt(value)
-            } else if let Some(value) = number.as_u64() {
-                Any::Number(value as f64)
-            } else if let Some(value) = number.as_f64() {
-                Any::Number(value)
-            } else {
-                Any::Null
-            }
-        }
+        Value::Number(number) => wire_number_to_any(number).unwrap_or(Any::Null),
         Value::String(value) => Any::String(value.clone().into()),
         Value::Array(values) => Any::Array(values.iter().map(json_to_any).collect()),
         Value::Object(values) => Any::Map(Arc::new(
@@ -561,16 +546,12 @@ fn any_to_json_inner(
             budget.charge_output(if *value { 4 } else { 5 })?;
             Ok(Value::Bool(*value))
         }
-        Any::Number(value) => {
-            let number = serde_json::Number::from_f64(*value);
+        Any::Number(_) => {
+            let number = projected_number(value);
             budget.charge_computed_output(|| {
                 number.as_ref().map_or(4, |number| number.to_string().len())
             })?;
             Ok(number.map(Value::Number).unwrap_or(Value::Null))
-        }
-        Any::BigInt(value) => {
-            budget.charge_computed_output(|| value.to_string().len())?;
-            Ok(Value::Number((*value).into()))
         }
         Any::String(value) => {
             budget.charge_computed_output(|| json_string_len(value))?;

@@ -50,7 +50,10 @@ public final class ProseViewerView: UIView {
                 ownedLayout?.retainedBytes ?? 0,
                 attachmentRevisions.retainedPublicationBytesForTesting
             ),
-            drawingView.retainedImagePixelsBytesForTesting
+            PreparedProseDrawingView.saturatingAdd(
+                drawingView.retainedImagePixelsBytesForTesting,
+                drawingView.tablePresentationRetainedBytesForTesting
+            )
         )
     }
 
@@ -354,6 +357,11 @@ public final class ProseViewerView: UIView {
             installPreparedLayout(errorLayout)
             reportErrorIfNeeded(pendingError)
             return errorLayout
+        }
+        if let widthPixels = ProseLayoutMetrics.widthPixels(widthPoints: width, scale: scale),
+           ownedLayoutMatches(request: request, widthPixels: widthPixels, scale: scale),
+           let ownedLayout {
+            return ownedLayout
         }
         let layout = layoutRegistry.measure(
             request: request,

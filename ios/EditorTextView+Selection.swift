@@ -40,6 +40,7 @@ extension EditorTextView {
             && !hasImageAttachment(at: point)
             && !hasTaskListMarker(at: point)
             && atomAttachmentRange(at: point) == nil
+            && rootTableContains?(point) != true
     }
 
     @discardableResult
@@ -52,6 +53,12 @@ extension EditorTextView {
         let caretPosition = autocapitalizationFriendlyEmptyBlockPosition(for: position) ?? position
         let offset = self.offset(from: beginningOfDocument, to: caretPosition)
         guard !isAtomBoundaryCaretOffset(offset) else { return false }
+        if authoritativeCellSelectionActive {
+            let scalar = PositionBridge.utf16OffsetToScalar(offset, in: self)
+            guard PositionBridge.isRootTextInputRangeSafe(from: scalar, to: scalar, in: self) else { return false }
+            setAuthoritativeCellSelectionActive(false)
+            rootTableSelectionInputBlocked = false
+        }
         _ = becomeFirstResponder()
         logicalSelectionScalarRange = nil
         logicalSelectionUtf16Range = nil
@@ -124,19 +131,19 @@ extension EditorTextView {
         } ?? false
     }
 
-    func scalarRange(forUtf16Range range: NSRange) -> (from: UInt32, to: UInt32) {
+    func scalarRange(forUtf16Range range: NSRange) -> (from: UInt32, to: UInt32)? {
         let start = PositionBridge.utf16OffsetToScalar(range.location, in: self)
         let end = PositionBridge.utf16OffsetToScalar(NSMaxRange(range), in: self)
-        return (from: min(start, end), to: max(start, end))
+        return inputScalarRange(fromLocal: start, toLocal: end)
     }
 
     func scalarRange(
         forUtf16Range range: NSRange,
         in storage: NSAttributedString
-    ) -> (from: UInt32, to: UInt32) {
+    ) -> (from: UInt32, to: UInt32)? {
         let start = PositionBridge.utf16OffsetToScalar(range.location, in: storage)
         let end = PositionBridge.utf16OffsetToScalar(NSMaxRange(range), in: storage)
-        return (from: min(start, end), to: max(start, end))
+        return inputScalarRange(fromLocal: start, toLocal: end)
     }
 
     /// UITextViewDelegate hook for user-driven selection updates.
@@ -147,6 +154,7 @@ extension EditorTextView {
     func textViewDidChangeSelection(_ textView: UITextView) {
         guard textView === self else { return }
         ensureInternalTextViewDelegate()
+        guard !authoritativeCellSelectionActive else { return }
         if !isApplyingRustState,
            !isComposing,
            externalTextComposition == nil,
@@ -192,6 +200,24 @@ extension EditorTextView {
         }
         if normalizeSelectionForEmptyBlockAutocapitalizationIfNeeded() {
             return
+        }
+        if rootTableSelectionInputBlocked {
+            guard selectedRange != lastAuthorizedSelectedUtf16Range,
+                  let range = selectedTextRange
+            else { return }
+            let scalars = PositionBridge.textRangeToScalarRange(range, in: self)
+            guard PositionBridge.isScalarRangeRepresentable(
+                from: scalars.from,
+                to: scalars.to,
+                in: self
+            ), PositionBridge.isRootTextInputRangeSafe(
+                from: scalars.from,
+                to: scalars.to,
+                in: self
+            ) else { return }
+            rootTableSelectionInputBlocked = false
+            logicalSelectionScalarRange = nil
+            logicalSelectionUtf16Range = nil
         }
         recordAuthorizedSelectionIfPossible()
         refreshNativeSelectionChromeVisibility()
@@ -269,7 +295,7 @@ extension EditorTextView {
     }
 
     func refreshNativeSelectionChromeVisibility() {
-        let hidden = selectedImageSelectionState() != nil
+        let hidden = authoritativeCellSelectionActive || selectedImageSelectionState() != nil
         if !hidden, tintColor.cgColor.alpha > 0 {
             visibleSelectionTintColor = tintColor
         }
@@ -298,6 +324,11 @@ extension EditorTextView {
             guard self.pendingSelectionSyncGeneration == generation else { return }
             self.syncSelectionToRustAndNotifyDelegate()
         }
+    }
+
+    func syncSelectionImmediately() {
+        pendingSelectionSyncGeneration &+= 1
+        syncSelectionToRustAndNotifyDelegate()
     }
 
     private func syncSelectionToRustAndNotifyDelegate() {
@@ -337,11 +368,57 @@ extension EditorTextView {
             selectionDidChange: sync.docAnchor,
             head: sync.docHead
         )
+        onAuthoritativeTextSelectionSynced?()
+    }
+
+    func setRootTableSelectionRepresentable(_ representable: Bool) {
+        guard tableCellPositionMap == nil else { return }
+        rootTableSelectionInputBlocked = !representable
+        if !representable {
+            logicalSelectionScalarRange = nil
+            logicalSelectionUtf16Range = nil
+        }
+    }
+
+    func setAuthoritativeCellSelectionActive(_ active: Bool) {
+        guard authoritativeCellSelectionActive != active else { return }
+        authoritativeCellSelectionActive = active
+        if active {
+            pendingSelectionSyncGeneration &+= 1
+            resetPendingNativeTextMutationState()
+            logicalSelectionScalarRange = nil
+            logicalSelectionUtf16Range = nil
+        }
+        refreshNativeSelectionChromeVisibility()
     }
 
     func currentLogicalScalarSelection() -> (anchor: UInt32, head: UInt32)? {
+        guard !rootTableSelectionInputBlocked else { return nil }
         guard let range = selectedTextRange else { return nil }
         let scalarRange = PositionBridge.textRangeToScalarRange(range, in: self)
+        if tableCellPositionMap != nil {
+            guard let mapped = inputScalarRange(
+                fromLocal: scalarRange.from,
+                toLocal: scalarRange.to
+            ) else { return nil }
+            if let logicalSelectionScalarRange,
+               min(logicalSelectionScalarRange.anchor, logicalSelectionScalarRange.head) == mapped.from,
+               max(logicalSelectionScalarRange.anchor, logicalSelectionScalarRange.head) == mapped.to {
+                return logicalSelectionScalarRange
+            }
+            logicalSelectionScalarRange = nil
+            logicalSelectionUtf16Range = nil
+            return (anchor: mapped.from, head: mapped.to)
+        }
+        guard PositionBridge.isScalarRangeRepresentable(
+            from: scalarRange.from,
+            to: scalarRange.to,
+            in: self
+        ), PositionBridge.isRootTextInputRangeSafe(
+            from: scalarRange.from,
+            to: scalarRange.to,
+            in: self
+        ) else { return nil }
         if let logicalSelectionScalarRange,
            min(logicalSelectionScalarRange.anchor, logicalSelectionScalarRange.head) == scalarRange.from,
            max(logicalSelectionScalarRange.anchor, logicalSelectionScalarRange.head) == scalarRange.to {
@@ -369,6 +446,76 @@ extension EditorTextView {
 
     func currentScalarSelection() -> (anchor: UInt32, head: UInt32)? {
         currentLogicalScalarSelection()
+    }
+
+    func isAuthorizedForTableCellInput() -> Bool {
+        guard !authoritativeCellSelectionActive else { return false }
+        guard let map = tableCellPositionMap else {
+            guard !rootTableSelectionInputBlocked else { return false }
+            if editorId != 0 {
+                guard let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
+                      hasAuthorizedRootNativeOwner(adapter) else { return false }
+            }
+            guard let selection = selectedTextRange else { return true }
+            let scalarRange = PositionBridge.textRangeToScalarRange(selection, in: self)
+            return PositionBridge.isRootTextInputRangeSafe(
+                from: scalarRange.from,
+                to: scalarRange.to,
+                in: self
+            )
+        }
+        guard let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
+              adapter.baseDocumentRevision == map.binding.documentRevision,
+              adapter.positionEpoch == map.binding.positionEpoch
+        else {
+            return false
+        }
+        return tableCellInputAuthority?() ?? ownsNativeBinding(adapter)
+    }
+
+    func hasAuthorizedRootNativeOwner(_ adapter: EditorV2Adapter) -> Bool {
+        rootTableNativeOwnerAuthority?(adapter) ?? ownsNativeBinding(adapter)
+    }
+
+    func isAuthorizedForHistoryCommand() -> Bool {
+        guard let adapter = EditorV2Registry.adapter(forLegacyId: editorId) else { return false }
+        return tableCellInputAuthority?() ?? hasAuthorizedRootNativeOwner(adapter)
+    }
+
+    func inputScalar(atLocalScalar localScalar: UInt32) -> UInt32? {
+        guard let map = tableCellPositionMap else {
+            return !rootTableSelectionInputBlocked
+                && PositionBridge.isScalarPositionRepresentable(localScalar, in: self)
+                && PositionBridge.isRootTextInputRangeSafe(from: localScalar, to: localScalar, in: self)
+                ? localScalar : nil
+        }
+        guard let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
+              isAuthorizedForTableCellInput(),
+              adapter.baseDocumentRevision == map.binding.documentRevision,
+              adapter.positionEpoch == map.binding.positionEpoch
+        else { return nil }
+        return map.globalScalar(
+            forLocalScalar: localScalar,
+            currentRevision: adapter.baseDocumentRevision,
+            currentEpoch: adapter.positionEpoch
+        )
+    }
+
+    func inputScalarRange(fromLocal: UInt32, toLocal: UInt32) -> (from: UInt32, to: UInt32)? {
+        guard fromLocal <= toLocal else { return nil }
+        guard let map = tableCellPositionMap else {
+            guard !rootTableSelectionInputBlocked,
+                  PositionBridge.isScalarRangeRepresentable(from: fromLocal, to: toLocal, in: self),
+                  PositionBridge.isRootTextInputRangeSafe(from: fromLocal, to: toLocal, in: self)
+            else { return nil }
+            return (fromLocal, toLocal)
+        }
+        guard let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
+              isAuthorizedForTableCellInput(),
+              adapter.baseDocumentRevision == map.binding.documentRevision,
+              adapter.positionEpoch == map.binding.positionEpoch
+        else { return nil }
+        return map.globalScalarRange(fromLocalScalar: fromLocal, toLocalScalar: toLocal)
     }
 
     /// Apply a selection from a parsed JSON selection object.
@@ -419,14 +566,25 @@ extension EditorTextView {
             } else {
                 headScalar = EditorV2Shadow.docToScalar(id: editorId, docPos: head)
             }
-            let startUtf16 = PositionBridge.scalarToUtf16Offset(
-                min(anchorScalar, headScalar),
-                in: self
-            )
-            let endUtf16 = PositionBridge.scalarToUtf16Offset(
-                max(anchorScalar, headScalar),
-                in: self
-            )
+            let localAnchor: UInt32
+            let localHead: UInt32
+            if let map = tableCellPositionMap {
+                guard let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
+                      adapter.baseDocumentRevision == map.binding.documentRevision,
+                      adapter.positionEpoch == map.binding.positionEpoch,
+                      let resolvedAnchor = map.localScalar(forGlobalScalar: anchorScalar, currentRevision: adapter.baseDocumentRevision, currentEpoch: adapter.positionEpoch),
+                      let resolvedHead = map.localScalar(forGlobalScalar: headScalar, currentRevision: adapter.baseDocumentRevision, currentEpoch: adapter.positionEpoch)
+                else {
+                    return SelectionApplyTrace(totalNanos: 0, resolveNanos: 0, assignmentNanos: 0, chromeNanos: 0)
+                }
+                localAnchor = resolvedAnchor
+                localHead = resolvedHead
+            } else {
+                localAnchor = anchorScalar
+                localHead = headScalar
+            }
+            let startUtf16 = PositionBridge.scalarToUtf16Offset(min(localAnchor, localHead), in: self)
+            let endUtf16 = PositionBridge.scalarToUtf16Offset(max(localAnchor, localHead), in: self)
             let resolveNanos = DispatchTime.now().uptimeNanoseconds - resolveStartedAt
 
             let assignmentStartedAt = DispatchTime.now().uptimeNanoseconds
@@ -483,7 +641,20 @@ extension EditorTextView {
             } else {
                 posScalar = EditorV2Shadow.docToScalar(id: editorId, docPos: pos)
             }
-            let startUtf16 = PositionBridge.scalarToUtf16Offset(posScalar, in: self)
+            let localScalar: UInt32
+            if let map = tableCellPositionMap {
+                guard let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
+                      adapter.baseDocumentRevision == map.binding.documentRevision,
+                      adapter.positionEpoch == map.binding.positionEpoch,
+                      let resolved = map.localScalar(forGlobalScalar: posScalar, currentRevision: adapter.baseDocumentRevision, currentEpoch: adapter.positionEpoch)
+                else {
+                    return SelectionApplyTrace(totalNanos: 0, resolveNanos: 0, assignmentNanos: 0, chromeNanos: 0)
+                }
+                localScalar = resolved
+            } else {
+                localScalar = posScalar
+            }
+            let startUtf16 = PositionBridge.scalarToUtf16Offset(localScalar, in: self)
             let targetRange = NSRange(location: startUtf16, length: 1)
             let resolveNanos = DispatchTime.now().uptimeNanoseconds - resolveStartedAt
             let assignmentStartedAt = DispatchTime.now().uptimeNanoseconds
@@ -508,6 +679,9 @@ extension EditorTextView {
             )
 
         case "all":
+            guard tableCellPositionMap == nil else {
+                return SelectionApplyTrace(totalNanos: 0, resolveNanos: 0, assignmentNanos: 0, chromeNanos: 0)
+            }
             let assignmentStartedAt = DispatchTime.now().uptimeNanoseconds
             logicalSelectionScalarRange = nil
             logicalSelectionUtf16Range = nil

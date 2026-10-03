@@ -4,6 +4,24 @@ import android.os.Looper
 import com.apollohg.editor.NativeEditorExpoView.EditorErrorBinding
 import com.apollohg.editor.NativeEditorExpoView.PendingEditorErrorEvent
 
+internal fun NativeEditorExpoView.hasTableRootNativeOwnerAuthority(
+    adapter: EditorV2Adapter
+): Boolean {
+    val binding = editorErrorBinding ?: return false
+    val viewToken = richTextView.editorId
+    return isAttachedToNativeWindow &&
+        viewToken != 0L &&
+        !NativeEditorViewRegistry.isDestroyed(viewToken) &&
+        richTextView.editorEditText.editorId == viewToken &&
+        richTextView.editorEditText.v2Driver === adapter &&
+        EditorV2Registry.adapterForViewToken(viewToken) === adapter &&
+        binding.adapter === adapter &&
+        binding.viewToken == viewToken &&
+        binding.editorId == eventEditorId(viewToken) &&
+        adapter.isNativeBindingOwner(binding.callbackToken) &&
+        adapter.ownsAutonomousErrorOwner(binding.callbackToken)
+}
+
 internal fun NativeEditorExpoView.bindEditorErrorCallbackIfLive(viewToken: Long) {
     if (!isAttachedToNativeWindow || richTextView.editorId != viewToken ||
         richTextView.editorEditText.editorId != viewToken

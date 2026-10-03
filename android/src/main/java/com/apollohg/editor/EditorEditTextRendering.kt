@@ -34,6 +34,7 @@ internal fun EditorEditText.applyRenderedSpannable(
     usedPatch: Boolean,
     preserveInputConnectionForExternalUpdate: Boolean = false
 ) {
+    inputRerendersForTesting += 1
     onBeforeRenderRefresh?.invoke()
     val startedAt = System.nanoTime()
     val previousScrollX = scrollX
@@ -278,6 +279,7 @@ internal fun EditorEditText.authorizeVisibleTextForMatchedOptimisticRender(
  * @param renderJSON The JSON array string of render elements.
  */
 internal fun EditorEditText.applyRenderJSONImpl(renderJSON: String) {
+    if (isTableCellInput || rootTablePositionMap != null || rootTableRenderNeedsRefresh) return
     standaloneRenderJSON = renderJSON
     cancelPendingImageLoads()
     restartImageLoadsOnAttach = false
@@ -310,4 +312,48 @@ internal fun EditorEditText.applyRenderJSONImpl(renderJSON: String) {
         "applyRenderJSON",
         "jsonLength=${renderJSON.length} totalUs=${nanosToMicros(System.nanoTime() - startedAt)}"
     )
+}
+
+internal fun renderedTextMatches(left: CharSequence?, right: CharSequence): Boolean {
+    if (left?.toString() != right.toString()) return false
+    data class SpanValue(
+        val type: Class<*>,
+        val start: Int,
+        val end: Int,
+        val flags: Int,
+        val value: Any
+    )
+    fun values(text: CharSequence): List<SpanValue>? {
+        val spanned = text as? Spanned ?: return emptyList()
+        return spanned.getSpans(0, spanned.length, Any::class.java).filter {
+            it is android.text.style.CharacterStyle || it is android.text.style.ParagraphStyle ||
+                it is Annotation || it is CodeBlockMetadataSpan
+        }.map { span ->
+            val value: Any = when (span) {
+                is android.text.ParcelableSpan -> {
+                    val parcel = android.os.Parcel.obtain()
+                    try {
+                        span.writeToParcel(parcel, 0)
+                        parcel.marshall().toList()
+                    } finally {
+                        parcel.recycle()
+                    }
+                }
+
+                is EditorResolvedTextSpan -> span.style to span.density
+
+                else -> return null
+            }
+            SpanValue(
+                span.javaClass,
+                spanned.getSpanStart(span),
+                spanned.getSpanEnd(span),
+                spanned.getSpanFlags(span),
+                value
+            )
+        }
+    }
+    val leftValues = values(left ?: return false) ?: return false
+    val rightValues = values(right) ?: return false
+    return leftValues == rightValues
 }

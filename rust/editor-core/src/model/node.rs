@@ -6,6 +6,7 @@ use crate::model::mark::Mark;
 
 #[cfg(test)]
 thread_local! {
+    pub(crate) static NODE_HANDLE_CLONES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static DEEP_NODE_PAYLOAD_CLONES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
@@ -87,9 +88,20 @@ impl Drop for NodeData {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
+#[cfg_attr(not(test), derive(Clone))]
 pub struct Node {
     data: Arc<NodeData>,
+}
+
+#[cfg(test)]
+impl Clone for Node {
+    fn clone(&self) -> Self {
+        NODE_HANDLE_CLONES.set(NODE_HANDLE_CLONES.get() + 1);
+        Self {
+            data: Arc::clone(&self.data),
+        }
+    }
 }
 
 impl PartialEq for Node {
@@ -271,6 +283,34 @@ impl Node {
 
     pub(crate) fn shares_storage_with(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.data, &other.data)
+    }
+
+    pub(super) fn replace_node_at_path(&mut self, path: &[u32], replacement: Node) {
+        if path.is_empty() {
+            *self = replacement;
+            return;
+        }
+        let shared = Arc::get_mut(&mut self.data).is_none();
+        if shared {
+            self.data = Arc::new(self.data.as_ref().clone());
+        }
+        let data = Arc::get_mut(&mut self.data).expect("replacement owns its ancestor payload");
+        if !shared {
+            // Rebuilding normalizes metadata capacity even on an owned ancestor.
+            let node_type = data.node_type.to_string();
+            let attrs = crate::boundary::clone_json_object_stack_safe(&data.attrs);
+            let kind = std::mem::replace(&mut data.kind, NodeKind::Void);
+            *data = NodeData {
+                node_type,
+                attrs,
+                marks: Vec::new(),
+                kind,
+            };
+        }
+        let NodeKind::Element { content } = &mut data.kind else {
+            panic!("non-leaf node in path must be an element");
+        };
+        content.replace_node_at_path(path, replacement);
     }
 
     pub(crate) fn history_snapshot_retained_bytes(&self) -> Option<usize> {

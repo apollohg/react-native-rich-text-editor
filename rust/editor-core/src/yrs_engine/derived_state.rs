@@ -7,6 +7,7 @@ mod localized_insert;
 mod observability;
 mod render_evidence;
 mod selection;
+mod table_availability;
 mod validation;
 
 use super::canonical::CanonicalArtifact;
@@ -21,6 +22,7 @@ use crate::position::update::UpdateMode;
 use crate::position::PositionMap;
 use crate::schema::Schema;
 use crate::selection::Selection;
+use crate::tables::admission::TableProjectionIndex;
 #[cfg(test)]
 use crate::transform::DocumentValidator;
 use crate::transform::StepMap;
@@ -33,17 +35,22 @@ pub(crate) use active_state::{
 };
 pub(crate) use candidate_evidence::{PreparedCandidateEvidence, PreparedCandidateValidation};
 #[cfg(test)]
-pub(crate) use history_snapshot::prepare_history_candidate_read_for_test;
-#[allow(unused_imports)]
 pub(crate) use history_snapshot::{
     history_document_snapshot_retained_bytes,
     history_document_snapshot_retained_bytes_with_canonical_charge,
+    prepare_history_candidate_read_for_test, HistoryDocumentSnapshotRetainedInput,
+};
+#[allow(unused_imports)]
+pub(crate) use history_snapshot::{
     history_document_snapshot_retained_bytes_with_precomputed_document_charge,
     AdmittedHistoryCandidateRead, AdmittedHistoryMutationLookupProof, HistoryDocumentSnapshot,
-    HistoryDocumentSnapshotRetainedBytes, HistoryDocumentSnapshotRetainedInput,
-    HistoryMutationLookupCapability, PreparedHistoryCandidateRead, RestoredHistoryDocumentState,
+    HistoryDocumentSnapshotRetainedBytes, HistoryMutationLookupCapability,
+    PreparedHistoryCandidateRead, RestoredHistoryDocumentState,
 };
-pub(crate) use insert_admission::{LocalizedInsertAdmission, ValidatedLocalizedInsertAdmission};
+pub(crate) use insert_admission::{
+    LocalizedTextblockEdit, LocalizedTextblockEditAdmission,
+    ValidatedLocalizedTextblockEditAdmission,
+};
 #[cfg(test)]
 use localized_index::canonical_marks_sha256;
 #[allow(unused_imports)]
@@ -76,8 +83,8 @@ pub(crate) use observability::{
     reset_preview_derivation_counts_for_test, reset_prewrite_selection_proof_counts_for_test,
     reset_relative_selection_traversal_counts_for_test, take_active_state_cache_counts_for_test,
     take_localized_index_lifecycle_counts_for_test, take_localized_index_metrics_for_test,
-    take_localized_insert_admission_work_for_test, take_preview_derivation_counts_for_test,
-    take_prewrite_selection_proof_counts_for_test,
+    take_localized_insert_admission_work_for_test, take_localized_leaf_text_hashes_for_test,
+    take_preview_derivation_counts_for_test, take_prewrite_selection_proof_counts_for_test,
     take_relative_selection_traversal_counts_for_test, ForcedHistoryDocumentSnapshotFallback,
     ForcedHistorySnapshotSemanticFallback, HistorySnapshotSemanticFallbackForTest,
     LocalizedIndexAllocationStage,
@@ -88,7 +95,7 @@ pub(crate) use selection::{
     apply_stored_mark_operation, canonical_marks, exact_point_is_representable,
     history_selection_to_relative, marks_at_position, operation_result_to_relative,
     resolve_selection, resolved_from_legacy, resolved_from_legacy_with_view, resolved_to_legacy,
-    stored_marks_after_selection_change, FinalizedSelectionState,
+    selection_table_index, stored_marks_after_selection_change, FinalizedSelectionState,
 };
 use std::sync::Arc;
 pub(crate) use validation::{
@@ -102,6 +109,7 @@ pub(crate) struct DerivedStateCache {
     pub document: Document,
     pub canonical_artifact: CanonicalArtifact,
     pub position_map: PositionMap,
+    pub block_branch_index: Option<Arc<super::block_branch_index::BlockBranchIndex>>,
     pub rendered_text: String,
     pub rendered_scalars: u32,
     pub document_text_bytes: usize,
@@ -116,9 +124,13 @@ pub(crate) struct DerivedStateCache {
     pub render_blocks: Arc<crate::render::incremental::CachedRenderBlocks>,
     pub mutation_lookup_seed: Arc<super::mutation::MutationLookupSeed>,
     pub validation_certificate: DocumentValidationCertificate,
+    pub table_projection_index: TableProjectionIndex,
 
     pub localized_text_index: Option<LocalizedTextLeafIndex>,
     active_state_certificate: Option<Arc<ActiveStateCertificate>>,
+    table_command_availability:
+        std::cell::RefCell<Option<table_availability::CachedTableCommandAvailability>>,
+    render_active_state: std::cell::OnceCell<table_availability::CachedRenderActiveState>,
 }
 
 impl DerivedStateCache {
@@ -162,6 +174,22 @@ impl DerivedStateCache {
                     yrs_state_epoch,
                 )
             })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn materialized_identity_for_test(
+        &self,
+    ) -> (
+        DocumentValidationCertificate,
+        Option<LocalizedTextLeafIndex>,
+    ) {
+        let mut validation = self.validation_certificate.clone();
+        let mut index = self.localized_text_index.clone();
+        validation.materialize_canonical_artifact();
+        if let Some(index) = index.as_mut() {
+            index.materialize_canonical_fingerprint(&validation);
+        }
+        (validation, index)
     }
 
     #[cfg(test)]
@@ -228,6 +256,7 @@ impl DerivedStateCache {
             document: self.document.clone(),
             canonical_artifact: self.canonical_artifact.clone(),
             position_map: self.position_map.clone(),
+            block_branch_index: self.block_branch_index.clone(),
             rendered_text: self.rendered_text.clone(),
             rendered_scalars: self.rendered_scalars,
             document_text_bytes: self.document_text_bytes,
@@ -242,8 +271,11 @@ impl DerivedStateCache {
             render_blocks: Arc::clone(&self.render_blocks),
             mutation_lookup_seed: Arc::clone(&self.mutation_lookup_seed),
             validation_certificate: self.validation_certificate.clone(),
+            table_projection_index: self.table_projection_index.clone(),
             localized_text_index,
             active_state_certificate: None,
+            table_command_availability: self.table_command_availability.clone(),
+            render_active_state: std::cell::OnceCell::new(),
         }
     }
 
@@ -415,6 +447,10 @@ impl DerivedStateCache {
                 schema_fingerprint,
                 validation.stats.node_count,
                 validation.stats.max_depth,
+                validated_candidate
+                    .as_ref()
+                    .and_then(|validated| validated.table_projection),
+                None,
             )
             .ok()?
         } else {
@@ -456,6 +492,13 @@ impl DerivedStateCache {
             || crate::editor_state::document_node_count(document.root()),
             |validation| validation.stats.node_count,
         );
+        let block_branch_index = super::block_branch_index::BlockBranchIndex::build(
+            txn,
+            fragment,
+            schema,
+            &position_map,
+        )
+        .map(Arc::new);
         let relative_selection = initial_relative_selection.unwrap_or_else(|| {
             let selection = (0..position_map.block_count())
                 .filter_map(|index| position_map.block(index))
@@ -467,8 +510,17 @@ impl DerivedStateCache {
                         .map(|block| Selection::node(block.doc_start))
                 })
                 .unwrap_or_else(Selection::all);
-            operation_result_to_relative(txn, fragment, &selection, schema)
+            operation_result_to_relative(
+                txn,
+                fragment,
+                &selection,
+                schema,
+                block_branch_index
+                    .as_deref()
+                    .map(|index| (index, &position_map, &document)),
+            )
         });
+        let table_projection_index = render_blocks.table_projection_index.as_ref().clone();
         let resolved_selection = resolve_selection(
             txn,
             fragment,
@@ -477,6 +529,8 @@ impl DerivedStateCache {
             &document,
             &position_map,
             &rendered_text,
+            &table_projection_index,
+            block_branch_index.as_deref(),
         )?;
         let legacy_selection = resolved_to_legacy(&resolved_selection);
         let mutation_lookup_seed = if admitted_validation.is_some() {
@@ -511,6 +565,7 @@ impl DerivedStateCache {
             Arc::new(mutation_lookup_seed.with_canonical_artifact(&canonical_artifact));
         let validation_certificate = if let Some(validation) = admitted_validation {
             DocumentValidationCertificate::from_report(
+                &document,
                 validation,
                 &canonical_artifact,
                 resource_limits,
@@ -542,6 +597,7 @@ impl DerivedStateCache {
         Some(Self {
             document,
             canonical_artifact,
+            block_branch_index,
             position_map,
             rendered_text,
             rendered_scalars,
@@ -557,8 +613,11 @@ impl DerivedStateCache {
             render_blocks,
             mutation_lookup_seed,
             validation_certificate,
+            table_projection_index,
             localized_text_index,
             active_state_certificate: None,
+            table_command_availability: std::cell::RefCell::new(None),
+            render_active_state: std::cell::OnceCell::new(),
         })
     }
 
@@ -588,6 +647,7 @@ impl DerivedStateCache {
         document_revision: u64,
         state_revision: u64,
         yrs_state_epoch: u64,
+        prepared_block_branch_index: Option<Option<Arc<super::block_branch_index::BlockBranchIndex>>>,
     ) -> Option<Self> {
         if canonical_artifact.schema_fingerprint() != schema_fingerprint
             || canonical_artifact.format_version()
@@ -639,6 +699,12 @@ impl DerivedStateCache {
             return None;
         }
 
+        // An attempted but unavailable index must not trigger another full walk.
+        let block_branch_index = prepared_block_branch_index.unwrap_or_else(|| {
+            super::block_branch_index::BlockBranchIndex::build(txn, fragment, schema, &position_map)
+                .map(Arc::new)
+        });
+        let table_projection_index = render_blocks.table_projection_index.as_ref().clone();
         let (relative_selection, resolved_selection, legacy_selection) =
             if let Some(finalized) = finalized_selection {
                 record_prewrite_selection_proof_install();
@@ -655,6 +721,8 @@ impl DerivedStateCache {
                     &document,
                     &position_map,
                     &rendered_text,
+                    &table_projection_index,
+                    block_branch_index.as_deref(),
                 );
                 if resolved_selection.is_none() {
                     let fallback = preserved_fallback?;
@@ -665,6 +733,7 @@ impl DerivedStateCache {
                         fallback,
                         schema,
                         strict_fallback_affinity,
+                        &table_projection_index,
                     );
                     resolved_selection = resolve_selection(
                         txn,
@@ -674,6 +743,8 @@ impl DerivedStateCache {
                         &document,
                         &position_map,
                         &rendered_text,
+                        &table_projection_index,
+                        block_branch_index.as_deref(),
                     );
                 }
                 let resolved_selection = resolved_selection?;
@@ -739,10 +810,10 @@ impl DerivedStateCache {
                 );
                 (validation_certificate, localized_text_index)
             };
-
         Some(Self {
             document,
             canonical_artifact,
+            block_branch_index,
             position_map,
             rendered_text,
             rendered_scalars,
@@ -758,8 +829,11 @@ impl DerivedStateCache {
             render_blocks,
             mutation_lookup_seed,
             validation_certificate,
+            table_projection_index,
             localized_text_index,
             active_state_certificate: None,
+            table_command_availability: self.table_command_availability.clone(),
+            render_active_state: std::cell::OnceCell::new(),
         })
     }
 

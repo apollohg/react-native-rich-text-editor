@@ -1,0 +1,3 @@
+This project's own code is licensed under Apache-2.0. Third-party code, generated bindings, and assets retain their original licenses. This file preserves applicable copyright and license notices and identifies where corresponding source can be obtained.
+
+Include the applicable notices and source links with distributed applications or accompanying materials. Framework peers and native dependencies resolved by a host application may have different versions and additional transitive dependencies; keep the notices from that actual build as well. Build/test-only tools are not represented as bundled application code.

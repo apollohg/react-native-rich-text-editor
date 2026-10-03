@@ -256,6 +256,7 @@ fn engine_config_revalidates_raw_resource_limits_before_creating_a_document() {
         max_schema_expression_bytes: 1024 * 1024,
         max_collaboration_message_bytes: 64 * 1024 * 1024,
         max_encoded_state_bytes: 256 * 1024 * 1024,
+        max_table_grid_slots: crate::boundary::HARD_MAX_TABLE_GRID_SLOTS,
     };
     let exact_engine = YrsDocumentEngine::new(YrsEngineConfig {
         schema: tiptap_schema(),

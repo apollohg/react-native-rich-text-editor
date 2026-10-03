@@ -4,6 +4,8 @@
 
 #[path = "../../src/boundary.rs"]
 pub mod boundary;
+#[path = "../../src/clipboard.rs"]
+pub mod clipboard;
 #[path = "../../src/collaboration_runtime/mod.rs"]
 pub mod collaboration_runtime;
 #[path = "command_planner_shim/command_planner.rs"]
@@ -12,11 +14,8 @@ pub(crate) mod command_planner;
 pub mod document_api;
 #[path = "../../src/editor_state.rs"]
 pub mod editor_state;
-#[path = "../../src/ffi_v2/types.rs"]
-pub(crate) mod ffi_v2_types;
-pub(crate) mod ffi_v2 {
-    pub(crate) use super::ffi_v2_types as types;
-}
+#[path = "../../src/ffi_v2/mod.rs"]
+pub(crate) mod ffi_v2;
 uniffi::setup_scaffolding!();
 #[path = "../../src/model/mod.rs"]
 pub mod model;
@@ -38,9 +37,11 @@ pub mod selection;
 pub mod serialize;
 #[path = "../../src/session.rs"]
 pub(crate) mod session;
+#[path = "../../src/tables/mod.rs"]
+pub(crate) mod tables;
 #[path = "../../src/transform/mod.rs"]
 pub mod transform;
-#[path = "../../src/viewer/types.rs"]
+#[path = "../../src/viewer/mod.rs"]
 pub(crate) mod viewer;
 #[path = "../../src/yrs_engine/mod.rs"]
 pub mod yrs_engine;

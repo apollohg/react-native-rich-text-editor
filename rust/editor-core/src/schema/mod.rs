@@ -17,6 +17,7 @@ use crate::model::{Document, Fragment, Node};
 use crate::schema::content_rule::{
     ContentRule, ContentRuleError, WorkBudget, DEFAULT_RUNTIME_WORK_LIMIT,
 };
+use crate::tables::{TableRole, TableRoles};
 
 #[cfg(test)]
 std::thread_local! {
@@ -104,6 +105,7 @@ pub struct NodeSpec {
     /// other node type is filtered to its schema-declared attrs, matching the
     /// HTML ingestion path (`extract_node_attrs`).
     pub allow_undeclared_attrs: bool,
+    pub table_role: Option<TableRole>,
 }
 
 #[derive(Debug, Clone)]
@@ -161,7 +163,7 @@ fn json_projection_float_matches(value: f64, number: &serde_json::Number) -> boo
         .is_some_and(|integer| integer_is_exact_binary64(integer) && (integer as f64) == value)
 }
 
-fn integer_is_exact_binary64(magnitude: u64) -> bool {
+pub(crate) fn integer_is_exact_binary64(magnitude: u64) -> bool {
     if magnitude == 0 {
         return true;
     }
@@ -174,17 +176,9 @@ fn legacy_heading_projection_name(projection: &NodeJsonProjection) -> Option<Str
         return None;
     }
     let level = match projection.attrs.get("level")? {
-        serde_json::Value::Number(number) => number
-            .as_u64()
-            .and_then(|value| u8::try_from(value).ok())
-            .or_else(|| number.as_i64().and_then(|value| u8::try_from(value).ok()))
-            .or_else(|| {
-                number.as_f64().and_then(|value| {
-                    (value.is_finite() && value.fract() == 0.0)
-                        .then(|| u8::try_from(value as i64).ok())
-                        .flatten()
-                })
-            }),
+        value @ serde_json::Value::Number(_) => {
+            crate::model::integral_unsigned(value).and_then(|level| u8::try_from(level).ok())
+        }
         serde_json::Value::String(value) => (value.len() <= 3)
             .then(|| value.parse::<u8>().ok())
             .flatten(),

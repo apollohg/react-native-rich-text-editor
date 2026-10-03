@@ -69,7 +69,8 @@ extension EditorTextView {
             return false
         }
 
-        let scalar = PositionBridge.utf16OffsetToScalar(paragraphStart, in: self)
+        let localScalar = PositionBridge.utf16OffsetToScalar(paragraphStart, in: self)
+        guard let scalar = inputScalar(atLocalScalar: localScalar) else { return false }
         performInterceptedInput {
             toggleTaskItemCheckedAtSelectionScalarInRust(anchor: scalar, head: scalar)
         }
@@ -215,6 +216,8 @@ extension EditorTextView {
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         if gestureRecognizer === caretPlacementTapRecognizer {
+            if let input = self as? TableCellInputTextView,
+               input.selectionHandleRole(at: touch.location(in: self)) != nil { return false }
             return touch.tapCount == 1 && canPlaceCaret(at: touch.location(in: self))
         }
         guard gestureRecognizer === imageSelectionTapRecognizer,

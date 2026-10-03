@@ -16,9 +16,31 @@ Pod::Spec.new do |s|
   s.source_files = 'ios/*.swift'
   s.vendored_frameworks = 'ios/NativeEditorHighlighting.xcframework'
   s.preserve_paths = 'ios/native_editor_highlightingFFI/**/*'
+  s.script_phases = [{
+    :name => 'Expose native_editor_highlightingFFI',
+    :execution_position => :before_compile,
+    :script => <<~SCRIPT,
+      set -e
+      ffi_destination="${PODS_CONFIGURATION_BUILD_DIR}/NativeEditorCodeHighlighting"
+      mkdir -p "$ffi_destination"
+      cp "${PODS_TARGET_SRCROOT}/ios/native_editor_highlightingFFI/native_editor_highlightingFFI.h" "$ffi_destination/"
+      cp "${PODS_TARGET_SRCROOT}/ios/native_editor_highlightingFFI/module.modulemap" "$ffi_destination/"
+    SCRIPT
+    :input_files => [
+      '${PODS_TARGET_SRCROOT}/ios/native_editor_highlightingFFI/native_editor_highlightingFFI.h',
+      '${PODS_TARGET_SRCROOT}/ios/native_editor_highlightingFFI/module.modulemap',
+    ],
+    :output_files => [
+      '${PODS_CONFIGURATION_BUILD_DIR}/NativeEditorCodeHighlighting/native_editor_highlightingFFI.h',
+      '${PODS_CONFIGURATION_BUILD_DIR}/NativeEditorCodeHighlighting/module.modulemap',
+    ],
+  }]
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',
-    'SWIFT_INCLUDE_PATHS' => '$(PODS_TARGET_SRCROOT)/ios/native_editor_highlightingFFI',
-    'HEADER_SEARCH_PATHS' => '$(PODS_TARGET_SRCROOT)/ios/native_editor_highlightingFFI'
+    'SWIFT_INCLUDE_PATHS' => '$(PODS_CONFIGURATION_BUILD_DIR)/NativeEditorCodeHighlighting $(PODS_CONFIGURATION_BUILD_DIR)/ReactNativeProseEditor',
+    'HEADER_SEARCH_PATHS' => '$(PODS_CONFIGURATION_BUILD_DIR)/NativeEditorCodeHighlighting'
+  }
+  s.user_target_xcconfig = {
+    'SWIFT_INCLUDE_PATHS' => '$(PODS_CONFIGURATION_BUILD_DIR)/NativeEditorCodeHighlighting',
   }
 end

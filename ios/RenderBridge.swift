@@ -62,6 +62,7 @@ enum RenderBridgeAttributes {
 
     /// Stores the owning top-level document child index for partial native patching.
     static let topLevelChildIndex = NSAttributedString.Key("com.apollohg.editor.topLevelChildIndex")
+    static let rootTableMarker = NSAttributedString.Key("com.apollohg.editor.rootTableMarker")
 }
 
 /// Layout constants for paragraph styles.
@@ -152,6 +153,7 @@ struct AtomRenderConfiguration: Equatable {
 /// ]
 /// ```
 final class RenderBridge {
+    static let rootTableAnchor = "\u{200B}"
 
     // MARK: - Public API
 
@@ -163,12 +165,54 @@ final class RenderBridge {
     ///   - textColor: The default text color.
     /// - Returns: The rendered attributed string. Returns an empty attributed
     ///   string if the JSON is invalid.
+    static func inputElements(_ elements: [FfiViewerElement], voidElementIndices: [UInt32], cellDocStart: UInt32) -> [[String: Any]]? {
+        func object(_ json: String) -> [String: Any]? {
+            guard let data = json.data(using: .utf8) else { return nil }
+            return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        }
+        var result: [[String: Any]] = []
+        let voidIndices = Set(voidElementIndices)
+        for (index, element) in elements.enumerated() {
+            switch element {
+            case let .table(tableId): result.append(["type": "table", "tableId": tableId])
+            case .blockEnd: result.append(["type": "blockEnd"])
+            case let .blockStart(nodeType, language, depth, context):
+                var value: [String: Any] = ["type": "blockStart", "nodeType": nodeType, "depth": depth]
+                value["language"] = language
+                if let context {
+                    guard let parsed = object(context) else { return nil }
+                    value["listContext"] = parsed
+                }
+                result.append(value)
+            case let .textRun(text, marks):
+                var values: [[String: Any]] = []
+                for mark in marks {
+                    guard var attrs = object(mark.attrsJson) else { return nil }
+                    attrs["type"] = mark.markType
+                    values.append(attrs)
+                }
+                result.append(["type": "textRun", "text": text, "marks": values])
+            case let .inlineAtom(nodeType, docPos, attrsJson, label), let .blockAtom(nodeType, docPos, attrsJson, label):
+                guard let attrs = object(attrsJson), let position = UInt32(exactly: UInt64(cellDocStart) + UInt64(docPos)) else { return nil }
+                let type: String
+                if case .inlineAtom = element {
+                    type = voidIndices.contains(UInt32(index)) ? "voidInline" : "opaqueInlineAtom"
+                } else {
+                    type = voidIndices.contains(UInt32(index)) ? "voidBlock" : "opaqueBlockAtom"
+                }
+                result.append(["type": type, "nodeType": nodeType, "docPos": position, "attrs": attrs, "label": label])
+            }
+        }
+        return result
+    }
+
     static func renderElements(
         fromJSON json: String,
         baseFont: UIFont,
         textColor: UIColor,
         theme: EditorTheme? = nil,
-        atomConfiguration: AtomRenderConfiguration? = nil
+        atomConfiguration: AtomRenderConfiguration? = nil,
+        rootTableIDs: Set<String> = []
     ) -> NSAttributedString {
         guard let data = json.data(using: .utf8),
               let parsed = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
@@ -181,7 +225,8 @@ final class RenderBridge {
             baseFont: baseFont,
             textColor: textColor,
             theme: theme,
-            atomConfiguration: atomConfiguration
+            atomConfiguration: atomConfiguration,
+            rootTableIDs: rootTableIDs
         )
     }
 
@@ -200,7 +245,9 @@ final class RenderBridge {
         baseFont: UIFont,
         textColor: UIColor,
         theme: EditorTheme? = nil,
-        atomConfiguration: AtomRenderConfiguration? = nil
+        atomConfiguration: AtomRenderConfiguration? = nil,
+        rootTableIDs: Set<String> = [],
+        blockRangeObserver: ((Int, NSRange) -> Void)? = nil
     ) -> NSAttributedString {
         let result = NSMutableAttributedString()
         var blockStack: [BlockContext] = []
@@ -213,6 +260,38 @@ final class RenderBridge {
             let topLevelChildIndex = jsonInt(element["topLevelChildIndex"])
 
             switch type {
+            case "table":
+                guard let tableID = element["tableId"] as? String,
+                      rootTableIDs.contains(tableID)
+                else { continue }
+                if !isFirstBlock {
+                    result.append(
+                        interBlockNewline(
+                            baseFont: baseFont,
+                            textColor: textColor,
+                            blockStack: [],
+                            theme: theme,
+                            topLevelChildIndex: topLevelChildIndex
+                        )
+                    )
+                }
+                isFirstBlock = false
+                let anchor = NSAttributedString(
+                    string: rootTableAnchor,
+                    attributes: [
+                        .font: UIFont.systemFont(ofSize: 0.1),
+                        .foregroundColor: UIColor.clear,
+                        RenderBridgeAttributes.rootTableMarker: tableID
+                    ]
+                )
+                result.append(
+                    attributedStringApplyingLeadingTopLevelChildIndexIfNeeded(
+                        anchor,
+                        topLevelChildIndex: topLevelChildIndex,
+                        resultIsEmpty: result.length == 0
+                    )
+                )
+
             case "textRun":
                 let text = element["text"] as? String ?? ""
                 let marks = element["marks"] as? [Any] ?? []
@@ -428,7 +507,8 @@ final class RenderBridge {
                     listContext: listContext,
                     topLevelChildIndex: topLevelChildIndex,
                     markerPending: isListItemContainer,
-                    language: element["language"] as? String
+                    language: element["language"] as? String,
+                    sourceElementIndex: elementIndex
                 )
                 let nestedListItemContainer =
                     isListItemContainer && (theme?.list?.itemSpacing != nil)
@@ -546,6 +626,9 @@ final class RenderBridge {
                             pendingTrailingParagraphSpacing = (pendingTrailingParagraphSpacing ?? 0) + spacing
                         }
                     }
+                    if let sourceElementIndex = endedBlock.sourceElementIndex {
+                        blockRangeObserver?(sourceElementIndex, NSRange(location: endedBlock.styleStart, length: result.length - endedBlock.styleStart))
+                    }
                 }
 
             default:
@@ -567,7 +650,8 @@ final class RenderBridge {
         baseFont: UIFont,
         textColor: UIColor,
         theme: EditorTheme? = nil,
-        atomConfiguration: AtomRenderConfiguration? = nil
+        atomConfiguration: AtomRenderConfiguration? = nil,
+        rootTableIDs: Set<String> = []
     ) -> NSAttributedString {
         var flattened: [[String: Any]] = []
         flattened.reserveCapacity(blocks.reduce(0) { $0 + $1.count })
@@ -586,7 +670,8 @@ final class RenderBridge {
             baseFont: baseFont,
             textColor: textColor,
             theme: theme,
-            atomConfiguration: atomConfiguration
+            atomConfiguration: atomConfiguration,
+            rootTableIDs: rootTableIDs
         )
         let needsLeadingInterBlockSeparator = includeLeadingInterBlockSeparator && startIndex > 0
         guard !blocks.isEmpty,

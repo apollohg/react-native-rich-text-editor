@@ -1,0 +1,142 @@
+{
+    "releaseEnvironment": {
+        "devices": [
+            { "platform": "ios", "device": "iPhone14,5" },
+            { "platform": "android", "device": "Pixel 7" }
+        ],
+        "physicalDevice": true,
+        "buildType": "release",
+        "refreshHz": 60,
+        "textScale": 1,
+        "viewportWidth": 390,
+        "viewportHeight": 844,
+        "overscanViewports": 1
+    },
+    "defaultTableTheme": {
+        "minColumnWidth": 80,
+        "cellPadding": 8,
+        "borderWidth": 1
+    },
+    "counterGates": {
+        "maxCellInputInstances": 1,
+        "nonFiniteLayouts": 0,
+        "unchangedCellRemeasurements": 0,
+        "unmountedCacheBytes": 33554432
+    },
+    "reportedCounters": ["pinnedLayoutBytes", "authoritativeDocumentBytes"],
+    "hardGates": [
+        {
+            "metric": "typing",
+            "fixtures": ["plain-3x3", "plain-1000x20", "plain-100x200"],
+            "runs": 5,
+            "warmupSamples": 20,
+            "samplesPerRun": 500,
+            "percentiles": [
+                { "fraction": 0.95, "maxMs": 32 },
+                { "fraction": 0.99, "maxMs": 50 }
+            ]
+        },
+        {
+            "metric": "viewerColdLayout",
+            "fixtures": ["plain-3x3"],
+            "runs": 1,
+            "samplesPerRun": 30,
+            "percentiles": [{ "fraction": 0.95, "maxMs": 16 }]
+        },
+        {
+            "metric": "editorColdLayout",
+            "fixtures": ["plain-3x3"],
+            "runs": 1,
+            "samplesPerRun": 30,
+            "percentiles": [{ "fraction": 0.95, "maxMs": 16 }]
+        },
+        {
+            "metric": "viewerColdLayout",
+            "fixtures": ["plain-1000x20", "plain-100x200"],
+            "runs": 1,
+            "samplesPerRun": 30,
+            "percentiles": [{ "fraction": 0.95, "maxMs": 500 }]
+        },
+        {
+            "metric": "editorColdLayout",
+            "fixtures": ["plain-1000x20", "plain-100x200"],
+            "runs": 1,
+            "samplesPerRun": 30,
+            "percentiles": [{ "fraction": 0.95, "maxMs": 500 }]
+        },
+        {
+            "metric": "warmMeasurement",
+            "fixtures": ["plain-3x3", "plain-1000x20", "plain-100x200"],
+            "runs": 1,
+            "samplesPerRun": 1000,
+            "percentiles": [{ "fraction": 0.99, "maxMs": 1 }]
+        },
+        {
+            "metric": "scrollHorizontal",
+            "fixtures": ["plain-3x3", "plain-1000x20", "plain-100x200"],
+            "runs": 1,
+            "minTraversalMs": 30000,
+            "maxTableAttributedPauseMs": 50,
+            "percentiles": [{ "fraction": 0.99, "maxMs": 16.67 }]
+        },
+        {
+            "metric": "scrollVertical",
+            "fixtures": ["plain-3x3", "plain-1000x20", "plain-100x200"],
+            "runs": 1,
+            "minTraversalMs": 30000,
+            "maxTableAttributedPauseMs": 50,
+            "percentiles": [{ "fraction": 0.99, "maxMs": 16.67 }]
+        },
+        {
+            "metric": "cellChangeStart",
+            "fixtures": [
+                "plain-3x3",
+                "plain-1000x20",
+                "plain-100x200",
+                "rich-merged-3x3",
+                "rich-merged-1000x20",
+                "rich-merged-100x200"
+            ],
+            "runs": 1,
+            "countersPerSample": { "changedCellRemeasurements": 1 },
+            "percentiles": []
+        },
+        {
+            "metric": "cellChangeEnd",
+            "fixtures": [
+                "plain-3x3",
+                "plain-1000x20",
+                "plain-100x200",
+                "rich-merged-3x3",
+                "rich-merged-1000x20",
+                "rich-merged-100x200"
+            ],
+            "runs": 1,
+            "countersPerSample": { "changedCellRemeasurements": 1 },
+            "percentiles": []
+        }
+    ],
+    "baselineMetrics": [
+        {
+            "metric": "typing",
+            "fixtures": ["rich-merged-3x3", "rich-merged-1000x20", "rich-merged-100x200"]
+        },
+        {
+            "metric": "viewerColdLayout",
+            "fixtures": ["rich-merged-3x3", "rich-merged-1000x20", "rich-merged-100x200"]
+        },
+        {
+            "metric": "editorColdLayout",
+            "fixtures": ["rich-merged-3x3", "rich-merged-1000x20", "rich-merged-100x200"]
+        },
+        {
+            "metric": "structuralCommand",
+            "fixtures": ["plain-3x3", "plain-1000x20", "plain-100x200"]
+        },
+        {
+            "metric": "remoteUpdate",
+            "fixtures": ["plain-3x3", "plain-1000x20", "plain-100x200"]
+        }
+    ],
+    "baselinePercentiles": [0.5, 0.95, 0.99]
+}

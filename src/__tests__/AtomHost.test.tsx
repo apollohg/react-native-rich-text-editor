@@ -94,6 +94,33 @@ test('keeps a measured spacer offscreen and pins focused controls', () => {
     ).toMatchObject({ height: 140 });
 });
 
+test('reports selected liveness and cleans up the same instance through the latest callback', () => {
+    const Card = () => <Text>Selected card</Text>;
+    const first = jest.fn();
+    const latest = jest.fn();
+    const screen = render(<AtomHost component={Card} atomProps={{ ...props, selected: true }}
+        width={200} estimatedHeight={60} visible={false} onLivenessChange={first} />);
+    expect(screen.getByText('Selected card')).toBeTruthy();
+    expect(first).toHaveBeenCalledTimes(1);
+    const instance = first.mock.calls[0][1];
+    expect(first).toHaveBeenLastCalledWith(true, instance);
+    screen.rerender(<AtomHost component={Card} atomProps={{ ...props, selected: true }}
+        width={200} estimatedHeight={60} visible={false} onLivenessChange={latest} />);
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(latest).not.toHaveBeenCalled();
+    screen.unmount();
+    expect(latest).toHaveBeenCalledTimes(1);
+    expect(latest).toHaveBeenLastCalledWith(false, instance);
+
+    const replacement = render(<AtomHost component={Card} atomProps={{ ...props, selected: true }}
+        width={200} estimatedHeight={60} visible={false} onLivenessChange={latest} />);
+    const replacementInstance = latest.mock.calls[1][1];
+    expect(replacementInstance).not.toBe(instance);
+    expect(latest).toHaveBeenLastCalledWith(true, replacementInstance);
+    replacement.unmount();
+    expect(latest).toHaveBeenLastCalledWith(false, replacementInstance);
+});
+
 test('exposes pending and rejected updates to the renderer', async() => {
     let reject!: (error: Error) => void;
 

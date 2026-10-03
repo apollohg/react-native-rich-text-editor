@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { type ComponentRef, useCallback, useEffect, useRef, useState } from 'react';
 import {
     KeyboardAvoidingView,
     Modal,
@@ -23,7 +23,7 @@ type LinkEditorModalProps = {
 
 /** Bottom sheet driven by `onRequestLink`. Saving an empty URL removes the link. */
 export function LinkEditorModal({ request, onClose }: LinkEditorModalProps) {
-    const inputRef = useRef<TextInput>(null);
+    const inputRef = useRef<ComponentRef<typeof TextInput>>(null);
     const [ href, setHref ] = useState('');
     const visible = request != null;
     const isActive = request?.isActive ?? false;

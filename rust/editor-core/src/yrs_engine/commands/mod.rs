@@ -2,7 +2,9 @@
 
 mod clipboard;
 mod format;
+mod structural_batch;
 mod structure;
+pub(crate) mod tables;
 mod text;
 
 use std::collections::HashMap;
@@ -13,9 +15,13 @@ use crate::schema::Schema;
 use crate::selection::Selection;
 
 use super::{
-    OperationResult, ResolvedSelection, RevisionedPosition, RevisionedRange, SelectionInput,
-    TransactionOrigin, TypedTransaction,
+    OperationError, OperationResult, ResolvedSelection, RevisionedPosition, RevisionedRange,
+    SelectionInput, TransactionOrigin, TypedOperation, TypedTransaction,
 };
+
+pub(crate) use tables::TableCommandSurface;
+
+const TABLE_ACTION_ORIGIN_FIELD: &str = "origin";
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypedCommand {
@@ -36,6 +42,7 @@ pub enum TypedCommand {
         plain_text: bool,
         allow_base64_images: bool,
         input_filter: Option<String>,
+        cell_drop: Option<TableCellDrop>,
     },
     SplitBlock,
     DeleteAndSplit,
@@ -87,6 +94,19 @@ pub enum TypedCommand {
         range: RevisionedRange,
         at: RevisionedPosition,
     },
+    Table(crate::tables::commands::TableCommand),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MovedTableCells {
+    pub anchor_cell: u32,
+    pub head_cell: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TableCellDrop {
+    pub target_cell: u32,
+    pub moved_cells: Option<MovedTableCells>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -136,6 +156,7 @@ pub(crate) struct PlanningContext<'a> {
     pub canonical_artifact: &'a crate::yrs_engine::canonical::CanonicalArtifact,
     pub allow_deferred_admission: bool,
     pub preparation: Option<&'a std::cell::RefCell<Option<PreparedCommandProof>>>,
+    pub localized_textblock_state: Option<&'a crate::yrs_engine::derived_state::DerivedStateCache>,
 }
 
 pub(crate) fn plan(
@@ -143,6 +164,9 @@ pub(crate) fn plan(
     command: TypedCommand,
 ) -> OperationResult<CommandPlan> {
     match command {
+        TypedCommand::DeleteBackward if tables::selection_is_a_cell_rectangle(&context) => {
+            tables::plan_clear_cell_rectangle(context)
+        }
         command @ (TypedCommand::InsertText { .. }
         | TypedCommand::DeleteRange { .. }
         | TypedCommand::DeleteBackward
@@ -168,5 +192,119 @@ pub(crate) fn plan(
         | TypedCommand::UpdateNodeAttrs { .. }
         | TypedCommand::ResizeImage { .. }
         | TypedCommand::MoveSelection { .. }) => structure::plan(context, command),
+        command @ TypedCommand::Table(_) => tables::plan(context, command),
     }
+}
+
+#[allow(dead_code)]
+pub(crate) fn table_action_transaction(
+    context: &PlanningContext<'_>,
+    prepared: crate::tables::command_context::PreparedTableAction,
+) -> OperationResult<CommandPlan> {
+    if context.origin != prepared.origin {
+        return Err(OperationError::transaction_invalid(
+            context.request_id,
+            TABLE_ACTION_ORIGIN_FIELD,
+            "table normalization belongs to a trusted local command only",
+        ));
+    }
+    if context.revision != prepared.base_document_revision {
+        return Err(OperationError::revision_mismatch(
+            context.request_id,
+            prepared.base_document_revision,
+            context.revision,
+        ));
+    }
+    let selection = structure::selection(context);
+    let plan = text::admitted_semantic_transaction(context, &selection, prepared.plan)?;
+    let CommandPlan::Transaction(transaction) = &plan else {
+        return Ok(plan);
+    };
+    if transaction
+        .operations
+        .iter()
+        .any(|operation| matches!(operation, TypedOperation::ReplaceStructure(_)))
+    {
+        return Err(OperationError::engine_invariant_failed(
+            context.request_id,
+            None,
+            "a table action cannot be lowered without replacing its whole table",
+        ));
+    }
+    Ok(plan)
+}
+
+#[cfg(test)]
+pub(crate) fn structural_edit_batch_for_test(
+    request_id: u64,
+    document: &Document,
+    schema: &Schema,
+    operations: &[crate::command_planner::SemanticOperation],
+    selection_after: &Selection,
+) -> OperationResult<Option<crate::yrs_engine::StructuralEditBatch>> {
+    structural_batch::structural_edit_batch(
+        request_id,
+        document,
+        schema,
+        operations,
+        selection_after,
+    )
+}
+
+#[cfg(test)]
+pub(crate) struct TableActionTestRequest<'a> {
+    pub document: &'a Document,
+    pub schema: &'a Schema,
+    pub resource_limits: &'a crate::boundary::ResourceLimits,
+    pub editing_limits: &'a crate::yrs_engine::EditingLimits,
+    pub revision: u64,
+    pub state_revision: u64,
+    pub yrs_state_epoch: u64,
+    pub origin: TransactionOrigin,
+}
+
+#[cfg(test)]
+pub(crate) fn table_action_plan_for_test(
+    request: TableActionTestRequest<'_>,
+    prepared: crate::tables::command_context::PreparedTableAction,
+) -> OperationResult<CommandPlan> {
+    let position_map = PositionMap::build(request.document, request.schema);
+    let rendered_text = crate::render::rendered_text(request.document, request.schema);
+    let canonical_schema =
+        crate::yrs_engine::canonical::CanonicalSchemaContext::new(request.schema);
+    let canonical_artifact = canonical_schema
+        .derive(request.document)
+        .expect("the table action fixture is canonical");
+    let point = crate::yrs_engine::ResolvedPoint {
+        document: 0,
+        scalar: 0,
+        utf16: 0,
+    };
+    let selection = ResolvedSelection::Text {
+        anchor: point,
+        head: point,
+    };
+    let context = PlanningContext {
+        request_id: prepared.request_id,
+        revision: request.revision,
+        state_revision: request.state_revision,
+        document: request.document,
+        position_map: &position_map,
+        rendered_text: &rendered_text,
+        selection: &selection,
+        initial_selection: None,
+        origin: request.origin,
+        stored_marks: None,
+        schema: request.schema,
+        resource_limits: request.resource_limits,
+        editing_limits: request.editing_limits,
+        max_length: None,
+        yrs_state_epoch: request.yrs_state_epoch,
+        canonical_schema: &canonical_schema,
+        canonical_artifact: &canonical_artifact,
+        allow_deferred_admission: false,
+        preparation: None,
+        localized_textblock_state: None,
+    };
+    table_action_transaction(&context, prepared)
 }

@@ -1,6 +1,14 @@
 import Foundation
 
 extension EditorV2Adapter {
+    struct EditorTablePresentationSnapshot {
+        let documentRevision: UInt64
+        let baseDocumentRevision: UInt64?
+        let positionEpoch: UInt64?
+        let index: EditorTableIndex
+        let changes: TableFrameChanges
+    }
+
     /// One view-facing update plus the document's scalar extent (the lenient
     /// `UInt32.max` doc→scalar mapping, used to clamp transient-IME
     /// positions the way the legacy engine did).
@@ -14,7 +22,7 @@ extension EditorV2Adapter {
     }
 
     struct AtomicRenderSnapshot {
-        let atomicRenderJSON: String
+        let renderObject: [String: Any]
         let viewUpdateJSON: String
         let documentRevision: UInt64
         let stateRevision: UInt64
@@ -246,15 +254,57 @@ extension EditorV2Adapter {
         }
     }
 
-    private static func isValidRenderBlocks(_ value: Any) -> Bool {
-        guard let blocks = value as? [Any] else { return false }
-        return blocks.allSatisfy { block in
-            guard let elements = block as? [Any] else { return false }
-            return elements.allSatisfy(isValidRenderElement)
+    static func parseTableAttributes(_ value: Any?) -> [String: [String: Any]]? {
+        guard let raw = (value ?? [String: String]()) as? [String: String] else { return nil }
+        var pool: [String: [String: Any]] = [:]
+        var unique = Set<String>()
+        var bytes = 0
+        var entries = 0
+        for (key, json) in raw {
+            entries += 1
+            bytes += json.utf8.count
+            guard key.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil,
+                  entries <= 7_000_000, unique.insert(json).inserted, bytes <= 192 * 1024 * 1024,
+                  let data = json.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { return nil }
+            var pending: [(Any, Int)] = [(object, 0)]
+            var work = 0
+            while let (item, depth) = pending.popLast() {
+                work += 1
+                if work > json.utf8.count || depth > 1024 { return nil }
+                if let number = item as? NSNumber, !number.doubleValue.isFinite { return nil }
+                if let object = item as? [String: Any] { pending.append(contentsOf: object.values.map { ($0, depth + 1) }) } else if let array = item as? [Any] { pending.append(contentsOf: array.map { ($0, depth + 1) }) }
+            }
+            pool[key] = object
+        }
+        return pool
+    }
+
+    static func validSemanticRenderElements(_ values: [Any], tableIndex: EditorTableIndex? = nil) -> Bool {
+        var referenced = Set<String>()
+        return values.allSatisfy { value in
+            guard let object = value as? [String: Any] else { return false }
+            if object["type"] as? String == "table" {
+                guard Set(object.keys) == ["type", "tableId"], let key = object["tableId"] as? String,
+                      !key.isEmpty, referenced.insert(key).inserted else { return false }
+                return tableIndex.map { $0.record(tableKey: key)?.host == nil } ?? true
+            }
+            return isValidRenderElement(value)
         }
     }
 
-    private static func isValidRenderPatch(_ value: Any) -> Bool {
+    private static func isValidRenderBlocks(_ value: Any, tableIndex: EditorTableIndex? = nil) -> Bool {
+        guard let blocks = value as? [Any] else { return false }
+        var elements: [Any] = []
+        for block in blocks {
+            guard let values = block as? [Any] else { return false }
+            elements.append(contentsOf: values)
+        }
+        return validSemanticRenderElements(elements, tableIndex: tableIndex)
+    }
+
+    private static func isValidRenderPatch(_ value: Any, tableIndex: EditorTableIndex? = nil) -> Bool {
         if value is NSNull { return true }
         guard let object = value as? [String: Any],
               Set(object.keys) == [
@@ -267,7 +317,7 @@ extension EditorV2Adapter {
               uint32Field(object, "startIndex") != nil,
               uint32Field(object, "deleteCount") != nil,
               let renderBlocks = object["renderBlocks"],
-              isValidRenderBlocks(renderBlocks)
+              isValidRenderBlocks(renderBlocks, tableIndex: tableIndex)
         else {
             return false
         }
@@ -347,6 +397,8 @@ extension EditorV2Adapter {
                 && uint32Field(selection, "posScalar") != nil
         case "all":
             return Set(selection.keys) == ["type"]
+        case "cell":
+            return EditorCellSelection.endpointPositions(selection) != nil
         default:
             return false
         }
@@ -390,21 +442,14 @@ extension EditorV2Adapter {
             positionEpoch = nil
         }
         object.removeValue(forKey: "positionEpoch")
-        guard let atomicData = try? JSONSerialization.data(withJSONObject: object),
-              let atomicRenderJSON = String(data: atomicData, encoding: .utf8)
-        else {
-            return nil
-        }
         object.removeValue(forKey: "scalarLength")
-        // documentIsEmpty stays in the view payload: the text view needs the
-        // core's answer to decide whether to show its placeholder.
         guard let viewData = try? JSONSerialization.data(withJSONObject: object),
               let viewUpdateJSON = String(data: viewData, encoding: .utf8)
         else {
             return nil
         }
         return AtomicRenderSnapshot(
-            atomicRenderJSON: atomicRenderJSON,
+            renderObject: object,
             viewUpdateJSON: viewUpdateJSON,
             documentRevision: documentRevision,
             stateRevision: stateRevision,

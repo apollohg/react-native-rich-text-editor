@@ -1,3 +1,4 @@
+import type { TableRole } from './TableTypes';
 import { validateAttributeSpec } from './attributeValidation';
 import {
     ATOM_HTML_DENIED_ATTRS,
@@ -367,6 +368,18 @@ export function normalizeSchemaDefinition(
         }
     };
 
+    const normalizeTableRole = (role: unknown): TableRole | undefined => {
+        switch (role) {
+            case 'table':
+            case 'row':
+            case 'cell':
+            case 'header_cell':
+                return role;
+            default:
+                return undefined;
+        }
+    };
+
     const nodes: NodeSpec[] = [];
 
     for (let nodeIndex = 0; nodeIndex < schema.nodes.length; nodeIndex += 1) {
@@ -381,6 +394,7 @@ export function normalizeSchemaDefinition(
         const html = normalizeNodeHtmlRules(raw.html);
         const attrs = normalizeAttrs(raw.attrs);
         const json = normalizeNodeJSONProjection(raw.json);
+        const tableRole = normalizeTableRole(raw.tableRole);
 
         if (
             (htmlTag != null && !isSafeHtmlTag(htmlTag)) ||
@@ -397,6 +411,7 @@ export function normalizeSchemaDefinition(
             ...(typeof raw.group === 'string' ? { group: raw.group } : {}),
             ...(Object.keys(attrs).length > 0 ? { attrs } : {}),
             role: normalizeRole(raw.role),
+            ...(tableRole == null ? {} : { tableRole }),
             ...(htmlTag == null ? {} : { htmlTag }),
             ...(html == null ? {} : { html }),
             ...(json == null ? {} : { json }),

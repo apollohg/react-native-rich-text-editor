@@ -250,15 +250,6 @@ final class EditorV2AdapterTests: XCTestCase {
         XCTAssertEqual(destroyAttempts, 2, file: file, line: line)
     }
 
-    func commandPreparation(_ result: String) -> String? {
-        guard let data = result.data(using: .utf8),
-            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else {
-            return nil
-        }
-        return object["blockedReason"] as? String
-    }
-
     static let accessorFixtures: [(String, String)] = [
         ("empty", ""),
         ("nested-lists", #"{"type":"doc","content":[{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]},{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"nested"}]}]}]}]},{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]}]}"#),

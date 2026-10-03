@@ -333,6 +333,86 @@ impl PreparedSemanticAdmission {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub(in crate::yrs_engine) fn prepare_validated_import(
+        request_id: u64,
+        document_revision: u64,
+        state_revision: u64,
+        yrs_state_epoch: u64,
+        schema: &Schema,
+        resource_limits: &ResourceLimits,
+        editing_limits: &EditingLimits,
+        max_length: Option<u32>,
+        transaction: &TypedTransaction,
+        source: &yrs_engine::engine::ValidatedImportDocument,
+        render_blocks: std::sync::Arc<crate::render::incremental::CachedRenderBlocks>,
+        rendered_text: String,
+    ) -> OperationResult<Self> {
+        if !source
+            .validation
+            .source_root
+            .shares_storage_with(source.document.root())
+        {
+            return Err(OperationError::engine_invariant_failed(
+                request_id,
+                None,
+                "import validation root does not match its source",
+            ));
+        }
+        if let Some(limit) = max_length {
+            let actual = source.canonical_artifact.text_scalar_len();
+            if actual > u64::from(limit) {
+                return Err(OperationError::document_limit_exceeded(
+                    request_id,
+                    None,
+                    "maxLength",
+                    u64::from(limit),
+                    actual,
+                ));
+            }
+        }
+        let canonical_artifact = source.canonical_artifact.clone();
+        let schema_fingerprint = canonical_artifact.schema_fingerprint();
+        let candidate_validation = yrs_engine::derived_state::PreparedCandidateValidation::prepare(
+            &CandidateValidationAuthority(()),
+            &source.document,
+            &canonical_artifact,
+            source.validation.report,
+            schema,
+            resource_limits,
+            editing_limits,
+            max_length,
+            schema_fingerprint,
+            PositionMap::build(&source.document, schema),
+            Some((render_blocks, rendered_text)),
+        )
+        .ok_or_else(|| {
+            OperationError::engine_invariant_failed(
+                request_id,
+                None,
+                "import candidate validation could not be sealed",
+            )
+        })?;
+        Ok(Self::from_post_validation_construction(
+            PreparedSemanticConstruction {
+                request_id,
+                document_revision,
+                state_revision,
+                yrs_state_epoch,
+                schema_fingerprint: schema_fingerprint.into(),
+                transaction: transaction.clone(),
+                expected_document: source.document.clone(),
+                canonical_artifact,
+                candidate_validation: Some(candidate_validation),
+                resource_limits: resource_limits.clone(),
+                editing_limits: editing_limits.clone(),
+                max_length,
+                undo_units: 0,
+                command_contract_oracle: PreparedCommandContractOracle::None,
+            },
+        ))
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub(in crate::yrs_engine) fn prepare_single_operation(
         request_id: u64,
         document_revision: u64,
@@ -455,6 +535,7 @@ impl PreparedSemanticAdmission {
                     max_length,
                     canonical_schema.schema_fingerprint(),
                     position_map,
+                    None,
                 )
                 .ok_or_else(|| {
                     OperationError::engine_invariant_failed(

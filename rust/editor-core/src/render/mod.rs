@@ -1,8 +1,24 @@
 pub mod generate;
 pub mod incremental;
+pub(crate) mod output_bytes;
 
-use crate::model::{Document, Node};
+use crate::model::{integral_unsigned, Document, Node};
 use crate::schema::{NodeRole, Schema};
+
+use generate::GenerateError;
+
+pub const DEFAULT_ORDERED_LIST_START: u32 = 1;
+
+pub(crate) fn ordered_list_start(node: &Node) -> Result<u32, GenerateError> {
+    match node.attrs().get("start") {
+        None | Some(serde_json::Value::Null) => Ok(DEFAULT_ORDERED_LIST_START),
+        Some(value) => {
+            let start =
+                integral_unsigned(value).ok_or(GenerateError::OrderedListStartOutOfRange)?;
+            u32::try_from(start).map_err(|_| GenerateError::OrderedListStartOutOfRange)
+        }
+    }
+}
 
 /// Context for list items, providing numbering and position metadata.
 #[derive(Debug, Clone, PartialEq)]
@@ -52,6 +68,10 @@ impl Drop for RenderMark {
 /// attributed strings (NSAttributedString / SpannableStringBuilder).
 #[derive(Debug, PartialEq)]
 pub enum RenderElement {
+    Table {
+        table: crate::tables::render::TableRenderRecord,
+        doc_offset: u32,
+    },
     /// A run of text with applied mark names.
     TextRun {
         text: String,
@@ -98,6 +118,10 @@ pub enum RenderElement {
 impl Clone for RenderElement {
     fn clone(&self) -> Self {
         match self {
+            Self::Table { table, doc_offset } => Self::Table {
+                table: table.clone(),
+                doc_offset: *doc_offset,
+            },
             Self::TextRun { text, marks } => Self::TextRun {
                 text: text.clone(),
                 marks: marks.clone(),
@@ -165,6 +189,8 @@ impl Clone for RenderElement {
 impl RenderElement {
     pub(crate) fn drain_json_payloads(&mut self) {
         match self {
+            // The final cell owner drains its payloads on the guarded drop stack.
+            Self::Table { .. } => {}
             Self::TextRun { marks, .. } => marks.clear(),
             Self::VoidInline { attrs, .. } | Self::VoidBlock { attrs, .. } => {
                 crate::boundary::drop_json_object_values_stack_safe(attrs);
@@ -194,59 +220,78 @@ pub(crate) fn rendered_text(document: &Document, schema: &Schema) -> String {
     crate::yrs_engine::observability::record_rendered_text_derivation();
     let blocks = incremental::render_blocks(document, schema);
     let elements = incremental::flatten_render_blocks(&blocks);
-    let mut text = String::new();
-    let mut pending_prefix = String::new();
-    let mut started_block = false;
+    let mut text = RenderedTextBuilder::default();
+    for element in crate::tables::render::source_elements(&elements) {
+        text.push(element, schema);
+    }
+    text.finish()
+}
 
-    let begin_block = |text: &mut String, started_block: &mut bool| {
-        if *started_block {
-            text.push('\n');
+#[derive(Default)]
+pub(crate) struct RenderedTextBuilder {
+    text: String,
+    pending_prefix: String,
+    started_block: bool,
+}
+
+impl RenderedTextBuilder {
+    fn begin_block(&mut self) {
+        if self.started_block {
+            self.text.push('\n');
         }
-        *started_block = true;
-    };
+        self.started_block = true;
+    }
 
-    for element in &elements {
+    pub(crate) fn push(&mut self, element: &RenderElement, schema: &Schema) {
         match element {
+            RenderElement::Table { .. } => unreachable!("source traversal expands tables"),
             RenderElement::BlockStart {
                 node_type,
                 list_context,
                 ..
             } => {
                 if let Some(context) = list_context {
-                    pending_prefix = if context.kind.as_deref() == Some("task") {
+                    self.pending_prefix = if context.kind.as_deref() == Some("task") {
                         task_list_marker_string(context.checked.unwrap_or(false))
                     } else {
                         list_marker_string(context.ordered, context.index)
                     };
                 }
                 if schema
-                    .node(&node_type)
+                    .node(node_type)
                     .is_some_and(|spec| matches!(spec.role, NodeRole::TextBlock))
                 {
-                    begin_block(&mut text, &mut started_block);
-                    text.push_str(&pending_prefix);
-                    pending_prefix.clear();
+                    self.begin_block();
+                    self.text.push_str(&self.pending_prefix);
+                    self.pending_prefix.clear();
                 }
             }
-            RenderElement::TextRun { text: value, .. } => text.push_str(value),
-            RenderElement::VoidInline { .. } => text.push('\n'),
+            RenderElement::TextRun { text, .. } => self.text.push_str(text),
+            RenderElement::VoidInline { .. } => self.text.push('\n'),
             RenderElement::VoidBlock { .. } => {
-                begin_block(&mut text, &mut started_block);
-                text.push('\u{fffc}');
+                self.begin_block();
+                self.text.push('\u{fffc}');
             }
             RenderElement::OpaqueInlineAtom {
                 node_type, label, ..
-            } => text.push_str(&opaque_atom_visible_string(node_type, label)),
+            } => self
+                .text
+                .push_str(&opaque_atom_visible_string(node_type, label)),
             RenderElement::OpaqueBlockAtom {
                 node_type, label, ..
             } => {
-                begin_block(&mut text, &mut started_block);
-                text.push_str(&opaque_atom_visible_string(node_type, label));
+                self.begin_block();
+                self.text
+                    .push_str(&opaque_atom_visible_string(node_type, label));
             }
             RenderElement::BlockEnd => {}
         }
     }
-    text
+
+    pub(crate) fn finish(mut self) -> String {
+        self.text.shrink_to_fit();
+        self.text
+    }
 }
 
 /// Visible text used for an ordered or unordered list marker.

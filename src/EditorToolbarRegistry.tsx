@@ -1,4 +1,4 @@
-import React, { createContext, useEffect, useSyncExternalStore, useState } from 'react';
+import React, { createContext, useEffect, useRef, useSyncExternalStore, useState } from 'react';
 import type { MentionSuggestion } from './addons';
 import type { EditorMentionTheme } from './EditorTheme';
 
@@ -187,6 +187,22 @@ export function setActiveEditorToolbarFrameOwnerForEditor(ownerId: number, isAct
 
     activeEditorToolbarFrameOwnerId = nextOwnerId;
     notifyEditorToolbarFrameListeners();
+}
+
+export function useRegisteredEditorToolbarFrame(frame: EditorToolbarFrame | null, ownerId: number) {
+    const registrationIdRef = useRef<number | null>(null);
+
+    if (registrationIdRef.current == null) {
+        registrationIdRef.current = allocateEditorToolbarRegistrationId();
+    }
+
+    const registrationId = registrationIdRef.current;
+
+    useEffect(() => {
+        registerEditorToolbarFrame(registrationId, frame, ownerId);
+    }, [ frame, ownerId, registrationId ]);
+
+    useEffect(() => () => unregisterEditorToolbarFrame(registrationId), [ registrationId ]);
 }
 
 export function useEditorToolbarFrames(ownerId: number): readonly EditorToolbarFrame[] {

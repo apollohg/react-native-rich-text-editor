@@ -30,6 +30,7 @@ export const V2_CREATE_RESOURCE_LIMIT_KEYS = new Set([
     'maxSchemaExpressionBytes',
     'maxCollaborationMessageBytes',
     'maxEncodedStateBytes',
+    'maxTableGridSlots',
 ]);
 
 export const V2_CREATE_EDITING_LIMIT_KEYS = new Set([

@@ -88,6 +88,10 @@ fn every_recoverable_atomic_stage_failpoint_is_pre_open_and_read_only() {
         let error = engine.apply_typed_transaction(transaction).unwrap_err();
 
         set_atomic_failpoint_for_test(None);
+        assert!(
+            engine.doc.try_transact_mut().is_ok(),
+            "failed stage {failpoint:?} retained its read lock"
+        );
         assert_eq!(error.code, "ENGINE_INVARIANT_FAILED", "{failpoint:?}");
         assert_eq!(
             error.details,
@@ -528,4 +532,273 @@ fn localized_seed_promotion_is_not_installed_before_any_recoverable_failpoint() 
         assert_eq!(promotions, 0, "{failpoint:?}");
         assert_eq!(atomic_audit(&engine), before, "{failpoint:?}");
     }
+}
+
+#[test]
+fn replayed_history_candidate_divergence_is_rejected_atomically() {
+    let mut engine = transaction_engine();
+    engine
+        .import_json(
+            r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"abc"}]}]}"#,
+            TransactionOrigin::DocumentImport,
+        )
+        .unwrap();
+    engine
+        .apply_command(
+            76_200,
+            crate::yrs_engine::TypedCommand::InsertText { text: "z".into() },
+        )
+        .unwrap()
+        .expect("insert must apply");
+    assert!(engine.can_undo());
+
+    let mut outbox =
+        crate::collaboration_runtime::outbox::CollaborationOutbox::with_ceilings(64, 1 << 20);
+    let before = atomic_audit(&engine);
+    let outbox_before = (
+        outbox.pending_document_update_count(),
+        outbox.pending_document_update_bytes(),
+        outbox.reserved_messages(),
+        outbox.has_pending_document_updates(),
+    );
+
+    set_replay_candidate_perturbation_for_test(true);
+    let error = engine
+        .undo_with_outbox(76_201, Some(&mut outbox))
+        .expect_err("a replayed candidate that disagrees with live must be rejected");
+    set_replay_candidate_perturbation_for_test(false);
+
+    assert_eq!(error.code, "ENGINE_INVARIANT_FAILED");
+    assert!(
+        error.message.contains("disagrees with the live store"),
+        "unexpected message: {}",
+        error.message
+    );
+    assert_eq!(atomic_audit(&engine), before);
+    assert_eq!(
+        (
+            outbox.pending_document_update_count(),
+            outbox.pending_document_update_bytes(),
+            outbox.reserved_messages(),
+            outbox.has_pending_document_updates(),
+        ),
+        outbox_before
+    );
+
+    assert!(
+        engine
+            .undo_with_outbox(76_202, Some(&mut outbox))
+            .unwrap()
+            .is_some(),
+        "the rejected pop leaves the history intact for a later retry"
+    );
+}
+
+#[test]
+fn each_history_pop_spends_exactly_two_replay_guard_state_encodings() {
+    let mut engine = transaction_engine();
+    engine
+        .import_json(
+            r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"abc"}]}]}"#,
+            TransactionOrigin::DocumentImport,
+        )
+        .unwrap();
+    engine
+        .apply_command(
+            76_300,
+            crate::yrs_engine::TypedCommand::InsertText { text: "z".into() },
+        )
+        .unwrap()
+        .expect("insert must apply");
+
+    reset_history_replay_guard_encodings_for_test();
+    engine.undo(76_301).unwrap().expect("undo must apply");
+    assert_eq!(
+        take_history_replay_guard_encodings_for_test(),
+        2,
+        "one live encoding and one replayed-candidate encoding per pop",
+    );
+
+    engine.redo(76_302).unwrap().expect("redo must apply");
+    assert_eq!(take_history_replay_guard_encodings_for_test(), 2);
+
+    reset_history_replay_guard_encodings_for_test();
+    assert!(
+        engine.redo(76_303).unwrap().is_none(),
+        "an exhausted redo stack pops nothing"
+    );
+    assert_eq!(
+        take_history_replay_guard_encodings_for_test(),
+        0,
+        "an unavailable pop never reaches the replay guard",
+    );
+}
+
+#[test]
+fn the_replay_guard_is_limit_free_and_defers_to_the_existing_encoded_state_admission() {
+    let mut engine = transaction_engine();
+    engine
+        .import_json(
+            r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"abc"}]}]}"#,
+            TransactionOrigin::DocumentImport,
+        )
+        .unwrap();
+    engine
+        .apply_command(
+            76_400,
+            crate::yrs_engine::TypedCommand::InsertText { text: "z".into() },
+        )
+        .unwrap()
+        .expect("insert must apply");
+    let live_encoded_len = engine.encoded_state().unwrap().len();
+    let before = atomic_audit(&engine);
+
+    engine.resource_limits.max_encoded_state_bytes = 1;
+    reset_history_replay_guard_encodings_for_test();
+    let error = engine
+        .undo(76_401)
+        .expect_err("a ceiling below the document is still rejected");
+
+    assert_eq!(
+        take_history_replay_guard_encodings_for_test(),
+        2,
+        "the guard ran to completion instead of failing on the ceiling",
+    );
+    assert_eq!(error.code, "DOCUMENT_LIMIT_EXCEEDED");
+    assert_eq!(
+        error.details,
+        Some(json!({ "field": "maxEncodedStateBytes" })),
+    );
+    assert_eq!(error.limit, Some(1));
+    assert!(
+        error.actual.unwrap() > u64::try_from(live_encoded_len).unwrap(),
+        "the reported size is the post-pop candidate from the existing admission point, \
+         not the live store the guard reads: actual={:?} live={live_encoded_len}",
+        error.actual,
+    );
+
+    engine.resource_limits.max_encoded_state_bytes =
+        ResourceLimits::default().max_encoded_state_bytes;
+    assert_eq!(atomic_audit(&engine), before);
+    engine
+        .undo(76_402)
+        .unwrap()
+        .expect("the pop succeeds once the ceiling admits the restored document");
+}
+
+#[test]
+fn replay_guard_accepts_equivalent_text_item_splits() {
+    use yrs::Text;
+    const INSERT_REQUEST: u64 = 76_500;
+    const SPLIT_UTF16_OFFSET: u32 = 3;
+    const EMPTY_RANGE: u32 = 0;
+    let mut engine = transaction_engine();
+    engine.import_json(r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"🦀x"}]}]}"#, TransactionOrigin::DocumentImport).unwrap();
+    engine
+        .apply_command(
+            INSERT_REQUEST,
+            TypedCommand::InsertText { text: "z".into() },
+        )
+        .unwrap()
+        .unwrap();
+    let before = engine.encoded_state().unwrap();
+    {
+        let mut txn = engine.doc.transact_mut();
+        let fragment = txn.get_xml_fragment(engine.fragment_name.as_str()).unwrap();
+        let XmlOut::Element(paragraph) = fragment.get(&txn, 0).unwrap() else {
+            panic!("paragraph fixture")
+        };
+        let XmlOut::Text(text) = paragraph.get(&txn, 0).unwrap() else {
+            panic!("text fixture")
+        };
+        text.remove_range(&mut txn, SPLIT_UTF16_OFFSET, EMPTY_RANGE);
+    }
+    assert_ne!(
+        before,
+        engine.encoded_state().unwrap(),
+        "the fixture changes item boundaries without editing text"
+    );
+    reset_history_replay_guard_encodings_for_test();
+    engine
+        .validate_history_replay_for_test(INSERT_REQUEST + 1)
+        .unwrap();
+    assert_eq!(
+        take_history_replay_guard_encodings_for_test(),
+        4,
+        "raw mismatch additionally normalizes both states"
+    );
+    assert!(engine.undo(INSERT_REQUEST + 2).unwrap().is_some());
+    assert_eq!(
+        engine.document_json().unwrap()["content"][0]["content"][0]["text"],
+        "🦀x"
+    );
+    assert!(engine.redo(INSERT_REQUEST + 3).unwrap().is_some());
+    assert_eq!(
+        engine.document_json().unwrap()["content"][0]["content"][0]["text"],
+        "z🦀x"
+    );
+}
+
+#[test]
+fn split_commit_rechecks_deletion_only_changes_after_compilation() {
+    use yrs::Text;
+    const REQUEST: u64 = 76_510;
+    const DELETED_OFFSET: u32 = 1;
+    const DELETED_LENGTH: u32 = 1;
+    let mut engine = transaction_engine();
+    engine.import_json(
+        r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"abc"}]}]}"#,
+        TransactionOrigin::DocumentImport,
+    ).unwrap();
+    let compiled = engine
+        .compile_typed_transaction(insert_transaction(&engine, REQUEST))
+        .unwrap();
+    let state_before = engine.doc.transact().state_vector();
+    let revision_before = (
+        engine.revision,
+        engine.state_revision,
+        engine.yrs_state_epoch,
+    );
+    {
+        let mut txn = engine
+            .doc
+            .try_transact_mut()
+            .expect("split compilation must release the read lock");
+        let fragment = txn.get_xml_fragment(engine.fragment_name.as_str()).unwrap();
+        let XmlOut::Element(paragraph) = fragment.get(&txn, 0).unwrap() else {
+            panic!("paragraph fixture")
+        };
+        let XmlOut::Text(text) = paragraph.get(&txn, 0).unwrap() else {
+            panic!("text fixture")
+        };
+        text.remove_range(&mut txn, DELETED_OFFSET, DELETED_LENGTH);
+    }
+    assert_eq!(engine.doc.transact().state_vector(), state_before);
+    assert_eq!(
+        (
+            engine.revision,
+            engine.state_revision,
+            engine.yrs_state_epoch
+        ),
+        revision_before,
+        "the fixture must exercise the fresh snapshot guard, not the revision gate"
+    );
+    let before = engine.encoded_state().unwrap();
+    let error = engine
+        .apply_compiled_transaction(compiled, false)
+        .unwrap_err();
+    assert_eq!(error.code, "ENGINE_INVARIANT_FAILED");
+    assert_eq!(
+        &*error.message,
+        "Yrs document snapshot changed before mutation preflight"
+    );
+    assert_eq!(
+        engine.encoded_state().unwrap(),
+        before,
+        "rejected commit must not write"
+    );
+    assert!(
+        engine.doc.try_transact_mut().is_ok(),
+        "rejected split commit retained its read lock"
+    );
 }

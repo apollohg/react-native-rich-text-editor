@@ -1,23 +1,32 @@
-use std::collections::HashMap;
-
 use yrs::branch::{Branch, BranchID, BranchPtr};
 use yrs::types::text::{Text, YChange};
 use yrs::types::xml::{XmlElementRef, XmlFragment, XmlFragmentRef, XmlOut, XmlTextRef};
-use yrs::{Any, Assoc, ReadTxn, StickyIndex};
+use yrs::types::TypeRef;
+use yrs::{Any, Assoc, IndexScope, Offset, ReadTxn, StickyIndex};
 
 use crate::model::Document;
 use crate::position::PositionMap;
-use crate::position_epoch::BoundaryAnchors;
-use crate::schema::{NodeRole, Schema};
+use crate::position_epoch::{AncestorAnchors, AncestorNode, BoundaryAnchors, EpochBlockChunk};
+use crate::schema::Schema;
 use crate::selection::Selection;
+use crate::tables::commands::{NODE_CLOSING_TOKENS, NODE_OPENING_TOKENS};
+use std::sync::Arc;
 
 use super::{Affinity, EditorOffsetKind, RevisionedPosition};
+
+pub(super) const VOID_NODE_SIZE: u32 = 1;
 
 #[cfg(test)]
 std::thread_local! {
     static RELATIVE_FULL_SIZE_PREPASSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static RELATIVE_FORWARD_TRAVERSALS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static RELATIVE_REVERSE_TRAVERSALS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static BOUNDARY_WALK_NODE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static BOUNDARY_TEXT_SCALAR_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static BOUNDARY_SORT_TARGETS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(crate) static BOUNDARY_COMPACTION_DISABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static PLAIN_TEXT_DIFF_FALLBACKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static XML_SIZE_NODE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]
@@ -50,6 +59,10 @@ pub enum RelativeSelection {
     },
     Node {
         point: RelativePoint,
+    },
+    Cell {
+        anchor: RelativePoint,
+        head: RelativePoint,
     },
     All,
 }
@@ -91,6 +104,22 @@ pub fn relative_point_to_doc_pos<T: ReadTxn>(
     sticky_index_to_doc_pos(txn, fragment, &point.sticky, schema)
 }
 
+pub(crate) fn relative_selection_resolves<T: ReadTxn>(
+    txn: &T,
+    fragment: &XmlFragmentRef,
+    relative: &RelativeSelection,
+    schema: &Schema,
+) -> bool {
+    let resolves = |point| relative_point_to_doc_pos(txn, fragment, point, schema).is_some();
+    match relative {
+        RelativeSelection::Text { anchor, head } | RelativeSelection::Cell { anchor, head } => {
+            resolves(anchor) && resolves(head)
+        }
+        RelativeSelection::Node { point } => resolves(point),
+        RelativeSelection::All => true,
+    }
+}
+
 pub fn relative_selection_to_selection<T: ReadTxn>(
     txn: &T,
     fragment: &XmlFragmentRef,
@@ -99,13 +128,24 @@ pub fn relative_selection_to_selection<T: ReadTxn>(
     document: &Document,
     position_map: &PositionMap,
 ) -> Option<Selection> {
+    relative_selection_with_resolver(relative, document, position_map, |point| {
+        relative_point_to_doc_pos(txn, fragment, point, schema)
+    })
+}
+
+pub(crate) fn relative_selection_with_resolver(
+    relative: &RelativeSelection,
+    document: &Document,
+    position_map: &PositionMap,
+    resolve: impl Fn(&RelativePoint) -> Option<u32>,
+) -> Option<Selection> {
     let selection = match relative {
-        RelativeSelection::Text { anchor, head } => Selection::text(
-            relative_point_to_doc_pos(txn, fragment, anchor, schema)?,
-            relative_point_to_doc_pos(txn, fragment, head, schema)?,
-        ),
-        RelativeSelection::Node { point } => {
-            Selection::node(relative_point_to_doc_pos(txn, fragment, point, schema)?)
+        RelativeSelection::Text { anchor, head } => {
+            Selection::text(resolve(anchor)?, resolve(head)?)
+        }
+        RelativeSelection::Node { point } => Selection::node(resolve(point)?),
+        RelativeSelection::Cell { anchor, head } => {
+            Selection::cell(resolve(anchor)?, resolve(head)?)
         }
         RelativeSelection::All => Selection::all(),
     };
@@ -164,9 +204,54 @@ pub(crate) fn sticky_index_to_doc_pos<T: ReadTxn>(
     #[cfg(test)]
     RELATIVE_REVERSE_TRAVERSALS.set(RELATIVE_REVERSE_TRAVERSALS.get().saturating_add(1));
     let offset = sticky_index.get_offset(txn)?;
+    offset_to_doc_pos(txn, fragment, &offset, schema)
+}
+
+pub(crate) fn surviving_relative_point_to_doc_pos<T: ReadTxn>(
+    txn: &T,
+    fragment: &XmlFragmentRef,
+    point: &RelativePoint,
+    schema: &Schema,
+) -> Option<u32> {
+    let mut offset = point.sticky.get_offset(txn)?;
+    let mut climbed = false;
+    let mut removed_table_structure = false;
+    loop {
+        if let Some(position) = offset_to_doc_pos(txn, fragment, &offset, schema) {
+            return (!climbed || removed_table_structure).then_some(position);
+        }
+        let BranchID::Nested(removed_container) = offset.branch.id() else {
+            return None;
+        };
+        removed_table_structure |= is_table_structure_branch(offset.branch, txn, schema);
+        climbed = true;
+        offset = StickyIndex::new(IndexScope::Relative(removed_container), Assoc::After)
+            .get_offset(txn)?;
+    }
+}
+
+fn is_table_structure_branch<T: ReadTxn>(branch: BranchPtr, txn: &T, schema: &Schema) -> bool {
+    matches!(branch.type_ref(), TypeRef::XmlElement(_))
+        && super::codec::wire_element_node_spec(&XmlElementRef::from(branch), txn, schema)
+            .is_some_and(|spec| spec.table_role.is_some())
+}
+
+fn offset_to_doc_pos<T: ReadTxn>(
+    txn: &T,
+    fragment: &XmlFragmentRef,
+    offset: &Offset,
+    schema: &Schema,
+) -> Option<u32> {
+    #[cfg(test)]
+    super::observability::record_yrs_tree_walk();
     let root_branch = BranchPtr::from(<XmlFragmentRef as AsRef<Branch>>::as_ref(fragment));
     if offset.branch == root_branch {
-        return sequence_branch_index_to_doc_pos(txn, fragment.children(txn), offset.index, schema);
+        return sequence_branch_index_to_doc_pos(
+            txn,
+            fragment.children(txn),
+            offset.index,
+            &|child| xml_out_pm_size(txn, child, schema),
+        );
     }
     let mut child_start = 0u32;
     for child in fragment.children(txn) {
@@ -214,7 +299,7 @@ fn sticky_index_to_doc_pos_in_node<T: ReadTxn>(
                     txn,
                     element.children(txn),
                     target_index,
-                    schema,
+                    &|child| xml_out_pm_size(txn, child, schema),
                 )
                 .map(|value| content_start + value);
             }
@@ -243,7 +328,7 @@ fn sticky_index_to_doc_pos_in_node<T: ReadTxn>(
                     txn,
                     fragment.children(txn),
                     target_index,
-                    schema,
+                    &|child| xml_out_pm_size(txn, child, schema),
                 )
                 .map(|value| node_start + value);
             }
@@ -267,11 +352,11 @@ fn sticky_index_to_doc_pos_in_node<T: ReadTxn>(
     }
 }
 
-fn sequence_branch_index_to_doc_pos<'a, T: ReadTxn>(
+pub(super) fn sequence_branch_index_to_doc_pos<'a, T: ReadTxn>(
     txn: &T,
     children: impl Iterator<Item = XmlOut> + 'a,
     target_index: u32,
-    schema: &Schema,
+    node_size: &impl Fn(&XmlOut) -> Option<u32>,
 ) -> Option<u32> {
     let mut branch_index = 0u32;
     let mut doc_pos = 0u32;
@@ -295,7 +380,7 @@ fn sequence_branch_index_to_doc_pos<'a, T: ReadTxn>(
                     return Some(doc_pos);
                 }
                 branch_index += 1;
-                doc_pos = doc_pos.checked_add(xml_out_pm_size(txn, &child, schema)?)?;
+                doc_pos = doc_pos.checked_add(node_size(&child)?)?;
                 if target_index == branch_index {
                     return Some(doc_pos);
                 }
@@ -319,6 +404,8 @@ pub(crate) fn doc_pos_to_sticky_index<T: ReadTxn>(
 ) -> Option<StickyIndex> {
     #[cfg(test)]
     RELATIVE_FULL_SIZE_PREPASSES.set(RELATIVE_FULL_SIZE_PREPASSES.get().saturating_add(1));
+    #[cfg(test)]
+    super::observability::record_yrs_tree_walk();
     let content_size = xml_fragment_pm_content_size(txn, fragment, schema)?;
     if doc_pos > content_size {
         return None;
@@ -341,136 +428,538 @@ fn forward_doc_pos_to_sticky_index<T: ReadTxn>(
         doc_pos,
         assoc,
         BranchPtr::from(<XmlFragmentRef as AsRef<Branch>>::as_ref(fragment)),
-        schema,
+        &|child| xml_out_pm_size(txn, child, schema),
     )
 }
 
-pub(crate) fn boundary_anchors_from_doc_pos<T: ReadTxn>(
+pub(crate) fn boundary_chunks_at_doc_positions<T: ReadTxn>(
     txn: &T,
     fragment: &XmlFragmentRef,
-    doc_pos: u32,
+    doc_positions: &[Vec<u32>],
     schema: &Schema,
-) -> Option<BoundaryAnchors> {
-    boundary_anchors_in_sequence(
+) -> Option<Vec<Arc<EpochBlockChunk>>> {
+    #[cfg(test)]
+    super::observability::record_yrs_tree_walk();
+    boundary_chunks_in_sequence(
         txn,
         fragment.children(txn),
-        doc_pos,
         BranchPtr::from(<XmlFragmentRef as AsRef<Branch>>::as_ref(fragment)),
+        0,
+        doc_positions,
         schema,
+        None,
     )
 }
 
-fn boundary_anchors_in_sequence<'a, T: ReadTxn>(
+pub(crate) fn boundary_chunk_for_block<T: ReadTxn>(
     txn: &T,
-    children: impl Iterator<Item = XmlOut> + 'a,
-    doc_pos: u32,
-    branch: BranchPtr,
+    element: &XmlElementRef,
+    doc_start: u32,
+    positions: Vec<u32>,
     schema: &Schema,
-) -> Option<BoundaryAnchors> {
-    let mut branch_index = 0u32;
-    let mut consumed_pm = 0u32;
-    let mut children = children.peekable();
+    ancestor: Option<Arc<AncestorNode>>,
+) -> Option<Arc<EpochBlockChunk>> {
+    boundary_chunks_in_sequence(
+        txn,
+        element.children(txn),
+        BranchPtr::from(<XmlElementRef as AsRef<Branch>>::as_ref(element)),
+        doc_start,
+        &[positions],
+        schema,
+        ancestor,
+    )?
+    .into_iter()
+    .next()
+}
 
-    while let Some(child) = children.next() {
-        match &child {
-            XmlOut::Text(text) => {
-                let text_value = xml_text_plain_string(text, txn)?;
-                let text_scalar_len = scalar_len(&text_value);
-                let mut retry_adjacent_text = false;
-                if doc_pos <= consumed_pm + text_scalar_len {
-                    let utf16_offset = scalar_offset_to_utf16(&text_value, doc_pos - consumed_pm)?;
-                    let text_branch = BranchPtr::from(<XmlTextRef as AsRef<Branch>>::as_ref(text));
-                    let before = sticky_at(txn, text_branch, utf16_offset, Assoc::Before)
-                        .or_else(|| sticky_at(txn, branch, branch_index, Assoc::Before));
-                    let after =
-                        sticky_at(txn, text_branch, utf16_offset, Assoc::After).or_else(|| {
-                            sticky_at(txn, branch, branch_index.checked_add(1)?, Assoc::After)
-                        });
-                    if let (Some(before), Some(after)) = (before, after) {
-                        return Some(BoundaryAnchors {
-                            before,
-                            after,
-                            ancestor_before: Vec::new(),
-                            ancestor_after: Vec::new(),
-                        });
-                    }
-                    if doc_pos < consumed_pm + text_scalar_len {
-                        return None;
-                    }
-                    retry_adjacent_text = true;
-                }
-                branch_index = branch_index.checked_add(1)?;
-                consumed_pm = consumed_pm.checked_add(text_scalar_len)?;
-                if retry_adjacent_text && !matches!(children.peek(), Some(XmlOut::Text(_))) {
-                    return None;
+enum BoundaryTargets<'positions> {
+    Ordered {
+        positions: &'positions [Vec<u32>],
+        block: usize,
+        offset: usize,
+    },
+    Sorted {
+        targets: Vec<(u32, usize, usize)>,
+        index: usize,
+    },
+}
+
+impl<'positions> BoundaryTargets<'positions> {
+    fn new(positions: &'positions [Vec<u32>]) -> Option<Self> {
+        let count = positions
+            .iter()
+            .try_fold(0usize, |total, block| total.checked_add(block.len()))?;
+        if positions.iter().flatten().is_sorted() {
+            return Some(Self::Ordered {
+                positions,
+                block: positions
+                    .iter()
+                    .position(|block| !block.is_empty())
+                    .unwrap_or(positions.len()),
+                offset: 0,
+            });
+        }
+        let mut targets = Vec::new();
+        targets.try_reserve_exact(count).ok()?;
+        for (block, positions) in positions.iter().enumerate() {
+            targets.extend(
+                positions
+                    .iter()
+                    .enumerate()
+                    .map(|(offset, position)| (*position, block, offset)),
+            );
+        }
+        targets.sort_unstable();
+        #[cfg(test)]
+        BOUNDARY_SORT_TARGETS.set(BOUNDARY_SORT_TARGETS.get().saturating_add(targets.len()));
+        Some(Self::Sorted { targets, index: 0 })
+    }
+
+    fn peek(&self) -> Option<(u32, usize, usize)> {
+        match self {
+            Self::Ordered {
+                positions,
+                block,
+                offset,
+            } => positions
+                .get(*block)?
+                .get(*offset)
+                .map(|position| (*position, *block, *offset)),
+            Self::Sorted { targets, index } => targets.get(*index).copied(),
+        }
+    }
+
+    fn advance(&mut self) {
+        match self {
+            Self::Ordered {
+                positions,
+                block,
+                offset,
+            } => {
+                *offset += 1;
+                while *block < positions.len() && *offset >= positions[*block].len() {
+                    *block += 1;
+                    *offset = 0;
                 }
             }
-            XmlOut::Element(element) => {
-                let child_size = xml_out_pm_size(txn, &child, schema)?;
-                if doc_pos == consumed_pm {
-                    return boundary_anchors_at(txn, branch, branch_index);
-                }
-                if doc_pos < consumed_pm.checked_add(child_size)? {
-                    let mut anchors = boundary_anchors_in_sequence(
-                        txn,
-                        element.children(txn),
-                        doc_pos.checked_sub(consumed_pm)?.checked_sub(1)?,
-                        BranchPtr::from(<XmlElementRef as AsRef<Branch>>::as_ref(element)),
-                        schema,
-                    )?;
-                    anchors.ancestor_before.push(sticky_at(
-                        txn,
-                        branch,
-                        branch_index,
-                        Assoc::Before,
-                    )?);
-                    anchors.ancestor_after.push(sticky_at(
-                        txn,
-                        branch,
-                        branch_index.checked_add(1)?,
-                        Assoc::After,
-                    )?);
-                    return Some(anchors);
-                }
-                branch_index = branch_index.checked_add(1)?;
-                consumed_pm = consumed_pm.checked_add(child_size)?;
+            Self::Sorted { index, .. } => *index += 1,
+        }
+    }
+}
+
+enum PendingBoundaryChunk {
+    Empty(usize),
+    Dense(Vec<Option<BoundaryAnchors>>),
+    Ready(EpochBlockChunk),
+}
+
+impl PendingBoundaryChunk {
+    fn insert(&mut self, offset: usize, anchors: BoundaryAnchors) {
+        if let Self::Empty(length) = self {
+            *self = Self::Dense(vec![None; *length]);
+        }
+        let Self::Dense(positions) = self else {
+            unreachable!("completed chunk has no pending targets")
+        };
+        positions[offset] = Some(anchors);
+    }
+
+    fn finish(self) -> Option<EpochBlockChunk> {
+        match self {
+            Self::Empty(0) => EpochBlockChunk::new(Vec::new()),
+            Self::Empty(_) => None,
+            Self::Dense(anchors) => {
+                EpochBlockChunk::new(anchors.into_iter().collect::<Option<Vec<_>>>()?)
             }
-            XmlOut::Fragment(nested) => {
-                let child_size = xml_out_pm_size(txn, &child, schema)?;
-                if doc_pos == consumed_pm {
-                    return boundary_anchors_at(txn, branch, branch_index);
-                }
-                if doc_pos < consumed_pm.checked_add(child_size)? {
-                    let mut anchors = boundary_anchors_in_sequence(
-                        txn,
-                        nested.children(txn),
-                        doc_pos.checked_sub(consumed_pm)?,
-                        BranchPtr::from(<XmlFragmentRef as AsRef<Branch>>::as_ref(nested)),
-                        schema,
-                    )?;
-                    anchors.ancestor_before.push(sticky_at(
-                        txn,
-                        branch,
-                        branch_index,
-                        Assoc::Before,
-                    )?);
-                    anchors.ancestor_after.push(sticky_at(
-                        txn,
-                        branch,
-                        branch_index.checked_add(1)?,
-                        Assoc::After,
-                    )?);
-                    return Some(anchors);
-                }
-                branch_index = branch_index.checked_add(1)?;
-                consumed_pm = consumed_pm.checked_add(child_size)?;
+            Self::Ready(chunk) => Some(chunk),
+        }
+    }
+}
+
+fn boundary_chunks_in_sequence<T: ReadTxn>(
+    txn: &T,
+    children: impl Iterator<Item = XmlOut>,
+    branch: BranchPtr,
+    start: u32,
+    doc_positions: &[Vec<u32>],
+    schema: &Schema,
+    ancestor: Option<Arc<AncestorNode>>,
+) -> Option<Vec<Arc<EpochBlockChunk>>> {
+    let mut walk = BoundaryAnchorWalk {
+        txn,
+        schema,
+        targets: BoundaryTargets::new(doc_positions)?,
+        chunks: doc_positions
+            .iter()
+            .map(|positions| PendingBoundaryChunk::Empty(positions.len()))
+            .collect(),
+        open: ancestor.into_iter().collect(),
+    };
+    walk.walk_sequence(children, branch, start, None)?;
+    if walk.targets.peek().is_some() {
+        return None;
+    }
+    walk.chunks
+        .into_iter()
+        .map(|chunk| chunk.finish().map(Arc::new))
+        .collect()
+}
+
+struct BoundaryAnchorWalk<'walk, T> {
+    txn: &'walk T,
+    schema: &'walk Schema,
+    targets: BoundaryTargets<'walk>,
+    chunks: Vec<PendingBoundaryChunk>,
+    open: Vec<Arc<AncestorNode>>,
+}
+
+impl<T: ReadTxn> BoundaryAnchorWalk<'_, T> {
+    fn pending(&self, sequence_end: Option<u32>) -> Option<u32> {
+        self.targets
+            .peek()
+            .map(|target| target.0)
+            .filter(|target| sequence_end.is_none_or(|end| *target < end))
+    }
+
+    fn resolve(&mut self, mut leaf: BoundaryAnchors) {
+        leaf.ancestor = self.open.last().cloned();
+        let position = self.targets.peek().expect("pending boundary target").0;
+        loop {
+            let (_, block, offset) = self.targets.peek().expect("pending boundary target");
+            self.targets.advance();
+            if self
+                .targets
+                .peek()
+                .is_some_and(|target| target.0 == position)
+            {
+                self.chunks[block].insert(offset, leaf.clone());
+            } else {
+                self.chunks[block].insert(offset, leaf);
+                break;
             }
         }
     }
 
-    (doc_pos == consumed_pm)
-        .then(|| boundary_anchors_at(txn, branch, branch_index))
-        .flatten()
+    fn resolve_at_child(
+        &mut self,
+        branch: BranchPtr,
+        index: u32,
+        position: u32,
+        sequence_end: Option<u32>,
+    ) -> Option<()> {
+        if self.pending(sequence_end) == Some(position) {
+            self.resolve(boundary_anchors_at(self.txn, branch, index)?);
+        }
+        Some(())
+    }
+
+    fn enter(
+        &mut self,
+        branch: BranchPtr,
+        index: u32,
+        table_cell: bool,
+        before: Option<StickyIndex>,
+        after: Option<StickyIndex>,
+    ) -> Option<()> {
+        let entered = Arc::new(AncestorNode {
+            anchors: AncestorAnchors {
+                before: before.or_else(|| sticky_at(self.txn, branch, index, Assoc::Before))?,
+                after: after
+                    .or_else(|| sticky_at(self.txn, branch, index.checked_add(1)?, Assoc::After))?,
+                table_cell,
+            },
+            parent: self.open.last().cloned(),
+        });
+        self.open.push(entered);
+        Some(())
+    }
+
+    fn leave(&mut self) {
+        self.open.pop();
+    }
+
+    fn walk_sequence(
+        &mut self,
+        children: impl Iterator<Item = XmlOut>,
+        branch: BranchPtr,
+        start: u32,
+        sequence_end: Option<u32>,
+    ) -> Option<u32> {
+        let mut index = 0u32;
+        let mut position = start;
+        let mut children = children.peekable();
+        let mut previous_id = None;
+        while let Some(child) = children.next() {
+            let current_id = integrated_xml_child_id(&child);
+            let before = if index == 0 {
+                Some(StickyIndex::new(
+                    IndexScope::from_branch(branch),
+                    Assoc::Before,
+                ))
+            } else {
+                previous_id.map(|id| StickyIndex::from_id(id, Assoc::Before))
+            };
+            let after = match children.peek() {
+                Some(next) => {
+                    integrated_xml_child_id(next).map(|id| StickyIndex::from_id(id, Assoc::After))
+                }
+                None if index.checked_add(1) == Some(branch.content_len()) => {
+                    current_id.map(|id| StickyIndex::from_id(id, Assoc::Before))
+                }
+                None => None,
+            };
+            #[cfg(test)]
+            BOUNDARY_WALK_NODE_VISITS.set(BOUNDARY_WALK_NODE_VISITS.get().saturating_add(1));
+            position = match &child {
+                XmlOut::Text(text) => {
+                    let followed_by_text = matches!(children.peek(), Some(XmlOut::Text(_)));
+                    self.walk_text(
+                        text,
+                        branch,
+                        index,
+                        position,
+                        sequence_end,
+                        followed_by_text,
+                    )?
+                }
+                XmlOut::Element(element) => {
+                    self.resolve_at_child(branch, index, position, sequence_end)?;
+                    if is_void_element(element, self.txn, self.schema) {
+                        position.checked_add(VOID_NODE_SIZE)?
+                    } else {
+                        self.enter(
+                            branch,
+                            index,
+                            is_table_cell_element(element, self.txn, self.schema),
+                            before,
+                            after,
+                        )?;
+                        let content_end = self.walk_sequence(
+                            element.children(self.txn),
+                            BranchPtr::from(<XmlElementRef as AsRef<Branch>>::as_ref(element)),
+                            position.checked_add(NODE_OPENING_TOKENS)?,
+                            None,
+                        )?;
+                        self.leave();
+                        content_end.checked_add(NODE_CLOSING_TOKENS)?
+                    }
+                }
+                XmlOut::Fragment(nested) => {
+                    self.resolve_at_child(branch, index, position, sequence_end)?;
+                    let fragment_end =
+                        position.checked_add(xml_out_pm_size(self.txn, &child, self.schema)?)?;
+                    self.enter(branch, index, false, before, after)?;
+                    self.walk_sequence(
+                        nested.children(self.txn),
+                        BranchPtr::from(<XmlFragmentRef as AsRef<Branch>>::as_ref(nested)),
+                        position,
+                        Some(fragment_end),
+                    )?;
+                    self.leave();
+                    fragment_end
+                }
+            };
+            previous_id = current_id;
+            index = index.checked_add(1)?;
+        }
+        self.resolve_at_child(branch, index, position, sequence_end)?;
+        Some(position)
+    }
+
+    fn compact_text_chunk(
+        &mut self,
+        item: yrs::ID,
+        value: &str,
+        start: u32,
+        end: u32,
+        sequence_end: Option<u32>,
+        text_branch: BranchPtr,
+        branch: BranchPtr,
+        index: u32,
+    ) -> bool {
+        #[cfg(test)]
+        if BOUNDARY_COMPACTION_DISABLED.get() {
+            return false;
+        }
+        let BoundaryTargets::Ordered {
+            positions,
+            block,
+            offset: 0,
+        } = &self.targets
+        else {
+            return false;
+        };
+        let block = *block;
+        let positions = &positions[block];
+        if !matches!(self.chunks[block], PendingBoundaryChunk::Empty(_))
+            || positions.first().is_none_or(|position| *position != start)
+            || positions.last().is_none_or(|position| {
+                *position != end || sequence_end.is_some_and(|end| *position >= end)
+            })
+        {
+            return false;
+        }
+        let Some(utf16_length) = u32::try_from(value.encode_utf16().count()).ok() else {
+            return false;
+        };
+        let Some(mut first) = text_boundary_anchors(
+            self.txn,
+            text_branch,
+            branch,
+            index,
+            0,
+            utf16_length == 0,
+            Some(item),
+        ) else {
+            return false;
+        };
+        let Some(mut last) = text_boundary_anchors(
+            self.txn,
+            text_branch,
+            branch,
+            index,
+            utf16_length,
+            true,
+            Some(item),
+        ) else {
+            return false;
+        };
+        first.ancestor = self.open.last().cloned();
+        last.ancestor = first.ancestor.clone();
+        let mut offsets = Vec::with_capacity(positions.len());
+        let mut characters = value.chars();
+        let mut scalar = start;
+        let mut utf16 = 0;
+        for position in positions {
+            while scalar < *position {
+                let Some(character) = characters.next() else {
+                    return false;
+                };
+                #[cfg(test)]
+                BOUNDARY_TEXT_SCALAR_VISITS
+                    .set(BOUNDARY_TEXT_SCALAR_VISITS.get().saturating_add(1));
+                utf16 += character.len_utf16() as u32;
+                scalar += 1;
+            }
+            offsets.push(utf16);
+        }
+        let Some(chunk) = EpochBlockChunk::plain_text(item, offsets, utf16_length, first, last)
+        else {
+            return false;
+        };
+        self.chunks[block] = PendingBoundaryChunk::Ready(chunk);
+        while self.targets.peek().is_some_and(|target| target.1 == block) {
+            self.targets.advance();
+        }
+        true
+    }
+
+    fn walk_text(
+        &mut self,
+        text: &XmlTextRef,
+        branch: BranchPtr,
+        index: u32,
+        start: u32,
+        sequence_end: Option<u32>,
+        followed_by_text: bool,
+    ) -> Option<u32> {
+        let (single_item, value) = match text.try_single_text_item(self.txn) {
+            Some((id, value)) => (Some(id), value),
+            None => (None, xml_text_plain_string(text, self.txn)?),
+        };
+        let text_end = start.checked_add(scalar_len(&value))?;
+        let text_branch = BranchPtr::from(<XmlTextRef as AsRef<Branch>>::as_ref(text));
+        let mut characters = value.chars();
+        let mut scalar_offset = 0u32;
+        let mut utf16_offset = 0u32;
+        while let Some(target) = self
+            .pending(sequence_end)
+            .filter(|target| *target <= text_end)
+        {
+            if let Some(item) = single_item {
+                if self.compact_text_chunk(
+                    item,
+                    &value,
+                    start,
+                    text_end,
+                    sequence_end,
+                    text_branch,
+                    branch,
+                    index,
+                ) {
+                    continue;
+                }
+            }
+            let target_offset = target.checked_sub(start)?;
+            while scalar_offset < target_offset {
+                let width = u32::try_from(characters.next()?.len_utf16()).ok()?;
+                #[cfg(test)]
+                BOUNDARY_TEXT_SCALAR_VISITS
+                    .set(BOUNDARY_TEXT_SCALAR_VISITS.get().saturating_add(1));
+                utf16_offset = utf16_offset.checked_add(width)?;
+                scalar_offset += 1;
+            }
+            let anchors = text_boundary_anchors(
+                self.txn,
+                text_branch,
+                branch,
+                index,
+                utf16_offset,
+                target == text_end,
+                single_item,
+            );
+            match anchors {
+                Some(anchors) => self.resolve(anchors),
+                None if target == text_end && followed_by_text => break,
+                None => return None,
+            }
+        }
+        Some(text_end)
+    }
+}
+
+fn text_boundary_anchors<T: ReadTxn>(
+    txn: &T,
+    text_branch: BranchPtr,
+    branch: BranchPtr,
+    index: u32,
+    utf16_offset: u32,
+    at_end: bool,
+    single_item: Option<yrs::ID>,
+) -> Option<BoundaryAnchors> {
+    let before = single_item
+        .filter(|_| utf16_offset > 0)
+        .and_then(|id| {
+            Some(StickyIndex::from_id(
+                yrs::ID::new(id.client, id.clock.checked_add(utf16_offset - 1)?),
+                Assoc::Before,
+            ))
+        })
+        .or_else(|| sticky_at(txn, text_branch, utf16_offset, Assoc::Before))
+        .or_else(|| sticky_at(txn, branch, index, Assoc::Before));
+    let after = single_item
+        .filter(|_| !at_end)
+        .and_then(|id| {
+            Some(StickyIndex::from_id(
+                yrs::ID::new(id.client, id.clock.checked_add(utf16_offset)?),
+                Assoc::After,
+            ))
+        })
+        .or_else(|| sticky_at(txn, text_branch, utf16_offset, Assoc::After))
+        .or_else(|| sticky_at(txn, branch, index.checked_add(1)?, Assoc::After));
+    Some(BoundaryAnchors {
+        before: before?,
+        after: after?,
+        ancestor: None,
+        pinned_cell: None,
+    })
+}
+
+fn integrated_xml_child_id(child: &XmlOut) -> Option<yrs::ID> {
+    match child.id() {
+        BranchID::Nested(id) => Some(id),
+        BranchID::Root(_) => None,
+    }
 }
 
 fn boundary_anchors_at<T: ReadTxn>(
@@ -481,8 +970,8 @@ fn boundary_anchors_at<T: ReadTxn>(
     Some(BoundaryAnchors {
         before: sticky_at(txn, branch, index, Assoc::Before)?,
         after: sticky_at(txn, branch, index, Assoc::After)?,
-        ancestor_before: Vec::new(),
-        ancestor_after: Vec::new(),
+        ancestor: None,
+        pinned_cell: None,
     })
 }
 
@@ -516,13 +1005,13 @@ pub(crate) fn cursor_sticky_index_from_doc_pos<T: ReadTxn>(
         .or_else(|| doc_pos_to_sticky_index(txn, fragment, doc_pos, Assoc::Before, schema))
 }
 
-fn doc_pos_to_sticky_index_in_sequence<'a, T: ReadTxn>(
+pub(super) fn doc_pos_to_sticky_index_in_sequence<'a, T: ReadTxn>(
     txn: &T,
     children: impl Iterator<Item = XmlOut> + 'a,
     doc_pos: u32,
     assoc: Assoc,
     branch: BranchPtr,
-    schema: &Schema,
+    node_size: &impl Fn(&XmlOut) -> Option<u32>,
 ) -> Option<StickyIndex> {
     let mut branch_index = 0u32;
     let mut consumed_pm = 0u32;
@@ -556,7 +1045,7 @@ fn doc_pos_to_sticky_index_in_sequence<'a, T: ReadTxn>(
                 }
             }
             XmlOut::Element(element) => {
-                let child_size = xml_out_pm_size(txn, &child, schema)?;
+                let child_size = node_size(&child)?;
                 if doc_pos == consumed_pm {
                     return StickyIndex::at(txn, branch, branch_index, assoc);
                 }
@@ -567,14 +1056,14 @@ fn doc_pos_to_sticky_index_in_sequence<'a, T: ReadTxn>(
                         doc_pos - consumed_pm - 1,
                         assoc,
                         BranchPtr::from(<XmlElementRef as AsRef<Branch>>::as_ref(element)),
-                        schema,
+                        node_size,
                     );
                 }
                 branch_index += 1;
                 consumed_pm += child_size;
             }
             XmlOut::Fragment(nested) => {
-                let child_size = xml_out_pm_size(txn, &child, schema)?;
+                let child_size = node_size(&child)?;
                 if doc_pos == consumed_pm {
                     return StickyIndex::at(txn, branch, branch_index, assoc);
                 }
@@ -585,7 +1074,7 @@ fn doc_pos_to_sticky_index_in_sequence<'a, T: ReadTxn>(
                         doc_pos - consumed_pm,
                         assoc,
                         BranchPtr::from(<XmlFragmentRef as AsRef<Branch>>::as_ref(nested)),
-                        schema,
+                        node_size,
                     );
                 }
                 branch_index += 1;
@@ -611,7 +1100,20 @@ fn xml_fragment_pm_content_size<T: ReadTxn>(
     })
 }
 
-fn is_void_element<T: ReadTxn>(element: &XmlElementRef, txn: &T, schema: &Schema) -> bool {
+fn is_table_cell_element<T: ReadTxn>(element: &XmlElementRef, txn: &T, schema: &Schema) -> bool {
+    super::codec::wire_element_node_spec(element, txn, schema).is_some_and(|spec| {
+        matches!(
+            spec.table_role,
+            Some(crate::tables::TableRole::Cell | crate::tables::TableRole::HeaderCell)
+        )
+    })
+}
+
+pub(super) fn is_void_element<T: ReadTxn>(
+    element: &XmlElementRef,
+    txn: &T,
+    schema: &Schema,
+) -> bool {
     if matches!(
         element.tag().as_ref(),
         "__opaque" | "__opaque_json" | "__skip"
@@ -624,16 +1126,20 @@ fn is_void_element<T: ReadTxn>(element: &XmlElementRef, txn: &T, schema: &Schema
     true
 }
 
-fn xml_out_pm_size<T: ReadTxn>(txn: &T, node: &XmlOut, schema: &Schema) -> Option<u32> {
+pub(super) fn xml_out_pm_size<T: ReadTxn>(txn: &T, node: &XmlOut, schema: &Schema) -> Option<u32> {
+    #[cfg(test)]
+    XML_SIZE_NODE_VISITS.set(XML_SIZE_NODE_VISITS.get().saturating_add(1));
     match node {
         XmlOut::Text(text) => Some(scalar_len(&xml_text_plain_string(text, txn)?)),
         XmlOut::Element(element) => {
             if is_void_element(element, txn, schema) {
-                Some(1)
+                Some(VOID_NODE_SIZE)
             } else {
-                element.children(txn).try_fold(2u32, |size, child| {
-                    size.checked_add(xml_out_pm_size(txn, &child, schema)?)
-                })
+                element
+                    .children(txn)
+                    .try_fold(NODE_OPENING_TOKENS + NODE_CLOSING_TOKENS, |size, child| {
+                        size.checked_add(xml_out_pm_size(txn, &child, schema)?)
+                    })
             }
         }
         XmlOut::Fragment(fragment) => fragment.children(txn).try_fold(0u32, |size, child| {
@@ -642,53 +1148,12 @@ fn xml_out_pm_size<T: ReadTxn>(txn: &T, node: &XmlOut, schema: &Schema) -> Optio
     }
 }
 
-pub(crate) fn block_atom_ids<T: ReadTxn>(
-    txn: &T,
-    fragment: &XmlFragmentRef,
-    schema: &Schema,
-) -> Option<HashMap<u32, String>> {
-    let mut ids = HashMap::new();
-    collect_block_atom_ids(txn, fragment.children(txn), 0, schema, &mut ids)?;
-    Some(ids)
-}
-
-fn collect_block_atom_ids<T: ReadTxn>(
-    txn: &T,
-    children: impl Iterator<Item = XmlOut>,
-    start: u32,
-    schema: &Schema,
-    ids: &mut HashMap<u32, String>,
-) -> Option<u32> {
-    let mut position = start;
-    for child in children {
-        position = match &child {
-            XmlOut::Element(element) if is_void_element(element, txn, schema) => {
-                let spec = super::codec::wire_element_node_spec(element, txn, schema);
-                if spec.is_some_and(|spec| matches!(spec.role, NodeRole::Block)) {
-                    if let BranchID::Nested(id) = AsRef::<Branch>::as_ref(element).id() {
-                        ids.insert(position, format!("y{}-{}", id.client, id.clock));
-                    }
-                }
-                position.checked_add(xml_out_pm_size(txn, &child, schema)?)?
-            }
-            XmlOut::Element(element) => collect_block_atom_ids(
-                txn,
-                element.children(txn),
-                position.checked_add(1)?,
-                schema,
-                ids,
-            )?
-            .checked_add(1)?,
-            XmlOut::Fragment(nested) => {
-                collect_block_atom_ids(txn, nested.children(txn), position, schema, ids)?
-            }
-            XmlOut::Text(_) => position.checked_add(xml_out_pm_size(txn, &child, schema)?)?,
-        };
+pub(super) fn xml_text_plain_string<T: ReadTxn>(text: &XmlTextRef, txn: &T) -> Option<String> {
+    if let Some(value) = text.try_plain_string(txn) {
+        return Some(value);
     }
-    Some(position)
-}
-
-fn xml_text_plain_string<T: ReadTxn>(text: &XmlTextRef, txn: &T) -> Option<String> {
+    #[cfg(test)]
+    PLAIN_TEXT_DIFF_FALLBACKS.set(PLAIN_TEXT_DIFF_FALLBACKS.get().saturating_add(1));
     let mut value = String::new();
     for diff in text.diff(txn, YChange::identity) {
         let yrs::Out::Any(Any::String(run)) = diff.insert else {
@@ -704,11 +1169,15 @@ fn scalar_len(value: &str) -> u32 {
 }
 
 pub fn scalar_offset_to_utf16(value: &str, scalar_offset: u32) -> Option<u32> {
+    if value
+        .as_bytes()
+        .get(..scalar_offset as usize)
+        .is_some_and(<[u8]>::is_ascii)
+    {
+        return Some(scalar_offset);
+    }
     let mut scalar_count = 0u32;
     let mut utf16_count = 0u32;
-    if scalar_offset == 0 {
-        return Some(0);
-    }
     for character in value.chars() {
         scalar_count += 1;
         utf16_count += character.len_utf16() as u32;
@@ -746,3 +1215,7 @@ impl From<Affinity> for Assoc {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "position_tests.rs"]
+mod tests;

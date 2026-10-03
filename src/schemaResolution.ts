@@ -1,4 +1,5 @@
 import { NativeEditorBoundaryError } from './NativeEditorBoundaryError';
+import { tableRolesAreConsistent } from './TableSchema';
 import { resolveEditorResourceLimits, type ResolvedEditorResourceLimits } from './ResourceLimits';
 import { contentExpressionSymbols, minimalContentMatch } from './contentExpression';
 import { type DocumentDescriptorLimits, defaultSchema } from './schemaPresets';
@@ -227,7 +228,7 @@ export function resolveDocumentSchema(
         markNames.add(mark.name);
     }
 
-    if (docRoles !== 1 || textRoles !== 1) {
+    if (docRoles !== 1 || textRoles !== 1 || !tableRolesAreConsistent(schema)) {
         return defaultSchema;
     }
 

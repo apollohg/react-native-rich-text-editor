@@ -5,7 +5,7 @@ use crate::yrs_engine::compiler::input_limits::{
 };
 use crate::yrs_engine::compiler::operations::{OperationCompiler, OperationOutcome};
 use crate::yrs_engine::compiler::positions::{map_position, resolve_position, resolve_range};
-use crate::yrs_engine::compiler::preview::{validate_preview, LocalizedSemanticCompilation};
+use crate::yrs_engine::compiler::preview::{validate_preview, LocalizedSemanticStep};
 use crate::yrs_engine::compiler::text_boundaries::text_boundaries;
 use crate::yrs_engine::compiler::{
     map_transform_error, merge_history_class, HistoryClass, MutationLookupTransition,
@@ -59,9 +59,11 @@ impl OperationCompiler<'_> {
         let operation_result;
         match operation {
             TypedOperation::InsertText { at, text, marks } => {
-                let localized = localized_semantic.take();
+                let localized = localized_semantic
+                    .as_mut()
+                    .and_then(|compiled| compiled.steps.pop_front());
                 let (pos, next, step_map) = if let Some(localized) = localized {
-                    let LocalizedSemanticCompilation {
+                    let LocalizedSemanticStep {
                         position,
                         preview,
                         step_map,
@@ -106,8 +108,10 @@ impl OperationCompiler<'_> {
                     let (plan, promotion) =
                         localized.compile_with_promotion(operation_index, pos, text, marks)?;
                     prelowered_plan = Some(plan);
-                    prelowered_lookup_transition =
-                        Some(MutationLookupTransition::Promote(promotion));
+                    prelowered_lookup_transition = Some(promotion.map_or(
+                        MutationLookupTransition::Invalidate { request_id },
+                        MutationLookupTransition::Promote,
+                    ));
                 }
                 operation_result = Some(Selection::cursor(step_map.map_pos(pos)));
                 composed_map = composed_map.compose(&step_map);
@@ -136,12 +140,19 @@ impl OperationCompiler<'_> {
                     &composed_map,
                 )?;
                 stored_marks_input = Some((from, to));
-                let step = Step::DeleteRange { from, to };
-                let (next, step_map) =
+                let (next, step_map) = if let Some(localized) = localized_semantic
+                    .as_mut()
+                    .and_then(|compiled| compiled.steps.pop_front())
+                {
+                    localized_derivations = Some(localized.derivations);
+                    (localized.preview, localized.step_map)
+                } else {
+                    let step = Step::DeleteRange { from, to };
                     crate::transform::apply_step_canonical_marks(&preview, &step, context.schema)
                         .map_err(|error| {
-                        map_transform_error(request_id, operation_index, "range", error)
-                    })?;
+                            map_transform_error(request_id, operation_index, "range", error)
+                        })?
+                };
                 if lowering.is_some() {
                     validate_preview(request_id, Some(operation_index), &next, context)?;
                 }
@@ -163,6 +174,20 @@ impl OperationCompiler<'_> {
                                 to,
                             )?;
                         }
+                    }
+                }
+                if let Some(localized) = localized_insert.as_mut() {
+                    localized.delete_range(operation_index, from, to)?;
+                    compatible_text_delete = true;
+                    if operation_index + 1 == transaction.operations.len() {
+                        prelowered_plan = Some(
+                            localized_insert
+                                .take()
+                                .expect("localized range compiler exists")
+                                .finish_range(operation_index)?,
+                        );
+                        prelowered_lookup_transition =
+                            Some(MutationLookupTransition::Invalidate { request_id });
                     }
                 }
                 operation_result = Some(Selection::cursor(from));
@@ -193,16 +218,23 @@ impl OperationCompiler<'_> {
                     &composed_map,
                 )?;
                 stored_marks_input = Some((from, to));
-                let step = Step::ReplaceRange {
-                    from,
-                    to,
-                    content: content.clone(),
-                };
-                let (next, step_map) =
+                let (next, step_map) = if let Some(localized) = localized_semantic
+                    .as_mut()
+                    .and_then(|compiled| compiled.steps.pop_front())
+                {
+                    localized_derivations = Some(localized.derivations);
+                    (localized.preview, localized.step_map)
+                } else {
+                    let step = Step::ReplaceRange {
+                        from,
+                        to,
+                        content: content.clone(),
+                    };
                     crate::transform::apply_step_canonical_marks(&preview, &step, context.schema)
                         .map_err(|error| {
-                        map_transform_error(request_id, operation_index, "range", error)
-                    })?;
+                            map_transform_error(request_id, operation_index, "range", error)
+                        })?
+                };
                 if lowering.is_some() {
                     validate_preview(request_id, Some(operation_index), &next, context)?;
                 }
@@ -225,6 +257,7 @@ impl OperationCompiler<'_> {
                                 limits: context.resource_limits,
                             },
                             ReplacementInput {
+                                canonical_content: None,
                                 from,
                                 to,
                                 boundaries: &boundaries,
@@ -232,6 +265,20 @@ impl OperationCompiler<'_> {
                             },
                         )?;
                     }
+                }
+                if let Some(localized) = localized_insert.take() {
+                    let node = content
+                        .child(0)
+                        .expect("localized replacement carries one text node");
+                    prelowered_plan = Some(localized.compile_range(
+                        operation_index,
+                        from,
+                        to,
+                        node.text_str().expect("localized replacement is text"),
+                        node.marks(),
+                    )?);
+                    prelowered_lookup_transition =
+                        Some(MutationLookupTransition::Invalidate { request_id });
                 }
                 operation_result = Some(Selection::cursor(from.saturating_add(content.size())));
                 composed_map = composed_map.compose(&step_map);

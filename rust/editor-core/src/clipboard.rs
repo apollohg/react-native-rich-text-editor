@@ -14,29 +14,52 @@ pub(crate) struct ClipboardSlice {
     pub open_end: usize,
 }
 
-pub(crate) fn selection_range(document: &Document, selection: &Selection) -> (u32, u32) {
+pub(crate) const CLIPBOARD_EMPTY_KEY: &str = "empty";
+pub(crate) const CLIPBOARD_UNSUPPORTED_KEY: &str = "unsupported";
+pub(crate) const CLIPBOARD_UNSUPPORTED_CELL_SELECTION: &str = "cellSelection";
+pub(crate) const CLIPBOARD_UNSUPPORTED_TABLE_GRID: &str = "tableGrid";
+pub(crate) const CLOSED_FRAGMENT_DEPTH: usize = 0;
+pub(crate) const LINE_BREAK: char = '\n';
+pub(crate) const LINE_BREAK_TEXT: &str = "\n";
+const HARD_BREAK_HTML_TAG: &str = "br";
+const VOID_TEXT_ATTRS: [&str; 4] = ["label", "alt", "name", "title"];
+const CARRIAGE_RETURN: char = '\r';
+const WINDOWS_LINE_BREAK: &str = "\r\n";
+
+pub(crate) fn normalized_line_breaks(text: &str) -> String {
+    text.replace(WINDOWS_LINE_BREAK, LINE_BREAK_TEXT)
+        .replace(CARRIAGE_RETURN, LINE_BREAK_TEXT)
+}
+
+pub(crate) fn unsupported_selection(selection: &Selection) -> Option<&'static str> {
+    match selection {
+        Selection::Cell { .. } => Some(CLIPBOARD_UNSUPPORTED_CELL_SELECTION),
+        Selection::Text { .. } | Selection::Node { .. } | Selection::All => None,
+    }
+}
+
+pub(crate) fn selection_range(document: &Document, selection: &Selection) -> Option<(u32, u32)> {
     match selection {
         Selection::Node { pos } => {
-            let size = document
-                .resolve(*pos)
-                .ok()
-                .and_then(|resolved| {
-                    let mut offset = 0;
-                    resolved
-                        .parent(document)
-                        .content()?
-                        .iter()
-                        .find_map(|node| {
-                            let found =
-                                (offset == resolved.parent_offset).then_some(node.node_size());
-                            offset += node.node_size();
-                            found
-                        })
-                })
-                .unwrap_or(1);
-            (*pos, pos.saturating_add(size))
+            let Ok(resolved) = document.resolve(*pos) else {
+                return None;
+            };
+            let mut offset = 0;
+            let size = resolved
+                .parent(document)
+                .content()?
+                .iter()
+                .find_map(|node| {
+                    let found = (offset == resolved.parent_offset).then_some(node.node_size());
+                    offset += node.node_size();
+                    found
+                })?;
+            Some((*pos, pos.checked_add(size)?))
         }
-        _ => (selection.from(document), selection.to(document)),
+        Selection::Cell { .. } => None,
+        Selection::Text { .. } | Selection::All => {
+            Some((selection.from(document)?, selection.to(document)?))
+        }
     }
 }
 
@@ -83,7 +106,7 @@ fn boundary_depth(document: &Document, position: u32) -> usize {
 }
 
 pub(crate) fn export(document: &Document, selection: &Selection, schema: &Schema) -> Option<Value> {
-    let (from, to) = selection_range(document, selection);
+    let (from, to) = selection_range(document, selection)?;
     if from >= to || to > document.content_size() {
         return None;
     }
@@ -92,47 +115,97 @@ pub(crate) fn export(document: &Document, selection: &Selection, schema: &Schema
         Default::default(),
         Fragment::from(clipped_children(document.root(), 0, from, to)),
     ));
-    Some(json!({
-        "fragment": json!({"version":1,"schema":crate::schema::schema_fingerprint(schema),"openStart":boundary_depth(document, from),"openEnd":boundary_depth(document, to),"document":to_prosemirror_json(&selected, schema),"text":readable_text(&selected, schema)}).to_string(),
-        "html": to_html(&selected, schema),
-        "text": readable_text(&selected, schema)
-    }))
+    Some(clipboard_payload(
+        &selected,
+        boundary_depth(document, from),
+        boundary_depth(document, to),
+        &readable_text(&selected, schema),
+        schema,
+    ))
+}
+
+pub(crate) fn export_cells(
+    document: &Document,
+    selection: &Selection,
+    projection_index: &crate::tables::admission::TableProjectionIndex,
+    schema: &Schema,
+) -> Result<Value, crate::tables::interchange::InterchangeFailure> {
+    let fragment = crate::tables::interchange::table_clipboard_fragment(
+        document,
+        selection,
+        projection_index,
+        schema,
+    )?;
+    let text = fragment
+        .children()
+        .iter()
+        .map(|table| crate::tables::paste::tab_separated_text(table, schema))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(crate::tables::interchange::unreadable_grid)?
+        .join(LINE_BREAK_TEXT);
+    let copied = Document::new(Node::element(
+        document.root().node_type().into(),
+        Default::default(),
+        fragment,
+    ));
+    Ok(clipboard_payload(
+        &copied,
+        CLOSED_FRAGMENT_DEPTH,
+        CLOSED_FRAGMENT_DEPTH,
+        &text,
+        schema,
+    ))
+}
+
+fn clipboard_payload(
+    selected: &Document,
+    open_start: usize,
+    open_end: usize,
+    text: &str,
+    schema: &Schema,
+) -> Value {
+    json!({
+        "fragment": json!({"version":1,"schema":crate::schema::schema_fingerprint(schema),"openStart":open_start,"openEnd":open_end,"document":to_prosemirror_json(selected, schema),"text":text}).to_string(),
+        "html": to_html(selected, schema),
+        "text": text
+    })
 }
 
 pub(crate) fn readable_text(document: &Document, schema: &Schema) -> String {
-    fn text(node: &Node, schema: &Schema) -> String {
-        if let Some(text) = node.text_str() {
-            return text.into();
-        }
-        if node.is_void() {
-            if schema
-                .node(node.node_type())
-                .is_some_and(|spec| spec.html_tag.as_deref() == Some("br"))
-            {
-                return "\n".into();
-            }
-            return ["label", "alt", "name", "title"]
-                .iter()
-                .find_map(|key| node.attrs().get(*key).and_then(Value::as_str))
-                .unwrap_or("")
-                .to_string();
-        }
-        let children = node.content().map(Fragment::children).unwrap_or(&[]);
-        let block_children = children.iter().any(|child| {
-            schema.node(child.node_type()).is_some_and(|spec| {
-                !matches!(
-                    spec.role,
-                    NodeRole::Inline | NodeRole::HardBreak | NodeRole::Text
-                )
-            })
-        });
-        children
-            .iter()
-            .map(|child| text(child, schema))
-            .collect::<Vec<_>>()
-            .join(if block_children { "\n" } else { "" })
+    node_text(document.root(), schema)
+}
+
+pub(crate) fn node_text(node: &Node, schema: &Schema) -> String {
+    if let Some(text) = node.text_str() {
+        return text.into();
     }
-    text(document.root(), schema)
+    if node.is_void() {
+        if schema
+            .node(node.node_type())
+            .is_some_and(|spec| spec.html_tag.as_deref() == Some(HARD_BREAK_HTML_TAG))
+        {
+            return LINE_BREAK_TEXT.into();
+        }
+        return VOID_TEXT_ATTRS
+            .iter()
+            .find_map(|key| node.attrs().get(*key).and_then(Value::as_str))
+            .unwrap_or_default()
+            .to_string();
+    }
+    let children = node.content().map(Fragment::children).unwrap_or(&[]);
+    let block_children = children.iter().any(|child| {
+        schema.node(child.node_type()).is_some_and(|spec| {
+            !matches!(
+                spec.role,
+                NodeRole::Inline | NodeRole::HardBreak | NodeRole::Text
+            )
+        })
+    });
+    children
+        .iter()
+        .map(|child| node_text(child, schema))
+        .collect::<Vec<_>>()
+        .join(if block_children { LINE_BREAK_TEXT } else { "" })
 }
 
 pub(crate) fn decode(
@@ -293,7 +366,7 @@ pub(crate) fn replacement(
     schema: &Schema,
     limits: &ResourceLimits,
 ) -> Option<SemanticCommandPlan> {
-    let (from, to) = selection_range(document, selection);
+    let (from, to) = selection_range(document, selection)?;
     if to > document.content_size() {
         return None;
     }
@@ -517,6 +590,33 @@ mod tests {
         let mut limits = ResourceLimits::default();
         limits.max_input_bytes = 8;
         assert!(decode(copied["fragment"].as_str().unwrap(), &schema, &limits).is_none());
+    }
+
+    #[test]
+    fn a_node_selection_that_names_no_node_yields_no_clipboard_range() {
+        let schema = tiptap_schema();
+        let document = from_prosemirror_json(
+            &json!({"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"abc"}]}]}),
+            &schema,
+            UnknownTypeMode::Error,
+        )
+        .unwrap();
+        let inside_the_text = 2;
+        assert_eq!(
+            selection_range(&document, &Selection::node(inside_the_text)),
+            None,
+            "a node selection that starts no child must not stand in for a one token range",
+        );
+        assert_eq!(
+            export(&document, &Selection::node(inside_the_text), &schema),
+            None,
+            "nothing is copied, so a cut of that selection removes nothing",
+        );
+        assert_eq!(
+            selection_range(&document, &Selection::node(0)),
+            Some((0, document.content_size())),
+            "a node selection that does start a child still reports the node extent",
+        );
     }
 
     #[test]

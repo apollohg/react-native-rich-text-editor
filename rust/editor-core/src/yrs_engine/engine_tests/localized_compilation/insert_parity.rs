@@ -44,9 +44,13 @@ fn localized_insert_compile_only_skips_every_proved_full_pass() {
     assert_eq!(
         take_full_pass_counts_for_test(),
         FullPassCounts {
-            canonical_projections: 1,
-            canonical_serializations: 2,
-            canonical_hashes: 1,
+            mutation_guard_snapshot_requests: 2,
+            compilation_snapshot_scans: 1,
+            compilation_snapshot_reuses: 1,
+            canonical_mark_nodes_visited: 2,
+            canonical_projections: 0,
+            canonical_serializations: 0,
+            canonical_hashes: 0,
             position_map_clones: 1,
             position_map_compactions: 1,
             render_identity_scans: 0,
@@ -63,6 +67,9 @@ fn localized_insert_compile_only_skips_every_proved_full_pass() {
     assert_eq!(
         take_full_pass_counts_for_test(),
         FullPassCounts {
+            mutation_guard_snapshot_requests: 2,
+            compilation_snapshot_scans: 1,
+            compilation_snapshot_reuses: 1,
             document_validations: 2,
             canonical_mark_tree_scans: 1,
             canonical_mark_validation_attempts: 1,
@@ -80,6 +87,14 @@ fn localized_insert_compile_only_skips_every_proved_full_pass() {
             document_node_count_scans: 1,
             render_identity_scans: 0,
             ordinary_step_applications: 1,
+            table_projection_derivations: 1,
+            table_command_availability_plans: 0,
+            yrs_tree_walks: 0,
+            whole_state_encodings: 0,
+            cell_content_keys: 0,
+            attribute_serializations: 0,
+            epoch_block_rebuilds: 0,
+            cell_content_generations: 0,
             ..FullPassCounts::default()
         }
     );
@@ -313,7 +328,10 @@ fn localized_insert_semantic_preview_matches_forced_generic_matrix() {
         let localized = engine
             .compile_typed_transaction(transaction.clone())
             .unwrap();
-        assert!(localized.localized_insert_admission.is_some(), "{case}");
+        assert!(
+            localized.localized_textblock_edit_admission.is_some(),
+            "{case}"
+        );
         assert_eq!(
             localized.affected_top_level_blocks, expected_affected,
             "{case}"
@@ -361,11 +379,13 @@ fn localized_insert_semantic_preview_matches_forced_generic_matrix() {
         let localized_state = engine.derived_state.as_ref().unwrap();
         let generic_state = generic_engine.derived_state.as_ref().unwrap();
         assert_eq!(
-            localized_state.validation_certificate, generic_state.validation_certificate,
+            localized_state.materialized_identity_for_test().0,
+            generic_state.materialized_identity_for_test().0,
             "{case}"
         );
         assert_eq!(
-            localized_state.localized_text_index, generic_state.localized_text_index,
+            localized_state.materialized_identity_for_test().1,
+            generic_state.materialized_identity_for_test().1,
             "{case}"
         );
         assert_eq!(
@@ -439,7 +459,7 @@ fn localized_insert_semantic_preview_matches_forced_generic_matrix() {
     let fallback = engine.compile_typed_transaction(transaction.clone());
     force_localized_semantic_allocation_failure_for_test(false);
     let fallback = fallback.unwrap();
-    assert!(fallback.localized_insert_admission.is_some());
+    assert!(fallback.localized_textblock_edit_admission.is_some());
     assert_eq!(
         take_full_pass_counts_for_test().ordinary_step_applications,
         1
@@ -538,7 +558,7 @@ fn localized_insert_exact_limits_and_one_under_errors_match_generic() {
     assert!(exact_length
         .compile_typed_transaction(transaction(&exact_length))
         .unwrap()
-        .localized_insert_admission
+        .localized_textblock_edit_admission
         .is_some());
     let rejected_length = fixture(Some(4), EditingLimits::default());
     let generic_length = fixture(Some(4), EditingLimits::default());
@@ -552,7 +572,7 @@ fn localized_insert_exact_limits_and_one_under_errors_match_generic() {
     assert!(exact_output_engine
         .compile_typed_transaction(transaction(&exact_output_engine))
         .unwrap()
-        .localized_insert_admission
+        .localized_textblock_edit_admission
         .is_some());
     let rejected_output_limits = EditingLimits {
         max_derived_output_bytes: exact_output - 1,
@@ -570,7 +590,7 @@ fn localized_insert_exact_limits_and_one_under_errors_match_generic() {
     assert!(exact_undo_engine
         .compile_typed_transaction(transaction(&exact_undo_engine))
         .unwrap()
-        .localized_insert_admission
+        .localized_textblock_edit_admission
         .is_some());
     let rejected_undo_limits = EditingLimits {
         max_undo_retained_units: exact_undo - 1,
@@ -767,8 +787,18 @@ fn localized_index_promotion_obeys_exact_transient_budget_boundary() {
     assert_eq!(exact.document_json(), generic.document_json());
     assert_eq!(history_audit(&exact), history_audit(&generic));
     assert_eq!(
-        exact.derived_state.as_ref().unwrap().localized_text_index,
-        generic.derived_state.as_ref().unwrap().localized_text_index
+        exact
+            .derived_state
+            .as_ref()
+            .unwrap()
+            .materialized_identity_for_test()
+            .1,
+        generic
+            .derived_state
+            .as_ref()
+            .unwrap()
+            .materialized_identity_for_test()
+            .1
     );
 
     let mut one_under = fixture();
@@ -796,4 +826,145 @@ fn localized_index_promotion_obeys_exact_transient_budget_boundary() {
         take_localized_index_lifecycle_counts_for_test(),
         (0, 1, 0, 1)
     );
+}
+
+#[test]
+fn localized_leaf_overlay_fallbacks_and_history_match_generic_compilation() {
+    const FIRST_REQUEST: u64 = 700_180;
+    let fixture = || {
+        let mut engine = transaction_engine();
+        engine.import_json(r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"alpha🙂"}]},{"type":"paragraph","content":[{"type":"text","text":"beta"}]},{"type":"paragraph"}]}"#, TransactionOrigin::DocumentImport).unwrap();
+        hydrate_import_for_compile_test(&mut engine);
+        engine
+    };
+    let mut localized = fixture();
+    let mut generic = fixture();
+    let point = |offset| RevisionedPosition {
+        offset,
+        kind: EditorOffsetKind::Scalar,
+        affinity: Affinity::After,
+    };
+    for (step, (block_index, inserted, deleted)) in [
+        (0, "x", 0),
+        (0, "🙂", 0),
+        (1, "e\u{301}", 0),
+        (1, "漢", 0),
+        (1, "", 1),
+        (1, "y", 0),
+        (1, "", u32::MAX),
+        (1, "z", 0),
+        (1, "🙂", 0),
+        (2, "empty", 0),
+        (2, "!", 0),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let state = localized.derived_state.as_ref().unwrap();
+        let block = state.position_map.block(block_index).unwrap();
+        let start = block.scalar_start + block.scalar_prefix_len;
+        let length = block.doc_end - block.doc_start;
+        let operation = if deleted > 0 {
+            TypedOperation::DeleteRange {
+                range: RevisionedRange {
+                    from: point(start),
+                    to: point(start + deleted.min(length)),
+                },
+            }
+        } else {
+            TypedOperation::InsertText {
+                at: point(start + length),
+                text: inserted.into(),
+                marks: Vec::new(),
+            }
+        };
+        let transaction = TypedTransaction {
+            request_id: FIRST_REQUEST + step as u64,
+            base_document_revision: localized.revision(),
+            origin: TransactionOrigin::LocalInput,
+            operations: vec![operation],
+            selection_intent: SelectionIntent::UseOperationResult,
+            history_policy: HistoryPolicy::Boundary,
+        };
+        let original = state.localized_text_index.clone();
+        let compiled = localized
+            .compile_typed_transaction(transaction.clone())
+            .unwrap();
+        assert!(
+            compiled.localized_textblock_edit_admission.is_some(),
+            "step {step} must exercise localized admission"
+        );
+        assert_eq!(
+            localized
+                .derived_state
+                .as_ref()
+                .unwrap()
+                .localized_text_index,
+            original,
+            "compile mutated source at {step}"
+        );
+        generic.derived_state.as_mut().unwrap().localized_text_index = None;
+        let generic_result = generic
+            .apply_typed_transaction_with_result(transaction)
+            .unwrap();
+        let localized_result = localized
+            .apply_compiled_transaction(compiled, true)
+            .unwrap()
+            .1
+            .unwrap();
+        assert_eq!(localized_result, generic_result, "result at {step}");
+        assert_eq!(
+            localized.document_json(),
+            generic.document_json(),
+            "document at {step}"
+        );
+        let localized_identity = localized
+            .derived_state
+            .as_ref()
+            .unwrap()
+            .materialized_identity_for_test();
+        let generic_identity = generic
+            .derived_state
+            .as_ref()
+            .unwrap()
+            .materialized_identity_for_test();
+        assert_eq!(
+            localized_identity.0, generic_identity.0,
+            "validation at {step}"
+        );
+        assert_eq!(
+            localized_identity.1.unwrap().leaves(),
+            generic_identity.1.unwrap().leaves(),
+            "leaf certificates at {step}"
+        );
+        assert_eq!(
+            localized.history.retained_units(0).unwrap(),
+            generic.history.retained_units(0).unwrap(),
+            "history charge at {step}"
+        );
+    }
+    let mut request = FIRST_REQUEST + 100;
+    for redo in [false, true] {
+        while if redo {
+            localized.can_redo()
+        } else {
+            localized.can_undo()
+        } {
+            if redo {
+                localized.redo(request).unwrap();
+                generic.redo(request).unwrap();
+            } else {
+                localized.undo(request).unwrap();
+                generic.undo(request).unwrap();
+            }
+            assert_eq!(
+                localized.document_json(),
+                generic.document_json(),
+                "history replay {request}"
+            );
+            assert_eq!(localized.can_undo(), generic.can_undo());
+            assert_eq!(localized.can_redo(), generic.can_redo());
+            request += 1;
+        }
+    }
 }

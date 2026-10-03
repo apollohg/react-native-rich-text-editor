@@ -23,14 +23,18 @@ import com.apollohg.editor.EditorBoxStyle
 import com.apollohg.editor.EditorEdges
 import com.apollohg.editor.EditorLinkTheme
 import com.apollohg.editor.EditorMentionTheme
-import com.apollohg.editor.EditorOrderedListMarkerTheme
 import com.apollohg.editor.EditorResolvedTextSpan
 import com.apollohg.editor.EditorTextStyle
-import com.apollohg.editor.EditorTheme
 import com.apollohg.editor.OrderedListMarkerFormatter
 import com.apollohg.editor.ProseViewerError
 import com.apollohg.editor.applyPhysicalTextAlignment
-import java.text.Bidi
+import com.apollohg.editor.tables.PreparedTableCellContent
+import com.apollohg.editor.tables.TableCellPreparationWorker
+import com.apollohg.editor.tables.TableGridRecord
+import com.apollohg.editor.tables.TableLayoutDirection
+import com.apollohg.editor.tables.TableSurfaceCell
+import com.apollohg.editor.tables.ViewerTableSurface
+import com.apollohg.editor.tables.physical
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.max
@@ -57,6 +61,25 @@ internal interface AndroidProseLayoutEngine {
         collapsesWhenEmpty: Boolean,
         semanticGenerationIdentity: String
     ): PreparedProseLayout = prepare(document, key, theme, widthPx, density, collapsesWhenEmpty)
+
+    fun prepare(
+        document: ViewerDocument,
+        key: ProseLayoutKey,
+        theme: PreparedProseTheme,
+        widthPx: Int,
+        density: Float,
+        collapsesWhenEmpty: Boolean,
+        semanticGenerationIdentity: String,
+        cellShapeContext: PreparedCellShapeBuildContext?
+    ): PreparedProseLayout = prepare(
+        document,
+        key,
+        theme,
+        widthPx,
+        density,
+        collapsesWhenEmpty,
+        semanticGenerationIdentity
+    )
 }
 
 private data class PreparedAtomAppearance(
@@ -184,9 +207,112 @@ internal class ResolvedTextStyleSpan(internal val typeface: Typeface, internal v
 }
 
 internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
+    companion object {
+        const val MAX_TABLE_PREPARATION_WORKERS = 2
+        private const val PHYSICAL_PIXEL_LAYOUT_SCALE = 1f
+    }
+    internal var tablePreparationWorkerLimit = MAX_TABLE_PREPARATION_WORKERS
+    internal var tableCellMeasurementEnabled = false
+    internal var tableMeasurementViewportHeightPx = 0
+    internal var tableCellLayoutObserverForTesting: ((Int, PreparedProseLayout) -> Unit)? = null
+
+    private data class TablePreparationPlan(
+        val indices: Set<Int> = emptySet(),
+        val transientIndices: Set<Int> = emptySet(),
+        val engines: List<StaticLayoutAndroidProseLayoutEngine> = emptyList(),
+        val contexts: List<PreparedCellShapeBuildContext> = emptyList(),
+        val prepare: List<TableCellPreparationWorker> = emptyList()
+    )
+
+    private fun tablePreparationPlan(
+        document: ViewerDocument,
+        table: com.apollohg.editor.tables.TableSurfaceSource,
+        tableKey: String,
+        theme: PreparedProseTheme,
+        cellMode: Boolean,
+        context: PreparedCellShapeBuildContext?,
+        prepare: (
+            List<Pair<com.apollohg.editor.tables.TableGridCell, Float>>,
+            StaticLayoutAndroidProseLayoutEngine,
+            PreparedCellShapeBuildContext?,
+            Set<Int>,
+            (com.apollohg.editor.tables.TableGridCell, Float, PreparedTableCellContent) -> Unit
+        ) -> Unit
+    ): TablePreparationPlan {
+        val count =
+            minOf(
+                MAX_TABLE_PREPARATION_WORKERS,
+                tablePreparationWorkerLimit.coerceAtLeast(1),
+                (Runtime.getRuntime().availableProcessors() - 1).coerceAtLeast(1)
+            )
+        if (cellMode || theme.codeHighlighting != null ||
+            reusableTableCell != null
+        ) {
+            return TablePreparationPlan()
+        }
+        val frequencies = table.cells.groupingBy { it.contentKey }.eachCount()
+        val eligible = table.cells.filter { source ->
+            (context == null || frequencies[source.contentKey] == 1) &&
+                document.cellSupportsBackgroundPreparation(source, tableKey)
+        }
+        val transientIndices = if (table.cells.size >
+            com.apollohg.editor.tables.TableCellLayoutStore.MAXIMUM_RESIDENT_LAYOUTS
+        ) {
+            eligible.filter {
+                frequencies[it.contentKey] == 1
+            }.mapTo(mutableSetOf()) { it.sourceIndex }
+        } else {
+            emptySet()
+        }
+        val indices = eligible.mapTo(mutableSetOf()) { it.sourceIndex }
+        if (indices.isEmpty()) return TablePreparationPlan(transientIndices = transientIndices)
+        val observerLock = Any()
+        val engines = List(count) {
+            StaticLayoutAndroidProseLayoutEngine().also { worker ->
+                worker.tablePreparationWorkerLimit = 1
+                worker.tableCellPreparationObserver =
+                    { index, contentKey ->
+                        synchronized(observerLock) {
+                            tableCellPreparationObserver?.invoke(index, contentKey)
+                            Unit
+                        }
+                    }
+                worker.tableCellLayoutObserverForTesting = { index, layout ->
+                    synchronized(observerLock) {
+                        tableCellLayoutObserverForTesting?.invoke(index, layout)
+                        Unit
+                    }
+                }
+            }
+        }
+        val contexts = List(count) { context?.fork() }
+        return TablePreparationPlan(
+            indices,
+            transientIndices,
+            engines,
+            contexts.filterNotNull(),
+            engines.mapIndexed {
+                    index,
+                    worker
+                ->
+                { cells, capture ->
+                    prepare(cells, worker, contexts[index], transientIndices, capture)
+                }
+            }
+        )
+    }
+
     /** Test seam: drawing must never increment this prepared-layout counter. */
-    internal var staticLayoutsBuilt: Int = 0
-        private set
+    private val staticLayoutCount = java.util.concurrent.atomic.AtomicInteger()
+    internal val staticLayoutsBuilt: Int get() = staticLayoutCount.get()
+    internal var tableCellPreparationObserver: ((Int, String) -> Unit)? = null
+    internal var incrementalTableSurface: ((String) -> Pair<ViewerTableSurface, Set<Int>>?)? = null
+    internal var tableIncrementalRelayoutObserver: (() -> Unit)? = null
+    internal var tableGridConversionObserverForTesting: (() -> Unit)? = null
+    internal var reusableTableCell: (
+        (TableSurfaceCell, Int) -> com.apollohg.editor.tables.PreparedViewerTableCell?
+    )? = null
+    internal var reusableTableCellStore: com.apollohg.editor.tables.TableCellLayoutStore? = null
 
     override fun prepare(
         document: ViewerDocument,
@@ -213,7 +339,57 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
         density: Float,
         collapsesWhenEmpty: Boolean,
         semanticGenerationIdentity: String
+    ): PreparedProseLayout = prepare(
+        document,
+        key,
+        theme,
+        widthPx,
+        density,
+        collapsesWhenEmpty,
+        semanticGenerationIdentity,
+        false
+    )
+
+    override fun prepare(
+        document: ViewerDocument,
+        key: ProseLayoutKey,
+        theme: PreparedProseTheme,
+        widthPx: Int,
+        density: Float,
+        collapsesWhenEmpty: Boolean,
+        semanticGenerationIdentity: String,
+        cellShapeContext: PreparedCellShapeBuildContext?
+    ): PreparedProseLayout = prepare(
+        document,
+        key,
+        theme,
+        widthPx,
+        density,
+        collapsesWhenEmpty,
+        semanticGenerationIdentity,
+        false,
+        cellShapeContext
+    )
+
+    private fun prepare(
+        document: ViewerDocument,
+        key: ProseLayoutKey,
+        theme: PreparedProseTheme,
+        widthPx: Int,
+        density: Float,
+        collapsesWhenEmpty: Boolean,
+        semanticGenerationIdentity: String,
+        cellMode: Boolean,
+        cellShapeContext: PreparedCellShapeBuildContext? = null
     ): PreparedProseLayout {
+        val tableViewportHeight =
+            key.tableMeasurementViewportHeightPx.takeIf { it > 0 }
+                ?: tableMeasurementViewportHeightPx
+        val reusableStore = if (cellMode) null else reusableTableCellStore
+        val tableLayoutStore by lazy {
+            reusableStore
+                ?: com.apollohg.editor.tables.TableCellLayoutStore()
+        }
         val warningSemanticGeneration = semanticGenerationIdentity
         if (widthPx <= 0 || !density.isFinite() ||
             density <= 0f
@@ -241,6 +417,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
         val contentWidth = max(1, widthPx - theme.insetLeftPx - theme.insetRightPx)
         var cursorY = theme.insetTopPx
         var retained = document.retainedBytes + theme.retainedBytes
+        var tableRetainedBytes = 0L
         val interactions = mutableListOf<PreparedProseInteraction>()
         val imageAttachments = mutableListOf<ViewerImageAttachment>()
         val viewerAtoms = mutableListOf<PreparedViewerAtom>()
@@ -344,23 +521,452 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
             val leafTop = cursorY
             val leftInset = (containerInset.left + outer.left).toInt()
             val rightInset = (containerInset.right + outer.right).toInt()
+            val blockTheme = if (sheet == null) {
+                theme
+            } else {
+                theme.copy(
+                    insetLeftPx = theme.insetLeftPx + leftInset,
+                    listItemSpacingPx = 0,
+                    listSpacingAfterPx = 0
+                )
+            }
+            val blockContentWidth = max(1, contentWidth - leftInset - rightInset)
+            val blockCursorY = cursorY + outer.top.toInt()
+            if (block.tableKey != null) {
+                val tableKey = requireNotNull(block.tableKey)
+                val incremental = incrementalTableSurface?.invoke(
+                    tableKey
+                )?.takeIf { (surface, changed) ->
+                    surface.identity == document.tablePresentationIdentity(tableKey) &&
+                        (
+                            block.frameRecord == null ||
+                                (
+                                    surface.sourceTable?.cells?.size ==
+                                        block.frameRecord.cells.size &&
+                                        changed.all { it in block.frameRecord.cells.indices }
+                                    )
+                            )
+                }
+                val frameRecord = block.frameRecord
+                val previousSource = incremental?.first?.sourceTable
+                val surfaceSource = if (frameRecord != null && previousSource != null) {
+                    com.apollohg.editor.tables.TableSurfaceSource.from(
+                        frameRecord,
+                        previousSource,
+                        incremental.second
+                    )
+                } else {
+                    requireNotNull(block.tableSource())
+                }
+                val placement = listPlacement(
+                    block,
+                    markers,
+                    blockTheme,
+                    blockContentWidth,
+                    disappearingListItemIdentities
+                )
+                val tableX = placement.textX
+                val tableWidth = placement.availableWidth
+                val childTheme = theme.copy(
+                    insetTopPx = 0,
+                    insetRightPx = 0,
+                    insetBottomPx = 0,
+                    insetLeftPx = 0
+                )
+                val shapeStyleDigest by lazy {
+                    cellShapeStyleDigest(
+                        childTheme,
+                        key.nativeFontRevision,
+                        key.fontEnvironmentRevision
+                    )
+                }
+                fun cellBuilder(
+                    cell: com.apollohg.editor.tables.TableGridCell,
+                    child: () -> ViewerDocument,
+                    childKey: ProseLayoutKey,
+                    engine: StaticLayoutAndroidProseLayoutEngine,
+                    context: PreparedCellShapeBuildContext?
+                ): () -> PreparedProseLayout = {
+                    engine.tableCellPreparationObserver?.invoke(cell.sourceIndex, cell.contentKey)
+                    engine.prepare(
+                        child(), childKey, childTheme, childKey.widthPx, density, false,
+                        warningSemanticGeneration, true, context
+                    )
+                        .also {
+                            engine.tableCellLayoutObserverForTesting?.invoke(cell.sourceIndex, it)
+                        }
+                }
+                fun prepareCell(
+                    cell: com.apollohg.editor.tables.TableGridCell,
+                    cellWidth: Float,
+                    worker: StaticLayoutAndroidProseLayoutEngine? = null,
+                    workerContext: PreparedCellShapeBuildContext? = null,
+                    retainShape: Boolean = true
+                ): PreparedProseLayout {
+                    val engine = worker ?: this
+                    val context = if (worker == null) cellShapeContext else workerContext
+                    val source = surfaceSource.cells.getOrNull(cell.sourceIndex)
+                    val childWidth = cellWidth.toInt().coerceAtLeast(1)
+                    val child = source?.let { document.cellDocument(it, tableKey) }
+                    if (child == null) {
+                        return PreparedProseLayout.error(
+                            key,
+                            cellWidth.toInt(),
+                            ProseViewerError.layout("Invalid table cell.")
+                        )
+                    }
+                    val childKey = key.copy(semanticKey = child.semanticKey, widthPx = childWidth)
+                    val build = cellBuilder(cell, { child }, childKey, engine, context)
+                    val prepared = if (context == null || theme.codeHighlighting != null) {
+                        build()
+                    } else {
+                        val shapeKey =
+                            cellShapeKey(
+                                cell.contentKey,
+                                child,
+                                childWidth,
+                                childTheme,
+                                density,
+                                shapeStyleDigest
+                            )
+                        context.resolve(shapeKey, build, retainShape = retainShape) { shape ->
+                            engine.bindCellShape(
+                                shape,
+                                child,
+                                childKey,
+                                childTheme,
+                                childWidth,
+                                density,
+                                warningSemanticGeneration,
+                                context
+                            )
+                        }
+                    }
+                    return prepared.copy(
+                        cellPreparation = cellBuilder(cell, {
+                            child
+                        }, childKey, this, null)
+                    )
+                }
+                val record by lazy {
+                    tableGridConversionObserverForTesting?.invoke()
+                    TableGridRecord.from(surfaceSource, document.semanticKey).physical(density)
+                }
+                val tableStyle = theme.tableStyle.physical(density)
+                val rtl = TableLayoutDirection.isRightToLeft(
+                    surfaceSource.direction,
+                    theme.tableDirection
+                )
+                val retainedSurface = incremental?.takeIf { (surface, _) ->
+                    surface.hostViewportWidth == tableWidth.toFloat() &&
+                        surface.style == tableStyle &&
+                        surface.isRightToLeft == rtl
+                }
+                val preparedSurface = if (retainedSurface != null) {
+                    val (previous, changed) = retainedSurface
+                    val contents = changed.associateWith { index ->
+                        val cell = com.apollohg.editor.tables.TableGridCell.from(
+                            surfaceSource.cells[index]
+                        )
+                        val frame = requireNotNull(previous.frameOfCell(index))
+                        prepareCell(
+                            cell,
+                            maxOf(
+                                0f,
+                                frame.width - 2f * (tableStyle.cellPadding + tableStyle.borderWidth)
+                            )
+                        )
+                    }
+                    tableIncrementalRelayoutObserver?.invoke()
+                    previous.replacingCells(
+                        contents,
+                        { record },
+                        surfaceSource,
+                        document.tableAttributes,
+                        reusePreparedGeometry = previous.displayScale == PHYSICAL_PIXEL_LAYOUT_SCALE
+                    ) {
+                            cell,
+                            width
+                        ->
+                        prepareCell(cell, width)
+                    }
+                } else {
+                    val measurePlain = deferredPlainCellMeasurer(childTheme.paragraph)
+                    val workers =
+                        tablePreparationPlan(
+                            document,
+                            surfaceSource,
+                            tableKey,
+                            theme,
+                            cellMode,
+                            cellShapeContext
+                        ) {
+                                inputs,
+                                worker,
+                                context,
+                                transient,
+                                capture
+                            ->
+                            inputs.chunked(
+                                PlainTableCellMeasurer.MAXIMUM_BATCH_CELLS
+                            ).forEach { batch ->
+                                val pending = mutableListOf<Pair<Int, PlainTableCellMeasurement>>()
+                                batch.forEachIndexed { index, (cell, width) ->
+                                    if (tableCellMeasurementEnabled &&
+                                        cell.sourceIndex in transient &&
+                                        !cellMode && tableViewportHeight > 0 &&
+                                        childTheme.supportsPlainCellMeasurement
+                                    ) {
+                                        val detached = surfaceSource.cells.getOrNull(
+                                            cell.sourceIndex
+                                        )?.let {
+                                            PlainTableCellDocument.capture(document, it, tableKey)
+                                        }
+                                        val text = detached?.text?.plainCellMeasurementText()
+                                        if (text != null) {
+                                            val childKey = key.copy(
+                                                semanticKey = detached.semanticKey,
+                                                widthPx = width.toInt().coerceAtLeast(1)
+                                            )
+                                            val build =
+                                                cellBuilder(
+                                                    cell,
+                                                    detached::materialize,
+                                                    childKey,
+                                                    this,
+                                                    null
+                                                )
+                                            capture(
+                                                cell,
+                                                width,
+                                                PreparedTableCellContent.EstimatedPlain(
+                                                    PendingPlainTableCellMeasurement(
+                                                        PlainTableCellMeasurement(
+                                                            childKey,
+                                                            text,
+                                                            build
+                                                        ),
+                                                        measurePlain
+                                                    )
+                                                )
+                                            )
+                                            return@forEachIndexed
+                                        }
+                                    }
+                                    val child = if (tableCellMeasurementEnabled &&
+                                        cell.sourceIndex in transient
+                                    ) {
+                                        surfaceSource.cells.getOrNull(cell.sourceIndex)?.let {
+                                            document.cellDocument(it, tableKey)
+                                        }
+                                    } else {
+                                        null
+                                    }
+                                    val text = child?.plainCellMeasurementText(childTheme)
+                                    if (text == null) {
+                                        capture(
+                                            cell,
+                                            width,
+                                            PreparedTableCellContent.Full(
+                                                prepareCell(
+                                                    cell,
+                                                    width,
+                                                    worker,
+                                                    context,
+                                                    cell.sourceIndex !in transient
+                                                )
+                                            )
+                                        )
+                                    } else {
+                                        val childWidth = width.toInt().coerceAtLeast(1)
+                                        val childKey = key.copy(
+                                            semanticKey = child.semanticKey,
+                                            widthPx = childWidth
+                                        )
+                                        val build =
+                                            cellBuilder(cell, { child }, childKey, this, null)
+                                        if (!cellMode && tableViewportHeight > 0) {
+                                            capture(
+                                                cell,
+                                                width,
+                                                PreparedTableCellContent.EstimatedPlain(
+                                                    PendingPlainTableCellMeasurement(
+                                                        PlainTableCellMeasurement(
+                                                            childKey,
+                                                            text,
+                                                            build
+                                                        ),
+                                                        measurePlain
+                                                    )
+                                                )
+                                            )
+                                        } else {
+                                            val cached = context?.resolveCached(
+                                                cellShapeKey(
+                                                    cell.contentKey,
+                                                    child,
+                                                    childWidth,
+                                                    childTheme,
+                                                    density,
+                                                    shapeStyleDigest
+                                                )
+                                            ) { shape ->
+                                                worker.bindCellShape(
+                                                    shape,
+                                                    child,
+                                                    childKey,
+                                                    childTheme,
+                                                    childWidth,
+                                                    density,
+                                                    warningSemanticGeneration,
+                                                    context
+                                                )
+                                            }
+                                            if (cached !=
+                                                null
+                                            ) {
+                                                capture(
+                                                    cell,
+                                                    width,
+                                                    PreparedTableCellContent.Full(
+                                                        cached.copy(cellPreparation = build)
+                                                    )
+                                                )
+                                            } else {
+                                                pending +=
+                                                    index to
+                                                    PlainTableCellMeasurement(childKey, text, build)
+                                            }
+                                        }
+                                    }
+                                }
+                                val measured = PlainTableCellMeasurer.measure(
+                                    pending.map {
+                                        it.second
+                                    }
+                                ) { text, width ->
+                                    worker.staticLayout(
+                                        text,
+                                        childTheme.paragraph,
+                                        width,
+                                        usePlainText = true
+                                    )
+                                }
+                                pending.zip(measured).forEach { (pendingCell, content) ->
+                                    val (cell, width) = batch[pendingCell.first]
+                                    capture(cell, width, content)
+                                }
+                            }
+                        }
+                    try {
+                        ViewerTableSurface(
+                            document.tablePresentationIdentity(
+                                tableKey
+                            ),
+                            record, tableWidth.toFloat(),
+                            tableStyle,
+                            rtl,
+                            displayScale =
+                            PHYSICAL_PIXEL_LAYOUT_SCALE,
+                            sourceTable =
+                            surfaceSource,
+
+                            editorTableId = tableKey, sourceAttributes = document.tableAttributes,
+                            layoutStore = tableLayoutStore,
+                            reuseCell = if (cellMode) {
+                                null
+                            } else {
+                                reusableTableCell?.let { reuse ->
+                                    { cell, width ->
+                                        surfaceSource.cells.getOrNull(cell.sourceIndex)?.let {
+                                            reuse(it, width.toInt().coerceAtLeast(1))
+                                        }
+                                    }
+                                }
+                            },
+                            prepareCellWorkers = workers.prepare,
+                            parallelCellIndices = workers.indices,
+                            transientCellIndices = workers.transientIndices
+                        ) { cell, width ->
+                            prepareCell(
+                                cell,
+                                width,
+                                retainShape =
+                                    cell.sourceIndex !in workers.transientIndices
+                            )
+                        }
+                    } finally {
+                        workers.contexts.forEach { it.close() }
+                        staticLayoutCount.addAndGet(workers.engines.sumOf { it.staticLayoutsBuilt })
+                    }
+                }
+                val surface = if (!cellMode && tableViewportHeight > 0) {
+                    preparedSurface.measuringViewport(
+                        -blockCursorY.toFloat(),
+                        (
+                            tableViewportHeight -
+                                blockCursorY
+                            ).toFloat()
+                    )
+                } else {
+                    preparedSurface
+                }
+                if (surface.preparationError !=
+                    null
+                ) {
+                    return PreparedProseLayout.error(key, widthPx, surface.preparationError!!)
+                }
+                val tableBounds = Rect(
+                    tableX,
+                    blockCursorY,
+                    tableX + surface.layout.contentWidth.toInt(),
+                    blockCursorY + surface.layout.contentHeight.toInt()
+                )
+                val fragments = placement.firstMarkers.map { (ancestor, marker) ->
+                    markerFragment(
+                        marker,
+                        placement.markerAnchors.getValue(ancestor.identity),
+                        tableBounds.top,
+                        tableBounds.bottom,
+                        placement.ancestorGutters.getValue(ancestor.identity),
+                        blockTheme.listMarkerColor
+                    )
+                }
+                val tableBlockBounds = fragments.fold(Rect(tableBounds)) { bounds, fragment ->
+                    bounds.apply { union(fragment.bounds) }
+                }
+                cursorY = tableBounds.bottom + placement.itemSpacing + outer.bottom.toInt()
+                containers.asReversed().forEach { ancestor ->
+                    if (ancestor.lastLeaf == index) {
+                        val ancestorBox = sheet!!.box(
+                            ancestor.nodeType,
+                            containers.takeWhile {
+                                it.identity != ancestor.identity
+                            }.map { it.nodeType }
+                        ).scaled(density)
+                        cursorY += ancestorBox.inset.bottom.toInt()
+                        containerBounds[ancestor.identity]?.bottom = cursorY
+                        cursorY += ancestorBox.margin.bottom.toInt()
+                    }
+                }
+                val tableBlock = PreparedProseBlock(
+                    fragments,
+                    tableBlockBounds,
+                    tableSurface = surface,
+                    tableBounds = Rect(tableBounds)
+                )
+                val surfaceRetainedBytes = surface.retainedBytes
+                retained += tableBlock.nonTableRetainedBytes + surfaceRetainedBytes
+                tableRetainedBytes += surfaceRetainedBytes
+                return@mapIndexed tableBlock
+            }
             var prepared = prepareBlock(
                 block,
                 imageAttachments.size,
                 markers,
-                if (sheet ==
-                    null
-                ) {
-                    theme
-                } else {
-                    theme.copy(
-                        insetLeftPx = theme.insetLeftPx + leftInset,
-                        listItemSpacingPx = 0,
-                        listSpacingAfterPx = 0
-                    )
-                },
-                max(1, contentWidth - leftInset - rightInset),
-                cursorY + outer.top.toInt(),
+                blockTheme,
+                blockContentWidth,
+                blockCursorY,
                 disappearingListItemIdentities,
                 warningSemanticGeneration
             )
@@ -392,7 +998,10 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                     prepared.copy(
                         block = PreparedProseBlock(
                             listOf(decoration) + prepared.block.fragments,
-                            seed
+                            seed,
+                            imageAttachment = prepared.block.imageAttachment,
+                            tableSurface = prepared.block.tableSurface,
+                            tableBounds = prepared.block.tableBounds
                         ),
                         nextY = end
                     )
@@ -413,7 +1022,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                 }
             }
             retained += prepared.block.retainedBytes + prepared.extraBytes
-            interactions += prepared.interactions
+            interactions += prepared.interactions.map { it.copy(sourceBlockIndex = index) }
             prepared.highlightedCodeKey?.let(highlightedCodeKeys::add)
             prepared.attachment?.let(imageAttachments::add)
             prepared.viewerAtom?.let {
@@ -504,7 +1113,8 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                 },
                 interaction.rects.fold(Rect()) { bounds, rect ->
                     if (bounds.isEmpty) Rect(rect) else Rect(bounds).apply { union(rect) }
-                }
+                },
+                interaction.sourceBlockIndex
             )
         }
         retained += interactions.sumOf { it.retainedBytes } + nodes.sumOf { it.retainedBytes }
@@ -523,7 +1133,61 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                 }
             }
         }
-        retained += highlightBlocks.sumOf { 64L + it.text.length * 2L }
+        val rootHighlightBlocks = if (cellMode || theme.codeHighlighting == null) {
+            highlightBlocks
+        } else {
+            promotedCodeHighlightBlocks(blocks, highlightBlocks)
+        }
+        val rootHighlightedCodeKeys = if (cellMode) {
+            highlightedCodeKeys.toSet()
+        } else {
+            buildSet {
+                addAll(highlightedCodeKeys)
+                blocks.forEach { block ->
+                    block.tableSurface?.takeIf { it.mayHaveHighlightedCodeKeys }?.cells?.forEach {
+                        if (it.highlightedCodeKeys.isNotEmpty()) addAll(it.highlightedCodeKeys)
+                    }
+                }
+            }
+        }
+        retained += rootHighlightBlocks.sumOf { 64L + it.text.length * 2L }
+        val rootAttachments = if (cellMode) {
+            imageAttachments
+        } else {
+            val direct = imageAttachments.associateBy { it.id }
+            val flattened = mutableListOf<ViewerImageAttachment>()
+            val emitted = mutableSetOf<String>()
+            blocks.forEach { block ->
+                block.imageAttachment?.let { direct[it.id] }?.let { attachment ->
+                    if (emitted.add(attachment.id)) flattened += attachment
+                }
+                block.tableSurface?.let { surface ->
+                    surface.parentImageAttachments(
+                        flattened.size,
+                        block.tableBounds ?: block.bounds
+                    ).forEach { attachment ->
+                        if (emitted.add(attachment.id)) flattened += attachment
+                    }
+                }
+            }
+            imageAttachments.forEach { attachment ->
+                if (emitted.add(attachment.id)) {
+                    flattened +=
+                        attachment
+                }
+            }
+            if (flattened.size > ViewerImageAttachment.MAXIMUM_ADMITTED_ATTACHMENTS) {
+                return PreparedProseLayout.error(
+                    key,
+                    widthPx,
+                    ProseViewerError.layout(
+                        "The document exceeds the maximum admitted image attachment count."
+                    )
+                )
+            }
+            flattened.mapIndexed { index, attachment -> attachment.copy(ordinal = index) }
+        }
+        retained += if (cellMode) 0 else rootAttachments.size * 96L
         // Mounted image-publication sidecars are runtime surface ownership,
         // not immutable artifact/cache ownership; account them at the host.
         return PreparedProseLayout(
@@ -533,18 +1197,276 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
             blocks,
             interactions,
             nodes,
-            imageAttachments,
+            rootAttachments,
             retained,
             viewerAtoms = viewerAtoms,
-            contentBox = sheet?.box(
-                "content"
-            )?.scaled(
-                density
-            ),
+            contentBox = if (cellMode) {
+                null
+            } else {
+                sheet?.box(
+                    "content"
+                )?.scaled(
+                    density
+                )
+            },
             codeHighlighting = theme.codeHighlighting,
-            codeHighlightBlocks = highlightBlocks,
-            highlightedCodeKeys = highlightedCodeKeys.toSet()
+            codeHighlightBlocks = rootHighlightBlocks,
+            highlightedCodeKeys = rootHighlightedCodeKeys,
+            tableRetainedBytesAtPreparation = tableRetainedBytes
         )
+    }
+
+    /** Rebinds only source-qualified metadata; all local StaticLayouts stay in the shape. */
+    private fun bindCellShape(
+        shape: PreparedCellShape,
+        document: ViewerDocument,
+        key: ProseLayoutKey,
+        theme: PreparedProseTheme,
+        widthPx: Int,
+        density: Float,
+        warningSemanticGeneration: String,
+        context: PreparedCellShapeBuildContext
+    ): PreparedProseLayout? {
+        val local = shape.localLayout
+        if (local.blocks.size != document.blocks.size || local.error != null) return null
+        val boundBlocks = mutableListOf<PreparedProseBlock>()
+        val boundInteractions = mutableListOf<PreparedProseInteraction>()
+        val boundAtoms = mutableListOf<PreparedViewerAtom>()
+        document.blocks.forEachIndexed { index, current ->
+            replayInlineFontDiagnostics(current, theme, warningSemanticGeneration)
+            val localBlock = local.blocks[index]
+            val sourceAtoms = if (current.isBlockAtom) {
+                emptyList()
+            } else {
+                current.inlines.filterIsInstance<ViewerInline.Atom>().filterNot {
+                    it.nodeType == "hardBreak" || it.nodeType == "hard_break"
+                }
+            }
+            var atomIndex = 0
+            val fragments = localBlock.fragments.map { fragment ->
+                if (fragment.kind != PreparedProseFragmentKind.ATOM) return@map fragment
+                val atom = sourceAtoms.getOrNull(atomIndex++) ?: return null
+                if (atom.nodeType != fragment.atomNodeType) return null
+                fragment.copy(
+                    atomDocPos = atom.docPos,
+                    atomAttrsJson = atom.attrsJson,
+                    label = atom.label.ifEmpty { " " }
+                )
+            }
+            if (atomIndex != sourceAtoms.size) return null
+            val tableSurface = current.tableKey?.let { tableKey ->
+                val tableBounds = localBlock.tableBounds ?: return null
+                val surfaceSource = requireNotNull(current.tableSource())
+                val childTheme = theme.copy(
+                    insetTopPx = 0,
+                    insetRightPx = 0,
+                    insetBottomPx = 0,
+                    insetLeftPx = 0
+                )
+                val shapeStyleDigest by lazy {
+                    cellShapeStyleDigest(
+                        childTheme,
+                        key.nativeFontRevision,
+                        key.fontEnvironmentRevision
+                    )
+                }
+                val surface = ViewerTableSurface(
+                    document.tablePresentationIdentity(tableKey),
+                    TableGridRecord.from(surfaceSource, document.semanticKey).physical(density),
+                    tableBounds.width().toFloat(),
+                    theme.tableStyle.physical(density),
+                    TableLayoutDirection.isRightToLeft(
+                        surfaceSource.direction,
+                        theme.tableDirection
+                    ),
+                    displayScale = PHYSICAL_PIXEL_LAYOUT_SCALE,
+                    sourceTable = surfaceSource,
+                    editorTableId = tableKey,
+                    sourceAttributes = document.tableAttributes
+                ) { cell, cellWidth ->
+                    val source =
+                        surfaceSource.cells.getOrNull(cell.sourceIndex)
+                            ?: return@ViewerTableSurface PreparedProseLayout.error(
+                                key,
+                                cellWidth.toInt(),
+                                ProseViewerError.layout("Invalid table cell.")
+                            )
+                    val child = document.cellDocument(source, tableKey)
+                    val childWidth = cellWidth.toInt().coerceAtLeast(1)
+                    val childKey = key.copy(semanticKey = child.semanticKey, widthPx = childWidth)
+                    val childShapeKey =
+                        cellShapeKey(
+                            cell.contentKey,
+                            child,
+                            childWidth,
+                            childTheme,
+                            density,
+                            shapeStyleDigest
+                        )
+                    context.resolve(childShapeKey, {
+                        tableCellPreparationObserver?.invoke(cell.sourceIndex, cell.contentKey)
+                        prepare(
+                            child, childKey, childTheme, childWidth, density, false,
+                            warningSemanticGeneration, true, context
+                        )
+                    }) { nestedShape ->
+                        bindCellShape(
+                            nestedShape,
+                            child,
+                            childKey,
+                            childTheme,
+                            childWidth,
+                            density,
+                            warningSemanticGeneration,
+                            context
+                        )
+                    }
+                }
+                if (kotlin.math.abs(surface.layout.contentWidth - tableBounds.width()) > 1f ||
+                    kotlin.math.abs(surface.layout.contentHeight - tableBounds.height()) > 1f
+                ) {
+                    return null
+                }
+                surface
+            }
+            if ((current.table == null) != (localBlock.tableBounds == null)) return null
+            val attachment = ViewerImageAttachment.sourceAndDeclaredSize(
+                current
+            )?.let { (id, source, declared) ->
+                localBlock.imageAttachment?.copy(id = id, source = source, declaredSize = declared)
+                    ?: return null
+            }
+            if ((attachment == null) != (localBlock.imageAttachment == null)) return null
+            boundBlocks += localBlock.copy(
+                fragments = fragments,
+                imageAttachment = attachment,
+                tableSurface = tableSurface
+            )
+            val currentInteractions = currentSemanticBindings(current)
+            val localInteractions = local.interactions.filter { it.sourceBlockIndex == index }
+            if (localInteractions.size != currentInteractions.size) return null
+            localInteractions.zip(currentInteractions).forEach { (prepared, currentInteraction) ->
+                if (prepared.kind != currentInteraction.kind ||
+                    prepared.href != currentInteraction.href ||
+                    prepared.visibleText != currentInteraction.visibleText
+                ) {
+                    return null
+                }
+                boundInteractions += prepared.copy(
+                    docPos = currentInteraction.docPos,
+                    label = currentInteraction.label,
+                    attrsJson = currentInteraction.attrsJson,
+                    sourceBlockIndex = index
+                )
+            }
+            val custom = (current.inlines.singleOrNull() as? ViewerInline.Atom)?.takeIf {
+                current.isBlockAtom && theme.viewerAtoms?.nodeTypes?.contains(it.nodeType) == true
+            }
+            if (custom != null) {
+                val localAtom = local.viewerAtoms.getOrNull(boundAtoms.size) ?: return null
+                if (localAtom.nodeType != custom.nodeType) return null
+                boundAtoms += localAtom.copy(docPos = custom.docPos, attrsJson = custom.attrsJson)
+            }
+        }
+        if (boundAtoms.size != local.viewerAtoms.size) return null
+        boundInteractions.sortWith(
+            compareBy<PreparedProseInteraction> {
+                it.rects.firstOrNull()?.top ?: Int.MAX_VALUE
+            }.thenBy { it.rects.firstOrNull()?.left ?: Int.MAX_VALUE }
+        )
+        val attachments = boundBlocks.mapNotNull {
+            it.imageAttachment
+        }.mapIndexed { ordinal, attachment ->
+            attachment.copy(ordinal = ordinal)
+        }
+        val nodes = boundInteractions.mapIndexed { index, interaction ->
+            PreparedProseAccessibilityNode(
+                index,
+                if (interaction.kind == PreparedProseInteraction.Kind.LINK) {
+                    PreparedProseAccessibilityNode.Role.LINK
+                } else {
+                    PreparedProseAccessibilityNode.Role.MENTION
+                },
+                if (interaction.kind ==
+                    PreparedProseInteraction.Kind.LINK
+                ) {
+                    interaction.visibleText
+                } else {
+                    interaction.label
+                },
+                interaction.rects.fold(Rect()) { bounds, rect ->
+                    if (bounds.isEmpty) Rect(rect) else Rect(bounds).apply { union(rect) }
+                },
+                interaction.sourceBlockIndex
+            )
+        }
+        return local.copy(
+            key = key,
+            widthPx = widthPx,
+            blocks = boundBlocks,
+            interactions = boundInteractions,
+            accessibilityNodes = nodes,
+            imageAttachments = attachments,
+            viewerAtoms = boundAtoms,
+            retainedBytes = local.retainedBytes + nodes.sumOf { it.retainedBytes },
+            cellShape = null
+        )
+    }
+
+    private fun currentSemanticBindings(block: ViewerBlock): List<PreparedProseInteraction> {
+        val result = mutableListOf<PreparedProseInteraction>()
+        block.inlines.forEach { inline ->
+            when (inline) {
+                is ViewerInline.Text -> href(inline.marks)?.let { href ->
+                    val previous = result.lastOrNull()
+                    if (previous?.kind == PreparedProseInteraction.Kind.LINK &&
+                        previous.href == href
+                    ) {
+                        result[result.lastIndex] =
+                            previous.copy(
+                                visibleText = previous.visibleText + inline.text,
+                                label =
+                                    previous.label + inline.text
+                            )
+                    } else {
+                        result += PreparedProseInteraction(
+                            PreparedProseInteraction.Kind.LINK,
+                            emptyList(),
+                            href,
+                            inline.text,
+                            null,
+                            inline.text,
+                            null
+                        )
+                    }
+                }
+
+                is ViewerInline.Atom -> if (inline.nodeType == "mention") {
+                    result += PreparedProseInteraction(
+                        PreparedProseInteraction.Kind.MENTION,
+                        emptyList(),
+                        null,
+                        inline.label,
+                        inline.docPos,
+                        inline.label,
+                        inline.attrsJson
+                    )
+                }
+            }
+        }
+        return result
+    }
+
+    private fun replayInlineFontDiagnostics(
+        block: ViewerBlock,
+        theme: PreparedProseTheme,
+        warningSemanticGeneration: String
+    ) {
+        val base = theme.paintFor(block)
+        val ancestors = block.containers.map { it.nodeType } + block.nodeType
+        block.inlines.filterIsInstance<ViewerInline.Text>().forEach { inline ->
+            markSpans(inline.marks, base, theme, warningSemanticGeneration, ancestors)
+        }
     }
 
     private data class BlockResult(
@@ -555,6 +1477,18 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
         val extraBytes: Long,
         val viewerAtom: PreparedViewerAtom? = null,
         val highlightedCodeKey: String? = null
+    )
+
+    private data class ListPlacement(
+        val textX: Int,
+        val availableWidth: Int,
+        val listInset: Int,
+        val quoteInset: Int,
+        val codeInset: Int,
+        val itemSpacing: Int,
+        val firstMarkers: List<Pair<ViewerListItemAncestor, PreparedMarker>>,
+        val ancestorGutters: Map<Int, Int>,
+        val markerAnchors: Map<Int, Int>
     )
 
     private fun prepareBlock(
@@ -568,102 +1502,20 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
         warningSemanticGeneration: String
     ): BlockResult {
         val paint = theme.paintFor(block)
-        val ancestors = listItemAncestors(block)
-        val ancestorMarkers = ancestors.mapNotNull { ancestor ->
-            measuredMarkers[ancestor.identity]?.let {
-                ancestor to
-                    it
-            }
-        }
-        val firstMarkers = ancestorMarkers.filter { (ancestor, _) ->
-            ancestor.isFirstRenderableLeaf
-        }
-        fun listStyle(ancestor: ViewerListItemAncestor) =
-            theme.sourceTheme?.styleSheet?.resolveElement(
-                if (ancestor.context.kind ==
-                    "task"
-                ) {
-                    "taskList"
-                } else if (ancestor.context.ordered) {
-                    "orderedList"
-                } else {
-                    "bulletList"
-                },
-                markerAncestors(block, ancestors.indexOf(ancestor)).dropLast(2)
-            )
-        fun listIndent(ancestor: ViewerListItemAncestor) =
-            listStyle(ancestor)?.indent?.times(theme.density)?.toInt() ?: theme.listIndentPx
-        val baseListInset = if (ancestors.isEmpty()) {
-            0
-        } else {
-            max(
-                0,
-                (
-                    listIndent(ancestors.first()) *
-                        (
-                            listStyle(ancestors.first())?.baseIndentMultiplier
-                                ?: theme.listBaseIndentMultiplier
-                            )
-                    ).toInt()
-            )
-        }
-        val ancestorGutters = ancestorMarkers.associate { (ancestor, marker) ->
-            ancestor.identity to
-                (
-                    marker.widthPx +
-                        (
-                            marker.checkbox?.gap?.times(theme.density)?.toInt()
-                                ?: marker.gapPx ?: theme.listMarkerGapPx
-                            )
-                    )
-        }
-        // A nested leaf owns every outer list column too: each ancestor adds
-        // its list indent and independently measured marker gutter.
-        val listInset =
-            baseListInset +
-                ancestorMarkers.sumOf { (ancestor, _) ->
-                    listIndent(ancestor) +
-                        (ancestorGutters[ancestor.identity] ?: 0)
-                }
-        val quoteInset = if (block.inBlockquote &&
-            theme.sourceTheme?.styleSheet == null
-        ) {
-            theme.quoteBorderWidthPx + theme.quoteMarkerGapPx +
-                theme.quoteIndentPx
-        } else {
-            0
-        }
-        val codeInset = if (block.nodeType == "codeBlock") theme.codePaddingHorizontalPx else 0
-        val textX = theme.insetLeftPx + listInset + quoteInset + codeInset
-        val itemSpacing = if (ancestors.isEmpty()) {
-            paint.spacingAfterPx
-        } else {
-            ancestors.sumOf { ancestor ->
-                when {
-                    ancestor.identity in disappearingListItemIdentities &&
-                        ancestor.context.isLast ->
-                        theme.listSpacingAfterPx
-
-                    ancestor.identity in disappearingListItemIdentities -> theme.listItemSpacingPx
-
-                    ancestor.isFinalRenderableLeaf -> theme.listItemSpacingPx
-
-                    else -> 0
-                }
-            }
-        }
-        fun markerAnchor(ancestor: ViewerListItemAncestor): Int {
-            var inset = baseListInset
-            ancestorMarkers.forEach { (candidate, _) ->
-                inset += listIndent(candidate) + (ancestorGutters[candidate.identity] ?: 0)
-                if (candidate.identity ==
-                    ancestor.identity
-                ) {
-                    return theme.insetLeftPx + quoteInset + inset
-                }
-            }
-            return textX - codeInset
-        }
+        val placement = listPlacement(
+            block,
+            measuredMarkers,
+            theme,
+            contentWidth,
+            disappearingListItemIdentities
+        )
+        val firstMarkers = placement.firstMarkers
+        val ancestorGutters = placement.ancestorGutters
+        val listInset = placement.listInset
+        val quoteInset = placement.quoteInset
+        val codeInset = placement.codeInset
+        val textX = placement.textX
+        val itemSpacing = placement.itemSpacing
         val customAtom = (block.inlines.singleOrNull() as? ViewerInline.Atom)?.takeIf {
             block.isBlockAtom && theme.viewerAtoms?.nodeTypes?.contains(it.nodeType) == true
         }
@@ -693,7 +1545,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                 fragments +=
                     markerFragment(
                         marker,
-                        markerAnchor(ancestor),
+                        placement.markerAnchors.getValue(ancestor.identity),
                         cursorY,
                         bounds.bottom,
                         ancestorGutters.getValue(ancestor.identity),
@@ -786,7 +1638,8 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                                         ?: "contain"
                             )
                         ),
-                        bounds
+                        bounds,
+                        imageAttachment = attachment
                     ),
                     emptyList(),
                     attachment,
@@ -844,7 +1697,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                 fragments +=
                     markerFragment(
                         marker,
-                        markerAnchor(ancestor),
+                        placement.markerAnchors.getValue(ancestor.identity),
                         cursorY,
                         end,
                         ancestorGutters.getValue(ancestor.identity),
@@ -865,13 +1718,16 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
             )
         }
 
-        val availableWidth = max(1, contentWidth - listInset - quoteInset - codeInset * 2)
+        val availableWidth = placement.availableWidth
+        val plainTextLayout = block.nodeType == "paragraph" &&
+            theme.sourceTheme?.styleSheet == null && paint.canUsePlainTextLayout
         val attributed = attributed(
             block.inlines,
             paint,
             theme,
             warningSemanticGeneration,
-            block.containers.map { it.nodeType } + block.nodeType
+            block.containers.map { it.nodeType } + block.nodeType,
+            omitUnmarkedSpans = plainTextLayout
         )
         var highlightedCodeKey: String? = null
         if (block.nodeType == "codeBlock") {
@@ -898,7 +1754,8 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                 }
             }
         }
-        val layout = staticLayout(attributed.text, paint, availableWidth)
+        val layout =
+            staticLayout(attributed.text, paint, availableWidth, usePlainText = plainTextLayout)
         val codeTopInset = if (block.nodeType == "codeBlock") theme.codePaddingVerticalPx else 0
         val firstLineHeight = layout.getLineBottom(0) - layout.getLineTop(0)
         val markerTopProtection = firstMarkers.maxOfOrNull { (_, marker) ->
@@ -1025,7 +1882,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
             fragments +=
                 markerFragment(
                     marker,
-                    markerAnchor(ancestor),
+                    placement.markerAnchors.getValue(ancestor.identity),
                     firstLineTop,
                     firstLineBottom,
                     ancestorGutters.getValue(ancestor.identity),
@@ -1110,6 +1967,100 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
             }
         }
 
+    private fun listPlacement(
+        block: ViewerBlock,
+        measuredMarkers: Map<Int, PreparedMarker>,
+        theme: PreparedProseTheme,
+        contentWidth: Int,
+        disappearingListItemIdentities: Set<Int>
+    ): ListPlacement {
+        val paint = theme.paintFor(block)
+        val ancestors = listItemAncestors(block)
+        val ancestorMarkers = ancestors.mapNotNull { ancestor ->
+            measuredMarkers[ancestor.identity]?.let { ancestor to it }
+        }
+        fun listStyle(ancestor: ViewerListItemAncestor) =
+            theme.sourceTheme?.styleSheet?.resolveElement(
+                when {
+                    ancestor.context.kind == "task" -> "taskList"
+                    ancestor.context.ordered -> "orderedList"
+                    else -> "bulletList"
+                },
+                markerAncestors(block, ancestors.indexOf(ancestor)).dropLast(2)
+            )
+        fun listIndent(ancestor: ViewerListItemAncestor) =
+            listStyle(ancestor)?.indent?.times(theme.density)?.toInt() ?: theme.listIndentPx
+        val baseListInset = if (ancestors.isEmpty()) {
+            0
+        } else {
+            max(
+                0,
+                (
+                    listIndent(ancestors.first()) *
+                        (
+                            listStyle(ancestors.first())?.baseIndentMultiplier
+                                ?: theme.listBaseIndentMultiplier
+                            )
+                    ).toInt()
+            )
+        }
+        val ancestorGutters = ancestorMarkers.associate { (ancestor, marker) ->
+            ancestor.identity to (
+                marker.widthPx +
+                    (
+                        marker.checkbox?.gap?.times(theme.density)?.toInt()
+                            ?: marker.gapPx ?: theme.listMarkerGapPx
+                        )
+                )
+        }
+        val listInset =
+            baseListInset +
+                ancestorMarkers.sumOf { (ancestor, _) ->
+                    listIndent(ancestor) + (ancestorGutters[ancestor.identity] ?: 0)
+                }
+        val quoteInset = if (block.inBlockquote && theme.sourceTheme?.styleSheet == null) {
+            theme.quoteBorderWidthPx + theme.quoteMarkerGapPx + theme.quoteIndentPx
+        } else {
+            0
+        }
+        val codeInset = if (block.nodeType == "codeBlock") theme.codePaddingHorizontalPx else 0
+        val textX = theme.insetLeftPx + listInset + quoteInset + codeInset
+        val itemSpacing = if (ancestors.isEmpty()) {
+            paint.spacingAfterPx
+        } else {
+            ancestors.sumOf { ancestor ->
+                when {
+                    ancestor.identity in disappearingListItemIdentities &&
+                        ancestor.context.isLast ->
+                        theme.listSpacingAfterPx
+
+                    ancestor.identity in disappearingListItemIdentities -> theme.listItemSpacingPx
+
+                    ancestor.isFinalRenderableLeaf -> theme.listItemSpacingPx
+
+                    else -> 0
+                }
+            }
+        }
+        var inset = baseListInset
+        val markerAnchors = mutableMapOf<Int, Int>()
+        ancestorMarkers.forEach { (ancestor, _) ->
+            inset += listIndent(ancestor) + (ancestorGutters[ancestor.identity] ?: 0)
+            markerAnchors[ancestor.identity] = theme.insetLeftPx + quoteInset + inset
+        }
+        return ListPlacement(
+            textX,
+            max(1, contentWidth - listInset - quoteInset - codeInset * 2),
+            listInset,
+            quoteInset,
+            codeInset,
+            itemSpacing,
+            ancestorMarkers.filter { (ancestor, _) -> ancestor.isFirstRenderableLeaf },
+            ancestorGutters,
+            markerAnchors
+        )
+    }
+
     private fun finishBlock(
         fragments: List<PreparedProseFragment>,
         interactions: List<PreparedProseInteraction>,
@@ -1191,7 +2142,8 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
         base: PreparedTextPaint,
         theme: PreparedProseTheme,
         warningSemanticGeneration: String,
-        ancestors: List<String>
+        ancestors: List<String>,
+        omitUnmarkedSpans: Boolean
     ): AttributedBlock {
         val source = StringBuilder()
         val spans = mutableListOf<(SpannableString) -> Unit>()
@@ -1204,7 +2156,19 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                     source.append(inline.text)
                     val end = source.length
                     val markSpans =
-                        markSpans(inline.marks, base, theme, warningSemanticGeneration, ancestors)
+                        if (omitUnmarkedSpans && inlines.size == 1 &&
+                            inline.marks.isEmpty()
+                        ) {
+                            emptyList()
+                        } else {
+                            markSpans(
+                                inline.marks,
+                                base,
+                                theme,
+                                warningSemanticGeneration,
+                                ancestors
+                            )
+                        }
                     spans +=
                         { value ->
                             markSpans.forEach {
@@ -1340,7 +2304,10 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                 }
             }
         }
-        val text = SpannableString(if (source.isEmpty()) "\u200B" else source.toString())
+        val text =
+            SpannableString(
+                if (source.isEmpty()) PlainTableCellMeasurer.EMPTY_TEXT else source.toString()
+            )
         spans.forEach { it(text) }
         return AttributedBlock(
             text,
@@ -1512,35 +2479,85 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
         return result
     }
 
+    private fun ViewerDocument.plainCellMeasurementText(theme: PreparedProseTheme): String? {
+        if (!theme.supportsPlainCellMeasurement) return null
+        val block = blocks.singleOrNull() ?: return null
+        if (block.nodeType != "paragraph" || block.inBlockquote || block.listContext != null ||
+            block.listItemBoundary != null || block.listItemAncestors.isNotEmpty() ||
+            block.containers.isNotEmpty() ||
+            block.isBlockAtom || block.tableKey != null
+        ) {
+            return null
+        }
+        val text = if (block.inlines.isEmpty()) {
+            ""
+        } else {
+            val inline = block.inlines.singleOrNull() as? ViewerInline.Text ?: return null
+            if (inline.marks.isNotEmpty()) return null
+            inline.text
+        }
+        return text.plainCellMeasurementText()
+    }
+
+    private val PreparedProseTheme.supportsPlainCellMeasurement: Boolean
+        get() = sourceTheme?.styleSheet == null && paragraph.canUsePlainTextLayout
+
+    private fun String.plainCellMeasurementText(): String? =
+        ifEmpty { PlainTableCellMeasurer.EMPTY_TEXT }.takeIf(PlainTableCellMeasurer::supports)
+
+    private fun deferredPlainCellMeasurer(
+        paint: PreparedTextPaint
+    ): (List<PlainTableCellMeasurement>) -> List<PreparedTableCellContent.MeasuredPlain> {
+        val plainPaint = paint.copy(resolvedStyle = null)
+        val count = staticLayoutCount
+        return { cells ->
+            val engine = StaticLayoutAndroidProseLayoutEngine()
+            PlainTableCellMeasurer.measure(cells) { text, width ->
+                engine.staticLayout(text, plainPaint, width, usePlainText = true)
+            }.also { count.addAndGet(engine.staticLayoutsBuilt) }
+        }
+    }
+
+    // Android's span and plain-text caret paths differ with letter spacing.
+    private val PreparedTextPaint.canUsePlainTextLayout: Boolean
+        get() = letterSpacing == 0f && lineHeightPx == null && textAlign == null
+
     private fun staticLayout(
         text: CharSequence,
         paint: PreparedTextPaint,
-        width: Int
+        width: Int,
+        usePlainText: Boolean = false
     ): StaticLayout {
-        staticLayoutsBuilt += 1
+        staticLayoutCount.incrementAndGet()
         val resolved = paint.newTextPaint()
-        val preparedText = SpannableString(text).apply {
-            // The full prepared range includes a single line and the final line
-            // after a hard break; builder line spacing does not provide that
-            // guarantee and would double-compensate these metrics.
-            if (getSpans(0, length, EditorResolvedTextSpan::class.java).isNotEmpty()) {
-                setSpan(
-                    com.apollohg.editor.EditorStyledLineMetricsSpan(),
-                    0,
-                    length,
-                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-                )
-            } else {
-                paint.lineHeightPx?.let {
+        val preparedText = if (usePlainText &&
+            (text !is Spanned || text.getSpans(0, text.length, Any::class.java).isEmpty())
+        ) {
+            text.toString()
+        } else {
+            SpannableString(text).apply {
+                // The full prepared range includes a single line and the final line
+                // after a hard break; builder line spacing does not provide that
+                // guarantee and would double-compensate these metrics.
+                if (getSpans(0, length, EditorResolvedTextSpan::class.java).isNotEmpty()) {
                     setSpan(
-                        FixedLineHeightMetricSpan(it),
+                        com.apollohg.editor.EditorStyledLineMetricsSpan(),
                         0,
                         length,
-                        Spanned.SPAN_INCLUSIVE_INCLUSIVE
+                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
                     )
+                } else {
+                    paint.lineHeightPx?.let {
+                        setSpan(
+                            FixedLineHeightMetricSpan(it),
+                            0,
+                            length,
+                            Spanned.SPAN_INCLUSIVE_INCLUSIVE
+                        )
+                    }
                 }
+                paint.textAlign?.let { applyPhysicalTextAlignment(it) }
             }
-            paint.textAlign?.let { applyPhysicalTextAlignment(it) }
         }
         return StaticLayout.Builder.obtain(preparedText, 0, preparedText.length, resolved, width)
             .setAlignment(Layout.Alignment.ALIGN_NORMAL)

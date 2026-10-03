@@ -109,10 +109,11 @@ extension NativeEditorExpoView {
     }
 
     func prepareForInputAccessoryMutationOrRetry(_ action: PendingAccessoryRetryAction) -> Bool {
-        guard richTextView.editorId != 0, richTextView.textView.isFirstResponder else {
+        let input = richTextView.activeTextInput
+        guard richTextView.editorId != 0, input.isFirstResponder else {
             return true
         }
-        guard richTextView.textView.prepareForExternalEditorUpdate() else {
+        guard input.prepareForExternalEditorUpdate() else {
             scheduleAccessoryRetry(action)
             return false
         }
@@ -121,7 +122,7 @@ extension NativeEditorExpoView {
 
     func reloadInputViewsAfterPreparingOrRetry() {
         guard prepareForInputAccessoryMutationOrRetry(.reloadInputViews) else { return }
-        richTextView.textView.reloadInputViews()
+        richTextView.activeTextInput.reloadInputViews()
         markAccessoryMutationSucceeded(.reloadInputViews)
     }
 

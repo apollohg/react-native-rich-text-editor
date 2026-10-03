@@ -1,7 +1,11 @@
 package com.apollohg.editor
 
+import com.apollohg.editor.viewer.PreparedProseInstrumentation
 import org.json.JSONArray
 import org.json.JSONObject
+
+internal val STALE_POSITION_EPOCH_CODES =
+    setOf("POSITION_EPOCH_INVALID", "POSITION_EPOCH_CELL_REMOVED")
 
 internal sealed interface MutationOutcome {
     data class Transaction(val changed: Boolean, val revision: ULong) : MutationOutcome
@@ -61,10 +65,16 @@ internal fun EditorV2Adapter.performNativeIntent(
             .put("positionEpoch", epoch)
             .put("intent", intent),
         includeBaseRevision = false
-    ) { requestJson -> backend.applyNativeIntent(editorId, requestJson) }
+    ) { requestJson ->
+        PreparedProseInstrumentation.measureTableStage(
+            PreparedProseInstrumentation.TableStage.NATIVE_INPUT_AND_FFI
+        ) {
+            backend.applyNativeIntent(editorId, requestJson)
+        }
+    }
     return when (result) {
         is EditorV2CallResult.Err -> {
-            if (result.error.code == "POSITION_EPOCH_INVALID") {
+            if (result.error.code in STALE_POSITION_EPOCH_CODES) {
                 debugNotes.add("position-epoch-refresh")
                 val recovery = refreshInternal(null, stripViewSelection = false)
                 if (reportPositionEpochInvalid) emit(result.error)
@@ -338,7 +348,7 @@ internal fun EditorV2Adapter.performHistoryMutation(
                 invalidateCachedAtomicState(null)
                 lastSyncedScalarSelection = null
             }
-            val update = refreshInternal(null) ?: return null
+            val update = refreshInternal(null, stripViewSelection = false) ?: return null
             if (changed) {
                 publishCachedCollaborationSelection()
                 notifyCollaborationMutation()

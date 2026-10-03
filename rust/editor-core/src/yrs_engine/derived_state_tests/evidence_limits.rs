@@ -209,9 +209,14 @@ fn generic_structural_evidence_uses_current_loosened_limits_and_reuses() {
                 1,
                 1,
                 1,
+                Some(None),
             )
             .expect("current-limit evidence must install")
     };
+    assert!(
+        next_state.block_branch_index.is_none(),
+        "an unavailable prepared index must keep the exact selection fallback without rebuilding"
+    );
     assert_eq!(
         next_state.validation_certificate.resource_limits,
         current_limits
@@ -364,6 +369,7 @@ fn remote_style_fallback_uses_current_limits_and_rejects_one_under_atomically() 
                 1,
                 1,
                 1,
+                None,
             )
             .expect("remote-style fallback must mint against current loosened limits")
     };
@@ -403,6 +409,7 @@ fn remote_style_fallback_uses_current_limits_and_rejects_one_under_atomically() 
             1,
             1,
             1,
+            None,
         )
     };
     assert!(rejected.is_none());

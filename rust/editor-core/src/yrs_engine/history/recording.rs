@@ -1,6 +1,6 @@
 impl YrsHistory {
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn pre_admit_recorded(
+    pub(crate) fn pre_admit_recorded<'a>(
         &mut self,
         request_id: u64,
         origin: TransactionOrigin,
@@ -9,7 +9,7 @@ impl YrsHistory {
         undo_units_bound: u64,
         before: Option<HistoryLocalState>,
         after_metadata_bytes: usize,
-        current_encoded_state: &[u8],
+        current_encoded_state: impl FnOnce() -> &'a [u8],
         update_bytes_bound: usize,
         prepared_limits: Option<PreparedHistoryLimits>,
     ) -> OperationResult<PreparedRecordedHistoryAdmission> {
@@ -68,7 +68,7 @@ impl YrsHistory {
         }
         let rolls = limits.should_roll || reservation_would_roll;
         let owned_baseline = rolls
-            .then(|| reserve_replay_roll_baseline(request_id, current_encoded_state))
+            .then(|| reserve_replay_roll_baseline(request_id, current_encoded_state()))
             .transpose()?;
         let replay_slot = self.prepare_replay_event_slot(request_id, rolls)?;
         let compatible =
@@ -169,65 +169,16 @@ impl YrsHistory {
         let pending_capture = Arc::new(Mutex::new(None::<HistoryMetadata>));
         let pending_pop = Arc::new(Mutex::new(None::<HistoryMetadata>));
         let popped = Arc::new(Mutex::new(None::<(EventKind, HistoryMetadataSlots)>));
-        let mut tracked_origins = HashSet::new();
-        tracked_origins.insert(Origin::from(INPUT_ORIGIN));
-        tracked_origins.insert(Origin::from(COMMAND_ORIGIN));
-        tracked_origins.insert(Origin::from(API_ORIGIN));
-        let mut manager = UndoManager::with_options(UndoOptions {
-            capture_timeout_millis: CAPTURE_TIMEOUT_MILLIS,
-            tracked_origins,
-            capture_transaction: None,
-            timestamp: clock.clone(),
-            init_undo_stack: undo,
-            init_redo_stack: redo,
-        });
-        manager.expand_scope(doc, fragment);
-
-        let added_capture = pending_capture.clone();
-        let added_pop = pending_pop.clone();
-        manager.observe_item_added_with(ADDED_OBSERVER, move |_, event| {
-            if let Some(metadata) = added_capture
-                .lock()
-                .expect("pending history capture lock poisoned")
-                .clone()
-            {
-                *event.meta_mut() = metadata;
-            } else if let Some(metadata) = added_pop
-                .lock()
-                .expect("pending history pop lock poisoned")
-                .clone()
-            {
-                *event.meta_mut() = metadata;
-            }
-        });
-
-        let updated_capture = pending_capture.clone();
-        manager.observe_item_updated_with(UPDATED_OBSERVER, move |_, event| {
-            let pending = updated_capture
-                .lock()
-                .expect("pending history capture lock poisoned")
-                .clone();
-            if let Some(metadata) = pending {
-                metadata.preserve_before_from(event.meta());
-                *event.meta_mut() = metadata;
-            }
-        });
-
-        let popped_target = pending_pop.clone();
-        let popped_result = popped.clone();
-        manager.observe_item_popped_with(POPPED_OBSERVER, move |_, event| {
-            let slots = event.meta().slots();
-            if let Some(target) = popped_target
-                .lock()
-                .expect("pending history pop lock poisoned")
-                .clone()
-            {
-                target.replace_slots(slots.clone());
-            }
-            *popped_result
-                .lock()
-                .expect("popped history metadata lock poisoned") = Some((event.kind(), slots));
-        });
+        let manager = build_undo_manager(
+            doc,
+            fragment,
+            clock.clone(),
+            undo,
+            redo,
+            &pending_capture,
+            &pending_pop,
+            &popped,
+        );
 
         Self {
             manager,
@@ -249,14 +200,47 @@ impl YrsHistory {
             pending_replay_event: None,
             rebase_before_next_event: false,
             recording_replay_events,
+            redone_chains: Vec::new(),
         }
     }
 
-    pub(crate) fn rebind(&mut self, doc: &Doc, fragment: &XmlFragmentRef) {
+    fn cloned_stacks(
+        &self,
+    ) -> (
+        Vec<StackItem<HistoryMetadata>>,
+        Vec<StackItem<HistoryMetadata>>,
+    ) {
+        (
+            self.manager.undo_stack().to_vec(),
+            self.manager.redo_stack().to_vec(),
+        )
+    }
+
+    fn install_stacks(
+        &mut self,
+        doc: &Doc,
+        fragment: &XmlFragmentRef,
+        undo: Vec<StackItem<HistoryMetadata>>,
+        redo: Vec<StackItem<HistoryMetadata>>,
+    ) {
+        self.manager = build_undo_manager(
+            doc,
+            fragment,
+            self.clock.clone(),
+            undo,
+            redo,
+            &self.pending_capture,
+            &self.pending_pop,
+            &self.popped,
+        );
+    }
+
+    pub(crate) fn rebind(&mut self, doc: &Doc, fragment: &XmlFragmentRef) -> usize {
         let limits = self.limits.clone();
         let clock = self.clock.clone();
         let max_encoded_state_bytes = self.max_encoded_state_bytes;
         let baseline = encode_full_state(doc);
+        let encoded_state_bytes = baseline.len();
         *self = Self::from_stacks(
             doc,
             fragment,
@@ -268,6 +252,7 @@ impl YrsHistory {
             baseline,
             true,
         );
+        encoded_state_bytes
     }
 
     pub(crate) fn replay_into(
@@ -361,11 +346,17 @@ impl YrsHistory {
                     });
                 }
                 ReplayEvent::Excluded { update, origin, .. } => {
-                    apply_update_bytes(request_id, doc, update, *origin)?;
+                    let removed_content = apply_update_bytes(request_id, doc, update, *origin)?;
+                    if *origin == TransactionOrigin::RemoteSync && removed_content {
+                        candidate.drop_unrevertible_stack_tops(doc, fragment);
+                    }
                     replayed_events.push(event.clone());
                 }
                 ReplayEvent::Action(action) => {
-                    if candidate.perform(*action).is_none() {
+                    if !candidate
+                        .perform(request_id, *action, doc, fragment)?
+                        .changed
+                    {
                         return Err(OperationError::engine_invariant_failed(
                             request_id,
                             None,
@@ -395,7 +386,8 @@ impl YrsHistory {
             doc,
             &self.epoch_baseline,
             TransactionOrigin::RemoteSync,
-        )
+        )?;
+        Ok(())
     }
 
     pub(crate) fn can_undo(&self) -> bool {
@@ -404,6 +396,14 @@ impl YrsHistory {
 
     pub(crate) fn can_redo(&self) -> bool {
         self.manager.can_redo()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn stack_depths_for_test(&self) -> (usize, usize) {
+        (
+            self.manager.undo_stack().len(),
+            self.manager.redo_stack().len(),
+        )
     }
 
     #[cfg(test)]
@@ -419,4 +419,78 @@ impl YrsHistory {
             _ => origin.as_tag(),
         })
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_undo_manager(
+    doc: &Doc,
+    fragment: &XmlFragmentRef,
+    clock: Arc<LatchingClock>,
+    undo: Vec<StackItem<HistoryMetadata>>,
+    redo: Vec<StackItem<HistoryMetadata>>,
+    pending_capture: &Arc<Mutex<Option<HistoryMetadata>>>,
+    pending_pop: &Arc<Mutex<Option<HistoryMetadata>>>,
+    popped: &Arc<Mutex<Option<(EventKind, HistoryMetadataSlots)>>>,
+) -> UndoManager<HistoryMetadata> {
+    let mut tracked_origins = HashSet::new();
+    tracked_origins.insert(Origin::from(INPUT_ORIGIN));
+    tracked_origins.insert(Origin::from(COMMAND_ORIGIN));
+    tracked_origins.insert(Origin::from(API_ORIGIN));
+    let mut manager = UndoManager::with_options(UndoOptions {
+        capture_timeout_millis: CAPTURE_TIMEOUT_MILLIS,
+        tracked_origins,
+        capture_transaction: None,
+        timestamp: clock,
+        init_undo_stack: undo,
+        init_redo_stack: redo,
+    });
+    manager.expand_scope(doc, fragment);
+
+    let added_capture = pending_capture.clone();
+    let added_pop = pending_pop.clone();
+    manager.observe_item_added(ADDED_OBSERVER, move |_, event| {
+        if let Some(metadata) = added_capture
+            .lock()
+            .expect("pending history capture lock poisoned")
+            .clone()
+        {
+            *event.meta_mut() = metadata;
+        } else if let Some(metadata) = added_pop
+            .lock()
+            .expect("pending history pop lock poisoned")
+            .clone()
+        {
+            *event.meta_mut() = metadata;
+        }
+    });
+
+    let updated_capture = pending_capture.clone();
+    manager.observe_item_updated(UPDATED_OBSERVER, move |_, event| {
+        let pending = updated_capture
+            .lock()
+            .expect("pending history capture lock poisoned")
+            .clone();
+        if let Some(metadata) = pending {
+            metadata.preserve_before_from(event.meta());
+            *event.meta_mut() = metadata;
+        }
+    });
+
+    let popped_target = pending_pop.clone();
+    let popped_result = popped.clone();
+    manager.observe_item_popped(POPPED_OBSERVER, move |_, event| {
+        let slots = event.meta().slots();
+        if let Some(target) = popped_target
+            .lock()
+            .expect("pending history pop lock poisoned")
+            .clone()
+        {
+            target.replace_slots(slots.clone());
+        }
+        *popped_result
+            .lock()
+            .expect("popped history metadata lock poisoned") = Some((event.kind(), slots));
+    });
+
+    manager
 }

@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
-import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+
+import { parseJson, readJsonFile } from './lib/json-file.mjs';
 
 // Frozen baselines may still carry legacy.* entries; indexResults ignores them.
 const REQUIRED_CASES = [
@@ -55,29 +56,6 @@ function parseArguments(args) {
         throw new Error('provide either one benchmark JSON file or --run');
     }
     return { run, inputPath, baselinePath };
-}
-
-function parseJson(text, label) {
-    let payload;
-    try {
-        payload = JSON.parse(text);
-    } catch (error) {
-        throw new Error(`failed to parse ${label} JSON: ${error.message}`);
-    }
-    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-        throw new Error(`${label} must be a JSON object`);
-    }
-    return payload;
-}
-
-function readJsonFile(filePath, label) {
-    let text;
-    try {
-        text = readFileSync(filePath, 'utf8');
-    } catch (error) {
-        throw new Error(`failed to read ${label} file ${filePath}: ${error.message}`);
-    }
-    return parseJson(text, label);
 }
 
 function runBenchmarkSample() {

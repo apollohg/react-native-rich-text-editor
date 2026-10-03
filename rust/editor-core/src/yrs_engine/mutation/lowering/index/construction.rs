@@ -351,6 +351,7 @@ impl MutationCompiler {
             fragment,
             schema,
             LocalizedTextblockLocator::Insert(locator),
+            None,
         )?
         else {
             return Ok((eager, MutationCompilerBuild::EagerFallback));

@@ -1,6 +1,25 @@
 use super::*;
 
 #[test]
+#[cfg(feature = "table-interop")]
+fn availability_audit_detects_same_length_payload_and_reservation_changes() {
+    let mut outbox = CollaborationOutbox::with_ceilings(4, 128);
+    let reservation = outbox.reserve_document_update(7, 4).unwrap();
+    outbox.install(reservation, vec![1; 4]);
+    let before = outbox.availability_audit().unwrap();
+    assert_eq!(before, outbox.availability_audit().unwrap());
+    let Some(OutboxOrderedMessage::DocumentUpdate(message)) = outbox.pending_ordered.front_mut()
+    else {
+        panic!("document update missing")
+    };
+    message.update_v1[0] = 2;
+    assert_ne!(before, outbox.availability_audit().unwrap());
+    let changed = outbox.availability_audit().unwrap();
+    let _reservation = outbox.reserve_document_update(8, 4).unwrap();
+    assert_ne!(changed, outbox.availability_audit().unwrap());
+}
+
+#[test]
 fn from_limits_uses_the_configured_outbox_ceilings() {
     let limits = CollaborationLimits {
         max_pending_outbox_messages: 3,

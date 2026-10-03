@@ -54,6 +54,11 @@ struct ProseViewerRequest: Hashable {
     let fontEnvironmentRevision: UInt64
     let attachmentRevision: UInt64
     let appearance: ProseViewerAppearance
+    let compiledCacheKey: String
+    let themeDigest: String
+    let semanticGenerationIdentity: String
+    let generationIdentity: String
+    let mentionPrefix: String?
 
     init(
         source: ProseViewerSource,
@@ -71,28 +76,20 @@ struct ProseViewerRequest: Hashable {
         self.fontEnvironmentRevision = fontEnvironmentRevision
         self.attachmentRevision = attachmentRevision
         self.appearance = appearance
-    }
-
-    var compiledCacheKey: String {
-        let mentionPrefix = Self.mentionPrefix(in: configuration.configJSON) ?? ""
+        let mentionPrefix = Self.mentionPrefix(in: configuration.configJSON)
+        self.mentionPrefix = mentionPrefix
         let input = [
             source.value,
             configuration.configJSON,
             configuration.imagePolicyJSON ?? "",
             configuration.imagesEnabled ? "1" : "0",
-            mentionPrefix,
+            mentionPrefix ?? "",
             source.kind == .json ? "json" : "html"
         ].joined(separator: "\u{1F}")
-        return SHA256Digest.hex(input)
-    }
-
-    var themeDigest: String { SHA256Digest.hex(configuration.themeJSON ?? "") }
-
-    /// Canonical publication identity. State-only layout/font revisions are
-    /// intentionally excluded so cancellation/reinstall cannot reopen image
-    /// metadata or resource-error publication for the same semantic source.
-    var semanticGenerationIdentity: String {
-        SHA256Digest.hex([
+        self.compiledCacheKey = SHA256Digest.hex(input)
+        self.themeDigest = SHA256Digest.hex(configuration.themeJSON ?? "")
+        // Semantic identity excludes revisions that only replace layout.
+        let semanticGenerationIdentity = SHA256Digest.hex([
             source.kind == .json ? "json" : "html",
             source.value,
             configuration.configJSON,
@@ -102,22 +99,16 @@ struct ProseViewerRequest: Hashable {
             configuration.collapsesWhenEmpty ? "1" : "0",
             mentionPrefix ?? ""
         ].joined(separator: "\u{1F}"))
-    }
-
-    /// Includes the semantic generation plus the permitted state-only layout
-    /// revisions. This remains the immutable layout/cache identity.
-    var generationIdentity: String {
-        SHA256Digest.hex([
+        self.semanticGenerationIdentity = semanticGenerationIdentity
+        self.generationIdentity = SHA256Digest.hex([
             semanticGenerationIdentity,
             String(attachmentRevision),
             String(nativeFontRevision),
-            String(Double(nativeFontScale).bitPattern),
+            String(Double(self.nativeFontScale).bitPattern),
             String(fontEnvironmentRevision),
             appearance.identity
         ].joined(separator: "\u{1F}"))
     }
-
-    var mentionPrefix: String? { Self.mentionPrefix(in: configuration.configJSON) }
 
     private static func mentionPrefix(in json: String) -> String? {
         guard let data = json.data(using: .utf8),
@@ -247,6 +238,13 @@ struct ViewerStyleAncestor: Hashable {
 }
 
 struct ViewerBlock: Hashable {
+    let table: FfiViewerTable?
+    let frameTable: FfiTableRecord?
+    var tableKey: String? { frameTable?.tableKey ?? table.map { "t\($0.tablePos)" } }
+    var tableSurfaceSource: TableSurfaceSource? {
+        if let frameTable { return TableSurfaceSource(frameRecord: frameTable) }
+        return table.map(TableSurfaceSource.init(viewerTable:))
+    }
     let styleAncestors: [ViewerStyleAncestor]
     let language: String?
     let isBlockAtom: Bool
@@ -272,8 +270,12 @@ struct ViewerBlock: Hashable {
         inlines: [ViewerInline],
         isBlockAtom: Bool = false,
         styleAncestors: [ViewerStyleAncestor] = [],
-        language: String? = nil
+        language: String? = nil,
+        table: FfiViewerTable? = nil,
+        frameTable: FfiTableRecord? = nil
     ) {
+        self.frameTable = frameTable
+        self.table = table
         self.language = language
         self.styleAncestors = styleAncestors
         self.isBlockAtom = isBlockAtom
@@ -301,7 +303,9 @@ struct ViewerBlock: Hashable {
             inlines: inlines,
             isBlockAtom: isBlockAtom,
             styleAncestors: styleAncestors,
-            language: language
+            language: language,
+            table: table,
+            frameTable: frameTable
         )
     }
 }
@@ -310,12 +314,17 @@ struct ViewerBlock: Hashable {
 /// prepared theme is attached only to the measurement copy; cached compiler
 /// output remains semantic/theme independent.
 struct ViewerDocument {
+    let tableAttributes: [String: [String: Any]]
+    let tableRecords: [String: FfiViewerTable]
+    let frameIndex: EditorTableIndex?
+    let tableSourceIDs: [String: String]
     let semanticKey: String
     let blocks: [ViewerBlock]
     let isEmpty: Bool
     let retainedBytes: Int
     let trailingEmptyTextBlockCount: Int
     let preparedTheme: PreparedProseTheme?
+    let preferredTextBlockName: String
 
     var paragraphs: [ViewerParagraph] {
         blocks.compactMap { block in
@@ -330,6 +339,10 @@ struct ViewerDocument {
     }
 
     init(semanticKey: String, paragraphs: [ViewerParagraph], isEmpty: Bool, retainedBytes: Int) {
+        tableAttributes = [:]
+        tableRecords = [:]
+        frameIndex = nil
+        tableSourceIDs = [:]
         self.semanticKey = semanticKey
         blocks = paragraphs.map {
             ViewerBlock(
@@ -345,6 +358,7 @@ struct ViewerDocument {
         self.retainedBytes = retainedBytes
         trailingEmptyTextBlockCount = 0
         preparedTheme = nil
+        preferredTextBlockName = "paragraph"
     }
 
     init(
@@ -353,23 +367,73 @@ struct ViewerDocument {
         isEmpty: Bool,
         retainedBytes: Int,
         trailingEmptyTextBlockCount: Int = 0,
-        preparedTheme: PreparedProseTheme? = nil
+        preparedTheme: PreparedProseTheme? = nil,
+        tableAttributes: [String: [String: Any]] = [:],
+        tableRecords: [String: FfiViewerTable] = [:],
+        frameIndex: EditorTableIndex? = nil,
+        tableSourceIDs: [String: String] = [:],
+        preferredTextBlockName: String = "paragraph"
     ) {
+        self.frameIndex = frameIndex
+        self.tableAttributes = tableAttributes
+        self.tableRecords = tableRecords
+        self.tableSourceIDs = tableSourceIDs
         self.semanticKey = semanticKey
         self.blocks = blocks
         self.isEmpty = isEmpty
         self.retainedBytes = retainedBytes
         self.trailingEmptyTextBlockCount = trailingEmptyTextBlockCount
         self.preparedTheme = preparedTheme
+        self.preferredTextBlockName = preferredTextBlockName
     }
 
     init(compiled: ViewerCompiledDocument) throws {
+        frameIndex = nil
+        let elements = compiled.elements()
+        var tableRecords: [String: FfiViewerTable] = [:]
+        for record in compiled.tableRecords() {
+            let id = "t\(record.tablePos)"
+            guard tableRecords[id] == nil else {
+                throw ProseViewerError.hostContract(message: "The compiler returned duplicate semantic table records.")
+            }
+            tableRecords[id] = record
+        }
+        guard let pool = EditorV2Adapter.parseTableAttributes(compiled.tableAttributes()),
+              Self.validTables(elements, records: tableRecords, pool: pool) else {
+            throw ProseViewerError.hostContract(message: "The compiler returned invalid semantic table references.")
+        }
+        try Self.validateAdmittedAttachments(elements: elements, tableRecords: tableRecords)
+        tableAttributes = pool
+        self.tableRecords = tableRecords
+        tableSourceIDs = [:]
         semanticKey = compiled.semanticKey()
         isEmpty = compiled.isEmpty()
         retainedBytes = Int(compiled.retainedBytesDecimal()) ?? 0
         trailingEmptyTextBlockCount = Int(compiled.trailingEmptyTextBlockCount())
         preparedTheme = nil
+        preferredTextBlockName = compiled.preferredTextBlockName()
+        blocks = try Self.lowerElements(
+            elements,
+            preferredTextBlockName: preferredTextBlockName,
+            tableRecords: tableRecords,
+            isEmpty: isEmpty
+        )
+    }
 
+    private static func lowerElements(
+        _ elements: [FfiViewerElement],
+        preferredTextBlockName: String,
+        tableRecords: [String: FfiViewerTable],
+        frameIndex: EditorTableIndex? = nil,
+        atomDocOffset: UInt32 = 0,
+        isEmpty: Bool
+    ) throws -> [ViewerBlock] {
+        func atomPosition(_ relative: UInt32) throws -> UInt32 {
+            guard let position = UInt32(exactly: UInt64(atomDocOffset) + UInt64(relative)) else {
+                throw ProseViewerError.hostContract(message: "The table atom position exceeds the document coordinate range.")
+            }
+            return position
+        }
         struct Builder {
             let language: String?
             let styleIdentity: Int
@@ -389,9 +453,55 @@ struct ViewerDocument {
         var renderableLeavesByListItem: [Int: [Int]] = [:]
         var listItemDepthByIdentity: [Int: UInt16] = [:]
         var nextListItemIdentity = 0
-        let preferredTextBlockName = compiled.preferredTextBlockName()
-        for element in compiled.elements() {
+        func appendRenderableLeaf(
+            nodeType: String,
+            inlines: [ViewerInline],
+            isBlockAtom: Bool,
+            table: FfiViewerTable? = nil,
+            frameTable: FfiTableRecord? = nil
+        ) {
+            let listContext = stack.reversed().compactMap(\.listContext).first
+            let listItemIdentity = stack.reversed().compactMap(\.listItemIdentity).first
+            let listItemAncestors = stack.compactMap { builder -> ViewerListItemAncestor? in
+                guard let identity = builder.listItemIdentity, let context = builder.listContext else { return nil }
+                return ViewerListItemAncestor(identity: identity, context: context)
+            }
+            let outermostListItem = stack.first { $0.listItemIdentity != nil }
+            rendered.append(ViewerBlock(
+                nodeType: nodeType,
+                depth: stack.last?.depth ?? 0,
+                inBlockquote: stack.contains { $0.nodeType == "blockquote" },
+                listContext: listContext,
+                listItemBoundary: nil,
+                listItemAncestors: listItemAncestors,
+                outermostListItemIdentity: outermostListItem?.listItemIdentity,
+                outermostListItemIsLast: outermostListItem?.listContext?.isLast ?? false,
+                inlines: inlines,
+                isBlockAtom: isBlockAtom,
+                styleAncestors: stack.flatMap { builder -> [ViewerStyleAncestor] in
+                    var values: [ViewerStyleAncestor] = []
+                    if let identity = builder.listStyleIdentity, let context = builder.listContext {
+                        values.append(ViewerStyleAncestor(identity: identity, nodeType: context.kind == "task" ? "taskList" : context.ordered ? "orderedList" : "bulletList"))
+                    }
+                    values.append(ViewerStyleAncestor(identity: builder.styleIdentity, nodeType: builder.nodeType))
+                    return values
+                },
+                table: table,
+                frameTable: frameTable
+            ))
+            if let listItemIdentity {
+                renderableLeavesByListItem[listItemIdentity, default: []].append(rendered.count - 1)
+            }
+        }
+        for element in elements {
             switch element {
+            case let .table(tableId):
+                let table = tableRecords[tableId]
+                let frameTable = frameIndex?.record(tableKey: tableId)
+                guard table != nil || frameTable != nil else {
+                    throw ProseViewerError.hostContract(message: "The compiler returned a dangling semantic table reference.")
+                }
+                appendRenderableLeaf(nodeType: "table", inlines: [], isBlockAtom: true, table: table, frameTable: frameTable)
             case let .blockStart(nodeType: nodeType, language: language, depth: depth, listContextJson: listContextJSON):
                 let listContext = Self.listContext(from: listContextJSON)
                 let parentIdentity = stack.last?.styleIdentity ?? -1
@@ -427,43 +537,14 @@ struct ViewerDocument {
             case let .inlineAtom(nodeType: nodeType, docPos: docPos, attrsJson: attrsJson, label: label):
                 guard !stack.isEmpty else { continue }
                 stack[stack.count - 1].inlines.append(
-                    .atom(nodeType: nodeType, docPos: docPos, attrsJSON: attrsJson, label: label)
+                    .atom(nodeType: nodeType, docPos: try atomPosition(docPos), attrsJSON: attrsJson, label: label)
                 )
             case let .blockAtom(nodeType: nodeType, docPos: docPos, attrsJson: attrsJson, label: label):
-                let listContext = stack.reversed().compactMap(\.listContext).first
-                let listItemIdentity = stack.reversed().compactMap(\.listItemIdentity).first
-                let listItemAncestors = stack.compactMap { builder -> ViewerListItemAncestor? in
-                    guard let identity = builder.listItemIdentity,
-                          let context = builder.listContext
-                    else { return nil }
-                    return ViewerListItemAncestor(identity: identity, context: context)
-                }
-                let outermostListItem = stack.first { $0.listItemIdentity != nil }
-                rendered.append(
-                    ViewerBlock(
-                        nodeType: nodeType,
-                        depth: stack.last?.depth ?? 0,
-                        inBlockquote: stack.contains { $0.nodeType == "blockquote" },
-                        listContext: listContext,
-                        listItemBoundary: nil,
-                        listItemAncestors: listItemAncestors,
-                        outermostListItemIdentity: outermostListItem?.listItemIdentity,
-                        outermostListItemIsLast: outermostListItem?.listContext?.isLast ?? false,
-                        inlines: [.atom(nodeType: nodeType, docPos: docPos, attrsJSON: attrsJson, label: label)],
-                        isBlockAtom: true,
-                        styleAncestors: stack.flatMap { builder -> [ViewerStyleAncestor] in
-                            var values: [ViewerStyleAncestor] = []
-                            if let identity = builder.listStyleIdentity, let context = builder.listContext {
-                                values.append(ViewerStyleAncestor(identity: identity, nodeType: context.kind == "task" ? "taskList" : context.ordered ? "orderedList" : "bulletList"))
-                            }
-                            values.append(ViewerStyleAncestor(identity: builder.styleIdentity, nodeType: builder.nodeType))
-                            return values
-                        }
-                    )
+                appendRenderableLeaf(
+                    nodeType: nodeType,
+                    inlines: [.atom(nodeType: nodeType, docPos: try atomPosition(docPos), attrsJSON: attrsJson, label: label)],
+                    isBlockAtom: true
                 )
-                if let listItemIdentity {
-                    renderableLeavesByListItem[listItemIdentity, default: []].append(rendered.count - 1)
-                }
             case .blockEnd:
                 guard let builder = stack.popLast() else { continue }
                 if builder.listContext?.isLast == true { listStyleGroups.removeValue(forKey: builder.listParentIdentity) }
@@ -536,9 +617,124 @@ struct ViewerDocument {
                 message: "The document exceeds the maximum admitted image attachment count."
             )
         }
-        blocks = rendered.isEmpty && !isEmpty
+        return rendered.isEmpty && !isEmpty
             ? [ViewerBlock(nodeType: "paragraph", depth: 0, inBlockquote: false, listContext: nil, listItemBoundary: nil, inlines: [.text(text: "", marks: [])])]
             : rendered
+    }
+
+    private static func validateAdmittedAttachments(
+        elements: [FfiViewerElement],
+        tableRecords: [String: FfiViewerTable]
+    ) throws {
+        var count = 0
+        func countAttachments(in elements: [FfiViewerElement]) throws {
+            for element in elements {
+                guard case let .blockAtom(nodeType, docPos, attrsJSON, _) = element,
+                      ViewerImageAttachment.sourceAndDeclaredSize(
+                        nodeType: nodeType,
+                        docPos: docPos,
+                        attrsJSON: attrsJSON
+                      ) != nil
+                else { continue }
+                count += 1
+                guard count <= ViewerImageAttachment.maximumAdmittedAttachments else {
+                    throw ProseViewerError.compiler(
+                        domain: "viewer",
+                        code: "ATTACHMENT_LIMIT_EXCEEDED",
+                        message: "The document exceeds the maximum admitted image attachment count."
+                    )
+                }
+            }
+        }
+
+        try countAttachments(in: elements)
+        for table in tableRecords.values {
+            for cell in table.cells {
+                try countAttachments(in: cell.elements)
+            }
+        }
+    }
+
+    func cellSupportsBackgroundPreparation(_ cell: TableSurfaceCell, in tableID: String) -> Bool {
+        if let frameIndex, frameIndex.docStart(tableKey: tableID, cellIndex: cell.sourceIndex) == nil {
+            return false
+        }
+        var depth = 0
+        var plain = true
+        for element in cell.elements {
+            switch element {
+            case let .blockStart(nodeType, _, _, _):
+                if nodeType == "image" { plain = false }
+                depth += 1
+            case .blockEnd:
+                if depth == 0 { plain = false } else { depth -= 1 }
+            case .textRun:
+                if depth == 0 { plain = false }
+            case .inlineAtom, .blockAtom, .table:
+                plain = false
+            }
+            if !plain { break }
+        }
+        if plain, depth == 0 { return true }
+        guard let child = try? cellDocument(for: cell, in: tableID) else { return false }
+        return child.blocks.allSatisfy { block in
+            !block.isBlockAtom && block.nodeType != "image" && block.tableKey == nil
+                && block.inlines.allSatisfy { if case .atom = $0 { return false }; return true }
+        }
+    }
+
+    func cellDocument(for cell: TableSurfaceCell, in tableID: String) throws -> ViewerDocument {
+        let atomDocOffset: UInt32 = try frameIndex.map { index in
+            guard let position = index.docStart(tableKey: tableID, cellIndex: cell.sourceIndex) else {
+                throw ProseViewerError.hostContract(message: "The table cell is missing from the installed frame.")
+            }
+            return position
+        } ?? 0
+        let nestedKeys = Set(cell.elements.compactMap { element -> String? in
+            if case let .table(key) = element { return key }
+            return nil
+        })
+        let nestedIndex = nestedKeys.isEmpty ? nil : frameIndex?.subtree(tableKeys: nestedKeys)
+        var records: [String: FfiViewerTable] = [:]
+        var pending = Array(nestedKeys)
+        while let key = pending.popLast() {
+            guard records[key] == nil, let record = tableRecords[key] else { continue }
+            records[key] = record
+            for child in record.cells {
+                for element in child.elements {
+                    if case let .table(key) = element { pending.append(key) }
+                }
+            }
+        }
+        var attributes = Set(nestedIndex?.attributeObjects.keys.map { $0 } ?? [])
+        for record in records.values {
+            attributes.insert(record.attrsKey)
+            attributes.formUnion(record.sourceRows.map(\.attrsKey))
+            attributes.formUnion(record.cells.map(\.attrsKey))
+        }
+        let identities = Set(records.keys).union(nestedIndex?.tableKeys ?? [])
+        return ViewerDocument(
+            semanticKey: "\(semanticKey):\(tableID):\(cell.sourceIndex):\(cell.contentKey)",
+            blocks: try Self.lowerElements(
+                cell.elements,
+                preferredTextBlockName: preferredTextBlockName,
+                tableRecords: tableRecords,
+                frameIndex: frameIndex,
+                atomDocOffset: atomDocOffset,
+                isEmpty: cell.elements.isEmpty
+            ),
+            isEmpty: cell.elements.isEmpty,
+            retainedBytes: 0,
+            tableAttributes: Dictionary(uniqueKeysWithValues: attributes.compactMap { key in
+                tableAttributes[key].map { (key, $0) }
+            }),
+            tableRecords: records,
+            frameIndex: nestedIndex,
+            tableSourceIDs: Dictionary(uniqueKeysWithValues: identities.compactMap { key in
+                tableSourceIDs[key].map { (key, $0) }
+            }),
+            preferredTextBlockName: preferredTextBlockName
+        )
     }
 
     func withPreparedTheme(_ theme: PreparedProseTheme) -> ViewerDocument {
@@ -548,8 +744,74 @@ struct ViewerDocument {
             isEmpty: isEmpty,
             retainedBytes: retainedBytes,
             trailingEmptyTextBlockCount: trailingEmptyTextBlockCount,
-            preparedTheme: theme
+            preparedTheme: theme,
+            tableAttributes: tableAttributes,
+            tableRecords: tableRecords,
+            frameIndex: frameIndex,
+            tableSourceIDs: tableSourceIDs,
+            preferredTextBlockName: preferredTextBlockName
         )
+    }
+
+    private static func validTables(_ elements: [FfiViewerElement], records: [String: FfiViewerTable], pool: [String: [String: Any]]) -> Bool {
+        var pending = elements.map { ($0, 0, UInt64(0), UInt64(UInt32.max)) }
+        var nodeCount = 0
+        var slots: UInt64 = 0
+        var referenced = Set<String>()
+        while let (element, depth, start, end) = pending.popLast() {
+            nodeCount += 1
+            if nodeCount + pending.count > 7_000_000 || depth > 1024 { return false }
+            guard case let .table(tableId) = element else { continue }
+            guard referenced.insert(tableId).inserted, let table = records[tableId] else { return false }
+            let rows = UInt64(table.rows), columns = UInt64(table.columns)
+            if rows > 4_000_000 || columns > 4_000_000 { return false }
+            slots += rows * columns
+            if slots > 4_000_000 || UInt64(table.tablePos) < start || UInt64(table.sourceEnd) > end ||
+                table.sourceEnd <= table.tablePos || UInt64(table.columnWidths.count) != columns ||
+                table.columnWidths.contains(where: { $0 == 0 }) || ![nil, "ltr", "rtl"].contains(table.direction) ||
+                table.readOnlyDescendants != (depth > 0) || pool[table.attrsKey] == nil { return false }
+            if table.failure != nil {
+                if rows != 0 || columns != 0 || !table.cells.isEmpty || !table.sourceRows.isEmpty ||
+                    !table.syntheticRegions.isEmpty || table.compatibilityDiagnostic != nil { return false }
+                continue
+            }
+            nodeCount += table.sourceRows.count + table.cells.count + table.syntheticRegions.count
+            if nodeCount > 7_000_000 { return false }
+            var previous = UInt64(table.tablePos) + 1
+            for row in table.sourceRows {
+                if UInt64(row.sourcePos) < previous || row.sourceEnd <= row.sourcePos || row.sourceEnd >= table.sourceEnd || pool[row.attrsKey] == nil { return false }
+                previous = UInt64(row.sourceEnd)
+            }
+            var occupied = Set<UInt64>()
+            func region(_ row: UInt32, _ column: UInt32, _ rowspan: UInt32, _ colspan: UInt32, _ key: String) -> Bool {
+                if rowspan == 0 || colspan == 0 || UInt64(row) + UInt64(rowspan) > rows || UInt64(column) + UInt64(colspan) > columns || pool[key] == nil { return false }
+                for regionRow in UInt64(row)..<(UInt64(row) + UInt64(rowspan)) {
+                    for regionColumn in UInt64(column)..<(UInt64(column) + UInt64(colspan))
+                        where !occupied.insert(regionRow * columns + regionColumn).inserted {
+                        return false
+                    }
+                }
+                return true
+            }
+            previous = UInt64(table.tablePos) + 1
+            var rowIndex = 0
+            for cell in table.cells {
+                if !region(cell.row, cell.column, cell.rowspan, cell.colspan, cell.attrsKey) || UInt64(cell.sourcePos) < previous || cell.sourceEnd <= cell.sourcePos || cell.contentKey.isEmpty { return false }
+                while rowIndex < table.sourceRows.count, table.sourceRows[rowIndex].sourceEnd <= cell.sourcePos { rowIndex += 1 }
+                guard rowIndex < table.sourceRows.count else { return false }
+                let row = table.sourceRows[rowIndex]
+                if row.sourcePos >= cell.sourcePos || row.sourceEnd <= cell.sourceEnd { return false }
+                previous = UInt64(cell.sourceEnd)
+                for child in cell.elements {
+                    pending.append((child, depth + 1, UInt64(cell.sourcePos) + 1, UInt64(cell.sourceEnd) - 1))
+                }
+            }
+            for gap in table.syntheticRegions
+                where !region(gap.row, gap.column, gap.rowspan, gap.colspan, gap.attrsKey) {
+                return false
+            }
+        }
+        return referenced == Set(records.keys)
     }
 
     private static func listContext(from json: String?) -> ViewerListContext? {

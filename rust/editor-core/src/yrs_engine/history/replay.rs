@@ -39,12 +39,12 @@ impl YrsHistory {
     /// newly compiled excluded event is retained in the new epoch. Remote
     /// callers keep using `pre_admit_excluded`, where a pending rebase remains
     /// an invalidate-after-commit signal.
-    pub(crate) fn pre_admit_compiled_excluded(
+    pub(crate) fn pre_admit_compiled_excluded<'a>(
         &mut self,
         request_id: u64,
         origin: TransactionOrigin,
         work_units: u64,
-        current_encoded_state: &[u8],
+        current_encoded_state: impl FnOnce() -> &'a [u8],
         update_bytes_bound: usize,
     ) -> OperationResult<PreparedExcludedHistoryAdmission> {
         let reserved_update = self.allocate_replay_update(request_id, update_bytes_bound)?;
@@ -57,7 +57,7 @@ impl YrsHistory {
             let replay_slot = self.prepare_replay_event_slot(request_id, rolls)?;
             let disposition = if rolls {
                 let owned_baseline =
-                    reserve_replay_roll_baseline(request_id, current_encoded_state)?;
+                    reserve_replay_roll_baseline(request_id, current_encoded_state())?;
                 ExcludedReplayDisposition::Roll { owned_baseline }
             } else {
                 ExcludedReplayDisposition::Append
@@ -256,14 +256,73 @@ impl YrsHistory {
         )
     }
 
-    pub(crate) fn perform(&mut self, action: HistoryAction) -> Option<HistorySnapshotSlot> {
-        let available = match action {
-            HistoryAction::Undo => self.manager.can_undo(),
-            HistoryAction::Redo => self.manager.can_redo(),
-        };
-        if !available {
-            return None;
+    fn acting_stack(&self, action: HistoryAction) -> &[StackItem<HistoryMetadata>] {
+        match action {
+            HistoryAction::Undo => self.manager.undo_stack(),
+            HistoryAction::Redo => self.manager.redo_stack(),
         }
+    }
+
+    fn top_reverts_nothing(&self, action: HistoryAction) -> bool {
+        self.acting_stack(action)
+            .last()
+            .is_none_or(|top| top.insertions().is_empty() && top.deletions().is_empty())
+    }
+
+    fn drop_top_stack_item(&mut self, doc: &Doc, fragment: &XmlFragmentRef, action: HistoryAction) {
+        let (mut undo, mut redo) = self.cloned_stacks();
+        match action {
+            HistoryAction::Undo => &mut undo,
+            HistoryAction::Redo => &mut redo,
+        }
+        .pop();
+        self.install_stacks(doc, fragment, undo, redo);
+    }
+
+    fn isolate_top_stack_item(
+        &mut self,
+        doc: &Doc,
+        fragment: &XmlFragmentRef,
+        action: HistoryAction,
+    ) -> Vec<StackItem<HistoryMetadata>> {
+        let (mut undo, mut redo) = self.cloned_stacks();
+        let acting = match action {
+            HistoryAction::Undo => &mut undo,
+            HistoryAction::Redo => &mut redo,
+        };
+        let mut beneath = std::mem::take(acting);
+        let top = beneath
+            .pop()
+            .expect("an available history stack has a top item");
+        acting.push(top);
+        self.install_stacks(doc, fragment, undo, redo);
+        beneath
+    }
+
+    fn restore_stack_items_beneath(
+        &mut self,
+        doc: &Doc,
+        fragment: &XmlFragmentRef,
+        action: HistoryAction,
+        mut beneath: Vec<StackItem<HistoryMetadata>>,
+    ) {
+        if beneath.is_empty() {
+            return;
+        }
+        let (mut undo, mut redo) = self.cloned_stacks();
+        let acting = match action {
+            HistoryAction::Undo => &mut undo,
+            HistoryAction::Redo => &mut redo,
+        };
+        beneath.append(acting);
+        *acting = beneath;
+        self.install_stacks(doc, fragment, undo, redo);
+    }
+
+    fn pop_isolated_stack_item(
+        &mut self,
+        action: HistoryAction,
+    ) -> (bool, Option<HistorySnapshotSlot>) {
         *self
             .popped
             .lock()
@@ -281,7 +340,7 @@ impl YrsHistory {
             .expect("pending history pop lock poisoned")
             .take();
         if !changed {
-            return None;
+            return (false, None);
         }
         let (kind, value) = self
             .popped
@@ -289,27 +348,109 @@ impl YrsHistory {
             .expect("popped history metadata lock poisoned")
             .take()
             .expect("changed Yrs history pop supplies metadata");
-        self.reset_grouping();
-        match kind {
-            EventKind::Undo => value.before,
-            EventKind::Redo => value.after,
+        (
+            true,
+            match kind {
+                EventKind::Undo => value.before,
+                EventKind::Redo => value.after,
+            },
+        )
+    }
+
+    pub(crate) fn perform(
+        &mut self,
+        request_id: u64,
+        action: HistoryAction,
+        doc: &Doc,
+        fragment: &XmlFragmentRef,
+    ) -> OperationResult<HistoryPop> {
+        let mut pruned = 0usize;
+        loop {
+            if self.acting_stack(action).is_empty() {
+                return Ok(HistoryPop::unchanged(pruned));
+            }
+            self.exclude_protected_containers(request_id, doc, fragment, action)?;
+            if self.top_reverts_nothing(action) {
+                self.drop_top_stack_item(doc, fragment, action);
+                pruned += 1;
+                continue;
+            }
+            let originals = self
+                .acting_stack(action)
+                .last()
+                .map(|top| top.deletions().clone())
+                .unwrap_or_default();
+            let beneath = self.isolate_top_stack_item(doc, fragment, action);
+            let (changed, restored) = self.pop_isolated_stack_item(action);
+            if changed {
+                let copies = match action {
+                    HistoryAction::Undo => self.manager.redo_stack(),
+                    HistoryAction::Redo => self.manager.undo_stack(),
+                }
+                .last()
+                .map(|item| item.insertions().clone())
+                .unwrap_or_default();
+                self.record_redone_chain(originals, copies);
+            }
+            self.restore_stack_items_beneath(doc, fragment, action, beneath);
+            if changed {
+                self.reset_grouping();
+                self.drop_unrevertible_stack_tops(doc, fragment);
+                return Ok(HistoryPop {
+                    changed,
+                    pruned,
+                    restored,
+                });
+            }
+            pruned += 1;
         }
     }
 
-    pub(crate) fn undo(&mut self) -> HistoryPop {
-        let restored = self.perform(HistoryAction::Undo);
-        HistoryPop {
-            changed: restored.is_some(),
-            restored,
-        }
+    pub(crate) fn undo(
+        &mut self,
+        request_id: u64,
+        doc: &Doc,
+        fragment: &XmlFragmentRef,
+    ) -> OperationResult<HistoryPop> {
+        self.perform(request_id, HistoryAction::Undo, doc, fragment)
     }
 
-    pub(crate) fn redo(&mut self) -> HistoryPop {
-        let restored = self.perform(HistoryAction::Redo);
-        HistoryPop {
-            changed: restored.is_some(),
-            restored,
+    pub(crate) fn redo(
+        &mut self,
+        request_id: u64,
+        doc: &Doc,
+        fragment: &XmlFragmentRef,
+    ) -> OperationResult<HistoryPop> {
+        self.perform(request_id, HistoryAction::Redo, doc, fragment)
+    }
+
+    pub(crate) fn acting_stack_matches(&self, other: &Self, action: HistoryAction) -> bool {
+        let mine = self.acting_stack(action);
+        let theirs = other.acting_stack(action);
+        mine.len() == theirs.len()
+            && mine.iter().zip(theirs.iter()).all(|(left, right)| {
+                left.insertions() == right.insertions() && left.deletions() == right.deletions()
+            })
+    }
+
+    pub(crate) fn drop_acting_stack_items(
+        &mut self,
+        doc: &Doc,
+        fragment: &XmlFragmentRef,
+        action: HistoryAction,
+        count: usize,
+    ) {
+        if count == 0 || self.acting_stack(action).is_empty() {
+            return;
         }
+        let (mut undo, mut redo) = self.cloned_stacks();
+        let acting = match action {
+            HistoryAction::Undo => &mut undo,
+            HistoryAction::Redo => &mut redo,
+        };
+        let retained = acting.len().saturating_sub(count);
+        acting.truncate(retained);
+        self.install_stacks(doc, fragment, undo, redo);
     }
 
     pub(crate) fn retained_units(&self, request_id: u64) -> OperationResult<u64> {
@@ -351,9 +492,7 @@ impl YrsHistory {
         let event_ceiling = self.event_ceiling();
         let next_count = self.replay_events.len().saturating_add(1);
         let next_bytes = self.replay_bytes.saturating_add(event.encoded_bytes());
-        let retained_metadata = self
-            .replay_metadata_bytes
-            .saturating_add(self.unmirrored_stack_metadata_bytes(request_id)?);
+        let retained_metadata = self.retained_metadata_bytes(request_id)?;
         if next_count >= event_ceiling
             || next_bytes > self.max_encoded_state_bytes
             || retained_metadata > self.limits.max_derived_output_bytes

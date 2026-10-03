@@ -70,12 +70,22 @@ final class EditorV2Adapter {
     var onRemoteRecoveryForTesting: (() -> Void)?
     var lastSyncedScalarSelection: (anchor: UInt32, head: UInt32)?
     var cachedAuthoritativeScalarSelection: (anchor: UInt32, head: UInt32)?
+    var publishedCollaborationCells: (anchor: UInt32, head: UInt32)?
     var cachedScalarLength: UInt32?
     var cachedActiveState: [String: Any]?
     var cachedHistoryState: (canUndo: Bool, canRedo: Bool)?
     var cachedViewUpdateJSON: String?
     var cachedAtomicRenderJSON: String?
+    var cachedAtomicRenderSelectionObject: [String: Any]?
     var cachedAtomicRenderDocumentRevision: UInt64?
+    var cachedSemanticRenderBlocks: [[[String: Any]]]?
+    var tableIndex = EditorTableIndex()
+    var installedFrameRevision: UInt64?
+    var fullFrameAdoptionCountForTesting = 0
+    var deltaFrameAdoptionCountForTesting = 0
+    var transformNativeFrameForTesting: ((FfiNativeRenderFrame) -> FfiNativeRenderFrame)?
+    var cachedTablePresentation: EditorTablePresentationSnapshot?
+    var tableResetGeneration: UInt64 = 0
     /// Diagnostics: structured notes for adapter-path failures
     /// (mismatch refreshes, derivation failures) that never surface as
     /// autonomous error events.
@@ -87,6 +97,7 @@ final class EditorV2Adapter {
     private var lifecycleState = LifecycleState.active
     var destroyed = false
 
+    static let revisionMismatchCode = "REVISION_MISMATCH"
     static let nativeOwnerLock = NSLock()
     static var nextNativeOwnerId: UInt64 = 0
 
@@ -263,6 +274,12 @@ final class EditorV2Adapter {
                 error: contractError("v2 destroy result violates the frozen unit-result shape")
             )
         }
+        if destroyed {
+            tableIndex = EditorTableIndex()
+            installedFrameRevision = nil
+            cachedTablePresentation = nil
+            cachedSemanticRenderBlocks = nil
+        }
         runtimeLock.unlock()
         return normalized
     }
@@ -363,6 +380,9 @@ final class EditorV2Adapter {
             "selection": selection,
             "activeState": cachedActiveState ?? NSNull(),
             "historyState": history,
+            "tableKeys": tableIndex.tableKeys.sorted(),
+            "installedFrameRevision": installedFrameRevision.map(String.init) ?? NSNull(),
+            "semanticRenderBlocks": cachedSemanticRenderBlocks ?? NSNull(),
             "viewUpdateJSON": cachedViewUpdateJSON ?? NSNull()
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else {

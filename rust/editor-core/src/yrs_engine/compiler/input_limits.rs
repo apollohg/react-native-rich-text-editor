@@ -5,7 +5,8 @@ use crate::yrs_engine::compiler::CompilationContext;
 use crate::yrs_engine::editing_limits::CheckedWork;
 use crate::yrs_engine::mutation::crdt_clock_scan_reservation;
 use crate::yrs_engine::{
-    OperationError, OperationResult, TransactionOrigin, TypedOperation, TypedTransaction,
+    OperationError, OperationResult, StructuralEdit, TransactionOrigin, TypedOperation,
+    TypedTransaction,
 };
 
 pub(crate) fn admit_transaction_envelope(
@@ -33,9 +34,24 @@ pub(crate) fn admit_transaction_envelope(
         ));
     }
     let mut work = CheckedWork::default();
+    let mut charged_operations = 0usize;
+    for operation in &transaction.operations {
+        charged_operations = charged_operations
+            .checked_add(operation.charged_operation_units())
+            .ok_or_else(|| {
+                OperationError::operation_limit_exceeded(
+                    request_id,
+                    None,
+                    "maxOperationsPerTransaction",
+                    u64::try_from(context.editing_limits.max_operations_per_transaction)
+                        .unwrap_or(u64::MAX),
+                    u64::MAX,
+                )
+            })?;
+    }
     work.charge_operations(
         request_id,
-        transaction.operations.len(),
+        charged_operations,
         context.editing_limits.max_operations_per_transaction,
     )?;
 
@@ -49,6 +65,48 @@ pub(crate) fn admit_transaction_envelope(
                 context.resource_limits,
                 input_bytes,
             )?),
+            TypedOperation::EditStructure(batch) => {
+                let mut total = 0usize;
+                for edit in batch.edits() {
+                    let edit_bytes = match edit {
+                        StructuralEdit::SpliceChildren { content, .. } => {
+                            checked_fragment_input_bytes(
+                                request_id,
+                                operation_index,
+                                content,
+                                context.resource_limits,
+                                input_bytes.saturating_add(total),
+                            )?
+                        }
+                        StructuralEdit::PatchAttributes { attrs, .. } => checked_attrs_input_bytes(
+                            request_id,
+                            operation_index,
+                            attrs,
+                            context.resource_limits,
+                            input_bytes.saturating_add(total),
+                        )?,
+                        StructuralEdit::InsertContentText { text, marks, .. } => text
+                            .len()
+                            .checked_add(checked_mark_set_input_bytes(
+                                request_id,
+                                operation_index,
+                                marks,
+                                context.resource_limits,
+                                input_bytes.saturating_add(total).saturating_add(text.len()),
+                            )?)
+                            .ok_or_else(|| {
+                                input_work_overflow(request_id, operation_index, context)
+                            })?,
+                    };
+                    total = total
+                        .checked_add(edit_bytes)
+                        .ok_or_else(|| input_work_overflow(request_id, operation_index, context))?;
+                    total = total
+                        .checked_add(edit.target_path().len())
+                        .ok_or_else(|| input_work_overflow(request_id, operation_index, context))?;
+                }
+                Some(total)
+            }
             TypedOperation::InsertText { text, marks, .. } => {
                 if text.is_empty() {
                     return Err(OperationError::operation_invalid(

@@ -342,7 +342,7 @@ fn import_encoded_state_seal_obeys_exact_retained_charge_without_dropping_two_x_
     assert!(exact_two_x_cache.encoded_state_seal.is_none());
 }
 
-fn assert_next_insert_uses_full_current_state_encode(
+fn assert_next_insert_needs_no_current_state_encode(
     engine: &mut YrsDocumentEngine,
     request_id: u64,
 ) {
@@ -350,7 +350,7 @@ fn assert_next_insert_uses_full_current_state_encode(
     engine
         .apply_typed_transaction(insert_transaction(engine, request_id))
         .unwrap();
-    assert_eq!(take_encoded_state_reuse_counts_for_test(), (0, 1, 0));
+    assert_eq!(take_encoded_state_reuse_counts_for_test(), (0, 0, 0));
 }
 
 fn imported_engine_with_sealed_state() -> YrsDocumentEngine {
@@ -394,6 +394,8 @@ fn sealed_state_vector_drift_falls_back() {
             &live_doc,
             &live_fragment,
             &compiled.mutation_plan,
+            &live_txn,
+            None,
             engine.revision,
             engine.yrs_state_epoch,
             engine.resource_limits.max_encoded_state_bytes,
@@ -408,7 +410,7 @@ fn sealed_state_vector_drift_falls_back() {
 
     reset_encoded_state_reuse_counts_for_test();
     engine.apply_compiled_transaction(compiled, true).unwrap();
-    assert_eq!(take_encoded_state_reuse_counts_for_test(), (0, 1, 0));
+    assert_eq!(take_encoded_state_reuse_counts_for_test(), (0, 0, 0));
 }
 
 #[test]
@@ -458,7 +460,7 @@ fn sealed_state_fragment_options_revision_and_epoch_drift_fall_back() {
         .as_mut()
         .unwrap()
         .fragment_id = BranchID::Root(Arc::from("other"));
-    assert_next_insert_uses_full_current_state_encode(&mut stale_fragment, 70_118);
+    assert_next_insert_needs_no_current_state_encode(&mut stale_fragment, 70_118);
 
     let mut stale_options = imported_engine_with_sealed_state();
     let seal = stale_options
@@ -472,7 +474,7 @@ fn sealed_state_fragment_options_revision_and_epoch_drift_fall_back() {
         OffsetKind::Bytes => OffsetKind::Utf16,
         OffsetKind::Utf16 => OffsetKind::Bytes,
     };
-    assert_next_insert_uses_full_current_state_encode(&mut stale_options, 70_119);
+    assert_next_insert_needs_no_current_state_encode(&mut stale_options, 70_119);
 
     let mut stale_revision = imported_engine_with_sealed_state();
     stale_revision
@@ -483,7 +485,7 @@ fn sealed_state_fragment_options_revision_and_epoch_drift_fall_back() {
         .as_mut()
         .unwrap()
         .document_revision = stale_revision.revision.saturating_add(1);
-    assert_next_insert_uses_full_current_state_encode(&mut stale_revision, 70_120);
+    assert_next_insert_needs_no_current_state_encode(&mut stale_revision, 70_120);
 
     let mut stale_epoch = imported_engine_with_sealed_state();
     stale_epoch
@@ -494,7 +496,7 @@ fn sealed_state_fragment_options_revision_and_epoch_drift_fall_back() {
         .as_mut()
         .unwrap()
         .yrs_state_epoch = stale_epoch.yrs_state_epoch.saturating_add(1);
-    assert_next_insert_uses_full_current_state_encode(&mut stale_epoch, 70_121);
+    assert_next_insert_needs_no_current_state_encode(&mut stale_epoch, 70_121);
 }
 
 #[test]
@@ -521,7 +523,7 @@ fn sealed_state_rechecks_current_limit_and_survives_selection_only_state_change(
         .encoded_state
         .len();
     limit_drift.resource_limits.max_encoded_state_bytes = retained_len.checked_mul(3).unwrap() - 1;
-    assert_next_insert_uses_full_current_state_encode(&mut limit_drift, 70_122);
+    assert_next_insert_needs_no_current_state_encode(&mut limit_drift, 70_122);
 
     let mut selection_only = imported_engine_with_sealed_state();
     let document_revision = selection_only.revision;

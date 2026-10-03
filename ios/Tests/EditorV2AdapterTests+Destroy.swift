@@ -149,10 +149,6 @@ extension EditorV2AdapterTests {
             destroySession: { _ in
                 destroyAttempts += 1
                 XCTAssertTrue(registry.isDestroyed(editorId: handle.nativeViewId))
-                XCTAssertTrue(
-                    registry.prepareForCommandJSON(editorId: handle.nativeViewId)
-                        .contains("\"ready\":false")
-                )
                 return FfiUnitResult(
                     value: nil,
                     error: FfiError(
@@ -187,10 +183,7 @@ extension EditorV2AdapterTests {
         XCTAssertEqual(destroyAttempts, 1)
         XCTAssertFalse(registry.isDestroyed(editorId: handle.nativeViewId))
         XCTAssertTrue(EditorV2Registry.adapter(forLegacyId: handle.nativeViewId) === adapter)
-        XCTAssertEqual(
-            commandPreparation(registry.prepareForCommandJSON(editorId: handle.nativeViewId)),
-            nil
-        )
+
     }
 
     func testDestroyReservationContentionReturnsRetryableErrorThenOwnerSuccessFinalizesOnce() {
@@ -240,10 +233,6 @@ extension EditorV2AdapterTests {
             finalizationChecks += 1
             XCTAssertNil(EditorV2Registry.adapter(forLegacyId: editorId))
             XCTAssertTrue(viewRegistry.isDestroyReserved(editorId: editorId))
-            XCTAssertTrue(
-                viewRegistry.prepareForCommandJSON(editorId: editorId)
-                    .contains("\"ready\":false")
-            )
         }
         defer {
             viewRegistry.onFinalizeDestroyForTesting = nil

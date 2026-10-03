@@ -35,6 +35,33 @@ fn html_rules_json_encode_non_scalar_attrs() {
 }
 
 #[test]
+fn html_rules_numeric_attributes_are_stable_across_integer_and_float_storage() {
+    let schema = atom_rules_schema();
+    for (count, expected) in [
+        (serde_json::json!(7), "7"),
+        (serde_json::json!(7.0), "7"),
+        (serde_json::json!(7.5), "7.5"),
+        (serde_json::json!(u64::MAX), "18446744073709551615"),
+    ] {
+        let document = from_prosemirror_json(
+            &serde_json::json!({"type":"doc","content":[
+                {"type":"counterCard","attrs":{"title":"", "count":count}}
+            ]}),
+            &schema,
+            UnknownTypeMode::Error,
+        )
+        .unwrap();
+        assert_eq!(
+            to_html(&document, &schema),
+            format!(
+                "<div data-type=\"counter-card\" data-count=\"{expected}\" data-title=\"\"></div>"
+            ),
+            "numeric HTML must retain its value without exposing JSON number storage: {count}"
+        );
+    }
+}
+
+#[test]
 fn html_rules_element_parses_to_atom_node() {
     let schema = atom_rules_schema();
     let doc = from_html(
@@ -281,6 +308,7 @@ fn mention_schema() -> Schema {
             // Mirrors the real `mentionNodeSpec()` (src/addons.ts), which
             // intentionally round-trips arbitrary app-defined attrs.
             allow_undeclared_attrs: true,
+            table_role: None,
         });
     }
     let marks = base.all_marks().cloned().collect();

@@ -14,6 +14,8 @@ use std::time::{Duration, Instant};
 // same render/position/active-state paths the v2 render accessor uses.
 #[path = "../src/boundary.rs"]
 mod boundary;
+#[path = "../src/clipboard.rs"]
+mod clipboard;
 #[path = "../src/collaboration_runtime/mod.rs"]
 mod collaboration_runtime;
 #[path = "command_planner_shim/command_planner.rs"]
@@ -22,14 +24,8 @@ mod command_planner;
 mod document_api;
 #[path = "../src/editor_state.rs"]
 mod editor_state;
-// Path-included engine sources retain their production dependency on the v2
-// wire primitives. Re-export only that shared types module at the benchmark
-// crate root; the benchmark must not pull in the v2 export entrypoints.
-#[path = "../src/ffi_v2/types.rs"]
-pub(crate) mod ffi_v2_types;
-pub(crate) mod ffi_v2 {
-    pub(crate) use super::ffi_v2_types as types;
-}
+#[path = "../src/ffi_v2/mod.rs"]
+pub(crate) mod ffi_v2;
 uniffi::setup_scaffolding!();
 #[path = "../src/model/mod.rs"]
 mod model;
@@ -51,9 +47,11 @@ mod selection;
 mod serialize;
 #[path = "../src/session.rs"]
 mod session;
+#[path = "../src/tables/mod.rs"]
+mod tables;
 #[path = "../src/transform/mod.rs"]
 mod transform;
-#[path = "../src/viewer/types.rs"]
+#[path = "../src/viewer/mod.rs"]
 mod viewer;
 #[path = "../src/yrs_engine/mod.rs"]
 mod yrs_engine;
@@ -72,55 +70,14 @@ use crate::yrs_engine::{
 pub use schema::presets::{prosemirror_schema, tiptap_schema};
 
 #[cfg(test)]
-mod test_support {
-    pub(crate) use registry_concurrency::RegistryConcurrencyGuard;
-
-    mod registry_concurrency {
-        use std::cell::Cell;
-        use std::sync::{Mutex, MutexGuard, OnceLock};
-
-        thread_local! {
-            static REGISTRY_GUARD_DEPTH: Cell<usize> = const { Cell::new(0) };
-        }
-
-        static REGISTRY_GUARD: OnceLock<Mutex<()>> = OnceLock::new();
-
-        pub(crate) struct RegistryConcurrencyGuard {
-            _guard: Option<MutexGuard<'static, ()>>,
-        }
-
-        impl RegistryConcurrencyGuard {
-            pub(crate) fn acquire() -> Self {
-                let already_held = REGISTRY_GUARD_DEPTH.with(|depth| {
-                    let held = depth.get() > 0;
-                    depth.set(depth.get() + 1);
-                    held
-                });
-                if already_held {
-                    return Self { _guard: None };
-                }
-                let guard = REGISTRY_GUARD
-                    .get_or_init(|| Mutex::new(()))
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                Self {
-                    _guard: Some(guard),
-                }
-            }
-
-            pub(crate) fn inherit_for_spawned_thread() -> Self {
-                REGISTRY_GUARD_DEPTH.with(|depth| depth.set(depth.get() + 1));
-                Self { _guard: None }
-            }
-        }
-
-        impl Drop for RegistryConcurrencyGuard {
-            fn drop(&mut self) {
-                REGISTRY_GUARD_DEPTH.with(|depth| depth.set(depth.get() - 1));
-            }
-        }
-    }
-}
+#[path = "../src/test_support/mod.rs"]
+mod test_support;
+#[cfg(test)]
+pub(crate) use document_api::session_initialization_test_support;
+#[cfg(test)]
+pub(crate) use native_transaction_bridge::native_bridge_test_support;
+#[cfg(test)]
+pub(crate) use registry::session_lifecycle_test_support;
 
 use serde_json::{json, Value};
 

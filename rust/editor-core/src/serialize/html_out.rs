@@ -1,5 +1,12 @@
 use crate::model::{Document, Node};
 use crate::schema::{NodeRole, Schema};
+use crate::tables::roles::TABLE_CELL_COLWIDTH_ATTR;
+use crate::tables::TableRole;
+
+pub(crate) const TABLE_BODY_HTML_TAG: &str = "tbody";
+pub(crate) const TABLE_COLWIDTH_HTML_ATTR: &str = "data-colwidth";
+pub(crate) const TABLE_COLWIDTH_SEPARATOR: char = ',';
+const FIRST_WIDTH_SLICE: usize = 0;
 
 /// Serialize a document to an HTML string using the given schema for tag mappings.
 ///
@@ -64,6 +71,12 @@ pub fn to_html(doc: &Document, schema: &Schema) -> String {
                     buf.push('>');
                     frames.push(Frame::Close(tag));
                 }
+                if spec.is_some_and(|spec| spec.table_role == Some(TableRole::Table)) {
+                    buf.push('<');
+                    buf.push_str(TABLE_BODY_HTML_TAG);
+                    buf.push('>');
+                    frames.push(Frame::Close(TABLE_BODY_HTML_TAG));
+                }
                 if let Some(content) = node.content() {
                     frames.extend(content.iter().rev().map(Frame::Node));
                 }
@@ -71,6 +84,20 @@ pub fn to_html(doc: &Document, schema: &Schema) -> String {
         }
     }
     buf
+}
+
+fn scalar_attribute(value: &serde_json::Value) -> Option<String> {
+    if let Some(value) = value.as_str() {
+        Some(value.to_owned())
+    } else if let Some(value) = value.as_bool() {
+        Some(value.to_string())
+    } else if let Some(value) = value.as_i64() {
+        Some(value.to_string())
+    } else if let Some(value) = value.as_u64() {
+        Some(value.to_string())
+    } else {
+        value.as_f64().map(|value| value.to_string())
+    }
 }
 
 fn serialize_html_rules_node(node: &Node, rules: &crate::schema::HtmlRules, buf: &mut String) {
@@ -90,11 +117,7 @@ fn serialize_html_rules_node(node: &Node, rules: &crate::schema::HtmlRules, buf:
         if value.is_null() {
             continue;
         }
-        let rendered = match value {
-            serde_json::Value::String(text) => text.clone(),
-            serde_json::Value::Bool(_) | serde_json::Value::Number(_) => value.to_string(),
-            _ => json_value_string(value),
-        };
+        let rendered = scalar_attribute(value).unwrap_or_else(|| json_value_string(value));
         buf.push(' ');
         buf.push_str(html_attr);
         buf.push_str("=\"");
@@ -119,22 +142,23 @@ fn serialize_node_attrs(node: &Node, spec: &crate::schema::NodeSpec, buf: &mut S
         }
         if key == "start"
             && matches!(spec.role, NodeRole::List { ordered: true })
-            && value.as_u64() == Some(1)
+            && crate::model::integral_unsigned(value)
+                == Some(u64::from(crate::render::DEFAULT_ORDERED_LIST_START))
         {
             continue;
         }
+        if is_table_cell_colwidth(spec, key) {
+            if let Some(widths) = render_colwidth(value) {
+                buf.push(' ');
+                buf.push_str(TABLE_COLWIDTH_HTML_ATTR);
+                buf.push_str("=\"");
+                escape_html(&widths, buf);
+                buf.push('"');
+            }
+            continue;
+        }
 
-        let rendered = if let Some(string_value) = value.as_str() {
-            string_value.to_string()
-        } else if let Some(bool_value) = value.as_bool() {
-            bool_value.to_string()
-        } else if let Some(number_value) = value.as_i64() {
-            number_value.to_string()
-        } else if let Some(number_value) = value.as_u64() {
-            number_value.to_string()
-        } else if let Some(number_value) = value.as_f64() {
-            number_value.to_string()
-        } else {
+        let Some(rendered) = scalar_attribute(value) else {
             continue;
         };
 
@@ -144,6 +168,37 @@ fn serialize_node_attrs(node: &Node, spec: &crate::schema::NodeSpec, buf: &mut S
         escape_html(&rendered, buf);
         buf.push('"');
     }
+}
+
+pub(crate) fn is_table_cell_colwidth(spec: &crate::schema::NodeSpec, key: &str) -> bool {
+    key == TABLE_CELL_COLWIDTH_ATTR
+        && matches!(
+            spec.table_role,
+            Some(TableRole::Cell) | Some(TableRole::HeaderCell)
+        )
+}
+
+fn render_colwidth(value: &serde_json::Value) -> Option<String> {
+    let serde_json::Value::Array(widths) = value else {
+        return None;
+    };
+    let mut rendered = String::new();
+    let mut carries_a_width = false;
+    for (slice, width) in widths.iter().enumerate() {
+        if slice > FIRST_WIDTH_SLICE {
+            rendered.push(TABLE_COLWIDTH_SEPARATOR);
+        }
+        let width = crate::model::integral_unsigned(width)
+            .filter(|width| *width != u64::from(crate::tables::projection::UNSET_COLUMN_WIDTH));
+        match width {
+            Some(width) => {
+                rendered.push_str(&width.to_string());
+                carries_a_width = true;
+            }
+            None => rendered.push_str(&crate::tables::projection::UNSET_COLUMN_WIDTH.to_string()),
+        }
+    }
+    carries_a_width.then_some(rendered)
 }
 
 fn serialize_mark_open(mark: &crate::model::Mark, schema: &Schema, buf: &mut String) {

@@ -8,7 +8,9 @@ import android.os.Looper
 import android.view.MotionEvent
 import android.view.View
 import android.view.Window
+import android.view.WindowInsets
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
@@ -49,6 +51,8 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
         val hadVisibleToolbar: Boolean,
         val selectionAnchor: Int?,
         val selectionHead: Int?,
+        val cellTableKey: String? = null,
+        val cellIndex: Int? = null,
         val mentionAnchor: Int? = null,
         val mentionHead: Int? = null,
         val mentionQuery: String? = null
@@ -85,7 +89,11 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
 
     internal data class PreflightUpdateEvent(val updateJSON: String, val documentRevision: String)
 
-    internal data class ActiveExternalTextComposition(val sessionId: String, val editorId: String)
+    internal data class ActiveExternalTextComposition(
+        val sessionId: String,
+        val editorId: String,
+        val input: EditorEditText
+    )
 
     internal enum class PendingPropertyRetryResult {
         STALE,
@@ -156,6 +164,7 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
     internal val onContentHeightChange by EventDispatcher<Map<String, Any>>()
     internal val onAtomLayout by EventDispatcher<Map<String, Any>>()
     internal val onEditorReady by EventDispatcher<Map<String, Any>>()
+    internal val onTableSelectionGeometry by EventDispatcher<Map<String, Any>>()
 
     @Suppress("unused")
     internal val onToolbarAction by EventDispatcher<Map<String, Any>>()
@@ -177,9 +186,15 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
     internal var onEditorErrorForTesting: ((Map<String, Any>) -> Unit)? = null
     internal var onExternalTextCompositionEndForTesting: ((Map<String, Any>) -> Unit)? = null
     internal var onEditorReadyForTesting: ((Map<String, Any>) -> Unit)? = null
+    internal var onTableSelectionGeometryForTesting: ((Map<String, Any>) -> Unit)? = null
+    internal var rootWindowInsetsForTesting: WindowInsetsCompat? = null
+    internal val tableSelectionGeometryPublisher = TableSelectionGeometryPublisher(
+        this,
+        this::currentTableSelectionGeometry,
+        this::dispatchTableSelectionGeometry
+    )
     internal var onOutsideTapTraceForTesting: ((String) -> Unit)? = null
     internal var onRefreshToolbarStateFromEditorSelectionForTesting: (() -> String?)? = null
-    internal var onBeforePrepareForEditorCommandForTesting: (() -> Unit)? = null
     internal var isAttachedToNativeWindow = false
     internal var didApplyAutoFocus = false
     internal var heightBehavior = EditorHeightBehavior.FIXED
@@ -223,6 +238,8 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
     internal var remoteCommitRebaseScheduled = false
     internal var remoteCommitRebaseEditorId: Long? = null
     internal var activeExternalTextComposition: ActiveExternalTextComposition? = null
+    internal var tableCellTextInput: EditorEditText? = null
+    private var lastEmittedFocus: Pair<Long, Boolean>? = null
     internal var toolbarState = NativeToolbarState.empty
     internal var showsToolbar = true
     internal var toolbarPlacement = ToolbarPlacement.KEYBOARD
@@ -293,7 +310,26 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
     init {
         addView(richTextView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         richTextView.onAtomLayoutChange = ::emitAtomLayout
+        richTextView.onTableSelectionGeometryMayChange =
+            tableSelectionGeometryPublisher::scheduleFlush
         richTextView.editorEditText.editorListener = this
+        richTextView.editorEditText.rootTableNativeOwnerAuthority =
+            ::hasTableRootNativeOwnerAuthority
+        richTextView.onTableCellInputCreated = { input ->
+            tableCellTextInput = input
+            input.editorListener = this
+            val root = richTextView.editorEditText
+            input.setAutoCapitalize(root.nativeAutoCapitalize)
+            input.setAutoCorrect(root.nativeAutoCorrect)
+            input.setKeyboardType(root.nativeKeyboardType)
+            input.setPrivateImeOptionsForEditor(root.privateImeOptions)
+            input.pasteMode = root.pasteMode
+            input.contentDescription = root.contentDescription
+            input.setEditorAccessibilityHint(root.editorAccessibilityHint?.toString())
+            input.setOnFocusChangeListener { _, hasFocus ->
+                handleTextInputFocusChange(input, hasFocus)
+            }
+        }
         richTextView.onBeforeDetachedFromWindow = {
             prepareForDetachFromWindow()
         }
@@ -320,27 +356,47 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
         )
 
         richTextView.editorEditText.setOnFocusChangeListener { _, hasFocus ->
-            if (hasFocus) {
-                cancelPendingToolbarRefocus()
-                installOutsideTapBlurHandlerIfNeeded()
-                scheduleOutsideTapBlurHandlerInstallRetry()
-                refreshMentionQuery()
-            } else {
-                if (consumeToolbarFocusPreservationForBlur()) {
-                    scheduleToolbarRefocus()
-                    return@setOnFocusChangeListener
-                }
-                uninstallOutsideTapBlurHandler()
-                clearMentionQueryState()
-                clearPendingNativeActionRetry()
-            }
-            updateKeyboardToolbarVisibility()
-            val event = mapOf<String, Any>(
-                "isFocused" to hasFocus,
-                "editorId" to eventEditorId(richTextView.editorId)
-            )
-            onFocusChangeForTesting?.invoke(event) ?: onFocusChange(event)
+            handleTextInputFocusChange(richTextView.editorEditText, hasFocus)
         }
+    }
+
+    private fun handleTextInputFocusChange(input: EditorEditText, hasFocus: Boolean) {
+        if (richTextView.activeTextInput !== input) {
+            if (!hasFocus) {
+                val editorId = richTextView.editorId
+                mainHandler.post {
+                    if (richTextView.editorId != editorId) return@post
+                    val active = richTextView.activeTextInput
+                    if (!active.hasFocus()) handleTextInputFocusChange(active, false)
+                }
+            }
+            return
+        }
+        if (hasFocus) {
+            cancelPendingToolbarRefocus()
+            installOutsideTapBlurHandlerIfNeeded()
+            scheduleOutsideTapBlurHandlerInstallRetry()
+            refreshMentionQuery()
+            tableSelectionGeometryPublisher.scheduleFlush()
+        } else {
+            if (consumeToolbarFocusPreservationForBlur()) {
+                scheduleToolbarRefocus()
+                return
+            }
+            uninstallOutsideTapBlurHandler()
+            clearMentionQueryState()
+            clearPendingNativeActionRetry()
+            tableSelectionGeometryPublisher.flush()
+        }
+        updateKeyboardToolbarVisibility()
+        val focus = richTextView.editorId to hasFocus
+        if (lastEmittedFocus == focus) return
+        lastEmittedFocus = focus
+        val event = mapOf<String, Any>(
+            "isFocused" to hasFocus,
+            "editorId" to eventEditorId(richTextView.editorId)
+        )
+        onFocusChangeForTesting?.invoke(event) ?: onFocusChange(event)
     }
 
     fun setEditorHandle(handle: String?) = setEditorHandleImpl(handle)
@@ -349,7 +405,10 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
      * Internal-only widget binding. This token is allocated by
      * [EditorV2Registry] and is never a public session identifier.
      */
-    fun setEditorId(id: Long) = setEditorIdImpl(id)
+    fun setEditorId(id: Long) {
+        setEditorIdImpl(id)
+        tableSelectionGeometryPublisher.flush()
+    }
 
     fun setThemeJson(themeJson: String?) = setThemeJsonImpl(themeJson)
 
@@ -414,6 +473,12 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
     fun setAllowImageResizing(allowImageResizing: Boolean) =
         setAllowImageResizingImpl(allowImageResizing)
 
+    fun setTableEditMenuEnabled(enabled: Boolean) {
+        richTextView.tableEditMenuEnabled = enabled
+    }
+
+    fun setTableDirection(tableDirection: String?) = setTableDirectionImpl(tableDirection)
+
     fun setToolbarItemsJson(toolbarItemsJson: String?) = setToolbarItemsJsonImpl(toolbarItemsJson)
 
     fun setToolbarFrameJson(toolbarFrameJson: String?) = setToolbarFrameJsonImpl(toolbarFrameJson)
@@ -457,15 +522,26 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         handleAttachedToWindow()
+        tableSelectionGeometryPublisher.observeWindowLayout()
     }
 
-    internal fun handleEditorDestroyed(editorId: Long) = handleEditorDestroyedImpl(editorId)
+    internal fun handleEditorDestroyed(editorId: Long) {
+        handleEditorDestroyedImpl(editorId)
+        tableSelectionGeometryPublisher.flush()
+    }
 
     override fun onDetachedFromWindow() {
         prepareForDetachFromWindow()
-        richTextView.editorEditText.retireInputConnectionForHostDetach()
+        richTextView.activeTextInput.retireInputConnectionForHostDetach()
         super.onDetachedFromWindow()
         handleDetachedFromWindow()
+        tableSelectionGeometryPublisher.stopObservingWindowLayout()
+        tableSelectionGeometryPublisher.flush()
+    }
+
+    override fun onApplyWindowInsets(insets: WindowInsets): WindowInsets {
+        tableSelectionGeometryPublisher.scheduleFlush()
+        return super.onApplyWindowInsets(insets)
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -530,8 +606,6 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
     internal fun applyRemoteCommitRefresh(expectedEditorId: Long) =
         applyRemoteCommitRefreshImpl(expectedEditorId)
 
-    fun prepareForEditorCommandJSON(): String = prepareForEditorCommandJSONImpl()
-
     override fun onSelectionChanged(anchor: Int, head: Int) {
         val stateJson = refreshToolbarStateFromEditorSelection()
         refreshMentionQuery()
@@ -593,7 +667,15 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
             atomicUpdateJSON = atomicUpdateJSON
         )
         val key = NativeCommitKey(event.editorId, event.documentRevision)
-        if (!pendingEditorUpdateKeys.add(key)) return
+        val pending = pendingEditorUpdateEvents.firstOrNull {
+            it.editorId == event.editorId && it.documentRevision == event.documentRevision
+        }
+        if (pending != null) {
+            if (pending.atomicUpdateJSON == event.atomicUpdateJSON) return
+            pendingEditorUpdateEvents.remove(pending)
+        } else if (!pendingEditorUpdateKeys.add(key)) {
+            return
+        }
         pendingEditorUpdateEvents.addLast(event)
         richTextView.editorEditText.recordImeTraceForTesting(
             "nativeViewEditorUpdateQueued",
@@ -793,8 +875,10 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
     internal fun isPointInsideStandaloneToolbarForTesting(
         rawX: Float,
         rawY: Float,
-        windowOriginOnScreen: Point
-    ): Boolean = isPointInsideStandaloneToolbarForTestingImpl(rawX, rawY, windowOriginOnScreen)
+        reactRootOnScreen: Point,
+        viewportOffset: Point
+    ): Boolean =
+        isPointInsideStandaloneToolbarForTestingImpl(rawX, rawY, reactRootOnScreen, viewportOffset)
 
     internal companion object {
         internal const val TOOLBAR_HIT_SLOP_DP = 8f

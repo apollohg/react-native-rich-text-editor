@@ -2,8 +2,14 @@ import os
 import UIKit
 
 extension EditorTextView {
+    private static let keyboardCaretMargin: CGFloat = 8
+
+    private var keyboardCaretInput: EditorTextView? {
+        isFirstResponder ? self : focusedTableCellInput?()
+    }
+
     @objc func handleKeyboardFrameChange(_ notification: Notification) {
-        guard isFirstResponder || keyboardFrameInScreen != nil else { return }
+        guard keyboardCaretInput != nil || keyboardFrameInScreen != nil else { return }
         if notification.name == UIResponder.keyboardWillHideNotification {
             keyboardFrameInScreen = nil
         } else {
@@ -38,10 +44,13 @@ extension EditorTextView {
         keyboardBottomInset = nextInset
         contentInset.bottom += delta
         verticalScrollIndicatorInsets.bottom += delta
-        if overlap > 0, isFirstResponder, let selection = selectedTextRange {
-            let caret = caretRect(for: selection.end)
+        if overlap > 0, let input = keyboardCaretInput, let selection = input.selectedTextRange {
+            let caret = input.caretRect(for: selection.end)
             if !caret.isEmpty {
-                scrollRectToVisible(caret.insetBy(dx: 0, dy: -8), animated: false)
+                scrollVerticallyToReveal(
+                    convert(caret, from: input).insetBy(dx: 0, dy: -Self.keyboardCaretMargin),
+                    within: bounds
+                )
             }
         }
     }
@@ -242,4 +251,21 @@ extension EditorTextView {
         lastAutoGrowMeasuredWidth = 0
     }
 
+}
+
+extension UIScrollView {
+    @discardableResult
+    func scrollVerticallyToReveal(_ rect: CGRect, within viewport: CGRect) -> Bool {
+        let visible = viewport.intersection(bounds.inset(by: adjustedContentInset))
+        guard !visible.isNull, !visible.isEmpty, !rect.isEmpty,
+              rect.minY.isFinite, rect.maxY.isFinite else { return false }
+        let delta = rect.maxY > visible.maxY ? rect.maxY - visible.maxY
+            : min(0, rect.minY - visible.minY)
+        let minimum = -adjustedContentInset.top
+        let maximum = max(minimum, contentSize.height - bounds.height + adjustedContentInset.bottom)
+        let next = min(maximum, max(minimum, contentOffset.y + delta))
+        guard next != contentOffset.y else { return false }
+        setContentOffset(CGPoint(x: contentOffset.x, y: next), animated: false)
+        return true
+    }
 }

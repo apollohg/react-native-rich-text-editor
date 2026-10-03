@@ -485,3 +485,402 @@ fn reconnect_publication_reports_clock_exhaustion_without_enqueuing() {
         assert_eq!(runtime.outbox().pending_protocol_reply_count(), 0);
     }
 }
+
+mod table_cell_presence {
+    use super::*;
+    use crate::boundary::ResourceLimits;
+    use crate::tables::commands::TableCommand;
+    use crate::tables::tests::{tabled_schema, PROSEMIRROR_TABLE_NAMES};
+    use crate::yrs_engine::{
+        CellSelectionPoint, EditingLimits, HistoryPolicy, InitializationMode, SelectionInput,
+        SelectionIntent, TransactionOrigin, TypedCommand, TypedTransaction, YrsEngineConfig,
+        DEFAULT_POSITION_AFFINITY,
+    };
+
+    const PUBLISHER_REQUEST_ID: u64 = 91;
+    const FIRST_TABLE: usize = 0;
+    const SECOND_TABLE: usize = 1;
+    const TOP_LEFT: usize = 0;
+    const TOP_RIGHT: usize = 1;
+    const BOTTOM_RIGHT: usize = 3;
+
+    fn tabled_engine(initialization_mode: InitializationMode) -> YrsDocumentEngine {
+        YrsDocumentEngine::new(YrsEngineConfig {
+            schema: tabled_schema(PROSEMIRROR_TABLE_NAMES),
+            fragment_name: "prosemirror".into(),
+            initialization_mode,
+            resource_limits: ResourceLimits::default(),
+            editing_limits: EditingLimits::default(),
+            max_length: None,
+            scope: None,
+        })
+        .expect("the tabled engine initializes")
+    }
+
+    fn cell(text: &str) -> Value {
+        json!({
+            "type": "table_cell",
+            "attrs": { "colspan": 1, "rowspan": 1, "colwidth": null },
+            "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": text }] }],
+        })
+    }
+
+    fn two_by_two(prefix: &str) -> Value {
+        json!({
+            "type": "table",
+            "content": [
+                { "type": "table_row", "content": [cell(&format!("{prefix}0")), cell(&format!("{prefix}1"))] },
+                { "type": "table_row", "content": [cell(&format!("{prefix}2")), cell(&format!("{prefix}3"))] },
+            ],
+        })
+    }
+
+    fn table_openings(engine: &YrsDocumentEngine) -> Vec<Vec<u32>> {
+        let index = engine
+            .table_projection_index()
+            .expect("a ready engine carries a table projection");
+        index
+            .positions()
+            .map(|position| {
+                index
+                    .table_at(position)
+                    .expect("every listed position projects a table")
+                    .cells
+                    .iter()
+                    .map(|cell| cell.source_pos)
+                    .collect()
+            })
+            .collect()
+    }
+
+    struct Peers {
+        publisher: YrsDocumentEngine,
+        publisher_runtime: CollaborationRuntime,
+        observer: YrsDocumentEngine,
+        observer_runtime: CollaborationRuntime,
+        limits: CollaborationLimits,
+    }
+
+    fn two_table_peers() -> Peers {
+        let mut publisher = tabled_engine(InitializationMode::LocalEmpty);
+        publisher
+            .import_json(
+                &json!({ "type": "doc", "content": [two_by_two("a"), two_by_two("b")] })
+                    .to_string(),
+                TransactionOrigin::DocumentImport,
+            )
+            .expect("the two-table fixture imports");
+        let mut observer = tabled_engine(InitializationMode::AwaitRemote);
+        observer
+            .apply_remote_update_v1(REQUEST_ID, &publisher.encoded_state().unwrap())
+            .expect("the observer admits the publisher's document");
+        assert_eq!(observer.document_json(), publisher.document_json());
+        Peers {
+            publisher,
+            publisher_runtime: runtime(),
+            observer,
+            observer_runtime: runtime(),
+            limits: CollaborationLimits::default(),
+        }
+    }
+
+    fn intent(selection: Value) -> String {
+        json!({ "state": { "user": "publisher" }, "focused": true, "selection": selection })
+            .to_string()
+    }
+
+    fn cell_selection(anchor_cell: u32, head_cell: u32) -> Value {
+        json!({ "type": "cell", "anchorCell": anchor_cell, "headCell": head_cell })
+    }
+
+    impl Peers {
+        fn try_publish(&mut self, selection: Value) -> Result<Value, SessionError> {
+            self.publisher_runtime.set_awareness_intent(
+                PUBLISHER_REQUEST_ID,
+                &intent(selection),
+                context(
+                    &mut self.publisher,
+                    TransportState::Disconnected,
+                    &self.limits,
+                ),
+            )?;
+            Ok(self
+                .publisher_runtime
+                .desired_awareness()
+                .cloned()
+                .expect("the published state is retained"))
+        }
+
+        fn select(&mut self, selection: Value) -> Value {
+            self.publisher_runtime
+                .set_awareness_selection(
+                    PUBLISHER_REQUEST_ID,
+                    &selection.to_string(),
+                    context(
+                        &mut self.publisher,
+                        TransportState::Disconnected,
+                        &self.limits,
+                    ),
+                )
+                .expect("the native selection update is admitted");
+            self.publisher_runtime
+                .desired_awareness()
+                .cloned()
+                .expect("the published state is retained")
+        }
+
+        fn publish_cells(&mut self, anchor_cell: u32, head_cell: u32) -> Value {
+            self.try_publish(cell_selection(anchor_cell, head_cell))
+                .expect("the publisher admits its own real-cell rectangle")
+        }
+
+        fn deliver_presence(&mut self) {
+            let update = self
+                .publisher
+                .awareness()
+                .encode_local_update_v1()
+                .expect("the publisher encodes its presence");
+            self.observer_runtime
+                .apply_awareness_frame(&mut self.observer, &self.limits, &update)
+                .expect("the observer admits the publisher's presence");
+        }
+
+        fn observed_publisher(&mut self) -> AwarenessPeerProjection {
+            let peers = self.observer_runtime.peers(&mut self.observer);
+            peers
+                .iter()
+                .find(|peer| !peer.is_local)
+                .cloned()
+                .unwrap_or_else(|| panic!("no remote peer among {peers:?}"))
+        }
+    }
+
+    #[test]
+    fn a_remote_rectangle_resolves_to_the_same_real_cells() {
+        let mut peers = two_table_peers();
+        let cells = table_openings(&peers.publisher);
+        let (anchor, head) = (
+            cells[FIRST_TABLE][TOP_LEFT],
+            cells[FIRST_TABLE][BOTTOM_RIGHT],
+        );
+
+        peers.publish_cells(anchor, head);
+        peers.deliver_presence();
+
+        let observed = peers.observed_publisher();
+        assert_eq!(
+            observed.cell_rectangle,
+            Some(AwarenessCellRectangleProjection {
+                anchor_cell: anchor,
+                head_cell: head,
+            }),
+            "observed peer: {observed:?}",
+        );
+        assert_eq!(
+            observed.cursor,
+            Some(AwarenessCursorProjection { anchor, head }),
+            "the ordinary cursor fallback addresses the same cell openings",
+        );
+    }
+
+    #[test]
+    fn a_remote_rectangle_whose_anchor_cell_was_deleted_keeps_only_the_cursor() {
+        let mut peers = two_table_peers();
+        let cells = table_openings(&peers.publisher);
+        let (anchor, head) = (
+            cells[FIRST_TABLE][TOP_LEFT],
+            cells[FIRST_TABLE][BOTTOM_RIGHT],
+        );
+        peers.publish_cells(anchor, head);
+        peers.deliver_presence();
+
+        peers
+            .observer
+            .apply_typed_transaction(TypedTransaction {
+                request_id: REQUEST_ID,
+                base_document_revision: peers.observer.revision(),
+                origin: TransactionOrigin::LocalApi,
+                operations: Vec::new(),
+                selection_intent: SelectionIntent::Set(SelectionInput::Cell {
+                    anchor: CellSelectionPoint::Document {
+                        opening: anchor,
+                        affinity: DEFAULT_POSITION_AFFINITY,
+                    },
+                    head: CellSelectionPoint::Document {
+                        opening: anchor,
+                        affinity: DEFAULT_POSITION_AFFINITY,
+                    },
+                }),
+                history_policy: HistoryPolicy::Skip,
+            })
+            .expect("the observer selects the anchor column");
+        peers
+            .observer
+            .apply_command(
+                REQUEST_ID,
+                TypedCommand::Table(TableCommand::DeleteTableColumns),
+            )
+            .expect("the column deletion plans")
+            .expect("the column deletion applies");
+
+        let remaining = table_openings(&peers.observer);
+        assert_eq!(
+            remaining[FIRST_TABLE].len(),
+            2,
+            "the first table keeps one column: {remaining:?}",
+        );
+        let observed = peers.observed_publisher();
+        assert_eq!(
+            observed.cell_rectangle, None,
+            "a deleted anchor cell must not slide onto its surviving neighbour {:?}",
+            remaining[FIRST_TABLE][TOP_LEFT],
+        );
+        assert!(
+            observed.cursor.is_some(),
+            "the valid cursor fallback survives: {observed:?}",
+        );
+    }
+
+    #[test]
+    fn a_remote_rectangle_spanning_two_tables_keeps_only_the_cursor() {
+        let mut peers = two_table_peers();
+        let cells = table_openings(&peers.publisher);
+        let first =
+            peers.publish_cells(cells[FIRST_TABLE][TOP_RIGHT], cells[FIRST_TABLE][TOP_RIGHT]);
+        let second =
+            peers.publish_cells(cells[SECOND_TABLE][TOP_LEFT], cells[SECOND_TABLE][TOP_LEFT]);
+        let mut spanning = first.clone();
+        spanning[AWARENESS_CELL_RECTANGLE_KEY]["head"] =
+            second[AWARENESS_CELL_RECTANGLE_KEY]["head"].clone();
+
+        assert_eq!(
+            peers.observer.resolve_awareness_cell_rectangle(&first),
+            Some((cells[FIRST_TABLE][TOP_RIGHT], cells[FIRST_TABLE][TOP_RIGHT])),
+        );
+        assert_eq!(
+            peers.observer.resolve_awareness_cell_rectangle(&second),
+            Some((cells[SECOND_TABLE][TOP_LEFT], cells[SECOND_TABLE][TOP_LEFT])),
+        );
+        assert_eq!(
+            peers.observer.resolve_awareness_cell_rectangle(&spanning),
+            None,
+            "real cells in different tables never form a rectangle: {spanning}",
+        );
+        assert!(peer_cursor_projection(&peers.observer, &spanning).is_some());
+    }
+
+    #[test]
+    fn the_rectangle_extension_counts_toward_the_peer_byte_ceiling() {
+        let mut measured = two_table_peers();
+        let cells = table_openings(&measured.publisher);
+        let (anchor, head) = (
+            cells[FIRST_TABLE][TOP_LEFT],
+            cells[FIRST_TABLE][BOTTOM_RIGHT],
+        );
+        let text_state = measured
+            .try_publish(json!({ "type": "text", "anchor": anchor, "head": head }))
+            .expect("the text cursor publishes under default limits");
+        let cell_state = measured.publish_cells(anchor, head);
+        let text_bytes = text_state.to_string().len();
+        let cell_bytes = cell_state.to_string().len();
+        assert!(
+            cell_bytes > text_bytes && cell_bytes - 1 >= intent(cell_selection(anchor, head)).len(),
+            "the extension must be what crosses the ceiling: text {text_bytes}, cell {cell_bytes}",
+        );
+
+        // Relative-position encodings include this document's random client ID.
+        let mut bounded = measured;
+        bounded.limits.max_awareness_peer_bytes = cell_bytes - 1;
+        let accepted = bounded
+            .try_publish(json!({ "type": "text", "anchor": anchor, "head": head }))
+            .expect("the text cursor fits under the ceiling");
+        let error = bounded
+            .try_publish(cell_selection(anchor, head))
+            .expect_err("the rectangle extension pushes the state over the ceiling");
+
+        assert_eq!(error.code, "INPUT_LIMIT_EXCEEDED", "{error:?}");
+        assert_eq!(
+            error.details,
+            Some(json!({ "field": "maxAwarenessPeerBytes" })),
+            "{error:?}",
+        );
+        assert_eq!(
+            bounded.publisher_runtime.desired_awareness(),
+            Some(&accepted),
+            "a refused rectangle leaves the previous presence in place",
+        );
+    }
+
+    #[test]
+    fn a_native_selection_update_swaps_between_cell_and_text_presence() {
+        let mut peers = two_table_peers();
+        let cells = table_openings(&peers.publisher);
+        let (anchor, head) = (
+            cells[FIRST_TABLE][TOP_LEFT],
+            cells[FIRST_TABLE][BOTTOM_RIGHT],
+        );
+        peers
+            .try_publish(Value::Null)
+            .expect("presence without a cursor publishes");
+        let cell_state = peers.select(cell_selection(anchor, head));
+        assert_eq!(
+            peer_cursor_projection(&peers.publisher, &cell_state),
+            Some(AwarenessCursorProjection { anchor, head }),
+            "the fallback cursor addresses the cell openings: {cell_state}",
+        );
+        assert_eq!(
+            peers
+                .publisher
+                .resolve_awareness_cell_rectangle(&cell_state),
+            Some((anchor, head)),
+            "the extension carries the same real cells: {cell_state}",
+        );
+
+        let caret = anchor + 2;
+        let text_state = peers.select(json!({ "type": "text", "anchor": caret, "head": caret }));
+        assert_eq!(
+            text_state.get(AWARENESS_CELL_RECTANGLE_KEY),
+            None,
+            "a text selection withdraws the rectangle: {text_state}",
+        );
+        assert_eq!(
+            peer_cursor_projection(&peers.publisher, &text_state),
+            Some(AwarenessCursorProjection {
+                anchor: caret,
+                head: caret,
+            }),
+        );
+    }
+
+    #[test]
+    fn stale_cell_openings_are_refused_with_the_stale_code_and_keep_presence() {
+        let mut peers = two_table_peers();
+        let cells = table_openings(&peers.publisher);
+        let (anchor, head) = (
+            cells[FIRST_TABLE][TOP_LEFT],
+            cells[FIRST_TABLE][BOTTOM_RIGHT],
+        );
+        let published = peers.publish_cells(anchor, head);
+        let shifted = anchor + 1;
+
+        let error = peers
+            .publisher_runtime
+            .set_awareness_selection(
+                PUBLISHER_REQUEST_ID,
+                &cell_selection(shifted, head).to_string(),
+                context(
+                    &mut peers.publisher,
+                    TransportState::Disconnected,
+                    &peers.limits,
+                ),
+            )
+            .expect_err("an opening that no longer starts a cell is refused");
+
+        assert_eq!(error.code, AWARENESS_CELL_SELECTION_STALE, "{error:?}");
+        assert_eq!(
+            peers.publisher_runtime.desired_awareness(),
+            Some(&published),
+            "a stale refusal leaves the published presence untouched",
+        );
+    }
+}

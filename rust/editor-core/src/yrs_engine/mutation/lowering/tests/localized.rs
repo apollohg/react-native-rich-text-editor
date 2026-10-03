@@ -79,9 +79,22 @@ mod localized_insert_tests {
     }
 
     #[derive(Debug, PartialEq)]
+    struct CreateActionView<'a> {
+        signature: &'a ParentSignature,
+        child_index: u32,
+        text: &'a str,
+        scalar_len: u32,
+        len_utf16: u32,
+        attrs: &'a Attrs,
+        follow_up_actions: usize,
+        operation_index: usize,
+    }
+
+    #[derive(Debug, PartialEq)]
     enum TextActionView<'a> {
         Insert(InsertActionView<'a>),
         Format(FormatActionView<'a>),
+        Create(CreateActionView<'a>),
     }
 
     fn action_signature(action: &YrsMutationAction) -> InsertActionView<'_> {
@@ -126,7 +139,27 @@ mod localized_insert_tests {
                 attrs,
                 operation_index: *operation_index,
             }),
-            _ => panic!("expected InsertText or FormatText action"),
+            YrsMutationAction::CreateText {
+                child_index,
+                text,
+                scalar_len,
+                len_utf16,
+                attrs,
+                follow_up,
+                signature,
+                operation_index,
+                ..
+            } => TextActionView::Create(CreateActionView {
+                signature,
+                child_index: *child_index,
+                text,
+                scalar_len: *scalar_len,
+                len_utf16: *len_utf16,
+                attrs,
+                follow_up_actions: follow_up.len(),
+                operation_index: *operation_index,
+            }),
+            _ => panic!("expected InsertText, FormatText or CreateText action"),
         }
     }
 

@@ -4,15 +4,17 @@ use super::candidate_cache::{
 use super::history_state::history_operation_error;
 #[cfg(test)]
 use super::test_hooks::FAIL_QUARANTINED_UPDATE_RESERVATION;
-use super::transaction_result::{affinity_aware_mapped_selection, cached_render_operation_error};
+use super::transaction_result::{cached_render_operation_error, surviving_selection};
 use super::{
     checked_operation_increment, merge_operation_details, EngineCommit, YrsDocumentEngine,
 };
 use crate::position::update::UpdateMode;
+use crate::position::PositionMap;
 use crate::serialize::{
     from_prosemirror_json_with_limits, rehydrate_reserved_html_opaque, JsonParseError,
     UnknownTypeMode,
 };
+use crate::tables::admission::admit_table_shapes;
 use crate::transform::{DocumentValidator, StepMap};
 use crate::yrs_engine;
 use crate::yrs_engine::derived_state::{stored_marks_after_selection_change, DerivedStateCache};
@@ -78,6 +80,7 @@ struct PreparedRemoteInstall {
     next_state: DerivedStateCache,
     prepared_live_seed: Arc<yrs_engine::mutation::MutationLookupSeed>,
     durable_client_ids: HashSet<u64>,
+    encoded_state_bytes: usize,
     next_revision: u64,
     next_state_revision: u64,
     next_epoch: u64,
@@ -112,6 +115,7 @@ impl YrsDocumentEngine {
         request_id: u64,
         update: &[u8],
     ) -> yrs_engine::OperationResult<PreparedRemoteUpdate> {
+        self.canonical_splice_cache = None;
         let admitted_revision = self.revision;
         let admitted_state_revision = self.state_revision;
         let admitted_epoch = self.yrs_state_epoch;
@@ -189,6 +193,14 @@ impl YrsDocumentEngine {
                     )
                 })?;
             }
+        }
+        // Seeding can compact structs whose live history metadata prevented merging.
+        let seeded_candidate_encoded =
+            encode_candidate_state_bounded(&candidate_doc, &self.resource_limits)
+                .map_err(|error| history_operation_error(request_id, error))?;
+        {
+            let mut txn =
+                candidate_doc.transact_mut_with(TransactionOrigin::RemoteSync.as_yrs_origin());
             txn.apply_update(candidate_update).map_err(|error| {
                 yrs_engine::OperationError::document_invalid(
                     request_id,
@@ -234,7 +246,9 @@ impl YrsDocumentEngine {
         let candidate_encoded =
             encode_candidate_state_bounded(&candidate_doc, &self.resource_limits)
                 .map_err(|error| history_operation_error(request_id, error))?;
-        if candidate_encoded == current_encoded {
+        let unchanged = candidate_encoded == seeded_candidate_encoded;
+        drop(seeded_candidate_encoded);
+        if unchanged {
             return Ok(self.seal_remote_outcome(
                 request_id,
                 PreparedDocumentOutcome::Unchanged,
@@ -268,6 +282,8 @@ impl YrsDocumentEngine {
         .map_err(|error| remote_json_error(request_id, error))?;
         let candidate_document = rehydrate_reserved_html_opaque(&candidate_document);
         DocumentValidator::validate(&candidate_document, &self.schema, &self.resource_limits)
+            .map_err(|error| remote_validation_error(request_id, error))?;
+        admit_table_shapes(&candidate_document, &self.schema, &self.resource_limits)
             .map_err(|error| remote_validation_error(request_id, error))?;
         if let Some(limit) = self.max_length {
             let actual = candidate_document.root().text_content().chars().count();
@@ -328,13 +344,15 @@ impl YrsDocumentEngine {
                         cached_render_operation_error(request_id, &self.resource_limits, error)
                     })?,
                 );
-                let fallback = affinity_aware_mapped_selection(
-                    &current.legacy_selection(),
+                let fallback = surviving_selection(
                     &current.relative_selection,
-                    &StepMap::empty(),
+                    current.legacy_selection(),
+                    &txn,
+                    &fragment,
                     &candidate_document,
                     &self.schema,
-                    None,
+                    &PositionMap::build(&candidate_document, &self.schema),
+                    &candidate_render_blocks.table_projection_index,
                 );
                 let mut next = current
                     .after_document_change(
@@ -361,6 +379,7 @@ impl YrsDocumentEngine {
                         next_revision,
                         next_state_revision,
                         next_epoch,
+                        None,
                     )
                     .ok_or_else(|| {
                         yrs_engine::OperationError::selection_position_invalid(
@@ -426,10 +445,15 @@ impl YrsDocumentEngine {
                 .collect::<HashSet<_>>()
         };
         let accepted_update = {
-            let current_state_vector = self.doc.transact().state_vector();
-            candidate_doc
-                .transact()
-                .encode_state_as_update_v1(&current_state_vector)
+            let current_state_vector = self.doc.transact().state_vector().encode_v1();
+            // Store deltas omit integrated suffixes beyond a client's clock hole.
+            yrs::diff_updates_v1(&candidate_encoded, &current_state_vector).map_err(|error| {
+                yrs_engine::OperationError::engine_invariant_failed(
+                    request_id,
+                    None,
+                    format!("candidate-produced incremental update cannot encode: {error}"),
+                )
+            })?
         };
         preflight_update_v1(&accepted_update, &self.resource_limits)
             .map_err(|error| history_operation_error(request_id, error))?;
@@ -536,6 +560,7 @@ impl YrsDocumentEngine {
                 next_state,
                 prepared_live_seed,
                 durable_client_ids,
+                encoded_state_bytes: candidate_encoded.len(),
                 next_revision,
                 next_state_revision,
                 next_epoch,
@@ -575,6 +600,7 @@ impl YrsDocumentEngine {
         &mut self,
         prepared: PreparedRemoteUpdate,
     ) -> yrs_engine::OperationResult<EngineCommit> {
+        self.canonical_splice_cache = None;
         let PreparedRemoteUpdate {
             seal,
             document,
@@ -622,23 +648,34 @@ impl YrsDocumentEngine {
                     mut next_state,
                     prepared_live_seed,
                     durable_client_ids,
+                    encoded_state_bytes,
                     next_revision,
                     next_state_revision,
                     next_epoch,
                 } = *install;
-                {
+                let removed_content = {
                     let mut txn = self.doc.transact_mut_with(history_admission.yrs_origin());
                     txn.apply_update(live_update).expect(
                         "candidate-proved remote update must apply to identical live state",
                     );
-                }
+                    !txn.delete_set().is_empty()
+                };
                 next_state.mutation_lookup_seed = prepared_live_seed;
                 self.history
                     .finish_prepared_excluded(history_admission, accepted_update);
+                if removed_content {
+                    let fragment = self
+                        .doc
+                        .get_or_insert_xml_fragment(self.fragment_name.as_str());
+                    self.history
+                        .drop_unrevertible_stack_tops(&self.doc, &fragment);
+                }
                 self.quarantined_remote_update = dependency_candidate;
                 self.derived_state = Some(next_state);
                 self.durable_client_ids = durable_client_ids;
+                self.encoded_state_upper_bound = encoded_state_bytes;
                 self.revision = next_revision;
+                self.record_document_change(super::DocumentChangeScope::Document);
                 self.state_revision = next_state_revision;
                 self.yrs_state_epoch = next_epoch;
                 self.last_committed_origin = Some(TransactionOrigin::RemoteSync);

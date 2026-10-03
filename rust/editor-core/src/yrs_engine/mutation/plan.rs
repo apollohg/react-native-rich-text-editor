@@ -6,3 +6,7 @@ include!("plan/envelope.rs");
 include!("plan/preflight.rs");
 include!("plan/execute.rs");
 include!("plan/estimate.rs");
+
+#[cfg(test)]
+#[path = "plan/scoped_guard_tests.rs"]
+mod scoped_guard_tests;

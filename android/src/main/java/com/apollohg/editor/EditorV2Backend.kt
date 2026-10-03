@@ -1,5 +1,7 @@
 package com.apollohg.editor
 
+import uniffi.editor_core.FfiNativeRenderFrame
+
 /**
  * The v2 backend contract: the v2 engine verbs plus the v2
  * render/selection/position accessor. The production implementation
@@ -96,12 +98,17 @@ internal interface EditorV2Backend {
         mirrorAnchor: Int?,
         mirrorHead: Int?
     ): EditorV2CallResult<String>
-    fun renderNative(
+    fun renderNativeFrame(
         editorId: String,
-        ownerId: String,
+        ownerId: String?,
         mirrorAnchor: Int?,
         mirrorHead: Int?
-    ): EditorV2CallResult<String>
+    ): EditorV2CallResult<FfiNativeRenderFrame>
+    fun seedNativeRenderCursor(
+        editorId: String,
+        ownerId: String,
+        documentRevision: String
+    ): EditorV2Error?
     fun pinPositionEpoch(
         editorId: String,
         ownerId: String,

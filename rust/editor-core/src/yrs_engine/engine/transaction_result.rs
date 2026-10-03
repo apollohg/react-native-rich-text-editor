@@ -4,12 +4,21 @@ use crate::boundary::ResourceLimits;
 use crate::model::Document;
 use crate::position::PositionMap;
 use crate::schema::Schema;
+use crate::selection::Selection;
+use crate::tables::admission::TableProjectionIndex;
+use crate::tables::command_context::{text_selection_between, text_selection_near_mapped};
+use crate::tables::selection::{cell_pair_is_usable, CellSelectionOrigin};
+use crate::transform::StepMap;
 use crate::yrs_engine;
 use crate::yrs_engine::compiler::{
     map_position, selectable_void_at, CompiledTransaction, SelectionPlan, StoredMarksPlan,
 };
-use crate::yrs_engine::TransactionOrigin;
+use crate::yrs_engine::{
+    surviving_relative_point_to_doc_pos, RelativePoint, RelativeSelection, TransactionOrigin,
+};
 use std::sync::Arc;
+use yrs::types::xml::XmlFragmentRef;
+use yrs::ReadTxn;
 
 impl YrsDocumentEngine {
     pub(super) fn prepare_empty_skip_result(
@@ -26,13 +35,31 @@ impl YrsDocumentEngine {
             .as_ref()
             .ok_or_else(|| yrs_engine::OperationError::engine_not_ready(request_id))?;
         let legacy_selection = yrs_engine::derived_state::resolved_to_legacy(selection);
-        let commands = crate::editor_state::command_applicability_with_known_node_count(
+        let commands = match current.table_command_availability(
             &current.document,
             &self.schema,
             &legacy_selection,
             &self.resource_limits,
-            current.document_node_count,
-        );
+            self.editing_limits.max_derived_output_bytes,
+            &current.render_blocks,
+            self.document_scope_revision(),
+        ) {
+            Some(commands) => crate::editor_state::command_applicability_with_cached_tables(
+                &current.document,
+                &self.schema,
+                &legacy_selection,
+                &self.resource_limits,
+                current.document_node_count,
+                commands,
+            ),
+            None => crate::editor_state::command_applicability_with_known_node_count(
+                &current.document,
+                &self.schema,
+                &legacy_selection,
+                &self.resource_limits,
+                current.document_node_count,
+            ),
+        };
         let active_state = crate::editor_state::active_state(
             &current.document,
             &self.schema,
@@ -55,7 +82,7 @@ impl YrsDocumentEngine {
             },
             render_update: yrs_engine::RenderUpdate::None,
         };
-        self.admit_typed_result(request_id, &result)?;
+        self.admit_typed_result(request_id, &result, None)?;
         Ok(result)
     }
 
@@ -63,6 +90,7 @@ impl YrsDocumentEngine {
         &self,
         compiled: &CompiledTransaction,
         render_update: yrs_engine::RenderUpdate,
+        render: &crate::render::incremental::CachedRenderBlocks,
         commit_authority: &CompiledCommitAuthority<'_, '_>,
     ) -> yrs_engine::OperationResult<(
         yrs_engine::TypedTransactionResult,
@@ -91,6 +119,12 @@ impl YrsDocumentEngine {
                     &self.schema,
                     position_map,
                     rendered_text,
+                    &yrs_engine::derived_state::selection_table_index(
+                        &compiled.preview,
+                        selection,
+                        &self.schema,
+                        &self.resource_limits,
+                    ),
                 )
                 .ok_or_else(|| {
                     yrs_engine::OperationError::engine_invariant_failed(
@@ -132,126 +166,165 @@ impl YrsDocumentEngine {
                 &self.resource_limits,
             )
         };
-        let (active_state, prepared_active_cache) =
-            if let Some(transition) = &compiled.prepared_active_state_transition {
-                yrs_engine::derived_state::record_active_state_cache_attempt();
-                let structural = compiled.localized_insert_admission.as_ref().map(
-                yrs_engine::derived_state::LocalizedInsertAdmission::active_state_structural_seal,
+        let availability_scope_revision = if compiled.localized_textblock_edit_admission.is_some()
+            || compiled.preview.shares_root_storage_with(&current.document)
+        {
+            self.document_scope_revision()
+        } else {
+            self.revision.saturating_add(1)
+        };
+        let table_commands = current.table_command_availability(
+            &compiled.preview,
+            &self.schema,
+            &legacy_selection,
+            &self.resource_limits,
+            self.editing_limits.max_derived_output_bytes,
+            render,
+            availability_scope_revision,
+        );
+        let (active_state, prepared_active_cache) = if let Some(table_commands) = table_commands {
+            let commands = crate::editor_state::command_applicability_with_cached_tables(
+                &compiled.preview,
+                &self.schema,
+                &legacy_selection,
+                &self.resource_limits,
+                document_node_count,
+                table_commands,
             );
-                let validated = if let Some(structural) = structural.as_ref() {
-                    current.validate_active_state_transition(
-                        commit_authority.derived(),
-                        transition,
-                        structural,
-                        &compiled.preview,
-                        &selection,
-                        stored_marks.as_deref(),
-                        &self.resource_limits,
-                        &self.editing_limits,
-                        self.max_length,
-                        self.yrs_state_epoch,
-                    )
-                } else {
-                    None
-                };
-                match validated {
-                    Some(cached) => {
-                        yrs_engine::derived_state::record_active_state_candidate_build();
-                        let warm_cached = cached.filter(|_| {
-                            !yrs_engine::derived_state::active_state_cache_hit_fallback_forced()
-                        });
-                        let was_warm = warm_cached.is_some();
-                        let cached = if let Some(cached) = warm_cached {
-                            cached
-                        } else {
-                            yrs_engine::derived_state::record_active_state_cache_fallback();
-                            let generic = generic_active_state();
-                            match yrs_engine::derived_state::CachedActiveState::try_new(
-                                generic,
-                                &self.resource_limits,
-                                &self.editing_limits,
-                            ) {
-                                Ok(cached) => cached,
-                                Err(generic) => {
-                                    let result = yrs_engine::TypedTransactionResult {
-                                        request_id: compiled.request_id,
-                                        origin: compiled.origin,
-                                        changed: current.document != compiled.preview,
-                                        document_revision: self.revision,
-                                        state_revision: self.state_revision,
-                                        selection,
-                                        active_state: generic,
-                                        history_state: crate::editor_state::HistoryState {
-                                            can_undo: self.can_undo(),
-                                            can_redo: self.can_redo(),
-                                        },
-                                        render_update,
-                                    };
-                                    self.admit_typed_result(compiled.request_id, &result)?;
-                                    return Ok((result, None));
-                                }
-                            }
-                        };
-                        #[cfg(test)]
-                        debug_assert_eq!(
-                            cached.value(),
-                            &crate::editor_state::active_state_for_debug_invariant(
-                                &compiled.preview,
-                                &self.schema,
-                                &legacy_selection,
-                                stored_marks.as_deref(),
-                                &self.resource_limits,
-                                document_node_count,
-                            )
-                        );
-                        if let Some(active_state) =
-                            cached.clone_public(&self.resource_limits, &self.editing_limits)
-                        {
-                            if was_warm {
-                                yrs_engine::derived_state::record_active_state_cache_hit();
-                            }
-                            (active_state, Some(cached))
-                        } else {
-                            if was_warm {
-                                yrs_engine::derived_state::record_active_state_cache_fallback();
-                                (generic_active_state(), None)
-                            } else {
-                                let generic =
-                                    yrs_engine::derived_state::CachedActiveState::try_into_value(
-                                        cached,
-                                    )
-                                    .unwrap_or_else(|cached| cached.value().clone());
-                                (generic, None)
-                            }
-                        }
-                    }
-                    None => {
-                        yrs_engine::derived_state::record_active_state_cache_fallback();
-                        (generic_active_state(), None)
-                    }
-                }
-            } else {
-                // Non-eligible result paths retain the existing generic behavior
-                // and are outside the active-state cache lifecycle counters.
-                let commands = crate::editor_state::command_applicability_with_known_node_count(
+            (
+                crate::editor_state::active_state(
                     &compiled.preview,
                     &self.schema,
                     &legacy_selection,
+                    stored_marks.as_deref(),
+                    commands,
                     &self.resource_limits,
-                    document_node_count,
-                );
-                (
-                    crate::editor_state::active_state(
-                        &compiled.preview,
-                        &self.schema,
-                        &legacy_selection,
-                        stored_marks.as_deref(),
-                        commands,
-                        &self.resource_limits,
-                    ),
-                    None,
+                ),
+                None,
+            )
+        } else if let Some(transition) = &compiled.prepared_active_state_transition {
+            yrs_engine::derived_state::record_active_state_cache_attempt();
+            let structural = compiled.localized_textblock_edit_admission.as_ref().map(
+                yrs_engine::derived_state::LocalizedTextblockEditAdmission::active_state_structural_seal,
+            );
+            let validated = if let Some(structural) = structural.as_ref() {
+                current.validate_active_state_transition(
+                    commit_authority.derived(),
+                    transition,
+                    structural,
+                    &compiled.preview,
+                    &selection,
+                    stored_marks.as_deref(),
+                    &self.resource_limits,
+                    &self.editing_limits,
+                    self.max_length,
+                    self.yrs_state_epoch,
                 )
+            } else {
+                None
             };
+            match validated {
+                Some(cached) => {
+                    yrs_engine::derived_state::record_active_state_candidate_build();
+                    let warm_cached = cached.filter(|_| {
+                        !yrs_engine::derived_state::active_state_cache_hit_fallback_forced()
+                    });
+                    let was_warm = warm_cached.is_some();
+                    let cached = if let Some(cached) = warm_cached {
+                        cached
+                    } else {
+                        yrs_engine::derived_state::record_active_state_cache_fallback();
+                        let generic = generic_active_state();
+                        match yrs_engine::derived_state::CachedActiveState::try_new(
+                            generic,
+                            &self.resource_limits,
+                            &self.editing_limits,
+                        ) {
+                            Ok(cached) => cached,
+                            Err(generic) => {
+                                let result = yrs_engine::TypedTransactionResult {
+                                    request_id: compiled.request_id,
+                                    origin: compiled.origin,
+                                    changed: current.document != compiled.preview,
+                                    document_revision: self.revision,
+                                    state_revision: self.state_revision,
+                                    selection,
+                                    active_state: generic,
+                                    history_state: crate::editor_state::HistoryState {
+                                        can_undo: self.can_undo(),
+                                        can_redo: self.can_redo(),
+                                    },
+                                    render_update,
+                                };
+                                self.admit_typed_result(
+                                    compiled.request_id,
+                                    &result,
+                                    Some(render),
+                                )?;
+                                return Ok((result, None));
+                            }
+                        }
+                    };
+                    #[cfg(test)]
+                    debug_assert_eq!(
+                        cached.value(),
+                        &crate::editor_state::active_state_for_debug_invariant(
+                            &compiled.preview,
+                            &self.schema,
+                            &legacy_selection,
+                            stored_marks.as_deref(),
+                            &self.resource_limits,
+                            document_node_count,
+                        )
+                    );
+                    if let Some(active_state) =
+                        cached.clone_public(&self.resource_limits, &self.editing_limits)
+                    {
+                        if was_warm {
+                            yrs_engine::derived_state::record_active_state_cache_hit();
+                        }
+                        (active_state, Some(cached))
+                    } else {
+                        if was_warm {
+                            yrs_engine::derived_state::record_active_state_cache_fallback();
+                            (generic_active_state(), None)
+                        } else {
+                            let generic =
+                                yrs_engine::derived_state::CachedActiveState::try_into_value(
+                                    cached,
+                                )
+                                .unwrap_or_else(|cached| cached.value().clone());
+                            (generic, None)
+                        }
+                    }
+                }
+                None => {
+                    yrs_engine::derived_state::record_active_state_cache_fallback();
+                    (generic_active_state(), None)
+                }
+            }
+        } else {
+            // Non-eligible result paths retain the existing generic behavior
+            // and are outside the active-state cache lifecycle counters.
+            let commands = crate::editor_state::command_applicability_with_known_node_count(
+                &compiled.preview,
+                &self.schema,
+                &legacy_selection,
+                &self.resource_limits,
+                document_node_count,
+            );
+            (
+                crate::editor_state::active_state(
+                    &compiled.preview,
+                    &self.schema,
+                    &legacy_selection,
+                    stored_marks.as_deref(),
+                    commands,
+                    &self.resource_limits,
+                ),
+                None,
+            )
+        };
         let result = yrs_engine::TypedTransactionResult {
             request_id: compiled.request_id,
             origin: compiled.origin,
@@ -266,7 +339,7 @@ impl YrsDocumentEngine {
             },
             render_update,
         };
-        self.admit_typed_result(compiled.request_id, &result)?;
+        self.admit_typed_result(compiled.request_id, &result, Some(render))?;
         Ok((result, prepared_active_cache))
     }
 
@@ -274,8 +347,12 @@ impl YrsDocumentEngine {
         &self,
         request_id: u64,
         result: &yrs_engine::TypedTransactionResult,
+        render: Option<&crate::render::incremental::CachedRenderBlocks>,
     ) -> yrs_engine::OperationResult<()> {
-        let actual = result.derived_output_bytes();
+        let actual = render.map_or_else(
+            || result.derived_output_bytes(),
+            |render| result.derived_output_bytes_with_render_cache(Some(render)),
+        );
         if actual > self.editing_limits.max_derived_output_bytes {
             return Err(yrs_engine::OperationError::document_limit_exceeded(
                 request_id,
@@ -308,7 +385,7 @@ impl YrsDocumentEngine {
             && result.active_state.nodes.len()
                 <= self.resource_limits.max_document_depth.saturating_add(1)
             && result.active_state.insertable_nodes.len() <= schema_nodes
-            && result.active_state.commands.len() <= 16;
+            && result.active_state.commands.len() <= crate::editor_state::ACTIVE_COMMAND_ENTRIES;
         if !active_is_bounded {
             return Err(yrs_engine::OperationError::document_limit_exceeded(
                 request_id,
@@ -345,10 +422,43 @@ pub(super) fn affinity_aware_mapped_selection(
             crate::selection::Selection::Node { pos },
             yrs_engine::RelativeSelection::Node { point },
         ) => crate::selection::Selection::node(map_position(map, *pos, point.affinity)),
+        (
+            crate::selection::Selection::Cell { anchor, head },
+            yrs_engine::RelativeSelection::Cell {
+                anchor: relative_anchor,
+                head: relative_head,
+            },
+        ) => crate::selection::Selection::cell(
+            map_position(map, *anchor, relative_anchor.affinity),
+            map_position(map, *head, relative_head.affinity),
+        ),
         (crate::selection::Selection::All, yrs_engine::RelativeSelection::All) => {
             crate::selection::Selection::all()
         }
-        _ => selection.map(map),
+        (
+            crate::selection::Selection::Text { .. },
+            yrs_engine::RelativeSelection::Node { .. }
+            | yrs_engine::RelativeSelection::Cell { .. }
+            | yrs_engine::RelativeSelection::All,
+        )
+        | (
+            crate::selection::Selection::Node { .. },
+            yrs_engine::RelativeSelection::Text { .. }
+            | yrs_engine::RelativeSelection::Cell { .. }
+            | yrs_engine::RelativeSelection::All,
+        )
+        | (
+            crate::selection::Selection::Cell { .. },
+            yrs_engine::RelativeSelection::Text { .. }
+            | yrs_engine::RelativeSelection::Node { .. }
+            | yrs_engine::RelativeSelection::All,
+        )
+        | (
+            crate::selection::Selection::All,
+            yrs_engine::RelativeSelection::Text { .. }
+            | yrs_engine::RelativeSelection::Node { .. }
+            | yrs_engine::RelativeSelection::Cell { .. },
+        ) => selection.map(map),
     };
     let owned_position_map;
     let position_map = if let Some(prepared) = prepared_position_map {
@@ -369,18 +479,75 @@ pub(super) fn affinity_aware_mapped_selection(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(super) fn surviving_selection<T: ReadTxn>(
+    relative: &RelativeSelection,
+    legacy: Selection,
+    txn: &T,
+    fragment: &XmlFragmentRef,
+    document: &Document,
+    schema: &Schema,
+    position_map: &PositionMap,
+    table_index: &TableProjectionIndex,
+) -> Selection {
+    let surviving =
+        |point: &RelativePoint| surviving_relative_point_to_doc_pos(txn, fragment, point, schema);
+    match (relative, &legacy) {
+        (RelativeSelection::Text { anchor, head }, Selection::Text { .. }) => {
+            if let (Some(anchor), Some(head)) = (surviving(anchor), surviving(head)) {
+                return text_selection_near_mapped(position_map, document, anchor, head);
+            }
+        }
+        (RelativeSelection::Cell { anchor, head }, Selection::Cell { .. }) => {
+            if let (Some(anchor), Some(head)) = (surviving(anchor), surviving(head)) {
+                return if cell_pair_is_usable(
+                    table_index,
+                    anchor,
+                    head,
+                    CellSelectionOrigin::Preserved,
+                ) {
+                    Selection::cell(anchor, head)
+                } else {
+                    text_selection_between(position_map, document, anchor, head)
+                };
+            }
+        }
+        (RelativeSelection::Node { point }, Selection::Node { .. }) => {
+            if let Some(pos) = surviving(point) {
+                return affinity_aware_mapped_selection(
+                    &Selection::node(pos),
+                    relative,
+                    &StepMap::empty(),
+                    document,
+                    schema,
+                    Some(position_map),
+                );
+            }
+        }
+        _ => {}
+    }
+    affinity_aware_mapped_selection(
+        &legacy,
+        relative,
+        &StepMap::empty(),
+        document,
+        schema,
+        Some(position_map),
+    )
+}
+
 pub(super) fn cached_transition_render_update(
-    update: &crate::render::incremental::CachedRenderTransitionUpdate,
+    update: crate::render::incremental::CachedRenderTransitionUpdate,
 ) -> yrs_engine::RenderUpdate {
     match update {
         crate::render::incremental::CachedRenderTransitionUpdate::None => {
             yrs_engine::RenderUpdate::None
         }
         crate::render::incremental::CachedRenderTransitionUpdate::Patch(patch) => {
-            yrs_engine::RenderUpdate::Patch(patch.clone())
+            yrs_engine::RenderUpdate::Patch(patch)
         }
         crate::render::incremental::CachedRenderTransitionUpdate::Full(blocks) => {
-            yrs_engine::RenderUpdate::Full(blocks.clone())
+            yrs_engine::RenderUpdate::Full(blocks)
         }
     }
 }
@@ -399,6 +566,14 @@ pub(super) fn cached_render_operation_error(
                 "maxDocumentNodes",
                 u64::try_from(limit).unwrap_or(u64::MAX),
                 u64::try_from(limit.saturating_add(1)).unwrap_or(u64::MAX),
+            )
+        }
+        crate::render::incremental::CachedRenderError::InvalidOrderedListStart => {
+            yrs_engine::OperationError::document_invalid(
+                request_id,
+                None,
+                "start",
+                "ordered-list start attribute is not a readable unsigned integer",
             )
         }
         crate::render::incremental::CachedRenderError::AllocationFailed
@@ -422,6 +597,36 @@ impl YrsDocumentEngine {
             .derived_state
             .as_ref()
             .ok_or_else(|| yrs_engine::OperationError::engine_not_ready(compiled.request_id))?;
+        if let Some(validation) = compiled.prepared_candidate_validation.as_ref() {
+            if let Some(cache) = validation.render_blocks().filter(|cache| {
+                cache.matches_identity(&compiled.preview, &self.schema_fingerprint)
+                    && compiled
+                        .canonical_artifact
+                        .as_ref()
+                        .is_some_and(|artifact| {
+                            validation.admits_context(
+                                &compiled.preview,
+                                artifact,
+                                &self.resource_limits,
+                                &self.editing_limits,
+                                self.max_length,
+                                &self.schema_fingerprint,
+                                &self.canonical_schema,
+                            )
+                        })
+            }) {
+                return Ok(crate::render::incremental::CachedRenderTransition {
+                    update: current.render_blocks.classify_transition_to(
+                        &current.document,
+                        &compiled.preview,
+                        cache,
+                        &compiled.affected_top_level_blocks,
+                    ),
+                    rerendered_new_blocks: compiled.preview.root().child_count(),
+                    cache: cache.clone(),
+                });
+            }
+        }
         let generic_transition = || {
             current.render_blocks.transition(
                 &current.document,
@@ -469,5 +674,85 @@ impl YrsDocumentEngine {
         transition.map_err(|error| {
             cached_render_operation_error(compiled.request_id, &self.resource_limits, error)
         })
+    }
+}
+
+#[cfg(test)]
+mod cached_render_error_classification_tests {
+    use super::cached_render_operation_error;
+    use crate::boundary::ResourceLimits;
+    use crate::render::incremental::CachedRenderError;
+
+    fn code(error: CachedRenderError) -> &'static str {
+        cached_render_operation_error(7, &ResourceLimits::default(), error).code
+    }
+
+    #[test]
+    fn an_unreadable_ordered_list_start_is_reported_as_invalid_document_content() {
+        assert_eq!(
+            code(CachedRenderError::InvalidOrderedListStart),
+            "DOCUMENT_INVALID"
+        );
+        assert_eq!(
+            code(CachedRenderError::CacheInvariantViolation),
+            "ENGINE_INVARIANT_FAILED"
+        );
+        assert_eq!(
+            code(CachedRenderError::PositionOverflow),
+            "ENGINE_INVARIANT_FAILED"
+        );
+        assert_eq!(
+            code(CachedRenderError::ResourceLimitExceeded),
+            "DOCUMENT_LIMIT_EXCEEDED"
+        );
+    }
+}
+
+#[cfg(test)]
+mod output_meter_tests {
+    use super::*;
+
+    #[test]
+    fn cached_table_output_admission_preserves_exact_and_one_byte_short_limits() {
+        use crate::test_support::large_table_fixture::{
+            multi_paragraph_cell_document, session_with_document,
+        };
+        const REQUEST_ID: u64 = 1;
+        let mut session = session_with_document(&multi_paragraph_cell_document());
+        let engine = &mut session.engine;
+        let render = engine.derived_state.as_ref().unwrap().render_blocks.clone();
+        let mut result = engine
+            .prepare_empty_skip_result(
+                REQUEST_ID,
+                TransactionOrigin::LocalApi,
+                &yrs_engine::ResolvedSelection::All,
+                None,
+                false,
+                0,
+            )
+            .unwrap();
+        result.render_update = yrs_engine::RenderUpdate::Full(render.materialize());
+        let exact = result.derived_output_bytes();
+        assert_eq!(
+            result.derived_output_bytes_with_render_cache(Some(&render)),
+            exact
+        );
+        engine.editing_limits.max_derived_output_bytes = exact;
+        engine
+            .admit_typed_result(REQUEST_ID, &result, Some(&render))
+            .unwrap();
+        engine
+            .admit_typed_result(REQUEST_ID, &result, None)
+            .unwrap();
+        engine.editing_limits.max_derived_output_bytes = exact - 1;
+        let cached_error = engine
+            .admit_typed_result(REQUEST_ID, &result, Some(&render))
+            .unwrap_err();
+        let ordinary_error = engine
+            .admit_typed_result(REQUEST_ID, &result, None)
+            .unwrap_err();
+        assert_eq!(cached_error, ordinary_error);
+        assert_eq!(cached_error.actual, Some(exact as u64));
+        assert_eq!(cached_error.limit, Some((exact - 1) as u64));
     }
 }

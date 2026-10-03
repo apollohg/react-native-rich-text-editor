@@ -180,11 +180,13 @@ extension EditorV2Adapter {
     func setContentHtml(_ html: String) -> String? {
         guard beginRuntimeOperation() else { return nil }
         defer { endRuntimeOperation() }
-        return performMutation(postSelectionMirror: (0, 0), includeSelectionInUpdate: true) {
+        return performMutation(
+            postSelectionMirror: (0, 0), includeSelectionInUpdate: true,
+            onAcceptedMutation: { self.tableResetGeneration &+= 1 }, {
             self.callWithEnvelope(["setHtml": html, "history": "resetAndClear"]) { requestJson in
                 editorV2ApplyLocalApi(editorId: self.editorId, requestJson: requestJson)
             }
-        }
+        })
     }
 
     func setContentJson(_ json: String) -> String? {
@@ -196,11 +198,13 @@ extension EditorV2Adapter {
             emit(contractError("setContentJson document is not valid JSON"))
             return nil
         }
-        return performMutation(postSelectionMirror: (0, 0), includeSelectionInUpdate: true) {
+        return performMutation(
+            postSelectionMirror: (0, 0), includeSelectionInUpdate: true,
+            onAcceptedMutation: { self.tableResetGeneration &+= 1 }, {
             self.callWithEnvelope(["setJson": document, "history": "resetAndClear"]) { requestJson in
                 editorV2ApplyLocalApi(editorId: self.editorId, requestJson: requestJson)
             }
-        }
+        })
     }
 
     /// Undoable whole-document replace (legacy `editorReplaceHtml` parity:

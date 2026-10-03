@@ -1,22 +1,101 @@
 package com.apollohg.editor
 
-import android.text.SpannableStringBuilder
 import com.apollohg.editor.EditorEditText.ApplyUpdateTrace
 import org.json.JSONObject
 
-/**
- * Apply a full render update from Rust to the EditText.
- *
- * Parses the update JSON, converts render elements to [android.text.SpannableStringBuilder]
- * via [RenderBridge], and replaces the EditText's content.
- *
- * @param updateJSON The JSON string from an [EditorV2Driver] transaction result.
- */
+private data class RootTableRender(
+    val extents: Map<String, TableScalarExtent>,
+    val scalarLength: Int,
+    val tableIds: Set<String>
+)
+
+private fun containsRootTableElement(update: JSONObject): Boolean {
+    fun hasTable(elements: org.json.JSONArray?): Boolean = elements != null &&
+        (0 until elements.length()).any { elements.optJSONObject(it)?.optString("type") == "table" }
+    if (hasTable(update.optJSONArray("renderElements"))) return true
+    val blocks = update.optJSONArray("renderBlocks")
+        ?: update.optJSONObject("renderPatch")?.optJSONArray("renderBlocks")
+        ?: return false
+    return (0 until blocks.length()).any { hasTable(blocks.optJSONArray(it)) }
+}
+
+private fun EditorEditText.rootTableRenderForUpdate(
+    updateJSON: String,
+    update: JSONObject,
+    blocks: org.json.JSONArray?
+): RootTableRender? {
+    val tableIds = buildSet {
+        if (blocks != null) {
+            for (blockIndex in 0 until blocks.length()) {
+                val block = blocks.optJSONArray(blockIndex) ?: continue
+                for (elementIndex in 0 until block.length()) {
+                    val element = block.optJSONObject(elementIndex) ?: continue
+                    if (element.optString("type") == "table") {
+                        val id = element.opt("tableId") as? String ?: return null
+                        add(id)
+                    }
+                }
+            }
+        }
+    }
+    if (tableIds.isEmpty()) {
+        val elements = update.optJSONArray("renderElements")
+        if (elements != null && (0 until elements.length()).any {
+                elements.optJSONObject(it)?.optString("type") == "table"
+            }
+        ) {
+            return null
+        }
+    }
+    val adapter = v2Driver as? EditorV2Adapter
+    val paired = if (adapter != null &&
+        (
+            updateJSON == adapter.cachedViewUpdateJson ||
+                updateJSON == adapter.cachedAtomicRenderJson
+            ) &&
+        canonicalV2U64(update.opt("documentVersion") as? String)?.toULong() ==
+        adapter.cachedAtomicRenderDocumentRevision
+    ) {
+        adapter
+    } else {
+        null
+    }
+    if (tableIds.isEmpty()) {
+        return if ((rootTablePositionMap == null && !rootTableRenderNeedsRefresh) ||
+            paired != null
+        ) {
+            RootTableRender(emptyMap(), 0, emptySet())
+        } else {
+            null
+        }
+    }
+    if (adapter != null && paired == null) return null
+    val index = paired?.tableIndex ?: return null
+    val scalarLength = paired.cachedScalarLength ?: return null
+    if (!index.tableKeys.containsAll(tableIds)) return null
+    return RootTableRender(
+        index.rootExtents.filterValues {
+            it.scalarEnd > it.scalarStart
+        }.mapValues { (_, extent) ->
+            TableScalarExtent(extent.scalarStart.toInt(), extent.scalarEnd.toInt())
+        },
+        scalarLength,
+        tableIds
+    )
+}
+
 internal fun EditorEditText.applyUpdateJSONImpl(
     updateJSON: String,
     notifyListener: Boolean = true,
     refreshInputConnectionForExternalUpdate: Boolean = false
 ): Boolean {
+    if (isTableCellInput) {
+        return tableCellUpdateConsumer?.invoke(
+            updateJSON,
+            notifyListener,
+            refreshInputConnectionForExternalUpdate
+        ) == true
+    }
     throwOnNextApplyUpdateForTesting?.let { error ->
         throwOnNextApplyUpdateForTesting = null
         throw error
@@ -25,7 +104,7 @@ internal fun EditorEditText.applyUpdateJSONImpl(
     val previousVisibleText = text?.toString().orEmpty()
     val parseStartedAt = totalStartedAt
     val update = try {
-        org.json.JSONObject(updateJSON)
+        (v2Driver as? EditorV2Adapter).readOnlyParsedUpdate(updateJSON)
     } catch (error: Exception) {
         recordImeTraceForTesting(
             "applyUpdateJSONNoop",
@@ -33,12 +112,18 @@ internal fun EditorEditText.applyUpdateJSONImpl(
         )
         return false
     }
-    deferredRustUpdateJSON?.let { deferredUpdateJSON ->
-        if (deferredUpdateJSON != updateJSON) {
-            advanceRenderBlocksThroughDeferredUpdate(deferredUpdateJSON)
+    val textSelectionMenuShowing = selectionActionMode?.tag === TextSelectionActionMode
+    val tableSensitiveUpdate = rootTablePositionMap != null || rootTableRenderNeedsRefresh ||
+        update.has("tableInputMappings") || containsRootTableElement(update)
+    fun advanceDeferred() {
+        deferredRustUpdateJSON?.let { deferredUpdateJSON ->
+            if (deferredUpdateJSON != updateJSON) {
+                advanceRenderBlocksThroughDeferredUpdate(deferredUpdateJSON)
+            }
+            cancelDeferredRustUpdateApplication(invalidateRenderBlocks = false)
         }
-        cancelDeferredRustUpdateApplication(invalidateRenderBlocks = false)
     }
+    if (!tableSensitiveUpdate) advanceDeferred()
     val parseNanos = System.nanoTime() - parseStartedAt
 
     val resolveRenderBlocksStartedAt = System.nanoTime()
@@ -52,6 +137,53 @@ internal fun EditorEditText.applyUpdateJSONImpl(
             ?.let { patch ->
                 currentRenderBlocksJson?.let { mergeRenderBlocks(it, patch) }
             }
+    val rootRender = rootTableRenderForUpdate(updateJSON, update, resolvedRenderBlocks)
+        ?: run {
+            recordImeTraceForTesting("rootTableRenderRejected", "admission")
+            return false
+        }
+    val hasRootTable = rootRender.tableIds.isNotEmpty()
+    val shouldSkipRender = !refreshInputConnectionForExternalUpdate &&
+        rootTableMapTableIds == rootRender.tableIds &&
+        rootTableMapExtents.keys == rootRender.extents.keys &&
+        !currentRenderBlocksNeedFullApply &&
+        !authorizedVisibleTextNeedsRebuild &&
+        resolvedRenderBlocks != null &&
+        currentRenderBlocksJson?.let { current ->
+            renderBlocksEqual(current, resolvedRenderBlocks)
+        } == true &&
+        text?.toString() == lastAuthorizedText &&
+        lastAppliedRenderAppearanceRevision == renderAppearanceRevision
+    val prebuiltRootRender = if (hasRootTable && !shouldSkipRender) {
+        val blocks = resolvedRenderBlocks ?: return false
+        RenderBridge.buildSpannableFromBlocks(
+            blocks,
+            baseFontSize = baseFontSize,
+            textColor = baseTextColor,
+            theme = theme,
+            density = resources.displayMetrics.density,
+            hostView = this,
+            atomConfiguration = atomRenderConfiguration,
+            rootTableIds = rootRender.extents.keys,
+            synthesizeTrailingHardBreakPlaceholders = false
+        )
+    } else {
+        null
+    }
+    val nextRootMap = if (hasRootTable) {
+        RootTablePositionMap.fromRendered(
+            prebuiltRootRender ?: text ?: return false,
+            rootRender.extents,
+            rootRender.scalarLength
+        )
+            ?: run {
+                recordImeTraceForTesting("rootTableRenderRejected", "coordinates")
+                return false
+            }
+    } else {
+        null
+    }
+    if (tableSensitiveUpdate) advanceDeferred()
     val resolveRenderBlocksNanos = System.nanoTime() - resolveRenderBlocksStartedAt
     if (
         renderBlocks == null &&
@@ -65,20 +197,9 @@ internal fun EditorEditText.applyUpdateJSONImpl(
         )
     }
 
-    // The core is the authority on empty state; adopt it before anything
-    // reconsiders the placeholder.
     setCoreReportedDocumentIsEmpty(
         if (update.has("documentIsEmpty")) update.optBoolean("documentIsEmpty") else null
     )
-    val shouldSkipRender = !refreshInputConnectionForExternalUpdate &&
-        !currentRenderBlocksNeedFullApply &&
-        !authorizedVisibleTextNeedsRebuild &&
-        resolvedRenderBlocks != null &&
-        currentRenderBlocksJson?.let { current ->
-            renderBlocksEqual(current, resolvedRenderBlocks)
-        } == true &&
-        text?.toString() == lastAuthorizedText &&
-        lastAppliedRenderAppearanceRevision == renderAppearanceRevision
     val previousScrollX = scrollX
     val previousScrollY = scrollY
 
@@ -86,7 +207,7 @@ internal fun EditorEditText.applyUpdateJSONImpl(
     val buildRenderNanos: Long
     val applyRenderNanos: Long
     val patchTrace = if (
-        !shouldSkipRender &&
+        !shouldSkipRender && !hasRootTable && rootTablePositionMap == null &&
         !currentRenderBlocksNeedFullApply &&
         renderPatch != null &&
         resolvedRenderBlocks != null &&
@@ -121,7 +242,9 @@ internal fun EditorEditText.applyUpdateJSONImpl(
         applyRenderNanos = patchTrace?.applyRenderNanos ?: 0L
     } else {
         val buildStartedAt = System.nanoTime()
-        val fullSpannable = if (resolvedRenderBlocks != null) {
+        val fullSpannable = if (prebuiltRootRender != null) {
+            prebuiltRootRender
+        } else if (resolvedRenderBlocks != null) {
             RenderBridge.buildSpannableFromBlocks(
                 resolvedRenderBlocks,
                 baseFontSize = baseFontSize,
@@ -175,6 +298,17 @@ internal fun EditorEditText.applyUpdateJSONImpl(
         lastAppliedRenderAppearanceRevision = renderAppearanceRevision
     }
 
+    val rootInputWasBlocked = rootTableSelectionInputBlocked
+    rootTablePositionMap = nextRootMap
+    rootTableRenderNeedsRefresh = false
+    rootTableMapDocumentVersion = updateDocumentVersion.takeIf { nextRootMap != null }
+    rootTableMapPositionEpoch = (v2Driver as? EditorV2Adapter)?.positionEpoch
+    rootTableMapTableIds = rootRender.tableIds
+    rootTableMapExtents = rootRender.extents
+    rootTableHasUnmappedExtent = rootRender.tableIds.size != rootRender.extents.size
+    rootTableSelectionInputBlocked = authoritativeCellSelectionActive ||
+        (nextRootMap != null && rootInputWasBlocked)
+
     val selectionStartedAt = System.nanoTime()
     val selection = update.optJSONObject("selection")
     if (selection != null) {
@@ -182,6 +316,7 @@ internal fun EditorEditText.applyUpdateJSONImpl(
             selection,
             updateDocumentVersion
         )
+        cellEditMenuReplacesTextMenu = textSelectionMenuShowing && authoritativeCellSelectionActive
     } else {
         logicalSelectionSnapshot = null
     }
@@ -197,6 +332,7 @@ internal fun EditorEditText.applyUpdateJSONImpl(
         onContentSizeMayChange?.invoke()
     }
     onSelectionOrContentMayChange?.invoke()
+    onRootUpdateApplied?.invoke(selection)
     if (heightBehavior == EditorHeightBehavior.AUTO_GROW) {
         requestLayout()
     } else {
@@ -241,5 +377,5 @@ internal fun EditorEditText.applyUpdateJSONImpl(
             totalNanos = totalNanos
         )
     }
-    return !shouldSkipRender
+    return hasRootTable || !shouldSkipRender
 }

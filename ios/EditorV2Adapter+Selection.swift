@@ -1,19 +1,205 @@
 import Foundation
 
 extension EditorV2Adapter {
+    struct TableMutationAdmission: Equatable {
+        let tableID: String
+        let documentRevision: UInt64
+        let presentationGeneration: UInt64
+        let ownerID: UInt64
+        let ownerToken: UUID
+    }
+
+    struct TableCellSelectionAdmission {
+        let tableID: String
+        let documentRevision: UInt64
+        var positionEpoch: UInt64
+        let presentationGeneration: UInt64
+        let ownerID: UInt64
+        let ownerToken: UUID
+        var anchor: UInt32
+        var head: UInt32
+
+        var mutation: TableMutationAdmission {
+            TableMutationAdmission(
+                tableID: tableID,
+                documentRevision: documentRevision,
+                presentationGeneration: presentationGeneration,
+                ownerID: ownerID,
+                ownerToken: ownerToken
+            )
+        }
+    }
+
+    func cachedAtomicRenderSelection() -> [String: Any]? {
+        cachedAtomicRenderSelectionObject
+    }
+
+    func admitsTableMutation(_ admission: TableMutationAdmission) -> Bool {
+        !destroyed
+            && baseDocumentRevision == admission.documentRevision
+            && cachedAtomicRenderDocumentRevision == admission.documentRevision
+            && cachedTablePresentation?.documentRevision == admission.documentRevision
+            && tableResetGeneration == admission.presentationGeneration
+            && nativeOwnerId == admission.ownerID
+            && nativeOwnerToken == admission.ownerToken
+            && tableIndex.record(tableKey: admission.tableID)?.readOnlyDescendants == false
+    }
+
+    func tableMutationAdmission(tableID: String) -> TableMutationAdmission? {
+        guard let ownerID = nativeOwnerId, let ownerToken = nativeOwnerToken else { return nil }
+        return TableMutationAdmission(
+            tableID: tableID,
+            documentRevision: baseDocumentRevision,
+            presentationGeneration: tableResetGeneration,
+            ownerID: ownerID,
+            ownerToken: ownerToken
+        )
+    }
+
+    func selectedTableCellsMutationAdmission() -> TableMutationAdmission? {
+        guard let selection = cachedAtomicRenderSelection(),
+              case let .drawable(tableID, _) = EditorCellSelection.resolve(selection, index: tableIndex),
+              let admission = tableMutationAdmission(tableID: tableID)
+        else { return nil }
+        return admitsTableMutation(admission) ? admission : nil
+    }
+
+    func tableCellSelectionAdmission(tableID: String) -> TableCellSelectionAdmission? {
+        guard let selection = cachedAtomicRenderSelection(),
+              let endpoints = EditorCellSelection.endpointPositions(selection),
+              let mutation = tableMutationAdmission(tableID: tableID),
+              let epoch = positionEpoch else { return nil }
+        let admission = TableCellSelectionAdmission(
+            tableID: tableID, documentRevision: mutation.documentRevision,
+            positionEpoch: epoch, presentationGeneration: mutation.presentationGeneration,
+            ownerID: mutation.ownerID, ownerToken: mutation.ownerToken,
+            anchor: endpoints.anchor, head: endpoints.head
+        )
+        return admitsTableCellSelection(admission) ? admission : nil
+    }
+
+    private func cachedSelectionIsExactCells(anchor: UInt32, head: UInt32, tableID: String) -> Bool {
+        guard let selection = cachedAtomicRenderSelection(),
+              let endpoints = EditorCellSelection.endpointPositions(selection),
+              endpoints.anchor == anchor,
+              endpoints.head == head,
+              case let .drawable(selectedTableID, _) = EditorCellSelection.resolve(
+                  selection, index: tableIndex
+              )
+        else { return false }
+        return selectedTableID == tableID
+    }
+
+    func admitsTableCellSelection(_ admission: TableCellSelectionAdmission) -> Bool {
+        admitsTableMutation(admission.mutation)
+            && positionEpoch == admission.positionEpoch
+            && cachedSelectionIsExactCells(
+                anchor: admission.anchor,
+                head: admission.head,
+                tableID: admission.tableID
+            )
+    }
+
+    private func applySelectionEnvelope(_ selection: [String: Any]) -> String? {
+        performMutation(adoptEngineSelection: true, publishMutation: false) {
+            self.callWithEnvelope(["selection": selection]) { requestJSON in
+                editorV2SetSelection(editorId: self.editorId, requestJson: requestJSON)
+            }
+        }
+    }
+
+    private static func exactCellSelectionEnvelope(anchor: UInt32, head: UInt32) -> [String: Any] {
+        [
+            "type": "cell",
+            "anchorCell": ["offset": Int(anchor), "kind": "document"],
+            "headCell": ["offset": Int(head), "kind": "document"]
+        ]
+    }
+
+    func selectExactTableCells(
+        anchor: UInt32,
+        head: UInt32,
+        admission: TableCellSelectionAdmission
+    ) -> String? {
+        guard beginRuntimeOperation() else { return nil }
+        defer { endRuntimeOperation() }
+        guard admitsTableCellSelection(admission),
+              let first = tableIndex.cellIndex(tableKey: admission.tableID, containingDoc: anchor),
+              let last = tableIndex.cellIndex(tableKey: admission.tableID, containingDoc: head),
+              tableIndex.docStart(tableKey: admission.tableID, cellIndex: first) == anchor,
+              tableIndex.docStart(tableKey: admission.tableID, cellIndex: last) == head
+        else { return nil }
+        let update = applySelectionEnvelope(Self.exactCellSelectionEnvelope(anchor: anchor, head: head))
+        if update != nil {
+            publishCollaborationCellsIfChanged()
+        }
+        guard let update,
+              admitsTableMutation(admission.mutation),
+              positionEpoch != nil,
+              cachedSelectionIsExactCells(anchor: anchor, head: head, tableID: admission.tableID)
+        else { return nil }
+        return update
+    }
+
+    func selectTableCell(cellIndex: Int, admission: TableMutationAdmission) -> String? {
+        guard beginRuntimeOperation() else { return nil }
+        defer { endRuntimeOperation() }
+        guard admitsTableMutation(admission),
+              let position = tableIndex.docStart(tableKey: admission.tableID, cellIndex: cellIndex),
+              let update = applySelectionEnvelope(Self.exactCellSelectionEnvelope(anchor: position, head: position))
+        else { return nil }
+        publishCollaborationCellsIfChanged()
+        guard admitsTableMutation(admission), positionEpoch != nil,
+              cachedSelectionIsExactCells(anchor: position, head: position, tableID: admission.tableID)
+        else { return nil }
+        return update
+    }
+
+    private func applyAdmittedTableCommand(
+        _ command: [String: Any],
+        admission: TableMutationAdmission,
+        targetsTable: Bool
+    ) -> String? {
+        guard beginRuntimeOperation() else { return nil }
+        defer { endRuntimeOperation() }
+        guard admitsTableMutation(admission) else { return nil }
+        var request = command
+        if targetsTable {
+            guard let tablePos = tableIndex.tableDocStart(tableKey: admission.tableID)
+            else { return nil }
+            request["tablePos"] = Int(tablePos)
+        }
+        return performMutation(adoptEngineSelection: true) {
+            self.callWithEnvelope(["command": request]) { requestJson in
+                editorV2ApplyCommand(editorId: self.editorId, requestJson: requestJson)
+            }
+        }
+    }
+
+    func applyTableCommandAtSelection(_ command: [String: String], admission: TableMutationAdmission) -> String? {
+        applyAdmittedTableCommand(command, admission: admission, targetsTable: false)
+    }
+
+    func resizeTableColumn(column: Int, width: Int, admission: TableMutationAdmission) -> String? {
+        guard column >= 0 else { return nil }
+        return applyAdmittedTableCommand(
+            ["type": "setTableColumnWidth", "width": width, "column": column],
+            admission: admission,
+            targetsTable: true
+        )
+    }
+
+    func deleteTable(admission: TableMutationAdmission) -> String? {
+        applyAdmittedTableCommand(["type": "deleteTable"], admission: admission, targetsTable: true)
+    }
+
     func syncNodeSelection(docPos: UInt32) -> EditorV2SelectionSync? {
         guard beginRuntimeOperation() else { return nil }
         defer { endRuntimeOperation() }
-        guard let update = performMutation(adoptEngineSelection: true, publishMutation: false, {
-            self.callWithEnvelope([
-                "selection": ["type": "atom", "docPos": Int(docPos), "edge": "node"]
-            ]) { requestJSON in
-                editorV2SetSelection(editorId: self.editorId, requestJson: requestJSON)
-            }
-        }),
-            let data = update.data(using: .utf8),
-            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let selection = object["selection"] as? [String: Any]
+        guard let update = applySelectionEnvelope(["type": "atom", "docPos": Int(docPos), "edge": "node"]),
+              let data = update.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let selection = object["selection"] as? [String: Any]
         else { return nil }
         if selection["type"] as? String == "node",
            let pos = Self.uint32Field(selection, "pos") {
@@ -82,7 +268,7 @@ extension EditorV2Adapter {
             lastSyncedScalarSelection = (clampedAnchor, clampedHead)
             return .ok
         case .failure(let error):
-            if error.code == "REVISION_MISMATCH" {
+            if error.code == Self.revisionMismatchCode {
                 if let update = refreshInternal(
                     mirrorSelection: nil,
                     strippingViewSelection: false
@@ -240,7 +426,29 @@ extension EditorV2Adapter {
         return refreshedUpdateJSON
     }
 
+    static let awarenessCellSelectionStaleCode = "AWARENESS_CELL_SELECTION_STALE"
+
+    private func cachedCollaborationCells() -> (anchor: UInt32, head: UInt32)? {
+        cachedAtomicRenderSelection().flatMap(EditorCellSelection.endpointPositions)
+    }
+
+    func publishCollaborationCellsIfChanged() {
+        guard roomBound else { return }
+        let cells = cachedCollaborationCells()
+        guard (cells?.anchor, cells?.head)
+            != (publishedCollaborationCells?.anchor, publishedCollaborationCells?.head)
+        else { return }
+        publishCachedCollaborationSelection()
+    }
+
     func publishCachedCollaborationSelection() {
+        if let cells = cachedCollaborationCells() {
+            publishAwarenessSelection(
+                ["type": "cell", "anchorCell": Int(cells.anchor), "headCell": Int(cells.head)],
+                cells: cells
+            )
+            return
+        }
         guard let selection = cachedAuthoritativeScalarSelection,
               let mapping = resolveSelectionMapping(
                   scalarAnchor: selection.anchor,
@@ -256,12 +464,17 @@ extension EditorV2Adapter {
     }
 
     private func publishCollaborationSelection(docAnchor: UInt32, docHead: UInt32) {
+        publishAwarenessSelection(
+            ["type": "text", "anchor": Int(docAnchor), "head": Int(docHead)],
+            cells: nil
+        )
+    }
+
+    private func publishAwarenessSelection(
+        _ selection: [String: Any],
+        cells: (anchor: UInt32, head: UInt32)?
+    ) {
         guard roomBound, let nativeEditorId = UInt64(editorId) else { return }
-        let selection: [String: Any] = [
-            "type": "text",
-            "anchor": Int(docAnchor),
-            "head": Int(docHead)
-        ]
         guard let data = try? JSONSerialization.data(withJSONObject: selection),
               let selectionJSON = String(data: data, encoding: .utf8)
         else {
@@ -271,6 +484,8 @@ extension EditorV2Adapter {
         switch Self.normalizeJsonResult(
             setAwarenessSelection(editorId, selectionJSON)
         ) {
+        case .failure(let error) where error.code == Self.awarenessCellSelectionStaleCode:
+            return
         case .failure(let error):
             emit(error)
         case .success(let value):
@@ -282,6 +497,7 @@ extension EditorV2Adapter {
                 emit(contractError("awareness selection result violates the frozen shape"))
                 return
             }
+            publishedCollaborationCells = cells
             if outboundChanged {
                 collaborationWake(nativeEditorId, .awareness)
             }

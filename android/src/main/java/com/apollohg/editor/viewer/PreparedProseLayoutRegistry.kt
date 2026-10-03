@@ -1,6 +1,7 @@
 package com.apollohg.editor.viewer
 
 import com.apollohg.editor.ProseViewerError
+import com.apollohg.editor.tables.TableLayoutDirection
 import java.security.MessageDigest
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
@@ -19,8 +20,12 @@ internal data class PreparedMountTicket(
 /** Shared, thread-safe compiler and prepared-layout registry for View and Fabric hosts. */
 internal class PreparedProseLayoutRegistry(
     private val compiler: DocumentCompiler = ::compileWithRust,
-    private val layoutEngine: AndroidProseLayoutEngine = StaticLayoutAndroidProseLayoutEngine(),
-    byteBudget: Long = 32L * 1024L * 1024L,
+    private val layoutEngine: AndroidProseLayoutEngine =
+        StaticLayoutAndroidProseLayoutEngine().apply {
+            tableCellMeasurementEnabled =
+                true
+        },
+    byteBudget: Long = com.apollohg.editor.viewer.PREPARED_LAYOUT_UNMOUNTED_BYTE_BUDGET,
     private val compiledByteBudget: Long = 8L * 1024L * 1024L,
     private val compilationFailureBudget: Int = 128,
     private val themeEntryBudget: Int = 128
@@ -51,7 +56,16 @@ internal class PreparedProseLayoutRegistry(
 
         /** Null means Yoga may prepare before the first component commit. */
         var permittedGenerationIdentity: String? = null
+        var tableGeometry: FabricTableGeometry? = null
+        var tableRemeasureGeneration: FabricGenerationToken? = null
     }
+
+    private class FabricTableGeometry(
+        val generation: FabricGenerationToken,
+        val key: ProseLayoutKey,
+        val widthPx: Int,
+        val heightPx: Int
+    )
 
     private val fabricLeaseLock = Any()
 
@@ -155,7 +169,8 @@ internal class PreparedProseLayoutRegistry(
         compiledDocument: ViewerDocument? = null,
         fontScale: Float = 1f,
         measurementImageState: ViewerAttachmentRevisionState? = null,
-        fabricLeaseEligibility: (() -> Boolean)? = null
+        fabricLeaseEligibility: (() -> Boolean)? = null,
+        tableMeasurementViewportHeightPx: Int = 0
     ): PreparedProseLayout {
         val generation = fabricSurface?.takeIf { fabricLeaseHandle > 0 }
             ?.let { FabricGenerationToken(it, request.generationIdentity, fabricLeaseHandle) }
@@ -188,6 +203,30 @@ internal class PreparedProseLayoutRegistry(
             ) {
                 return invalidWidthArtifact(request)
             }
+            if (request.tableGeometryPolicy == TableGeometryPolicy.STAGED) {
+                val staged = synchronized(fabricLeaseLock) {
+                    ownedGeneration?.let {
+                        activeFabricLeases[
+                            FabricLeaseOwner(
+                                it.surface,
+                                it.leaseHandle
+                            )
+                        ]?.tableGeometry
+                    }
+                        ?.takeIf {
+                            it.generation == ownedGeneration &&
+                                !requiresTableGeometryRevision(ownedGeneration) &&
+                                it.key.widthPx == widthPx && it.key.densityBits == densityBits &&
+                                it.key.nativeFontRevision == request.nativeFontRevision &&
+                                it.key.fontEnvironmentRevision == request.fontEnvironmentRevision &&
+                                it.key.attachmentRevision == request.attachmentRevision
+                        }
+                } ?: throw tableGeometryRevisionRequired(generation, widthPx)
+                return layoutCache.value(staged.key, ownedGeneration, shouldCreateFabricLease = {
+                    ownedGeneration != null && isLeaseActive(ownedGeneration, leaseActive) &&
+                        fabricLeaseEligibility?.invoke() != false
+                }) { throw tableGeometryRevisionRequired(generation, widthPx) }
+            }
             val document = preparedDocument(request, ownedGeneration, compiledDocument, leaseActive)
             if (ownedGeneration != null &&
                 !isLeaseActive(ownedGeneration, leaseActive)
@@ -195,14 +234,25 @@ internal class PreparedProseLayoutRegistry(
                 return invalidWidthArtifact(request)
             }
             val theme = resolveTheme(request, density, fontScale)
-            val key = layoutKey(document, request, widthPx, densityBits)
-            layoutCache.value(key, ownedGeneration, shouldCreateFabricLease = {
+            val key = layoutKey(document, request, widthPx, densityBits, theme.tableDirection)
+                .copy(
+                    tableMeasurementViewportHeightPx = if (document.blocks.any {
+                            it.tableKey != null
+                        }
+                    ) {
+                        request.tableMeasurementViewportHeightPx.takeIf { it > 0 }
+                            ?: tableMeasurementViewportHeightPx
+                    } else {
+                        0
+                    }
+                )
+            layoutCache.valueWithCellShapeContext(key, ownedGeneration, shouldCreateFabricLease = {
                 ownedGeneration == null ||
                     (
                         isLeaseActive(ownedGeneration, leaseActive) &&
                             fabricLeaseEligibility?.invoke() != false
                         )
-            }) {
+            }) { cellContext ->
                 val layoutStarted = PreparedProseInstrumentation.now()
                 layoutPreparationCount += 1
                 try {
@@ -214,7 +264,8 @@ internal class PreparedProseLayoutRegistry(
                             widthPx,
                             density,
                             request.configuration.collapsesWhenEmpty,
-                            request.semanticGenerationIdentity
+                            request.semanticGenerationIdentity,
+                            cellContext
                         )
                     }
                     val artifact = if (imageMeasurementState != null) {
@@ -237,9 +288,77 @@ internal class PreparedProseLayoutRegistry(
                     )
                 }
             }
+        } catch (required: TableGeometryRevisionRequired) {
+            throw required
         } catch (error: ProseViewerError) {
             cachedErrorArtifact(request, widthPx, densityBits, error, ownedGeneration, leaseActive)
         }
+    }
+
+    fun stageTableGeometry(
+        current: FabricGenerationToken,
+        request: ProseViewerRequest,
+        artifact: PreparedProseLayout,
+        stillCurrent: () -> Boolean
+    ): PreparedProseLayout? {
+        require(request.tableGeometryPolicy == TableGeometryPolicy.STAGED)
+        require(
+            request.tableGeometryRevision == artifact.key.tableGeometryRevision &&
+                request.tableGeometryRevision > 0
+        )
+        require(request.semanticGenerationIdentity == artifact.key.semanticGenerationIdentity)
+        require(artifact.key.generationIdentity == current.generationIdentity)
+        val next = current.copy(generationIdentity = request.generationIdentity)
+        val key = artifact.key.copy(
+            generationIdentity = request.generationIdentity,
+            tableGeometryRevision = request.tableGeometryRevision,
+            tableMeasurementViewportHeightPx = request.tableMeasurementViewportHeightPx
+        )
+        val metadata = FabricTableGeometry(next, key, artifact.widthPx, artifact.heightPx)
+        val owner = FabricLeaseOwner(current.surface, current.leaseHandle)
+        synchronized(fabricLeaseLock) {
+            if (!isLeaseActiveLocked(current) || !stillCurrent()) return null
+            activeFabricLeases.getValue(owner).apply {
+                tableGeometry = metadata
+                tableRemeasureGeneration = null
+            }
+        }
+        fun eligible(): Boolean = synchronized(fabricLeaseLock) {
+            val state = activeFabricLeases[owner]
+            state?.active?.get() == true && state.tableGeometry === metadata && stillCurrent()
+        }
+        val prepared = layoutCache.value(key, next, ::eligible) { artifact.copy(key = key) }
+        if (!eligible()) {
+            layoutCache.releasePendingLease(next)
+            return null
+        }
+        return prepared
+    }
+
+    fun requiresTableGeometryRevision(generation: FabricGenerationToken): Boolean =
+        synchronized(fabricLeaseLock) {
+            val state = activeFabricLeases[
+                FabricLeaseOwner(
+                    generation.surface,
+                    generation.leaseHandle
+                )
+            ]
+            state?.active?.get() == true && state.tableRemeasureGeneration == generation
+        }
+
+    private fun tableGeometryRevisionRequired(
+        generation: FabricGenerationToken?,
+        widthPx: Int
+    ): TableGeometryRevisionRequired = synchronized(fabricLeaseLock) {
+        val metadata = generation?.let {
+            activeFabricLeases[FabricLeaseOwner(it.surface, it.leaseHandle)]?.tableGeometry
+        }?.takeIf { it.generation == generation }
+        if (generation != null && isLeaseActiveLocked(generation)) {
+            activeFabricLeases[FabricLeaseOwner(generation.surface, generation.leaseHandle)]
+                ?.tableRemeasureGeneration = generation
+        }
+        generation?.let(preparedMountTickets::remove)
+        TableGeometryRevisionRequired(metadata?.widthPx ?: widthPx, metadata?.heightPx ?: 0)
     }
 
     /** Mount acquisition intentionally cannot invoke Rust or StaticLayout.Builder. */
@@ -356,7 +475,22 @@ internal class PreparedProseLayoutRegistry(
             synchronized(fabricLeaseLock) {
                 isLeaseActiveLocked(generation) && preparedMountTickets[generation] === metadata
             }
-        } ?: return null
+        } ?: run {
+            synchronized(fabricLeaseLock) {
+                val state = activeFabricLeases[
+                    FabricLeaseOwner(
+                        generation.surface,
+                        generation.leaseHandle
+                    )
+                ]
+                if (state?.tableGeometry?.generation ==
+                    generation
+                ) {
+                    tableGeometryRevisionRequired(generation, metadata.contentWidthPx)
+                }
+            }
+            return null
+        }
         return PreparedMountTicket(
             generation,
             metadata.nativeFontRevision,
@@ -372,6 +506,10 @@ internal class PreparedProseLayoutRegistry(
         generation: FabricGenerationToken,
         onPrepared: (Boolean) -> Unit
     ): Boolean {
+        if (requiresTableGeometryRevision(generation)) {
+            onPrepared(false)
+            return true
+        }
         val spec = synchronized(fabricLeaseLock) {
             if (isLeaseActiveLocked(generation)) {
                 finalLayoutSpecs[generation]
@@ -391,12 +529,18 @@ internal class PreparedProseLayoutRegistry(
                             finalLayoutSpecs[generation] === spec &&
                             preparedMountTickets[generation]?.revision == spec.revision
                     }
-                }.fold(fresh::complete, fresh::completeExceptionally)
+                }.fold(fresh::complete) { error ->
+                    if (error is TableGeometryRevisionRequired) {
+                        fresh.complete(false)
+                    } else {
+                        fresh.completeExceptionally(error)
+                    }
+                }
             }
         }
         future.whenComplete { ticket, _ ->
             finalPreparationInFlight.remove(generation, future)
-            onPrepared(ticket)
+            onPrepared(ticket == true)
         }
         return true
     }
@@ -440,6 +584,8 @@ internal class PreparedProseLayoutRegistry(
             val state = activeFabricLeases[owner] ?: return
             if (!state.active.get()) return
             state.permittedGenerationIdentity = generation.generationIdentity
+            if (state.tableGeometry?.generation != generation) state.tableGeometry = null
+            if (state.tableRemeasureGeneration != generation) state.tableRemeasureGeneration = null
             finalLayoutSpecs.keys
                 .filter {
                     FabricLeaseOwner(it.surface, it.leaseHandle) == owner && it != generation
@@ -507,6 +653,10 @@ internal class PreparedProseLayoutRegistry(
 
     private fun sweepFabricOwner(owner: FabricLeaseOwner) {
         synchronized(fabricLeaseLock) {
+            activeFabricLeases[owner]?.apply {
+                tableGeometry = null
+                tableRemeasureGeneration = null
+            }
             finalLayoutSpecs.keys.filter { FabricLeaseOwner(it.surface, it.leaseHandle) == owner }
                 .forEach(finalLayoutSpecs::remove)
             preparedMountTickets.keys.filter {
@@ -635,6 +785,9 @@ internal class PreparedProseLayoutRegistry(
 
     internal val preparedLayoutCacheCountForTesting: Int
         get() = layoutCache.completedCountForTesting
+    internal val compiledDocumentBytesForTesting: Long get() = synchronized(compilerLock) {
+        compiledRetainedBytes
+    }
     internal val layoutRetainedBytesForTesting: Long get() = layoutCache.retainedBytesForTesting
     internal val fabricLeaseCountForTesting: Int get() = layoutCache.leaseCountForTesting
     internal val fabricGenerationPinCountForTesting: Int get() = synchronized(compilerLock) {
@@ -732,7 +885,8 @@ internal class PreparedProseLayoutRegistry(
         document: ViewerDocument,
         request: ProseViewerRequest,
         widthPx: Int,
-        densityBits: Long
+        densityBits: Long,
+        tableDirection: TableLayoutDirection
     ) = ProseLayoutKey(
         semanticKey = document.semanticKey,
         widthPx = widthPx,
@@ -742,7 +896,10 @@ internal class PreparedProseLayoutRegistry(
         densityBits = densityBits,
         attachmentRevision = request.attachmentRevision,
         generationIdentity = request.generationIdentity,
-        semanticGenerationIdentity = request.semanticGenerationIdentity
+        semanticGenerationIdentity = request.semanticGenerationIdentity,
+        tableDirection = tableDirection,
+        tableGeometryRevision = request.tableGeometryRevision,
+        tableMeasurementViewportHeightPx = request.tableMeasurementViewportHeightPx
     )
 
     private fun trimCompiledLocked() {
@@ -767,7 +924,9 @@ internal class PreparedProseLayoutRegistry(
         density: Float,
         fontScale: Float
     ): PreparedProseTheme = synchronized(compilerLock) {
-        val key = "${request.generationIdentity}:${density.toRawBits()}:${fontScale.toRawBits()}"
+        val tableDirection = TableLayoutDirection.fromDefaultLocale()
+        val key =
+            "${request.generationIdentity}:${density.toRawBits()}:${fontScale.toRawBits()}:$tableDirection"
         themes[key]?.let { return@synchronized it }
         val resolved = PreparedProseTheme.resolve(
             request.configuration.themeJson,
@@ -779,7 +938,10 @@ internal class PreparedProseLayoutRegistry(
             org.json.JSONObject(request.configuration.configJson).optJSONObject("codeHighlighting")
         )
         highlighting?.let { com.apollohg.editor.CodeHighlightingRegistry.provider(it.provider) }
-        val configured = resolved.copy(codeHighlighting = highlighting)
+        val configured = resolved.copy(
+            codeHighlighting = highlighting,
+            tableDirection = tableDirection
+        )
         themes[key] = configured
         themeRetainedBytes += resolved.retainedBytes
         while ((themeRetainedBytes > themeByteBudget || themes.size > themeEntryBudget) &&
@@ -805,6 +967,9 @@ internal class PreparedProseLayoutRegistry(
             activeFabricLeases[FabricLeaseOwner(generation.surface, generation.leaseHandle)]
         }
 
+    internal fun isFabricLeaseActive(generation: FabricGenerationToken): Boolean =
+        isLeaseActive(generation, activeLeaseFor(generation))
+
     private fun isLeaseActiveLocked(generation: FabricGenerationToken): Boolean = isLeaseActive(
         generation,
         activeFabricLeases[FabricLeaseOwner(generation.surface, generation.leaseHandle)]
@@ -818,7 +983,8 @@ internal class PreparedProseLayoutRegistry(
             lease &&
             (
                 lease.permittedGenerationIdentity == null ||
-                    lease.permittedGenerationIdentity == generation.generationIdentity
+                    lease.permittedGenerationIdentity == generation.generationIdentity ||
+                    lease.tableGeometry?.generation == generation
                 )
     }
 

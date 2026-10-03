@@ -30,15 +30,15 @@ extension NativeEditorExpoView {
     }
 
     func inputAccessoryViewForTesting() -> UIView? {
-        richTextView.textView.inputAccessoryView
+        richTextView.activeTextInput.inputAccessoryView
     }
 
     func isUsingAccessoryToolbarForTesting() -> Bool {
-        richTextView.textView.inputAccessoryView === accessoryToolbar
+        richTextView.activeTextInput.inputAccessoryView === accessoryToolbar
     }
 
     func isUsingAccessoryPlaceholderForTesting() -> Bool {
-        richTextView.textView.inputAccessoryView === accessoryPlaceholder
+        richTextView.activeTextInput.inputAccessoryView === accessoryPlaceholder
     }
 
     func markRecentToolbarTouchForTesting() {

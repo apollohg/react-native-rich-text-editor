@@ -192,7 +192,7 @@ final class RichTextEditorViewTests: XCTestCase {
     }
 
     func hostEditorView(_ view: RichTextEditorView) -> UIWindow {
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 480))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 480))
         let viewController = UIViewController()
         window.rootViewController = viewController
         window.makeKeyAndVisible()
@@ -202,7 +202,7 @@ final class RichTextEditorViewTests: XCTestCase {
     }
 
     func hostNativeEditorExpoView(_ view: NativeEditorExpoView) -> UIWindow {
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 480))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 480))
         let viewController = UIViewController()
         window.rootViewController = viewController
         window.makeKeyAndVisible()

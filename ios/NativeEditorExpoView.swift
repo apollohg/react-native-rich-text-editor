@@ -61,6 +61,7 @@ class NativeEditorExpoView: ExpoView, EditorTextViewDelegate, UIGestureRecognize
     let accessoryPlaceholder = EditorAccessoryPlaceholderView(frame: .zero)
     var toolbarFramesInWindow: [CGRect] = []
     var lastToolbarTouchUptime: TimeInterval = -Double.infinity
+    var lastEmittedFocus: (editorId: UInt64, isFocused: Bool)?
     var didApplyAutoFocus = false
     var toolbarState = NativeToolbarState.empty
     var toolbarItems: [NativeToolbarItem] = NativeToolbarItem.defaults
@@ -143,10 +144,20 @@ class NativeEditorExpoView: ExpoView, EditorTextViewDelegate, UIGestureRecognize
     let onAddonEvent = EventDispatcher()
     let onEditorError = EventDispatcher()
     let onExternalTextCompositionEnd = EventDispatcher()
+    let onTableSelectionGeometry = EventDispatcher()
     /// Native integration tests capture the exact payload production sends to
     /// Expo without assigning adapter callbacks directly.
     var onEditorErrorForTesting: (([String: Any]) -> Void)?
     var onExternalTextCompositionEndForTesting: (([String: Any]) -> Void)?
+    var onTableSelectionGeometryForTesting: (([String: Any]) -> Void)?
+    var onFocusChangeForTesting: (([String: Any]) -> Void)?
+    var onSelectionChangeForTesting: (([String: Any]) -> Void)?
+    let keyboardOcclusionView = UIView()
+    var keyboardOcclusionConstraints: [NSLayoutConstraint] = []
+    private(set) lazy var tableSelectionGeometryPublisher = TableSelectionGeometryPublisher(
+        resolve: { [weak self] in self?.currentTableSelectionGeometry() },
+        emit: { [weak self] in self?.dispatchTableSelectionGeometry($0) }
+    )
     var autonomousErrorBindingAdapter: EditorV2Adapter?
     var autonomousErrorBindingEditorId: String?
     var autonomousErrorBindingToken: UUID?
@@ -199,6 +210,9 @@ class NativeEditorExpoView: ExpoView, EditorTextViewDelegate, UIGestureRecognize
     required init(appContext: AppContext? = nil) {
         richTextView = RichTextEditorView(frame: .zero)
         super.init(appContext: appContext)
+        richTextView.tableCellBindingAuthority = { [weak self] adapter in
+            self?.ownsDelegatedTableCellBinding(adapter) ?? false
+        }
         richTextView.imageLoadOwner = imageLoadOwner
         richTextView.onHeightMayChange = { [weak self] measuredHeight in
             guard let self, self.heightBehavior == .autoGrow else { return }
@@ -209,30 +223,41 @@ class NativeEditorExpoView: ExpoView, EditorTextViewDelegate, UIGestureRecognize
         richTextView.onAtomContentWidthChange = { [weak self] width in
             self?.emitAtomLayout(width: width)
         }
-        richTextView.textView.editorDelegate = self
+        richTextView.onTableSelectionGeometryMayChange = { [weak self] in
+            self?.tableSelectionGeometryPublisher.scheduleFlush()
+        }
+        richTextView.textInputs.forEach { $0.editorDelegate = self }
         richTextView.textView.onExternalUpdateReadinessMayChange = { [weak self] in
             self?.schedulePendingAtomsWakeIfNeeded()
         }
         configureAccessoryToolbar()
 
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(textViewDidBeginEditing(_:)),
-            name: UITextView.textDidBeginEditingNotification,
-            object: richTextView.textView
-        )
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(textViewDidEndEditing(_:)),
-            name: UITextView.textDidEndEditingNotification,
-            object: richTextView.textView
-        )
-
+        for input in richTextView.textInputs {
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(textViewDidBeginEditing(_:)),
+                name: UITextView.textDidBeginEditingNotification,
+                object: input
+            )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(textViewDidEndEditing(_:)),
+                name: UITextView.textDidEndEditingNotification,
+                object: input
+            )
+        }
         addSubview(richTextView)
+        keyboardLayoutGuide.followsUndockedKeyboard = true
+        keyboardOcclusionView.isHidden = true
+        keyboardOcclusionView.isUserInteractionEnabled = false
+        keyboardOcclusionView.translatesAutoresizingMaskIntoConstraints = false
+        richTextView.addSubview(keyboardOcclusionView)
+        trackKeyboardOcclusion(of: keyboardLayoutGuide)
     }
 
     deinit {
-        richTextView.textView.editorDelegate = nil
+        tableSelectionGeometryPublisher.cancelScheduledFlush()
+        richTextView.textInputs.forEach { $0.editorDelegate = nil }
         richTextView.textView.onExternalUpdateReadinessMayChange = nil
         if let resultJSON = richTextView.textView.discardTransientNativeInputForEditorRebind() {
             dispatchExternalTextCompositionEnd(resultJSON)
@@ -302,8 +327,17 @@ class NativeEditorExpoView: ExpoView, EditorTextViewDelegate, UIGestureRecognize
         return richTextView.intrinsicContentSize
     }
 
+    override var frame: CGRect {
+        didSet { tableSelectionGeometryPublisher.scheduleFlush() }
+    }
+
+    override var center: CGPoint {
+        didSet { tableSelectionGeometryPublisher.scheduleFlush() }
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
+        tableSelectionGeometryPublisher.scheduleFlush()
         richTextView.frame = bounds
         guard heightBehavior == .autoGrow else { return }
         let currentWidth = bounds.width.rounded(.towardZero)
@@ -327,7 +361,8 @@ class NativeEditorExpoView: ExpoView, EditorTextViewDelegate, UIGestureRecognize
             ensureAutonomousErrorBinding()
             applyRemoteCommitRefresh()
         }
-        if richTextView.textView.isFirstResponder {
+        tableSelectionGeometryPublisher.flush()
+        if richTextView.activeTextInput.isFirstResponder {
             installOutsideTapRecognizerIfNeeded()
         } else {
             uninstallOutsideTapRecognizer()

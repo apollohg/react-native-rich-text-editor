@@ -323,6 +323,12 @@ pub(super) fn compile_transaction_impl(
         let after = match &selection_plan {
             SelectionPlan::Preserve => initial.resolved_selection.clone(),
             SelectionPlan::Mapped(selection) | SelectionPlan::Explicit(selection) => {
+                let table_index = yrs_engine::derived_state::selection_table_index(
+                    &preview,
+                    selection,
+                    context.schema,
+                    context.resource_limits,
+                );
                 let resolved = if let Some(derivations) = preview_derivations.as_ref() {
                     yrs_engine::derived_state::resolved_from_legacy_with_view(
                         &preview,
@@ -330,12 +336,14 @@ pub(super) fn compile_transaction_impl(
                         context.schema,
                         &derivations.position_map,
                         &derivations.rendered_text,
+                        &table_index,
                     )
                 } else {
                     yrs_engine::derived_state::resolved_from_legacy(
                         &preview,
                         selection,
                         context.schema,
+                        &table_index,
                     )
                 };
                 resolved.ok_or_else(|| {
@@ -533,7 +541,7 @@ pub(super) fn compile_transaction_impl(
         // seals its current epoch onto the compiled plan before it can leave
         // the stable read view.
         yrs_state_epoch: 0,
-        localized_insert_admission: None,
+        localized_textblock_edit_admission: None,
         prepared_derived_evidence: None,
         prepared_candidate_validation,
         prepared_active_state_transition: None,

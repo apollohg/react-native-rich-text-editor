@@ -1,16 +1,10 @@
 package com.apollohg.editor
 import android.app.Activity
-import android.os.Handler
 import android.os.Looper
-import android.view.inputmethod.EditorInfo
 import java.time.Duration
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicReference
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -33,7 +27,9 @@ internal class NativeEditorExpoViewControlledUpdateMalformedUpdatesTest :
         val adapter = attachAdapterForViewTest(backend)
         val viewToken = EditorV2Registry.register(adapter)
         val errors = mutableListOf<EditorV2Error>()
-        val malformedUpdateJson = renderUpdateJson("malformed")
+        val malformedUpdateJson = JSONObject(
+            renderUpdateJson("malformed")
+        ).put("documentVersion", "invalid").toString()
         try {
             adapter.onAutonomousError = { errors += it }
             view.onAddonEventForTesting = {}
@@ -67,7 +63,9 @@ internal class NativeEditorExpoViewControlledUpdateMalformedUpdatesTest :
         val adapter = attachAdapterForViewTest(backend)
         val viewToken = EditorV2Registry.register(adapter)
         val errors = mutableListOf<EditorV2Error>()
-        val malformedUpdateJson = renderUpdateJson("malformed")
+        val malformedUpdateJson = JSONObject(
+            renderUpdateJson("malformed")
+        ).put("documentVersion", "invalid").toString()
         try {
             adapter.onAutonomousError = { errors += it }
             view.onAddonEventForTesting = {}
@@ -103,7 +101,9 @@ internal class NativeEditorExpoViewControlledUpdateMalformedUpdatesTest :
         val adapter = attachAdapterForViewTest(backend)
         val viewToken = EditorV2Registry.register(adapter)
         val errors = mutableListOf<EditorV2Error>()
-        val malformedUpdateJson = renderUpdateJson("malformed")
+        val malformedUpdateJson = JSONObject(
+            renderUpdateJson("malformed")
+        ).put("documentVersion", "invalid").toString()
         try {
             adapter.onAutonomousError = { errors += it }
             view.onAddonEventForTesting = {}
@@ -208,7 +208,7 @@ internal class NativeEditorExpoViewControlledUpdateMalformedUpdatesTest :
             assertTrue(commitBoundText(view, "b"))
 
             val malformed = JSONObject(atomicRenderUpdateJson("a", olderRevision))
-            malformed.remove("historyState")
+            malformed.put("documentVersion", "0$olderRevision")
             view.setPendingEditorUpdateJson(malformed.toString())
             view.setPendingEditorUpdateEditorId(viewToken)
             view.setPendingEditorUpdateRevision(2)

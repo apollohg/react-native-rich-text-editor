@@ -3,6 +3,11 @@ package com.apollohg.editor.viewer
 import android.graphics.Rect
 import android.text.StaticLayout
 import com.apollohg.editor.ProseViewerError
+import com.apollohg.editor.tables.TableCellLayoutStore
+import com.apollohg.editor.tables.TableLayoutDirection
+import com.apollohg.editor.tables.ViewerTableSurface
+import java.util.Collections
+import java.util.IdentityHashMap
 
 internal data class ProseLayoutKey(
     val semanticKey: String,
@@ -14,7 +19,10 @@ internal data class ProseLayoutKey(
     val attachmentRevision: Long,
     val generationIdentity: String,
     /** Immutable semantic diagnostic context; excludes replacement revisions. */
-    val semanticGenerationIdentity: String = semanticKey
+    val semanticGenerationIdentity: String = semanticKey,
+    val tableDirection: TableLayoutDirection = TableLayoutDirection.LEFT_TO_RIGHT,
+    val tableGeometryRevision: Long = 0,
+    val tableMeasurementViewportHeightPx: Int = 0
 )
 
 internal data class FabricSurfaceToken(val surfaceId: Int, val componentTag: Int)
@@ -92,12 +100,17 @@ internal data class PreparedProseFragment(
 /** An immutable culling unit in document paint order. */
 internal data class PreparedProseBlock(
     val fragments: List<PreparedProseFragment>,
-    val bounds: Rect
+    val bounds: Rect,
+    val imageAttachment: ViewerImageAttachment? = null,
+    val tableSurface: com.apollohg.editor.tables.ViewerTableSurface? = null,
+    /** Immutable content frame before enclosing decorations expand culling bounds. */
+    val tableBounds: Rect? = null
 ) {
     val topPx: Int get() = bounds.top
     val bottomPx: Int get() = bounds.bottom
     fun intersects(clip: Rect): Boolean = bottomPx > clip.top && topPx < clip.bottom
-    val retainedBytes: Long get() = 160L + fragments.sumOf { it.retainedBytes }
+    val nonTableRetainedBytes: Long get() = 192L + fragments.sumOf { it.retainedBytes }
+    val retainedBytes: Long get() = nonTableRetainedBytes + (tableSurface?.retainedBytes ?: 0L)
 }
 
 internal data class PreparedProseInteraction(
@@ -108,23 +121,53 @@ internal data class PreparedProseInteraction(
     /** Kept as Long so the complete unsigned Rust u32 domain is lossless. */
     val docPos: Long? = null,
     val label: String,
-    val attrsJson: String? = null
+    val attrsJson: String? = null,
+    /** Local prepared-block index, retained so mounted traversal never infers source order from paint bounds. */
+    val sourceBlockIndex: Int? = null
 ) {
     enum class Kind { LINK, MENTION }
     val retainedBytes: Long get() = 144L + rects.size * 32L + (href?.length ?: 0) * 2L +
         visibleText.length * 2L +
         label.length * 2L +
-        (attrsJson?.length ?: 0) * 2L
+        (attrsJson?.length ?: 0) * 2L +
+        if (sourceBlockIndex == null) 0L else 8L
 }
 
 internal data class PreparedProseAccessibilityNode(
     val interactionIndex: Int,
     val role: Role,
     val label: String,
-    val bounds: Rect
+    val bounds: Rect,
+    val sourceBlockIndex: Int? = null
 ) {
     enum class Role { LINK, MENTION }
-    val retainedBytes: Long get() = 96L + label.length * 2L
+    val retainedBytes: Long get() = 96L + label.length * 2L +
+        if (sourceBlockIndex == null) 0L else 8L
+}
+
+internal fun Collection<PreparedProseLayout>.forEachRetainedLayout(
+    visit: (PreparedProseLayout) -> Unit,
+    table: (ViewerTableSurface) -> Unit = {}
+) {
+    val layouts = Collections.newSetFromMap(IdentityHashMap<PreparedProseLayout, Boolean>())
+    val stores = Collections.newSetFromMap(IdentityHashMap<TableCellLayoutStore, Boolean>())
+    val surfaces = Collections.newSetFromMap(IdentityHashMap<ViewerTableSurface, Boolean>())
+    fun walk(layout: PreparedProseLayout) {
+        if (!layouts.add(layout)) return
+        visit(layout)
+        layout.blocks.forEach { block ->
+            block.tableSurface?.let { surface ->
+                if (surfaces.add(surface)) table(surface)
+                if (stores.add(
+                        surface.layoutStore
+                    )
+                ) {
+                    surface.layoutStore.residentLayouts.forEach(::walk)
+                }
+            }
+        }
+    }
+    forEach(::walk)
 }
 
 /** A fully prepared artifact. StaticLayout construction is complete before publication. */
@@ -142,8 +185,40 @@ internal data class PreparedProseLayout(
     val contentBox: com.apollohg.editor.EditorBoxStyle? = null,
     val codeHighlighting: com.apollohg.editor.NativeCodeHighlightingConfig? = null,
     val codeHighlightBlocks: List<com.apollohg.editor.CodeHighlightBlock> = emptyList(),
-    val highlightedCodeKeys: Set<String> = emptySet()
+    val highlightedCodeKeys: Set<String> = emptySet(),
+    /** Present only on a bound table cell; parent cache ownership reaches it recursively. */
+    internal val cellShape: PreparedCellShape? = null,
+    internal val cellPreparation: (() -> PreparedProseLayout)? = null,
+    private val tableRetainedBytesAtPreparation: Long = blocks.sumOf {
+        it.tableSurface?.retainedBytes
+            ?: 0L
+    }
 ) {
+    internal val nonTableRetainedBytes: Long get() = retainedBytes - tableRetainedBytesAtPreparation
+
+    internal val currentRetainedBytes: Long
+        get() {
+            var bytes = 0L
+            forEachRetainedLayout(
+                {
+                    bytes += it.retainedBytes - it.tableRetainedBytesAtPreparation
+                },
+                { bytes += it.metadataRetainedBytes }
+            )
+            return bytes
+        }
+
+    internal fun forEachRetainedLayout(
+        visit: (PreparedProseLayout) -> Unit,
+        table: (ViewerTableSurface) -> Unit = {}
+    ) {
+        listOf(this).forEachRetainedLayout(visit, table)
+    }
+
+    internal fun replacingTableSurfaces(
+        surfaces: Map<String, ViewerTableSurface>
+    ): PreparedProseLayout = reflowTableSurfaces(this, surfaces)
+
     val hasMonotonicBlockBounds = (1 until blocks.size).all {
         blocks[it - 1].topPx <= blocks[it].topPx && blocks[it - 1].bottomPx <= blocks[it].bottomPx
     }
@@ -183,4 +258,18 @@ internal data class PreparedProseLayout(
         fun error(key: ProseLayoutKey, widthPx: Int, error: ProseViewerError) =
             PreparedProseLayout(key, widthPx, 0, emptyList(), retainedBytes = 0, error = error)
     }
+}
+
+internal fun promotedCodeHighlightBlocks(
+    blocks: List<PreparedProseBlock>,
+    descriptors: List<com.apollohg.editor.CodeHighlightBlock>
+): List<com.apollohg.editor.CodeHighlightBlock> = buildList {
+    val byStart = descriptors.associateBy { it.start }
+    blocks.forEachIndexed { index, block ->
+        byStart[index]?.let { add(it.copy(start = size)) }
+        block.tableSurface?.cells?.forEach { cell ->
+            cell.codeHighlightBlocks.forEach { add(it.copy(start = size)) }
+        }
+    }
+    descriptors.filter { it.start !in blocks.indices }.forEach { add(it.copy(start = size)) }
 }

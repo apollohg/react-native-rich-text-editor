@@ -209,17 +209,25 @@ fn localized_nested_custom_list_textblock_matches_eager() {
 }
 
 #[test]
-fn localized_empty_inline_void_and_cross_block_inputs_choose_eager_before_lowering() {
+fn localized_empty_textblock_insert_creates_the_eager_text_target() {
+    let source = json!({
+        "type": "doc",
+        "content": [{ "type": "paragraph" }]
+    });
+    let (_doc, eager, localized, mode) =
+        compile_pair_at_block_offset(&source, &tiptap_schema(), 0, 0, "!");
+    assert_eq!(mode, MutationCompilerBuild::Localized);
+    assert!(matches!(
+        localized.actions.as_slice(),
+        [YrsMutationAction::CreateText { .. }]
+    ));
+    assert_insert_plans_equal(&eager, &localized);
+}
+
+#[test]
+fn localized_textblock_eligibility_respects_atom_gaps_and_block_boundaries() {
     let schema = tiptap_schema();
     let cases = [
-        (
-            json!({
-                "type": "doc",
-                "content": [{ "type": "paragraph" }]
-            }),
-            0,
-            0,
-        ),
         (
             json!({
                 "type": "doc",
@@ -234,6 +242,7 @@ fn localized_empty_inline_void_and_cross_block_inputs_choose_eager_before_loweri
             }),
             0,
             0,
+            MutationCompilerBuild::Localized,
         ),
         (
             json!({
@@ -245,6 +254,7 @@ fn localized_empty_inline_void_and_cross_block_inputs_choose_eager_before_loweri
             }),
             0,
             3,
+            MutationCompilerBuild::EagerFallback,
         ),
         (
             json!({
@@ -259,9 +269,10 @@ fn localized_empty_inline_void_and_cross_block_inputs_choose_eager_before_loweri
             }),
             0,
             2,
+            MutationCompilerBuild::EagerFallback,
         ),
     ];
-    for (source, block_index, extra_position) in cases {
+    for (source, block_index, extra_position, expected) in cases {
         let limits = ResourceLimits::default();
         let document = from_prosemirror_json(&source, &schema, UnknownTypeMode::Preserve).unwrap();
         let position_map = PositionMap::build(&document, &schema);
@@ -285,7 +296,7 @@ fn localized_empty_inline_void_and_cross_block_inputs_choose_eager_before_loweri
             },
         )
         .unwrap();
-        assert_eq!(mode, MutationCompilerBuild::EagerFallback);
+        assert_eq!(mode, expected);
     }
 }
 
@@ -424,6 +435,7 @@ fn seeded_localized_insert_is_restricted_and_matches_eager_without_eager_rebuild
         "schema-a",
         9,
         4,
+        None,
     )
     .unwrap()
     .expect("existing text insert must localize");
@@ -452,7 +464,7 @@ fn seeded_marked_non_bmp_insert_preserves_exact_action_and_input_ceilings() {
     let block = PositionMap::build(&document, &schema)
         .block(0)
         .unwrap()
-        .clone();
+        .into_owned();
     let position = block.doc_start + 2;
     let marks = vec![Mark::new("bold".into(), HashMap::new())];
     let doc = seeded_document(&source, &schema, &limits);
@@ -500,6 +512,7 @@ fn seeded_marked_non_bmp_insert_preserves_exact_action_and_input_ceilings() {
             "schema-a",
             3,
             2,
+            None,
         )?
         .expect("marked existing-text insert must localize")
         .compile(0, position, "🦀", &marks)

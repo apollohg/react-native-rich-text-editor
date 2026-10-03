@@ -84,6 +84,12 @@ impl Schema {
             .unwrap_or(false)
     }
 
+    pub fn is_text_block(&self, node_type: &str) -> bool {
+        self.node(node_type)
+            .map(|spec| matches!(spec.role, NodeRole::TextBlock))
+            .unwrap_or(false)
+    }
+
     pub fn is_list_item(&self, node_type: &str) -> bool {
         self.node(node_type)
             .map(|spec| matches!(spec.role, NodeRole::ListItem))

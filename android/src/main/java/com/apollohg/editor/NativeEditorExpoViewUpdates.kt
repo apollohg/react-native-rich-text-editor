@@ -44,6 +44,7 @@ internal fun NativeEditorExpoView.applyEditorResetUpdateOutcome(
     // The reset must be a valid external snapshot before it is allowed to
     // supersede any distinct ordinary pending update.
     cancelActiveExternalTextComposition("documentChange")
+    richTextView.activeTextInput.discardTransientNativeInputForExternalRecovery()
     richTextView.editorEditText.discardTransientNativeInputForExternalRecovery()
     clearPendingEditorUpdateState(resetAppliedRevision = false)
     clearPendingViewCommandUpdateRetry()
@@ -59,6 +60,7 @@ internal fun NativeEditorExpoView.applyEditorResetUpdateOutcome(
             )
             ?: return PendingEditorUpdateApplyOutcome.PERMANENTLY_REJECTED
     }
+    if (adapter != null && resetJson == null) adapter.markTablePresentationReset()
     drainPendingEditorUpdateEvents()
     isApplyingJSUpdate = true
     val applied = try {
@@ -68,7 +70,7 @@ internal fun NativeEditorExpoView.applyEditorResetUpdateOutcome(
             refreshInputConnectionForExternalUpdate = true
         )
         if (didApply && richTextView.editorEditText.text?.toString() == previousText) {
-            richTextView.editorEditText.restartInputForEditorIfFocused("reset")
+            richTextView.activeTextInput.restartInputForEditorIfFocused("reset")
         }
         didApply
     } catch (error: Throwable) {
@@ -121,7 +123,7 @@ internal fun NativeEditorExpoView.applyRemoteCommitRefreshImpl(expectedEditorId:
     if (isApplyingJSUpdate) return
     // Preparing an external update commits a live composition. The commit
     // re-bases the adapter itself, so leave the half-typed word alone.
-    if (richTextView.editorEditText.hasPendingCompositionForExternalRefresh()) return
+    if (richTextView.activeTextInput.hasPendingCompositionForExternalRefresh()) return
     val adapter = EditorV2Registry.adapterForViewToken(richTextView.editorId) ?: return
     val errorBindingOwnsAdapter = editorErrorBinding?.let { binding ->
         binding.adapter === adapter &&
@@ -129,7 +131,7 @@ internal fun NativeEditorExpoView.applyRemoteCommitRefreshImpl(expectedEditorId:
             adapter.isNativeBindingOwner(binding.callbackToken)
     } == true
     if (!errorBindingOwnsAdapter && !richTextView.editorEditText.ownsNativeBinding(adapter)) return
-    val preflight = richTextView.editorEditText.prepareForExternalEditorUpdateWithResult()
+    val preflight = richTextView.activeTextInput.prepareForExternalEditorUpdateWithResult()
     if (!preflight.ready) return
     val update = preflight.adoptedUpdateJSON ?: adapter.refreshFromRustState(null) ?: return
     val applied = richTextView.editorEditText.applyUpdateJSON(
@@ -191,7 +193,7 @@ internal fun NativeEditorExpoView.applyEditorUpdateOutcome(
             adoptedUpdateJSON = null
         )
     } else {
-        richTextView.editorEditText.prepareForExternalEditorUpdateWithResult()
+        richTextView.activeTextInput.prepareForExternalEditorUpdateWithResult()
     }
     if (!preflight.ready) {
         if (scheduleViewCommandRetry) {
@@ -221,50 +223,6 @@ internal fun NativeEditorExpoView.applyEditorUpdateOutcome(
     } catch (error: Throwable) {
         Log.w(LOG_TAG, "Failed to apply JS editor update", error)
         PendingEditorUpdateApplyOutcome.PERMANENTLY_REJECTED
-    } finally {
-        isApplyingJSUpdate = false
-    }
-}
-
-internal fun NativeEditorExpoView.prepareForEditorCommandJSONImpl(): String {
-    if (Looper.myLooper() != Looper.getMainLooper()) {
-        return NativeEditorViewRegistry.commandPreparationJSON(
-            ready = false,
-            blockedReason = "unknown"
-        )
-    }
-    if (handleDestroyedCurrentEditorIfNeeded()) {
-        return NativeEditorViewRegistry.commandPreparationJSON(
-            ready = false,
-            blockedReason = "destroyed"
-        )
-    }
-    if (richTextView.editorId != 0L && !isAttachedToNativeWindow) {
-        return NativeEditorViewRegistry.commandPreparationJSON(
-            ready = false,
-            blockedReason = "detached"
-        )
-    }
-    if (richTextView.editorId != 0L &&
-        richTextView.editorEditText.editorId != richTextView.editorId
-    ) {
-        return NativeEditorViewRegistry.commandPreparationJSON(
-            ready = false,
-            blockedReason = "detached"
-        )
-    }
-    if (shouldBlockEditorCommandForPendingUpdate()) {
-        return pendingEditorUpdateCommandPreparationJSON()
-    }
-    isApplyingJSUpdate = true
-    return try {
-        onBeforePrepareForEditorCommandForTesting?.invoke()
-        val preparation = richTextView.editorEditText.prepareForExternalEditorCommand()
-        NativeEditorViewRegistry.commandPreparationJSON(
-            ready = preparation.ready,
-            updateJSON = preparation.updateJSON,
-            blockedReason = if (preparation.ready) null else "composition"
-        )
     } finally {
         isApplyingJSUpdate = false
     }

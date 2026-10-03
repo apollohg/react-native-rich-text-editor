@@ -1,22 +1,62 @@
 use super::candidate_cache::encode_state_bounded;
 use super::history_state::history_operation_error;
 use super::outbound::OutboundUpdateSink;
-use super::transaction_result::cached_transition_render_update;
-use super::{checked_operation_increment, YrsDocumentEngine};
+use super::transaction_result::{cached_transition_render_update, surviving_selection};
+use super::{checked_operation_increment, merge_operation_details, YrsDocumentEngine};
+use crate::position::PositionMap;
 use crate::serialize::{
     from_prosemirror_json_with_limits, rehydrate_reserved_html_opaque, UnknownTypeMode,
 };
+use crate::tables::admission::{admit_table_shapes, TableProjectionIndex};
 use crate::transform::{canonicalize_yrs_document, DocumentValidator};
 use crate::yrs_engine;
-use crate::yrs_engine::derived_state::{history_selection_to_relative, DerivedStateCache};
-use crate::yrs_engine::{TransactionOrigin, YrsDocumentCodec};
+use crate::yrs_engine::derived_state::{
+    history_selection_to_relative, operation_result_to_relative, resolved_to_legacy,
+    DerivedStateCache,
+};
+use crate::yrs_engine::{relative_selection_resolves, TransactionOrigin, YrsDocumentCodec};
+
+const DOCUMENT_LIMIT_EXCEEDED_CODE: &str = "DOCUMENT_LIMIT_EXCEEDED";
+const HISTORY_DOCUMENT_FIELD: &str = "document";
 use std::sync::Arc;
-use yrs::{Doc, OffsetKind, Options, ReadTxn, Transact};
+use yrs::{Doc, OffsetKind, Options, ReadTxn, StateVector, Transact};
+
+fn replay_comparison_state(doc: &Doc) -> Vec<u8> {
+    #[cfg(test)]
+    super::test_hooks::HISTORY_REPLAY_GUARD_STATE_ENCODINGS.set(
+        super::test_hooks::HISTORY_REPLAY_GUARD_STATE_ENCODINGS
+            .get()
+            .saturating_add(1),
+    );
+    #[cfg(test)]
+    crate::yrs_engine::observability::record_whole_state_encoding();
+    doc.transact()
+        .encode_state_as_update_v1(&StateVector::default())
+}
+
+#[cfg(test)]
+fn perturb_replayed_candidate_for_test(doc: &Doc, fragment: &yrs::XmlFragmentRef) {
+    use yrs::types::xml::XmlFragment;
+    if !super::test_hooks::PERTURB_REPLAYED_HISTORY_CANDIDATE.get() {
+        return;
+    }
+    let mut txn = doc.transact_mut();
+    fragment.insert(&mut txn, 0, yrs::XmlTextPrelim::new("replay-divergence"));
+}
 
 struct PreparedHistoryCandidateState {
     state: DerivedStateCache,
     encoded_state: Vec<u8>,
     candidate_publication: Option<yrs_engine::derived_state::HistoryMutationLookupCapability>,
+}
+
+enum HistoryPopPreparation {
+    Prepared(Box<PreparedHistoryPop>),
+    Drained {
+        action: yrs_engine::history::HistoryAction,
+        items: usize,
+    },
+    Unavailable,
 }
 
 struct PreparedHistoryPop {
@@ -25,6 +65,7 @@ struct PreparedHistoryPop {
     candidate_history: yrs_engine::history::YrsHistory,
     candidate_state: DerivedStateCache,
     candidate_publication: Option<yrs_engine::derived_state::HistoryMutationLookupCapability>,
+    encoded_state_bytes: usize,
     next_document_revision: u64,
     next_state_revision: u64,
     next_yrs_state_epoch: u64,
@@ -132,11 +173,21 @@ impl YrsDocumentEngine {
             Option<yrs_engine::TypedTransactionResult>,
         )>,
     > {
-        let Some(prepared) = self.prepare_history_pop(request_id, undoing, with_result)? else {
-            return Ok(None);
-        };
-        self.commit_prepared_history_pop(prepared, outbound)
-            .map(Some)
+        self.canonical_splice_cache = None;
+        match self.prepare_history_pop(request_id, undoing, with_result)? {
+            HistoryPopPreparation::Prepared(prepared) => self
+                .commit_prepared_history_pop(*prepared, outbound)
+                .map(Some),
+            HistoryPopPreparation::Drained { action, items } => {
+                let fragment = self
+                    .doc
+                    .get_or_insert_xml_fragment(self.fragment_name.as_str());
+                self.history
+                    .drop_acting_stack_items(&self.doc, &fragment, action, items);
+                Ok(None)
+            }
+            HistoryPopPreparation::Unavailable => Ok(None),
+        }
     }
 
     fn prepare_history_pop(
@@ -144,13 +195,13 @@ impl YrsDocumentEngine {
         request_id: u64,
         undoing: bool,
         with_result: bool,
-    ) -> yrs_engine::OperationResult<Option<PreparedHistoryPop>> {
+    ) -> yrs_engine::OperationResult<HistoryPopPreparation> {
         if if undoing {
             !self.history.can_undo()
         } else {
             !self.history.can_redo()
         } {
-            return Ok(None);
+            return Ok(HistoryPopPreparation::Unavailable);
         }
 
         let next_document_revision =
@@ -172,16 +223,35 @@ impl YrsDocumentEngine {
         let mut candidate_history =
             self.history
                 .replay_into(request_id, &candidate_doc, &candidate_fragment)?;
+        #[cfg(test)]
+        perturb_replayed_candidate_for_test(&candidate_doc, &candidate_fragment);
+        self.verify_replayed_candidate_matches_live(request_id, &candidate_doc)?;
+        let replayed_stack_matches_live =
+            candidate_history.acting_stack_matches(&self.history, action);
         let candidate_pop = match action {
-            yrs_engine::history::HistoryAction::Undo => candidate_history.undo(),
-            yrs_engine::history::HistoryAction::Redo => candidate_history.redo(),
+            yrs_engine::history::HistoryAction::Undo => {
+                candidate_history.undo(request_id, &candidate_doc, &candidate_fragment)?
+            }
+            yrs_engine::history::HistoryAction::Redo => {
+                candidate_history.redo(request_id, &candidate_doc, &candidate_fragment)?
+            }
         };
         if !candidate_pop.changed {
-            return Err(yrs_engine::OperationError::engine_invariant_failed(
-                request_id,
-                None,
-                "bounded history replay cannot reproduce the next live pop",
-            ));
+            if candidate_pop.pruned == 0 {
+                return Err(yrs_engine::OperationError::engine_invariant_failed(
+                    request_id,
+                    None,
+                    "bounded history replay cannot reproduce the next live pop",
+                ));
+            }
+            return Ok(if replayed_stack_matches_live {
+                HistoryPopPreparation::Drained {
+                    action,
+                    items: candidate_pop.pruned,
+                }
+            } else {
+                HistoryPopPreparation::Unavailable
+            });
         }
         let restored_slot = candidate_pop.restored.as_ref().ok_or_else(|| {
             yrs_engine::OperationError::engine_invariant_failed(
@@ -214,24 +284,82 @@ impl YrsDocumentEngine {
             .then(|| self.prepare_history_result(request_id, &candidate_state))
             .transpose()?;
 
+        let encoded_state_bytes = candidate_encoded_state.len();
         candidate_history.accept_action(request_id, action, candidate_encoded_state)?;
         if let Some(result) = &mut result {
+            candidate_state.cache_render_active_state(
+                result.active_state.clone(),
+                &self.resource_limits,
+                &self.editing_limits,
+            );
             result.history_state = crate::editor_state::HistoryState {
                 can_undo: candidate_history.can_undo(),
                 can_redo: candidate_history.can_redo(),
             };
         }
-        Ok(Some(PreparedHistoryPop {
+        Ok(HistoryPopPreparation::Prepared(Box::new(
+            PreparedHistoryPop {
+                request_id,
+                candidate_doc,
+                candidate_history,
+                candidate_state,
+                candidate_publication,
+                encoded_state_bytes,
+                next_document_revision,
+                next_state_revision,
+                next_yrs_state_epoch,
+                result,
+            },
+        )))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn validate_history_replay_for_test(
+        &self,
+        request_id: u64,
+    ) -> yrs_engine::OperationResult<()> {
+        let candidate = self.new_history_candidate_doc();
+        self.history.seed_candidate(request_id, &candidate)?;
+        let fragment = candidate.get_or_insert_xml_fragment(self.fragment_name.as_str());
+        let _history = self
+            .history
+            .replay_into(request_id, &candidate, &fragment)?;
+        self.verify_replayed_candidate_matches_live(request_id, &candidate)
+    }
+
+    fn verify_replayed_candidate_matches_live(
+        &self,
+        request_id: u64,
+        candidate_doc: &Doc,
+    ) -> yrs_engine::OperationResult<()> {
+        let live = replay_comparison_state(&self.doc);
+        let replay = replay_comparison_state(candidate_doc);
+        if live != replay
+            && self.normalized_replay_comparison_state(request_id, &live)?
+                != self.normalized_replay_comparison_state(request_id, &replay)?
+        {
+            return Err(yrs_engine::OperationError::engine_invariant_failed(
+                request_id,
+                None,
+                "history replay reconstructed a document that disagrees with the live store",
+            ));
+        }
+        Ok(())
+    }
+
+    fn normalized_replay_comparison_state(
+        &self,
+        request_id: u64,
+        encoded: &[u8],
+    ) -> yrs_engine::OperationResult<Vec<u8>> {
+        let normalized = self.new_history_candidate_doc();
+        yrs_engine::history::apply_update_bytes(
             request_id,
-            candidate_doc,
-            candidate_history,
-            candidate_state,
-            candidate_publication,
-            next_document_revision,
-            next_state_revision,
-            next_yrs_state_epoch,
-            result,
-        }))
+            &normalized,
+            encoded,
+            TransactionOrigin::DocumentImport,
+        )?;
+        Ok(replay_comparison_state(&normalized))
     }
 
     fn commit_prepared_history_pop(
@@ -335,7 +463,9 @@ impl YrsDocumentEngine {
         }
         self.history = prepared.candidate_history;
         self.derived_state = Some(prepared.candidate_state);
+        self.encoded_state_upper_bound = prepared.encoded_state_bytes;
         self.revision = prepared.next_document_revision;
+        self.record_document_change(super::DocumentChangeScope::Document);
         self.state_revision = prepared.next_state_revision;
         self.yrs_state_epoch = prepared.next_yrs_state_epoch;
         self.last_committed_origin = Some(TransactionOrigin::UndoRedo);
@@ -364,12 +494,31 @@ impl YrsDocumentEngine {
             .ok_or_else(|| yrs_engine::OperationError::engine_not_ready(request_id))?;
         let selection = candidate.resolved_selection.clone();
         let legacy_selection = candidate.legacy_selection();
-        let commands = crate::editor_state::command_applicability(
+        let commands = match candidate.table_command_availability(
             &candidate.document,
             &self.schema,
             &legacy_selection,
             &self.resource_limits,
-        );
+            self.editing_limits.max_derived_output_bytes,
+            &candidate.render_blocks,
+            candidate.document_revision,
+        ) {
+            Some(commands) => crate::editor_state::command_applicability_with_cached_tables(
+                &candidate.document,
+                &self.schema,
+                &legacy_selection,
+                &self.resource_limits,
+                candidate.document_node_count,
+                commands,
+            ),
+            None => crate::editor_state::command_applicability_with_known_node_count(
+                &candidate.document,
+                &self.schema,
+                &legacy_selection,
+                &self.resource_limits,
+                candidate.document_node_count,
+            ),
+        };
         let active_state = crate::editor_state::active_state(
             &candidate.document,
             &self.schema,
@@ -379,7 +528,7 @@ impl YrsDocumentEngine {
             &self.resource_limits,
         );
         let render_update =
-            cached_transition_render_update(&current.render_blocks.classify_transition_to(
+            cached_transition_render_update(current.render_blocks.classify_transition_to(
                 &current.document,
                 &candidate.document,
                 &candidate.render_blocks,
@@ -399,7 +548,7 @@ impl YrsDocumentEngine {
             },
             render_update,
         };
-        self.admit_typed_result(request_id, &result)?;
+        self.admit_typed_result(request_id, &result, None)?;
         Ok(result)
     }
 
@@ -517,26 +666,10 @@ impl YrsDocumentEngine {
         })?;
         let document =
             canonicalize_yrs_document(&rehydrate_reserved_html_opaque(&document), &self.schema);
-        DocumentValidator::validate(&document, &self.schema, &self.resource_limits).map_err(
-            |error| {
-                if error.code() == "DOCUMENT_LIMIT_EXCEEDED" {
-                    yrs_engine::OperationError::document_limit_exceeded(
-                        request_id,
-                        None,
-                        "document",
-                        error.limit.unwrap_or(0) as u64,
-                        error.actual.unwrap_or(0) as u64,
-                    )
-                } else {
-                    yrs_engine::OperationError::document_invalid(
-                        request_id,
-                        None,
-                        "document",
-                        error.to_string(),
-                    )
-                }
-            },
-        )?;
+        DocumentValidator::validate(&document, &self.schema, &self.resource_limits)
+            .map_err(|error| history_document_validation_error(request_id, error))?;
+        admit_table_shapes(&document, &self.schema, &self.resource_limits)
+            .map_err(|error| history_document_validation_error(request_id, error))?;
         if let Some(limit) = self.max_length {
             let actual = document.root().text_content().chars().count() as u64;
             if actual > u64::from(limit) {
@@ -570,24 +703,46 @@ impl YrsDocumentEngine {
         // original relative cursor can remain valid yet resolve beside the
         // redone content. Preserve the document-relative snapshot as the CRDT
         // metadata and reseal it from the exact resolved fallback on restore.
-        let restored_relative = if canonical_fingerprint == restored.canonical_fingerprint {
-            history_selection_to_relative(
+        let restored_relative =
+            if canonical_fingerprint == restored.canonical_fingerprint.fingerprint() {
+                history_selection_to_relative(
+                    &txn,
+                    &fragment,
+                    &restored.relative_selection,
+                    &restored.resolved_selection,
+                    &self.schema,
+                )
+                .ok_or_else(|| {
+                    yrs_engine::OperationError::engine_invariant_failed(
+                        request_id,
+                        None,
+                        "history selection affinity is not exactly representable in the candidate",
+                    )
+                })?
+            } else if relative_selection_resolves(
                 &txn,
                 &fragment,
                 &restored.relative_selection,
-                &restored.resolved_selection,
                 &self.schema,
-            )
-            .ok_or_else(|| {
-                yrs_engine::OperationError::engine_invariant_failed(
-                    request_id,
-                    None,
-                    "history selection affinity is not exactly representable in the candidate",
-                )
-            })?
-        } else {
-            restored.relative_selection.clone()
-        };
+            ) {
+                restored.relative_selection.clone()
+            } else {
+                let surviving = surviving_selection(
+                    &restored.relative_selection,
+                    resolved_to_legacy(&restored.resolved_selection),
+                    &txn,
+                    &fragment,
+                    &document,
+                    &self.schema,
+                    &PositionMap::build(&document, &self.schema),
+                    &TableProjectionIndex::derive_or_fallback(
+                        &document,
+                        &self.schema,
+                        &self.resource_limits,
+                    ),
+                );
+                operation_result_to_relative(&txn, &fragment, &surviving, &self.schema, None)
+            };
         let stored_marks = restored
             .stored_marks
             .as_deref()
@@ -655,7 +810,9 @@ impl YrsDocumentEngine {
         request_id: u64,
         undoing: bool,
     ) -> yrs_engine::OperationResult<Option<usize>> {
-        let Some(prepared) = self.prepare_history_pop(request_id, undoing, false)? else {
+        let HistoryPopPreparation::Prepared(prepared) =
+            self.prepare_history_pop(request_id, undoing, false)?
+        else {
             return Ok(None);
         };
         let live_state_vector = self.doc.transact().state_vector();
@@ -667,4 +824,28 @@ impl YrsDocumentEngine {
         };
         Ok(Some(captured_len))
     }
+}
+
+fn history_document_validation_error(
+    request_id: u64,
+    error: crate::boundary::BoundaryError,
+) -> yrs_engine::OperationError {
+    let mut mapped = if error.code() == DOCUMENT_LIMIT_EXCEEDED_CODE {
+        yrs_engine::OperationError::document_limit_exceeded(
+            request_id,
+            None,
+            HISTORY_DOCUMENT_FIELD,
+            u64::try_from(error.limit.unwrap_or(0)).unwrap_or(u64::MAX),
+            u64::try_from(error.actual.unwrap_or(0)).unwrap_or(u64::MAX),
+        )
+    } else {
+        yrs_engine::OperationError::document_invalid(
+            request_id,
+            None,
+            HISTORY_DOCUMENT_FIELD,
+            error.to_string(),
+        )
+    };
+    merge_operation_details(&mut mapped, error.details);
+    mapped
 }

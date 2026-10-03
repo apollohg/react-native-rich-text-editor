@@ -67,8 +67,10 @@ internal object EditorClipboard {
         )
     }
 
+    fun isReadable(description: ClipDescription): Boolean = description.mimeTypeCount > 0
+
     fun read(clip: ClipData, context: Context): EditorClipboardPayload {
-        if (clip.itemCount == 0) return EditorClipboardPayload()
+        if (clip.itemCount == 0 || !isReadable(clip.description)) return EditorClipboardPayload()
         val item = clip.getItemAt(0)
         val hasPrivateMime = (0 until clip.description.mimeTypeCount).any {
             clip.description.getMimeType(it) == MIME_TYPE_FRAGMENT
@@ -116,16 +118,67 @@ internal fun EditorEditText.publishClipboard(payload: EditorClipboardPayload): B
     }
 }
 
-internal fun EditorEditText.handleCopy(): Boolean {
-    if (editorId == 0L || v2Driver == null) return baseTextContextMenuItem(android.R.id.copy)
-    if (discardTransientInputForDestroyedEditorIfNeeded()) return false
-    if (!prepareForExternalInteractionMutation()) return false
-    syncCurrentSelectionToRust()
-    val payload = v2Driver?.clipboardJson()?.let(EditorClipboard::fromExportJson) ?: return false
+private fun EditorEditText.publishEngineClipboard(driver: EditorV2Driver): Boolean {
+    val payload = driver.clipboardJson()?.let(EditorClipboard::fromExportJson) ?: return false
     return publishClipboard(payload)
 }
 
+private fun EditorEditText.engineOwnsSelection(): Boolean =
+    authoritativeCellSelectionActive || authoritativeNodeSelectionRange?.let { range ->
+        selectionStart == range.start && selectionEnd == range.end
+    } == true
+
+internal fun EditorEditText.handleCopy(): Boolean {
+    if (isTableCellInput) return false
+    if (!authoritativeCellSelectionActive &&
+        (rootTableRenderNeedsRefresh || rootTablePositionMap != null)
+    ) {
+        return false
+    }
+    val driver = v2Driver
+    if (editorId == 0L || driver == null) return baseTextContextMenuItem(android.R.id.copy)
+    if (discardTransientInputForDestroyedEditorIfNeeded()) return false
+    if (!prepareForExternalInteractionMutation()) return false
+    if (!authoritativeCellSelectionActive) syncCurrentSelectionToRust()
+    return publishEngineClipboard(driver)
+}
+
+internal fun EditorEditText.canPerformCellSelectionMenuItem(id: Int): Boolean = when (id) {
+    android.R.id.copy -> authoritativeCellSelectionActive
+
+    android.R.id.cut -> isEditable && canMutateSelectedTableCells()
+
+    android.R.id.paste ->
+        isEditable && pasteMode != EditorPasteMode.DISABLED &&
+            canMutateSelectedTableCells() && hasPasteableClip()
+
+    else -> false
+}
+
+private fun EditorEditText.hasPasteableClip(): Boolean {
+    val clipboard =
+        context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return false
+    return clipboard.primaryClipDescription?.let(EditorClipboard::isReadable) == true
+}
+
+internal fun EditorEditText.canMutateSelectedTableCells(): Boolean {
+    val adapter = v2Driver as? EditorV2Adapter ?: return false
+    return authoritativeCellSelectionActive && hasAuthorizedNativeTableOwner(adapter) &&
+        adapter.selectedTableCellsMutationAdmission() != null
+}
+
+private fun EditorEditText.cutSelectedTableCells() {
+    if (!canMutateSelectedTableCells()) return
+    if (discardTransientInputForDestroyedEditorIfNeeded()) return
+    if (!prepareForExternalInteractionMutation()) return
+    val driver = v2Driver ?: return
+    if (!publishEngineClipboard(driver)) return
+    driver.clearSelectedTableCells()?.let { applyUpdateJSON(it) }
+}
+
 internal fun EditorEditText.handlePaste(plainTextOnly: Boolean) {
+    if (isTableCellInput && !canDispatchTableCellMutation()) return
+    if (authoritativeCellSelectionActive && !canMutateSelectedTableCells()) return
     val forcePlainText = plainTextOnly || pasteMode == EditorPasteMode.PLAIN_TEXT
     if (editorId == 0L) {
         baseTextContextMenuItem(
@@ -159,22 +212,30 @@ internal fun EditorEditText.handlePaste(plainTextOnly: Boolean) {
         }
         return
     }
-    val (anchor, head) = currentScalarSelection() ?: return
-    val preserveEngineSelection = authoritativeNodeSelectionRange?.let { range ->
-        selectionStart == range.start && selectionEnd == range.end
-    } == true
-    driver.pasteAtSelection(
-        fragment = payload.fragment,
-        html = payload.html,
-        text = payload.text,
-        plainText = forcePlainText,
-        anchor = anchor,
-        head = head,
-        preserveEngineSelection = preserveEngineSelection
-    )?.let { applyUpdateJSON(it) }
+    val update = if (engineOwnsSelection()) {
+        driver.pasteAtEngineSelection(payload.fragment, payload.html, payload.text, forcePlainText)
+    } else {
+        val (anchor, head) = currentScalarSelection()
+            ?.let { inputScalarSelection(it.first, it.second) } ?: return
+        driver.pasteAtSelection(
+            payload.fragment,
+            payload.html,
+            payload.text,
+            forcePlainText,
+            anchor,
+            head
+        )
+    }
+    update?.let { applyUpdateJSON(it) }
 }
 
 internal fun EditorEditText.handleCut() {
+    if (isTableCellInput) return
+    if (authoritativeCellSelectionActive) {
+        cutSelectedTableCells()
+        return
+    }
+    if (rootTableRenderNeedsRefresh || rootTablePositionMap != null) return
     if (editorId == 0L) {
         baseTextContextMenuItem(android.R.id.cut)
         return
@@ -200,29 +261,28 @@ internal fun EditorEditText.handleCut() {
     }
     syncCurrentSelectionToRust()
 
-    val payload = v2Driver?.clipboardJson()?.let(EditorClipboard::fromExportJson) ?: return
-    if (!publishClipboard(payload)) return
+    val driver = v2Driver ?: return
+    if (!publishEngineClipboard(driver)) return
 
-    val (anchor, head) = currentScalarSelection() ?: return
+    val localSelection = currentScalarSelection() ?: return
     if (onDeleteRangeInRustForTesting != null) {
-        deleteRangeInRust(minOf(anchor, head), maxOf(anchor, head))
+        deleteRangeInRust(
+            minOf(localSelection.first, localSelection.second),
+            maxOf(localSelection.first, localSelection.second)
+        )
         return
     }
-    val preserveEngineSelection = authoritativeNodeSelectionRange?.let { range ->
-        selectionStart == range.start && selectionEnd == range.end
-    } == true
-    v2Driver?.pasteAtSelection(
-        fragment = null,
-        html = null,
-        text = "",
-        plainText = true,
-        anchor = anchor,
-        head = head,
-        preserveEngineSelection = preserveEngineSelection
-    )?.let { applyUpdateJSON(it) }
+    val (anchor, head) = inputScalarSelection(localSelection.first, localSelection.second) ?: return
+    val update = if (engineOwnsSelection()) {
+        driver.pasteAtEngineSelection(null, null, "", true)
+    } else {
+        driver.pasteAtSelection(null, null, "", true, anchor, head)
+    }
+    update?.let { applyUpdateJSON(it) }
 }
 
 internal fun EditorEditText.handleAccessibilitySetText(arguments: android.os.Bundle?): Boolean {
+    if (isTableCellInput) return false
     val replacement = arguments
         ?.getCharSequence(
             android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE

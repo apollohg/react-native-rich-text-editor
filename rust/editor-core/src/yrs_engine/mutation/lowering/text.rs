@@ -32,6 +32,10 @@ impl MutationCompiler {
             &self.targets[target_index].text,
             scalar_index,
         )?;
+        let attrs = attrs_keeping_equivalent_stored_values(
+            attrs,
+            insertion_neighbour_attrs(&self.targets[target_index].current_runs, index_utf16),
+        );
         let missing_gap_work = match &self.targets[target_index].kind {
             ResolvedTargetKind::Missing {
                 signature,
@@ -327,7 +331,25 @@ impl MutationCompiler {
                 "mark range crosses structural XML content",
             ));
         };
-        for span in spans {
+        let pieces = spans
+            .iter()
+            .flat_map(|span| {
+                unformatted_pieces(
+                    &self.targets[span.target].current_runs,
+                    span.index_utf16,
+                    span.len_utf16,
+                    &attrs,
+                )
+                .into_iter()
+                .map(|(index_utf16, len_utf16, attrs)| (span.target, index_utf16, len_utf16, attrs))
+            })
+            .collect::<Vec<_>>();
+        for (target_index, index_utf16, len_utf16, attrs) in pieces {
+            let span = FormatPiece {
+                target: target_index,
+                index_utf16,
+                len_utf16,
+            };
             let action_work = 1usize
                 .checked_add(usize::try_from(span.len_utf16).unwrap_or(usize::MAX))
                 .and_then(|work| work.checked_add(attrs_work(&attrs)))
@@ -413,6 +435,7 @@ impl MutationCompiler {
             to,
             boundaries,
             content,
+            ..
         } = replacement;
         if self.delete(operation_index, from, to, boundaries)? == TextRangeDisposition::Structural {
             return self.replace_structural_range(operation_index, context, replacement);
@@ -595,12 +618,13 @@ impl MutationCompiler {
             });
         }
 
-        let json = content
-            .iter()
-            .map(|node| crate::serialize::node_to_prosemirror_json(node, schema))
-            .collect::<Vec<_>>();
-        let mut batch = prepare_xml_nodes(&json, limits, path.len().saturating_add(2))
-            .map_err(|error| map_prepared_node_error(self.request_id, operation_index, error))?;
+        let depth = path.len().saturating_add(2);
+        let mut batch = if let Some(canonical_content) = replacement.canonical_content {
+            prepare_xml_nodes(canonical_content, limits, depth)
+        } else {
+            crate::yrs_engine::codec::prepare_model_nodes(content.children(), schema, limits, depth)
+        }.map_err(|error| map_prepared_node_error(self.request_id, operation_index, error))?;
+
         for child in &mut batch.nodes {
             child.index = delete_start
                 .checked_add(child.index)
@@ -668,15 +692,103 @@ fn remove_scalar_range(
     Ok(())
 }
 
+struct FormatPiece {
+    target: usize,
+    index_utf16: u32,
+    len_utf16: u32,
+}
+
+fn run_utf16_len(run: &PreparedTextRun) -> u32 {
+    u32::try_from(run.text.encode_utf16().count()).unwrap_or(u32::MAX)
+}
+
+fn insertion_neighbour_attrs(runs: &[PreparedTextRun], index_utf16: u32) -> [Option<&Attrs>; 2] {
+    let before = runs
+        .iter()
+        .find(|run| {
+            run.index_utf16 < index_utf16
+                && index_utf16 <= run.index_utf16.saturating_add(run_utf16_len(run))
+        })
+        .map(|run| &run.attrs);
+    let starting_at = runs
+        .iter()
+        .find(|run| run.index_utf16 == index_utf16 && run_utf16_len(run) > 0)
+        .map(|run| &run.attrs);
+    [before, starting_at]
+}
+
+fn stored_value_is_equivalent(stored: Option<&Attrs>, key: &str, desired: &Any) -> bool {
+    is_attributeless_mark_value(desired)
+        && stored
+            .and_then(|stored| stored.get(key))
+            .is_some_and(is_attributeless_mark_value)
+}
+
+fn attrs_keeping_equivalent_stored_values(
+    attrs: Attrs,
+    neighbours: [Option<&Attrs>; 2],
+) -> Attrs {
+    attrs
+        .into_iter()
+        .map(|(key, desired)| {
+            let stored = neighbours
+                .iter()
+                .find(|stored| stored_value_is_equivalent(**stored, &key, &desired))
+                .and_then(|stored| stored.and_then(|stored| stored.get(&key)).cloned());
+            (key, stored.unwrap_or(desired))
+        })
+        .collect()
+}
+
+fn unformatted_pieces(
+    runs: &[PreparedTextRun],
+    index_utf16: u32,
+    len_utf16: u32,
+    attrs: &Attrs,
+) -> Vec<(u32, u32, Attrs)> {
+    let end = index_utf16.saturating_add(len_utf16);
+    let needed = |stored: Option<&Attrs>| -> Attrs {
+        attrs
+            .iter()
+            .filter(|(key, desired)| !stored_value_is_equivalent(stored, key, desired))
+            .map(|(key, desired)| (key.clone(), desired.clone()))
+            .collect()
+    };
+    let mut pieces: Vec<(u32, u32, Attrs)> = Vec::new();
+    let mut push = |from: u32, to: u32, piece: Attrs| {
+        if from >= to || piece.is_empty() {
+            return;
+        }
+        match pieces.last_mut() {
+            Some((last_from, last_len, last_attrs))
+                if last_from.saturating_add(*last_len) == from && *last_attrs == piece =>
+            {
+                *last_len = to - *last_from;
+            }
+            _ => pieces.push((from, to - from, piece)),
+        }
+    };
+    let mut cursor = index_utf16;
+    for run in runs {
+        let run_end = run.index_utf16.saturating_add(run_utf16_len(run));
+        if run_end <= cursor || run.index_utf16 >= end {
+            continue;
+        }
+        push(cursor, run.index_utf16.min(end), needed(None));
+        let from = cursor.max(run.index_utf16);
+        let to = run_end.min(end);
+        push(from, to, needed(Some(&run.attrs)));
+        cursor = to;
+    }
+    push(cursor, end, needed(None));
+    pieces
+}
+
 fn marks_to_attrs(marks: &[Mark]) -> Attrs {
     marks
         .iter()
         .map(|mark| {
-            let value = if mark.attrs().is_empty() {
-                Any::Bool(true)
-            } else {
-                json_to_any(&Value::Object(mark.attrs().clone().into_iter().collect()))
-            };
+            let value = json_to_any(&Value::Object(mark.attrs().clone().into_iter().collect()));
             (Arc::<str>::from(mark.mark_type()), value)
         })
         .collect()
@@ -688,26 +800,6 @@ pub(crate) fn mark_attr(mark: &Mark) -> Attrs {
 
 pub(crate) fn removed_mark_attr(mark_type: &str) -> Attrs {
     Attrs::from([(Arc::<str>::from(mark_type), Any::Null)])
-}
-
-fn json_to_any(value: &Value) -> Any {
-    match value {
-        Value::Null => Any::Null,
-        Value::Bool(value) => Any::Bool(*value),
-        Value::Number(number) => number
-            .as_i64()
-            .map(Any::BigInt)
-            .or_else(|| number.as_f64().map(Any::Number))
-            .unwrap_or(Any::Null),
-        Value::String(value) => Any::String(value.clone().into()),
-        Value::Array(values) => Any::Array(values.iter().map(json_to_any).collect()),
-        Value::Object(values) => Any::Map(Arc::new(
-            values
-                .iter()
-                .map(|(key, value)| (key.clone(), json_to_any(value)))
-                .collect(),
-        )),
-    }
 }
 
 fn inline_text_pieces(

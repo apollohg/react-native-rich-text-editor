@@ -61,9 +61,10 @@ function evaluateInteger(expression) {
 }
 
 function evaluateRustInteger(source, expression) {
+    expression = expression.replace(/asusize$/, '');
     if (/^[A-Z][A-Z0-9_]*$/.test(expression)) {
         const match = source.match(
-            new RegExp(`(?:pub\\(crate\\))?const${expression}:usize=([\\d_*+]+);`)
+            new RegExp(`(?:pub\\(crate\\))?const${expression}:(?:usize|u32)=([\\d_*+]+);`)
         );
         assert.ok(match, `Rust integer constant missing for ${expression}`);
         expression = match[1];
@@ -133,7 +134,7 @@ assert.deepEqual(
 for (const [name, ceiling] of Object.entries(resourceCeilings)) {
     const snake = name.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
     const match = compactRust.match(
-        new RegExp(`\\("${name}",(?:self|limits)\\.${snake},([A-Z][A-Z0-9_]*|[\\d_*+]+),?\\)`)
+        new RegExp(`\\("${name}",(?:self|limits)\\.${snake},((?:[A-Z][A-Z0-9_]*|[\\d_*+]+)(?:asusize)?),?\\)`)
     );
     assert.ok(match, `Rust ceiling missing for ${name}`);
     assert.equal(evaluateRustInteger(compactRust, match[1]), ceiling, `Rust ceiling drift for ${name}`);
@@ -317,9 +318,7 @@ assert.doesNotMatch(
 // file's text. It is intentionally part of every security-validation entry.
 assertPinnedCargoBehaviorSpawnFixture({ root, pinnedCargo });
 
-// The production surface is the 36 editor_v2_* UniFFI functions plus
-// editor_core_version.
-const V2_EXPORT_COUNT = 36;
+const V2_EXPORT_COUNT = (read('rust/v2-symbols.sh').match(/^    editor_v2_[a-z_]+$/gm) ?? []).length;
 if (releaseMode) {
     const androidModule = read('android/src/main/java/com/apollohg/editor/NativeEditorModule.kt');
     const iosModule = read('ios/NativeEditorModule.swift');
@@ -372,7 +371,7 @@ if (releaseMode) {
     assert.equal(
         (ffiHeader.match(/uniffi_editor_core_fn_func_editor_v2_/g) ?? []).length,
         V2_EXPORT_COUNT,
-        'the FFI header must expose exactly 36 editor_v2_* symbols'
+        `the FFI header must expose exactly ${V2_EXPORT_COUNT} editor_v2_* symbols`
     );
     assert.match(ffiHeader, /uniffi_editor_core_fn_func_editor_core_version/);
     assert.doesNotMatch(ffiHeader, /uniffi_editor_core_fn_func_collaboration_session/);

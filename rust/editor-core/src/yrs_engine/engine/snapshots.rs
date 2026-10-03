@@ -83,6 +83,7 @@ impl YrsDocumentEngine {
         &mut self,
         snapshot: &DocumentSnapshot,
     ) -> YrsEngineResult<EngineCommit> {
+        self.canonical_splice_cache = None;
         self.validate_snapshot_manifest(snapshot)?;
 
         let current_state = encode_state_bounded(&self.doc, &self.resource_limits)?;
@@ -149,7 +150,9 @@ impl YrsDocumentEngine {
         );
         self.derived_state = next_derived_state;
         self.durable_client_ids = candidate.durable_client_ids;
+        self.encoded_state_upper_bound = candidate.encoded_state_bytes;
         self.revision = next_revision;
+        self.record_document_change(super::DocumentChangeScope::Document);
         self.state_revision = next_state_revision;
         self.yrs_state_epoch = next_yrs_state_epoch;
         self.last_committed_origin = Some(TransactionOrigin::SnapshotRestore);
@@ -223,8 +226,10 @@ impl YrsDocumentEngine {
         let derived_document = rehydrate_reserved_html_opaque(&derived_document);
         validate_import_document(&derived_document, &self.schema, &self.resource_limits)
             .map_err(|error| snapshot_derived_error(error, "encodedState"))?;
-        encode_candidate_state_bounded(&candidate_doc, &self.resource_limits)
-            .map_err(|error| snapshot_derived_error(error, "encodedState"))?;
+        let encoded_state_bytes =
+            encode_candidate_state_bounded(&candidate_doc, &self.resource_limits)
+                .map_err(|error| snapshot_derived_error(error, "encodedState"))?
+                .len();
         let canonical_artifact =
             self.canonical_schema
                 .derive(&derived_document)
@@ -235,6 +240,7 @@ impl YrsDocumentEngine {
                     )
                 })?;
         Ok(CandidateDocument {
+            encoded_state_bytes,
             doc: candidate_doc,
             state: EngineDocumentState::Ready {
                 document: derived_document,

@@ -12,6 +12,7 @@ use crate::serialize::{
     from_html_with_limits, from_prosemirror_json_with_limits, FromHtmlOptions, JsonParseError,
     ParseError, UnknownTypeMode,
 };
+use crate::tables::admission::AdmittedTableProjection;
 use crate::transform::{
     canonicalize_yrs_document_with_evidence, validate_importable_marks_with_evidence,
     CanonicalMarksEvidence, DocumentValidationReport, DocumentValidator,
@@ -19,18 +20,20 @@ use crate::transform::{
 use crate::yrs_engine;
 use crate::yrs_engine::canonical::{CanonicalArtifact, CanonicalSchemaContext};
 use crate::yrs_engine::{EditingLimits, TransactionOrigin, YrsEngineError, YrsEngineResult};
+use yrs::Transact;
 
 #[derive(Clone)]
-pub(super) struct RootBoundValidationReport {
-    pub(super) source_root: crate::model::Node,
-    pub(super) report: DocumentValidationReport,
+pub(in crate::yrs_engine) struct RootBoundValidationReport {
+    pub(in crate::yrs_engine) source_root: crate::model::Node,
+    pub(in crate::yrs_engine) report: DocumentValidationReport,
+    pub(in crate::yrs_engine) table_projection: Option<AdmittedTableProjection>,
 }
 
-pub(super) struct ValidatedImportDocument {
-    pub(super) document: Document,
-    pub(super) canonical_artifact: CanonicalArtifact,
-    pub(super) validation: RootBoundValidationReport,
-    pub(super) carry_import_encoded_state_receipt: bool,
+pub(in crate::yrs_engine) struct ValidatedImportDocument {
+    pub(in crate::yrs_engine) document: Document,
+    pub(in crate::yrs_engine) canonical_artifact: CanonicalArtifact,
+    pub(in crate::yrs_engine) validation: RootBoundValidationReport,
+    pub(in crate::yrs_engine) carry_import_encoded_state_receipt: bool,
 }
 
 impl ValidatedImportDocument {
@@ -58,10 +61,6 @@ impl ValidatedImportDocument {
             let validation =
                 validate_import_document_report(&canonical_document, schema, resource_limits)?;
             (canonical_document, validation)
-        };
-        let validation = RootBoundValidationReport {
-            source_root: document.root().clone(),
-            report: validation,
         };
         let canonical_artifact = if let Some(input_len) = json_input_len {
             canonical_schema.derive_validated_json(
@@ -92,7 +91,11 @@ pub(crate) fn admit_local_import_document(
     resource_limits: &ResourceLimits,
     editing_limits: &EditingLimits,
     json_input_len: Option<usize>,
-) -> YrsEngineResult<Document> {
+) -> YrsEngineResult<(
+    Document,
+    DocumentValidationReport,
+    Option<AdmittedTableProjection>,
+)> {
     let canonical_schema = CanonicalSchemaContext::new(schema);
     let admitted = ValidatedImportDocument::new(
         document,
@@ -102,7 +105,11 @@ pub(crate) fn admit_local_import_document(
         json_input_len,
     )?;
     admit_canonical_output(&admitted.canonical_artifact, editing_limits)?;
-    Ok(admitted.document)
+    Ok((
+        admitted.document,
+        admitted.validation.report,
+        admitted.validation.table_projection,
+    ))
 }
 
 fn contains_reserved_public_json_forge(root: &crate::model::Node) -> bool {
@@ -217,6 +224,14 @@ impl YrsDocumentEngine {
             &self.resource_limits,
         )
         .map_err(map_json_import_error)?;
+        self.admit_parsed_json_document(document, input_len)
+    }
+
+    fn admit_parsed_json_document(
+        &self,
+        document: Document,
+        input_len: usize,
+    ) -> YrsEngineResult<ValidatedImportDocument> {
         #[cfg(test)]
         yrs_engine::observability::record_import_model_parse();
         let source = ValidatedImportDocument::new(
@@ -227,6 +242,7 @@ impl YrsDocumentEngine {
             Some(input_len),
         )?;
         admit_canonical_output(&source.canonical_artifact, &self.editing_limits)?;
+        source.canonical_artifact.history_snapshot_retained_charge();
         Ok(source)
     }
 
@@ -300,18 +316,40 @@ impl YrsDocumentEngine {
 
     /// Shared bounded-input/parse/model admission for JSON root replacement,
     /// used by both the commit path and the outbound-bound probe.
-    fn admit_root_replacement_json(
+    pub(super) fn admit_root_replacement_json(
         &self,
         input: &str,
     ) -> Result<ValidatedImportDocument, yrs_engine::RootReplacementError> {
         use yrs_engine::RootReplacementError;
         let input = BoundedInput::new(input, InputKind::DocumentJson, &self.resource_limits)
             .map_err(|error| RootReplacementError::Admission(error.into()))?;
-        let value = self
-            .parse_document_json(input.as_str())
-            .map_err(RootReplacementError::Admission)?;
-        self.admit_validated_json_document(value.as_value(), input.as_str().len())
-            .map_err(RootReplacementError::Admission)
+        let admitted = crate::boundary::DepthCheckedJson::new(
+            input.as_str(),
+            document_json_container_depth_limit(self.resource_limits.max_document_depth)
+                .map_err(|error| RootReplacementError::Admission(error.into()))?,
+            self.resource_limits.max_document_depth,
+            "DOCUMENT_LIMIT_EXCEEDED",
+        )
+        .map_err(|error| RootReplacementError::Admission(error.into()))?;
+        with_document_stack_for_json_container_depth(admitted.container_depth(), || {
+            if let Some(document) = crate::serialize::json_in::try_from_plain_json(
+                admitted.as_str(),
+                &self.schema,
+                &self.resource_limits,
+            ) {
+                let document = document
+                    .map_err(map_json_import_error)
+                    .map_err(RootReplacementError::Admission)?;
+                self.admit_parsed_json_document(document, input.as_str().len())
+                    .map_err(RootReplacementError::Admission)
+            } else {
+                let value = admitted
+                    .parse_value("DOCUMENT_INVALID")
+                    .map_err(|error| RootReplacementError::Admission(error.into()))?;
+                self.admit_validated_json_document(value.as_value(), input.as_str().len())
+                    .map_err(RootReplacementError::Admission)
+            }
+        })
     }
 
     /// The sealed whole-root `ReplaceStructure` transaction for an admitted
@@ -336,12 +374,7 @@ impl YrsDocumentEngine {
                 "root child count exceeds the addressable replacement window",
             ))
         })?;
-        let content = source
-            .document
-            .root()
-            .content()
-            .cloned()
-            .unwrap_or_else(crate::model::Fragment::empty);
+        let content = self.authored_replacement_content(request_id, source, history)?;
         let history_policy = match history {
             yrs_engine::ReplacementHistory::UndoableBoundary => yrs_engine::HistoryPolicy::Boundary,
             yrs_engine::ReplacementHistory::ResetAndClear => yrs_engine::HistoryPolicy::Skip,
@@ -364,6 +397,59 @@ impl YrsDocumentEngine {
         })
     }
 
+    fn authored_replacement_content(
+        &self,
+        request_id: u64,
+        source: &ValidatedImportDocument,
+        history: yrs_engine::ReplacementHistory,
+    ) -> Result<crate::model::Fragment, yrs_engine::RootReplacementError> {
+        use yrs_engine::RootReplacementError;
+        let raw = |document: &Document| {
+            document
+                .root()
+                .content()
+                .cloned()
+                .unwrap_or_else(crate::model::Fragment::empty)
+        };
+        match history {
+            yrs_engine::ReplacementHistory::ResetAndClear => return Ok(raw(&source.document)),
+            yrs_engine::ReplacementHistory::UndoableBoundary => {}
+        }
+        let mut authored = source.document.clone();
+        for table_pos in crate::tables::normalize::outer_table_positions(
+            &authored,
+            &self.schema,
+            &self.resource_limits,
+        )
+        .map_err(RootReplacementError::Transaction)?
+        .into_iter()
+        .rev()
+        {
+            let operations = crate::tables::normalize::normalize_outer_table(
+                &authored,
+                table_pos,
+                &self.schema,
+                &self.resource_limits,
+            )
+            .map_err(RootReplacementError::Transaction)?;
+            if operations.is_empty() {
+                continue;
+            }
+            authored =
+                crate::command_planner::apply_operations(&authored, &self.schema, &operations)
+                    .map_err(|()| {
+                        RootReplacementError::Transaction(
+                    yrs_engine::OperationError::engine_invariant_failed(
+                        request_id,
+                        None,
+                        "an authored replacement's table normalization could not be applied",
+                    ),
+                )
+                    })?;
+        }
+        Ok(raw(&authored))
+    }
+
     /// Lower an admitted replacement document to one sealed whole-root
     /// `ReplaceStructure` transaction and apply the requested history class.
     fn commit_root_replacement(
@@ -375,13 +461,97 @@ impl YrsDocumentEngine {
     ) -> Result<yrs_engine::TransactionCommit, yrs_engine::RootReplacementError> {
         use yrs_engine::RootReplacementError;
         let transaction = self.root_replacement_transaction(request_id, &source, history)?;
-        let (commit, _) = self
-            .apply_typed_transaction_with_staged_context(
-                transaction,
-                false,
-                &mut OutboundUpdateSink::from_optional_outbox(outbox),
+        let mut outbound = OutboundUpdateSink::from_optional_outbox(outbox);
+        let matches_source = matches!(transaction.operations.as_slice(),
+            [yrs_engine::TypedOperation::ReplaceStructure(replacement)]
+                if source.document.root().content() == Some(replacement.content()))
+            && self.document() != Some(&source.document);
+        let (commit, _) = if matches_source {
+            if source
+                .canonical_artifact
+                .history_snapshot_retained_charge()
+                .is_none_or(|charge| {
+                    charge
+                        .canonical_retained_bytes
+                        .saturating_add(charge.source_document_retained_bytes)
+                        > self.editing_limits.max_derived_output_bytes
+                })
+            {
+                source.canonical_artifact.sha256();
+            }
+            let mut rendered_text = crate::render::RenderedTextBuilder::default();
+            let render_blocks = crate::render::incremental::CachedRenderBlocks::build_validated(
+                &source.document,
+                &self.schema,
+                &self.resource_limits,
+                &self.schema_fingerprint,
+                source.validation.report.stats.node_count,
+                source.validation.report.stats.max_depth,
+                source.validation.table_projection.as_ref(),
+                Some(&mut rendered_text),
             )
-            .map_err(RootReplacementError::Transaction)?;
+            .map_err(|error| {
+                RootReplacementError::Transaction(
+                    super::transaction_result::cached_render_operation_error(
+                        request_id,
+                        &self.resource_limits,
+                        error,
+                    ),
+                )
+            })?;
+            let admission =
+                yrs_engine::compiler::PreparedSemanticAdmission::prepare_validated_import(
+                    request_id,
+                    self.revision,
+                    self.state_revision,
+                    self.yrs_state_epoch,
+                    &self.schema,
+                    &self.resource_limits,
+                    &self.editing_limits,
+                    self.max_length,
+                    &transaction,
+                    &source,
+                    std::sync::Arc::new(render_blocks),
+                    rendered_text.finish(),
+                )
+                .map_err(RootReplacementError::Transaction)?;
+            let context = self
+                .prepare_mutation_lookup_seed(request_id)
+                .map_err(RootReplacementError::Transaction)?;
+            let authority_doc = self.doc.clone();
+            let read_transaction =
+                yrs_engine::compiler::CompilationReadTransaction::for_immediate_commit(
+                    authority_doc.transact(),
+                );
+            let mut compiled = self
+                .with_compiled_base_authority(
+                    request_id,
+                    Some(&context),
+                    &read_transaction,
+                    |authority, txn, fragment| {
+                        self.compile_typed_transaction_with_read_view(
+                            transaction,
+                            Some((&admission, &source.document)),
+                            authority,
+                            txn,
+                            fragment,
+                        )
+                    },
+                )
+                .map_err(RootReplacementError::Transaction)?;
+            compiled.mutation_lookup_transition = None;
+            self.apply_compiled_transaction_with_history_and_context(
+                compiled,
+                false,
+                None,
+                Some(context),
+                Some(read_transaction),
+                &mut outbound,
+            )
+        } else {
+            self.apply_typed_transaction_with_staged_context(transaction, false, &mut outbound)
+        }
+        .map_err(RootReplacementError::Transaction)?;
         if history == yrs_engine::ReplacementHistory::ResetAndClear {
             self.reset_history_binding();
         }
@@ -434,7 +604,7 @@ fn validate_import_document_report(
     document: &Document,
     schema: &Schema,
     resource_limits: &ResourceLimits,
-) -> YrsEngineResult<DocumentValidationReport> {
+) -> YrsEngineResult<RootBoundValidationReport> {
     let root_has_doc_role = schema
         .node(document.root().node_type())
         .is_some_and(|spec| matches!(spec.role, NodeRole::Doc));
@@ -447,8 +617,15 @@ fn validate_import_document_report(
             ),
         ));
     }
-    DocumentValidator::validate_report(document, schema, resource_limits)
-        .map_err(map_import_validation_error)
+    let table_projection = AdmittedTableProjection::admit(document, schema, resource_limits)
+        .map_err(map_import_validation_error)?;
+    let report = DocumentValidator::validate_report(document, schema, resource_limits)
+        .map_err(map_import_validation_error)?;
+    Ok(RootBoundValidationReport {
+        source_root: document.root().clone(),
+        report,
+        table_projection: Some(table_projection),
+    })
 }
 
 pub(super) fn map_json_import_error(error: JsonParseError) -> YrsEngineError {

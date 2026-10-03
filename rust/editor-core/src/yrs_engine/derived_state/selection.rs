@@ -10,10 +10,12 @@ use crate::model::{Document, Mark};
 use crate::position::PositionMap;
 use crate::schema::Schema;
 use crate::selection::Selection;
+use crate::tables::admission::TableProjectionIndex;
+use crate::tables::selection::{cell_pair_is_usable, snap_cell_selection, CellSelectionOrigin};
 use crate::yrs_engine::compiler::selectable_void_at;
 use crate::yrs_engine::position::{
     cursor_sticky_index_from_doc_pos, doc_pos_to_relative_point, doc_pos_to_sticky_index,
-    relative_point_to_doc_pos, relative_selection_to_selection,
+    relative_point_to_doc_pos,
 };
 use crate::yrs_engine::{
     scalar_offset_to_utf16, Affinity, OperationError, OperationResult, RelativePoint,
@@ -79,6 +81,7 @@ impl DerivedStateCache {
         self.stored_marks = stored_marks;
         self.reseal_state_revision(state_revision);
         self.clear_active_state_certificate();
+        self.render_active_state.take();
     }
 
     pub fn resolve_relative_selection<T: ReadTxn>(
@@ -96,6 +99,8 @@ impl DerivedStateCache {
             &self.document,
             &self.position_map,
             &self.rendered_text,
+            &self.table_projection_index,
+            self.block_branch_index.as_deref(),
         )
     }
 
@@ -167,16 +172,40 @@ pub(crate) fn apply_stored_mark_operation(
     }
 }
 
+pub(crate) fn selection_table_index(
+    document: &Document,
+    selection: &Selection,
+    schema: &Schema,
+    resource_limits: &crate::boundary::ResourceLimits,
+) -> TableProjectionIndex {
+    match selection {
+        Selection::Cell { .. } => {
+            TableProjectionIndex::derive_or_fallback(document, schema, resource_limits)
+        }
+        Selection::Text { .. } | Selection::Node { .. } | Selection::All => {
+            TableProjectionIndex::empty()
+        }
+    }
+}
+
 pub(crate) fn resolved_from_legacy(
     document: &Document,
     selection: &Selection,
     schema: &Schema,
+    table_index: &TableProjectionIndex,
 ) -> Option<ResolvedSelection> {
     record_preview_position_map_derivation();
     let position_map = PositionMap::build(document, schema);
     record_preview_rendered_text_derivation();
     let rendered = crate::render::rendered_text(document, schema);
-    resolved_from_legacy_with_view(document, selection, schema, &position_map, &rendered)
+    resolved_from_legacy_with_view(
+        document,
+        selection,
+        schema,
+        &position_map,
+        &rendered,
+        table_index,
+    )
 }
 
 pub(crate) fn resolved_from_legacy_with_view(
@@ -185,6 +214,7 @@ pub(crate) fn resolved_from_legacy_with_view(
     schema: &Schema,
     position_map: &PositionMap,
     rendered: &str,
+    table_index: &TableProjectionIndex,
 ) -> Option<ResolvedSelection> {
     let point = |document_position| {
         let scalar = position_map.doc_to_scalar(document_position, document);
@@ -203,6 +233,15 @@ pub(crate) fn resolved_from_legacy_with_view(
             Some(ResolvedSelection::Node { at: point(*pos)? })
         }
         Selection::Node { .. } => None,
+        Selection::Cell { anchor, head } => {
+            if !cell_pair_is_usable(table_index, *anchor, *head, CellSelectionOrigin::Preserved) {
+                return None;
+            }
+            Some(ResolvedSelection::Cell {
+                anchor: point(*anchor)?,
+                head: point(*head)?,
+            })
+        }
         Selection::All => Some(ResolvedSelection::All),
     }
 }
@@ -248,6 +287,7 @@ pub(super) fn preserve_with_mapped_fallback<T: ReadTxn>(
     mapped: &Selection,
     schema: &Schema,
     strict_affinity: bool,
+    table_index: &TableProjectionIndex,
 ) -> RelativeSelection {
     let point = |current: &RelativePoint, mapped_position| {
         if relative_point_to_doc_pos(txn, fragment, current, schema).is_some() {
@@ -285,11 +325,23 @@ pub(super) fn preserve_with_mapped_fallback<T: ReadTxn>(
                 point: point(current, *pos),
             }
         }
+        (
+            RelativeSelection::Cell { .. },
+            Selection::Cell {
+                anchor: mapped_anchor,
+                head: mapped_head,
+            },
+        ) => {
+            let snapped = snap_cell_selection(table_index, *mapped_anchor, *mapped_head)
+                .unwrap_or_else(|| Selection::cursor(*mapped_anchor));
+            operation_result_to_relative(txn, fragment, &snapped, schema, None)
+        }
         (RelativeSelection::All, Selection::All) => RelativeSelection::All,
-        _ => operation_result_to_relative(txn, fragment, mapped, schema),
+        _ => operation_result_to_relative(txn, fragment, mapped, schema, None),
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn resolve_selection<T: ReadTxn>(
     txn: &T,
     fragment: &XmlFragmentRef,
@@ -298,6 +350,8 @@ pub(crate) fn resolve_selection<T: ReadTxn>(
     document: &Document,
     position_map: &PositionMap,
     rendered_text: &str,
+    table_index: &TableProjectionIndex,
+    block_index: Option<&crate::yrs_engine::block_branch_index::BlockBranchIndex>,
 ) -> Option<ResolvedSelection> {
     #[cfg(test)]
     RELATIVE_SELECTION_RESOLUTION_TRAVERSALS.set(
@@ -305,14 +359,34 @@ pub(crate) fn resolve_selection<T: ReadTxn>(
             .get()
             .saturating_add(1),
     );
-    let selection = relative_selection_to_selection(
-        txn,
-        fragment,
-        relative_selection,
-        schema,
-        document,
-        position_map,
-    )?;
+    let selection = if block_index.is_some() {
+        crate::yrs_engine::position::relative_selection_with_resolver(
+            relative_selection,
+            document,
+            position_map,
+            |point| {
+                block_index
+                    .and_then(|index| {
+                        index.doc_pos_of_offset(
+                            txn,
+                            &point.sticky.get_offset(txn)?,
+                            position_map,
+                            document,
+                        )
+                    })
+                    .or_else(|| relative_point_to_doc_pos(txn, fragment, point, schema))
+            },
+        )
+    } else {
+        crate::yrs_engine::position::relative_selection_to_selection(
+            txn,
+            fragment,
+            relative_selection,
+            schema,
+            document,
+            position_map,
+        )
+    }?;
     let point = |document_position| {
         let scalar = position_map.doc_to_scalar(document_position, document);
         Some(ResolvedPoint {
@@ -330,6 +404,15 @@ pub(crate) fn resolve_selection<T: ReadTxn>(
             Some(ResolvedSelection::Node { at: point(pos)? })
         }
         Selection::Node { .. } => None,
+        Selection::Cell { anchor, head } => {
+            if !cell_pair_is_usable(table_index, anchor, head, CellSelectionOrigin::Preserved) {
+                return None;
+            }
+            Some(ResolvedSelection::Cell {
+                anchor: point(anchor)?,
+                head: point(head)?,
+            })
+        }
         Selection::All => Some(ResolvedSelection::All),
     }
 }
@@ -339,18 +422,38 @@ pub(crate) fn operation_result_to_relative<T: ReadTxn>(
     fragment: &XmlFragmentRef,
     selection: &Selection,
     schema: &Schema,
+    indexed_view: Option<(
+        &crate::yrs_engine::block_branch_index::BlockBranchIndex,
+        &PositionMap,
+        &Document,
+    )>,
 ) -> RelativeSelection {
     #[cfg(test)]
     OPERATION_RESULT_RELATIVE_TRAVERSALS
         .set(OPERATION_RESULT_RELATIVE_TRAVERSALS.get().saturating_add(1));
+    let sticky_at = |position, assoc| {
+        indexed_view
+            .and_then(|(index, map, document)| {
+                index.sticky_at_doc_pos(txn, position, assoc, map, document)
+            })
+            .or_else(|| doc_pos_to_sticky_index(txn, fragment, position, assoc, schema))
+    };
     let before = |position| {
-        doc_pos_to_sticky_index(txn, fragment, position, Assoc::Before, schema).expect(
+        sticky_at(position, Assoc::Before).expect(
             "compiler-normalized operation-result position has an exact Before Yrs association",
         )
     };
     match selection {
         Selection::Text { anchor, head } if anchor == head => {
-            let sticky = cursor_sticky_index_from_doc_pos(txn, fragment, *anchor, true, schema)
+            let sticky = indexed_view
+                .and_then(|(index, map, document)| {
+                    index
+                        .sticky_at_doc_pos(txn, *anchor, Assoc::After, map, document)
+                        .or_else(|| {
+                            index.sticky_at_doc_pos(txn, *anchor, Assoc::Before, map, document)
+                        })
+                })
+                .or_else(|| cursor_sticky_index_from_doc_pos(txn, fragment, *anchor, true, schema))
                 .expect("compiler-normalized cursor has a Yrs association");
             let point = RelativePoint {
                 affinity: affinity_from_assoc(sticky.assoc),
@@ -374,6 +477,16 @@ pub(crate) fn operation_result_to_relative<T: ReadTxn>(
         Selection::Node { pos } => RelativeSelection::Node {
             point: RelativePoint {
                 sticky: before(*pos),
+                affinity: Affinity::Before,
+            },
+        },
+        Selection::Cell { anchor, head } => RelativeSelection::Cell {
+            anchor: RelativePoint {
+                sticky: before(*anchor),
+                affinity: Affinity::Before,
+            },
+            head: RelativePoint {
+                sticky: before(*head),
                 affinity: Affinity::Before,
             },
         },
@@ -410,8 +523,41 @@ pub(crate) fn history_selection_to_relative<T: ReadTxn>(
                 point: point(at.document, captured)?,
             })
         }
+        (
+            RelativeSelection::Cell {
+                anchor: captured_anchor,
+                head: captured_head,
+            },
+            ResolvedSelection::Cell { anchor, head },
+        ) => Some(RelativeSelection::Cell {
+            anchor: point(anchor.document, captured_anchor)?,
+            head: point(head.document, captured_head)?,
+        }),
         (RelativeSelection::All, ResolvedSelection::All) => Some(RelativeSelection::All),
-        _ => None,
+        (
+            RelativeSelection::Text { .. },
+            ResolvedSelection::Node { .. }
+            | ResolvedSelection::Cell { .. }
+            | ResolvedSelection::All,
+        )
+        | (
+            RelativeSelection::Node { .. },
+            ResolvedSelection::Text { .. }
+            | ResolvedSelection::Cell { .. }
+            | ResolvedSelection::All,
+        )
+        | (
+            RelativeSelection::Cell { .. },
+            ResolvedSelection::Text { .. }
+            | ResolvedSelection::Node { .. }
+            | ResolvedSelection::All,
+        )
+        | (
+            RelativeSelection::All,
+            ResolvedSelection::Text { .. }
+            | ResolvedSelection::Node { .. }
+            | ResolvedSelection::Cell { .. },
+        ) => None,
     }
 }
 
@@ -429,6 +575,7 @@ pub(crate) fn resolved_to_legacy(selection: &ResolvedSelection) -> Selection {
     match selection {
         ResolvedSelection::Text { anchor, head } => Selection::text(anchor.document, head.document),
         ResolvedSelection::Node { at } => Selection::node(at.document),
+        ResolvedSelection::Cell { anchor, head } => Selection::cell(anchor.document, head.document),
         ResolvedSelection::All => Selection::all(),
     }
 }

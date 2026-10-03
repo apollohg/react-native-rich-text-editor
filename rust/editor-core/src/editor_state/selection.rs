@@ -11,7 +11,9 @@ fn can_toggle_blockquote_transaction_oracle(
     else {
         return false;
     };
-    let pos = selection.from(document);
+    let Some(pos) = selection.from(document) else {
+        return false;
+    };
     let mut transaction = Transaction::new();
     if let Some((start, quote)) =
         containing_node_at(document, schema, pos, |_, name| name == blockquote_type)
@@ -25,12 +27,10 @@ fn can_toggle_blockquote_transaction_oracle(
             content: Fragment::from(content.iter().cloned().collect::<Vec<_>>()),
         });
     } else {
-        let Some(range) = selected_block_range(
-            document,
-            schema,
-            selection.from(document),
-            selection.to(document),
-        ) else {
+        let Some(range) = selection
+            .text_range(document)
+            .and_then(|(from, to)| selected_block_range(document, schema, from, to))
+        else {
             return false;
         };
         let Some(quote_spec) = schema.node(blockquote_type) else {
@@ -72,7 +72,9 @@ fn can_apply_list_type_transaction_oracle(
     if schema.node(list_type).is_none() {
         return false;
     }
-    let pos = selection.from(document);
+    let Some(pos) = selection.from(document) else {
+        return false;
+    };
     let mut transaction = Transaction::new();
     if let Some((start, list)) = containing_node_at(document, schema, pos, |role, _| {
         matches!(role, NodeRole::List { .. })
@@ -94,12 +96,9 @@ fn can_apply_list_type_transaction_oracle(
         let Some(item_type) = schema.list_item_type_for(list_type) else {
             return false;
         };
-        let range = selected_block_range(
-            document,
-            schema,
-            selection.from(document),
-            selection.to(document),
-        );
+        let range = selection
+            .text_range(document)
+            .and_then(|(from, to)| selected_block_range(document, schema, from, to));
         let in_quote = range
             .as_ref()
             .and_then(|range| document.node_at(&range.parent_path))
@@ -127,9 +126,12 @@ fn can_apply_list_type_transaction_oracle(
                 )]),
             });
         } else {
+            let Some((wrap_from, wrap_to)) = selection.text_range(document) else {
+                return false;
+            };
             transaction.add_step(Step::WrapInList {
-                from: selection.from(document),
-                to: selection.to(document),
+                from: wrap_from,
+                to: wrap_to,
                 list_type: list_type.to_string(),
                 item_type,
                 attrs: HashMap::new(),
@@ -187,8 +189,8 @@ pub(crate) fn selected_text_block_range(
     let range = selected_block_range(
         document,
         schema,
-        selection.from(document),
-        selection.to(document),
+        selection.from(document)?,
+        selection.to(document)?,
     )?;
     (!range.selected_blocks.is_empty()
         && range.selected_blocks.iter().all(|block| {

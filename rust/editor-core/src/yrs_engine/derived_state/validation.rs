@@ -1,4 +1,4 @@
-use super::insert_admission::LocalizedInsertAdmission;
+use super::insert_admission::LocalizedTextblockEditPlan;
 use crate::boundary::ResourceLimits;
 use crate::model::{Document, Node};
 use crate::schema::Schema;
@@ -38,6 +38,7 @@ pub(crate) struct ValidatedDocumentEvidence {
 
 pub(crate) struct ValidatedCandidateContext<'a> {
     pub evidence: &'a ValidatedDocumentEvidence,
+    pub table_projection: Option<&'a crate::tables::admission::AdmittedTableProjection>,
     pub canonical_schema: &'a yrs_engine::canonical::CanonicalSchemaContext,
     pub fragment_name: &'a str,
     pub engine_epoch: u64,
@@ -253,6 +254,7 @@ impl ValidatedDocumentEvidence {
 #[derive(Debug, Clone)]
 pub(crate) struct DocumentValidationCertificate {
     pub(super) stats: DocumentStats,
+    pub(super) depth_counts: Arc<[usize]>,
     pub(super) metrics: DocumentValidationMetrics,
     pub(super) resource_limits: ResourceLimits,
     pub(super) schema_fingerprint: Arc<str>,
@@ -282,6 +284,7 @@ impl PartialEq for DocumentValidationCertificate {
             false
         };
         self.stats == other.stats
+            && self.depth_counts == other.depth_counts
             && self.metrics == other.metrics
             && self.resource_limits == other.resource_limits
             && self.schema_fingerprint == other.schema_fingerprint
@@ -300,6 +303,7 @@ impl Eq for DocumentValidationCertificate {}
 impl DocumentValidationCertificate {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn from_report(
+        document: &Document,
         validation: DocumentValidationReport,
         canonical_artifact: &CanonicalArtifact,
         resource_limits: &ResourceLimits,
@@ -312,6 +316,11 @@ impl DocumentValidationCertificate {
         yrs_engine::observability::record_validation_certificate_construction();
         Self {
             stats: validation.stats,
+            depth_counts: Self::subtree_depth_counts(
+                document.root(),
+                crate::transform::DOCUMENT_ROOT_DEPTH,
+            )
+            .into(),
             metrics: validation.metrics,
             resource_limits: resource_limits.clone(),
             schema_fingerprint: Arc::from(schema_fingerprint),
@@ -348,6 +357,7 @@ impl DocumentValidationCertificate {
             DocumentValidator::validate_report(document, schema, resource_limits).ok()?;
         crate::transform::validate_canonical_marks(document, schema).ok()?;
         let mut certificate = Self::from_report(
+            document,
             validation,
             canonical_artifact,
             resource_limits,
@@ -360,6 +370,10 @@ impl DocumentValidationCertificate {
         certificate.canonical_serialized_len = canonical_artifact.serialized_len();
         certificate.canonical_fingerprint_materialized = true;
         Some(certificate)
+    }
+
+    pub(crate) fn depth_slots(&self) -> usize {
+        self.depth_counts.len()
     }
 
     pub(crate) fn stats(&self) -> DocumentStats {
@@ -433,39 +447,110 @@ impl DocumentValidationCertificate {
         self.state_revision = state_revision;
     }
 
-    pub(super) fn promote_existing_insert(
-        &self,
-        canonical_artifact: &CanonicalArtifact,
-        derivations: &CompiledDocumentDerivations,
-        admission: &LocalizedInsertAdmission,
+    pub(crate) fn subtree_depth_counts(node: &Node, depth: usize) -> Vec<usize> {
+        let mut counts = Vec::<usize>::new();
+        let mut pending = vec![(node, depth)];
+        while let Some((node, depth)) = pending.pop() {
+            if counts.len() <= depth {
+                counts.resize(depth + 1, 0);
+            }
+            counts[depth] += 1;
+            if let Some(content) = node.content() {
+                pending.extend(content.iter().map(|child| (child, depth + 1)));
+            }
+        }
+        counts
+    }
+
+    pub(crate) fn mint_localized(
+        previous: &Self,
+        block_path: &[u32],
+        old_block: &Node,
+        new_block: &Node,
+        schema: &Schema,
+        limits: &ResourceLimits,
     ) -> Option<Self> {
-        let canonical_fingerprint = canonical_artifact.sha256();
-        if canonical_artifact.schema_fingerprint() != self.schema_fingerprint.as_ref()
-            || canonical_artifact.format_version()
-                != yrs_engine::canonical::CANONICAL_ARTIFACT_FORMAT_VERSION
-            || canonical_artifact.serialized_len() != admission.next_canonical_serialized_len
-            || canonical_artifact.text_scalar_len() != admission.next_raw_text_scalars
-            || canonical_artifact.text_utf8_bytes() != admission.next_raw_text_utf8_bytes
-            || derivations.document_node_count != self.stats.node_count
-            || derivations.document_text_bytes != admission.next_raw_text_utf8_bytes
-            || derivations.rendered_scalars != admission.next_rendered_scalars
+        let depth = crate::transform::DOCUMENT_ROOT_DEPTH.checked_add(block_path.len())?;
+        let old =
+            DocumentValidator::validate_subtree_report(old_block, schema, limits, depth).ok()?;
+        let new =
+            DocumentValidator::validate_subtree_report(new_block, schema, limits, depth).ok()?;
+        crate::transform::validate_subtree_marks(new_block, schema).ok()?;
+        if previous.resource_limits != *limits {
+            return None;
+        }
+        let mut depth_counts = previous.depth_counts.to_vec();
+        let old_depths = Self::subtree_depth_counts(old_block, depth);
+        let new_depths = Self::subtree_depth_counts(new_block, depth);
+        depth_counts.resize(depth_counts.len().max(new_depths.len()), 0);
+        for (depth, count) in depth_counts.iter_mut().enumerate() {
+            *count = count
+                .checked_sub(old_depths.get(depth).copied().unwrap_or_default())?
+                .checked_add(new_depths.get(depth).copied().unwrap_or_default())?;
+        }
+        let max_depth = depth_counts.iter().rposition(|count| *count > 0)?;
+        depth_counts.truncate(max_depth.checked_add(1)?);
+        let stats = DocumentStats {
+            node_count: previous
+                .stats
+                .node_count
+                .checked_sub(old.stats.node_count)?
+                .checked_add(new.stats.node_count)?,
+            max_depth,
+        };
+        let metrics = DocumentValidationMetrics {
+            metadata_bytes: previous
+                .metrics
+                .metadata_bytes
+                .checked_sub(old.metrics.metadata_bytes)?
+                .checked_add(new.metrics.metadata_bytes)?,
+            validation_work: previous
+                .metrics
+                .validation_work
+                .checked_sub(old.metrics.validation_work)?
+                .checked_add(new.metrics.validation_work)?,
+        };
+        if stats.node_count > limits.max_document_nodes
+            || stats.max_depth > limits.max_document_depth
+            || metrics.metadata_bytes > limits.max_input_bytes
+            || metrics.validation_work > crate::transform::document_validation_work_limit(limits)
         {
             return None;
         }
         Some(Self {
-            stats: self.stats,
-            metrics: self.metrics,
-            resource_limits: self.resource_limits.clone(),
-            schema_fingerprint: Arc::clone(&self.schema_fingerprint),
+            stats,
+            depth_counts: depth_counts.into(),
+            metrics,
+            ..previous.clone()
+        })
+    }
+
+    pub(super) fn promote_localized_canonical(
+        self,
+        canonical_artifact: &CanonicalArtifact,
+        derivations: &CompiledDocumentDerivations,
+        plan: &LocalizedTextblockEditPlan,
+    ) -> Option<Self> {
+        if canonical_artifact.schema_fingerprint() != self.schema_fingerprint.as_ref()
+            || canonical_artifact.format_version()
+                != yrs_engine::canonical::CANONICAL_ARTIFACT_FORMAT_VERSION
+            || canonical_artifact.serialized_len() != plan.next_canonical_serialized_len
+            || canonical_artifact.text_scalar_len() != plan.next_raw_text_scalars
+            || canonical_artifact.text_utf8_bytes() != plan.next_raw_text_utf8_bytes
+            || derivations.document_node_count != self.stats.node_count
+            || derivations.document_text_bytes != plan.next_raw_text_utf8_bytes
+            || derivations.rendered_scalars != plan.next_rendered_scalars
+        {
+            return None;
+        }
+        Some(Self {
             canonical_artifact: canonical_artifact.clone(),
-            canonical_fingerprint,
+            canonical_fingerprint: [0; 32],
             canonical_serialized_len: canonical_artifact.serialized_len(),
-            canonical_fingerprint_materialized: true,
+            canonical_fingerprint_materialized: false,
             raw_text_scalars: canonical_artifact.text_scalar_len(),
             raw_text_utf8_bytes: canonical_artifact.text_utf8_bytes(),
-            document_revision: self.document_revision,
-            state_revision: self.state_revision,
-            yrs_state_epoch: self.yrs_state_epoch,
+            ..self
         })
     }
 

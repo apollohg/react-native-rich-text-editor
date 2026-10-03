@@ -1,13 +1,21 @@
 #[cfg(test)]
 use std::cell::Cell;
 use std::collections::HashSet;
+use std::ops::Range;
 use std::sync::{Arc, Mutex, OnceLock};
 
+use yrs::branch::{Branch, BranchID};
+use yrs::encoding::write::Write;
 use yrs::sync::time::Clock;
-use yrs::types::xml::XmlFragmentRef;
+use yrs::types::xml::{XmlFragment, XmlFragmentRef, XmlOut};
+use yrs::types::Text;
 use yrs::undo::{EventKind, Options as UndoOptions, StackItem, UndoManager};
 use yrs::updates::decoder::Decode;
-use yrs::{Doc, IdSet, Origin, ReadTxn, StateVector, Transact, Update};
+use yrs::updates::encoder::{Encode, Encoder, EncoderV1};
+use yrs::{
+    Assoc, ClientID, Doc, IdSet, IndexScope, OffsetKind, Options, Origin, ReadTxn, StateVector,
+    StickyIndex, Transact, Update, ID,
+};
 
 use crate::model::Mark;
 
@@ -95,12 +103,56 @@ fn reserve_replay_roll_baseline(
 }
 
 #[derive(Debug, Clone)]
+pub(crate) enum HistoryCanonicalIdentity {
+    Materialized([u8; 32]),
+    Retained(super::canonical::CanonicalArtifact),
+}
+
+impl HistoryCanonicalIdentity {
+    pub(crate) fn from_artifact(
+        artifact: &super::canonical::CanonicalArtifact,
+        snapshot_retained: bool,
+    ) -> Self {
+        if snapshot_retained {
+            Self::Retained(artifact.clone())
+        } else {
+            Self::Materialized(artifact.sha256())
+        }
+    }
+
+    pub(crate) fn fingerprint(&self) -> [u8; 32] {
+        match self {
+            Self::Materialized(fingerprint) => *fingerprint,
+            Self::Retained(artifact) => artifact.sha256(),
+        }
+    }
+
+    pub(crate) fn matches_artifact(&self, artifact: &super::canonical::CanonicalArtifact) -> bool {
+        matches!(self, Self::Retained(retained) if retained.ptr_eq(artifact))
+            || self.fingerprint() == artifact.sha256()
+    }
+}
+
+impl PartialEq for HistoryCanonicalIdentity {
+    fn eq(&self, other: &Self) -> bool {
+        if let (Self::Retained(left), Self::Retained(right)) = (self, other) {
+            if left.ptr_eq(right) {
+                return true;
+            }
+        }
+        self.fingerprint() == other.fingerprint()
+    }
+}
+
+impl Eq for HistoryCanonicalIdentity {}
+
+#[derive(Debug, Clone)]
 pub(crate) struct HistorySnapshot {
     pub relative_selection: RelativeSelection,
     pub resolved_selection: ResolvedSelection,
     pub stored_marks: Option<Vec<Mark>>,
     pub text_length: u64,
-    pub canonical_fingerprint: [u8; 32],
+    pub canonical_fingerprint: HistoryCanonicalIdentity,
     pub derived_output_bytes: usize,
     pub metadata_bytes: usize,
     pub document_snapshot: Option<Arc<super::derived_state::HistoryDocumentSnapshot>>,
@@ -143,7 +195,7 @@ pub(crate) struct PreparedHistoryLimits {
 pub(crate) struct HistorySnapshotTemplate {
     pub stored_marks: Option<Vec<Mark>>,
     pub text_length: u64,
-    pub canonical_fingerprint: [u8; 32],
+    pub canonical_fingerprint: HistoryCanonicalIdentity,
     pub derived_output_bytes: usize,
     pub metadata_bytes: usize,
     pub document_snapshot_retained_bytes:
@@ -233,10 +285,19 @@ impl HistoryMetadata {
     }
 
     fn slots(&self) -> HistoryMetadataSlots {
+        #[cfg(test)]
+        super::observability::HISTORY_OWNED_SLOT_READS
+            .set(super::observability::HISTORY_OWNED_SLOT_READS.get() + 1);
         self.0
             .lock()
             .expect("history metadata lock poisoned")
             .clone()
+    }
+
+    fn slot_identities(&self) -> [Option<usize>; 2] {
+        let slots = self.0.lock().expect("history metadata lock poisoned");
+        [slots.before.as_ref(), slots.after.as_ref()]
+            .map(|slot| slot.map(HistorySnapshotSlot::identity))
     }
 
     fn replace_slots(&self, slots: HistoryMetadataSlots) {
@@ -314,7 +375,18 @@ pub(crate) enum HistoryAction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct HistoryPop {
     pub changed: bool,
+    pub pruned: usize,
     pub restored: Option<HistorySnapshotSlot>,
+}
+
+impl HistoryPop {
+    fn unchanged(pruned: usize) -> Self {
+        Self {
+            changed: false,
+            pruned,
+            restored: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -468,11 +540,18 @@ pub(crate) struct YrsHistory {
     pending_replay_event: Option<PendingReplayEvent>,
     rebase_before_next_event: bool,
     recording_replay_events: bool,
+    redone_chains: Vec<RedoneChain>,
 }
 
 include!("history/recording.rs");
 include!("history/capture.rs");
 include!("history/replay.rs");
+include!("history/deletion_filter.rs");
+
+#[cfg(feature = "table-interop")]
+mod availability_audit;
+#[cfg(feature = "table-interop")]
+pub(crate) use availability_audit::AvailabilityHistoryAudit;
 
 fn stack_units(stack: &[StackItem<HistoryMetadata>], request_id: u64) -> OperationResult<u64> {
     let mut total = 0u64;
@@ -535,16 +614,18 @@ fn encode_full_state(doc: &Doc) -> Vec<u8> {
     if txn.state_vector().is_empty() {
         Vec::new()
     } else {
+        #[cfg(test)]
+        super::observability::record_whole_state_encoding();
         txn.encode_state_as_update_v1(&StateVector::default())
     }
 }
 
-fn apply_update_bytes(
+pub(in crate::yrs_engine) fn apply_update_bytes(
     request_id: u64,
     doc: &Doc,
     bytes: &[u8],
     origin: TransactionOrigin,
-) -> OperationResult<()> {
+) -> OperationResult<bool> {
     apply_update_bytes_with_origin(request_id, doc, bytes, origin.as_yrs_origin())
 }
 
@@ -553,9 +634,9 @@ fn apply_update_bytes_with_origin(
     doc: &Doc,
     bytes: &[u8],
     origin: Origin,
-) -> OperationResult<()> {
+) -> OperationResult<bool> {
     if bytes.is_empty() {
-        return Ok(());
+        return Ok(false);
     }
     let update = Update::decode_v1(bytes).map_err(|error| {
         OperationError::engine_invariant_failed(
@@ -564,15 +645,15 @@ fn apply_update_bytes_with_origin(
             format!("cannot decode bounded history replay event: {error}"),
         )
     })?;
-    doc.transact_mut_with(origin)
-        .apply_update(update)
-        .map_err(|error| {
-            OperationError::engine_invariant_failed(
-                request_id,
-                None,
-                format!("cannot apply bounded history replay event: {error}"),
-            )
-        })
+    let mut txn = doc.transact_mut_with(origin);
+    txn.apply_update(update).map_err(|error| {
+        OperationError::engine_invariant_failed(
+            request_id,
+            None,
+            format!("cannot apply bounded history replay event: {error}"),
+        )
+    })?;
+    Ok(!txn.delete_set().is_empty())
 }
 
 fn add_id_set_units(mut total: u64, set: &IdSet, request_id: u64) -> OperationResult<u64> {

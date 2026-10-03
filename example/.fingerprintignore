@@ -1,0 +1,11 @@
+../.git/**/*
+../rust/editor-core/target/**/*
+../rust/editor-core/fuzz/target/**/*
+../rust/vendor/yrs/target/**/*
+../packages/code-highlighting/rust/target/**/*
+../ios-tests/Pods/**/*
+../ios-tests/build/**/*
+../ios-tests/DerivedData/**/*
+../ios-tests/**/*.xcresult/**/*
+../example/android/**/*
+../example/ios/**/*

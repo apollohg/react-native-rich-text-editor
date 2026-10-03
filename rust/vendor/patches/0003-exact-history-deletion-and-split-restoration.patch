@@ -1,0 +1,150 @@
+--- a/src/undo.rs
++++ b/src/undo.rs
+@@ -90,6 +90,15 @@
+     state: Arc<Inner<M>>,
+ }
+ 
++/// A captured insertion range and the live range an undo/redo would delete.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub struct ResolvedDeletion {
++    pub source: ID,
++    pub source_len: u32,
++    pub target: ID,
++    pub target_len: u32,
++}
++
+ #[cfg(feature = "history-audit")]
+ #[derive(Debug, PartialEq, Eq)]
+ pub struct HistoryAudit<M> {
+@@ -583,6 +592,23 @@
+         &self.state.redo_stack.0
+     }
+ 
++    /// Resolves deletion targets without changing document content or history.
++    /// The transaction materializes item boundaries just as undo/redo does.
++    pub fn resolved_deletions(
++        &self,
++        txn: &mut TransactionMut,
++        item: &StackItem<M>,
++    ) -> Option<Vec<ResolvedDeletion>> {
++        if item.doc != txn.doc().guid() {
++            return None;
++        }
++        Self::deletion_candidates(&item.insertions, txn, &self.state.scope).map(|items| {
++            items.into_iter().map(|(source, source_len, target)| ResolvedDeletion {
++                source, source_len, target: *target.id(), target_len: target.len(),
++            }).collect()
++        })
++    }
++
+     /// Undo last action tracked by current undo manager. Actions (a.k.a. [StackItem]s) are groups
+     /// of updates performed in a given time range - they also can be separated explicitly by
+     /// calling [UndoManager::reset].
+@@ -728,6 +754,35 @@
+         changed
+     }
+ 
++    fn deletion_candidates(
++        insertions: &IdSet,
++        txn: &mut TransactionMut,
++        scope: &HashSet<BranchPtr>,
++    ) -> Option<Vec<(ID, u32, ItemPtr)>> {
++        let mut to_delete = Vec::new();
++        let deleted: Vec<_> = insertions.blocks().collect(txn);
++        for slice in deleted {
++            if let BlockSlice::Item(slice) = slice {
++                let mut item = txn.store.materialize(slice);
++                let source = *item.id();
++                let source_len = item.len();
++                if item.redone.is_some() {
++                    let slice = match txn.store_mut().follow_redone(item.id()) {
++                        Some(slice) => slice,
++                        None => return None,
++                    };
++                    item = txn.store.materialize(slice);
++                }
++
++                if !item.is_deleted() && scope.iter().any(|b| b.is_parent_of(Some(item))) {
++                    to_delete.push((source, source_len, item));
++                }
++            }
++        }
++
++        Some(to_delete)
++    }
++
+     fn try_process(
+         item: StackItem<M>,
+         mut txn: TransactionMut,
+@@ -739,26 +794,11 @@
+         origin: Origin,
+     ) -> bool {
+         let mut to_redo = HashSet::<ItemPtr>::new();
+-        let mut to_delete = Vec::<ItemPtr>::new();
+         let mut change_performed = false;
+ 
+-        let deleted: Vec<_> = item.insertions.blocks().collect(&txn);
+-        for slice in deleted {
+-            if let BlockSlice::Item(slice) = slice {
+-                let mut item = txn.store.materialize(slice);
+-                if item.redone.is_some() {
+-                    let slice = match txn.store_mut().follow_redone(item.id()) {
+-                        Some(slice) => slice,
+-                        None => return false,
+-                    };
+-                    item = txn.store.materialize(slice);
+-                }
+-
+-                if !item.is_deleted() && scope.iter().any(|b| b.is_parent_of(Some(item))) {
+-                    to_delete.push(item);
+-                }
+-            }
+-        }
++        let Some(to_delete) = Self::deletion_candidates(&item.insertions, &mut txn, scope) else {
++            return false;
++        };
+ 
+         let mut deleted = item.deletions.blocks();
+         while let Some(slice) = deleted.next(&txn) {
+@@ -773,21 +813,30 @@
+             }
+         }
+ 
+-        // Iterate in a deterministic order: `to_redo` is a `HashSet<ItemPtr>` whose
+-        // iteration order varies per process, and each `redo` consumes clock values,
+-        // so an unordered walk binds re-inserted content to different IDs run to run.
+-        let mut ordered: Vec<_> = to_redo.iter().copied().collect();
+-        ordered.sort_unstable_by_key(|ptr| *ptr.id());
+-
+-        for mut ptr in ordered {
+-            change_performed |= ptr
+-                .redo(&mut txn, &to_redo, &item.insertions, stack, other)
+-                .is_some();
++        // Redo can split a merged source while resolving old neighbours.
++        // Preserve ranges and revisit each fragment in deterministic ID order.
++        let mut ordered: Vec<_> = to_redo
++            .iter()
++            .map(|ptr| (*ptr.id(), ptr.id().clock + ptr.len()))
++            .collect();
++        ordered.sort_unstable_by_key(|(id, _)| *id);
++
++        for (mut cursor, end) in ordered {
++            while cursor.clock < end {
++                let Some(slice) = txn.store.blocks.get_item_clean_start(&cursor) else {
++                    break;
++                };
++                let mut ptr = txn.store.materialize(slice);
++                change_performed |= ptr
++                    .redo(&mut txn, &to_redo, &item.insertions, stack, other)
++                    .is_some();
++                cursor.clock += ptr.len();
++            }
+         }
+ 
+         // We want to delete in reverse order so that children are deleted before
+         // parents, so we have more information available when items are filtered.
+-        for &item in to_delete.iter().rev() {
++        for &(_, _, item) in to_delete.iter().rev() {
+             // if self.options.delete_filter(item) {
+             txn.delete(item);
+             change_performed = true;

@@ -1,0 +1,1210 @@
+package com.apollohg.editor
+
+import android.accessibilityservice.AccessibilityServiceInfo
+import android.app.Instrumentation
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Color
+import android.os.SystemClock
+import android.view.InputDevice
+import android.view.KeyEvent
+import android.view.MotionEvent
+import android.view.ViewConfiguration
+import android.view.ViewGroup
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
+import android.widget.FrameLayout
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.test.core.app.ActivityScenario
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.filters.LargeTest
+import androidx.test.filters.SdkSuppress
+import androidx.test.platform.app.InstrumentationRegistry
+import com.apollohg.editor.viewer.PreparedProseDrawingView
+import java.util.Collections
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
+import org.json.JSONObject
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import org.junit.runner.RunWith
+
+@RunWith(AndroidJUnit4::class)
+@LargeTest
+class NativeDeviceTableCellTest {
+    private val instrumentation: Instrumentation = InstrumentationRegistry.getInstrumentation()
+
+    @Test
+    fun nativeTableMenuFollowsLongPressAndCrossCellSelectionHandles() {
+        val text = "Alpha Beta Gamma"
+        val document = com.apollohg.editor.tables.PlainTableFixture.document(2, 2, text)
+        withEditor(document) { fixture ->
+            val before = fixture.adapter.documentJson()
+            val first = fixture.cellPoint(0)
+            gesture(
+                listOf(first, first),
+                ViewConfiguration.getLongPressTimeout() * LONG_PRESS_HOLD_FACTOR
+            )
+            fixture.onActivity {
+                val root = fixture.editor.richTextView.editorEditText
+                assertTrue(
+                    "long press opens table actions",
+                    fixture.editor.richTextView.editorTableSurface.isCellEditMenuVisible
+                )
+                val menu = requireNotNull(root.selectionActionMode).menu
+                assertTrue(menu.performIdentifierAction(R.id.table_accessibility_add_row_after, 0))
+                assertTrue(root.applyUpdateJSON(requireNotNull(fixture.adapter.undo())))
+                assertEquals(before, fixture.adapter.documentJson())
+            }
+            fixture.tapCell(0)
+            waitUntil("keyboard is visible before selection gestures") {
+                var visible = false
+                fixture.onActivity {
+                    visible = ViewCompat.getRootWindowInsets(fixture.cellInput())
+                        ?.isVisible(WindowInsetsCompat.Type.ime()) == true
+                }
+                visible
+            }
+            fixture.awaitCommittedFrame()
+            var handle = first
+            var middle = first
+            fixture.onActivity {
+                val input = fixture.cellInput()
+                input.setSelection(0, text.length)
+                input.syncCurrentSelectionToRust()
+                handle = textHandlePoint(input)
+                middle =
+                    handle.first - input.layout.getPrimaryHorizontal(text.length) / 2 to
+                    handle.second
+            }
+            gesture(interpolate(handle, middle), SWIPE_STEP_MS)
+            fixture.onActivity {
+                val input = fixture.cellInput()
+                assertTrue(
+                    "in-cell selection shortened: ${input.selectionStart}..${input.selectionEnd}",
+                    input.selectionEnd in 1 until text.length
+                )
+                assertFalse(fixture.editor.richTextView.editorTableSurface.isCellEditMenuVisible)
+                input.interaction.endSelectionActionMode()
+                input.setSelection(0, text.length)
+                input.syncCurrentSelectionToRust()
+                handle = textHandlePoint(input)
+            }
+            val last = fixture.cellPoint(3)
+            gesture(interpolate(handle, last), SWIPE_STEP_MS)
+            fixture.onActivity {
+                val surface = fixture.editor.richTextView.editorTableSurface
+                assertTrue(
+                    "cross-cell handle release opens table menu: selection=${fixture.adapter.cachedAtomicRenderSelection()} drag=${surface.dragActive()} ${fixture.diagnostics()}",
+                    surface.isCellEditMenuVisible
+                )
+                val table = fixture.adapter.tableIndex
+                val selection = requireNotNull(fixture.adapter.cachedAtomicRenderSelection())
+                val resolved = com.apollohg.editor.tables.resolveEditorCellSelection(
+                    selection,
+                    table
+                )
+                    as com.apollohg.editor.tables.EditorCellSelection.Drawable
+                assertEquals(
+                    setOf(0, 1, 2, 3),
+                    surface.drawingView.selectedTableCellSourceIndices[resolved.tableId]
+                )
+                assertEquals(before, fixture.adapter.documentJson())
+            }
+            try {
+                awaitNativeMenu()
+            } finally {
+                fixture.awaitCommittedFrame()
+                fixture.captureScreenshot("native-android-table-selection-menu.png")
+            }
+            var cellHandle = last
+            fixture.onActivity {
+                val surface = fixture.editor.richTextView.editorTableSurface
+                surface.dismissCellEditMenu()
+                val drawing = surface.drawingView
+                val position = drawing.selectionHandles().single {
+                    it.role == com.apollohg.editor.viewer.TableSelectionHandleRole.HEAD
+                }
+                val location = IntArray(2).also(drawing::getLocationOnScreen)
+                cellHandle = location[0] + position.x to location[1] + position.y
+            }
+            gesture(interpolate(cellHandle, fixture.cellPoint(1)), SWIPE_STEP_MS)
+            fixture.onActivity {
+                assertTrue(
+                    "adjusting cell rectangle reopens menu: from=$cellHandle selection=${fixture.adapter.cachedAtomicRenderSelection()} ${fixture.diagnostics()}",
+                    fixture.editor.richTextView.editorTableSurface.isCellEditMenuVisible
+                )
+                val surface = fixture.editor.richTextView.editorTableSurface
+                assertEquals(
+                    "the adjusted rectangle contains only the first row",
+                    setOf(0, 1),
+                    surface.drawingView.selectedTableCellSourceIndices.values.single()
+                )
+                assertEquals(before, fixture.adapter.documentJson())
+            }
+        }
+    }
+
+    private fun awaitNativeMenu() {
+        val automation = instrumentation.uiAutomation
+        val originalFlags = automation.serviceInfo.flags
+        automation.serviceInfo = automation.serviceInfo.apply {
+            flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+        }
+        try {
+            val label = instrumentation.targetContext.getString(android.R.string.cut)
+            fun containsLabel(node: android.view.accessibility.AccessibilityNodeInfo): Boolean {
+                if (node.isVisibleToUser &&
+                    (node.text?.toString() == label || node.contentDescription?.toString() == label)
+                ) {
+                    return true
+                }
+                return (0 until node.childCount).any { index ->
+                    node.getChild(index)?.let(::containsLabel) == true
+                }
+            }
+            waitUntil("native floating menu is rendered") {
+                automation.windows.any { it.root?.let(::containsLabel) == true }
+            }
+        } finally {
+            automation.serviceInfo = automation.serviceInfo.apply { flags = originalFlags }
+        }
+    }
+
+    private fun interpolate(from: Pair<Float, Float>, to: Pair<Float, Float>) =
+        (0..SWIPE_STEPS).map { step ->
+            val fraction = step.toFloat() / SWIPE_STEPS
+            from.first + (to.first - from.first) * fraction to
+                from.second + (to.second - from.second) * fraction
+        }
+
+    private fun textHandlePoint(input: EditorEditText): Pair<Float, Float> {
+        val method = input.interaction.javaClass.getDeclaredMethod(
+            "handleGeometry",
+            Int::class.javaPrimitiveType
+        )
+            .apply { isAccessible = true }
+        val geometry = method.invoke(input.interaction, input.selectionEnd) as Pair<*, *>
+        val bounds = geometry.second as android.graphics.Rect
+        val location = IntArray(2).also(input::getLocationOnScreen)
+        return location[0] + input.totalPaddingLeft - input.scrollX + bounds.exactCenterX() to
+            location[1] + input.totalPaddingTop - input.scrollY + bounds.exactCenterY()
+    }
+
+    @Test
+    fun multiRowSelectionScrollsGentlyAtTheEdgeAndStopsInTheCenter() {
+        val document = com.apollohg.editor.tables.PlainTableFixture.document(
+            SELECTION_SCROLL_ROWS,
+            2,
+            "Select rows"
+        )
+        withEditor(document) { fixture ->
+            val before = fixture.adapter.documentJson()
+            val first = fixture.cellPoint(0)
+            gesture(
+                listOf(first, first),
+                ViewConfiguration.getLongPressTimeout() * LONG_PRESS_HOLD_FACTOR
+            )
+            var head = first
+            var edge = first
+            var center = first
+            fixture.onActivity {
+                val view = fixture.editor.richTextView
+                view.editorTableSurface.dismissCellEditMenu()
+                val drawing = view.editorTableSurface.drawingView
+                val handle = drawing.selectionHandles().single {
+                    it.role == com.apollohg.editor.viewer.TableSelectionHandleRole.HEAD
+                }
+                val origin = IntArray(2).also(drawing::getLocationOnScreen)
+                head = origin[0] + handle.x to origin[1] + handle.y
+                val visible = android.graphics.Rect()
+                assertTrue(view.editorScrollView.getGlobalVisibleRect(visible))
+                center = visible.exactCenterX() to visible.exactCenterY()
+                edge =
+                    center.first to
+                    (visible.bottom - dp(view.context, SELECTION_EDGE_INSET_DP)).toFloat()
+            }
+            var edgeScroll = 0
+            var centerScroll = 0
+            gesture(
+                listOf(head, edge, edge, edge, center, center, center),
+                SELECTION_HOLD_STEP_MS
+            ) { index ->
+                instrumentation.runOnMainSync {
+                    val view = fixture.editor.richTextView
+                    when (index) {
+                        3 -> {
+                            edgeScroll = view.editorScrollView.scrollY
+                            assertTrue(
+                                "held edge scroll=$edgeScroll must remain controllable",
+                                edgeScroll in 1..dp(view.context, SELECTION_SHALLOW_MAX_SCROLL_DP)
+                            )
+                            assertTrue(view.editorTableSurface.dragActive())
+                        }
+
+                        4 -> centerScroll = view.editorScrollView.scrollY
+
+                        6 -> {
+                            assertEquals(
+                                "returning to center stops autoscroll immediately",
+                                centerScroll,
+                                view.editorScrollView.scrollY
+                            )
+                            assertTrue(view.editorTableSurface.isCellEditMenuVisible)
+                            assertTrue(
+                                view.editorTableSurface.drawingView
+                                    .selectedTableCellSourceIndices.values.single().size > 2
+                            )
+                            assertEquals(before, fixture.adapter.documentJson())
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun rejectedCellTypingRestoresTheCaretAndKeepsTheConnectionUsable() {
+        val initial = "ab"
+        val document = com.apollohg.editor.tables.PlainTableFixture.document(1, 1, initial)
+        val config = JSONObject(
+            CONFIG
+        ).put("policy", JSONObject().put("maxLength", initial.length)).toString()
+        withEditor(document, config = config) { fixture ->
+            fixture.tapCell(0)
+            fixture.onActivity {
+                val input = fixture.cellInput()
+                input.setSelection(initial.length)
+                val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+                val before = fixture.adapter.documentJson()
+                val revision = fixture.adapter.baseDocumentRevision
+                assertTrue(connection.commitText("x", 1))
+                assertEquals(initial, input.text.toString())
+                assertEquals(initial.length, input.selectionStart)
+                assertEquals(input.selectionStart, input.selectionEnd)
+                assertEquals(before, fixture.adapter.documentJson())
+                assertEquals(revision, fixture.adapter.baseDocumentRevision)
+                assertTrue(connection.deleteSurroundingTextInCodePoints(1, 0))
+                val inserted = "😀"
+                assertTrue(connection.commitText(inserted, 1))
+                val expected = initial.dropLast(1) + inserted
+                assertEquals(expected, input.text.toString())
+                assertEquals(expected.length, input.selectionStart)
+                assertEquals(listOf(expected), fixture.cellTexts())
+                assertSame(input, fixture.cellInput())
+            }
+            fixture.awaitCommittedFrame()
+        }
+    }
+
+    @Test
+    fun expoToolbarTypingInTwentyThousandSlotTableStaysWithinHeap() {
+        val fixtureSource = com.apollohg.editor.tables.PlainTableFixture
+        withEditor(
+            fixtureSource.document(fixtureSource.LARGE_ROWS, fixtureSource.LARGE_COLUMNS),
+            showToolbar = true
+        ) { fixture ->
+            val index = fixtureSource.LARGE_ROWS * fixtureSource.LARGE_COLUMNS / 2
+            fixture.revealCell(index)
+            fixture.tapCell(index)
+            instrumentation.waitForIdleSync()
+            Runtime.getRuntime().gc()
+            val runtime = Runtime.getRuntime()
+            val beforeHeap = runtime.totalMemory() - runtime.freeMemory()
+            val fullFrames = fixture.adapter.fullFrameAdoptionCountForTesting
+            repeat(fixtureSource.TYPING_PROBE_CHARACTERS) {
+                fixture.onActivity {
+                    val input = fixture.cellInput()
+                    val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+                    assertTrue(connection.commitText("x", 1))
+                }
+                instrumentation.waitForIdleSync()
+            }
+            Runtime.getRuntime().gc()
+            val growth = runtime.totalMemory() - runtime.freeMemory() - beforeHeap
+            assertTrue(
+                "retained heap grew by $growth bytes",
+                growth < fixtureSource.TYPING_HEAP_GROWTH_CEILING_BYTES
+            )
+            assertEquals(
+                "typing must not request a Full frame",
+                fullFrames,
+                fixture.adapter.fullFrameAdoptionCountForTesting
+            )
+            fixture.onActivity {
+                assertEquals(
+                    fixtureSource.CELL_TEXT.length + fixtureSource.TYPING_PROBE_CHARACTERS,
+                    fixture.cellInput().text.length
+                )
+            }
+        }
+    }
+
+    @Test
+    @SdkSuppress(minSdkVersion = 29)
+    fun authoritativeCellRectangleRetiresInputAndReturnsToTextOnTapOutsideIt() =
+        withEditor { fixture ->
+            fixture.tapCell(0)
+            fixture.onActivity {
+                val stale =
+                    requireNotNull(fixture.cellInput().onCreateInputConnection(EditorInfo()))
+                val before = fixture.adapter.documentJson()
+                val revision = fixture.adapter.baseDocumentRevision
+                val cells = fixture.adapter.tableRecordsForTesting.values.single().getJSONArray(
+                    "cells"
+                )
+                fun point(index: Int): JSONObject {
+                    val opening = cells.getJSONObject(index).getInt("sourcePos")
+                    return JSONObject().put("kind", "scalar").put(
+                        "offset",
+                        requireNotNull(fixture.adapter.scalarPositionForDoc(opening + 2))
+                    )
+                }
+                val selection = JSONObject().put("type", "cell")
+                    .put("anchorCell", point(0)).put("headCell", point(0))
+                val result = fixture.adapter.callWithEnvelope(
+                    JSONObject().put("selection", selection)
+                ) {
+                    UniffiEditorV2Backend.setSelection(fixture.adapter.editorId, it)
+                }
+                assertTrue(result is EditorV2CallResult.Ok)
+                val root = fixture.editor.richTextView.editorEditText
+                assertTrue(
+                    root.applyUpdateJSON(requireNotNull(fixture.adapter.refreshFromRustState(null)))
+                )
+                assertSame(root, fixture.editor.richTextView.activeTextInput)
+                assertTrue(root.hasFocus())
+                assertTrue(root.authoritativeCellSelectionActive)
+                assertFalse(root.isCursorVisible)
+                assertFalse(stale.beginBatchEdit())
+                stale.commitText("stale", 1)
+                assertEquals(before, fixture.adapter.documentJson())
+                assertEquals(revision, fixture.adapter.baseDocumentRevision)
+            }
+            fixture.awaitCommittedFrame()
+            fixture.captureScreenshot("native-device-table-cell-selection.png")
+            fixture.tapCell(1)
+            fixture.onActivity {
+                val input = fixture.cellInput()
+                assertEquals("Owner", input.text.toString())
+                assertEquals(
+                    "text",
+                    JSONObject(requireNotNull(fixture.adapter.cachedAtomicRenderJson))
+                        .getJSONObject("selection").getString("type")
+                )
+                assertFalse(
+                    fixture.editor.richTextView.editorEditText.authoritativeCellSelectionActive
+                )
+                input.setSelection(input.text.length)
+                assertTrue(
+                    requireNotNull(input.onCreateInputConnection(EditorInfo())).commitText("!", 1)
+                )
+                assertEquals(fixture.diagnostics(), listOf("Alpha", "Owner!"), fixture.cellTexts())
+            }
+        }
+
+    @Test
+    fun swipesOnShortProseKeepTheComposingCellBoundAndFocused() = withEditor { fixture ->
+        fixture.tapCell(0)
+        lateinit var input: EditorEditText
+        lateinit var connection: InputConnection
+        fixture.onActivity {
+            input = fixture.cellInput()
+            input.setSelection(input.text.length)
+            connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            assertTrue(connection.setComposingText(COMPOSED_TEXT, 1))
+        }
+        listOf(true, false).forEach { horizontal ->
+            fixture.swipeFollowingProse(horizontal)
+            fixture.onActivity {
+                val root = fixture.editor.richTextView.editorEditText
+                val label = if (horizontal) "horizontal" else "vertical"
+                assertSame(
+                    "$label swipe must keep the cell input",
+                    input,
+                    fixture.editor.richTextView.activeTextInput
+                )
+                assertTrue("$label swipe must keep the cell focused", input.hasFocus())
+                assertFalse("$label swipe must not focus the prose", root.hasFocus())
+                assertEquals(
+                    "$label swipe keeps the composition pending",
+                    listOf("Alpha", "Owner"),
+                    fixture.cellTexts()
+                )
+            }
+        }
+        fixture.onActivity {
+            assertTrue(connection.finishComposingText())
+            assertEquals(listOf("Alpha$COMPOSED_TEXT", "Owner"), fixture.cellTexts())
+        }
+    }
+
+    @Test
+    fun longPressOnProseCommitsTheCellCompositionAndFocusesTheProse() = withEditor { fixture ->
+        fixture.tapCell(0)
+        fixture.onActivity {
+            val input = fixture.cellInput()
+            input.setSelection(input.text.length)
+            assertTrue(
+                requireNotNull(
+                    input.onCreateInputConnection(EditorInfo())
+                ).setComposingText(COMPOSED_TEXT, 1)
+            )
+        }
+        fixture.longPressFollowingProse()
+        fixture.onActivity {
+            val root = fixture.editor.richTextView.editorEditText
+            assertSame(
+                "a long press releases the cell",
+                root,
+                fixture.editor.richTextView.activeTextInput
+            )
+            assertTrue("the prose takes focus for its long press", root.hasFocus())
+            assertEquals(listOf("Alpha$COMPOSED_TEXT", "Owner"), fixture.cellTexts())
+        }
+    }
+
+    @Test
+    @SdkSuppress(minSdkVersion = 29)
+    fun tappedCellCommitsTextAndEmojiThroughExpoOwner() = withEditor { fixture ->
+        fixture.tapCell(0)
+        var expectedRevision = ""
+        fixture.onActivity {
+            val input = fixture.cellInput()
+            assertEquals("Alpha", input.text.toString())
+            assertTrue(fixture.editor.hasTableRootNativeOwnerAuthority(fixture.adapter))
+            val before = fixture.adapter.baseDocumentRevision
+            input.setSelection(input.text.length)
+            val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            assertTrue(connection.commitText("X😀", 1))
+            assertEquals(fixture.diagnostics(), listOf("AlphaX😀", "Owner"), fixture.cellTexts())
+            assertEquals(listOf("Before table.", "After table."), fixture.proseTexts())
+            assertEquals(before + 1uL, fixture.adapter.baseDocumentRevision)
+            expectedRevision = fixture.adapter.baseDocumentRevision.toString()
+        }
+        fixture.awaitUpdate(expectedRevision)
+        fixture.awaitCommittedFrame()
+        fixture.captureScreenshot("native-device-table-expo-edited.png")
+    }
+
+    @Test
+    fun switchingCellsRetiresOldConnectionAndCommitsCompositionOnce() = withEditor { fixture ->
+        fixture.tapCell(0)
+        lateinit var input: EditorEditText
+        lateinit var oldConnection: InputConnection
+        fixture.onActivity {
+            input = fixture.cellInput()
+            input.setSelection(input.text.length)
+            oldConnection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            assertTrue(oldConnection.setComposingText("pending", 1))
+            assertEquals(listOf("Alpha", "Owner"), fixture.cellTexts())
+        }
+        fixture.tapCell(1)
+        fixture.onActivity {
+            assertSame(input, fixture.cellInput())
+            assertEquals(
+                fixture.diagnostics(),
+                listOf("Alphapending", "Owner"),
+                fixture.cellTexts()
+            )
+            assertEquals("Owner", input.text.toString())
+            val beforeStale = fixture.adapter.documentJson()
+            assertFalse(oldConnection.beginBatchEdit())
+            oldConnection.commitText("stale", 1)
+            assertEquals(beforeStale, fixture.adapter.documentJson())
+            input.setSelection(input.text.length)
+            val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            assertTrue(connection.commitText("!", 1))
+            assertEquals(listOf("Alphapending", "Owner!"), fixture.cellTexts())
+            assertEquals(listOf("Before table.", "After table."), fixture.proseTexts())
+        }
+    }
+
+    @Test
+    fun hardwareTabMovesToNextCellAndAppendsOneRow() = withEditor { fixture ->
+        fixture.tapCell(0)
+        fixture.onActivity {
+            val input = fixture.cellInput()
+            val oldConnection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            assertTrue(
+                input.dispatchKeyEvent(
+                    KeyEvent(
+                        100L,
+                        100L,
+                        KeyEvent.ACTION_DOWN,
+                        KeyEvent.KEYCODE_TAB,
+                        0
+                    )
+                )
+            )
+            assertSame(input, fixture.cellInput())
+            assertEquals("Owner", input.text.toString())
+            assertFalse(oldConnection.beginBatchEdit())
+            val before = fixture.adapter.baseDocumentRevision
+            assertTrue(
+                input.dispatchKeyEvent(
+                    KeyEvent(
+                        200L,
+                        200L,
+                        KeyEvent.ACTION_DOWN,
+                        KeyEvent.KEYCODE_TAB,
+                        0
+                    )
+                )
+            )
+            assertEquals(before + 1uL, fixture.adapter.baseDocumentRevision)
+            assertSame(input, fixture.cellInput())
+            assertEquals("\u200B", input.text.toString())
+            val freshConnection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            assertTrue(input.canDispatchTableCellMutation())
+            assertTrue(freshConnection.commitText("N", 1))
+            assertEquals(2, fixture.tableRowCount())
+            assertEquals("N", fixture.secondRowFirstCellText())
+            assertEquals(listOf("Alpha", "Owner"), fixture.cellTexts())
+            assertEquals(listOf("Before table.", "After table."), fixture.proseTexts())
+        }
+    }
+
+    @Test
+    fun hardwareRightArrowCrossesCellsThenEntersFollowingProse() = withEditor { fixture ->
+        fixture.tapCell(0)
+        fixture.onActivity {
+            val input = fixture.cellInput()
+            input.setSelection(input.text.length)
+            val oldConnection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            val revision = fixture.adapter.baseDocumentRevision
+            assertTrue(
+                input.dispatchKeyEvent(
+                    KeyEvent(
+                        310L,
+                        310L,
+                        KeyEvent.ACTION_DOWN,
+                        KeyEvent.KEYCODE_DPAD_RIGHT,
+                        0
+                    )
+                )
+            )
+            assertSame(input, fixture.cellInput())
+            assertEquals("Owner", input.text.toString())
+            assertFalse(oldConnection.beginBatchEdit())
+            assertEquals(revision, fixture.adapter.baseDocumentRevision)
+
+            input.setSelection(input.text.length)
+            assertTrue(
+                input.dispatchKeyEvent(
+                    KeyEvent(
+                        311L,
+                        311L,
+                        KeyEvent.ACTION_DOWN,
+                        KeyEvent.KEYCODE_DPAD_RIGHT,
+                        0
+                    )
+                )
+            )
+            val root = fixture.editor.richTextView.editorEditText
+            assertSame(root, fixture.editor.richTextView.activeTextInput)
+            assertEquals(root.text.toString().indexOf("After table."), root.selectionStart)
+            assertEquals(revision, fixture.adapter.baseDocumentRevision)
+            assertTrue(
+                requireNotNull(root.onCreateInputConnection(EditorInfo()))
+                    .commitText("X", 1)
+            )
+            assertEquals(listOf("Before table.", "XAfter table."), fixture.proseTexts())
+            assertEquals(1, fixture.tableRowCount())
+        }
+    }
+
+    @Test
+    fun hardwareRightArrowEntersRtlTextAtVisualLeftEdge() =
+        withEditor(DOCUMENT.replace("\"Owner\"", "\"אבג\"")) { fixture ->
+            fixture.tapCell(0)
+            fixture.onActivity {
+                val input = fixture.cellInput()
+                input.setSelection(input.text.length)
+                val revision = fixture.adapter.baseDocumentRevision
+                assertTrue(
+                    input.dispatchKeyEvent(
+                        KeyEvent(
+                            320L,
+                            320L,
+                            KeyEvent.ACTION_DOWN,
+                            KeyEvent.KEYCODE_DPAD_RIGHT,
+                            0
+                        )
+                    )
+                )
+                assertSame(input, fixture.cellInput())
+                assertEquals("אבג", input.text.toString())
+                val entry = input.selectionStart
+                assertEquals(entry, input.layout.getOffsetToLeftOf(entry))
+                val nativeNext = input.layout.getOffsetToRightOf(entry)
+                assertTrue(nativeNext != entry)
+                assertTrue(
+                    input.dispatchKeyEvent(
+                        KeyEvent(
+                            321L,
+                            321L,
+                            KeyEvent.ACTION_DOWN,
+                            KeyEvent.KEYCODE_DPAD_RIGHT,
+                            0
+                        )
+                    )
+                )
+                assertSame(input, fixture.cellInput())
+                assertEquals("אבג", input.text.toString())
+                assertEquals(nativeNext, input.selectionStart)
+                assertEquals(revision, fixture.adapter.baseDocumentRevision)
+            }
+        }
+
+    @Test
+    @SdkSuppress(minSdkVersion = 29)
+    fun nestedTableRendersReadOnlyWhileHardwareTabSkipsItsOuterCell() =
+        withEditor(NESTED_DOCUMENT) { fixture ->
+            fixture.onActivity {
+                assertTrue(fixture.nestedContentRendered())
+                assertEquals(listOf("Before table.", "After table."), fixture.proseTexts())
+            }
+            fixture.awaitCommittedFrame()
+            fixture.captureScreenshot("native-device-nested-table-mounted.png")
+            fixture.tapCell(1)
+            fixture.onActivity {
+                assertSame(
+                    fixture.editor.richTextView.editorEditText,
+                    fixture.editor.richTextView.activeTextInput
+                )
+            }
+            fixture.tapCell(0)
+            fixture.onActivity {
+                val input = fixture.cellInput()
+                assertEquals("Alpha", input.text.toString())
+                assertTrue(
+                    input.dispatchKeyEvent(
+                        KeyEvent(
+                            100L,
+                            100L,
+                            KeyEvent.ACTION_DOWN,
+                            KeyEvent.KEYCODE_TAB,
+                            0
+                        )
+                    )
+                )
+                assertEquals("Owner", input.text.toString())
+                input.setSelection(input.text.length)
+                assertTrue(
+                    requireNotNull(input.onCreateInputConnection(EditorInfo())).commitText("!", 1)
+                )
+                assertEquals("Owner!", fixture.outerCellText(2))
+                assertTrue(
+                    input.dispatchKeyEvent(
+                        KeyEvent(
+                            200L,
+                            200L,
+                            KeyEvent.ACTION_DOWN,
+                            KeyEvent.KEYCODE_TAB,
+                            0,
+                            KeyEvent.META_SHIFT_ON
+                        )
+                    )
+                )
+                assertEquals("Alpha", input.text.toString())
+                assertEquals("Nested", fixture.nestedCellText())
+                assertEquals(listOf("Before table.", "After table."), fixture.proseTexts())
+            }
+            fixture.awaitCommittedFrame()
+            fixture.captureScreenshot("native-device-nested-table-edited.png")
+        }
+
+    @Test
+    fun proseAndWrapperBlurFinishCompositionAndReadOnlyRetiresInput() = withEditor { fixture ->
+        fixture.tapCell(0)
+        fixture.onActivity {
+            val input = fixture.cellInput()
+            input.setSelection(input.text.length)
+            assertTrue(
+                requireNotNull(input.onCreateInputConnection(EditorInfo()))
+                    .setComposingText("one", 1)
+            )
+        }
+        fixture.tapFollowingProse()
+        fixture.onActivity {
+            assertSame(
+                fixture.editor.richTextView.editorEditText,
+                fixture.editor.richTextView.activeTextInput
+            )
+            assertEquals(fixture.diagnostics(), listOf("Alphaone", "Owner"), fixture.cellTexts())
+            assertEquals(listOf("Before table.", "After table."), fixture.proseTexts())
+        }
+        fixture.tapCell(1)
+        fixture.onActivity {
+            val input = fixture.cellInput()
+            input.setSelection(input.text.length)
+            val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            assertTrue(connection.setComposingText("two", 1))
+            fixture.editor.blur()
+            assertEquals(listOf("Alphaone", "Ownertwo"), fixture.cellTexts())
+        }
+        fixture.onActivity {
+            assertFalse(fixture.editor.richTextView.activeTextInput.hasFocus())
+            assertEquals(listOf("Alphaone", "Ownertwo"), fixture.cellTexts())
+        }
+        fixture.tapCell(1)
+        fixture.onActivity {
+            val input = fixture.cellInput()
+            assertTrue(input.isAuthorizedForTableCellInput())
+            val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            assertTrue(connection.beginBatchEdit())
+            connection.endBatchEdit()
+            assertTrue(input.isAuthorizedForTableCellInput())
+            fixture.editor.setEditable(false)
+            val beforeStale = fixture.adapter.documentJson()
+            assertFalse(connection.beginBatchEdit())
+            connection.commitText("stale", 1)
+            assertEquals(beforeStale, fixture.adapter.documentJson())
+            assertEquals(listOf("Before table.", "After table."), fixture.proseTexts())
+        }
+    }
+
+    private fun withEditor(
+        document: String = DOCUMENT,
+        showToolbar: Boolean = false,
+        config: String = CONFIG,
+        test: (Fixture) -> Unit
+    ) {
+        ActivityScenario.launch(NativeEditorOutsideTapActivity::class.java).use { scenario ->
+            val editorRef = AtomicReference<NativeEditorExpoView>()
+            val created = when (val result = UniffiEditorV2Backend.create(config, null)) {
+                is EditorV2CallResult.Ok -> result.value
+
+                is EditorV2CallResult.Err -> error(
+                    "create failed: ${result.error.code}: ${result.error.message}"
+                )
+            }
+            val adapter = requireNotNull(
+                EditorV2Adapter.attach(
+                    UniffiEditorV2Backend,
+                    JSONObject(created).getString("editorId"),
+                    false
+                )
+            )
+            val token = EditorV2Registry.register(adapter)
+            try {
+                requireNotNull(adapter.setContentJson(document))
+                val updates = Collections.synchronizedList(mutableListOf<Map<String, Any>>())
+                scenario.onActivity { activity ->
+                    initializeSoLoaderIfAvailable(activity)
+                    val expo = testExpoContext(activity)
+                    val root = FrameLayout(activity).apply { setBackgroundColor(Color.WHITE) }
+                    ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
+                        val bars = insets.getInsets(
+                            WindowInsetsCompat.Type.systemBars() or
+                                WindowInsetsCompat.Type.displayCutout()
+                        )
+                        view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+                        insets
+                    }
+                    val editor = NativeEditorExpoView(expo.context, expo.appContext).apply {
+                        keepScreenOn = true
+                        clipToPadding = false
+                        setShowToolbar(showToolbar)
+                        onFocusChangeForTesting = {}
+                        onAddonEventForTesting = {}
+                        onEditorUpdateForTesting = updates::add
+                        onEditorReadyForTesting = {}
+                        onSelectionChangeForTesting = {}
+                        onContentHeightChangeForTesting = {}
+                        onAtomLayoutForTesting = {}
+                        onTableSelectionGeometryForTesting = {}
+                    }
+                    root.addView(
+                        editor,
+                        FrameLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            dp(activity, 300)
+                        ).apply {
+                            topMargin = dp(activity, 48)
+                            leftMargin = dp(activity, 16)
+                            rightMargin = dp(activity, 16)
+                        }
+                    )
+                    activity.setContentView(root)
+                    editor.setEditorId(token)
+                    editorRef.set(editor)
+                }
+                val fixture = Fixture(scenario, editorRef, adapter, updates)
+                fixture.awaitTableLayout()
+                test(fixture)
+            } finally {
+                scenario.onActivity { editorRef.get()?.setEditorId(0L) }
+                releasePairedV2TestEditor(token)
+            }
+        }
+    }
+
+    private inner class Fixture(
+        private val scenario: ActivityScenario<NativeEditorOutsideTapActivity>,
+        private val editorRef: AtomicReference<NativeEditorExpoView>,
+        val adapter: EditorV2Adapter,
+        private val updates: List<Map<String, Any>>
+    ) {
+        val editor: NativeEditorExpoView get() = requireNotNull(editorRef.get())
+
+        fun onActivity(action: () -> Unit) = scenario.onActivity { action() }
+
+        fun cellInput(): EditorEditText {
+            val input = editor.richTextView.activeTextInput
+            assertTrue("cell input must be active", input !== editor.richTextView.editorEditText)
+            assertTrue("cell input must hold focus", input.hasFocus())
+            return input
+        }
+
+        fun diagnostics(): String {
+            val root = editor.richTextView.editorEditText
+            val input = editor.richTextView.activeTextInput
+            return "owner=${editor.hasTableRootNativeOwnerAuthority(adapter)} " +
+                "revision=${adapter.baseDocumentRevision} " +
+                "active=${input.text} focused=${input.hasFocus()} " +
+                "cell=${input.isTableCellInput} map=${input.tableCellPositionMap?.binding} " +
+                (
+                    "epoch=${adapter.positionEpoch} " +
+                        "authority=${input.tableCellInputAuthority?.invoke()} "
+                    ) +
+                "dispatch=${input.canDispatchTableCellMutation()} " +
+                "generation=${input.inputConnectionGenerationForTesting()} " +
+                "activeIc=${input.activeInputConnection} " +
+                "inputTrace=${input.imeTraceSnapshotForTesting().takeLast(20)} " +
+                "rootTrace=${root.imeTraceSnapshotForTesting().takeLast(20)} " +
+                "notes=${adapter.debugNotes.takeLast(10)}"
+        }
+
+        fun cellTexts(): List<String> {
+            val content = JSONObject(requireNotNull(adapter.documentJson())).getJSONArray("content")
+            val rows = (0 until content.length()).map(content::getJSONObject)
+                .first { it.getString("type") == "table" }.getJSONArray("content").getJSONObject(0)
+                .getJSONArray("content")
+            return (0 until rows.length()).map { index ->
+                rows.getJSONObject(index).getJSONArray("content").getJSONObject(0)
+                    .getJSONArray("content").getJSONObject(0).getString("text")
+            }
+        }
+
+        fun outerCellText(index: Int): String = JSONObject(requireNotNull(adapter.documentJson()))
+            .getJSONArray("content").getJSONObject(1).getJSONArray("content").getJSONObject(0)
+            .getJSONArray("content").getJSONObject(index).getJSONArray("content")
+            .getJSONObject(0).getJSONArray("content").getJSONObject(0).getString("text")
+
+        fun nestedCellText(): String = JSONObject(requireNotNull(adapter.documentJson()))
+            .getJSONArray("content").getJSONObject(1).getJSONArray("content").getJSONObject(0)
+            .getJSONArray("content").getJSONObject(1).getJSONArray("content").getJSONObject(0)
+            .getJSONArray("content").getJSONObject(0).getJSONArray("content").getJSONObject(0)
+            .getJSONArray("content").getJSONObject(0)
+            .getJSONArray("content").getJSONObject(0).getString("text")
+
+        fun nestedContentRendered(): Boolean {
+            val outer = tableHostOrNull()?.preparedLayout?.blocks?.singleOrNull()?.tableSurface
+                ?: return false
+            val nested = outer.cells.getOrNull(1)?.content?.blocks
+                ?.singleOrNull { it.tableSurface != null }?.tableSurface ?: return false
+            return nested.cells.singleOrNull()?.content?.blocks?.flatMap { it.fragments }
+                ?.any { it.layout?.text?.contains("Nested") == true } == true
+        }
+
+        fun tableRowCount(): Int = JSONObject(requireNotNull(adapter.documentJson()))
+            .getJSONArray("content").getJSONObject(1).getJSONArray("content").length()
+
+        fun secondRowFirstCellText(): String = JSONObject(requireNotNull(adapter.documentJson()))
+            .getJSONArray("content").getJSONObject(1).getJSONArray("content")
+            .getJSONObject(1).getJSONArray("content").getJSONObject(0)
+            .getJSONArray("content").getJSONObject(0).getJSONArray("content")
+            .getJSONObject(0).getString("text")
+
+        fun proseTexts(): List<String> {
+            val blocks = JSONObject(requireNotNull(adapter.documentJson())).getJSONArray("content")
+            return listOf(0, 2).map { index ->
+                blocks.getJSONObject(
+                    index
+                ).getJSONArray("content").getJSONObject(0).getString("text")
+            }
+        }
+
+        fun awaitTableLayout() = waitUntil("Expo table layout") {
+            var ready = false
+            scenario.onActivity {
+                val view = editor.richTextView
+                val host = tableHostOrNull()
+                val input = view.editorEditText
+                ready = host?.preparedLayout?.blocks?.any { it.tableSurface != null } == true &&
+                    view.width > 0 && host.width > 0 && input.layout != null &&
+                    editor.hasTableRootNativeOwnerAuthority(adapter)
+            }
+            ready
+        }
+
+        fun awaitUpdate(expectedRevision: String) = waitUntil("wrapper editor update event") {
+            var received = false
+            scenario.onActivity {
+                received = updates.any { event ->
+                    event["editorId"] == adapter.editorId &&
+                        event["documentRevision"] == expectedRevision
+                }
+            }
+            received
+        }
+
+        fun revealCell(index: Int) {
+            scenario.onActivity {
+                val host = requireNotNull(tableHostOrNull())
+                val surface = requireNotNull(host.preparedLayout).blocks.mapNotNull {
+                    it.tableSurface
+                }.single()
+                val location = requireNotNull(host.tableAccessibilityLocation(surface, index))
+                assertTrue(
+                    host.accessibilityNodeProvider.performAction(
+                        location.cellNodeId,
+                        android.view.accessibility.AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS,
+                        null
+                    )
+                )
+            }
+            instrumentation.waitForIdleSync()
+        }
+
+        fun tapCell(index: Int) {
+            val (x, y) = cellPoint(index)
+            tap(x, y)
+        }
+
+        fun cellPoint(index: Int): Pair<Float, Float> {
+            instrumentation.waitForIdleSync()
+            var x = 0f
+            var y = 0f
+            scenario.onActivity {
+                val host = requireNotNull(tableHostOrNull())
+                val block = requireNotNull(host.preparedLayout).blocks.single {
+                    it.tableSurface !=
+                        null
+                }
+                val surface = requireNotNull(block.tableSurface)
+                val frame = requireNotNull(surface.frameOfCell(index))
+                val bounds = requireNotNull(block.tableBounds)
+                val location = IntArray(2)
+                host.getLocationOnScreen(location)
+                x = location[0] + bounds.left + frame.left + frame.width / 2f
+                y = location[1] + bounds.top + frame.top + frame.height / 2f
+            }
+            return x to y
+        }
+
+        fun tapFollowingProse() {
+            val (x, y) = followingProsePoint()
+            tap(x, y)
+        }
+
+        fun swipeFollowingProse(horizontal: Boolean) {
+            val (x, y) = followingProsePoint()
+            val step =
+                ViewConfiguration.get(instrumentation.targetContext).scaledTouchSlop *
+                    SWIPE_STEP_SLOP_FACTOR
+            gesture(
+                (0..SWIPE_STEPS).map { index ->
+                    if (horizontal) x + index * step to y else x to y + index * step
+                },
+                SWIPE_STEP_MS
+            )
+        }
+
+        fun longPressFollowingProse() {
+            val (x, y) = followingProsePoint()
+            gesture(
+                listOf(x to y, x to y),
+                ViewConfiguration.getLongPressTimeout() * LONG_PRESS_HOLD_FACTOR
+            )
+        }
+
+        private fun followingProsePoint(): Pair<Float, Float> {
+            instrumentation.waitForIdleSync()
+            var x = 0f
+            var y = 0f
+            scenario.onActivity {
+                val input = editor.richTextView.editorEditText
+                val offset = input.text.indexOf("After table.") + 4
+                assertTrue(offset >= 4)
+                val layout = requireNotNull(input.layout)
+                val line = layout.getLineForOffset(offset)
+                val location = IntArray(2)
+                input.getLocationOnScreen(location)
+                x = location[0] + input.totalPaddingLeft + layout.getPrimaryHorizontal(offset)
+                y = location[1] + input.totalPaddingTop +
+                    (layout.getLineTop(line) + layout.getLineBottom(line)) / 2f
+            }
+            return x to y
+        }
+
+        fun awaitCommittedFrame() {
+            val committed = CountDownLatch(1)
+            val callback = Runnable { committed.countDown() }
+            scenario.onActivity {
+                val decor = it.window.decorView
+                assertTrue(decor.isHardwareAccelerated)
+                decor.viewTreeObserver.registerFrameCommitCallback(callback)
+                decor.invalidate()
+            }
+            try {
+                assertTrue(
+                    "edited Expo cell frame must be submitted",
+                    committed.await(3, TimeUnit.SECONDS)
+                )
+            } finally {
+                scenario.onActivity {
+                    it.window.decorView.viewTreeObserver.unregisterFrameCommitCallback(callback)
+                }
+            }
+        }
+
+        fun captureScreenshot(filename: String) {
+            instrumentation.waitForIdleSync()
+            val directory = requireNotNull(instrumentation.targetContext.getExternalFilesDir(null))
+            val bitmap = requireNotNull(instrumentation.uiAutomation.takeScreenshot())
+            try {
+                java.io.File(directory, filename).outputStream().use { output ->
+                    assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, output))
+                }
+            } finally {
+                bitmap.recycle()
+            }
+        }
+
+        private fun tableHostOrNull(): PreparedProseDrawingView? {
+            val frame = editor.richTextView.editorContentFrame
+            return (0 until frame.childCount).map(frame::getChildAt)
+                .filterIsInstance<PreparedProseDrawingView>().singleOrNull()
+        }
+    }
+
+    private fun tap(x: Float, y: Float) = gesture(listOf(x to y, x to y), TAP_DURATION_MS)
+
+    private fun gesture(
+        points: List<Pair<Float, Float>>,
+        stepMs: Long,
+        afterEvent: ((Int) -> Unit)? = null
+    ) {
+        val start = SystemClock.uptimeMillis()
+        var released = false
+        try {
+            points.forEachIndexed { index, (x, y) ->
+                val action = when (index) {
+                    0 -> MotionEvent.ACTION_DOWN
+                    points.lastIndex -> MotionEvent.ACTION_UP
+                    else -> MotionEvent.ACTION_MOVE
+                }
+                val eventTime = start + index * stepMs
+                SystemClock.sleep((eventTime - SystemClock.uptimeMillis()).coerceAtLeast(0))
+                val event = MotionEvent.obtain(start, eventTime, action, x, y, 0).apply {
+                    source = InputDevice.SOURCE_TOUCHSCREEN
+                }
+                try {
+                    assertTrue(
+                        "UiAutomation rejected ${MotionEvent.actionToString(action)}",
+                        instrumentation.uiAutomation.injectInputEvent(event, afterEvent != null)
+                    )
+                } finally {
+                    event.recycle()
+                }
+                released = action == MotionEvent.ACTION_UP
+                afterEvent?.invoke(index)
+            }
+        } finally {
+            if (!released) {
+                val (x, y) = points.last()
+                val cancel = MotionEvent.obtain(
+                    start,
+                    SystemClock.uptimeMillis(),
+                    MotionEvent.ACTION_CANCEL,
+                    x,
+                    y,
+                    0
+                ).apply { source = InputDevice.SOURCE_TOUCHSCREEN }
+                try {
+                    instrumentation.uiAutomation.injectInputEvent(cancel, true)
+                } finally {
+                    cancel.recycle()
+                }
+            }
+        }
+        instrumentation.waitForIdleSync()
+    }
+
+    private fun waitUntil(description: String, condition: () -> Boolean) {
+        val deadline = SystemClock.uptimeMillis() + 5_000L
+        do {
+            instrumentation.waitForIdleSync()
+            if (condition()) return
+            SystemClock.sleep(20)
+        } while (SystemClock.uptimeMillis() < deadline)
+        assertTrue(description, condition())
+    }
+
+    private fun dp(context: Context, value: Int): Int =
+        (value * context.resources.displayMetrics.density).toInt()
+
+    companion object {
+        private const val SELECTION_SCROLL_ROWS = 80
+        private const val SELECTION_EDGE_INSET_DP = 44
+        private const val SELECTION_SHALLOW_MAX_SCROLL_DP = 32
+        private const val SELECTION_HOLD_STEP_MS = 120L
+        private const val COMPOSED_TEXT = "Z"
+        private const val SWIPE_STEPS = 4
+        private const val SWIPE_STEP_SLOP_FACTOR = 1.5f
+        private const val SWIPE_STEP_MS = 16L
+        private const val TAP_DURATION_MS = 40L
+        private const val LONG_PRESS_HOLD_FACTOR = 2L
+        private const val CONFIG = """{"schema":{"nodes":[{"name":"doc","content":"block+",""" +
+            """"role":"doc"},{"name":"paragraph","content":"inline*",""" +
+            """"group":"block","role":"textBlock"},{"name":"text",""" +
+            """"content":"","group":"inline","role":"text"},""" +
+            """{"name":"table","content":"table_row+","group":"block",""" +
+            """"role":"block","tableRole":"table"},""" +
+            """{"name":"table_row","content":"(table_cell | """ +
+            """table_header)*","role":"block","tableRole":"row"},""" +
+            """{"name":"table_cell","content":"block+","role":"block",""" +
+            """"tableRole":"cell","attrs":{"colspan":{"type":"number",""" +
+            """"default":1,"min":1},"rowspan":{"type":"number",""" +
+            """"default":1,"min":1},"colwidth":{"default":null}}},""" +
+            """{"name":"table_header","content":"block+",""" +
+            """"role":"block","tableRole":"header_cell",""" +
+            """"attrs":{"colspan":{"type":"number","default":1,""" +
+            """"min":1},"rowspan":{"type":"number","default":1,""" +
+            """"min":1},"colwidth":{"default":null}}}],"marks":[]},""" +
+            """"initialization":{"type":"localEmpty"}}"""
+        private const val DOCUMENT = """{"type":"doc","content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"Before table."}]},""" +
+            """{"type":"table","content":[{"type":"table_row",""" +
+            """"content":[{"type":"table_cell",""" +
+            """"content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"Alpha"}]}]},""" +
+            """{"type":"table_cell","content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"Owner"}]}]}]}]},""" +
+            """{"type":"paragraph","content":[{"type":"text",""" +
+            """"text":"After table."}]}]}"""
+        private const val NESTED_DOCUMENT = """{"type":"doc","content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"Before table."}]},""" +
+            """{"type":"table","content":[{"type":"table_row",""" +
+            """"content":[{"type":"table_cell",""" +
+            """"content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"Alpha"}]}]},""" +
+            """{"type":"table_cell","content":[{"type":"table",""" +
+            """"content":[{"type":"table_row",""" +
+            """"content":[{"type":"table_cell",""" +
+            """"content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"Nested"}]}]}]}]}]},""" +
+            """{"type":"table_cell","content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text","text":"Owner"}]}]}]}]},""" +
+            """{"type":"paragraph","content":[{"type":"text",""" +
+            """"text":"After table."}]}]}"""
+    }
+}

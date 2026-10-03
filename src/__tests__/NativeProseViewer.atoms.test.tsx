@@ -11,6 +11,7 @@ import React from 'react';
 import { View } from 'react-native';
 import { act, fireEvent, render } from '@testing-library/react-native';
 import { NativeProseViewer } from '../NativeProseViewer';
+import { AtomHost } from '../AtomHost';
 import { defineAtomNode, type AtomComponentProps } from '../atoms';
 
 const Counter = (props: AtomComponentProps) => <View testID={'counter'} atomProps={props} />;
@@ -46,6 +47,28 @@ function publish(view: ReturnType<typeof render>, positions = [ position ]) {
             revision: configuration.revision,
             layoutWidth: 300,
             atomsJson: JSON.stringify(positions),
+        },
+    });
+}
+
+function publishPresentation(
+    view: ReturnType<typeof render>,
+    presentationSequence: string,
+    positions: readonly Record<string, unknown>[]
+) {
+    const native = view.getByTestId('prepared-prose-viewer');
+    const configuration = JSON.parse(native.props.themeJson).viewerAtoms;
+
+    fireEvent(native, 'atomLayout', {
+        nativeEvent: {
+            generation: configuration.generation,
+            revision: configuration.revision,
+            layoutWidth: 300,
+            atomsJson: JSON.stringify({
+                format: 'viewer-atoms-v2',
+                presentationSequence,
+                atoms: positions,
+            }),
         },
     });
 }
@@ -620,6 +643,228 @@ describe('NativeProseViewer custom atoms', () => {
         expect(onError).toHaveBeenCalledWith(
             expect.objectContaining({ code: 'INVALID_ATOM_LAYOUT', fatal: false })
         );
+    });
+
+    it('clips candidate table hosts while retaining complete offscreen metadata and measurements', () => {
+        const second = {
+            ...position,
+            docPos: 1,
+            attrsJson: '{"count":3}',
+            x: 190,
+            presentation: {
+                clip: { x: 200, y: 20, width: 20, height: 40 },
+                candidate: false,
+            },
+        };
+        const first = {
+            ...position,
+            presentation: {
+                clip: { x: 20, y: 30, width: 40, height: 50 },
+                candidate: true,
+            },
+        };
+        const view = render(<NativeProseViewer contentJSON={content} atoms={atoms} />);
+
+        publishPresentation(view, '1', [ first, second ]);
+        expect(view.getAllByTestId('counter')).toHaveLength(1);
+        const measurementLayer = view.UNSAFE_getByType(AtomHost).parent!;
+        expect(measurementLayer.props.style).toEqual({
+            position: 'absolute', left: -8, top: -6, width: 276,
+        });
+        expect(measurementLayer.parent!.parent!.props.style).toEqual(expect.objectContaining({
+            overflow: 'hidden', left: 20, top: 30, width: 40, height: 50,
+        }));
+
+        fireEvent(view.getByTestId('counter').parent!, 'layout', {
+            nativeEvent: { layout: { width: 276, height: 123, x: 0, y: 0 } },
+        });
+        publishPresentation(view, '2', [
+            { ...first, presentation: { ...first.presentation, candidate: false } },
+            second,
+        ]);
+
+        expect(view.queryByTestId('counter')).toBeNull();
+        expect(
+            JSON.parse(view.getByTestId('prepared-prose-viewer').props.themeJson).viewerAtoms
+                .measurements['0']
+        ).toEqual({ width: 276, height: 123 });
+
+        publishPresentation(view, '3', [ first, second ]);
+        expect(view.getAllByTestId('counter')).toHaveLength(1);
+        expect(
+            JSON.parse(view.getByTestId('prepared-prose-viewer').props.themeJson).viewerAtoms
+                .measurements['0']
+        ).toEqual({ width: 276, height: 123 });
+    });
+
+    it('keeps the newest valid presentation envelope after stale and malformed events', () => {
+        const onError = jest.fn();
+        const view = render(
+            <NativeProseViewer contentJSON={content} atoms={atoms} onError={onError} />
+        );
+        const newest = { ...position, y: 91, presentation: {
+            clip: { x: 0, y: 90, width: 276, height: 80 }, candidate: true,
+        } };
+
+        publishPresentation(view, '2', [ newest ]);
+        publishPresentation(view, '1', [ { ...newest, attrsJson: '[]' } ]);
+        publishPresentation(view, '1', []);
+        expect(
+            view.UNSAFE_getAllByType(View).some(node => node.props.style?.top === 91)
+        ).toBe(true);
+        expect(onError).not.toHaveBeenCalled();
+
+        publishPresentation(view, '3', [ { ...newest, presentation: { clip: { x: 0 }, candidate: true } } ]);
+        expect(onError).toHaveBeenCalledWith(expect.objectContaining({ code: 'INVALID_ATOM_LAYOUT' }));
+        publishPresentation(view, '3', [ newest ]);
+        expect(view.getByTestId('counter')).toBeTruthy();
+    });
+
+    it('pins an active table host until its liveness callback releases it', () => {
+        let setActive!: (active: boolean) => void;
+        const ActiveCounter = (props: AtomComponentProps) => {
+            setActive = props.setActive;
+            return <View testID={'active-counter'} atomProps={props} />;
+        };
+        const definition = { ...atom, component: ActiveCounter };
+        const tableAtom = {
+            ...position,
+            presentation: {
+                clip: { x: 0, y: 0, width: 276, height: 80 },
+                candidate: true,
+            },
+        };
+        const view = render(<NativeProseViewer contentJSON={content} atoms={[ definition ]} />);
+
+        publishPresentation(view, '1', [ tableAtom ]);
+        act(() => setActive(true));
+        publishPresentation(view, '2', [
+            { ...tableAtom, presentation: { ...tableAtom.presentation, candidate: false } },
+        ]);
+        expect(view.getByTestId('active-counter')).toBeTruthy();
+
+        act(() => setActive(false));
+        expect(view.queryByTestId('active-counter')).toBeNull();
+    });
+
+    it('pins a focused table host until blur after leaving candidates', () => {
+        const tableAtom = { ...position, presentation: {
+            clip: { x: 12, y: 24, width: 276, height: 80 }, candidate: true,
+        } };
+        const view = render(<NativeProseViewer contentJSON={content} atoms={atoms} />);
+        publishPresentation(view, '1', [ tableAtom ]);
+        fireEvent(view.getByTestId('atom-host'), 'focus');
+        publishPresentation(view, '2', [ {
+            ...tableAtom, presentation: { ...tableAtom.presentation, candidate: false },
+        } ]);
+        expect(view.getByTestId('counter')).toBeTruthy();
+        fireEvent(view.getByTestId('atom-host'), 'blur');
+        expect(view.queryByTestId('counter')).toBeNull();
+    });
+
+    it('retains a pending atom update across a geometry-only candidate exit', async() => {
+        let finish!: () => void;
+        const deferred = new Promise<void>(resolve => { finish = resolve; });
+        const onUpdateAtomAttrs = jest.fn(() => deferred);
+        const tableAtom = { ...position, presentation: {
+            clip: { x: 12, y: 24, width: 276, height: 80 }, candidate: true,
+        } };
+        const view = render(<NativeProseViewer contentJSON={content} atoms={atoms}
+            readOnly={false} onUpdateAtomAttrs={onUpdateAtomAttrs} />);
+        publishPresentation(view, '1', [ tableAtom ]);
+        let pending!: Promise<void>;
+        act(() => { pending = view.getByTestId('counter').props.atomProps.updateAttrs({ count: 3 }); });
+        expect(onUpdateAtomAttrs).toHaveBeenCalledTimes(1);
+        expect(view.getByTestId('counter').props.atomProps.updatePending).toBe(true);
+        publishPresentation(view, '2', [ {
+            ...tableAtom, x: -400,
+            presentation: { clip: { x: 12, y: 24, width: 0, height: 0 }, candidate: false },
+        } ]);
+        expect(view.getByTestId('counter')).toBeTruthy();
+        await act(async() => { finish(); await pending; });
+        expect(view.queryByTestId('counter')).toBeNull();
+        expect(onUpdateAtomAttrs).toHaveBeenCalledWith(expect.objectContaining({
+            docPos: 0, attrs: { count: 2 }, partial: { count: 3 },
+        }));
+    });
+
+    it('keeps a replacement pinned when a retired host finishes its update', async() => {
+        let finish!: () => void;
+        const deferred = new Promise<void>(resolve => { finish = resolve; });
+        const onUpdateAtomAttrs = jest.fn(() => deferred);
+        const tableAtom = { ...position, presentation: {
+            clip: { x: 12, y: 24, width: 276, height: 80 }, candidate: true,
+        } };
+        const view = render(<NativeProseViewer contentJSON={content} atoms={atoms}
+            readOnly={false} onUpdateAtomAttrs={onUpdateAtomAttrs} />);
+        publishPresentation(view, '1', [ tableAtom ]);
+        const retiredHost = view.UNSAFE_getByType(AtomHost);
+        let pending!: Promise<void>;
+        act(() => { pending = view.getByTestId('counter').props.atomProps.updateAttrs({ count: 3 }); });
+        expect(view.getByTestId('counter').props.atomProps.updatePending).toBe(true);
+        publishPresentation(view, '2', []);
+        expect(view.queryByTestId('counter')).toBeNull();
+        publishPresentation(view, '3', [ tableAtom ]);
+        expect(view.UNSAFE_getByType(AtomHost)).not.toBe(retiredHost);
+        expect(view.getByTestId('counter').props.atomProps.updatePending).toBe(false);
+        fireEvent(view.getByTestId('atom-host'), 'focus');
+        publishPresentation(view, '4', [ {
+            ...tableAtom,
+            presentation: { clip: { x: 12, y: 24, width: 0, height: 0 }, candidate: false },
+        } ]);
+        await act(async() => { finish(); await pending; });
+        expect(view.getByTestId('counter')).toBeTruthy();
+        const measurementLayer = view.UNSAFE_getByType(AtomHost).parent!;
+        expect(measurementLayer.props.style.width).toBe(276);
+        expect(measurementLayer.parent!.parent!.props.style).toEqual(expect.objectContaining({
+            width: 0, height: 0, overflow: 'hidden',
+        }));
+        fireEvent(view.getByTestId('atom-host'), 'blur');
+        expect(view.queryByTestId('counter')).toBeNull();
+        publishPresentation(view, '5', [ tableAtom ]);
+        expect(view.getByTestId('counter')).toBeTruthy();
+        publishPresentation(view, '6', [ {
+            ...tableAtom, presentation: { ...tableAtom.presentation, candidate: false },
+        } ]);
+        expect(view.queryByTestId('counter')).toBeNull();
+    });
+
+    it('orders empty envelopes and prevents a same-revision legacy overwrite', () => {
+        const view = render(<NativeProseViewer contentJSON={content} atoms={atoms} />);
+        publish(view);
+        expect(view.getByTestId('counter')).toBeTruthy();
+        publishPresentation(view, '9', [ position ]);
+        publish(view, []);
+        expect(view.getByTestId('counter')).toBeTruthy();
+        publishPresentation(view, '10', []);
+        expect(view.queryByTestId('counter')).toBeNull();
+        publishPresentation(view, '9', [ position ]);
+        publishPresentation(view, '10', [ position ]);
+        publish(view);
+        expect(view.queryByTestId('counter')).toBeNull();
+        publishPresentation(view, '11', [ position ]);
+        expect(view.getByTestId('counter')).toBeTruthy();
+    });
+
+    it.each([ '0', '01', '-1', '+1', '1.0', '1e2', '18446744073709551616' ])(
+        'rejects invalid presentation sequence %s without poisoning freshness', sequence => {
+            const onError = jest.fn();
+            const view = render(<NativeProseViewer contentJSON={content} atoms={atoms} onError={onError} />);
+            publishPresentation(view, sequence, [ position ]);
+            expect(onError).toHaveBeenCalledWith(expect.objectContaining({ code: 'INVALID_ATOM_LAYOUT' }));
+            publishPresentation(view, '1', [ position ]);
+            expect(view.getByTestId('counter')).toBeTruthy();
+        }
+    );
+
+    it('compares full UInt64 sequences without floating-point rounding', () => {
+        const view = render(<NativeProseViewer contentJSON={content} atoms={atoms} />);
+        publishPresentation(view, '18446744073709551614', [ position ]);
+        expect(view.getByTestId('counter')).toBeTruthy();
+        publishPresentation(view, '18446744073709551615', []);
+        expect(view.queryByTestId('counter')).toBeNull();
+        publishPresentation(view, '18446744073709551614', [ position ]);
+        expect(view.queryByTestId('counter')).toBeNull();
     });
 
     it('rejects obsolete measurements after container width changes', () => {

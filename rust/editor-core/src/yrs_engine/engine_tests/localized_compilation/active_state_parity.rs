@@ -153,12 +153,12 @@ fn prepared_active_state_warm_hit_matches_forced_generic_at_output_boundaries() 
         let left_state = left.derived_state.as_ref().unwrap();
         let right_state = right.derived_state.as_ref().unwrap();
         assert_eq!(
-            left_state.validation_certificate,
-            right_state.validation_certificate
+            left_state.materialized_identity_for_test().0,
+            right_state.materialized_identity_for_test().0
         );
         assert_eq!(
-            left_state.localized_text_index,
-            right_state.localized_text_index
+            left_state.materialized_identity_for_test().1,
+            right_state.materialized_identity_for_test().1
         );
         assert_eq!(
             left_state.render_blocks.materialize(),
@@ -471,11 +471,13 @@ fn prepared_active_state_context_matrix_matches_forced_generic() {
         let hit_state = hit.derived_state.as_ref().unwrap();
         let generic_state = generic.derived_state.as_ref().unwrap();
         assert_eq!(
-            hit_state.validation_certificate, generic_state.validation_certificate,
+            hit_state.materialized_identity_for_test().0,
+            generic_state.materialized_identity_for_test().0,
             "{shape}"
         );
         assert_eq!(
-            hit_state.localized_text_index, generic_state.localized_text_index,
+            hit_state.materialized_identity_for_test().1,
+            generic_state.materialized_identity_for_test().1,
             "{shape}"
         );
         assert_eq!(

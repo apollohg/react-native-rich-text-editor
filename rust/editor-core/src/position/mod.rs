@@ -1,10 +1,13 @@
 pub mod build;
 pub mod delta_tree;
 mod fuzz_tests;
+mod storage;
 pub mod update;
 
 use smallvec::SmallVec;
+use std::borrow::Cow;
 use std::collections::HashSet;
+use storage::Blocks;
 
 use crate::model::node::Node;
 use crate::model::resolved_pos::ResolvedPos;
@@ -14,12 +17,19 @@ use crate::schema::Schema;
 
 use delta_tree::DeltaTree;
 
+const BLOCK_PATH_INLINE_CAPACITY: usize = 8;
+
+#[cfg(test)]
+std::thread_local! {
+    pub(crate) static DOCUMENT_BLOCK_LOOKUP_PROBES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Maps one "rendered block" between doc positions and scalar offsets.
 ///
 /// A block is either:
 /// - A text block (e.g. paragraph) that directly contains inline content
 /// - A block-level void node (e.g. horizontalRule) rendered as a placeholder
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct BlockMapping {
     /// Doc position at the start of this block's content (after the open tag).
     /// For void blocks, this is the position of the void node itself.
@@ -37,9 +47,35 @@ pub struct BlockMapping {
     /// Number of scalars for the separator after this block (0 for terminal).
     pub rendered_break_after: u32,
     /// Path from doc root to this block's node (child indices at each level).
-    pub node_path: SmallVec<[u32; 8]>,
+    pub node_path: SmallVec<[u32; BLOCK_PATH_INLINE_CAPACITY]>,
     /// Whether this block maps a block-level void node instead of text content.
     pub is_void_block: bool,
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static BLOCK_MAPPING_CLONES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+impl Clone for BlockMapping {
+    fn clone(&self) -> Self {
+        #[cfg(test)]
+        BLOCK_MAPPING_CLONES.set(BLOCK_MAPPING_CLONES.get() + 1);
+        Self {
+            doc_start: self.doc_start,
+            doc_end: self.doc_end,
+            scalar_start: self.scalar_start,
+            scalar_len: self.scalar_len,
+            scalar_prefix_len: self.scalar_prefix_len,
+            rendered_break_after: self.rendered_break_after,
+            node_path: if self.node_path.spilled() {
+                self.node_path.clone()
+            } else {
+                SmallVec::from_slice(&self.node_path)
+            },
+            is_void_block: self.is_void_block,
+        }
+    }
 }
 
 /// Bidirectional index for converting between doc positions and rendered-text
@@ -50,7 +86,7 @@ pub struct BlockMapping {
 /// shown in the native text view.
 #[derive(Debug, Clone)]
 pub struct PositionMap {
-    blocks: Vec<BlockMapping>,
+    blocks: Blocks,
     prefix_deltas: DeltaTree,
     hard_break_node_types: HashSet<String>,
 }
@@ -64,7 +100,7 @@ impl PositionMap {
     /// Create from pre-built block mappings (used by the build module).
     pub(crate) fn from_blocks(blocks: Vec<BlockMapping>, schema: &Schema) -> Self {
         Self {
-            blocks,
+            blocks: Blocks::Dense(blocks),
             prefix_deltas: DeltaTree::empty(),
             hard_break_node_types: schema.hard_break_node_types().map(str::to_owned).collect(),
         }
@@ -76,7 +112,7 @@ impl PositionMap {
     }
 
     /// Access a block mapping by index.
-    pub fn block(&self, index: usize) -> Option<&BlockMapping> {
+    pub fn block(&self, index: usize) -> Option<Cow<'_, BlockMapping>> {
         self.blocks.get(index)
     }
 
@@ -85,7 +121,7 @@ impl PositionMap {
         if self.blocks.is_empty() {
             return 0;
         }
-        let last = &self.blocks[self.blocks.len() - 1];
+        let last = self.blocks.get(self.blocks.len() - 1).unwrap();
         let (_, sd) = self.prefix_deltas.accumulated_delta(self.blocks.len() - 1);
         let last_scalar_start = (last.scalar_start as i64 + sd as i64) as u32;
         last_scalar_start + last.scalar_prefix_len + last.scalar_len + last.rendered_break_after
@@ -93,23 +129,23 @@ impl PositionMap {
 
     /// Get the effective doc_start for a block, accounting for pending deltas.
     pub(crate) fn effective_doc_start(&self, block_idx: usize) -> u32 {
-        let block = &self.blocks[block_idx];
+        let (doc_start, _, _) = self.blocks.offsets(block_idx).unwrap();
         let (dd, _) = self.prefix_deltas.accumulated_delta(block_idx);
-        (block.doc_start as i64 + dd as i64) as u32
+        (doc_start as i64 + dd as i64) as u32
     }
 
     /// Get the effective doc_end for a block, accounting for pending deltas.
-    fn effective_doc_end(&self, block_idx: usize) -> u32 {
-        let block = &self.blocks[block_idx];
+    pub(crate) fn effective_doc_end(&self, block_idx: usize) -> u32 {
+        let (_, doc_end, _) = self.blocks.offsets(block_idx).unwrap();
         let (dd, _) = self.prefix_deltas.accumulated_delta(block_idx);
-        (block.doc_end as i64 + dd as i64) as u32
+        (doc_end as i64 + dd as i64) as u32
     }
 
     /// Get the effective scalar_start for a block, accounting for pending deltas.
-    fn effective_scalar_start(&self, block_idx: usize) -> u32 {
-        let block = &self.blocks[block_idx];
+    pub(crate) fn effective_scalar_start(&self, block_idx: usize) -> u32 {
+        let (_, _, scalar_start) = self.blocks.offsets(block_idx).unwrap();
         let (_, sd) = self.prefix_deltas.accumulated_delta(block_idx);
-        (block.scalar_start as i64 + sd as i64) as u32
+        (scalar_start as i64 + sd as i64) as u32
     }
 
     /// Convert a rendered-text scalar offset to a doc position.
@@ -121,6 +157,56 @@ impl PositionMap {
         self.scalar_to_doc_metered(scalar_offset, doc, |_| true)
             .map(|(position, _)| position)
             .unwrap_or(0)
+    }
+
+    pub(crate) fn block_range_for_path(&self, path: &[u32]) -> std::ops::Range<usize> {
+        let start = self
+            .blocks
+            .partition_point(|block| block.node_path.as_slice() < path);
+        let end = self.blocks.partition_point(|block| {
+            block.node_path.as_slice() < path || block.node_path.starts_with(path)
+        });
+        start..end
+    }
+
+    pub(crate) fn block_doc_positions(
+        &self,
+        block_index: usize,
+        doc: &Document,
+    ) -> Option<Vec<u32>> {
+        let block = self.block(block_index)?;
+        let scalar_start = self.effective_scalar_start(block_index);
+        let scalar_end = if block_index + 1 < self.block_count() {
+            self.effective_scalar_start(block_index + 1)
+        } else {
+            self.total_scalars().checked_add(1)?
+        };
+        let doc_start = self.effective_doc_start(block_index);
+        let mut node = doc.root();
+        for &index in &block.node_path {
+            node = node.child(usize::try_from(index).ok()?)?;
+        }
+        let mut positions = Vec::new();
+        positions
+            .try_reserve_exact(usize::try_from(scalar_end.checked_sub(scalar_start)?).ok()?)
+            .ok()?;
+        for scalar in scalar_start..scalar_end {
+            let intra = scalar - scalar_start;
+            let position = if block.is_void_block {
+                doc_start.checked_add(u32::from(intra >= block.scalar_len))?
+            } else if intra < block.scalar_prefix_len {
+                doc_start
+            } else {
+                doc_start.checked_add(scalar_to_doc_intra_block_metered(
+                    node,
+                    intra - block.scalar_prefix_len,
+                    &self.hard_break_node_types,
+                    &mut |_| true,
+                )?)?
+            };
+            positions.push(position);
+        }
+        Some(positions)
     }
 
     pub(crate) fn scalar_to_doc_metered(
@@ -147,7 +233,7 @@ impl PositionMap {
             }
         }
         let block_idx = lo.saturating_sub(1);
-        let block = &self.blocks[block_idx];
+        let block = self.blocks.get(block_idx).unwrap();
         let eff_scalar_start = self.effective_scalar_start(block_idx);
         let eff_doc_start = self.effective_doc_start(block_idx);
 
@@ -206,7 +292,7 @@ impl PositionMap {
                 let eff_doc_start = self.effective_doc_start(block_idx);
                 let eff_doc_end = self.effective_doc_end(block_idx);
                 let eff_scalar_start = self.effective_scalar_start(block_idx);
-                let block = &self.blocks[block_idx];
+                let block = self.blocks.get(block_idx).unwrap();
 
                 if block.is_void_block {
                     if doc_pos <= eff_doc_start {
@@ -241,9 +327,7 @@ impl PositionMap {
 
                 eff_scalar_start + block.scalar_prefix_len + intra_scalar
             }
-            None => {
-                self.total_scalars()
-            }
+            None => self.total_scalars(),
         }
     }
 
@@ -271,7 +355,7 @@ impl PositionMap {
         if let Some(block_idx) = self.find_block_for_doc_pos(doc_pos) {
             let eff_doc_start = self.effective_doc_start(block_idx);
             let eff_doc_end = self.effective_doc_end(block_idx);
-            let block = &self.blocks[block_idx];
+            let block = self.blocks.get(block_idx).unwrap();
 
             if block.doc_start == block.doc_end {
                 return eff_doc_start;
@@ -291,74 +375,89 @@ impl PositionMap {
         self.effective_doc_end(last_idx)
     }
 
-    /// Find the block index that contains or is nearest to the given doc position.
-    ///
-    /// Returns `None` if the position is beyond all blocks.
-    pub(crate) fn find_block_for_doc_pos(&self, doc_pos: u32) -> Option<usize> {
-        if self.blocks.is_empty() {
-            return None;
+    pub(crate) fn forward_cursor_pos(&self, doc_pos: u32, doc: &Document) -> u32 {
+        let normalized = self.normalize_cursor_pos(doc_pos, doc);
+        if normalized == doc_pos {
+            return doc_pos;
         }
-
-        // For each block, the "coverage" is from some position before doc_start
-        // (the open tag) to some position after doc_end (the close tag).
-        // For precise matching we need to account for structural tokens.
-        //
-        // Strategy: find the block with the closest doc_start that is <= doc_pos.
-        // If doc_pos is past that block's doc_end, check if it's on the close
-        // tag or between blocks.
-
-        let mut best_idx: Option<usize> = None;
-
-        for i in 0..self.blocks.len() {
-            let eff_start = self.effective_doc_start(i);
-            let eff_end = self.effective_doc_end(i);
-            let block = &self.blocks[i];
-
-            if block.doc_start == block.doc_end {
-                // Void block: position is at or near the void's position.
-                // The void node occupies 1 doc token at doc_start.
-                // But doc_start here was set to the content position (after open tag
-                // of parent), and the void occupies that position.
-                if doc_pos == eff_start {
-                    return Some(i);
-                }
-                if doc_pos < eff_start {
-                    break;
-                }
-                best_idx = Some(i);
-                continue;
-            }
-
-            if doc_pos >= eff_start && doc_pos <= eff_end {
-                return Some(i);
-            }
-
-            if doc_pos < eff_start {
-                // Position is before this block (on a structural token).
-                // Snap to this block or the previous one.
-                if let Some(prev) = best_idx {
-                    let prev_end = self.effective_doc_end(prev);
-                    let dist_to_prev = doc_pos - prev_end;
-                    let dist_to_next = eff_start - doc_pos;
-                    if dist_to_prev <= dist_to_next {
-                        return Some(prev);
-                    } else {
-                        return Some(i);
-                    }
-                }
-                return Some(i);
-            }
-
-            best_idx = Some(i);
-        }
-
-        best_idx
+        self.next_block_start(doc_pos)
+            .or_else(|| self.previous_block_end(doc_pos))
+            .unwrap_or(normalized)
     }
 
-    /// Access the internal blocks slice (for testing / debugging).
-    #[allow(dead_code)]
-    pub fn blocks(&self) -> &[BlockMapping] {
-        &self.blocks
+    pub(crate) fn backward_cursor_pos(&self, doc_pos: u32, doc: &Document) -> u32 {
+        let normalized = self.normalize_cursor_pos(doc_pos, doc);
+        if normalized == doc_pos {
+            return doc_pos;
+        }
+        self.previous_block_end(doc_pos)
+            .or_else(|| self.next_block_start(doc_pos))
+            .unwrap_or(normalized)
+    }
+
+    fn next_block_start(&self, doc_pos: u32) -> Option<u32> {
+        (0..self.blocks.len())
+            .map(|block_idx| self.effective_doc_start(block_idx))
+            .find(|start| *start >= doc_pos)
+    }
+
+    fn previous_block_end(&self, doc_pos: u32) -> Option<u32> {
+        (0..self.blocks.len())
+            .rev()
+            .map(|block_idx| self.effective_doc_end(block_idx))
+            .find(|end| *end <= doc_pos)
+    }
+
+    /// Find the containing or nearest block, preserving zero-width block boundaries.
+    pub(crate) fn find_block_for_doc_pos(&self, doc_pos: u32) -> Option<usize> {
+        let mut lo = 0usize;
+        let mut hi = self.blocks.len();
+        while lo < hi {
+            #[cfg(test)]
+            DOCUMENT_BLOCK_LOOKUP_PROBES.set(DOCUMENT_BLOCK_LOOKUP_PROBES.get() + 1);
+            let mid = lo + (hi - lo) / 2;
+            if self.effective_doc_end(mid) < doc_pos {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        let Some(block) = self.blocks.get(lo) else {
+            return lo.checked_sub(1);
+        };
+        let start = self.effective_doc_start(lo);
+        if doc_pos >= start {
+            return Some(lo);
+        }
+        let previous = lo.checked_sub(1);
+        // Empty paragraphs share the existing zero-width boundary behavior.
+        if block.doc_start == block.doc_end {
+            return previous;
+        }
+        if let Some(previous) = previous {
+            if doc_pos - self.effective_doc_end(previous) <= start - doc_pos {
+                return Some(previous);
+            }
+        }
+        Some(lo)
+    }
+
+    #[cfg(test)]
+    pub fn blocks(
+        &self,
+    ) -> impl ExactSizeIterator<Item = Cow<'_, BlockMapping>> + DoubleEndedIterator {
+        self.blocks.iter()
+    }
+
+    pub(crate) fn block_path(&self, index: usize) -> Option<&[u32]> {
+        self.blocks.path(index)
+    }
+
+    pub(crate) fn block_partition_point(
+        &self,
+        predicate: impl FnMut(&BlockMapping) -> bool,
+    ) -> usize {
+        self.blocks.partition_point(predicate)
     }
 
     /// Rendered scalar width of an inline void in this map's schema domain.
@@ -380,17 +479,7 @@ impl PositionMap {
             .blocks
             .capacity()
             .checked_mul(std::mem::size_of::<BlockMapping>())?;
-        let spilled_path_bytes = self.blocks.iter().try_fold(0usize, |total, block| {
-            let path_bytes = if block.node_path.spilled() {
-                block
-                    .node_path
-                    .capacity()
-                    .checked_mul(std::mem::size_of::<u32>())?
-            } else {
-                0
-            };
-            total.checked_add(path_bytes)
-        })?;
+        let spilled_path_bytes = self.blocks.spilled_path_bytes()?;
         let hard_break_capacity = self.hard_break_node_types.capacity();
         let hard_break_bucket_count_bound = if hard_break_capacity == 0 {
             0
@@ -418,7 +507,6 @@ impl PositionMap {
             .checked_add(hard_break_string_bytes)
     }
 }
-
 
 /// Walk a text block node's content and convert a scalar offset to a doc
 /// token offset within the block.
@@ -554,10 +642,10 @@ fn inline_void_visible_scalar_len(node: &Node, hard_break_node_types: &HashSet<S
 mod retained_size_tests {
     use smallvec::smallvec;
 
-    use super::{BlockMapping, PositionMap};
+    use super::{BlockMapping, PositionMap, BLOCK_PATH_INLINE_CAPACITY};
     use crate::schema::presets::tiptap_schema;
 
-    fn block(path: smallvec::SmallVec<[u32; 8]>) -> BlockMapping {
+    fn block(path: smallvec::SmallVec<[u32; BLOCK_PATH_INLINE_CAPACITY]>) -> BlockMapping {
         BlockMapping {
             doc_start: 0,
             doc_end: 0,
@@ -567,6 +655,38 @@ mod retained_size_tests {
             rendered_break_after: 0,
             node_path: path,
             is_void_block: false,
+        }
+    }
+
+    #[test]
+    fn block_clone_preserves_inline_and_spilled_storage_and_independence() {
+        const DEEP_PATH: usize = 128;
+        for depth in (0..=16).chain(std::iter::once(DEEP_PATH)) {
+            for force_spill in [false, true] {
+                let mut source = block((0..depth as u32).collect());
+                if force_spill {
+                    source.node_path.reserve(DEEP_PATH);
+                }
+                source.doc_start = 2;
+                source.doc_end = 7;
+                source.scalar_start = 11;
+                source.scalar_len = 5;
+                source.scalar_prefix_len = 3;
+                source.rendered_break_after = 1;
+                source.is_void_block = true;
+                let expected_path = source.node_path.clone();
+                let copy = source.clone();
+                assert_eq!(format!("{copy:?}"), format!("{source:?}"));
+                assert_eq!(
+                    copy.node_path.capacity(),
+                    expected_path.capacity(),
+                    "depth={depth}, forced={force_spill}"
+                );
+                assert_eq!(copy.node_path.spilled(), expected_path.spilled());
+                source.node_path.clear();
+                source.node_path.push(u32::MAX);
+                assert_eq!(copy.node_path, expected_path, "cloned paths must not alias");
+            }
         }
     }
 

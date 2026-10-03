@@ -1,0 +1,83 @@
+--- a/src/any.rs
++++ b/src/any.rs
+@@ -149,11 +149,11 @@
+                             // TYPE 125: INTEGER
+                             encoder.write_u8(125);
+                             encoder.write_var(n)
+-                        } else if (n as f32) as i64 == n {
++                        } else if (n as f32) as i128 == i128::from(n) {
+                             // TYPE 124: FLOAT32
+                             encoder.write_u8(124);
+                             encoder.write_f32(n as f32)
+-                        } else if (n as f64) as i64 == n {
++                        } else if (n as f64) as i128 == i128::from(n) {
+                             // TYPE 123: FLOAT64
+                             encoder.write_u8(123);
+                             encoder.write_f64(n as f64)
+@@ -305,7 +305,7 @@
+             Number::Float(value) => {
+                 // check if conversion is lossless
+                 let converted = value as i64;
+-                if converted as f64 == value {
++                if converted as f64 == value && i128::from(converted) == value as i128 {
+                     Some(converted)
+                 } else {
+                     None
+@@ -318,7 +318,7 @@
+         match self {
+             Number::Int(value) => {
+                 let n = value as f64;
+-                if n as i64 == value {
++                if n as i128 == i128::from(value) {
+                     Some(n)
+                 } else {
+                     None
+@@ -1082,4 +1082,47 @@
+         assert_eq!(hex(Number::Float(f64::INFINITY)), "7c7f800000");
+         assert_eq!(hex(Number::Float(f64::NEG_INFINITY)), "7cff800000");
+     }
+-}
++
++    #[test]
++    fn integer_wire_roundtrip_preserves_precision_at_i64_boundaries() {
++        const FIRST_INEXACT_INTEGER: i64 = (1_i64 << 53) + 1;
++        for value in [
++            i64::MIN,
++            i64::MIN + 1,
++            -FIRST_INEXACT_INTEGER,
++            FIRST_INEXACT_INTEGER,
++            i64::MAX - 1,
++            i64::MAX,
++        ] {
++            let mut bytes = Vec::new();
++            Any::Number(Number::Int(value)).encode(&mut bytes);
++            let decoded = Any::decode(&mut Cursor::new(&bytes)).unwrap();
++            let actual = match decoded {
++                Any::Number(Number::Int(n)) => i128::from(n),
++                Any::Number(Number::Float(n)) => n as i128,
++                other => panic!("integer {value} decoded as {other:?}"),
++            };
++            assert_eq!(
++                actual,
++                i128::from(value),
++                "wire roundtrip for {value}: {bytes:?}"
++            );
++        }
++    }
++
++    #[test]
++    fn number_lossless_conversions_reject_saturating_i64_roundtrips() {
++        const I64_UPPER_EXCLUSIVE: f64 = -(i64::MIN as f64);
++        assert_eq!(Number::Int(i64::MAX).as_f64(), None);
++        assert_eq!(Number::Float(I64_UPPER_EXCLUSIVE).as_i64(), None);
++        assert_ne!(Number::Int(i64::MAX), Number::Float(I64_UPPER_EXCLUSIVE));
++        assert_eq!(Number::Int(i64::MIN).as_f64(), Some(i64::MIN as f64));
++        assert_eq!(Number::Float(i64::MIN as f64).as_i64(), Some(i64::MIN));
++        assert_eq!(Number::Float(1.5).as_i64(), None);
++        assert_eq!(Number::Float(f64::NAN).as_i64(), None);
++        assert_eq!(
++            serde_json::to_value(Number::Int(i64::MAX)).unwrap(),
++            serde_json::json!(i64::MAX)
++        );
++    }
++}

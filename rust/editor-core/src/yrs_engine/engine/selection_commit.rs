@@ -1,7 +1,11 @@
 use super::commit::CompiledCommitAuthority;
 use super::{checked_operation_increment, YrsDocumentEngine};
 use crate::selection::Selection;
+use crate::tables::selection::{
+    admit_cell_pair, CellAdmission, CELL_SELECTION_ANCHOR_FIELD, CELL_SELECTION_HEAD_FIELD,
+};
 use crate::yrs_engine;
+use crate::yrs_engine::compiler::{cell_admission_error, resolve_cell_opening};
 use crate::yrs_engine::compiler::{
     selectable_void_at, CompilationContext, CompiledTransaction, RelativeSelectionPlan,
     SelectionPlan, StoredMarksPlan,
@@ -65,7 +69,12 @@ impl YrsDocumentEngine {
             yrs_engine::SelectionIntent::Set(yrs_engine::SelectionInput::Node { at }) => {
                 at.kind == yrs_engine::EditorOffsetKind::Utf16
             }
-            _ => false,
+            yrs_engine::SelectionIntent::Set(yrs_engine::SelectionInput::Cell { anchor, head }) => {
+                anchor.needs_rendered_text() || head.needs_rendered_text()
+            }
+            yrs_engine::SelectionIntent::Set(yrs_engine::SelectionInput::All)
+            | yrs_engine::SelectionIntent::Preserve
+            | yrs_engine::SelectionIntent::UseOperationResult => false,
         };
         let rendered_text = if needs_rendered_text {
             current.rendered_text.as_str()
@@ -208,6 +217,65 @@ impl YrsDocumentEngine {
                     point: relative_point("selection.at", *at)?,
                 }
             }
+            yrs_engine::SelectionIntent::Set(yrs_engine::SelectionInput::Cell { anchor, head }) => {
+                let opening = |field: &'static str, point| {
+                    resolve_cell_opening(
+                        &current.table_projection_index,
+                        point,
+                        rendered_text,
+                        &current.position_map,
+                        &current.document,
+                        request_id,
+                        field,
+                    )
+                };
+                let anchor_document = opening(CELL_SELECTION_ANCHOR_FIELD, *anchor)?;
+                let head_document = opening(CELL_SELECTION_HEAD_FIELD, *head)?;
+                let admission = admit_cell_pair(
+                    &current.table_projection_index,
+                    anchor_document,
+                    head_document,
+                );
+                if admission != CellAdmission::Admitted {
+                    return Err(cell_admission_error(
+                        request_id,
+                        CELL_SELECTION_ANCHOR_FIELD,
+                        admission,
+                    ));
+                }
+                let cell_relative_point =
+                    |field: &'static str,
+                     document_position,
+                     affinity|
+                     -> yrs_engine::OperationResult<yrs_engine::RelativePoint> {
+                        yrs_engine::position::doc_pos_to_relative_point(
+                            &txn,
+                            &fragment,
+                            document_position,
+                            affinity,
+                            &self.schema,
+                        )
+                        .ok_or_else(|| {
+                            yrs_engine::OperationError::selection_position_invalid(
+                            request_id,
+                            field,
+                            "cell selection cannot be represented with the requested Yrs affinity",
+                        )
+                        })
+                    };
+                yrs_engine::RelativeSelection::Cell {
+                    anchor: cell_relative_point(
+                        CELL_SELECTION_ANCHOR_FIELD,
+                        anchor_document,
+                        anchor.affinity(),
+                    )?,
+                    head: cell_relative_point(
+                        CELL_SELECTION_HEAD_FIELD,
+                        head_document,
+                        head.affinity(),
+                    )?,
+                }
+            }
             yrs_engine::SelectionIntent::Set(yrs_engine::SelectionInput::All) => {
                 yrs_engine::RelativeSelection::All
             }
@@ -267,6 +335,13 @@ impl YrsDocumentEngine {
                 next_stored_marks,
                 next_state_revision,
             );
+            if let Some(result) = &result {
+                current.cache_render_active_state(
+                    result.active_state.clone(),
+                    &self.resource_limits,
+                    &self.editing_limits,
+                );
+            }
             self.state_revision = next_state_revision;
             self.last_committed_origin = Some(transaction.origin);
         }
@@ -306,6 +381,8 @@ impl YrsDocumentEngine {
                 if commit_authority.state_vector().is_empty() {
                     Vec::new()
                 } else {
+                    #[cfg(test)]
+                    crate::yrs_engine::observability::record_whole_state_encoding();
                     commit_authority
                         .txn()
                         .encode_state_as_update_v1(&StateVector::default())
@@ -338,6 +415,10 @@ impl YrsDocumentEngine {
                         commit_authority.fragment(),
                         selection,
                         context.schema,
+                        current
+                            .block_branch_index
+                            .as_deref()
+                            .map(|index| (index, &current.position_map, &current.document)),
                     ),
                     RelativeSelectionPlan::Unsealed
                     | RelativeSelectionPlan::Preserve
@@ -452,6 +533,13 @@ impl YrsDocumentEngine {
             }
             return Ok((commit, result));
         };
+        if let Some(result) = &result {
+            next.cache_render_active_state(
+                result.active_state.clone(),
+                &self.resource_limits,
+                &self.editing_limits,
+            );
+        }
         self.derived_state = Some(next);
         self.state_revision = next_state_revision;
         self.last_committed_origin = Some(compiled.origin);

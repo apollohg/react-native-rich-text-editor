@@ -1,0 +1,4 @@
+#ifdef __OBJC__
+#import <XCTest/XCTest.h>
+#import "ExpoModulesCore-Swift.h"
+#endif

@@ -4,7 +4,13 @@ import android.graphics.RectF
 import android.os.Build
 import android.widget.LinearLayout.LayoutParams
 import com.apollohg.editor.NativeEditorExpoView.ToolbarPlacement
+import com.apollohg.editor.tables.TableLayoutDirection
 import org.json.JSONObject
+
+private fun NativeEditorExpoView.forEachTextInput(block: (EditorEditText) -> Unit) {
+    block(richTextView.editorEditText)
+    tableCellTextInput?.let(block)
+}
 
 internal fun NativeEditorExpoView.setThemeJsonImpl(themeJson: String?) {
     if (lastThemeJson == themeJson && !hasPendingTheme) return
@@ -112,21 +118,21 @@ internal fun NativeEditorExpoView.applyAutoFocusIfNeeded() {
 }
 
 internal fun NativeEditorExpoView.setAutoCapitalizeImpl(autoCapitalize: String?) {
-    richTextView.editorEditText.setAutoCapitalize(autoCapitalize)
+    forEachTextInput { it.setAutoCapitalize(autoCapitalize) }
 }
 
 internal fun NativeEditorExpoView.setAutoCorrectImpl(autoCorrect: Boolean?) {
-    richTextView.editorEditText.setAutoCorrect(autoCorrect)
+    forEachTextInput { it.setAutoCorrect(autoCorrect) }
 }
 
 internal fun NativeEditorExpoView.setKeyboardTypeImpl(keyboardType: String?) {
-    richTextView.editorEditText.setKeyboardType(keyboardType)
+    forEachTextInput { it.setKeyboardType(keyboardType) }
 }
 
 internal fun NativeEditorExpoView.setAndroidInputOptionsJsonImpl(optionsJson: String?) {
     val options = optionsJson?.let { runCatching { JSONObject(it) }.getOrNull() }
     val privateImeOptions = options?.opt("privateImeOptions") as? String
-    richTextView.editorEditText.setPrivateImeOptionsForEditor(privateImeOptions)
+    forEachTextInput { it.setPrivateImeOptionsForEditor(privateImeOptions) }
 }
 
 internal fun NativeEditorExpoView.setEditableImpl(editable: Boolean) {
@@ -136,23 +142,32 @@ internal fun NativeEditorExpoView.setEditableImpl(editable: Boolean) {
         cancelPendingToolbarRefocus()
         clearPendingNativeActionRetry()
     }
+    if (!editable) {
+        tableCellTextInput?.isEditable = false
+    }
     richTextView.editorEditText.isEditable = editable
+    if (!editable) {
+        richTextView.invalidateActiveTableCellInput()
+    } else {
+        tableCellTextInput?.isEditable = true
+    }
     updateKeyboardToolbarVisibility()
 }
 
 internal fun NativeEditorExpoView.setPasteModeImpl(rawPasteMode: String?) {
-    richTextView.editorEditText.pasteMode = EditorPasteMode.fromRaw(rawPasteMode)
+    val mode = EditorPasteMode.fromRaw(rawPasteMode)
+    forEachTextInput { it.pasteMode = mode }
 }
 
 internal fun NativeEditorExpoView.setAccessibilityLabelImpl(label: String?) {
-    richTextView.editorEditText.contentDescription = label
+    forEachTextInput { it.contentDescription = label }
 }
 
 internal fun NativeEditorExpoView.setAccessibilityHintImpl(hint: String?) {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
         richTextView.editorEditText.tooltipText = null
     }
-    richTextView.editorEditText.setEditorAccessibilityHint(hint)
+    forEachTextInput { it.setEditorAccessibilityHint(hint) }
 }
 
 internal fun NativeEditorExpoView.setShowToolbarImpl(showToolbar: Boolean) {
@@ -178,6 +193,10 @@ internal fun NativeEditorExpoView.setToolbarPlacementImpl(rawToolbarPlacement: S
 
 internal fun NativeEditorExpoView.setAllowImageResizingImpl(allowImageResizing: Boolean) {
     richTextView.setImageResizingEnabled(allowImageResizing)
+}
+
+internal fun NativeEditorExpoView.setTableDirectionImpl(tableDirection: String?) {
+    richTextView.tableDirection = TableLayoutDirection.fromRaw(tableDirection)
 }
 
 internal fun NativeEditorExpoView.setToolbarItemsJsonImpl(toolbarItemsJson: String?) {

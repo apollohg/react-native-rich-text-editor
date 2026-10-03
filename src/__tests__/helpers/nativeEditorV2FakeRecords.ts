@@ -83,11 +83,9 @@ export type FakeTransportState =
 export type FakeDocumentState = 'LocalReady' | 'AwaitRemote' | 'RoomReady';
 
 /** The Rust-tagged JSON wire value accepted by the fake native entry. */
-export interface FakeNativeEditorLocalAwarenessWireSelection {
-    type: 'text';
-    anchor: number;
-    head: number;
-}
+export type FakeNativeEditorLocalAwarenessWireSelection =
+    | { type: 'text'; anchor: number; head: number }
+    | { type: 'cell'; anchorCell: number; headCell: number };
 
 /**
  * The fake models the Rust wire contract, not the opaque caller intent that

@@ -22,7 +22,10 @@ export function isFakeRecord(value: unknown): value is Record<string, unknown> {
 
 export const FAKE_AWARENESS_INTENT_KEYS = new Set([ 'state', 'focused', 'selection' ]);
 
-export const FAKE_AWARENESS_SELECTION_KEYS = new Set([ 'type', 'anchor', 'head' ]);
+export const FAKE_AWARENESS_SELECTION_KEYS: Record<string, readonly string[]> = {
+    text: [ 'type', 'anchor', 'head' ],
+    cell: [ 'type', 'anchorCell', 'headCell' ],
+};
 
 export function hasFakeReservedCursor(value: unknown): boolean {
     const pending: unknown[] = [ value ];
@@ -66,19 +69,24 @@ export function validFakeAwarenessSelection(
         return false;
     }
 
+    const keys =
+        typeof value.type === 'string' && Object.prototype.hasOwnProperty.call(
+            FAKE_AWARENESS_SELECTION_KEYS,
+            value.type
+        )
+            ? FAKE_AWARENESS_SELECTION_KEYS[value.type]
+            : undefined;
+    const ownKeys = Reflect.ownKeys(value);
+
     if (
-        Reflect.ownKeys(value).some(
-            key => typeof key !== 'string' || !FAKE_AWARENESS_SELECTION_KEYS.has(key)
-        ) ||
-        !Object.prototype.hasOwnProperty.call(value, 'type') ||
-        !Object.prototype.hasOwnProperty.call(value, 'anchor') ||
-        !Object.prototype.hasOwnProperty.call(value, 'head') ||
-        value.type !== 'text'
+        keys === undefined ||
+        ownKeys.length !== keys.length ||
+        ownKeys.some(key => typeof key !== 'string' || !keys.includes(key))
     ) {
         return false;
     }
 
-    return exactV2U32(value.anchor) != null && exactV2U32(value.head) != null;
+    return keys.every(key => key === 'type' || exactV2U32(value[key]) != null);
 }
 
 export function parseFakeAwarenessIntent(
@@ -221,6 +229,10 @@ export function fakeCursorForIntent(
 
     if (selection === null) {
         return null;
+    }
+
+    if (selection.type === 'cell') {
+        return { anchor: selection.anchorCell, head: selection.headCell };
     }
 
     return { anchor: selection.anchor, head: selection.head };

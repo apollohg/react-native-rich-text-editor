@@ -141,6 +141,49 @@ class EditorClipboardRealEngineTest {
         }
     }
 
+    @Test
+    fun `cutting an atom node selection removes it through the engine selection`() {
+        val source = realEditor(
+            "<p>Before</p><img src=\"https://example.com/cat.png\" alt=\"Cat\" width=\"320\" height=\"180\">"
+        )
+        try {
+            val blocks = requireNotNull(source.editText.currentRenderBlocksJson)
+            val atom = (0 until blocks.length())
+                .asSequence()
+                .mapNotNull { blocks.optJSONArray(it) }
+                .flatMap { block ->
+                    (0 until block.length()).asSequence().mapNotNull(block::optJSONObject)
+                }
+                .first { it.optString("type") == "voidBlock" }
+            source.editText.applyUpdateJSON(
+                requireNotNull(source.adapter.selectAtomNode(atom.getInt("docPos"))),
+                notifyListener = false
+            )
+
+            assertTrue(source.editText.onTextContextMenuItem(android.R.id.cut))
+
+            assertTrue(
+                requireNotNull(
+                    clipboard().primaryClip?.description?.extras?.getString(
+                        EditorClipboard.EXTRA_FRAGMENT
+                    )
+                ).contains("\"type\":\"image\"")
+            )
+            val content = JSONObject(
+                requireNotNull(source.adapter.documentJson())
+            ).getJSONArray("content")
+            assertTrue(
+                "the cut must remove the selected image: $content",
+                (0 until content.length()).none {
+                    content.getJSONObject(it).getString("type") ==
+                        "image"
+                }
+            )
+        } finally {
+            source.adapter.destroy()
+        }
+    }
+
     private fun realEditor(html: String): RealEditor {
         val created = UniffiEditorV2Backend.create(
             """{"initialization":{"type":"localEmpty"}}""",

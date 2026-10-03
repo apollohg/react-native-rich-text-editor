@@ -1,8 +1,23 @@
-use super::{text::semantic_transaction, CommandPlan, PlanningContext, TypedCommand};
+use super::{
+    text::semantic_transaction, CommandPlan, MovedTableCells, PlanningContext, TableCellDrop,
+    TypedCommand,
+};
 use crate::clipboard::{self, ClipboardSlice};
+use crate::command_planner::default_attrs;
 use crate::model::{Document, Fragment, Node};
 use crate::selection::Selection;
+use crate::tables::command_context::table_shape_operation_error;
+use crate::tables::commands::cell_node;
+use crate::tables::paste::{
+    matrix_from_rows, matrix_from_slice, tab_separated_fields, TableMatrix,
+};
+use crate::tables::types::TableError;
+use crate::tables::TableRoles;
 use crate::yrs_engine::{OperationError, OperationResult};
+
+const MAX_INPUT_BYTES_FIELD: &str = "maxInputBytes";
+const PARAGRAPH_HTML_TAG: &str = "p";
+const PARAGRAPH_NODE: &str = "paragraph";
 
 fn filter_node(node: &Node, filter: Option<&regex::Regex>, allow_base64: bool) -> Option<Node> {
     let safe_url = |value: &serde_json::Value| {
@@ -72,15 +87,193 @@ fn has_payload(root: &Node) -> bool {
     false
 }
 
+fn usable_slice(
+    slice: ClipboardSlice,
+    filter: Option<&regex::Regex>,
+    allow_base64_images: bool,
+) -> Option<ClipboardSlice> {
+    let had_payload = has_payload(slice.document.root());
+    let filtered = filter_node(slice.document.root(), filter, allow_base64_images)?;
+    let slice = ClipboardSlice {
+        document: Document::new(filtered),
+        ..slice
+    };
+    if slice.document.root().child_count() == 0 {
+        return None;
+    }
+    if had_payload && !has_payload(slice.document.root()) {
+        return None;
+    }
+    Some(slice)
+}
+
+fn filtered_text(
+    context: &PlanningContext<'_>,
+    text: Option<&str>,
+    filter: Option<&regex::Regex>,
+) -> OperationResult<Option<String>> {
+    let Some(text) = text else {
+        return Ok(None);
+    };
+    if text.len() > context.resource_limits.max_input_bytes {
+        return Err(OperationError::document_limit_exceeded(
+            context.request_id,
+            None,
+            MAX_INPUT_BYTES_FIELD,
+            context.resource_limits.max_input_bytes as u64,
+            text.len() as u64,
+        ));
+    }
+    let text = text
+        .chars()
+        .filter(|c| filter.is_none_or(|filter| filter.is_match(&c.to_string())))
+        .collect::<String>();
+    Ok((!text.is_empty()).then_some(text))
+}
+
+fn text_blocks(context: &PlanningContext<'_>, text: &str) -> Option<Vec<Node>> {
+    let paragraph = context
+        .schema
+        .node_by_html_tag(PARAGRAPH_HTML_TAG)
+        .or_else(|| context.schema.node(PARAGRAPH_NODE))?;
+    let attrs: std::collections::HashMap<String, serde_json::Value> = paragraph
+        .attrs
+        .iter()
+        .filter_map(|(key, attr)| attr.default.clone().map(|value| (key.clone(), value)))
+        .collect();
+    Some(
+        clipboard::normalized_line_breaks(text)
+            .split(clipboard::LINE_BREAK)
+            .map(|part| {
+                Node::element(
+                    paragraph.name.clone(),
+                    attrs.clone(),
+                    Fragment::from(if part.is_empty() {
+                        vec![]
+                    } else {
+                        vec![Node::text(part.into(), vec![])]
+                    }),
+                )
+            })
+            .collect(),
+    )
+}
+
+fn pasted_matrix(
+    context: &PlanningContext<'_>,
+    selection: &Selection,
+    slices: &[ClipboardSlice],
+    text: Option<&str>,
+    filter: Option<&regex::Regex>,
+) -> OperationResult<Option<TableMatrix>> {
+    let shaped = |error: TableError| table_shape_operation_error(error, context.request_id);
+    let Some(roles) = TableRoles::resolve(context.schema).map_err(shaped)? else {
+        return Ok(None);
+    };
+    let fills_cell_selection = match selection {
+        Selection::Cell { .. } => true,
+        Selection::Text { .. } | Selection::Node { .. } | Selection::All => false,
+    };
+    let Some(cell_attrs) = default_attrs(context.schema, &roles.cell) else {
+        return Ok(None);
+    };
+    let single_cell = |blocks: Vec<Node>| -> OperationResult<Option<TableMatrix>> {
+        matrix_from_rows(
+            vec![vec![cell_node(&roles.cell, cell_attrs.clone(), blocks)]],
+            &roles,
+            context.schema,
+            context.resource_limits,
+        )
+        .map_err(shaped)
+    };
+    if let Some(slice) = slices.first() {
+        let Some(content) = slice.document.root().content() else {
+            return Ok(None);
+        };
+        let matrix = matrix_from_slice(
+            content,
+            slice.open_start,
+            slice.open_end,
+            &roles,
+            context.schema,
+            context.resource_limits,
+        )
+        .map_err(shaped)?;
+        if matrix.is_some() || !fills_cell_selection {
+            return Ok(matrix);
+        }
+        return single_cell(content.children().to_vec());
+    }
+    let Some(text) = filtered_text(context, text, filter)? else {
+        return Ok(None);
+    };
+    if let Some(fields) = tab_separated_fields(&text) {
+        let mut rows = Vec::with_capacity(fields.len());
+        for row in fields {
+            let mut cells = Vec::with_capacity(row.len());
+            for field in row {
+                let Some(blocks) = text_blocks(context, &field) else {
+                    return Ok(None);
+                };
+                cells.push(cell_node(&roles.cell, cell_attrs.clone(), blocks));
+            }
+            rows.push(cells);
+        }
+        return matrix_from_rows(rows, &roles, context.schema, context.resource_limits)
+            .map_err(shaped);
+    }
+    if !fills_cell_selection {
+        return Ok(None);
+    }
+    let Some(blocks) = text_blocks(context, &text) else {
+        return Ok(None);
+    };
+    single_cell(blocks)
+}
+
+pub(super) struct PastedContent {
+    pub fragment: Option<String>,
+    pub html: Option<String>,
+    pub text: Option<String>,
+    pub plain_text: bool,
+    pub allow_base64_images: bool,
+    pub input_filter: Option<String>,
+}
+
 pub(super) fn plan(
     context: PlanningContext<'_>,
-    fragment: Option<String>,
-    html: Option<String>,
-    text: Option<String>,
-    plain_text: bool,
-    allow_base64_images: bool,
-    input_filter: Option<String>,
+    content: PastedContent,
+    cell_drop: Option<TableCellDrop>,
 ) -> OperationResult<CommandPlan> {
+    let Some(cell_drop) = cell_drop else {
+        return plan_at_selection(context, content, None);
+    };
+    let Some(dropped) = super::tables::cell_drop_selection(&context, cell_drop.target_cell)? else {
+        return Ok(CommandPlan::NotApplicable);
+    };
+    plan_at_selection(
+        PlanningContext {
+            selection: &dropped,
+            ..context
+        },
+        content,
+        cell_drop.moved_cells,
+    )
+}
+
+fn plan_at_selection(
+    context: PlanningContext<'_>,
+    content: PastedContent,
+    moved_cells: Option<MovedTableCells>,
+) -> OperationResult<CommandPlan> {
+    let PastedContent {
+        fragment,
+        html,
+        text,
+        plain_text,
+        allow_base64_images,
+        input_filter,
+    } = content;
     let filter = input_filter
         .map(|filter| regex::Regex::new(&filter))
         .transpose()
@@ -94,7 +287,9 @@ pub(super) fn plan(
         })?;
     let selection = crate::yrs_engine::derived_state::resolved_to_legacy(context.selection);
     if plain_text && text.as_deref() == Some("") && fragment.is_none() && html.is_none() {
-        let (from, to) = clipboard::selection_range(context.document, &selection);
+        let Some((from, to)) = clipboard::selection_range(context.document, &selection) else {
+            return Ok(CommandPlan::NotApplicable);
+        };
         if from == to {
             return Ok(CommandPlan::NotApplicable);
         }
@@ -143,7 +338,7 @@ pub(super) fn plan(
                     context
                         .schema
                         .node(node.node_type())
-                        .is_some_and(|spec| spec.html_tag.as_deref() == Some("p"))
+                        .is_some_and(|spec| spec.html_tag.as_deref() == Some(PARAGRAPH_HTML_TAG))
                 })
             };
             let open_start = usize::from(is_paragraph(document.root().child(0)));
@@ -167,92 +362,63 @@ pub(super) fn plan(
     let derived_text = representations
         .first()
         .map(|slice| clipboard::readable_text(&slice.document, context.schema));
-    if !plain_text {
-        for slice in representations {
-            let had_payload = has_payload(slice.document.root());
-            let Some(filtered) =
-                filter_node(slice.document.root(), filter.as_ref(), allow_base64_images)
-            else {
-                continue;
+    let slices: Vec<ClipboardSlice> = if plain_text {
+        Vec::new()
+    } else {
+        representations
+            .into_iter()
+            .filter_map(|slice| usable_slice(slice, filter.as_ref(), allow_base64_images))
+            .collect()
+    };
+    let pasted_text = text.or(fragment_text).or(derived_text);
+    if let Some(anchor) = super::tables::outer_paste_anchor(&context, &selection)? {
+        if let Some(matrix) = pasted_matrix(
+            &context,
+            &selection,
+            &slices,
+            pasted_text.as_deref(),
+            filter.as_ref(),
+        )? {
+            let planned = match moved_cells {
+                None => super::tables::paste_matrix(&context, &anchor, &selection, matrix)?,
+                Some(moved) => {
+                    super::tables::move_matrix(&context, moved, &anchor, &selection, matrix)?
+                }
             };
-            let slice = ClipboardSlice {
-                document: Document::new(filtered),
-                ..slice
-            };
-            if slice.document.root().child_count() == 0 {
-                continue;
-            }
-            if had_payload && !has_payload(slice.document.root()) {
-                continue;
-            }
-            let Some(plan) = clipboard::replacement(
-                context.document,
-                &selection,
-                &slice,
-                context.schema,
-                context.resource_limits,
-            ) else {
-                continue;
-            };
-            if let Ok(transaction) = semantic_transaction(&context, &selection, plan) {
-                return Ok(transaction);
+            match planned {
+                CommandPlan::NotApplicable => {}
+                plan @ (CommandPlan::Transaction(_) | CommandPlan::SelectionOnly(_)) => {
+                    return Ok(plan)
+                }
             }
         }
     }
-    let Some(text) = text.or(fragment_text).or(derived_text) else {
+    if moved_cells.is_some() {
+        return Ok(CommandPlan::NotApplicable);
+    }
+    for slice in slices {
+        let Some(plan) = clipboard::replacement(
+            context.document,
+            &selection,
+            &slice,
+            context.schema,
+            context.resource_limits,
+        ) else {
+            continue;
+        };
+        if let Ok(transaction) = semantic_transaction(&context, &selection, plan) {
+            return Ok(transaction);
+        }
+    }
+    let Some(text) = filtered_text(&context, pasted_text.as_deref(), filter.as_ref())? else {
         return Ok(CommandPlan::NotApplicable);
     };
-    if text.len() > context.resource_limits.max_input_bytes {
-        return Err(OperationError::document_limit_exceeded(
-            context.request_id,
-            None,
-            "maxInputBytes",
-            context.resource_limits.max_input_bytes as u64,
-            text.len() as u64,
-        ));
-    }
-    let text = text
-        .chars()
-        .filter(|c| {
-            filter
-                .as_ref()
-                .is_none_or(|filter| filter.is_match(&c.to_string()))
-        })
-        .collect::<String>();
-    if text.is_empty() {
-        return Ok(CommandPlan::NotApplicable);
-    }
     if matches!(selection, Selection::Text { .. }) {
         return super::text::plan(context, TypedCommand::ReplaceSelectionText { text });
     }
-    let paragraph = context
-        .schema
-        .node_by_html_tag("p")
-        .or_else(|| context.schema.node("paragraph"));
-    let Some(paragraph) = paragraph else {
+    let Some(blocks) = text_blocks(&context, &text) else {
         return Ok(CommandPlan::NotApplicable);
     };
-    let attrs: std::collections::HashMap<String, serde_json::Value> = paragraph
-        .attrs
-        .iter()
-        .filter_map(|(key, attr)| attr.default.clone().map(|value| (key.clone(), value)))
-        .collect();
-    let blocks = text
-        .replace("\r\n", "\n")
-        .replace('\r', "\n")
-        .split('\n')
-        .map(|part| {
-            Node::element(
-                paragraph.name.clone(),
-                attrs.clone(),
-                Fragment::from(if part.is_empty() {
-                    vec![]
-                } else {
-                    vec![Node::text(part.into(), vec![])]
-                }),
-            )
-        })
-        .collect();
     let slice = ClipboardSlice {
         document: Document::new(Node::element(
             context.document.root().node_type().into(),

@@ -1,7 +1,100 @@
 import ExpoModulesCore
 import UIKit
 
+final class TableSelectionGeometryPublisher: NSObject {
+    private let resolve: () -> TableSelectionGeometry?
+    private let emit: ([String: Any]) -> Void
+    private var published: TableSelectionGeometry?
+    private var frameLink: CADisplayLink?
+
+    init(resolve: @escaping () -> TableSelectionGeometry?, emit: @escaping ([String: Any]) -> Void) {
+        self.resolve = resolve
+        self.emit = emit
+    }
+
+    var hasScheduledFlushForTesting: Bool { frameLink != nil }
+
+    func scheduleFlush() {
+        guard frameLink == nil else { return }
+        let link = CADisplayLink(target: self, selector: #selector(flushScheduledFrame(_:)))
+        frameLink = link
+        link.add(to: .main, forMode: .common)
+    }
+
+    func flush() {
+        cancelScheduledFlush()
+        let current = resolve()
+        if let previous = published, current?.editorId != previous.editorId || current == nil {
+            published = nil
+            if let cleared = NativeEditorExpoView.editorScopedEventPayload(
+                [:], originatingEditorId: previous.editorId
+            ) {
+                emit(cleared)
+            }
+        }
+        guard let current, current != published,
+              let payload = NativeEditorExpoView.editorScopedEventPayload(
+                current.eventPayload, originatingEditorId: current.editorId
+              )
+        else { return }
+        published = current
+        emit(payload)
+    }
+
+    func cancelScheduledFlush() {
+        frameLink?.invalidate()
+        frameLink = nil
+    }
+
+    @objc private func flushScheduledFrame(_ link: CADisplayLink) {
+        guard link === frameLink else { return }
+        flush()
+    }
+}
+
 extension NativeEditorExpoView {
+    func currentTableSelectionGeometry() -> TableSelectionGeometry? {
+        guard let window, richTextView.activeTextInput.isFirstResponder,
+              let geometry = richTextView.tableSelectionGeometry(
+                obstructions: tableSelectionObstructions(in: window)
+              ),
+              geometry.editorId == richTextView.editorId
+        else { return nil }
+        return geometry
+    }
+
+    func tableSelectionObstructions(in window: UIWindow) -> TableSelectionObstructions {
+        let safeArea = window.bounds.inset(by: window.safeAreaInsets)
+        let occludedEditor = keyboardOcclusionView.frame.intersection(richTextView.bounds)
+        let keyboard = occludedEditor.isNull || occludedEditor.isEmpty
+            ? CGRect.null
+            : richTextView.convert(occludedEditor, to: window).intersection(safeArea)
+        return TableSelectionObstructions(
+            safeArea: safeArea,
+            keyboard: keyboard.isNull || keyboard.isEmpty ? nil : keyboard
+        )
+    }
+
+    func trackKeyboardOcclusion(of guide: UILayoutGuide) {
+        NSLayoutConstraint.deactivate(keyboardOcclusionConstraints)
+        keyboardOcclusionConstraints = [
+            keyboardOcclusionView.topAnchor.constraint(equalTo: guide.topAnchor),
+            keyboardOcclusionView.bottomAnchor.constraint(equalTo: guide.bottomAnchor),
+            keyboardOcclusionView.leadingAnchor.constraint(equalTo: guide.leadingAnchor),
+            keyboardOcclusionView.trailingAnchor.constraint(equalTo: guide.trailingAnchor)
+        ]
+        NSLayoutConstraint.activate(keyboardOcclusionConstraints)
+        tableSelectionGeometryPublisher.scheduleFlush()
+    }
+
+    func dispatchTableSelectionGeometry(_ payload: [String: Any]) {
+        if let onTableSelectionGeometryForTesting {
+            onTableSelectionGeometryForTesting(payload)
+        } else {
+            onTableSelectionGeometry(payload)
+        }
+    }
+
     func editorTextView(
         _ textView: EditorTextView,
         didEndExternalTextComposition resultJSON: String
@@ -36,7 +129,11 @@ extension NativeEditorExpoView {
             event,
             originatingEditorId: originatingEditorId
         ) else { return }
-        onSelectionChange(scopedEvent)
+        if let onSelectionChangeForTesting {
+            onSelectionChangeForTesting(scopedEvent)
+        } else {
+            onSelectionChange(scopedEvent)
+        }
     }
 
     func editorTextView(_ textView: EditorTextView, didReceiveUpdate updateJSON: String) {

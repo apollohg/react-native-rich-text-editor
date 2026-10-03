@@ -30,13 +30,14 @@ use super::{
     encode_state_bounded, equivalent_private_candidate_doc, fresh_utf16_doc_excluding,
     fresh_utf16_doc_excluding_with, history_metadata_bytes,
     mark_compiled_commit_durable_write_for_test, prepare_import_candidate_cache,
-    reset_encoded_state_reuse_counts_for_test, reset_import_receipt_sha256_counts_for_test,
-    reset_import_receipt_state_decodings_for_test, reset_import_state_encoding_counts_for_test,
-    reset_prepared_candidate_cache_counts_for_test, retained_import_state_charge,
-    seal_candidate_state_vector, set_compiled_commit_stage_failpoint_for_test,
-    set_outbound_staging_copy_failure_for_test,
+    reset_encoded_state_reuse_counts_for_test, reset_history_replay_guard_encodings_for_test,
+    reset_import_receipt_sha256_counts_for_test, reset_import_receipt_state_decodings_for_test,
+    reset_import_state_encoding_counts_for_test, reset_prepared_candidate_cache_counts_for_test,
+    retained_import_state_charge, seal_candidate_state_vector,
+    set_compiled_commit_stage_failpoint_for_test, set_outbound_staging_copy_failure_for_test,
     set_quarantined_update_reservation_failure_for_test,
-    take_compiled_commit_authority_counts_for_test, take_encoded_state_reuse_counts_for_test,
+    set_replay_candidate_perturbation_for_test, take_compiled_commit_authority_counts_for_test,
+    take_encoded_state_reuse_counts_for_test, take_history_replay_guard_encodings_for_test,
     take_import_receipt_sha256_counts_for_test, take_import_receipt_state_decodings_for_test,
     take_import_state_encoding_counts_for_test, take_prepared_candidate_cache_counts_for_test,
     utf16_doc, CandidateDocument, CompiledCommitPreparationStage, CompiledTransaction,
@@ -648,3 +649,8 @@ mod localized_compilation;
 mod prepared_commands;
 #[path = "engine_tests/remote_updates.rs"]
 mod remote_updates;
+
+#[path = "engine_tests/document_revision.rs"]
+mod document_revision;
+#[path = "engine_tests/encoded_bound.rs"]
+mod encoded_bound;

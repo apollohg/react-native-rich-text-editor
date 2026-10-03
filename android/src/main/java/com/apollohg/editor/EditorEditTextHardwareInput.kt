@@ -20,6 +20,10 @@ internal fun EditorEditText.handleCompositionKeyEventImpl(
             return true
         }
         markHandledHardwareKeyDown(signature)
+        if (event.keyCode == KeyEvent.KEYCODE_TAB && isTableCellInput) {
+            handleTab(event.isShiftPressed)
+            return true
+        }
         runWithTransientInputMutationGuard {
             when (event.keyCode) {
                 KeyEvent.KEYCODE_DEL,

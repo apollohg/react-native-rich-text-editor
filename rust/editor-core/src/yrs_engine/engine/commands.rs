@@ -6,7 +6,11 @@ use super::outbound::OutboundUpdateSink;
 use super::YrsDocumentEngine;
 use crate::model::Document;
 use crate::selection::Selection;
+use crate::tables::selection::{
+    admit_cell_pair, CellAdmission, CELL_SELECTION_ANCHOR_FIELD, CELL_SELECTION_HEAD_FIELD,
+};
 use crate::yrs_engine;
+use crate::yrs_engine::compiler::{cell_admission_error, resolve_cell_opening};
 use crate::yrs_engine::compiler::{
     selectable_void_at, CompiledTransaction, PreparedSemanticAdmission, SelectionPlan,
 };
@@ -37,9 +41,11 @@ impl YrsDocumentEngine {
             None,
             None,
             yrs_engine::TransactionOrigin::LocalCommand,
+            false,
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn plan_command_internal_at_selection<'a>(
         &'a self,
         request_id: u64,
@@ -50,6 +56,7 @@ impl YrsDocumentEngine {
         selection: Option<&'a yrs_engine::ResolvedSelection>,
         initial_selection: Option<&'a yrs_engine::SelectionInput>,
         origin: yrs_engine::TransactionOrigin,
+        admits_textblock_local_intents: bool,
     ) -> yrs_engine::OperationResult<yrs_engine::CommandPlan> {
         let state = self
             .derived_state
@@ -91,6 +98,7 @@ impl YrsDocumentEngine {
                 canonical_artifact: &state.canonical_artifact,
                 allow_deferred_admission,
                 preparation,
+                localized_textblock_state: admits_textblock_local_intents.then_some(state),
             },
             command,
         )
@@ -138,6 +146,7 @@ impl YrsDocumentEngine {
             Some(&resolved),
             Some(&selection),
             origin,
+            true,
         )? {
             yrs_engine::CommandPlan::NotApplicable => return Ok(None),
             yrs_engine::CommandPlan::SelectionOnly(transaction) => {
@@ -253,6 +262,33 @@ impl YrsDocumentEngine {
                 }
                 Ok(yrs_engine::ResolvedSelection::Node {
                     at: resolved_point(pos)?,
+                })
+            }
+            yrs_engine::SelectionInput::Cell { anchor, head } => {
+                let opening = |field: &'static str, point| {
+                    resolve_cell_opening(
+                        &state.table_projection_index,
+                        point,
+                        &state.rendered_text,
+                        &state.position_map,
+                        &state.document,
+                        request_id,
+                        field,
+                    )
+                };
+                let anchor = opening(CELL_SELECTION_ANCHOR_FIELD, *anchor)?;
+                let head = opening(CELL_SELECTION_HEAD_FIELD, *head)?;
+                let admission = admit_cell_pair(&state.table_projection_index, anchor, head);
+                if admission != CellAdmission::Admitted {
+                    return Err(cell_admission_error(
+                        request_id,
+                        CELL_SELECTION_ANCHOR_FIELD,
+                        admission,
+                    ));
+                }
+                Ok(yrs_engine::ResolvedSelection::Cell {
+                    anchor: resolved_point(anchor)?,
+                    head: resolved_point(head)?,
                 })
             }
             yrs_engine::SelectionInput::All => Ok(yrs_engine::ResolvedSelection::All),
@@ -401,6 +437,7 @@ impl YrsDocumentEngine {
             state,
             expected_document,
             candidate_artifact,
+            None,
             &candidate_derivations,
             &candidate_render.cache,
             state.stored_marks.as_deref(),
@@ -545,6 +582,11 @@ impl YrsDocumentEngine {
             state,
             evidence.canonical_retained_bytes,
             evidence.source_document_retained_bytes,
+            yrs_engine::derived_state::DocumentValidationCertificate::subtree_depth_counts(
+                expected_document.root(),
+                crate::transform::DOCUMENT_ROOT_DEPTH,
+            )
+            .len(),
             &evidence.candidate_derivations,
             &candidate_render.cache,
             state.stored_marks.as_deref(),
@@ -564,7 +606,9 @@ impl YrsDocumentEngine {
         );
         let after = history_snapshot_template_from_identity(
             evidence.canonical_text_scalar_len,
-            evidence.canonical_fingerprint,
+            yrs_engine::history::HistoryCanonicalIdentity::Materialized(
+                evidence.canonical_fingerprint,
+            ),
             evidence.canonical_serialized_len,
             state.stored_marks.as_deref(),
             &self.fragment_name,

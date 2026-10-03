@@ -499,7 +499,8 @@ class NativeEditorModule : Module() {
                 "onEditorReady",
                 "onToolbarAction",
                 "onAddonEvent",
-                "onExternalTextCompositionEnd"
+                "onExternalTextCompositionEnd",
+                "onTableSelectionGeometry"
             )
 
             GroupView<NativeEditorExpoView> {
@@ -558,6 +559,12 @@ class NativeEditorModule : Module() {
             }
             Prop("allowImageResizing") { view: NativeEditorExpoView, allowImageResizing: Boolean ->
                 view.setAllowImageResizing(allowImageResizing)
+            }
+            Prop("tableEditMenuEnabled") { view: NativeEditorExpoView, enabled: Boolean ->
+                view.setTableEditMenuEnabled(enabled)
+            }
+            Prop("tableDirection") { view: NativeEditorExpoView, tableDirection: String? ->
+                view.setTableDirection(tableDirection)
             }
             Prop("imageLoadingPolicyJson") { view: NativeEditorExpoView, policyJson: String? ->
                 view.setImageLoadingPolicyJson(policyJson)

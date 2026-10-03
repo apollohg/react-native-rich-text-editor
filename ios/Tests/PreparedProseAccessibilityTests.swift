@@ -199,6 +199,10 @@ final class PreparedProseAccessibilityTests: XCTestCase {
 
     func testAccessibleDrawingViewLazilyMaterializesPermittedNodesAndRecycles() throws {
         let drawing = PreparedProseDrawingView(frame: CGRect(x: 0, y: 0, width: 180, height: 80))
+        let window = makeTestWindow(frame: drawing.frame)
+        window.addSubview(drawing)
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
         let layout = try prepare(
             ViewerDocument(
                 semanticKey: "lazy-accessibility-fixture",
@@ -249,16 +253,58 @@ final class PreparedProseAccessibilityTests: XCTestCase {
         XCTAssertEqual(drawing.materializedAccessibilityElementCountForTesting, 0)
     }
 
+    func testAccessibilityScreenPathPreservesWrappedRectsThroughViewTransforms() throws {
+        let layout = try prepare(plainDocument(String(repeating: "wrapped accessible text ", count: 4)), width: 110)
+        let drawing = PreparedProseDrawingView(frame: CGRect(x: 31, y: 47, width: 110, height: 180))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let controller = UIViewController()
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        controller.view.addSubview(drawing)
+        drawing.bounds.origin = CGPoint(x: 11, y: 23)
+        drawing.transform = CGAffineTransform(a: 1, b: 0.15, c: 0.2, d: 1, tx: 0, ty: 0)
+        drawing.install(layout: layout)
+        let node = try XCTUnwrap(layout.accessibilityNodes.first)
+        XCTAssertGreaterThan(node.rects.count, 1)
+        let element = try XCTUnwrap(drawing.accessibilityElement(at: 0) as? UIAccessibilityElement)
+        let path = try XCTUnwrap(element.accessibilityPath)
+        var points: [CGPoint] = []
+        var subpaths = 0
+        var closedSubpaths = 0
+        path.cgPath.applyWithBlock { pointer in
+            let part = pointer.pointee
+            switch part.type {
+            case .moveToPoint:
+                subpaths += 1
+                points.append(part.points[0])
+            case .addLineToPoint: points.append(part.points[0])
+            case .closeSubpath: closedSubpaths += 1
+            default: XCTFail("Rectangular accessibility fragments must remain polygons")
+            }
+        }
+        let expected = node.rects.flatMap { rect in
+            [
+                CGPoint(x: rect.minX, y: rect.minY),
+                CGPoint(x: rect.maxX, y: rect.minY),
+                CGPoint(x: rect.maxX, y: rect.maxY),
+                CGPoint(x: rect.minX, y: rect.maxY)
+            ].map { point in
+                window.convert(drawing.convert(point, to: window), to: window.screen.coordinateSpace)
+            }
+        }
+        XCTAssertEqual(subpaths, node.rects.count)
+        XCTAssertEqual(closedSubpaths, node.rects.count)
+        XCTAssertEqual(points.count, expected.count)
+        let accuracy = 1 / window.screen.scale
+        for (actual, expected) in zip(points, expected) {
+            XCTAssertEqual(actual.x, expected.x, accuracy: accuracy)
+            XCTAssertEqual(actual.y, expected.y, accuracy: accuracy)
+        }
+    }
+
     func testPlainParagraphIsExposedAsStaticText() throws {
-        let layout = try prepare(
-            ViewerDocument(
-                semanticKey: "plain-accessibility-fixture",
-                paragraphs: [ViewerParagraph(text: "Readable plain prose")],
-                isEmpty: false,
-                retainedBytes: 64
-            ),
-            width: 180
-        )
+        let layout = try prepare(plainDocument("Readable plain prose"), width: 180)
         let drawing = PreparedProseDrawingView(frame: CGRect(x: 0, y: 0, width: 180, height: 80))
         drawing.install(layout: layout)
 
@@ -269,6 +315,62 @@ final class PreparedProseAccessibilityTests: XCTestCase {
         )
         XCTAssertEqual(element.accessibilityLabel, "Readable plain prose")
         XCTAssertTrue(element.accessibilityTraits.contains(.staticText))
+        XCTAssertEqual(element.accessibilityFrame, .zero, "A detached view has no screen geometry")
+        XCTAssertNil(element.accessibilityPath)
+    }
+
+    func testRootProseLabelChangeRefreshesTheFocusedNodeInPlace() throws {
+        let drawing = PreparedProseDrawingView(frame: CGRect(x: 0, y: 0, width: 180, height: 80))
+        let window = makeTestWindow(frame: drawing.frame)
+        window.addSubview(drawing)
+        window.isHidden = false
+        defer { window.isHidden = true }
+        drawing.install(layout: try prepare(plainDocument("Readable plain prose"), width: 180))
+        let element = try XCTUnwrap(drawing.accessibilityElement(at: 0) as? UIAccessibilityElement)
+        var arguments: [Any?] = []
+        drawing.onAccessibilityLayoutChangedForTesting = { arguments.append($0) }
+        drawing.accessibilityFocusProbe = { $0 === element }
+
+        drawing.install(layout: try prepare(plainDocument("Rewritten plain prose"), width: 180))
+
+        XCTAssertEqual(
+            element.accessibilityLabel,
+            "Rewritten plain prose",
+            "a label read in the installing turn reflects the new layout"
+        )
+        flushMainQueue()
+        XCTAssertEqual(drawing.index(ofAccessibilityElement: element), 0, "a label change keeps the element")
+        XCTAssertEqual(arguments.count, 1, "announcements: \(arguments)")
+        XCTAssertTrue(
+            arguments.first.flatMap { $0 } as AnyObject === element,
+            "VoiceOver re-reads the focused node without moving: \(arguments)"
+        )
+    }
+
+    func testInvalidatingOffWindowReleasesTheSupersededLayout() throws {
+        let drawing = PreparedProseDrawingView(frame: CGRect(x: 0, y: 0, width: 180, height: 80))
+        let window = makeTestWindow(frame: drawing.frame)
+        window.addSubview(drawing)
+        window.isHidden = false
+        defer { window.isHidden = true }
+        weak var superseded: PreparedProseLayout?
+        try autoreleasepool {
+            let layout = try prepare(plainDocument("Readable plain prose"), width: 180)
+            superseded = layout
+            drawing.install(layout: layout)
+            XCTAssertNotNil(drawing.accessibilityElement(at: 0))
+        }
+        XCTAssertEqual(drawing.materializedAccessibilityElementCountForTesting, 1)
+
+        drawing.removeFromSuperview()
+        drawing.install(layout: try prepare(plainDocument("Rewritten plain prose"), width: 180))
+
+        XCTAssertEqual(
+            drawing.materializedAccessibilityElementCountForTesting,
+            0,
+            "an off-window view drops elements on invalidation"
+        )
+        XCTAssertNil(superseded, "materialized elements must not keep a superseded layout alive")
     }
 
     func testHeadingBlocksAreExposedWithHeaderTrait() throws {
@@ -395,6 +497,15 @@ final class PreparedProseAccessibilityTests: XCTestCase {
 
         XCTAssertFalse(staleElement.accessibilityActivate())
         XCTAssertNil(activatedHref)
+    }
+
+    private func plainDocument(_ text: String) -> ViewerDocument {
+        ViewerDocument(
+            semanticKey: "plain-accessibility-fixture",
+            paragraphs: [ViewerParagraph(text: text)],
+            isEmpty: false,
+            retainedBytes: 64
+        )
     }
 
     private func prepare(_ document: ViewerDocument, width: CGFloat) throws -> PreparedProseLayout {

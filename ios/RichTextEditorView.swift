@@ -93,7 +93,7 @@ final class AtomHostContainerView: UIView {
 ///
 /// For now, this is a plain UIView that can be used in a UIKit context
 /// and serves as the integration point for the future Fabric component.
-final class RichTextEditorView: UIView {
+final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
 
     struct HostedLayoutTrace {
         let intrinsicContentSizeNanos: UInt64
@@ -115,6 +115,46 @@ final class RichTextEditorView: UIView {
 
     /// The editor text view that handles input interception.
     let textView: EditorTextView
+    private lazy var tableInputCoordinator = EditorTableInputCoordinator()
+    private lazy var tableSurface = EditorTableSurface(inputCoordinator: tableInputCoordinator)
+    private lazy var tableCellTapRecognizer: UITapGestureRecognizer = {
+        let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleTableCellTap(_:)))
+        recognizer.delegate = self
+        return recognizer
+    }()
+    private lazy var tableCellDoubleTapRecognizer: UITapGestureRecognizer = {
+        let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleTableCellDoubleTap(_:)))
+        recognizer.numberOfTapsRequired = 2
+        recognizer.delegate = self
+        return recognizer
+    }()
+    private var tableCellTapTimestamp: TimeInterval = 0
+    private lazy var tableCellLongPressRecognizer: UILongPressGestureRecognizer = {
+        let recognizer = UILongPressGestureRecognizer(target: self, action: #selector(handleTableCellLongPress(_:)))
+        recognizer.delegate = self
+        return recognizer
+    }()
+    var tableEditMenuEnabled = true {
+        didSet { if !tableEditMenuEnabled { tableSurface.dismissCellEditMenu() } }
+    }
+    var tableCellBindingAuthority: ((EditorV2Adapter) -> Bool)?
+
+    var activeTextInput: EditorTextView {
+        switch tableInputCoordinator.phase {
+        case .inactive:
+            return textView
+        case .bound, .composing:
+            return tableInputCoordinator.cellInput
+        }
+    }
+
+    var textInputs: [EditorTextView] {
+        [textView, tableInputCoordinator.cellInput]
+    }
+
+    var hasPendingCompositionForExternalRefresh: Bool {
+        activeTextInput.hasPendingCompositionForExternalRefresh
+    }
     private let defaultImageLoadOwner = RenderImageLoadOwner(policy: .default)
     var imageLoadOwner: RenderImageLoadOwner {
         get { textView.imageLoadOwner ?? defaultImageLoadOwner }
@@ -172,6 +212,23 @@ final class RichTextEditorView: UIView {
         }
     }
 
+    var onTableSelectionGeometryMayChange: (() -> Void)? {
+        get { tableSurface.onSelectionGeometryMayChange }
+        set { tableSurface.onSelectionGeometryMayChange = newValue }
+    }
+
+    func tableSelectionGeometry(obstructions: TableSelectionObstructions) -> TableSelectionGeometry? {
+        tableSurface.selectionGeometry(obstructions: obstructions)
+    }
+
+    var tableDirection: TableLayoutDirection? {
+        didSet {
+            guard oldValue != tableDirection else { return }
+            tableSurface.hostTableDirection = tableDirection
+            refreshTablePresentation()
+        }
+    }
+
     var heightBehavior: EditorHeightBehavior = .fixed {
         didSet {
             guard oldValue != heightBehavior else { return }
@@ -202,6 +259,8 @@ final class RichTextEditorView: UIView {
     var editorId: UInt64 = 0 {
         didSet {
             guard oldValue != editorId else { return }
+            invalidateTableCellBinding()
+            tableSurface.clearPresentation()
             textView.discardTransientNativeInputForEditorRebind()
             if editorId != 0 {
                 let initialUpdateJSON = initialUpdateJSONForNextEditorBind
@@ -213,7 +272,8 @@ final class RichTextEditorView: UIView {
             }
             remoteSelectionOverlayView.update(
                 selections: remoteSelections,
-                editorId: editorId
+                editorId: editorId,
+                captureFrame: false
             )
             imageTapOverlayView.isHidden = editorId == 0 || !allowImageResizing
             imageResizeOverlayView.refresh()
@@ -224,6 +284,456 @@ final class RichTextEditorView: UIView {
         guard editorId != id else { return }
         initialUpdateJSONForNextEditorBind = initialUpdateJSON
         editorId = id
+    }
+
+    @discardableResult
+    func bindTableCell(tableID: String, cellIndex: UInt32, contentRect: CGRect, selection: [String: Any]? = nil) -> Bool {
+        guard editorId != 0,
+              let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
+              hasTableCellBindingAuthority(adapter),
+              let table = adapter.tableIndex.record(tableKey: tableID),
+              let epoch = adapter.positionEpoch,
+              let projection = EditorTableInputCoordinator.projection(
+                  cellIndex: cellIndex,
+                  tableKey: tableID,
+                  index: adapter.tableIndex,
+                  documentRevision: adapter.baseDocumentRevision,
+                  positionEpoch: epoch,
+                  baseFont: textView.baseFont,
+                  textColor: textView.baseTextColor,
+                  theme: textView.theme,
+                  atomConfiguration: textView.atomRenderConfiguration
+              )
+        else { return false }
+        let nestedHeights = tableSurface.nestedTableHeights(tableID: tableID, cellIndex: cellIndex) ?? [:]
+        guard table.cells[Int(cellIndex)].nestedTables.allSatisfy({ nestedHeights[$0.tableKey] != nil }) else {
+            return false
+        }
+        if let selection, !selectionFitsTableCell(selection, map: projection.positionMap) {
+            return false
+        }
+
+        tableInputCoordinator.copyInputTraits(from: textView)
+        guard tableInputCoordinator.bind(
+            projection.target,
+            text: projection.text,
+            positionMap: projection.positionMap,
+            editorId: editorId,
+            tableID: tableID,
+            cellIndex: cellIndex,
+            inputAuthority: { [weak self, weak adapter] in
+                guard let self,
+                      let adapter,
+                      adapter.editorId == String(self.editorId)
+                else { return false }
+                return self.hasTableCellBindingAuthority(adapter)
+            }
+        ) else { return false }
+        tableInputCoordinator.cellInput.backgroundColor = .clear
+        tableInputCoordinator.cellInput.isOpaque = false
+        tableInputCoordinator.cellInput.onProjectedUpdate = { [weak self] updateJSON, notifyDelegate in
+            self?.applyActiveTableCellUpdate(updateJSON, notifyDelegate: notifyDelegate) ?? false
+        }
+        tableInputCoordinator.cellInput.onTableCellTab = { [weak self] backward in
+            self?.moveFromActiveTableCell(backward: backward)
+        }
+        tableInputCoordinator.cellInput.onTableCellArrow = { [weak self] direction in
+            self?.moveFromActiveTableCell(by: direction)
+        }
+        let cellInput = tableInputCoordinator.cellInput
+        cellInput.onAuthoritativeTextSelectionSynced = { [weak self, weak cellInput] in
+            guard let self, let cellInput else { return }
+            self.settleTableSelectionAfterTextSync(from: cellInput)
+        }
+        tableSurface.placeActiveInput(tableID: tableID, cellIndex: cellIndex, fallback: contentRect)
+        return true
+    }
+
+    private func settleTableSelectionAfterTextSync(from input: EditorTextView) {
+        guard editorId != 0,
+              input.editorId == editorId,
+              let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
+              hasTableCellBindingAuthority(adapter),
+              let selection = adapter.cachedAtomicRenderSelection(),
+              selection["type"] as? String == "text"
+        else { return }
+        if input === textView {
+            tableSurface.clearCellSelection()
+            return
+        }
+        guard input === tableInputCoordinator.cellInput,
+              activeTextInput === input,
+              let tableID = tableInputCoordinator.activeTableID,
+              let cellIndex = tableInputCoordinator.activeCellIndex,
+              let oldMap = tableInputCoordinator.positionMap,
+              oldMap.binding.documentRevision == adapter.baseDocumentRevision,
+              let epoch = adapter.positionEpoch,
+              oldMap.binding.tableKey == tableID, oldMap.binding.cellIndex == cellIndex,
+              let projection = EditorTableInputCoordinator.projection(
+                  cellIndex: cellIndex, tableKey: tableID, index: adapter.tableIndex,
+                  documentRevision: adapter.baseDocumentRevision, positionEpoch: epoch,
+                  baseFont: textView.baseFont, textColor: textView.baseTextColor,
+                  theme: textView.theme, atomConfiguration: textView.atomRenderConfiguration
+              ),
+              projection.text.string == input.textStorage.string,
+              tableInputCoordinator.refreshPositionMap(projection.positionMap)
+        else { return }
+        textView.setAuthoritativeCellSelectionActive(false)
+        tableSurface.clearCellSelection()
+    }
+
+    private var isApplyingActiveTableCellUpdate = false
+
+    func invalidateTableCellBinding() {
+        tableSurface.hideActiveInput()
+        _ = tableInputCoordinator.invalidateBinding()
+    }
+
+    func hasTableCellBindingAuthority(_ adapter: EditorV2Adapter) -> Bool {
+        textView.ownsNativeBinding(adapter) || tableCellBindingAuthority?(adapter) == true
+    }
+
+    private func applyActiveTableCellUpdate(_ updateJSON: String, notifyDelegate: Bool) -> Bool {
+        isApplyingActiveTableCellUpdate = true
+        defer { isApplyingActiveTableCellUpdate = false }
+        let applied = textView.applyUpdateJSON(updateJSON, notifyDelegate: notifyDelegate)
+        if applied { tableSurface.scheduleActiveInputReveal() }
+        return applied
+    }
+
+    private func moveFromActiveTableCell(backward: Bool) {
+        let input = tableInputCoordinator.cellInput
+        guard activeTextInput === input,
+              case .bound = tableInputCoordinator.phase,
+              input.isEditable,
+              tableInputCoordinator.activeTableID != nil,
+              let currentMap = tableInputCoordinator.positionMap,
+              let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
+              hasTableCellBindingAuthority(adapter),
+              input.isAuthorizedForTableCellInput()
+        else { return }
+        guard input.prepareForExternalEditorUpdate(),
+              activeTextInput === input,
+              case .bound = tableInputCoordinator.phase,
+              input.isAuthorizedForTableCellInput(),
+              tableInputCoordinator.positionMap?.binding == currentMap.binding,
+              tableInputCoordinator.positionMap?.segments == currentMap.segments,
+              let selection = input.currentScalarSelection(),
+              let authoritativeSelection = adapter.cachedAtomicRenderSelection(),
+              authoritativeSelection["type"] as? String == "text"
+        else { return }
+
+        let command: [String: Any] = [
+            "type": "moveToAdjacentCell",
+            "step": backward ? "backward" : "forward",
+            "appendRow": !backward
+        ]
+        guard let update = adapter.commandAtSelection(command, anchor: selection.anchor, head: selection.head),
+              let updateData = update.data(using: .utf8),
+              let updateObject = try? JSONSerialization.jsonObject(with: updateData) as? [String: Any],
+              let targetSelection = updateObject["selection"] as? [String: Any],
+              targetSelection["type"] as? String == "text",
+              let targetScalar = v2ExactUInt32(targetSelection["anchorScalar"] as? NSNumber),
+              targetScalar == v2ExactUInt32(targetSelection["headScalar"] as? NSNumber)
+        else { return }
+
+        let commandRevision = adapter.baseDocumentRevision
+        let commandStateRevision = adapter.stateRevision
+        let commandEpoch = adapter.positionEpoch
+        let focused = input.isFirstResponder
+        guard input.applyUpdateJSON(update) else {
+            invalidateTableCellBinding()
+            return
+        }
+        guard editorId != 0,
+              EditorV2Registry.adapter(forLegacyId: editorId) === adapter,
+              hasTableCellBindingAuthority(adapter),
+              adapter.baseDocumentRevision == commandRevision,
+              adapter.stateRevision == commandStateRevision,
+              adapter.positionEpoch == commandEpoch
+        else { return }
+        guard activeTextInput === input,
+              tableInputCoordinator.positionMap.map({ selectionFitsTableCell(targetSelection, map: $0) }) == true
+        else {
+            invalidateTableCellBinding()
+            return
+        }
+        _ = input.applySelectionFromJSON(targetSelection)
+        if focused { _ = input.becomeFirstResponder() }
+    }
+
+    private func moveFromActiveTableCell(by direction: TableCellArrowDirection) {
+        let input = tableInputCoordinator.cellInput
+        guard activeTextInput === input,
+              case .bound = tableInputCoordinator.phase,
+              input.isAtTableCellArrowBoundary(direction),
+              let tableID = tableInputCoordinator.activeTableID,
+              let cellIndex = tableInputCoordinator.activeCellIndex,
+              let currentMap = tableInputCoordinator.positionMap,
+              let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
+              hasTableCellBindingAuthority(adapter)
+        else { return }
+        guard input.prepareForExternalEditorUpdate(),
+              activeTextInput === input,
+              tableInputCoordinator.activeTableID == tableID,
+              tableInputCoordinator.activeCellIndex == cellIndex,
+              tableInputCoordinator.positionMap?.binding == currentMap.binding,
+              input.isAtTableCellArrowBoundary(direction),
+              hasTableCellBindingAuthority(adapter),
+              EditorV2Registry.adapter(forLegacyId: editorId) === adapter,
+              let currentPosition = input.selectedTextRange,
+              currentPosition.isEmpty
+        else { return }
+        let caretRect = input.caretRect(for: currentPosition.start)
+        let caret = tableSurface.convert(CGPoint(x: caretRect.midX, y: caretRect.midY), from: input)
+        guard let destination = tableSurface.arrowDestination(
+            tableID: tableID, cellIndex: cellIndex, direction: direction, caret: caret
+        ) else { return }
+        let focused = input.isFirstResponder
+        let stateRevision = adapter.stateRevision
+        switch destination {
+        case .blocked:
+            return
+        case .surroundingProse:
+            guard let rightToLeft = tableSurface.isRightToLeft(tableID: tableID) else { return }
+            let forward: Bool
+            switch direction {
+            case .left: forward = rightToLeft
+            case .right: forward = !rightToLeft
+            case .up: forward = false
+            case .down: forward = true
+            }
+            guard let scalar = surroundingProseScalar(tableID: tableID, forward: forward),
+                  adapter.stateRevision == stateRevision,
+                  adapter.positionEpoch == currentMap.binding.positionEpoch,
+                  tableInputCoordinator.positionMap?.binding == currentMap.binding,
+                  activeTextInput === input
+            else { return }
+            invalidateTableCellBinding()
+            guard EditorV2Registry.adapter(forLegacyId: editorId) === adapter,
+                  hasTableCellBindingAuthority(adapter),
+                  adapter.baseDocumentRevision == currentMap.binding.documentRevision,
+                  adapter.stateRevision == stateRevision
+            else { return }
+            let offset = PositionBridge.scalarToUtf16Offset(scalar, in: textView)
+            textView.setRootTableSelectionRepresentable(true)
+            if focused { _ = textView.becomeFirstResponder() }
+            guard activeTextInput === textView,
+                  EditorV2Registry.adapter(forLegacyId: editorId) === adapter,
+                  hasTableCellBindingAuthority(adapter),
+                  adapter.baseDocumentRevision == currentMap.binding.documentRevision,
+                  adapter.stateRevision == stateRevision,
+                  adapter.positionEpoch == currentMap.binding.positionEpoch
+            else { return }
+            textView.selectedRange = NSRange(location: offset, length: 0)
+            textView.syncSelectionImmediately()
+        case .cell(let targetIndex):
+            guard targetIndex != cellIndex,
+                  bindTableCell(
+                      tableID: tableID,
+                      cellIndex: targetIndex,
+                      contentRect: input.frame
+                  ),
+                  let targetMap = tableInputCoordinator.positionMap,
+                  activeTextInput === input,
+                  tableInputCoordinator.activeTableID == tableID,
+                  tableInputCoordinator.activeCellIndex == targetIndex,
+                  input.tableCellPositionMap?.binding == targetMap.binding,
+                  adapter.stateRevision == stateRevision,
+                  adapter.positionEpoch == currentMap.binding.positionEpoch,
+                  EditorV2Registry.adapter(forLegacyId: editorId) === adapter,
+                  hasTableCellBindingAuthority(adapter)
+            else { return }
+            let entry: CGPoint
+            switch direction {
+            case .right:
+                entry = CGPoint(x: input.bounds.minX, y: input.bounds.minY)
+            case .left:
+                entry = CGPoint(x: input.bounds.maxX, y: input.bounds.maxY)
+            case .down:
+                entry = CGPoint(x: tableSurface.convert(caret, to: input).x, y: input.bounds.minY)
+            case .up:
+                entry = CGPoint(x: tableSurface.convert(caret, to: input).x, y: input.bounds.maxY)
+            }
+            let nearest = input.closestPosition(to: entry).map {
+                PositionBridge.utf16OffsetToScalar(input.offset(from: input.beginningOfDocument, to: $0), in: input)
+            }
+            let fallback = (direction == .left || direction == .up)
+                ? targetMap.segments.last.map { $0.localScalarRange.upperBound - 1 }
+                : targetMap.segments.first?.localScalarRange.lowerBound
+            guard let local = nearest.flatMap({ targetMap.globalScalar(forLocalScalar: $0) }) != nil
+                ? nearest : fallback,
+                let scalar = targetMap.globalScalar(forLocalScalar: local)
+            else {
+                if activeTextInput === input && tableInputCoordinator.activeTableID == tableID
+                    && tableInputCoordinator.activeCellIndex == targetIndex {
+                    invalidateTableCellBinding()
+                }
+                return
+            }
+            input.selectedRange = NSRange(
+                location: PositionBridge.scalarToUtf16Offset(local, in: input), length: 0
+            )
+            input.syncSelectionImmediately()
+            guard EditorV2Registry.adapter(forLegacyId: editorId) === adapter,
+                  hasTableCellBindingAuthority(adapter),
+                  adapter.baseDocumentRevision == currentMap.binding.documentRevision,
+                  tableInputCoordinator.activeTableID == tableID,
+                  tableInputCoordinator.activeCellIndex == targetIndex,
+                  input.currentScalarSelection()?.head == scalar,
+                  authoritativeTextSelectionIsAt(scalar, adapter: adapter)
+            else { return }
+            if focused { _ = input.becomeFirstResponder() }
+        }
+    }
+
+    private func authoritativeTextSelectionIsAt(_ scalar: UInt32, adapter: EditorV2Adapter) -> Bool {
+        guard let selection = adapter.cachedAtomicRenderSelection(),
+              selection["type"] as? String == "text"
+        else { return false }
+        return v2ExactUInt32(selection["anchorScalar"] as? NSNumber) == scalar
+            && v2ExactUInt32(selection["headScalar"] as? NSNumber) == scalar
+    }
+
+    private func surroundingProseScalar(tableID: String, forward: Bool) -> UInt32? {
+        let root = textView
+        guard root.textStorage.length > 0 else { return nil }
+        var result: UInt32?
+        root.textStorage.enumerateAttribute(
+            RenderBridgeAttributes.rootTableMarker,
+            in: NSRange(location: 0, length: root.textStorage.length)
+        ) { value, range, stop in
+            guard value as? String == tableID,
+                  let extent = PositionBridge.rootTablePositionMap(in: root)?.extents[tableID]
+            else { return }
+            var neighbor = forward ? NSMaxRange(range) : range.location - 1
+            let rendered = root.textStorage.string as NSString
+            while neighbor >= 0 && neighbor < rendered.length,
+                  rendered.substring(with: NSRange(location: neighbor, length: 1))
+                  .rangeOfCharacter(from: .newlines) != nil {
+                neighbor += forward ? 1 : -1
+            }
+            guard neighbor >= 0,
+                  neighbor < rendered.length,
+                  root.textStorage.attribute(
+                      RenderBridgeAttributes.rootTableMarker, at: neighbor, effectiveRange: nil
+                  ) == nil
+            else { return }
+            let scalar = forward ? extent.scalarEnd.addingReportingOverflow(1)
+                : extent.scalarStart.subtractingReportingOverflow(1)
+            guard !scalar.overflow,
+                  PositionBridge.isScalarPositionRepresentable(scalar.partialValue, in: root),
+                  PositionBridge.isRootTextInputRangeSafe(
+                      from: scalar.partialValue, to: scalar.partialValue, in: root
+                  )
+            else { return }
+            result = scalar.partialValue
+            stop.pointee = true
+        }
+        return result
+    }
+
+    private func selectionScalarRange(_ selection: [String: Any]) -> (start: UInt32, end: UInt32)? {
+        switch selection["type"] as? String {
+        case "text":
+            guard let anchor = v2ExactUInt32(selection["anchorScalar"] as? NSNumber),
+                  let head = v2ExactUInt32(selection["headScalar"] as? NSNumber)
+            else { return nil }
+            return (min(anchor, head), max(anchor, head))
+        case "node":
+            guard let position = v2ExactUInt32(selection["posScalar"] as? NSNumber), position < UInt32.max else { return nil }
+            return (position, position + 1)
+        default:
+            return nil
+        }
+    }
+
+    private func selectionFitsTableCell(_ selection: [String: Any], map: TableCellPositionMap) -> Bool {
+        guard let (start, end) = selectionScalarRange(selection) else { return false }
+        guard let localStart = map.localScalar(forGlobalScalar: start),
+              let localEnd = map.localScalar(forGlobalScalar: end),
+              let range = map.globalScalarRange(fromLocalScalar: localStart, toLocalScalar: localEnd)
+        else { return false }
+        return range.from == start && range.to == end
+    }
+
+    private func refreshActiveTableCell(after updateJSON: String) {
+        guard let tableID = tableInputCoordinator.activeTableID else { return }
+        let update = updateJSON.data(using: .utf8)
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        let selection = update?["selection"] as? [String: Any]
+        if selection?["type"] as? String == "cell" {
+            retireActiveTableCell(refocusingRoot: tableInputCoordinator.cellInput.isFirstResponder)
+            return
+        }
+        guard let cellIndex = tableInputCoordinator.activeCellIndex,
+              let binding = tableInputCoordinator.positionMap?.binding,
+              let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
+              let selection
+        else {
+            invalidateTableCellBinding()
+            return
+        }
+        let frame = tableSurface.convert(
+            tableInputCoordinator.cellInput.bounds,
+            from: tableInputCoordinator.cellInput
+        )
+        guard isApplyingActiveTableCellUpdate,
+              binding.tableKey == tableID, binding.cellIndex == cellIndex,
+              adapter.cachedTablePresentation?.changes.replacedTables.contains(tableID) != true,
+              bindTableCell(tableID: tableID, cellIndex: cellIndex, contentRect: frame, selection: selection)
+        else {
+            moveActiveTableCell(to: selection, adapter: adapter, fallback: frame)
+            return
+        }
+        _ = tableInputCoordinator.cellInput.applySelectionFromJSON(selection)
+    }
+
+    private func moveActiveTableCell(to selection: [String: Any], adapter: EditorV2Adapter, fallback: CGRect) {
+        let cellWasFocused = tableInputCoordinator.cellInput.isFirstResponder
+        guard !bindTableCell(holding: selection, adapter: adapter, fallback: fallback, focus: cellWasFocused) else {
+            return
+        }
+        retireActiveTableCell(refocusingRoot: cellWasFocused)
+    }
+
+    private func retireActiveTableCell(refocusingRoot: Bool) {
+        invalidateTableCellBinding()
+        if refocusingRoot {
+            _ = textView.becomeFirstResponder()
+        }
+    }
+
+    private func followRootSelectionIntoTableCell(after updateJSON: String) {
+        guard activeTextInput === textView,
+              textView.isFirstResponder,
+              editorId != 0,
+              let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
+              hasTableCellBindingAuthority(adapter),
+              !adapter.tableIndex.tableKeys.isEmpty,
+              let data = updateJSON.data(using: .utf8),
+              let update = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let selection = update["selection"] as? [String: Any]
+        else { return }
+        _ = bindTableCell(holding: selection, adapter: adapter, fallback: .zero, focus: true)
+    }
+
+    private func bindTableCell(
+        holding selection: [String: Any],
+        adapter: EditorV2Adapter,
+        fallback: CGRect,
+        focus: Bool
+    ) -> Bool {
+        guard let range = selectionScalarRange(selection),
+              let tableID = adapter.tableIndex.tableKey(containingScalar: range.start),
+              let index = adapter.tableIndex.cellIndex(tableKey: tableID, containingScalar: range.start),
+              let cellIndex = UInt32(exactly: index) else { return false }
+        let contentRect = tableSurface.cellFrame(tableID: tableID, cellIndex: cellIndex) ?? fallback
+        guard bindTableCell(tableID: tableID, cellIndex: cellIndex, contentRect: contentRect, selection: selection) else { return false }
+        let cellInput = tableInputCoordinator.cellInput
+        _ = cellInput.applySelectionFromJSON(selection)
+        if focus { _ = cellInput.becomeFirstResponder() }
+        return true
     }
 
     // MARK: - Initialization
@@ -244,7 +754,7 @@ final class RichTextEditorView: UIView {
         // Add the text view as a subview. These views always track the host bounds,
         // so manual layout is cheaper than driving them through Auto Layout.
         textView.imageLoadOwner = defaultImageLoadOwner
-        remoteSelectionOverlayView.bind(textView: textView)
+        remoteSelectionOverlayView.bind(textView: textView, tableSurface: tableSurface)
         taskListMarkerTapOverlayView.bind(editorView: self)
         imageTapOverlayView.bind(editorView: self)
         imageResizeOverlayView.bind(editorView: self)
@@ -262,14 +772,46 @@ final class RichTextEditorView: UIView {
             )
         }
         textView.onViewportMayChange = { [weak self] in
-            self?.layoutManagedSubviews()
-            self?.refreshOverlaysIfNeeded()
-            self?.emitAtomContentWidthIfAvailable()
+            guard let self else { return }
+            self.layoutManagedSubviews()
+            self.tableSurface.updateGeometry(from: self.textView)
+            self.refreshOverlaysIfNeeded()
+            self.emitAtomContentWidthIfAvailable()
         }
         textView.onSelectionOrContentMayChange = { [weak self] in
             self?.scheduleRefreshOverlaysIfNeeded()
         }
+        textView.onAuthoritativeTextSelectionSynced = { [weak self] in
+            guard let self else { return }
+            self.settleTableSelectionAfterTextSync(from: self.textView)
+        }
+        textView.rootTableNativeOwnerAuthority = { [weak self] adapter in
+            self?.hasTableCellBindingAuthority(adapter) ?? false
+        }
+        textView.onFirstResponderResigned = { [weak self] in
+            self?.tableSurface.dismissCellEditMenu()
+        }
+        textView.tableCellDropHandler = tableSurface
+        textView.onAuthoritativeRenderApplied = { [weak self] updateJSON in
+            self?.refreshTablePresentation()
+            self?.refreshActiveTableCell(after: updateJSON)
+            self?.followRootSelectionIntoTableCell(after: updateJSON)
+        }
         addSubview(textView)
+        textView.addGestureRecognizer(tableCellTapRecognizer)
+        addGestureRecognizer(tableCellLongPressRecognizer)
+        textView.addGestureRecognizer(tableCellDoubleTapRecognizer)
+        addSubview(tableSurface)
+        tableSurface.installTableInteraction(on: self)
+        textView.rootTableContains = { [weak self] point in
+            guard let self else { return false }
+            return self.tableSurface.rootTableContains(self.textView.convert(point, to: self.tableSurface))
+        }
+        textView.focusedTableCellInput = { [weak self] in
+            guard let self, self.activeTextInput !== self.textView, self.activeTextInput.isFirstResponder
+            else { return nil }
+            return self.activeTextInput
+        }
         addSubview(remoteSelectionOverlayView)
         addSubview(taskListMarkerTapOverlayView)
         // Image touches must stay inside the scroll view's gesture hierarchy.
@@ -319,6 +861,13 @@ final class RichTextEditorView: UIView {
         invalidateIntrinsicContentSize()
     }
 
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        guard traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) else { return }
+        tableSurface.invalidateAppearance()
+        setNeedsLayout()
+    }
+
     // MARK: - Configuration
 
     /// Configure the editor's appearance.
@@ -338,6 +887,8 @@ final class RichTextEditorView: UIView {
         textView.font = font
         textView.textColor = textColor
         textView.backgroundColor = backgroundColor
+        tableSurface.invalidateAppearance()
+        refreshTablePresentation()
     }
 
     @discardableResult
@@ -347,6 +898,8 @@ final class RichTextEditorView: UIView {
         layer.cornerRadius = cornerRadius
         clipsToBounds = cornerRadius > 0
         updateStyleContentMask()
+        tableSurface.invalidateAppearance()
+        refreshTablePresentation()
         refreshOverlays()
         return true
     }
@@ -777,6 +1330,10 @@ final class RichTextEditorView: UIView {
         if textView.frame != managedFrame {
             textView.frame = managedFrame
         }
+        if tableSurface.frame != managedFrame {
+            tableSurface.frame = managedFrame
+        }
+        tableSurface.updateGeometry(from: textView)
         if remoteSelectionOverlayView.frame != managedFrame {
             remoteSelectionOverlayView.frame = managedFrame
         }
@@ -789,6 +1346,110 @@ final class RichTextEditorView: UIView {
         if imageResizeOverlayView.frame != managedFrame {
             imageResizeOverlayView.frame = managedFrame
         }
+    }
+
+    private func refreshTablePresentation() {
+        defer { refreshRemoteSelections() }
+        guard editorId != 0,
+              let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
+              let presentation = adapter.cachedTablePresentation
+        else {
+            tableSurface.clearPresentation()
+            return
+        }
+        let selectionValue = adapter.cachedAtomicRenderSelection()
+        let selection = selectionValue.flatMap {
+            EditorCellSelection.resolve($0, index: adapter.tableIndex)
+        }
+        tableSurface.present(
+            presentation, selection: selection,
+            endpoints: selectionValue.flatMap(EditorCellSelection.endpointPositions),
+            ownerIdentity: "\(editorId):\(adapter.tableResetGeneration)",
+            from: textView
+        )
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        let point = touch.location(in: tableSurface)
+        guard !tableSurface.hasSelectionHandle(at: point) else { return false }
+        if gestureRecognizer === tableCellLongPressRecognizer {
+            return canPresentTableMenu(at: point, touchedView: touch.view)
+        }
+        if gestureRecognizer === tableCellDoubleTapRecognizer {
+            return tableSurface.cellSelectionContains(point)
+        }
+        guard gestureRecognizer === tableCellTapRecognizer,
+              touch.tapCount == 1,
+              tableSurface.cellHit(at: point) != nil
+        else { return false }
+        tableCellTapTimestamp = touch.timestamp
+        return true
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        gestureRecognizer === tableCellTapRecognizer && otherGestureRecognizer === tableCellDoubleTapRecognizer
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        guard gestureRecognizer === tableCellLongPressRecognizer else { return false }
+        return otherGestureRecognizer === tableCellTapRecognizer
+            || otherGestureRecognizer === tableCellDoubleTapRecognizer
+            || textView.interactions.compactMap { $0 as? UITextInteraction }.contains {
+                $0.gesturesForFailureRequirements.contains(otherGestureRecognizer)
+            }
+    }
+
+    @objc
+    private func handleTableCellTap(_ recognizer: UITapGestureRecognizer) {
+        guard recognizer.state == .ended else { return }
+        tapTableCell(at: recognizer.location(in: tableSurface), touchedAt: tableCellTapTimestamp)
+    }
+
+    @objc
+    private func handleTableCellDoubleTap(_ recognizer: UITapGestureRecognizer) {
+        guard recognizer.state == .ended else { return }
+        doubleTapTableCell(at: recognizer.location(in: tableSurface))
+    }
+
+    func doubleTapTableCell(at point: CGPoint) {
+        tableSurface.dismissCellEditMenu()
+        _ = activateTableCell(at: point)
+    }
+
+    func tapTableCell(at point: CGPoint, touchedAt timestamp: TimeInterval) {
+        if !tableEditMenuEnabled,
+           tableSurface.toggleCellEditMenu(at: point, touchedAt: timestamp) { return }
+        tableSurface.dismissCellEditMenu()
+        _ = activateTableCell(at: point)
+    }
+
+    func canPresentTableMenu(at point: CGPoint, touchedView: UIView?) -> Bool {
+        guard tableEditMenuEnabled, !hasPendingCompositionForExternalRefresh,
+              let touchedView, touchedView === textView || touchedView.isDescendant(of: textView),
+              !tableSurface.hasSelectionHandle(at: point), let hit = tableSurface.cellHit(at: point),
+              tableSurface.tableMutationContext(tableID: hit.tableID) != nil else { return false }
+        return true
+    }
+
+    @objc private func handleTableCellLongPress(_ recognizer: UILongPressGestureRecognizer) {
+        guard recognizer.state == .began else { return }
+        tableSurface.presentCellEditMenu(at: recognizer.location(in: tableSurface))
+    }
+
+    @discardableResult
+    func activateTableCell(at point: CGPoint) -> Bool {
+        guard let hit = tableSurface.cellHit(at: point),
+              bindTableCell(tableID: hit.tableID, cellIndex: hit.cellIndex, contentRect: hit.contentRect)
+        else { return false }
+        return tableInputCoordinator.cellInput.placeCaret(
+            at: tableSurface.convert(point, to: tableInputCoordinator.cellInput)
+        )
     }
 
     func selectedImageGeometry() -> (docPos: UInt32, rect: CGRect)? {

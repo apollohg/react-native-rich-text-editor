@@ -396,14 +396,14 @@ fn insert_node_offset_node_class_and_recursive_attribute_matrix() {
             ),
             Node::element(
                 "taskList".into(),
-                HashMap::from([("listMeta".into(), json!({ "owner": "team", "rank": 7 }))]),
+                HashMap::from([("listMeta".into(), json!({ "owner": "team", "rank": 7.0 }))]),
                 Fragment::from(vec![Node::element(
                     "taskItem".into(),
                     HashMap::from([
                         ("checked".into(), Value::Bool(true)),
                         (
                             "itemMeta".into(),
-                            json!({ "id": "task-1", "flags": [1, false] }),
+                            json!({ "id": "task-1", "flags": [1.0, false] }),
                         ),
                     ]),
                     Fragment::from(vec![
@@ -423,7 +423,7 @@ fn insert_node_offset_node_class_and_recursive_attribute_matrix() {
                             "customBlock".into(),
                             HashMap::from([(
                                 "meta".into(),
-                                json!({ "nested": { "values": [1, "x", true] } }),
+                                json!({ "nested": { "values": [1.0, "x", true] } }),
                             )]),
                         ),
                     ]),

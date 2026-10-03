@@ -54,6 +54,9 @@ fn resolve_configured_create_schema(
 pub(crate) struct ResolvedLocalDocument {
     pub document: crate::model::Document,
     pub schema: crate::schema::Schema,
+    pub resource_limits: ResourceLimits,
+    pub validation: crate::transform::DocumentValidationReport,
+    pub table_projection: Option<crate::tables::admission::AdmittedTableProjection>,
 }
 
 pub(crate) fn resolve_local_document(
@@ -67,25 +70,38 @@ pub(crate) fn resolve_local_document(
         FfiViewerSourceKind::Html => InputKind::Html,
     };
     let input = BoundedInput::new(source, input_kind, &config.resource_limits)?;
-    let document = match source_kind {
+    let (document, validation, table_projection) = match source_kind {
         FfiViewerSourceKind::Json => {
             let depth_limit = crate::boundary::document_json_container_depth_limit(
                 config.resource_limits.max_document_depth,
             )?;
-            let value = parse_json_value_stack_safe(
+            let admitted = crate::boundary::DepthCheckedJson::new(
                 input.as_str(),
                 depth_limit,
                 config.resource_limits.max_document_depth,
                 "DOCUMENT_LIMIT_EXCEEDED",
-                "DOCUMENT_INVALID",
             )?;
-            let document = crate::serialize::from_prosemirror_json_with_limits(
-                value.as_value(),
-                &schema,
-                crate::serialize::UnknownTypeMode::Preserve,
-                &config.resource_limits,
-            )
-            .map_err(viewer_json_parse_error)?;
+            let document = crate::boundary::with_document_stack_for_json_container_depth(
+                admitted.container_depth(),
+                || {
+                    if let Some(document) = crate::serialize::json_in::try_from_plain_json(
+                        admitted.as_str(),
+                        &schema,
+                        &config.resource_limits,
+                    ) {
+                        document.map_err(viewer_json_parse_error)
+                    } else {
+                        let value = admitted.parse_value("DOCUMENT_INVALID")?;
+                        crate::serialize::from_prosemirror_json_with_limits(
+                            value.as_value(),
+                            &schema,
+                            crate::serialize::UnknownTypeMode::Preserve,
+                            &config.resource_limits,
+                        )
+                        .map_err(viewer_json_parse_error)
+                    }
+                },
+            )?;
             crate::yrs_engine::admit_local_import_document(
                 document,
                 &schema,
@@ -117,7 +133,13 @@ pub(crate) fn resolve_local_document(
         }
     };
 
-    Ok(ResolvedLocalDocument { document, schema })
+    Ok(ResolvedLocalDocument {
+        document,
+        schema,
+        resource_limits: config.resource_limits,
+        validation,
+        table_projection,
+    })
 }
 
 fn resolve_local_empty_document(config_json: &str) -> Result<ResolvedLocalDocument, SessionError> {
@@ -125,7 +147,7 @@ fn resolve_local_empty_document(config_json: &str) -> Result<ResolvedLocalDocume
     let document = schema
         .default_document()
         .map_err(|error| SessionError::new(ErrorDomain::Document, "DOCUMENT_INVALID", error))?;
-    let document = crate::yrs_engine::admit_local_import_document(
+    let (document, validation, table_projection) = crate::yrs_engine::admit_local_import_document(
         document,
         &schema,
         &config.resource_limits,
@@ -134,7 +156,13 @@ fn resolve_local_empty_document(config_json: &str) -> Result<ResolvedLocalDocume
     )
     .map_err(SessionError::from)?;
 
-    Ok(ResolvedLocalDocument { document, schema })
+    Ok(ResolvedLocalDocument {
+        document,
+        schema,
+        resource_limits: config.resource_limits,
+        validation,
+        table_projection,
+    })
 }
 
 fn resolve_local_config(

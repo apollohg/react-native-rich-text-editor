@@ -3,6 +3,7 @@
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FullPassCounts {
     pub import_model_parses: usize,
+    pub json_value_deserializations: usize,
     pub validated_evidence_constructions: usize,
     pub validation_certificate_constructions: usize,
     pub planner_simulations: usize,
@@ -26,6 +27,17 @@ pub(crate) struct FullPassCounts {
     pub render_top_level_start_scans: usize,
     pub active_applicability_passes: usize,
     pub ordinary_step_applications: usize,
+    pub table_projection_derivations: usize,
+    pub table_command_availability_plans: usize,
+    pub yrs_tree_walks: usize,
+    pub whole_state_encodings: usize,
+    pub mutation_guard_snapshot_requests: usize,
+    pub compilation_snapshot_scans: usize,
+    pub compilation_snapshot_reuses: usize,
+    pub cell_content_keys: usize,
+    pub attribute_serializations: usize,
+    pub epoch_block_rebuilds: usize,
+    pub cell_content_generations: usize,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -52,9 +64,14 @@ macro_rules! recorder {
 }
 
 std::thread_local! {
+    pub(crate) static HISTORY_OWNED_SLOT_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(crate) static HISTORY_STACK_METADATA_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(crate) static HISTORY_REPLAY_METADATA_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(crate) static PREFLIGHT_CHILDREN_ENUMERATED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static FULL_PASS_COUNTS: std::cell::Cell<FullPassCounts> = const {
         std::cell::Cell::new(FullPassCounts {
             import_model_parses: 0,
+            json_value_deserializations: 0,
             validated_evidence_constructions: 0,
             validation_certificate_constructions: 0,
             planner_simulations: 0,
@@ -78,6 +95,17 @@ std::thread_local! {
             render_top_level_start_scans: 0,
             active_applicability_passes: 0,
             ordinary_step_applications: 0,
+            table_projection_derivations: 0,
+            table_command_availability_plans: 0,
+            yrs_tree_walks: 0,
+            whole_state_encodings: 0,
+            mutation_guard_snapshot_requests: 0,
+            compilation_snapshot_scans: 0,
+            compilation_snapshot_reuses: 0,
+            cell_content_keys: 0,
+            attribute_serializations: 0,
+            epoch_block_rebuilds: 0,
+            cell_content_generations: 0,
         })
     };
     static PREPARED_ADMISSION_COUNTS: std::cell::Cell<PreparedAdmissionCounts> = const {
@@ -92,6 +120,15 @@ std::thread_local! {
     };
 }
 
+recorder!(
+    record_mutation_guard_snapshot_request,
+    mutation_guard_snapshot_requests
+);
+recorder!(record_compilation_snapshot_scan, compilation_snapshot_scans);
+recorder!(
+    record_compilation_snapshot_reuse,
+    compilation_snapshot_reuses
+);
 recorder!(record_planner_simulation, planner_simulations);
 recorder!(record_import_model_parse, import_model_parses);
 recorder!(
@@ -125,10 +162,32 @@ recorder!(
     canonical_identity_predicate_nodes_visited
 );
 recorder!(record_canonical_projection, canonical_projections);
+std::thread_local! {
+    static NODE_JSON_PROJECTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+pub(crate) fn record_node_json_projection() {
+    NODE_JSON_PROJECTIONS.set(NODE_JSON_PROJECTIONS.get().saturating_add(1));
+}
+
+pub(crate) fn take_node_json_projections_for_test() -> usize {
+    NODE_JSON_PROJECTIONS.replace(0)
+}
 recorder!(record_canonical_serialization, canonical_serializations);
 recorder!(record_canonical_hash, canonical_hashes);
 recorder!(record_affected_top_level_scan, affected_top_level_scans);
 recorder!(record_position_map_clone, position_map_clones);
+std::thread_local! {
+    static STEP_MAP_PREFIX_RANGES_COPIED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+pub(crate) fn record_step_map_prefix_copy(ranges: usize) {
+    STEP_MAP_PREFIX_RANGES_COPIED.with(|count| count.set(count.get().saturating_add(ranges)));
+}
+
+pub(crate) fn take_step_map_prefix_ranges_copied() -> usize {
+    STEP_MAP_PREFIX_RANGES_COPIED.with(|count| count.replace(0))
+}
 recorder!(record_position_map_compaction, position_map_compactions);
 recorder!(record_rendered_text_derivation, rendered_text_derivations);
 recorder!(record_raw_document_text_scan, raw_document_text_scans);
@@ -143,6 +202,24 @@ recorder!(
     active_applicability_passes
 );
 recorder!(record_ordinary_step_application, ordinary_step_applications);
+recorder!(
+    record_table_projection_derivation,
+    table_projection_derivations
+);
+recorder!(
+    record_table_command_availability_plan,
+    table_command_availability_plans
+);
+recorder!(record_yrs_tree_walk, yrs_tree_walks);
+recorder!(
+    record_json_value_deserialization,
+    json_value_deserializations
+);
+recorder!(record_whole_state_encoding, whole_state_encodings);
+recorder!(record_cell_content_key, cell_content_keys);
+recorder!(record_attribute_serialization, attribute_serializations);
+recorder!(record_epoch_block_rebuild, epoch_block_rebuilds);
+recorder!(record_cell_content_generation, cell_content_generations);
 
 pub(crate) fn reset_full_pass_counts_for_test() {
     FULL_PASS_COUNTS.set(FullPassCounts::default());

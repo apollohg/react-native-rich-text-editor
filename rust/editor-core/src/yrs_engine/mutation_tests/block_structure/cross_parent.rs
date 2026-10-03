@@ -586,7 +586,7 @@ fn cross_parent_replace_updates_a_prepared_inline_atom_blueprint() {
                 at: atom_position,
                 attrs: HashMap::from([
                     ("id".into(), Value::String("new".into())),
-                    ("meta".into(), json!({ "nested": [2, false] })),
+                    ("meta".into(), json!({ "nested": [2.0, false] })),
                 ]),
             },
         ],
@@ -618,7 +618,7 @@ fn cross_parent_replace_updates_a_prepared_inline_atom_blueprint() {
     assert_eq!(actual["content"][0]["content"][1]["attrs"]["id"], "new");
     assert_eq!(
         actual["content"][0]["content"][1]["attrs"]["meta"],
-        json!({ "nested": [2, false] })
+        json!({ "nested": [2.0, false] })
     );
 }
 

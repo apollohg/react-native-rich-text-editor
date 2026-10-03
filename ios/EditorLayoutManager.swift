@@ -179,7 +179,7 @@ final class EditorLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
 
             let paragraphRange = nsString.paragraphRange(for: NSRange(location: range.location, length: 0))
             let paragraphStart = paragraphRange.location
-            guard !Self.isParagraphStartCreatedByHardBreak(paragraphStart, in: textStorage) else {
+            guard !RenderBridge.isListContinuationParagraph(paragraphStart, in: textStorage) else {
                 return
             }
             guard drawnParagraphStarts.insert(paragraphStart).inserted else { return }
@@ -352,7 +352,7 @@ final class EditorLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         let paragraphRange = nsString.paragraphRange(for: NSRange(location: charIndex, length: 0))
         let paragraphStart = paragraphRange.location
         guard paragraphStart < textStorage.length else { return nil }
-        guard !Self.isParagraphStartCreatedByHardBreak(paragraphStart, in: textStorage) else { return nil }
+        guard !RenderBridge.isListContinuationParagraph(paragraphStart, in: textStorage) else { return nil }
 
         guard let listContext = textStorage.attribute(
             RenderBridgeAttributes.listMarkerContext,
@@ -891,19 +891,6 @@ final class EditorLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             width: bulletDiameter,
             height: bulletDiameter
         )
-    }
-
-    static func isParagraphStartCreatedByHardBreak(
-        _ paragraphStart: Int,
-        in textStorage: NSTextStorage
-    ) -> Bool {
-        guard paragraphStart > 0, paragraphStart <= textStorage.length else { return false }
-        let previousVoidType = textStorage.attribute(
-            RenderBridgeAttributes.voidNodeType,
-            at: paragraphStart - 1,
-            effectiveRange: nil
-        ) as? String
-        return EditorNodeTypes.isHardBreak(previousVoidType)
     }
 
     private func markerFont(

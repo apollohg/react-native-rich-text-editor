@@ -3,18 +3,6 @@ import UIKit
 
 // MARK: - PositionBridge
 
-/// Converts between UITextView cursor positions (UTF-16 code unit offsets, snapped
-/// to grapheme cluster boundaries) and Rust editor-core scalar offsets (Unicode
-/// scalar values = Unicode code points).
-///
-/// UIKit's text system uses UTF-16 internally (NSString). Emoji like U+1F468
-/// (man) occupy 2 UTF-16 code units (a surrogate pair) but 1 Unicode scalar.
-/// Composed emoji sequences like 👨‍👩‍👧‍👦 are multiple scalars joined by
-/// ZWJ but render as a single grapheme cluster.
-///
-/// Rust's editor-core counts positions in Unicode scalars (what Rust calls `char`).
-/// The PositionMap in Rust converts between doc positions and scalar offsets.
-/// This bridge converts between those scalar offsets and UITextView UTF-16 offsets.
 final class PositionBridge {
 
     private struct StringConversionTable {
@@ -25,7 +13,9 @@ final class PositionBridge {
     private final class TextViewConversionTable: NSObject {
         let adjustedUtf16ToScalar: [UInt32]
 
-        init(adjustedUtf16ToScalar: [UInt32]) {
+        init(
+            adjustedUtf16ToScalar: [UInt32]
+        ) {
             self.adjustedUtf16ToScalar = adjustedUtf16ToScalar
         }
     }
@@ -41,37 +31,27 @@ final class PositionBridge {
     }
 
     private static var textViewConversionTableKey: UInt8 = 0
+    private static var rootTablePositionMapKey: UInt8 = 0
+
+    static func rootTablePositionMap(in textView: UITextView) -> RootTablePositionMap? {
+        objc_getAssociatedObject(textView, &rootTablePositionMapKey) as? RootTablePositionMap
+    }
+
+    static func setRootTablePositionMap(_ map: RootTablePositionMap?, in textView: UITextView) {
+        objc_setAssociatedObject(textView, &rootTablePositionMapKey, map, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+    }
+
     private static let stringTableLock = NSLock()
     private static var lastStringTableText = ""
     private static var lastStringTable: StringConversionTable?
 
     // MARK: - UTF-16 <-> Scalar Conversion
 
-    /// Convert a UITextView cursor position (UTF-16 offset) to a Rust scalar offset.
-    ///
-    /// Walks the string from the beginning, counting Unicode scalars consumed as
-    /// we advance through UTF-16 code units. Surrogate pairs (code units > U+FFFF)
-    /// contribute 2 UTF-16 code units but only 1 scalar.
-    ///
-    /// - Parameters:
-    ///   - position: A `UITextPosition` obtained from the text view.
-    ///   - textView: The text view containing the text.
-    /// - Returns: The equivalent Unicode scalar offset.
     static func textViewToScalar(_ position: UITextPosition, in textView: UITextView) -> UInt32 {
         let utf16Offset = textView.offset(from: textView.beginningOfDocument, to: position)
         return utf16OffsetToScalar(utf16Offset, in: textView)
     }
 
-    /// Convert a Rust scalar offset to a UITextView position.
-    ///
-    /// Walks the string counting scalars until we reach the target, then returns
-    /// the corresponding UTF-16 offset as a UITextPosition.
-    ///
-    /// - Parameters:
-    ///   - scalar: The Unicode scalar offset from Rust.
-    ///   - textView: The text view containing the text.
-    /// - Returns: The equivalent `UITextPosition`, or the end of document if the
-    ///   scalar offset exceeds the text length.
     static func scalarToTextView(_ scalar: UInt32, in textView: UITextView) -> UITextPosition {
         let utf16Offset = scalarToUtf16Offset(scalar, in: textView)
         return textView.position(
@@ -88,7 +68,8 @@ final class PositionBridge {
             max(utf16Offset, 0),
             min((text as NSString).length, conversionTable.adjustedUtf16ToScalar.count - 1)
         )
-        return conversionTable.adjustedUtf16ToScalar[clampedOffset]
+        let local = conversionTable.adjustedUtf16ToScalar[clampedOffset]
+        return rootTablePositionMap(in: textView)?.globalBoundary(local: local) ?? local
     }
 
     static func utf16OffsetToScalar(_ utf16Offset: Int, in attributedString: NSAttributedString) -> UInt32 {
@@ -101,7 +82,28 @@ final class PositionBridge {
     static func scalarToUtf16Offset(_ scalar: UInt32, in textView: UITextView) -> Int {
         let conversionTable = textViewConversionTable(for: textView)
         let utf16ToScalar = conversionTable.adjustedUtf16ToScalar
-        return scalarToUtf16Offset(scalar, inAdjustedUtf16ToScalarTable: utf16ToScalar)
+        return scalarToUtf16Offset(
+            rootTablePositionMap(in: textView)?.localBoundary(global: scalar) ?? scalar,
+            inAdjustedUtf16ToScalarTable: utf16ToScalar
+        )
+    }
+
+    static func isScalarPositionRepresentable(_ scalar: UInt32, in textView: UITextView) -> Bool {
+        rootTablePositionMap(in: textView)?.isPositionRepresentable(scalar) ?? true
+    }
+
+    static func hasRootTableScalarExtents(in textView: UITextView) -> Bool {
+        rootTablePositionMap(in: textView)?.hasTables == true
+    }
+
+    static func isScalarRangeRepresentable(from: UInt32, to: UInt32, in textView: UITextView) -> Bool {
+        guard from <= to else { return false }
+        return rootTablePositionMap(in: textView)?.isRangeRepresentable(from: from, to: to) ?? true
+    }
+
+    static func isRootTextInputRangeSafe(from: UInt32, to: UInt32, in textView: UITextView) -> Bool {
+        guard from <= to else { return false }
+        return rootTablePositionMap(in: textView)?.isInputRangeSafe(from: from, to: to) ?? true
     }
 
     static func scalarToUtf16Offset(_ scalar: UInt32, in attributedString: NSAttributedString) -> Int {
@@ -135,30 +137,12 @@ final class PositionBridge {
         return low
     }
 
-    /// Convert a UTF-16 offset to a Unicode scalar offset within a string.
-    ///
-    /// This is the core conversion used by `textViewToScalar`. Exposed as a
-    /// static method for direct use and testing.
-    ///
-    /// - Parameters:
-    ///   - utf16Offset: The UTF-16 code unit offset.
-    ///   - text: The string to walk.
-    /// - Returns: The number of Unicode scalars from the start to the given UTF-16 offset.
     static func utf16OffsetToScalar(_ utf16Offset: Int, in text: String) -> UInt32 {
         let conversionTable = stringConversionTable(for: text)
         let clampedOffset = min(max(utf16Offset, 0), conversionTable.utf16ToScalar.count - 1)
         return conversionTable.utf16ToScalar[clampedOffset]
     }
 
-    /// Convert a Unicode scalar offset to a UTF-16 offset within a string.
-    ///
-    /// This is the core conversion used by `scalarToTextView`. Exposed as a
-    /// static method for direct use and testing.
-    ///
-    /// - Parameters:
-    ///   - scalar: The Unicode scalar offset.
-    ///   - text: The string to walk.
-    /// - Returns: The number of UTF-16 code units from the start to the given scalar offset.
     static func scalarToUtf16Offset(_ scalar: UInt32, in text: String) -> Int {
         let conversionTable = stringConversionTable(for: text)
         guard scalar > 0 else { return 0 }
@@ -168,18 +152,6 @@ final class PositionBridge {
 
     // MARK: - Grapheme Boundary Snapping
 
-    /// Snap a UTF-16 offset to the nearest grapheme cluster boundary.
-    ///
-    /// UITextView may report offsets in the middle of a grapheme cluster (e.g.
-    /// between the scalars of a flag emoji or a composed character sequence).
-    /// This method snaps the offset forward to the end of the current grapheme
-    /// cluster, since that is the position the user would perceive.
-    ///
-    /// - Parameters:
-    ///   - utf16Offset: A UTF-16 code unit offset that may be mid-grapheme.
-    ///   - text: The string to inspect.
-    /// - Returns: The nearest grapheme-aligned UTF-16 offset. If the input is
-    ///   already on a boundary, it is returned unchanged.
     static func snapToGraphemeBoundary(_ utf16Offset: Int, in text: String) -> Int {
         guard !text.isEmpty else { return 0 }
 
@@ -204,12 +176,6 @@ final class PositionBridge {
 
     // MARK: - UITextRange <-> Scalar Range
 
-    /// Convert a UITextRange to a (from, to) pair of Rust scalar offsets.
-    ///
-    /// - Parameters:
-    ///   - range: A `UITextRange` from the text view.
-    ///   - textView: The text view containing the text.
-    /// - Returns: A tuple of (from, to) scalar offsets where from <= to.
     static func textRangeToScalarRange(
         _ range: UITextRange,
         in textView: UITextView
@@ -219,13 +185,6 @@ final class PositionBridge {
         return (from: min(from, to), to: max(from, to))
     }
 
-    /// Convert a pair of Rust scalar offsets to a UITextRange.
-    ///
-    /// - Parameters:
-    ///   - from: The start scalar offset.
-    ///   - to: The end scalar offset.
-    ///   - textView: The text view.
-    /// - Returns: The corresponding `UITextRange`, or nil if the positions are invalid.
     static func scalarRangeToTextRange(
         from: UInt32,
         to: UInt32,
@@ -238,12 +197,6 @@ final class PositionBridge {
 
     // MARK: - Cursor Scalar Offset (Convenience)
 
-    /// Get the current cursor position as a Rust scalar offset.
-    ///
-    /// If there is a range selection, returns the head (moving end) position.
-    ///
-    /// - Parameter textView: The text view.
-    /// - Returns: The scalar offset of the cursor, or 0 if no selection exists.
     static func cursorScalarOffset(in textView: UITextView) -> UInt32 {
         if let editorTextView = textView as? EditorTextView,
            let selection = editorTextView.currentLogicalScalarSelection() {
@@ -278,6 +231,7 @@ final class PositionBridge {
         guard let cached = objc_getAssociatedObject(textView, &textViewConversionTableKey) as? TextViewConversionTable else {
             return false
         }
+        guard !hasRootTableScalarExtents(in: textView) else { return false }
 
         let oldAdjusted = cached.adjustedUtf16ToScalar
         let oldUtf16Count = max(0, oldAdjusted.count - 1)
@@ -316,6 +270,7 @@ final class PositionBridge {
         guard let cached = objc_getAssociatedObject(textView, &textViewConversionTableKey) as? TextViewConversionTable else {
             return false
         }
+        guard !hasRootTableScalarExtents(in: textView) else { return false }
 
         let oldAdjusted = cached.adjustedUtf16ToScalar
         let oldUtf16Count = max(0, oldAdjusted.count - 1)
@@ -428,7 +383,9 @@ final class PositionBridge {
             placeholders: adjustments.placeholders,
             listMarkers: adjustments.listMarkers
         )
-        let conversionTable = TextViewConversionTable(adjustedUtf16ToScalar: adjustedUtf16ToScalar)
+        let conversionTable = TextViewConversionTable(
+            adjustedUtf16ToScalar: adjustedUtf16ToScalar
+        )
         objc_setAssociatedObject(
             textView,
             &textViewConversionTableKey,
@@ -444,7 +401,7 @@ final class PositionBridge {
         listMarkers: [VirtualListMarker] = [],
     ) -> [UInt32] {
         let utf16Count = max(0, baseUtf16ToScalar.count - 1)
-        var deltas = Array(repeating: Int32(0), count: utf16Count + 2)
+        var deltas = Array(repeating: Int64(0), count: utf16Count + 2)
 
         for placeholderOffset in placeholders {
             let startOffset = min(max(placeholderOffset + 1, 0), utf16Count + 1)
@@ -455,15 +412,15 @@ final class PositionBridge {
 
         for marker in listMarkers {
             let startOffset = min(max(marker.paragraphStartUtf16, 0), utf16Count)
-            deltas[startOffset] += Int32(marker.scalarLength)
+            deltas[startOffset] += Int64(marker.scalarLength)
         }
 
         var adjustedUtf16ToScalar = Array(repeating: UInt32(0), count: utf16Count + 1)
-        var runningDelta: Int32 = 0
+        var runningDelta: Int64 = 0
         for offset in 0...utf16Count {
             runningDelta += deltas[offset]
-            let adjustedValue = Int32(baseUtf16ToScalar[offset]) + runningDelta
-            adjustedUtf16ToScalar[offset] = UInt32(max(0, adjustedValue))
+            let adjustedValue = Int64(baseUtf16ToScalar[offset]) + runningDelta
+            adjustedUtf16ToScalar[offset] = UInt32(max(0, min(adjustedValue, Int64(UInt32.max))))
         }
         return adjustedUtf16ToScalar
     }
@@ -507,7 +464,7 @@ final class PositionBridge {
             let paragraphStart = nsString.paragraphRange(
                 for: NSRange(location: range.location, length: 0)
             ).location
-            guard !isParagraphStartCreatedByHardBreak(
+            guard !RenderBridge.isListContinuationParagraph(
                 paragraphStart,
                 in: attributedString
             ) else {
@@ -544,18 +501,6 @@ final class PositionBridge {
         syntheticPlaceholderOffsets(in: textStorage as NSAttributedString)
     }
 
-    private static func isParagraphStartCreatedByHardBreak(
-        _ paragraphStart: Int,
-        in attributedString: NSAttributedString
-    ) -> Bool {
-        guard paragraphStart > 0, paragraphStart <= attributedString.length else { return false }
-        let previousVoidType = attributedString.attribute(
-            RenderBridgeAttributes.voidNodeType,
-            at: paragraphStart - 1,
-            effectiveRange: nil
-        ) as? String
-        return EditorNodeTypes.isHardBreak(previousVoidType)
-    }
 }
 
 // MARK: - v2 position envelopes
@@ -588,8 +533,6 @@ enum EditorV2PositionBridge {
         ]
     }
 
-    /// Unicode-scalar length of one committed string (the position currency
-    /// used by every v2 envelope — NOT grapheme clusters, NOT UTF-16 units).
     static func scalarLength(of text: String) -> UInt32 {
         UInt32(text.unicodeScalars.count)
     }

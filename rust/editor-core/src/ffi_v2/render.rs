@@ -1,45 +1,9 @@
-//! v2 render/selection/position accessor.
-//!
-//! The v2 boundary returns structured mutation outcomes (revisions, history)
-//! but no render payload, resolved selection, or position mapping, so the
-//! staging adapters derived those through a STATELESS legacy render probe
-//! (create a throwaway legacy editor, feed it the authoritative v2 document
-//! JSON, probe, destroy — on every derivation). This module is the probe's
-//! replacement: every value the probe provided is derived here directly from
-//! the live v2 session, reusing the exact legacy derivation and serialization
-//! code paths so the wire output is probe-identical:
-//!
-//! - `editor_v2_render_update` / `editor_v2_render_native` — one atomic
-//!   current-state snapshot containing authoritative render blocks or, for a
-//!   retained native owner, an owner-relative block patch,
-//!   explicitly mirrored `selection`, toolbar `activeState`, history,
-//!   document/state revisions, and the checked scalar extent.
-//! - `editor_v2_resolve_scalar_selection` — the engine-authoritative
-//!   scalar->doc selection resolution the delegate callbacks consume.
-//! - `editor_v2_doc_to_scalar` / `editor_v2_scalar_to_doc` — the lenient
-//!   position mapping helpers (clamping at the document extent, exactly the
-//!   legacy `PositionMap` semantics the probe exposed).
-//!
-//! Without a mirror the snapshot uses the engine's authoritative selection
-//! and stored marks. A mirror maps through the lenient scalar->doc mapping
-//! plus cursor normalization and replaces selection only for that snapshot.
-//!
-//! The wire shape is JSON inside the frozen `FfiJsonResult` envelope (never a
-//! new exception channel): the native views already consume the legacy update
-//! JSON shape, so the accessor emits that shape verbatim and the frozen
-//! envelope invariants are untouched.
-//!
-//! The accessor needs the session schema (render blocks and active state are
-//! schema-derived) but the engine keeps it private; the create path therefore
-//! registers the already-resolved schema per session id here, and destroy
-//! unregisters it.
-
 #![allow(
     clippy::result_large_err,
     reason = "SessionError is the established unboxed session error envelope"
 )]
 
-use std::collections::HashMap;
+#[cfg(test)]
 use std::sync::{LazyLock, Mutex};
 
 use serde::Serialize;
@@ -55,14 +19,9 @@ use crate::yrs_engine::ResolvedSelection;
 use crate::yrs_engine::YrsEngineError;
 
 use super::editor::{json_result, with_editor};
-use super::types::{decimal_u64, parse_canonical_u64, FfiJsonResult};
-
-/// Schemas resolved at `editor_v2_create` time, keyed by session id. The
-/// engine owns its schema privately; this registry is the render accessor's
-/// schema source for sessions created through the v2 boundary (the only v2
-/// creation path). Entries are removed on `editor_v2_destroy`.
-static SESSION_SCHEMAS: LazyLock<Mutex<HashMap<u64, Schema>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+#[cfg(test)]
+use super::types::parse_canonical_u64;
+use super::types::{decimal_u64, FfiJsonResult};
 
 #[cfg(test)]
 struct RenderSnapshotTestHook {
@@ -174,20 +133,6 @@ pub(crate) fn resolve_create_schema(schema: &Option<Value>) -> Result<Schema, Se
     }
 }
 
-pub(crate) fn register_session_schema(id: u64, schema: Schema) {
-    SESSION_SCHEMAS
-        .lock()
-        .expect("session schema registry poisoned")
-        .insert(id, schema);
-}
-
-pub(crate) fn unregister_session_schema(id: u64) {
-    SESSION_SCHEMAS
-        .lock()
-        .expect("session schema registry poisoned")
-        .remove(&id);
-}
-
 fn engine_not_ready() -> SessionError {
     SessionError::from(YrsEngineError::new(
         "ENGINE_NOT_READY",
@@ -226,6 +171,7 @@ fn selection_json(document: &Document, position_map: &PositionMap, selection: &S
             position_map.doc_to_scalar(*head, document),
         ),
         Selection::Node { pos } => Selection::node(position_map.doc_to_scalar(*pos, document)),
+        Selection::Cell { anchor, head } => Selection::cell(*anchor, *head),
         Selection::All => Selection::All,
     };
     selection_to_json(selection, Some(&scalar))
@@ -235,6 +181,7 @@ fn resolved_selection_to_legacy(selection: &ResolvedSelection) -> Selection {
     match selection {
         ResolvedSelection::Text { anchor, head } => Selection::text(anchor.document, head.document),
         ResolvedSelection::Node { at } => Selection::node(at.document),
+        ResolvedSelection::Cell { anchor, head } => Selection::cell(anchor.document, head.document),
         ResolvedSelection::All => Selection::all(),
     }
 }
@@ -253,21 +200,13 @@ fn resolved_selection_json(selection: &ResolvedSelection) -> Value {
             "pos": at.document,
             "posScalar": at.scalar,
         }),
+        ResolvedSelection::Cell { anchor, head } => serde_json::json!({
+            "type": "cell",
+            "anchorCell": anchor.document,
+            "headCell": head.document,
+        }),
         ResolvedSelection::All => serde_json::json!({ "type": "all" }),
     }
-}
-
-fn registered_schema(editor_id: &str) -> Result<Schema, SessionError> {
-    let id = parse_canonical_u64(editor_id)
-        .ok_or_else(|| config_invalid(format!("malformed editor handle: {editor_id:?}")))?;
-    SESSION_SCHEMAS
-        .lock()
-        .expect("session schema registry poisoned")
-        .get(&id)
-        .cloned()
-        .ok_or_else(|| {
-            config_invalid("render accessor has no schema registration for this session")
-        })
 }
 
 #[uniffi::export]
@@ -277,66 +216,40 @@ pub fn editor_v2_render_update(
     mirror_scalar_head: Option<u32>,
 ) -> FfiJsonResult {
     json_result(with_editor(&editor_id, |session| {
-        render_snapshot_json(
+        root_snapshot_json(
             session,
             &editor_id,
-            mirror_scalar_anchor,
-            mirror_scalar_head,
             None,
+            render_mirror(mirror_scalar_anchor, mirror_scalar_head)?,
         )
     }))
 }
 
-#[uniffi::export]
-pub fn editor_v2_render_native(
-    editor_id: String,
-    owner_id: String,
-    mirror_scalar_anchor: Option<u32>,
-    mirror_scalar_head: Option<u32>,
-) -> FfiJsonResult {
-    let owner_id = match parse_canonical_u64(&owner_id) {
-        Some(owner_id) => owner_id,
-        None => {
-            return FfiJsonResult::err(super::types::FfiError::from(config_invalid(
-                "native render ownerId must be a canonical decimal u64 string",
-            )))
-        }
-    };
-    json_result(with_editor(&editor_id, |session| {
-        render_snapshot_json(
-            session,
-            &editor_id,
-            mirror_scalar_anchor,
-            mirror_scalar_head,
-            Some(owner_id),
-        )
-    }))
+fn render_mirror(
+    anchor: Option<u32>,
+    head: Option<u32>,
+) -> Result<Option<(u32, u32)>, SessionError> {
+    match (anchor, head) {
+        (None, None) => Ok(None),
+        (Some(anchor), Some(head)) => Ok(Some((anchor, head))),
+        _ => Err(config_invalid(
+            "render mirror requires both scalar anchor and head",
+        )),
+    }
 }
 
-fn render_snapshot_json(
+pub(crate) fn root_snapshot_json(
     session: &mut EditorSession,
     editor_id: &str,
-    mirror_scalar_anchor: Option<u32>,
-    mirror_scalar_head: Option<u32>,
     owner_id: Option<u64>,
+    mirror: Option<(u32, u32)>,
 ) -> Result<String, SessionError> {
     let previous_native_render =
         owner_id.and_then(|owner_id| session.native_render_cursor(owner_id));
-    let mirror = match (mirror_scalar_anchor, mirror_scalar_head) {
-        (None, None) => None,
-        (Some(anchor), Some(head)) => Some((anchor, head)),
-        _ => {
-            return Err(config_invalid(
-                "render mirror requires both scalar anchor and head",
-            ))
-        }
-    };
     let engine = &session.engine;
     let document = engine.document().ok_or_else(engine_not_ready)?;
     let position_map = engine.position_map().ok_or_else(engine_not_ready)?;
-    let schema = registered_schema(&editor_id)?;
-    let current_render_blocks = engine.cached_render_blocks().ok_or_else(engine_not_ready)?;
-    let atom_ids = engine.block_atom_ids().ok_or_else(engine_not_ready)?;
+    let schema = engine.schema();
     pause_render_snapshot_for_test(&editor_id);
 
     let (selection, selection_value, stored_marks) = match mirror {
@@ -354,67 +267,62 @@ fn render_snapshot_json(
             )
         }
     };
-    let commands = crate::editor_state::command_applicability(
-        document,
-        &schema,
-        &selection,
-        engine.resource_limits(),
-    );
-    let active_state = crate::editor_state::active_state(
-        document,
-        &schema,
-        &selection,
-        stored_marks,
-        commands,
-        engine.resource_limits(),
-    );
+    let active_state = if mirror.is_none()
+        || (engine.stored_marks().is_none()
+            && engine
+                .resolved_selection()
+                .is_some_and(|resolved| resolved_selection_to_legacy(resolved) == selection))
+    {
+        engine.active_state().ok_or_else(engine_not_ready)?
+    } else {
+        let commands = crate::editor_state::command_applicability(
+            document,
+            schema,
+            &selection,
+            engine.resource_limits(),
+        );
+        crate::editor_state::active_state(
+            document,
+            schema,
+            &selection,
+            stored_marks,
+            commands,
+            engine.resource_limits(),
+        )
+    };
     let scalar_length = position_map.doc_to_scalar(u32::MAX, document);
-    let document_is_empty = crate::editor_state::document_is_empty(document, &schema);
+    let document_is_empty = crate::editor_state::document_is_empty(document, schema);
 
     let document_version = engine.revision();
-    let (render_blocks, render_patch) = match previous_native_render {
-        Some(previous) if previous.document_revision == document_version => (
-            Value::Null,
-            serialize_render_patch(
-                &crate::render::incremental::RenderBlocksPatch {
-                    start_index: 0,
-                    delete_count: 0,
-                    blocks: Vec::new(),
-                },
-                &atom_ids,
-                previous.document_revision,
-            ),
-        ),
-        Some(previous) if previous.document_revision < document_version => {
-            match previous
-                .render_blocks
-                .classify_cached_transition_to(&current_render_blocks)
-            {
-                crate::render::incremental::CachedRenderTransitionUpdate::Patch(patch) => (
+    let (render_blocks, render_patch) = {
+        let current = if let Some(previous) = previous_native_render.as_ref().filter(|previous| {
+            previous.document_revision == document_version
+                && previous.schema_fingerprint == engine.schema_fingerprint()
+        }) {
+            previous.root_projection.clone()
+        } else {
+            root_projection(engine)?
+        };
+        match previous_native_render
+            .as_ref()
+            .filter(|previous| previous.schema_fingerprint == engine.schema_fingerprint())
+        {
+            Some(previous) => {
+                let old = &previous.root_projection;
+                let prefix = old.iter().zip(&current).take_while(|(a, b)| a == b).count();
+                let suffix = old[prefix..]
+                    .iter()
+                    .rev()
+                    .zip(current[prefix..].iter().rev())
+                    .take_while(|(a, b)| a == b)
+                    .count();
+                (
                     Value::Null,
-                    serialize_render_patch(&patch, &atom_ids, previous.document_revision),
-                ),
-                crate::render::incremental::CachedRenderTransitionUpdate::None => (
-                    Value::Null,
-                    serialize_render_patch(
-                        &crate::render::incremental::RenderBlocksPatch {
-                            start_index: 0,
-                            delete_count: 0,
-                            blocks: Vec::new(),
-                        },
-                        &atom_ids,
-                        previous.document_revision,
-                    ),
-                ),
-                crate::render::incremental::CachedRenderTransitionUpdate::Full(blocks) => {
-                    (serialize_render_blocks(&blocks, &atom_ids), Value::Null)
-                }
+                    serde_json::json!({"baseDocumentVersion": previous.document_revision.to_string(), "startIndex": prefix, "deleteCount": old.len() - prefix - suffix, "renderBlocks": &current[prefix..current.len()-suffix]}),
+                )
             }
+            None => (Value::Array(current), Value::Null),
         }
-        _ => (
-            serialize_render_blocks(&current_render_blocks.materialize(), &atom_ids),
-            Value::Null,
-        ),
     };
     let mut snapshot = AtomicRenderSnapshot {
         render_blocks,
@@ -444,7 +352,8 @@ fn render_snapshot_json(
                 .to_string(),
         );
     }
-    Ok(serde_json::to_string(&snapshot).expect("atomic render snapshot serializes"))
+    let json = serde_json::to_string(&snapshot).expect("atomic render snapshot serializes");
+    Ok(json)
 }
 
 #[uniffi::export]
@@ -485,179 +394,255 @@ pub fn editor_v2_scalar_to_doc(editor_id: String, scalar: u32) -> FfiJsonResult 
     }))
 }
 
-fn serialize_render_elements(
-    elements: &[crate::render::RenderElement],
-    atom_ids: &HashMap<u32, String>,
-) -> serde_json::Value {
-    let items: Vec<serde_json::Value> = elements
-        .iter()
-        .map(|el| match el {
-            crate::render::RenderElement::TextRun { text, marks } => {
-                serde_json::json!({
-                    "type": "textRun",
-                    "text": text,
-                    "marks": marks.iter().map(serialize_render_mark).collect::<Vec<_>>(),
+pub(crate) fn table_keys(
+    engine: &crate::yrs_engine::YrsDocumentEngine,
+) -> Result<std::collections::BTreeMap<u32, String>, SessionError> {
+    let document = engine.document().ok_or_else(engine_not_ready)?;
+    let source_ids = RenderSourceIds {
+        document,
+        index: engine.block_branch_index().ok_or_else(engine_not_ready)?,
+    };
+    let cache = engine.cached_render_blocks().ok_or_else(engine_not_ready)?;
+    let mut tables = Vec::new();
+    cache.visit_table_records(&mut tables);
+    tables
+        .into_iter()
+        .map(|(position, _)| {
+            source_ids
+                .table_key(position)
+                .map(|key| (position, key.to_owned()))
+                .ok_or_else(|| {
+                    SessionError::from(YrsEngineError::new(
+                        "ENGINE_INVARIANT_FAILED",
+                        "table source identity is missing",
+                    ))
                 })
-            }
-            crate::render::RenderElement::VoidInline {
-                node_type,
-                doc_pos,
-                attrs,
-            } => {
-                let mut obj = serde_json::json!({
-                    "type": "voidInline",
-                    "nodeType": node_type,
-                    "docPos": doc_pos,
-                });
-                if !attrs.is_empty() {
-                    obj["attrs"] = serde_json::Value::Object(
-                        attrs
-                            .iter()
-                            .map(|(key, value)| {
-                                (
-                                    key.clone(),
-                                    crate::boundary::clone_json_value_stack_safe(value),
-                                )
-                            })
-                            .collect(),
-                    );
-                }
-                obj
-            }
-            crate::render::RenderElement::VoidBlock {
-                node_type,
-                doc_pos,
-                attrs,
-            } => {
-                let mut obj = serde_json::json!({
-                    "type": "voidBlock",
-                    "nodeType": node_type,
-                    "docPos": doc_pos,
-                });
-                if !attrs.is_empty() {
-                    obj["attrs"] = serde_json::Value::Object(
-                        attrs
-                            .iter()
-                            .map(|(key, value)| {
-                                (
-                                    key.clone(),
-                                    crate::boundary::clone_json_value_stack_safe(value),
-                                )
-                            })
-                            .collect(),
-                    );
-                }
-                if let Some(atom_id) = atom_ids.get(doc_pos) {
-                    obj["atomId"] = Value::String(atom_id.clone());
-                }
-                obj
-            }
-            crate::render::RenderElement::OpaqueInlineAtom {
-                node_type,
-                label,
-                doc_pos,
-                attrs,
-                mention_theme,
-            } => {
-                let mut obj = serde_json::json!({
-                    "type": "opaqueInlineAtom",
-                    "nodeType": node_type,
-                    "label": label,
-                    "docPos": doc_pos,
-                });
-                if !attrs.is_empty() {
-                    obj["attrs"] = serde_json::Value::Object(
-                        attrs
-                            .iter()
-                            .map(|(key, value)| {
-                                (
-                                    key.clone(),
-                                    crate::boundary::clone_json_value_stack_safe(value),
-                                )
-                            })
-                            .collect(),
-                    );
-                }
-                if let Some(mention_theme) = mention_theme {
-                    obj["mentionTheme"] = serde_json::Value::Object(
-                        mention_theme
-                            .iter()
-                            .map(|(key, value)| {
-                                (
-                                    key.clone(),
-                                    crate::boundary::clone_json_value_stack_safe(value),
-                                )
-                            })
-                            .collect(),
-                    );
-                }
-                obj
-            }
-            crate::render::RenderElement::OpaqueBlockAtom {
-                node_type,
-                label,
-                doc_pos,
-                attrs,
-            } => {
-                let mut obj = serde_json::json!({
-                    "type": "opaqueBlockAtom",
-                    "nodeType": node_type,
-                    "label": label,
-                    "docPos": doc_pos,
-                });
-                if !attrs.is_empty() {
-                    obj["attrs"] = serde_json::Value::Object(
-                        attrs
-                            .iter()
-                            .map(|(key, value)| {
-                                (
-                                    key.clone(),
-                                    crate::boundary::clone_json_value_stack_safe(value),
-                                )
-                            })
-                            .collect(),
-                    );
-                }
-                obj
-            }
-            crate::render::RenderElement::BlockStart {
-                node_type,
-                language,
-                depth,
-                list_context,
-            } => {
-                let mut obj = serde_json::json!({
-                    "type": "blockStart",
-                    "nodeType": node_type,
-                    "depth": depth,
-                });
-                if let Some(language) = language {
-                    obj["language"] = serde_json::Value::String(language.clone());
-                }
-                if let Some(ctx) = list_context {
-                    obj["listContext"] = serde_json::json!({
-                        "ordered": ctx.ordered,
-                        "index": ctx.index,
-                        "total": ctx.total,
-                        "start": ctx.start,
-                        "isFirst": ctx.is_first,
-                        "isLast": ctx.is_last,
-                    });
-                    if let Some(kind) = &ctx.kind {
-                        obj["listContext"]["kind"] = serde_json::Value::String(kind.clone());
-                    }
-                    if let Some(checked) = ctx.checked {
-                        obj["listContext"]["checked"] = serde_json::Value::Bool(checked);
-                    }
-                }
-                obj
-            }
-            crate::render::RenderElement::BlockEnd => {
-                serde_json::json!({"type": "blockEnd"})
-            }
         })
-        .collect();
-    serde_json::Value::Array(items)
+        .collect()
+}
+
+pub(crate) fn root_projection(
+    engine: &crate::yrs_engine::YrsDocumentEngine,
+) -> Result<Vec<Value>, SessionError> {
+    let document = engine.document().ok_or_else(engine_not_ready)?;
+    let source_ids = RenderSourceIds {
+        document,
+        index: engine.block_branch_index().ok_or_else(engine_not_ready)?,
+    };
+    let cache = engine.cached_render_blocks().ok_or_else(engine_not_ready)?;
+    cache
+        .root_blocks()
+        .map(|block| {
+            block
+                .iter()
+                .map(|element| serialize_render_element(element, &source_ids))
+                .collect::<Result<Vec<_>, _>>()
+                .map(Value::Array)
+        })
+        .collect()
+}
+
+struct RenderSourceIds<'a> {
+    index: &'a crate::yrs_engine::BlockBranchIndex,
+    document: &'a crate::model::Document,
+}
+
+impl RenderSourceIds<'_> {
+    fn table_key(&self, position: u32) -> Option<&str> {
+        self.index
+            .table_key(&crate::tables::commands::node_path_starting_at(
+                self.document,
+                position,
+            )?)
+    }
+
+    fn atom_id(&self, position: u32) -> Option<&str> {
+        self.index
+            .atom_id(&crate::tables::commands::node_path_starting_at(
+                self.document,
+                position,
+            )?)
+    }
+}
+
+fn serialize_render_element(
+    element: &crate::render::RenderElement,
+    source_ids: &RenderSourceIds<'_>,
+) -> Result<Value, SessionError> {
+    Ok(match element {
+        crate::render::RenderElement::Table { doc_offset, .. } => source_ids
+            .table_key(*doc_offset)
+            .map(|key| serde_json::json!({"type":"table", "tableId":key}))
+            .ok_or_else(|| {
+                SessionError::from(YrsEngineError::new(
+                    "ENGINE_INVARIANT_FAILED",
+                    "table source identity is missing",
+                ))
+            })?,
+        crate::render::RenderElement::TextRun { text, marks } => {
+            serde_json::json!({
+                "type": "textRun",
+                "text": text,
+                "marks": marks.iter().map(serialize_render_mark).collect::<Vec<_>>(),
+            })
+        }
+        crate::render::RenderElement::VoidInline {
+            node_type,
+            doc_pos,
+            attrs,
+        } => {
+            let mut obj = serde_json::json!({
+                "type": "voidInline",
+                "nodeType": node_type,
+                "docPos": *doc_pos,
+            });
+            if !attrs.is_empty() {
+                obj["attrs"] = serde_json::Value::Object(
+                    attrs
+                        .iter()
+                        .map(|(key, value)| {
+                            (
+                                key.clone(),
+                                crate::boundary::clone_json_value_stack_safe(value),
+                            )
+                        })
+                        .collect(),
+                );
+            }
+            obj
+        }
+        crate::render::RenderElement::VoidBlock {
+            node_type,
+            doc_pos,
+            attrs,
+        } => {
+            let mut obj = serde_json::json!({
+                "type": "voidBlock",
+                "nodeType": node_type,
+                "docPos": *doc_pos,
+            });
+            if !attrs.is_empty() {
+                obj["attrs"] = serde_json::Value::Object(
+                    attrs
+                        .iter()
+                        .map(|(key, value)| {
+                            (
+                                key.clone(),
+                                crate::boundary::clone_json_value_stack_safe(value),
+                            )
+                        })
+                        .collect(),
+                );
+            }
+            if let Some(atom_id) = source_ids.atom_id(*doc_pos) {
+                obj["atomId"] = Value::String(atom_id.to_owned());
+            }
+            obj
+        }
+        crate::render::RenderElement::OpaqueInlineAtom {
+            node_type,
+            label,
+            doc_pos,
+            attrs,
+            mention_theme,
+        } => {
+            let mut obj = serde_json::json!({
+                "type": "opaqueInlineAtom",
+                "nodeType": node_type,
+                "label": label,
+                "docPos": *doc_pos,
+            });
+            if !attrs.is_empty() {
+                obj["attrs"] = serde_json::Value::Object(
+                    attrs
+                        .iter()
+                        .map(|(key, value)| {
+                            (
+                                key.clone(),
+                                crate::boundary::clone_json_value_stack_safe(value),
+                            )
+                        })
+                        .collect(),
+                );
+            }
+            if let Some(mention_theme) = mention_theme {
+                obj["mentionTheme"] = serde_json::Value::Object(
+                    mention_theme
+                        .iter()
+                        .map(|(key, value)| {
+                            (
+                                key.clone(),
+                                crate::boundary::clone_json_value_stack_safe(value),
+                            )
+                        })
+                        .collect(),
+                );
+            }
+            obj
+        }
+        crate::render::RenderElement::OpaqueBlockAtom {
+            node_type,
+            label,
+            doc_pos,
+            attrs,
+        } => {
+            let mut obj = serde_json::json!({
+                "type": "opaqueBlockAtom",
+                "nodeType": node_type,
+                "label": label,
+                "docPos": *doc_pos,
+            });
+            if !attrs.is_empty() {
+                obj["attrs"] = serde_json::Value::Object(
+                    attrs
+                        .iter()
+                        .map(|(key, value)| {
+                            (
+                                key.clone(),
+                                crate::boundary::clone_json_value_stack_safe(value),
+                            )
+                        })
+                        .collect(),
+                );
+            }
+            obj
+        }
+        crate::render::RenderElement::BlockStart {
+            node_type,
+            language,
+            depth,
+            list_context,
+        } => {
+            let mut obj = serde_json::json!({
+                "type": "blockStart",
+                "nodeType": node_type,
+                "depth": depth,
+            });
+            if let Some(language) = language {
+                obj["language"] = serde_json::Value::String(language.clone());
+            }
+            if let Some(ctx) = list_context {
+                obj["listContext"] = serde_json::json!({
+                    "ordered": ctx.ordered,
+                    "index": ctx.index,
+                    "total": ctx.total,
+                    "start": ctx.start,
+                    "isFirst": ctx.is_first,
+                    "isLast": ctx.is_last,
+                });
+                if let Some(kind) = &ctx.kind {
+                    obj["listContext"]["kind"] = serde_json::Value::String(kind.clone());
+                }
+                if let Some(checked) = ctx.checked {
+                    obj["listContext"]["checked"] = serde_json::Value::Bool(checked);
+                }
+            }
+            obj
+        }
+        crate::render::RenderElement::BlockEnd => {
+            serde_json::json!({"type": "blockEnd"})
+        }
+    })
 }
 
 fn serialize_render_mark(mark: &crate::render::RenderMark) -> serde_json::Value {
@@ -674,31 +659,6 @@ fn serialize_render_mark(mark: &crate::render::RenderMark) -> serde_json::Value 
         }
         serde_json::Value::Object(obj)
     }
-}
-
-fn serialize_render_blocks(
-    blocks: &[Vec<crate::render::RenderElement>],
-    atom_ids: &HashMap<u32, String>,
-) -> serde_json::Value {
-    serde_json::Value::Array(
-        blocks
-            .iter()
-            .map(|block| serialize_render_elements(block, atom_ids))
-            .collect(),
-    )
-}
-
-fn serialize_render_patch(
-    patch: &crate::render::incremental::RenderBlocksPatch,
-    atom_ids: &HashMap<u32, String>,
-    base_document_version: u64,
-) -> Value {
-    serde_json::json!({
-        "baseDocumentVersion": decimal_u64(base_document_version),
-        "startIndex": patch.start_index,
-        "deleteCount": patch.delete_count,
-        "renderBlocks": serialize_render_blocks(&patch.blocks, atom_ids),
-    })
 }
 
 fn selection_to_json(
@@ -733,6 +693,11 @@ fn selection_to_json(
         (crate::selection::Selection::Node { pos }, _) => {
             serde_json::json!({"type": "node", "pos": pos})
         }
+        (crate::selection::Selection::Cell { anchor, head }, _) => serde_json::json!({
+            "type": "cell",
+            "anchorCell": anchor,
+            "headCell": head,
+        }),
         (crate::selection::Selection::All, _) => serde_json::json!({"type": "all"}),
     }
 }

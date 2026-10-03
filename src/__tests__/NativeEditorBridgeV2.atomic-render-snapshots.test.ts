@@ -27,6 +27,69 @@ describe('NativeEditorBridge v2', () => {
             expect(Object.isFrozen(snapshot.activeState.marks)).toBe(true);
         });
 
+        it('accepts table references without a pool from native frames', () => {
+            const handle = createHandle();
+            const reference = { type: 'table', tableId: 'y17-42' };
+            const full = {
+                ...MOCK_ATOMIC_RENDER_SNAPSHOT,
+                renderBlocks: [[reference]],
+            };
+            mockNativeModule.editorV2RenderUpdate.mockReturnValueOnce(
+                okRecord(JSON.stringify(full)),
+            );
+            expect(handle.bridge.renderUpdate()).toEqual(full);
+            const patch = {
+                ...MOCK_ATOMIC_RENDER_SNAPSHOT,
+                renderBlocks: null,
+                renderPatch: {
+                    baseDocumentVersion: '1',
+                    startIndex: 0,
+                    deleteCount: 1,
+                    renderBlocks: [[reference]],
+                },
+            };
+            mockNativeModule.editorV2RenderUpdate.mockReturnValueOnce(
+                okRecord(JSON.stringify(patch)),
+            );
+            expect(handle.bridge.renderUpdate()).toEqual(patch);
+        });
+
+        it('a JS render snapshot carries no table payload', () => {
+            const handle = createHandle();
+            const snapshot = handle.bridge.renderUpdate();
+            for (const key of [
+                'tableAttributes',
+                'tableRecords',
+                'tableInputMappings',
+            ]) {
+                expect(snapshot).not.toHaveProperty(key);
+                mockNativeModule.editorV2RenderUpdate.mockReturnValueOnce(
+                    okRecord(
+                        JSON.stringify({
+                            ...MOCK_ATOMIC_RENDER_SNAPSHOT,
+                            [key]: {},
+                        }),
+                    ),
+                );
+                expect(() => handle.bridge.renderUpdate()).toThrow();
+            }
+        });
+
+        it('requires a table identity in typed render elements', () => {
+            const diagnostics = compileTypeScriptContractFixture(`
+                import type { RenderElement } from '../NativeEditorTypes';
+                const table: RenderElement = { type: 'table' };
+            `);
+            expect(diagnostics).toContain('tableId');
+            expect(
+                compileTypeScriptContractFixture(`
+                import type { RenderElement } from '../NativeEditorTypes';
+                const table: RenderElement = { type: 'table', tableId: 'y17-42' };
+                const prose: RenderElement = { type: 'textRun', text: 'text', marks: [] };
+            `),
+            ).toBe('');
+        });
+
         it('passes an exact optional mirror while retaining the atomic result shape', () => {
             const handle = createHandle();
             handle.bridge.renderUpdate({ anchor: 2, head: 5 });

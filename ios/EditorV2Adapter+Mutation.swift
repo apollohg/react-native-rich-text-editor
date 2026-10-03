@@ -1,6 +1,8 @@
 import Foundation
 
 extension EditorV2Adapter {
+    static let stalePositionEpochCodes: Set<String> = ["POSITION_EPOCH_INVALID", "POSITION_EPOCH_CELL_REMOVED"]
+
     enum MutationKind {
         case transaction(changed: Bool, revision: UInt64)
         case notApplicable
@@ -35,7 +37,7 @@ extension EditorV2Adapter {
     }
 
     private func handleMutationError(_ error: FfiError) -> String? {
-        if error.code == "REVISION_MISMATCH" {
+        if error.code == Self.revisionMismatchCode {
             let update = refreshInternal(
                 mirrorSelection: nil,
                 strippingViewSelection: false
@@ -58,6 +60,11 @@ extension EditorV2Adapter {
         let documentChanged: Bool
     }
 
+    enum NativeIntentSubmission {
+        case applied(NativeIntentOutcome)
+        case recovered(updateJSON: String)
+    }
+
     func nativeIntent(_ type: String, anchor: UInt32, head: UInt32) -> [String: Any] {
         [
             "type": type,
@@ -71,6 +78,19 @@ extension EditorV2Adapter {
         reportPositionEpochInvalid: Bool = false,
         refreshPositionEpochInvalid: Bool = true
     ) -> NativeIntentOutcome? {
+        guard case .applied(let outcome)? = submitNativeIntentRecoveringStaleEpoch(
+            intent,
+            reportPositionEpochInvalid: reportPositionEpochInvalid,
+            refreshPositionEpochInvalid: refreshPositionEpochInvalid
+        ) else { return nil }
+        return outcome
+    }
+
+    private func submitNativeIntentRecoveringStaleEpoch(
+        _ intent: [String: Any],
+        reportPositionEpochInvalid: Bool,
+        refreshPositionEpochInvalid: Bool
+    ) -> NativeIntentSubmission? {
         guard !destroyed else { return nil }
         guard let nativeOwnerId else { return nil }
         if positionEpoch == nil {
@@ -87,25 +107,27 @@ extension EditorV2Adapter {
             ],
             includeBaseRevision: false
         ) { requestJson in
-            editorV2ApplyNativeIntent(editorId: self.editorId, requestJson: requestJson)
+            PreparedProseInstrumentation.measureTableStage(.nativeInputAndFFI) {
+                editorV2ApplyNativeIntent(editorId: self.editorId, requestJson: requestJson)
+            }
         }
         switch Self.normalizeJsonResult(result) {
         case .failure(let error):
-            if error.code == "POSITION_EPOCH_INVALID" {
+            if Self.stalePositionEpochCodes.contains(error.code) {
                 debugNotes.append(
                     refreshPositionEpochInvalid
                         ? "position-epoch-refresh"
                         : "position-epoch-invalid"
                 )
-                if refreshPositionEpochInvalid {
-                    _ = refreshInternal(mirrorSelection: nil, strippingViewSelection: false)
-                }
+                let recovery = refreshPositionEpochInvalid
+                    ? refreshInternal(mirrorSelection: nil, strippingViewSelection: false)?.updateJSON
+                    : nil
                 if reportPositionEpochInvalid {
                     emit(error)
                 }
-            } else {
-                emit(error)
+                return recovery.map { .recovered(updateJSON: $0) }
             }
+            emit(error)
             return nil
         case .success(let value):
             guard let outcome = parseMutationOutcome(value) else {
@@ -137,10 +159,10 @@ extension EditorV2Adapter {
                 }
                 documentChanged = didChangeDocument
             }
-            return NativeIntentOutcome(
+            return .applied(NativeIntentOutcome(
                 changed: changed,
                 documentChanged: documentChanged
-            )
+            ))
         }
     }
 
@@ -203,6 +225,21 @@ extension EditorV2Adapter {
         return renderNativeIntentOutcome(outcome)
     }
 
+    func performNativeIntentAdoptingStaleEpochRecovery(_ intent: [String: Any]) -> String? {
+        switch submitNativeIntentRecoveringStaleEpoch(
+            intent,
+            reportPositionEpochInvalid: false,
+            refreshPositionEpochInvalid: true
+        ) {
+        case .applied(let outcome)?:
+            return renderNativeIntentOutcome(outcome)?.updateJSON
+        case .recovered(let updateJSON)?:
+            return updateJSON
+        case nil:
+            return nil
+        }
+    }
+
     /// One typed v2 mutation: optional selection pre-sync, one transaction,
     /// revision tracking, render synthesis, and the collaboration drain ping.
     ///
@@ -223,6 +260,7 @@ extension EditorV2Adapter {
         includeSelectionInUpdate: Bool = false,
         adoptEngineSelection: Bool = false,
         publishMutation: Bool = true,
+        onAcceptedMutation: (() -> Void)? = nil,
         _ call: () -> FfiJsonResult
     ) -> String? {
         guard !destroyed else {
@@ -267,6 +305,7 @@ extension EditorV2Adapter {
             case .transaction(let didChange, let revision):
                 changed = didChange
                 baseDocumentRevision = revision
+                onAcceptedMutation?()
                 if let postSelectionMirror, !adoptEngineSelection {
                     lastSyncedScalarSelection = postSelectionMirror
                 }
@@ -277,6 +316,7 @@ extension EditorV2Adapter {
             case .replacement(let didChange, let revision):
                 changed = didChange
                 baseDocumentRevision = revision
+                onAcceptedMutation?()
                 // Whole-root replacement resets the engine-side selection;
                 // the cached sync point is no longer valid.
                 lastSyncedScalarSelection = nil

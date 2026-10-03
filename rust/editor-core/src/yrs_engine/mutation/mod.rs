@@ -12,22 +12,22 @@ pub(crate) use lowering::{
 
 #[cfg(test)]
 pub(crate) use lowering::{
-    lookup_payload_legacy_parity_for_test, reset_import_lookup_event_count_for_test,
+    assert_lookup_and_branch_index_parity_for_test, lookup_payload_legacy_parity_for_test, reset_import_lookup_event_count_for_test,
     set_lookup_seed_hydration_failpoint_for_test, take_import_lookup_event_count_for_test,
     LookupSeedHydrationFailpoint,
 };
 pub(crate) use plan::{
     crdt_clock_scan_reservation, crdt_envelope, deleting_plan_undo_units,
     direct_xml_replacement_growth, estimate_undo_units, estimate_update_v1_growth,
-    planned_insertion_units, preflight_mutation_plan, CrdtEnvelope, YrsMutationAction,
-    YrsMutationPlan,
+    planned_insertion_units, preflight_mutation_plan_with_read_scope, CrdtEnvelope,
+    YrsMutationAction, YrsMutationPlan,
 };
 
 #[allow(unused_imports)] // Production execution is consumed by the engine boundary.
 pub(crate) use plan::execute_mutation_plan;
 
 #[cfg(test)]
-pub(crate) use plan::preflight_mutation_work_for_test;
+pub(crate) use plan::{preflight_mutation_plan, preflight_mutation_work_for_test};
 
 #[cfg(test)]
 pub(crate) use lowering::{

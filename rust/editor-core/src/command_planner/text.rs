@@ -228,7 +228,9 @@ pub(crate) fn plan_delete_backward(
             false,
         );
     }
-    let cursor = selection.from(document);
+    let Some(cursor) = selection.from(document) else {
+        return Ok(None);
+    };
     if let Some(plan) = super::plan_empty_split_action(document, schema, cursor) {
         return Ok(Some(plan));
     }
@@ -553,12 +555,19 @@ pub(crate) fn apply_operations(
     schema: &Schema,
     operations: &[SemanticOperation],
 ) -> Result<Document, ()> {
+    apply_operations_mapped(document, schema, operations).map(|(document, _)| document)
+}
+
+pub(crate) fn apply_operations_mapped(
+    document: &Document,
+    schema: &Schema,
+    operations: &[SemanticOperation],
+) -> Result<(Document, crate::transform::StepMap), ()> {
     let mut transaction = Transaction::new();
     for operation in operations {
         transaction.add_step(operation.as_step());
     }
     transaction
         .apply_steps_unchecked(document, schema)
-        .map(|(document, _)| document)
         .map_err(|_| ())
 }

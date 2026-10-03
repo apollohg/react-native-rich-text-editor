@@ -1,0 +1,17 @@
+<resources>
+    <item name="table_accessibility_add_row_before" type="id" />
+    <item name="table_accessibility_add_row_after" type="id" />
+    <item name="table_accessibility_delete_rows" type="id" />
+    <item name="table_accessibility_select_rows" type="id" />
+    <item name="table_accessibility_add_column_before" type="id" />
+    <item name="table_accessibility_add_column_after" type="id" />
+    <item name="table_accessibility_delete_columns" type="id" />
+    <item name="table_accessibility_select_columns" type="id" />
+    <item name="table_accessibility_toggle_header_row" type="id" />
+    <item name="table_accessibility_toggle_header_column" type="id" />
+    <item name="table_accessibility_toggle_header_cell" type="id" />
+    <item name="table_accessibility_merge_cells" type="id" />
+    <item name="table_accessibility_split_cell" type="id" />
+    <item name="table_accessibility_clear_cells" type="id" />
+    <item name="table_accessibility_delete_table" type="id" />
+</resources>

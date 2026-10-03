@@ -130,6 +130,9 @@ extension EditorTextView {
     }
 
     func prepareForExternalEditorUpdateResult() -> ExternalEditorUpdatePreparation {
+        guard !blockExternalEditorUpdatePreparationForTesting else {
+            return ExternalEditorUpdatePreparation(ready: false, adoptedUpdateJSON: nil)
+        }
         let composition = prepareActiveCompositionForExternalMutation()
         guard composition.ready else {
             return ExternalEditorUpdatePreparation(ready: false, adoptedUpdateJSON: nil)

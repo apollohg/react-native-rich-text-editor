@@ -1,25 +1,14 @@
 package com.apollohg.editor
-import android.app.Activity
-import android.graphics.Point
 import android.os.Looper
-import android.view.MotionEvent
-import android.view.Window
 import android.view.inputmethod.EditorInfo
-import android.widget.FrameLayout
-import android.widget.ScrollView
 import java.time.Duration
 import java.util.concurrent.atomic.AtomicBoolean
-import org.json.JSONArray
-import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
@@ -158,11 +147,6 @@ internal class NativeEditorExpoViewTest : NativeEditorExpoViewTestFixture() {
                 rustDestroyCalls += 1
                 assertTrue(NativeEditorViewRegistry.isDestroyed(editorId))
                 assertFalse(NativeEditorViewRegistry.register(editorId, view))
-                val preparation = JSONObject(
-                    NativeEditorViewRegistry.prepareForCommandJSON(editorId)
-                )
-                assertFalse(preparation.getBoolean("ready"))
-                assertEquals("destroyed", preparation.getString("blockedReason"))
                 destroyEditorThenInvalidate(
                     editorHandle = "9200000",
                     viewToken = editorId,
@@ -205,9 +189,7 @@ internal class NativeEditorExpoViewTest : NativeEditorExpoViewTestFixture() {
 
         NativeEditorViewRegistry.invalidateDestroyedEditor(editorId)
 
-        val preparation = JSONObject(NativeEditorViewRegistry.prepareForCommandJSON(editorId))
-        assertFalse(preparation.getBoolean("ready"))
-        assertEquals("destroyed", preparation.getString("blockedReason"))
+        assertNull(EditorV2Registry.adapterForViewToken(editorId))
         assertEquals(0L, view.richTextView.editorId)
     }
 
@@ -221,9 +203,7 @@ internal class NativeEditorExpoViewTest : NativeEditorExpoViewTestFixture() {
         NativeEditorViewRegistry.invalidateDestroyedEditor(editorId)
 
         assertFalse(NativeEditorViewRegistry.register(editorId, view))
-        val preparation = JSONObject(NativeEditorViewRegistry.prepareForCommandJSON(editorId))
-        assertFalse(preparation.getBoolean("ready"))
-        assertEquals("destroyed", preparation.getString("blockedReason"))
+        assertNull(EditorV2Registry.adapterForViewToken(editorId))
     }
 
     @Test
@@ -249,28 +229,7 @@ internal class NativeEditorExpoViewTest : NativeEditorExpoViewTestFixture() {
         assertFalse(thread.isAlive)
         assertTrue(completed.get())
         assertEquals(0L, view.richTextView.editorId)
-        val preparation = JSONObject(NativeEditorViewRegistry.prepareForCommandJSON(editorId))
-        assertFalse(preparation.getBoolean("ready"))
-        assertEquals("destroyed", preparation.getString("blockedReason"))
-    }
-
-    @Test
-    fun `cleared detached weak owner does not block command preflight forever`() {
-        val expoContext = testExpoContext(RuntimeEnvironment.getApplication())
-        val view = NativeEditorExpoView(expoContext.context, expoContext.appContext)
-        val editorId = 77883L
-
-        NativeEditorViewRegistry.markEditorCreated(editorId)
-        NativeEditorViewRegistry.register(editorId, view)
-        NativeEditorViewRegistry.unregister(
-            editorId,
-            view,
-            blockCommandsUntilRegistered = true
-        )
-        NativeEditorViewRegistry.forceDetachedOwnerClearedForTesting(editorId)
-
-        val preparation = JSONObject(NativeEditorViewRegistry.prepareForCommandJSON(editorId))
-        assertTrue(preparation.getBoolean("ready"))
+        assertNull(EditorV2Registry.adapterForViewToken(editorId))
     }
 
     @Test

@@ -1,9 +1,24 @@
-import type {
-    DocumentJSON,
-    EditorToolbarItem,
-    MentionSuggestion,
+import {
+    TABLE_NODE_NAMES,
+    type DocumentJSON,
+    type EditorToolbarItem,
+    type MentionSuggestion,
+    type TableDirection,
+    type TableNamingPreset,
 } from '@apollohg/react-native-rich-text-editor';
 
+import { BOLD, ITALIC, STRIKE, UNDERLINE, heading, link, listItem, paragraph, text } from './documentNodes';
+import {
+    PLAIN_TABLE_SIZES,
+    createIrregularTableDocument,
+    createPlainTable,
+    createRichTableDocument,
+    table,
+    tableRow,
+    textCell,
+    withTableDirection,
+    type TableCellKind,
+} from './tableContent';
 import { TASK_ITEM_NODE_NAME, TASK_LIST_NODE_NAME } from './taskList';
 
 export const APP_TITLE = 'React Native Editor';
@@ -15,43 +30,70 @@ export const MENTION_TRIGGER = '@';
 /** Remote image used by the initial document. */
 export const SAMPLE_IMAGE_URL = 'https://picsum.photos/seed/native-editor/1200/800';
 
+export const TABLE_NAMING_PRESET: TableNamingPreset = 'prosemirror';
+export const TABLE_NAMES = TABLE_NODE_NAMES[TABLE_NAMING_PRESET];
+
+export const EDITOR_SURFACES = [ 'editor', 'viewer' ] as const;
+export type EditorSurface = (typeof EDITOR_SURFACES)[number];
+export const EDITOR_SURFACE_LABELS: Readonly<Record<EditorSurface, string>> = {
+    editor: 'Editor',
+    viewer: 'Viewer',
+};
+
+export const TABLE_DIRECTIONS: readonly TableDirection[] = [ 'ltr', 'rtl' ];
+export const TABLE_DIRECTION_LABELS: Readonly<Record<TableDirection, string>> = {
+    ltr: 'LTR',
+    rtl: 'RTL',
+};
+
+export const TABLE_TOOLBAR_MODES = [ 'custom', 'default', 'hidden' ] as const;
+export type TableToolbarMode = (typeof TABLE_TOOLBAR_MODES)[number];
+export const TABLE_TOOLBAR_MODE_LABELS: Readonly<Record<TableToolbarMode, string>> = {
+    custom: 'Custom bar',
+    default: 'Default bar',
+    hidden: 'No bar',
+};
+
+export const VIEWPORT_MODES = [ 'full', 'narrow' ] as const;
+export type ViewportMode = (typeof VIEWPORT_MODES)[number];
+export const VIEWPORT_MODE_LABELS: Readonly<Record<ViewportMode, string>> = {
+    full: 'Full width',
+    narrow: 'Narrow',
+};
+
 const REPOSITORY_URL = 'https://github.com/apollohg/react-native-rich-text-editor';
+const MERGED_HEADER_COLSPAN = 2;
+const MERGED_GROUP_ROWSPAN = 2;
+const WIDE_TABLE_COLUMN_WIDTH = 180;
+const COUNTER_CARD_NODE_NAME = 'counterCard';
 
-type MarkJSON = { type: string; attrs?: Record<string, unknown> };
-
-const BOLD: MarkJSON = { type: 'bold' };
-const ITALIC: MarkJSON = { type: 'italic' };
-const UNDERLINE: MarkJSON = { type: 'underline' };
-const STRIKE: MarkJSON = { type: 'strike' };
-const REPOSITORY_LINK: MarkJSON = { type: 'link', attrs: { href: REPOSITORY_URL } };
-
-function text(value: string, ...marks: readonly MarkJSON[]): DocumentJSON {
-    return marks.length === 0
-        ? { type: 'text', text: value }
-        : { type: 'text', text: value, marks };
-}
-
-function paragraph(...content: readonly DocumentJSON[]): DocumentJSON {
-    return content.length === 0 ? { type: 'paragraph' } : { type: 'paragraph', content };
-}
-
-function heading(level: number, title: string): DocumentJSON {
-    return { type: 'heading', attrs: { level }, content: [ text(title) ] };
-}
-
-function listItem(...content: readonly DocumentJSON[]): DocumentJSON {
-    return { type: 'list_item', content };
-}
+const REPOSITORY_LINK = link(REPOSITORY_URL);
 
 function taskItem(checked: boolean, label: string): DocumentJSON {
     return { type: TASK_ITEM_NODE_NAME, attrs: { checked }, content: [ paragraph(text(label)) ] };
+}
+
+function counterCard(title: string, count: number): DocumentJSON {
+    return { type: COUNTER_CARD_NODE_NAME, attrs: { title, count } };
+}
+
+function showcaseCell(
+    kind: TableCellKind,
+    label: string | null,
+    attrs?: Record<string, unknown>
+): DocumentJSON {
+    return textCell(TABLE_NAMES, kind, label, attrs);
+}
+
+function wideTableCell(kind: TableCellKind, label: string): DocumentJSON {
+    return showcaseCell(kind, label, { colwidth: [ WIDE_TABLE_COLUMN_WIDTH ] });
 }
 
 /**
  * The initial document is JSON rather than HTML: the HTML importer maps every
  * `<ul>` to a bullet list, so a checklist can only be seeded this way.
  */
-export const INITIAL_DOCUMENT: DocumentJSON = {
+const INITIAL_DOCUMENT: DocumentJSON = {
     type: 'doc',
     content: [
         heading(1, 'Field notes'),
@@ -67,6 +109,67 @@ export const INITIAL_DOCUMENT: DocumentJSON = {
             text(', and '),
             text('links', REPOSITORY_LINK),
             text('.')
+        ),
+        heading(2, 'Tables'),
+        heading(3, 'Basic'),
+        table(
+            TABLE_NAMES,
+            tableRow(
+                TABLE_NAMES,
+                showcaseCell('headerCell', 'Task'),
+                showcaseCell('headerCell', 'Owner'),
+                showcaseCell('headerCell', 'Status')
+            ),
+            tableRow(
+                TABLE_NAMES,
+                showcaseCell('cell', 'Outline'),
+                showcaseCell('cell', 'Alice'),
+                showcaseCell('cell', 'In progress')
+            ),
+            tableRow(
+                TABLE_NAMES,
+                showcaseCell('cell', 'Review'),
+                showcaseCell('cell', null),
+                showcaseCell('cell', 'Ready')
+            )
+        ),
+        heading(3, 'Merged cells'),
+        table(
+            TABLE_NAMES,
+            tableRow(
+                TABLE_NAMES,
+                showcaseCell('headerCell', 'Release plan', { colspan: MERGED_HEADER_COLSPAN }),
+                showcaseCell('headerCell', 'Status')
+            ),
+            tableRow(
+                TABLE_NAMES,
+                showcaseCell('cell', 'Core editor', { rowspan: MERGED_GROUP_ROWSPAN }),
+                showcaseCell('cell', 'iOS'),
+                showcaseCell('cell', 'Ready')
+            ),
+            tableRow(TABLE_NAMES, showcaseCell('cell', 'Android'), showcaseCell('cell', 'In review'))
+        ),
+        heading(3, 'Wide table'),
+        table(
+            TABLE_NAMES,
+            tableRow(
+                TABLE_NAMES,
+                wideTableCell('headerCell', 'Phase'),
+                wideTableCell('headerCell', 'Owner'),
+                wideTableCell('headerCell', 'Platform'),
+                wideTableCell('headerCell', 'Priority'),
+                wideTableCell('headerCell', 'Due date'),
+                wideTableCell('headerCell', 'Status')
+            ),
+            tableRow(
+                TABLE_NAMES,
+                wideTableCell('cell', 'Design'),
+                wideTableCell('cell', 'Chloe'),
+                wideTableCell('cell', 'iOS + Android'),
+                wideTableCell('cell', 'High'),
+                wideTableCell('cell', 'Friday'),
+                wideTableCell('cell', 'In progress')
+            )
         ),
         {
             type: 'blockquote',
@@ -100,7 +203,7 @@ export const INITIAL_DOCUMENT: DocumentJSON = {
         { type: 'image', attrs: { src: SAMPLE_IMAGE_URL, alt: 'Sample' } },
         heading(2, 'Counters'),
         paragraph(text('Custom blocks are React components living inside the document.')),
-        { type: 'counterCard', attrs: { title: 'Cups of coffee', count: 2 } },
+        counterCard('Cups of coffee', 2),
         {
             type: 'ordered_list',
             content: [
@@ -114,6 +217,52 @@ export const INITIAL_DOCUMENT: DocumentJSON = {
         paragraph(),
     ],
 };
+
+export const DOCUMENT_FIXTURES = [
+    'showcase',
+    'rich',
+    'small',
+    'tall',
+    'wide',
+    'irregular',
+] as const;
+
+export type DocumentFixture = (typeof DOCUMENT_FIXTURES)[number];
+
+export const DOCUMENT_FIXTURE_LABELS: Readonly<Record<DocumentFixture, string>> = {
+    showcase: 'Showcase',
+    rich: 'Rich',
+    small: '3×3',
+    tall: '1000×20',
+    wide: '100×200',
+    irregular: 'Irregular',
+};
+
+export function fixtureDocument(fixture: DocumentFixture): DocumentJSON {
+    switch (fixture) {
+        case 'showcase':
+            return INITIAL_DOCUMENT;
+        case 'rich':
+            return createRichTableDocument({
+                names: TABLE_NAMES,
+                imageUrl: SAMPLE_IMAGE_URL,
+                atom: counterCard('Cells per row', 3),
+                linkUrl: REPOSITORY_URL,
+            });
+        case 'irregular':
+            return createIrregularTableDocument(TABLE_NAMES);
+
+        default: {
+            const { rows, columns } = PLAIN_TABLE_SIZES[fixture];
+
+            return createPlainTable(rows, columns, TABLE_NAMES);
+        }
+    }
+}
+
+export function viewerDocument(document: DocumentJSON, direction: TableDirection): DocumentJSON {
+    return withTableDirection(document, TABLE_NAMES, direction);
+}
 
 export const MENTION_SUGGESTIONS: readonly MentionSuggestion[] = [
     {

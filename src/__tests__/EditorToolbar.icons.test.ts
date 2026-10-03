@@ -1,3 +1,4 @@
+import './helpers/NativeRichTextEditorFixture';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import glyphMap from '@react-native-vector-icons/material-design-icons/glyphmaps/MaterialDesignIcons.json';

@@ -28,6 +28,7 @@ extension NativeEditorExpoView {
         accessoryToolbar.apply(state: .empty)
         uninstallOutsideTapRecognizer()
         refreshSystemAssistantToolbarIfNeeded()
+        tableSelectionGeometryPublisher.flush()
     }
 
     func setEditorId(_ id: UInt64) {
@@ -107,6 +108,7 @@ extension NativeEditorExpoView {
         }
         refreshSystemAssistantToolbarIfNeeded()
         refreshMentionQuery()
+        tableSelectionGeometryPublisher.flush()
     }
 
     func ownsNativeBinding(editorId: UInt64) -> Bool {
@@ -117,6 +119,15 @@ extension NativeEditorExpoView {
         let autonomousOwner = autonomousErrorBindingAdapter === adapter
             && autonomousErrorBindingToken.map { adapter.isNativeBindingOwner(token: $0) } == true
         return autonomousOwner || richTextView.textView.ownsNativeBinding(adapter)
+    }
+
+    func ownsDelegatedTableCellBinding(_ adapter: EditorV2Adapter) -> Bool {
+        guard richTextView.editorId != 0,
+              v2CanonicalUInt64String(adapter.editorId) == String(richTextView.editorId),
+              autonomousErrorBindingAdapter === adapter,
+              let token = autonomousErrorBindingToken
+        else { return false }
+        return adapter.isNativeBindingOwner(token: token)
     }
 
     func claimNativeOwnershipAndCatchUp(editorId: UInt64) {
@@ -169,6 +180,7 @@ extension NativeEditorExpoView {
     }
 
     func clearAutonomousErrorBinding() {
+        richTextView.invalidateTableCellBinding()
         autonomousErrorBindingGeneration &+= 1
         pendingAutonomousErrors.removeAll()
         if let adapter = autonomousErrorBindingAdapter,

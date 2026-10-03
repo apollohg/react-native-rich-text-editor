@@ -31,9 +31,18 @@ extension EditorTextView {
         guard externalTextCompositionTerminalResults[sessionId] == nil else {
             return externalCompositionEndedErrorJSON(sessionId: sessionId)
         }
-        guard let selectionJSON = adapter.selectionJSON(),
+        let selectionJSON: String?
+        if tableCellPositionMap != nil {
+            selectionJSON = isAuthorizedForTableCellInput() ? adapter.cachedAtomicRenderJSON : nil
+        } else {
+            selectionJSON = adapter.selectionJSON()
+        }
+        guard let selectionJSON,
               let selectionData = selectionJSON.data(using: .utf8),
-              let selection = try? JSONSerialization.jsonObject(with: selectionData) as? [String: Any],
+              let snapshot = try? JSONSerialization.jsonObject(with: selectionData) as? [String: Any],
+              let selection = tableCellPositionMap != nil
+                ? snapshot["selection"] as? [String: Any]
+                : snapshot,
               selection["type"] as? String == "text"
         else {
             return externalCompositionErrorJSON(

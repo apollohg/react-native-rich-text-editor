@@ -779,6 +779,12 @@ class EditorInputConnection(
         clearCompositionTracking()
     }
 
+    internal fun abandonCompositionForRejectedRootInput() {
+        clearCompositionTracking()
+        editorView.clearNativeComposingSpans()
+        editorView.restoreAuthorizedTextSnapshotForEditor()
+    }
+
     internal fun deleteTransientTextForHardwareKeyEvent(event: KeyEvent): Boolean =
         if (!isCurrentInputSession()) {
             false

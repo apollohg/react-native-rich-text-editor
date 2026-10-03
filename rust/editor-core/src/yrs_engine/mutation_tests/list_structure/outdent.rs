@@ -141,7 +141,7 @@ fn outdent_preserves_existing_final_nested_list_attrs_when_merging_trailing_item
         "type": "doc",
         "content": [{
             "type": "orderedList",
-            "attrs": { "start": 10 },
+            "attrs": { "start": 10.0 },
             "content": [
                 {
                     "type": "listItem",
@@ -149,7 +149,7 @@ fn outdent_preserves_existing_final_nested_list_attrs_when_merging_trailing_item
                         { "type": "paragraph", "content": [{ "type": "text", "text": "parent" }] },
                         {
                             "type": "orderedList",
-                            "attrs": { "start": 5 },
+                            "attrs": { "start": 5.0 },
                             "content": [
                                 { "type": "listItem", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "before" }] }] },
                                 {
@@ -158,7 +158,7 @@ fn outdent_preserves_existing_final_nested_list_attrs_when_merging_trailing_item
                                         { "type": "paragraph", "content": [{ "type": "text", "text": "moved" }] },
                                         {
                                             "type": "orderedList",
-                                            "attrs": { "start": 99 },
+                                            "attrs": { "start": 99.0 },
                                             "content": [{ "type": "listItem", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "existing" }] }] }]
                                         }
                                     ]
@@ -184,7 +184,7 @@ fn outdent_preserves_existing_final_nested_list_attrs_when_merging_trailing_item
     assert_eq!(actual, expected);
     let merged = &actual["content"][0]["content"][1]["content"][1];
     assert_eq!(merged["type"], "orderedList");
-    assert_eq!(merged["attrs"]["start"], 99);
+    assert_eq!(merged["attrs"]["start"], 99.0);
     assert_eq!(merged["content"].as_array().unwrap().len(), 3);
     assert_eq!(
         merged["content"][0]["content"][0]["content"][0]["text"],

@@ -5,6 +5,7 @@ use crate::boundary::ResourceLimits;
 use crate::model::Document;
 use crate::model::Node;
 use crate::render::empty_text_block_placeholder_string;
+use crate::render::generate::GenerateError;
 use crate::render::inline_atom_label;
 use crate::render::inline_atom_mention_theme;
 use crate::render::opaque_node_is_inline;
@@ -13,6 +14,8 @@ use crate::render::ListContext;
 use crate::render::RenderElement;
 use crate::render::RenderMark;
 use crate::schema::{schema_fingerprint, NodeRole, Schema};
+use crate::tables::admission::TableProjectionIndex;
+use crate::tables::render::TableRenderContext;
 
 #[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -325,6 +328,7 @@ pub(crate) enum CachedRenderError {
     AllocationFailed,
     PositionOverflow,
     CacheInvariantViolation,
+    InvalidOrderedListStart,
 }
 
 #[derive(Debug, Clone)]
@@ -333,7 +337,9 @@ struct CachedRenderBlock {
     start_pos: u32,
     node_size: u32,
     elements: Arc<Vec<RenderElement>>,
+    element_count: usize,
     position_element_indices: Arc<Vec<usize>>,
+    cell_output_bytes: std::sync::OnceLock<usize>,
 }
 
 impl Drop for CachedRenderBlock {
@@ -351,6 +357,8 @@ pub(crate) struct CachedRenderBlocks {
     blocks: Vec<CachedRenderBlock>,
     document_root_seal: Node,
     schema_fingerprint: Arc<str>,
+    pub(crate) table_projection_index: Arc<TableProjectionIndex>,
+    pub(crate) table_attributes: std::collections::BTreeMap<String, Arc<str>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -391,13 +399,31 @@ pub(crate) fn try_incremental(
     // Walk top-level children to compute positions, but only generate elements
     // for affected blocks.
     let mut pos: u32 = 0;
+    let mut context = TableRenderContext::new(
+        Arc::new(TableProjectionIndex::derive_or_fallback(
+            doc,
+            schema,
+            &ResourceLimits::default(),
+        )),
+        &schema_fingerprint(schema),
+    );
     for i in 0..root.child_count() {
         let child = root.child(i).expect("child index in bounds");
 
         if affected.contains(&i) {
             let mut elements = Vec::new();
             let mut block_pos = pos;
-            generate_block(child, schema, &mut elements, &mut block_pos, 0, None, i)?;
+            generate_block(
+                child,
+                schema,
+                &mut elements,
+                &mut block_pos,
+                0,
+                None,
+                i,
+                &mut context,
+                false,
+            )?;
             results.push((i, elements));
         }
 
@@ -566,7 +592,7 @@ pub fn safe_contiguous_render_blocks_patch(
 
 /// Generate render elements for a single top-level block and its descendants.
 /// This mirrors the logic in `generate::walk_children` but for a single node.
-fn generate_block(
+pub(crate) fn generate_block(
     node: &crate::model::Node,
     schema: &Schema,
     elements: &mut Vec<RenderElement>,
@@ -574,9 +600,21 @@ fn generate_block(
     depth: u16,
     list_info: Option<(String, bool, u32, u32)>,
     child_index: usize,
+    context: &mut TableRenderContext,
+    in_cell: bool,
 ) -> Result<(), CachedRenderError> {
     stacker::maybe_grow(64 * 1024, 1024 * 1024, || {
-        generate_block_inner(node, schema, elements, pos, depth, list_info, child_index)
+        generate_block_inner(
+            node,
+            schema,
+            elements,
+            pos,
+            depth,
+            list_info,
+            child_index,
+            context,
+            in_cell,
+        )
     })
 }
 
@@ -588,8 +626,26 @@ fn generate_block_inner(
     depth: u16,
     list_info: Option<(String, bool, u32, u32)>,
     child_index: usize,
+    context: &mut TableRenderContext,
+    in_cell: bool,
 ) -> Result<(), CachedRenderError> {
     let spec = schema.node(node.node_type());
+    if !context.source_only
+        && spec.is_some_and(|spec| spec.table_role == Some(crate::tables::TableRole::Table))
+    {
+        let doc_offset = *pos;
+        let absolute_pos = context
+            .coordinate_origin
+            .checked_add(doc_offset)
+            .ok_or(CachedRenderError::PositionOverflow)?;
+        let table =
+            crate::tables::render::generate_table(node, schema, absolute_pos, context, in_cell)?;
+        *pos = pos
+            .checked_add(table.structure.doc_size)
+            .ok_or(CachedRenderError::PositionOverflow)?;
+        elements.push(RenderElement::Table { table, doc_offset });
+        return Ok(());
+    }
     let role = spec.map(|s| &s.role);
 
     match role {
@@ -624,6 +680,8 @@ fn generate_block_inner(
                     depth,
                     Some((node.node_type().to_string(), ordered, start_attr, total)),
                     j,
+                    context,
+                    in_cell,
                 )?;
             }
             *pos += 1; // list close tag
@@ -671,7 +729,17 @@ fn generate_block_inner(
             *pos += 1;
             for j in 0..node.child_count() {
                 let child = node.child(j).expect("child index in bounds");
-                generate_block(child, schema, elements, pos, depth + 1, None, j)?;
+                generate_block(
+                    child,
+                    schema,
+                    elements,
+                    pos,
+                    depth + 1,
+                    None,
+                    j,
+                    context,
+                    in_cell,
+                )?;
             }
             *pos += 1;
             elements.push(RenderElement::BlockEnd);
@@ -696,7 +764,17 @@ fn generate_block_inner(
             } else {
                 for j in 0..node.child_count() {
                     let child = node.child(j).expect("child index in bounds");
-                    generate_block(child, schema, elements, pos, depth + 1, None, j)?;
+                    generate_block(
+                        child,
+                        schema,
+                        elements,
+                        pos,
+                        depth + 1,
+                        None,
+                        j,
+                        context,
+                        in_cell,
+                    )?;
                 }
             }
             *pos += 1;
@@ -724,7 +802,17 @@ fn generate_block_inner(
             *pos += 1;
             for j in 0..node.child_count() {
                 let child = node.child(j).expect("child index in bounds");
-                generate_block(child, schema, elements, pos, depth + 1, None, j)?;
+                generate_block(
+                    child,
+                    schema,
+                    elements,
+                    pos,
+                    depth + 1,
+                    None,
+                    j,
+                    context,
+                    in_cell,
+                )?;
             }
             *pos += 1;
             elements.push(RenderElement::BlockEnd);
@@ -746,7 +834,9 @@ fn generate_block_inner(
             *pos += 1;
             for j in 0..node.child_count() {
                 let child = node.child(j).expect("child index in bounds");
-                generate_block(child, schema, elements, pos, depth, None, j)?;
+                generate_block(
+                    child, schema, elements, pos, depth, None, j, context, in_cell,
+                )?;
             }
             *pos += 1;
         }

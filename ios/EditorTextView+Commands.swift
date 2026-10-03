@@ -98,18 +98,17 @@ extension EditorTextView {
     }
 
     func performToolbarUndo() {
-        guard prepareForToolbarCommand() else { return }
-        performInterceptedInput {
-            let updateJSON = EditorV2Shadow.undo(id: editorId)
-            applyUpdateJSON(updateJSON)
-        }
+        performToolbarHistoryCommand(EditorV2Shadow.undo)
     }
 
     func performToolbarRedo() {
-        guard prepareForToolbarCommand() else { return }
-        performInterceptedInput {
-            let updateJSON = EditorV2Shadow.redo(id: editorId)
-            applyUpdateJSON(updateJSON)
+        performToolbarHistoryCommand(EditorV2Shadow.redo)
+    }
+
+    private func performToolbarHistoryCommand(_ command: (UInt64) -> String) {
+        guard isAuthorizedForHistoryCommand(), prepareForToolbarCommand() else { return }
+        performAuthorizedInterceptedInput {
+            applyUpdateJSON(command(editorId))
         }
     }
 

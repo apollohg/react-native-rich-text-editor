@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -10,6 +10,7 @@ const validator = join(repoRoot, "scripts", "validate-packed-package.sh");
 const rn076Validator = join(repoRoot, "scripts", "validate-android-rn076-consumer.sh");
 const checksumValidator = join(repoRoot, "scripts", "validate-uniffi-checksum-values.rb");
 const checksumManifest = join(repoRoot, "scripts", "package-abi-manifest.json");
+const tableValidator = join(repoRoot, "scripts", "tests", "validate-table-package.mjs");
 const validatorSource = readFileSync(validator, "utf8");
 const packageManifest = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
 const workDir = mkdtempSync(join(tmpdir(), "native-editor-packed-package-fixtures-"));
@@ -158,6 +159,73 @@ function runRn076Validator(...args) {
     env: { ...process.env, NODE_COMPILE_CACHE: join(workDir, "node-compile-cache") },
   });
   return { status: result.status, output: `${result.stdout}\n${result.stderr}` };
+}
+
+function runTablePackageFixtures() {
+  const fixture = join(workDir, "table-package");
+  for (const path of [
+    "package.json", "ReactNativeProseEditor.podspec", "dist", "ios/Tables",
+    "ios/Generated_editor_core.swift", "android/src/main/java/com/apollohg/editor/tables",
+    "rust/bindings/kotlin/uniffi/editor_core/editor_core.kt",
+  ]) copyPath(repoRoot, fixture, path);
+  const check = () => {
+    const result = spawnSync(process.execPath, [tableValidator, fixture], { cwd: repoRoot, encoding: "utf8" });
+    return { status: result.status, output: `${result.stdout}\n${result.stderr}` };
+  };
+  const mutate = (name, path, update, expected) => {
+    const target = join(fixture, path);
+    const original = existsSync(target) ? readFileSync(target) : null;
+    mkdirSync(dirname(target), { recursive: true });
+    try {
+      const next = update(original);
+      if (next === null) rmSync(target);
+      else writeFileSync(target, next);
+      expectFailure(name, check(), expected);
+    } finally {
+      if (original === null) {
+        rmSync(target, { force: true });
+        for (let directory = dirname(target); directory !== fixture && readdirSync(directory).length === 0; directory = dirname(directory)) {
+          rmdirSync(directory);
+        }
+      } else writeFileSync(target, original);
+    }
+  };
+  expectPass("table package baseline", check());
+  mutate("table declaration export missing", "dist/index.d.ts",
+    (value) => value.toString().replace(/\bTableCommand,?\s*/g, ""), /TableCommand/);
+  mutate("table runtime export missing", "dist/index.js",
+    (value) => value.toString().replace(/^Object\.defineProperty\(exports, "withTablesSchema".*\n/m, ""), /withTablesSchema/);
+  mutate("table declaration target missing", "dist/TableTypes.d.ts", () => null, /TableTypes|TableCommand|TableCellSelection/);
+  mutate("table runtime implementation missing", "dist/TableToolbar.js", () => null, /TableToolbar\.js/);
+  mutate("iOS table source missing", "ios/Tables/TableGridLayout.swift", () => null, /TableGridLayout\.swift/);
+  mutate("Android table source missing", "android/src/main/java/com/apollohg/editor/tables/TableCellPositionMap.kt",
+    () => null, /TableCellPositionMap\.kt/);
+  mutate("CocoaPods excludes tables", "ReactNativeProseEditor.podspec",
+    (value) => value.toString().replace("'ios/Tables/**/*.swift', ", ""), /CocoaPods|podspec|ios\/Tables/);
+  mutate("Swift table field drift", "ios/Generated_editor_core.swift",
+    (value) => value.toString().replace("public var sourceRow: UInt32", "public var sourceRow: UInt64"), /FfiTableCellRecord/);
+  mutate("Kotlin table field drift", "rust/bindings/kotlin/uniffi/editor_core/editor_core.kt",
+    (value) => value.toString().replace("var `sourceRow`: kotlin.UInt", "var `sourceRow`: kotlin.ULong"), /FfiTableCellRecord/);
+  mutate("table record missing", "ios/Generated_editor_core.swift",
+    (value) => value.toString().replace("public struct FfiTableFrame {", "public struct RemovedTableFrame {"), /FfiTableFrame/);
+  for (const [section, dependency] of [
+    ["dependencies", "@tiptap/extension-table"], ["devDependencies", "yjs"],
+    ["peerDependencies", "prosemirror-tables"], ["optionalDependencies", "playwright"],
+  ]) {
+    mutate(`forbidden ${section} ${dependency}`, "package.json", (value) => {
+      const manifest = JSON.parse(value);
+      manifest[section] = { ...manifest[section], [dependency]: "1.0.0" };
+      return JSON.stringify(manifest);
+    }, /development dependency/);
+  }
+  for (const path of ["scripts/table-interop/peer.js", "AGENTS.md", "docs/superpowers/plan.md", ".superpowers/progress.md"]) {
+    mutate(`forbidden packaged path ${path}`, path, () => "fixture", /forbidden packaged path/);
+  }
+  mutate("test-only Swift peer export", "ios/Generated_editor_core.swift",
+    (value) => `${value}\npublic func tableInteropPeer() {}\n`, /test-only.*peer|tableInteropPeer/);
+  mutate("test-only native peer symbol", "rust/android/arm64-v8a/libeditor_core.so",
+    () => Buffer.from("\0_ZN11editor_core13table_interop5serve17h0123456789abcdefE\0"), /test-only.*peer|table_interop/);
+  expectPass("table package restored after negative cases", check());
 }
 
 function runFixtureCommand(command, args, options = {}) {
@@ -363,6 +431,7 @@ function runFixtureScopeCheck() {
 
 function runIosConsumerFixture() {
   const linklessPod = makeFixture("linkless-pod");
+  copyPath(repoRoot, linklessPod, "dist");
   const linklessPodspec = join(linklessPod, "ReactNativeProseEditor.podspec");
   replace(
     linklessPodspec,
@@ -387,6 +456,7 @@ function runIosConsumerFixture() {
 
 function runAndroidConsumerFixture() {
   const unpackagedAndroid = makeFixture("unpackaged-android");
+  copyPath(repoRoot, unpackagedAndroid, "dist");
   replace(
     join(unpackagedAndroid, "android/build.gradle"),
     '"${project.projectDir}/../rust/android"',
@@ -480,7 +550,9 @@ function runRn076ConsumerFixtures() {
 }
 
 try {
-  if (process.env.VALIDATE_PACKED_PACKAGE_FIXTURE === "fixture-scope") {
+  if (process.env.VALIDATE_PACKED_PACKAGE_FIXTURE === "tables") {
+    runTablePackageFixtures();
+  } else if (process.env.VALIDATE_PACKED_PACKAGE_FIXTURE === "fixture-scope") {
     runFixtureScopeCheck();
   } else if (process.env.VALIDATE_PACKED_PACKAGE_FIXTURE === "native-parser-bounds") {
     runNativeParserBoundsFixtures();
@@ -495,6 +567,7 @@ try {
   } else if (fixtureGroup === "android-rn076-consumer") {
     runRn076ConsumerFixtures();
   } else {
+    runTablePackageFixtures();
     const baseline = makeFixture("baseline");
     expectPass("baseline ABI", run("--validate-abi-root", baseline));
     expectPass("baseline copied artifacts", run("--validate-copies", repoRoot, baseline));

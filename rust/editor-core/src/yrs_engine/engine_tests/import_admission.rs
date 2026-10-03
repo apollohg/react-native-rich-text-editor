@@ -79,6 +79,39 @@ fn validated_import_source_reuses_one_schema_ranked_canonical_result() {
 }
 
 #[test]
+fn canonicalized_import_projection_is_bound_to_the_final_root() {
+    let schema = tiptap_schema();
+    let limits = ResourceLimits::default();
+    let input = json!({"type": "doc", "content": [{"type": "paragraph", "content": [{
+        "type": "text", "text": "ordered", "marks": [{"type": "italic"}, {"type": "bold"}]
+    }]}]});
+    let parsed = from_prosemirror_json(&input, &schema, UnknownTypeMode::Preserve).unwrap();
+    let original = parsed.clone();
+    let canonical_schema = crate::yrs_engine::canonical::CanonicalSchemaContext::new(&schema);
+    let admitted =
+        ValidatedImportDocument::new(parsed, &schema, &canonical_schema, &limits, None).unwrap();
+    assert_ne!(
+        original, admitted.document,
+        "fixture must exercise mark canonicalization"
+    );
+    let proof = admitted.validation.table_projection.as_ref().unwrap();
+    assert!(proof
+        .matching_index(
+            &original,
+            &crate::schema::schema_fingerprint(&schema),
+            &limits
+        )
+        .is_none());
+    assert!(proof
+        .matching_index(
+            &admitted.document,
+            &crate::schema::schema_fingerprint(&schema),
+            &limits
+        )
+        .is_some());
+}
+
+#[test]
 fn admitted_import_runs_one_validation_certificate_and_render_path() {
     use crate::yrs_engine::observability::{
         reset_full_pass_counts_for_test, take_full_pass_counts_for_test,
@@ -467,7 +500,7 @@ fn private_prepared_command_orchestrator_finalizes_deferred_admission_once() {
 }
 
 #[test]
-fn first_imported_prepared_insert_traverses_each_history_document_once() {
+fn first_imported_prepared_insert_reuses_the_before_history_charge() {
     use crate::model::{
         reset_history_snapshot_retained_bytes_traversals_for_test,
         take_history_snapshot_retained_bytes_traversals_for_test,
@@ -484,8 +517,8 @@ fn first_imported_prepared_insert_traverses_each_history_document_once() {
 
     assert_eq!(
         take_history_snapshot_retained_bytes_traversals_for_test(),
-        2,
-        "history admission must traverse the before and after source documents once each"
+        1,
+        "history admission reuses the before charge and traverses only the prepared after document"
     );
 }
 
@@ -917,3 +950,487 @@ fn eager_non_insert_first_mutations_do_not_materialize_base_identity() {
 }
 
 include!("import_admission/staged_authority.rs");
+
+#[test]
+fn a_table_import_performs_each_document_wide_pass_once() {
+    use crate::render::incremental::{
+        reset_cached_render_counts_for_test, take_cached_render_counts_for_test,
+    };
+    use crate::yrs_engine::observability::{
+        reset_full_pass_counts_for_test, take_full_pass_counts_for_test,
+    };
+    const ROWS: usize = 1000;
+    const COLUMNS: usize = 20;
+    const REQUEST: u64 = 120;
+    let source =
+        crate::test_support::large_table_fixture::plain_table_document(ROWS, COLUMNS).to_string();
+    let mut engine = YrsDocumentEngine::new(YrsEngineConfig {
+        schema: crate::schema::presets::prosemirror_table_schema(),
+        fragment_name: "prosemirror".into(),
+        initialization_mode: crate::yrs_engine::InitializationMode::LocalEmpty,
+        resource_limits: ResourceLimits::default(),
+        editing_limits: crate::yrs_engine::EditingLimits::default(),
+        max_length: None,
+        scope: None,
+    })
+    .unwrap();
+    reset_full_pass_counts_for_test();
+    reset_cached_render_counts_for_test();
+    crate::yrs_engine::observability::take_node_json_projections_for_test();
+    crate::yrs_engine::position::reset_relative_position_traversal_counts_for_test();
+    engine
+        .prepare_root_replacement_json(
+            REQUEST,
+            &source,
+            crate::yrs_engine::ReplacementHistory::ResetAndClear,
+        )
+        .unwrap();
+    let counts = take_full_pass_counts_for_test();
+    let renders = take_cached_render_counts_for_test();
+    let relative_walks =
+        crate::yrs_engine::position::take_relative_position_traversal_counts_for_test();
+    eprintln!("table import: {counts:#?}; cached renders: {renders:?}");
+    assert_eq!(
+        counts.yrs_tree_walks, 0,
+        "ordinary table import must derive block branches during the mandatory lookup walk"
+    );
+    assert_eq!(
+        counts.json_value_deserializations, 0,
+        "plain table replacement must not allocate an intermediate JSON value tree"
+    );
+    assert_eq!(
+        relative_walks,
+        (0, 0, 0),
+        "the imported table's initial cursor must use the candidate branch index"
+    );
+    let state = engine.derived_state.as_ref().unwrap();
+    let txn = engine.doc.transact();
+    let fragment = txn.get_xml_fragment(engine.fragment_name.as_str()).unwrap();
+    let walked_index = crate::yrs_engine::block_branch_index::BlockBranchIndex::build(
+        &txn,
+        &fragment,
+        &engine.schema,
+        &state.position_map,
+    )
+    .unwrap();
+    state
+        .block_branch_index
+        .as_ref()
+        .unwrap()
+        .assert_same_allocations_for_test(&walked_index);
+    assert_eq!(
+        state.relative_selection,
+        crate::yrs_engine::derived_state::operation_result_to_relative(
+            &txn,
+            &fragment,
+            &state.legacy_selection,
+            &engine.schema,
+            None,
+        ),
+        "the committed cursor must preserve the exact root-walk anchor and association"
+    );
+    assert_eq!(
+        crate::yrs_engine::observability::take_node_json_projections_for_test(),
+        0,
+        "root import must lower admitted nodes without projecting JSON"
+    );
+    assert_eq!(
+        counts.canonical_projections, 0,
+        "root replacement must not build an intermediate canonical JSON tree"
+    );
+    assert_eq!(counts.document_validations, 1);
+    assert_eq!(counts.rendered_text_derivations, 0);
+    assert_eq!(renders.0, 1);
+    assert!(counts.canonical_serializations <= 1, "{counts:#?}");
+    assert_eq!(counts.table_projection_derivations, 0);
+    assert_eq!(
+        engine.document_json().unwrap(),
+        serde_json::from_str::<serde_json::Value>(&source).unwrap()
+    );
+}
+
+#[test]
+fn canonical_child_reuse_preserves_reset_and_undoable_root_replacements() {
+    use crate::yrs_engine::observability::take_node_json_projections_for_test;
+    use crate::yrs_engine::ReplacementHistory;
+    const REQUEST: u64 = 65_300;
+    let source = serde_json::json!({"type":"doc","content":[
+        {"type":"heading","attrs":{"level":1},"content":[{"type":"text","text":"hé🙂","marks":[{"type":"bold"}]}]},
+        {"type":"blockquote","content":[{"type":"paragraph","content":[{"type":"text","text":"nested"}]}]},
+        {"type":"unknown","attrs":{"nested":[true,null]}}
+    ]});
+    let schema = tiptap_schema();
+    let parsed = crate::serialize::from_prosemirror_json(
+        &source,
+        &schema,
+        crate::serialize::UnknownTypeMode::Preserve,
+    )
+    .unwrap();
+    let expected = crate::serialize::to_prosemirror_json(&parsed, &schema);
+    for history in [
+        ReplacementHistory::ResetAndClear,
+        ReplacementHistory::UndoableBoundary,
+    ] {
+        let mut engine = transaction_engine();
+        let before = engine.document_json().unwrap();
+        take_node_json_projections_for_test();
+        engine
+            .prepare_root_replacement_json(REQUEST, &source.to_string(), history)
+            .unwrap();
+        assert_eq!(
+            take_node_json_projections_for_test(),
+            0,
+            "an exact admitted replacement must lower nodes without projecting JSON"
+        );
+        assert_eq!(engine.document_json().unwrap(), expected);
+        let undone = engine.undo(REQUEST + 1).unwrap();
+        if history == ReplacementHistory::UndoableBoundary {
+            assert!(undone.is_some());
+            assert_eq!(engine.document_json().unwrap(), before);
+            assert!(engine.redo(REQUEST + 2).unwrap().is_some());
+            assert_eq!(engine.document_json().unwrap(), expected);
+        } else {
+            assert!(undone.is_none(), "reset must retain no undo entry");
+        }
+    }
+}
+
+#[test]
+fn compact_root_json_matches_legacy_import_documents_fees_and_errors() {
+    use crate::yrs_engine::{ReplacementHistory, RootReplacementError};
+    let sources = [
+        r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"a🦀é"}]}]}"#,
+        r#"{"ty\u0070e":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"a\n\uD83E\uDD80"}]}]}"#,
+        r#"{"type":"doc","content":[{"type":"paragraph"},{"type":"paragraph","content":[]}]}"#,
+        r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"ignored","content":[{"type":"paragraph"}]}]}]}"#,
+        r#"{"type":"doc","content":[{"type":"horizontalRule","content":[{"type":"paragraph"}]}]}"#,
+        r#"{"type":"doc","content":[{"type":"paragraph","attrs":{"textAlign":"right"},"content":[{"type":"text","text":"rich","marks":[{"type":"bold"}]}]}]}"#,
+        r#"{"type":"doc","content":[{"type":"future","extra":null,"content":[{"type":"paragraph"}]}]}"#,
+        r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":null}]}]}"#,
+        r#"{"type":"doc","content":[{"type":"paragraph","content":null}]}"#,
+        r#"{"type":"doc","type":"paragraph","content":[{"type":"text","text":"duplicate"}]}"#,
+        r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":null,"text":"last wins"}]}]}"#,
+        r#"{"type":"doc","content":[{"type":"paragraph"}],"extra":1e400}"#,
+        r#"{"type":"doc","content":[{"type":"paragraph"}]} trailing"#,
+        r#"{"type":"doc","content":[{"type":"paragraph"}]"#,
+        r#"{"type":"doc","content":[null]}"#,
+        r#"{"type":"doc","content":[{"type":"h1","content":[{"type":"text","text":"legacy"}]}]}"#,
+    ];
+    for input in sources {
+        for limits in [
+            ResourceLimits::default(),
+            ResourceLimits {
+                max_document_nodes: 2,
+                ..ResourceLimits::default()
+            },
+            ResourceLimits {
+                max_document_depth: 2,
+                ..ResourceLimits::default()
+            },
+            ResourceLimits {
+                max_input_bytes: input.len() - 1,
+                ..ResourceLimits::default()
+            },
+        ] {
+            let input_limit = limits.max_input_bytes;
+            let configuration_limits = ResourceLimits {
+                max_input_bytes: ResourceLimits::default().max_input_bytes,
+                ..limits
+            };
+            let mut actual = transaction_engine_with_resource_limits_and_mode(
+                configuration_limits.clone(),
+                crate::yrs_engine::InitializationMode::LocalEmpty,
+            );
+            let mut oracle = transaction_engine_with_resource_limits_and_mode(
+                configuration_limits,
+                crate::yrs_engine::InitializationMode::LocalEmpty,
+            );
+            actual.resource_limits.max_input_bytes = input_limit;
+            oracle.resource_limits.max_input_bytes = input_limit;
+            let before = actual.document_json();
+            let revision = actual.revision();
+            let expected = crate::serialize::json_in::with_legacy_json_for_test(|| {
+                oracle.prepare_root_replacement_json(
+                    65_400,
+                    input,
+                    ReplacementHistory::ResetAndClear,
+                )
+            });
+            let result = actual.prepare_root_replacement_json(
+                65_400,
+                input,
+                ReplacementHistory::ResetAndClear,
+            );
+            match (result, expected) {
+                (Ok(_), Ok(_)) => {
+                    assert_eq!(actual.document(), oracle.document(), "document: {input}");
+                    let current = actual.derived_state.as_ref().unwrap();
+                    let expected = oracle.derived_state.as_ref().unwrap();
+                    assert_eq!(
+                        current.document.history_snapshot_retained_bytes(),
+                        expected.document.history_snapshot_retained_bytes(),
+                        "model fee: {input}"
+                    );
+                    assert_eq!(
+                        current
+                            .canonical_artifact
+                            .history_snapshot_retained_charge(),
+                        expected
+                            .canonical_artifact
+                            .history_snapshot_retained_charge(),
+                        "artifact fee: {input}"
+                    );
+                }
+                (Err(actual_error), Err(expected_error)) => {
+                    match (actual_error, expected_error) {
+                        (
+                            RootReplacementError::Admission(actual),
+                            RootReplacementError::Admission(expected),
+                        ) => assert_eq!(actual, expected, "admission error: {input}"),
+                        (
+                            RootReplacementError::Transaction(actual),
+                            RootReplacementError::Transaction(expected),
+                        ) => assert_eq!(actual, expected, "transaction error: {input}"),
+                        (actual, expected) => {
+                            panic!("error phase for {input}: {actual:?}; {expected:?}")
+                        }
+                    }
+                    assert_eq!(actual.document_json(), before, "rejected state: {input}");
+                    assert_eq!(actual.revision(), revision, "rejected revision: {input}");
+                    assert!(!actual.can_undo(), "rejected history: {input}");
+                }
+                (actual, expected) => {
+                    panic!("import parity for {input}: actual={actual:?}; expected={expected:?}")
+                }
+            }
+        }
+    }
+}
+
+const SMALL_IMPORT_STACK_BYTES: usize = 128 * 1024;
+const COMPACT_JSON_ADMITTED_DEPTH: usize = 256;
+const COMPACT_JSON_FALLBACK_NESTINGS: [usize; 5] = [7, 8, 60, 64, 70];
+
+fn nested_plain_blockquote_json(nesting: usize) -> String {
+    let mut input = String::from(r#"{"type":"doc","content":["#);
+    for _ in 0..nesting {
+        input.push_str(r#"{"type":"blockquote","content":["#);
+    }
+    input.push_str(r#"{"type":"paragraph","content":[{"type":"text","text":"deep"}]}"#);
+    for _ in 0..=nesting {
+        input.push_str("]}");
+    }
+    input
+}
+
+#[test]
+fn compact_root_json_admission_fits_a_small_stack() {
+    for nesting in COMPACT_JSON_FALLBACK_NESTINGS {
+        let engine = transaction_engine_with_resource_limits_and_mode(
+            ResourceLimits {
+                max_document_depth: COMPACT_JSON_ADMITTED_DEPTH,
+                ..ResourceLimits::default()
+            },
+            crate::yrs_engine::InitializationMode::LocalEmpty,
+        );
+        let input = nested_plain_blockquote_json(nesting);
+        let (actual, oracle) = std::thread::Builder::new()
+            .name(format!("compact-json-admission-{nesting}"))
+            .stack_size(SMALL_IMPORT_STACK_BYTES)
+            .spawn(move || {
+                let actual = engine.admit_root_replacement_json(&input).unwrap();
+                let oracle = crate::serialize::json_in::with_legacy_json_for_test(|| {
+                    engine.admit_root_replacement_json(&input)
+                })
+                .unwrap();
+                (actual, oracle)
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+        assert_eq!(actual.document, oracle.document, "nesting {nesting}");
+        assert_eq!(
+            actual.canonical_artifact.value(),
+            oracle.canonical_artifact.value(),
+            "canonical import at nesting {nesting}"
+        );
+    }
+}
+
+#[test]
+fn compact_root_json_preserves_near_ceiling_fallback() {
+    for nesting in COMPACT_JSON_FALLBACK_NESTINGS {
+        let thread = std::thread::Builder::new().name(format!("compact-json-commit-{nesting}"));
+        // The unoptimized transaction compiler exceeds the release stack budget.
+        #[cfg(not(debug_assertions))]
+        let thread = thread.stack_size(SMALL_IMPORT_STACK_BYTES);
+        thread
+            .spawn(move || {
+                let input = nested_plain_blockquote_json(nesting);
+                let limits = ResourceLimits {
+                    max_document_depth: COMPACT_JSON_ADMITTED_DEPTH,
+                    ..ResourceLimits::default()
+                };
+                let mut actual = transaction_engine_with_resource_limits_and_mode(
+                    limits.clone(),
+                    crate::yrs_engine::InitializationMode::LocalEmpty,
+                );
+                let mut oracle = transaction_engine_with_resource_limits_and_mode(
+                    limits,
+                    crate::yrs_engine::InitializationMode::LocalEmpty,
+                );
+                actual
+                    .prepare_root_replacement_json(
+                        65_401,
+                        &input,
+                        crate::yrs_engine::ReplacementHistory::ResetAndClear,
+                    )
+                    .unwrap();
+                crate::serialize::json_in::with_legacy_json_for_test(|| {
+                    oracle.prepare_root_replacement_json(
+                        65_401,
+                        &input,
+                        crate::yrs_engine::ReplacementHistory::ResetAndClear,
+                    )
+                })
+                .unwrap();
+                assert_eq!(actual.document(), oracle.document(), "nesting {nesting}");
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+}
+
+#[test]
+fn compact_root_json_preserves_projected_schema_fallback() {
+    use crate::yrs_engine::observability::{
+        reset_full_pass_counts_for_test, take_full_pass_counts_for_test,
+    };
+    let schema = crate::schema::Schema::from_json(&json!({
+        "nodes": [
+            {"name":"doc","content":"block+","role":"doc"},
+            {"name":"body","content":"inline*","group":"block","role":"textBlock",
+             "json":{"type":"para","attrs":{}}},
+            {"name":"text","group":"inline","role":"text"}
+        ], "marks": []
+    }))
+    .unwrap();
+    for node_type in ["body", "para"] {
+        let input = json!({"type":"doc","content":[{"type":node_type,
+            "content":[{"type":"text","text":"projected"}]}]})
+        .to_string();
+        let make_engine = || {
+            YrsDocumentEngine::new(YrsEngineConfig {
+                schema: schema.clone(),
+                fragment_name: "prosemirror".into(),
+                initialization_mode: crate::yrs_engine::InitializationMode::LocalEmpty,
+                resource_limits: ResourceLimits::default(),
+                editing_limits: crate::yrs_engine::EditingLimits::default(),
+                max_length: None,
+                scope: None,
+            })
+            .unwrap()
+        };
+        let mut actual = make_engine();
+        let mut oracle = make_engine();
+        reset_full_pass_counts_for_test();
+        actual
+            .prepare_root_replacement_json(
+                65_402,
+                &input,
+                crate::yrs_engine::ReplacementHistory::ResetAndClear,
+            )
+            .unwrap();
+        assert_eq!(
+            take_full_pass_counts_for_test().json_value_deserializations,
+            1,
+            "projected native type and wire alias must use the full parser: {node_type}"
+        );
+        crate::serialize::json_in::with_legacy_json_for_test(|| {
+            oracle.prepare_root_replacement_json(
+                65_402,
+                &input,
+                crate::yrs_engine::ReplacementHistory::ResetAndClear,
+            )
+        })
+        .unwrap();
+        assert_eq!(actual.document(), oracle.document(), "{node_type}");
+        assert_eq!(
+            actual.document_json(),
+            oracle.document_json(),
+            "{node_type}"
+        );
+    }
+}
+
+#[test]
+fn compact_root_json_preserves_history_boundaries_and_replay() {
+    use crate::yrs_engine::{EditingLimits, ReplacementHistory};
+    let snapshot_metadata = super::history_metadata_bytes(None, "prosemirror");
+    let standalone = snapshot_metadata * 2;
+    let retained_pair = standalone * 2;
+    for limit in [
+        standalone - 1,
+        standalone,
+        retained_pair - 1,
+        retained_pair,
+        EditingLimits::default().max_derived_output_bytes,
+    ] {
+        let limits = EditingLimits {
+            max_derived_output_bytes: limit,
+            ..EditingLimits::default()
+        };
+        let mut actual = transaction_engine_with_editing_limits(limits.clone());
+        let mut oracle = transaction_engine_with_editing_limits(limits);
+        for (index, text) in ["first", "second"].into_iter().enumerate() {
+            let request = 65_410 + index as u64;
+            let input = json!({"type":"doc","content":[{"type":"paragraph",
+                "content":[{"type":"text","text":text}]}]})
+            .to_string();
+            let before = atomic_audit(&actual);
+            let result = actual.prepare_root_replacement_json(
+                request,
+                &input,
+                ReplacementHistory::UndoableBoundary,
+            );
+            let expected = crate::serialize::json_in::with_legacy_json_for_test(|| {
+                oracle.prepare_root_replacement_json(
+                    request,
+                    &input,
+                    ReplacementHistory::UndoableBoundary,
+                )
+            });
+            match (result, expected) {
+                (Ok(_), Ok(_)) => assert!(limit >= standalone),
+                (
+                    Err(crate::yrs_engine::RootReplacementError::Transaction(actual_error)),
+                    Err(crate::yrs_engine::RootReplacementError::Transaction(expected_error)),
+                ) => {
+                    assert_eq!(actual_error, expected_error, "limit {limit}");
+                    assert_eq!(limit, standalone - 1);
+                    assert_eq!(atomic_audit(&actual), before, "atomic rejection at {limit}");
+                }
+                (result, expected) => panic!("history parity at {limit}: {result:?}; {expected:?}"),
+            }
+            assert_eq!(actual.document(), oracle.document(), "limit {limit}");
+            assert_eq!(actual.can_undo(), oracle.can_undo(), "limit {limit}");
+        }
+        for request in 65_420..65_422 {
+            assert_eq!(
+                actual.undo(request).unwrap(),
+                oracle.undo(request).unwrap(),
+                "limit {limit}"
+            );
+            assert_eq!(actual.document(), oracle.document(), "undo at {limit}");
+        }
+        for request in 65_422..65_424 {
+            assert_eq!(
+                actual.redo(request).unwrap(),
+                oracle.redo(request).unwrap(),
+                "limit {limit}"
+            );
+            assert_eq!(actual.document(), oracle.document(), "redo at {limit}");
+        }
+    }
+}

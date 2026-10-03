@@ -35,6 +35,10 @@ interface AtomPosition {
     y: number;
     width: number;
     height: number;
+    presentation?: {
+        clip: { x: number; y: number; width: number; height: number };
+        candidate: boolean;
+    };
 }
 
 interface Measurement {
@@ -50,21 +54,45 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return value != null && typeof value === 'object' && !Array.isArray(value);
 }
 
+function isCanonicalPresentationSequence(value: unknown): value is string {
+    return typeof value === 'string' &&
+        /^(?:[1-9][0-9]*)$/.test(value) &&
+        (value.length < 20 ||
+            (value.length === 20 && value <= '18446744073709551615'));
+}
+
+function isStrictlyNewerPresentationSequence(next: string, previous?: string): boolean {
+    return previous == null || next.length > previous.length ||
+        (next.length === previous.length && next > previous);
+}
+
+function parseEnvelope(json: string): { values: unknown[]; presentationSequence?: string } {
+    const parsed: unknown = JSON.parse(json);
+
+    if (Array.isArray(parsed)) {
+        return { values: parsed };
+    } else if (
+        isRecord(parsed) &&
+        parsed.format === 'viewer-atoms-v2' &&
+        isCanonicalPresentationSequence(parsed.presentationSequence) &&
+        Array.isArray(parsed.atoms)
+    ) {
+        return { values: parsed.atoms, presentationSequence: parsed.presentationSequence };
+    }
+
+    throw new Error('Atom positions must be an array or a valid presentation envelope.');
+}
+
 function parsePositions(
-    json: string,
+    values: unknown[],
     definitions: ReadonlyMap<string, AtomNodeDefinition<any>>,
     snapshot: string
 ): AtomPosition[] {
-    const values: unknown = JSON.parse(json);
-
-    if (!Array.isArray(values)) {
-        throw new Error('Atom positions must be an array.');
-    }
 
     const seen = new Set<number>();
     const identities = new Set<string>();
 
-    return values.map((value: unknown) => {
+    const positions = values.map((value: unknown) => {
         if (
             !isRecord(value) ||
             typeof value.nodeType !== 'string' ||
@@ -81,6 +109,37 @@ function parsePositions(
             seen.has(Number(value.docPos))
         ) {
             throw new Error('Invalid prepared atom position.');
+        }
+
+        let presentation: AtomPosition['presentation'];
+
+        if (value.presentation != null) {
+            const rawPresentation = value.presentation;
+
+            if (!isRecord(rawPresentation) || typeof rawPresentation.candidate !== 'boolean') {
+                throw new Error('Invalid prepared atom presentation.');
+            }
+
+            const rawClip = rawPresentation.clip;
+
+            if (!isRecord(rawClip) ||
+                ![ 'x', 'y', 'width', 'height' ].every(
+                    key => typeof rawClip[key] === 'number' && Number.isFinite(rawClip[key])
+                ) ||
+                Number(rawClip.width) < 0 || Number(rawClip.height) < 0
+            ) {
+                throw new Error('Invalid prepared atom presentation.');
+            }
+
+            presentation = {
+                candidate: rawPresentation.candidate,
+                clip: {
+                    x: Number(rawClip.x),
+                    y: Number(rawClip.y),
+                    width: Number(rawClip.width),
+                    height: Number(rawClip.height),
+                },
+            };
         }
 
         const attrs: unknown = JSON.parse(value.attrsJson);
@@ -108,8 +167,10 @@ function parsePositions(
         identities.add(key);
         seen.add(Number(value.docPos));
 
-        return { ...value, attrs, key, atomId } as AtomPosition;
+        return { ...value, attrs, key, atomId, presentation } as AtomPosition;
     });
+
+    return positions;
 }
 
 export function useViewerAtoms({
@@ -175,6 +236,12 @@ export function useViewerAtoms({
     const renderedPositions = layout?.positions ?? [];
     const positions = pendingLayout ? [] : renderedPositions;
     const mountedMeasurements = useRef(new Map<string, { nodeType: string; size: Measurement }>());
+    const lastPresentationSequence = useRef<string | undefined>(undefined);
+    const lastV2Identity = useRef<string | undefined>(undefined);
+    const [ pinnedHosts, setPinnedHosts ] = useState<ReadonlyMap<string, {
+        instance: object;
+        pinned: boolean;
+    }>>(new Map());
 
     useLayoutEffect(() => {
         for (const [ key, measured ] of mountedMeasurements.current) {
@@ -259,7 +326,20 @@ export function useViewerAtoms({
         }
 
         try {
-            const next = parsePositions(value.atomsJson, latest.definitions, latest.snapshot);
+            const envelope = parseEnvelope(value.atomsJson);
+            const identity = `${value.generation}\u0000${value.revision}`;
+
+            if (envelope.presentationSequence != null) {
+                if (!isStrictlyNewerPresentationSequence(
+                    envelope.presentationSequence,
+                    lastPresentationSequence.current
+                )) {
+                    return;
+                }
+            } else if (lastV2Identity.current === identity) {
+                return;
+            }
+            const next = parsePositions(envelope.values, latest.definitions, latest.snapshot);
             const retainedMeasurements: Measurements = {};
             const retainedKeys = new Set<string>();
 
@@ -293,6 +373,10 @@ export function useViewerAtoms({
                 previous?.generation === value.generation && previous.json === value.atomsJson
                     ? previous
                     : { generation: value.generation, json: value.atomsJson, positions: next });
+            if (envelope.presentationSequence != null) {
+                lastPresentationSequence.current = envelope.presentationSequence;
+                lastV2Identity.current = identity;
+            }
         } catch {
             mountedMeasurements.current.clear();
             setLayout(null);
@@ -471,14 +555,104 @@ export function useViewerAtoms({
         []
     );
 
-    const children = renderedPositions.map(atom => {
+    const updatePinnedHost = useCallback((key: string, pinned: boolean, instance: object) => {
+        setPinnedHosts(previous => {
+            const currentHost = previous.get(key);
+
+            if (currentHost != null && currentHost.instance !== instance) {
+                return previous;
+            }
+
+            if (currentHost?.pinned === pinned) {
+                return previous;
+            }
+
+            const next = new Map(previous);
+            if (pinned) {
+                next.set(key, { instance, pinned });
+            } else {
+                next.delete(key);
+            }
+            return next;
+        });
+    }, []);
+
+    const children = renderedPositions.flatMap(atom => {
         const Component = definitions.get(atom.nodeType)?.component;
 
         if (!Component) {
-            return null;
+            return [];
         }
 
-        return (
+        const tablePresentation = atom.presentation;
+        const pinned = pinnedHosts.get(atom.key)?.pinned === true;
+
+        if (tablePresentation && !tablePresentation.candidate && !pinned) {
+            return [];
+        }
+
+        const host = (
+            <AtomHost
+                component={Component}
+                width={atom.width}
+                estimatedHeight={atom.height}
+                visible={atomIsVisible(atom.y, atom.height, viewport)}
+                onMeasure={event => measure(generation, atom, Component, event)}
+                onLivenessChange={tablePresentation
+                    ? (isPinned, instance) => updatePinnedHost(atom.key, isPinned, instance)
+                    : undefined}
+                atomProps={{
+                    attrs: atom.attrs,
+                    nodeType: atom.nodeType,
+                    selected: false,
+                    readOnly,
+                    interactive: interactive && !pendingLayout,
+                    isViewer: true,
+                    updateAttrs: partial => updateAttrs(layout!.generation, atom, partial),
+                }}
+            />
+        );
+
+        if (tablePresentation) {
+            const clippedX = Math.max(atom.x, tablePresentation.clip.x);
+            const clippedY = Math.max(atom.y, tablePresentation.clip.y);
+            const clippedRight = Math.min(atom.x + atom.width, tablePresentation.clip.x + tablePresentation.clip.width);
+            const clippedBottom = Math.min(atom.y + atom.height, tablePresentation.clip.y + tablePresentation.clip.height);
+
+            return [
+                <View
+                    key={atom.key}
+                    collapsable={false}
+                    pointerEvents={!interactive || pendingLayout ? 'none' : 'box-none'}
+                    accessibilityElementsHidden={pendingLayout}
+                    importantForAccessibility={pendingLayout ? 'no-hide-descendants' : 'auto'}
+                    style={{
+                        position: 'absolute',
+                        left: clippedX,
+                        top: clippedY,
+                        width: Math.max(0, clippedRight - clippedX),
+                        height: Math.max(0, clippedBottom - clippedY),
+                        overflow: 'hidden',
+                        opacity: pendingLayout ? 0 : 1,
+                    }}
+                >
+                    <View
+                        collapsable={false}
+                        onLayout={event => measure(generation, atom, Component, event)}
+                        style={{
+                            position: 'absolute',
+                            left: atom.x - clippedX,
+                            top: atom.y - clippedY,
+                            width: atom.width,
+                        }}
+                    >
+                        {host}
+                    </View>
+                </View>,
+            ];
+        }
+
+        return [(
             <View
                 key={atom.key}
                 collapsable={false}
@@ -494,24 +668,9 @@ export function useViewerAtoms({
                 }}
                 onLayout={event => measure(generation, atom, Component, event)}
             >
-                <AtomHost
-                    component={Component}
-                    width={atom.width}
-                    estimatedHeight={atom.height}
-                    visible={atomIsVisible(atom.y, atom.height, viewport)}
-                    onMeasure={event => measure(generation, atom, Component, event)}
-                    atomProps={{
-                        attrs: atom.attrs,
-                        nodeType: atom.nodeType,
-                        selected: false,
-                        readOnly,
-                        interactive: interactive && !pendingLayout,
-                        isViewer: true,
-                        updateAttrs: partial => updateAttrs(layout!.generation, atom, partial),
-                    }}
-                />
+                {host}
             </View>
-        );
+        )];
     });
 
     return {

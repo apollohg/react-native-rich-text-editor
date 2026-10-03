@@ -84,7 +84,10 @@ export {
     type NativeCollaborationTransportEvent,
     normalizeNativeCollaborationTransportEvent,
 } from './NativeEditorCollaborationTransport';
-export { createNativeEditorLocalAwarenessSelection } from './NativeEditorLocalAwareness';
+export {
+    createNativeEditorLocalAwarenessCellSelection,
+    createNativeEditorLocalAwarenessSelection,
+} from './NativeEditorLocalAwareness';
 export { NativeEditorDocumentBridge } from './NativeEditorDocumentBridge';
 export {
     type NativeEditorDocumentHandle,

@@ -241,11 +241,9 @@ fn attrs_to_marks(
     for (name, value) in attrs {
         let mut object = Map::new();
         object.insert("type".to_string(), Value::String(name.to_string()));
-        match any_to_json(value, budget, 1)? {
-            Value::Bool(true) | Value::Null => {}
-            other => {
-                object.insert("attrs".to_string(), other);
-            }
+        let mark_attrs = any_to_json(value, budget, 1)?;
+        if !mark_value_omits_attrs(value) {
+            object.insert("attrs".to_string(), mark_attrs);
         }
         marks.push(Value::Object(object));
     }

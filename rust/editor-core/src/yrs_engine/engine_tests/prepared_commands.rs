@@ -60,7 +60,7 @@ fn prepared_insert_compilation_uses_localized_semantics_after_planner_step() {
     let compiled = engine
         .compile_prepared_typed_transaction(transaction, proof)
         .unwrap();
-    assert!(compiled.localized_insert_admission.is_some());
+    assert!(compiled.localized_textblock_edit_admission.is_some());
     assert_eq!(
         take_full_pass_counts_for_test().ordinary_step_applications,
         0
@@ -316,8 +316,11 @@ fn stage4b2_prepared_selection_tamper_fails_closed_to_generic_parity() {
                 *len_utf16 = len_utf16.saturating_add(1);
             }
             "admissionResult" => {
-                let admission = compiled.localized_insert_admission.as_ref().unwrap();
-                compiled.localized_insert_admission = Some(
+                let admission = compiled
+                    .localized_textblock_edit_admission
+                    .as_ref()
+                    .unwrap();
+                compiled.localized_textblock_edit_admission = Some(
                     admission
                         .tampered_claims_for_test()
                         .into_iter()

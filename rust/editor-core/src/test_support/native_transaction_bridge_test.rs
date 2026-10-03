@@ -21,6 +21,8 @@ const REPLACEMENT_DOC: &str = r#"{"type":"doc","content":[{"type":"paragraph","c
 
 const GENEROUS_MESSAGES: usize = 64;
 const GENEROUS_BYTES: usize = 1024 * 1024;
+const RESIZE_PROBE_WIDTH: u32 = 140;
+const RESIZE_PROBE_COLUMN: u32 = 1;
 
 fn session_with_runtime() -> u64 {
     bridge::create_session(SessionOptions {
@@ -346,6 +348,21 @@ fn stale_base_revisions_reject_with_revision_mismatch() {
     let error = bridge::submit_command(
         id,
         &command_envelope(53, stale, serde_json::json!({ "type": "toggleBlockquote" })),
+    )
+    .unwrap_err();
+    assert_atomic_rejection(id, &before, &error, "REVISION_MISMATCH");
+
+    let error = bridge::submit_command(
+        id,
+        &command_envelope(
+            56,
+            stale,
+            serde_json::json!({
+                "type": "setTableColumnWidth",
+                "width": RESIZE_PROBE_WIDTH,
+                "column": RESIZE_PROBE_COLUMN,
+            }),
+        ),
     )
     .unwrap_err();
     assert_atomic_rejection(id, &before, &error, "REVISION_MISMATCH");

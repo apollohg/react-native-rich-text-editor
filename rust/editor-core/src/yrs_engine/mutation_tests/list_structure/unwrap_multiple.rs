@@ -586,7 +586,7 @@ fn unwrap_supports_empty_items_and_preserves_void_and_task_attrs() {
         "type": "doc",
         "content": [{
             "type": "taskList",
-            "attrs": { "listMeta": { "owner": "team", "rank": 7 } },
+            "attrs": { "listMeta": { "owner": "team", "rank": 7.0 } },
             "content": [
                 {
                     "type": "taskItem",
@@ -598,7 +598,7 @@ fn unwrap_supports_empty_items_and_preserves_void_and_task_attrs() {
                 },
                 {
                     "type": "taskItem",
-                    "attrs": { "checked": false, "itemMeta": { "id": "stationary", "score": 4 } },
+                    "attrs": { "checked": false, "itemMeta": { "id": "stationary", "score": 4.0 } },
                     "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "remain" }] }]
                 }
             ]
@@ -629,7 +629,7 @@ fn unwrap_supports_empty_items_and_preserves_void_and_task_attrs() {
     assert_eq!(actual["content"][1]["attrs"]["alt"], "typed");
     assert_eq!(
         actual["content"][2]["attrs"]["listMeta"],
-        json!({ "owner": "team", "rank": 7 })
+        json!({ "owner": "team", "rank": 7.0 })
     );
     assert_eq!(
         actual["content"][2]["content"][0]["attrs"]["checked"],
@@ -637,7 +637,7 @@ fn unwrap_supports_empty_items_and_preserves_void_and_task_attrs() {
     );
     assert_eq!(
         actual["content"][2]["content"][0]["attrs"]["itemMeta"],
-        json!({ "id": "stationary", "score": 4 })
+        json!({ "id": "stationary", "score": 4.0 })
     );
 }
 

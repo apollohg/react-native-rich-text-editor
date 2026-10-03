@@ -182,6 +182,11 @@ fn typed_awareness_intent_ffi_and_collaboration_binary_round_trip() {
         .iter()
         .find(|peer| peer["isLocal"] == true)
         .expect("a local peer");
+    assert_eq!(
+        local["resolvedAt"],
+        json!({"editorId": id, "documentRevision": revision_of(&id).to_string()}),
+        "the projected positions carry their receiver frame identity"
+    );
     assert_eq!(local["state"]["name"], json!("ffi peer"), "{local:?}");
     assert!(local["state"].get("state").is_none(), "{local:?}");
     assert_eq!(local["state"]["focused"], true, "{local:?}");

@@ -229,11 +229,13 @@ pub(super) struct EncodedStateSeal {
 }
 
 impl PreparedCandidateCache {
-    pub(super) fn take_matching_encoded_state(
+    pub(super) fn take_matching_encoded_state<T: yrs::ReadTxn>(
         &mut self,
         live_doc: &Doc,
         live_fragment: &XmlFragmentRef,
         mutation_plan: &YrsMutationPlan,
+        live_txn: &T,
+        live_scope: Option<crate::yrs_engine::compiler::CompilationReadScope<'_>>,
         document_revision: u64,
         yrs_state_epoch: u64,
         max_encoded_state_bytes: usize,
@@ -262,7 +264,7 @@ impl PreparedCandidateCache {
             && seal.skip_gc == self.doc.skip_gc()
             && seal.fragment_id == live_fragment_id
             && seal.fragment_id == candidate_fragment_id
-            && mutation_plan.matches_sealed_import_state(&self.state_vector);
+            && mutation_plan.matches_sealed_import_state(&self.state_vector, live_txn, live_scope);
         matches.then_some(seal.encoded_state)
     }
 
@@ -334,6 +336,12 @@ pub(super) fn utf16_doc() -> Doc {
         skip_gc: true,
         ..Options::default()
     };
+    #[cfg(test)]
+    let options = Options {
+        client_id: crate::test_support::deterministic_clients::next_client_id()
+            .unwrap_or(options.client_id),
+        ..options
+    };
     Doc::with_options(options)
 }
 
@@ -366,6 +374,8 @@ pub(super) fn encode_state_bounded(
     let encoded_state = if txn.state_vector().is_empty() {
         Vec::new()
     } else {
+        #[cfg(test)]
+        crate::yrs_engine::observability::record_whole_state_encoding();
         txn.encode_state_as_update_v1(&StateVector::default())
     };
     if encoded_state.len() > resource_limits.max_encoded_state_bytes {
@@ -470,6 +480,8 @@ pub(super) fn prepare_import_candidate_cache(
             let encoded = if source_state_vector.is_empty() {
                 Vec::new()
             } else {
+                #[cfg(test)]
+                crate::yrs_engine::observability::record_whole_state_encoding();
                 source_txn.encode_state_as_update_v1(&StateVector::default())
             };
             let source_fragment = source_txn.get_xml_fragment(fragment_name)?;

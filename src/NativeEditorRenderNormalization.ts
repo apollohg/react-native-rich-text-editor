@@ -26,7 +26,6 @@ import {
     normalizeNativeEditorV2Bytes,
 } from './NativeEditorResultNormalization';
 import { validEditorMentionTheme } from './EditorMentionThemeValidation';
-
 export function validListContext(value: unknown): value is ListContext {
     if (!isPlainRecord(value)) {
         return false;
@@ -54,47 +53,61 @@ export function validListContext(value: unknown): value is ListContext {
     );
 }
 
-export function validRenderElement(value: unknown): value is RenderElement {
-    if (!isPlainRecord(value) || !RENDER_ELEMENT_TYPES.has(value.type as RenderElement['type'])) {
+function validLeafRenderElement(value: unknown): value is RenderElement {
+    if (
+        !isPlainRecord(value) ||
+        !RENDER_ELEMENT_TYPES.has(value.type as RenderElement['type'])
+    ) {
         return false;
     }
 
     switch (value.type) {
         case 'textRun':
             return (
-                hasExactOwnKeys(value, [ 'type', 'text', 'marks' ]) &&
+                hasExactOwnKeys(value, ['type', 'text', 'marks']) &&
                 typeof value.text === 'string' &&
                 Array.isArray(value.marks) &&
                 value.marks.every(validRenderMark)
             );
         case 'blockStart':
             return (
-                hasOnlyOwnKeys(value, [ 'type',
+                hasOnlyOwnKeys(value, [
+                    'type',
                     'nodeType',
                     'depth',
                     'listContext',
-                    'language' ]) &&
+                    'language',
+                ]) &&
                 typeof value.nodeType === 'string' &&
                 nativeEditorV2U32(value.depth) != null &&
-                (value.language === undefined || typeof value.language === 'string') &&
-                (value.listContext === undefined || validListContext(value.listContext))
+                (value.language === undefined ||
+                    typeof value.language === 'string') &&
+                (value.listContext === undefined ||
+                    validListContext(value.listContext))
             );
         case 'blockEnd':
-            return hasExactOwnKeys(value, [ 'type' ]);
+            return hasExactOwnKeys(value, ['type']);
         case 'voidInline':
             return (
-                hasOnlyOwnKeys(value, [ 'type', 'nodeType', 'docPos', 'attrs' ]) &&
+                hasOnlyOwnKeys(value, [
+                    'type',
+                    'nodeType',
+                    'docPos',
+                    'attrs',
+                ]) &&
                 typeof value.nodeType === 'string' &&
                 nativeEditorV2U32(value.docPos) != null &&
                 (value.attrs === undefined || isPlainRecord(value.attrs))
             );
         case 'voidBlock':
             return (
-                hasOnlyOwnKeys(value, [ 'type',
+                hasOnlyOwnKeys(value, [
+                    'type',
                     'nodeType',
                     'docPos',
                     'attrs',
-                    'atomId' ]) &&
+                    'atomId',
+                ]) &&
                 typeof value.nodeType === 'string' &&
                 nativeEditorV2U32(value.docPos) != null &&
                 (value.attrs === undefined || isPlainRecord(value.attrs)) &&
@@ -114,15 +127,18 @@ export function validRenderElement(value: unknown): value is RenderElement {
                 typeof value.label === 'string' &&
                 nativeEditorV2U32(value.docPos) != null &&
                 (value.attrs === undefined || isPlainRecord(value.attrs)) &&
-                (value.mentionTheme === undefined || validEditorMentionTheme(value.mentionTheme))
+                (value.mentionTheme === undefined ||
+                    validEditorMentionTheme(value.mentionTheme))
             );
         case 'opaqueBlockAtom':
             return (
-                hasOnlyOwnKeys(value, [ 'type',
+                hasOnlyOwnKeys(value, [
+                    'type',
                     'nodeType',
                     'label',
                     'docPos',
-                    'attrs' ]) &&
+                    'attrs',
+                ]) &&
                 typeof value.nodeType === 'string' &&
                 typeof value.label === 'string' &&
                 nativeEditorV2U32(value.docPos) != null &&
@@ -133,19 +149,47 @@ export function validRenderElement(value: unknown): value is RenderElement {
     return false;
 }
 
-export function normalizeRenderBlocks(value: unknown): RenderElement[][] | null {
-    if (!Array.isArray(value)) {
-        return null;
-    }
-
-    return value.every(
-        block => Array.isArray(block) && block.every(element => validRenderElement(element))
-    )
-        ? (value)
+export function normalizeRenderBlocks(
+    value: unknown,
+): RenderElement[][] | null {
+    if (!Array.isArray(value) || !value.every(Array.isArray)) return null;
+    return validRenderElements(value.flat())
+        ? (value as RenderElement[][])
         : null;
 }
 
-export function normalizeRenderPatch(value: unknown): RenderBlocksPatch | null | undefined {
+export function validRenderElement(value: unknown): value is RenderElement {
+    return validRenderElements([value]);
+}
+
+const MAX_RENDER_ELEMENT_COUNT = 7_000_000;
+const RENDER_DOCUMENT_POSITION_LIMIT = 0xffff_ffff;
+
+function validRenderElements(roots: unknown[]): boolean {
+    if (roots.length > MAX_RENDER_ELEMENT_COUNT) return false;
+    const tableIds = new Set<string>();
+    return roots.every((value) => {
+        if (!isPlainRecord(value)) return false;
+        if (value.type === 'table') {
+            if (
+                !hasExactOwnKeys(value, ['type', 'tableId']) ||
+                typeof value.tableId !== 'string' ||
+                tableIds.has(value.tableId)
+            )
+                return false;
+            tableIds.add(value.tableId);
+            return true;
+        }
+        if (!validLeafRenderElement(value)) return false;
+        if (value.docPos === undefined) return true;
+        const position = nativeEditorV2U32(value.docPos);
+        return position !== null && position < RENDER_DOCUMENT_POSITION_LIMIT;
+    });
+}
+
+export function normalizeRenderPatch(
+    value: unknown,
+): RenderBlocksPatch | null | undefined {
     if (value === null) {
         return null;
     }
@@ -162,8 +206,16 @@ export function normalizeRenderPatch(value: unknown): RenderBlocksPatch | null |
         return undefined;
     }
 
-    const renderBlocks = normalizeRenderBlocks(value.renderBlocks);
-    const baseDocumentVersion = normalizeNativeEditorV2DecimalId(value.baseDocumentVersion);
+    if (
+        !Array.isArray(value.renderBlocks) ||
+        !value.renderBlocks.every(Array.isArray) ||
+        !validRenderElements(value.renderBlocks.flat())
+    )
+        return undefined;
+    const renderBlocks = value.renderBlocks as RenderElement[][];
+    const baseDocumentVersion = normalizeNativeEditorV2DecimalId(
+        value.baseDocumentVersion,
+    );
     const startIndex = nativeEditorV2U32(value.startIndex);
     const deleteCount = nativeEditorV2U32(value.deleteCount);
 
@@ -185,15 +237,19 @@ export function normalizeRenderSelection(value: unknown): Selection | null {
     }
 
     if (value.type === 'all') {
-        return hasExactOwnKeys(value, [ 'type' ]) ? { type: 'all' } : null;
+        return hasExactOwnKeys(value, ['type']) ? { type: 'all' } : null;
     }
 
     if (value.type === 'text') {
-        if (!hasExactOwnKeys(value, [ 'type',
-            'anchor',
-            'head',
-            'anchorScalar',
-            'headScalar' ])) {
+        if (
+            !hasExactOwnKeys(value, [
+                'type',
+                'anchor',
+                'head',
+                'anchorScalar',
+                'headScalar',
+            ])
+        ) {
             return null;
         }
 
@@ -202,17 +258,41 @@ export function normalizeRenderSelection(value: unknown): Selection | null {
         const anchorScalar = nativeEditorV2U32(value.anchorScalar);
         const headScalar = nativeEditorV2U32(value.headScalar);
 
-        if (anchor == null || head == null || anchorScalar == null || headScalar == null) {
+        if (
+            anchor == null ||
+            head == null ||
+            anchorScalar == null ||
+            headScalar == null
+        ) {
             return null;
         }
 
         return {
-            type: 'text', anchor, head, anchorScalar, headScalar,
+            type: 'text',
+            anchor,
+            head,
+            anchorScalar,
+            headScalar,
         };
     }
 
+    if (value.type === 'cell') {
+        if (!hasExactOwnKeys(value, ['type', 'anchorCell', 'headCell'])) {
+            return null;
+        }
+
+        const anchorCell = nativeEditorV2U32(value.anchorCell);
+        const headCell = nativeEditorV2U32(value.headCell);
+
+        if (anchorCell == null || headCell == null) {
+            return null;
+        }
+
+        return { type: 'cell', anchorCell, headCell };
+    }
+
     if (value.type === 'node') {
-        if (!hasExactOwnKeys(value, [ 'type', 'pos', 'posScalar' ])) {
+        if (!hasExactOwnKeys(value, ['type', 'pos', 'posScalar'])) {
             return null;
         }
 
@@ -264,8 +344,13 @@ export function normalizeRenderActiveState(value: unknown): ActiveState | null {
     };
 }
 
-export function normalizeRenderHistoryState(value: unknown): HistoryState | null {
-    if (!isPlainRecord(value) || !hasExactOwnKeys(value, [ 'canUndo', 'canRedo' ])) {
+export function normalizeRenderHistoryState(
+    value: unknown,
+): HistoryState | null {
+    if (
+        !isPlainRecord(value) ||
+        !hasExactOwnKeys(value, ['canUndo', 'canRedo'])
+    ) {
         return null;
     }
 
@@ -289,7 +374,7 @@ export function deepFreezeV2Value<T>(value: T): T {
 
 /** Validate and freeze the one complete render/state snapshot. */
 export function normalizeNativeEditorV2RenderUpdateValue(
-    value: unknown
+    value: unknown,
 ): NativeEditorAtomicRenderSnapshot | null {
     const parsed = parseNativeEditorV2JsonValue(value);
 
@@ -314,8 +399,9 @@ export function normalizeNativeEditorV2RenderUpdateValue(
     }
 
     const renderBlocks =
-        parsed.renderBlocks === null ? null : normalizeRenderBlocks(parsed.renderBlocks);
-
+        parsed.renderBlocks === null
+            ? null
+            : normalizeRenderBlocks(parsed.renderBlocks);
     const renderPatch = normalizeRenderPatch(parsed.renderPatch);
     const selection = normalizeRenderSelection(parsed.selection);
     const activeState = normalizeRenderActiveState(parsed.activeState);
@@ -366,18 +452,24 @@ export function normalizeNativeEditorV2RenderUpdateValue(
     });
 }
 
-export function normalizeNativeEditorV2DocumentJsonValue(value: unknown): DocumentJSON | null {
+export function normalizeNativeEditorV2DocumentJsonValue(
+    value: unknown,
+): DocumentJSON | null {
     const parsed = parseNativeEditorV2JsonValue(value);
 
-    return isPlainRecord(parsed) ? (parsed) : null;
+    return isPlainRecord(parsed) ? parsed : null;
 }
 
 export function normalizeNativeEditorV2ContentSnapshotValue(
-    value: unknown
+    value: unknown,
 ): ContentSnapshot | null {
     const parsed = parseNativeEditorV2JsonValue(value);
 
-    if (!isPlainRecord(parsed) || typeof parsed.html !== 'string' || !isPlainRecord(parsed.json)) {
+    if (
+        !isPlainRecord(parsed) ||
+        typeof parsed.html !== 'string' ||
+        !isPlainRecord(parsed.json)
+    ) {
         return null;
     }
 
@@ -391,7 +483,7 @@ export interface NativeEditorSnapshotExport {
 
 /** The snapshot export record arrives as direct fields (JSON + bytes), not a JSON string. */
 export function normalizeNativeEditorV2SnapshotExportValue(
-    value: unknown
+    value: unknown,
 ): NativeEditorSnapshotExport | null {
     if (!isPlainRecord(value) || typeof value.metadataJson !== 'string') {
         return null;
@@ -406,7 +498,9 @@ export function normalizeNativeEditorV2SnapshotExportValue(
     return { metadataJson: value.metadataJson, encodedState };
 }
 
-export function normalizeNativeEditorV2CreateValue(value: unknown): { editorId: string } | null {
+export function normalizeNativeEditorV2CreateValue(
+    value: unknown,
+): { editorId: string } | null {
     const parsed = parseNativeEditorV2JsonValue(value);
 
     if (!isPlainRecord(parsed)) {

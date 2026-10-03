@@ -336,6 +336,53 @@ fn borrowed_mark_conversion_preserves_exact_sorted_attrs() {
 }
 
 #[test]
+fn json_writes_store_attributeless_marks_as_empty_map_formats() {
+    let bold_text = |text: &str| {
+        json!({
+            "type": "doc",
+            "content": [{
+                "type": "paragraph",
+                "content": [{ "type": "text", "text": text, "marks": [{ "type": "bold" }] }]
+            }]
+        })
+    };
+    let schema = tiptap_schema();
+    let limits = ResourceLimits::default();
+    let codec = YrsDocumentCodec::new(&schema, &limits);
+    let doc = utf16_doc();
+    {
+        let mut txn = doc.transact_mut();
+        let fragment = txn.get_or_insert_xml_fragment("prosemirror");
+        codec
+            .apply_json(&fragment, &mut txn, &empty_json("doc"), &bold_text("ab"))
+            .unwrap();
+        codec
+            .apply_json(&fragment, &mut txn, &bold_text("ab"), &bold_text("aXb"))
+            .unwrap();
+    }
+    assert_eq!(read_raw(&doc), bold_text("aXb"));
+    let txn = doc.transact();
+    let fragment = txn.get_xml_fragment("prosemirror").unwrap();
+    let formats = fragment
+        .successors(&txn)
+        .filter_map(|node| match node {
+            yrs::types::xml::XmlOut::Text(text) => Some(text.diff(&txn, YChange::identity)),
+            _ => None,
+        })
+        .flatten()
+        .map(|diff| (diff.insert.to_string(&txn), diff.attributes.map(|attrs| *attrs)))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        formats,
+        vec![(
+            "aXb".to_string(),
+            Some(mark_attrs_value("bold", Any::Map(Default::default())))
+        )],
+        "imported and diffed text must carry the empty-map format y-prosemirror writes"
+    );
+}
+
+#[test]
 fn shared_codec_preserves_multimark_unicode_and_opaque_payload_exactly() {
     let input = json!({
         "type": "doc",
@@ -398,7 +445,7 @@ fn round_trips_list_attrs_and_inline_and_block_void_nodes() {
         "content": [
             {
                 "type": "orderedList",
-                "attrs": { "start": 3 },
+                "attrs": { "start": 3.0 },
                 "content": [{
                     "type": "listItem",
                     "content": [{
@@ -438,7 +485,7 @@ fn round_trips_opaque_json_nodes_without_changing_payloads() {
                     "type": "callout",
                     "attrs": {
                         "kind": "warning",
-                        "metadata": [true, null, { "rank": 2 }]
+                        "metadata": [true, null, { "rank": 2.0 }]
                     },
                     "content": [
                         { "type": "text", "text": "preserve " },

@@ -7,6 +7,7 @@ import android.text.Spanned
 import org.json.JSONObject
 
 internal fun EditorEditText.caretRectImpl(): RectF? {
+    if (authoritativeCellSelectionActive) return null
     if (isCollapsedAtomBoundarySelection(selectionStart, selectionEnd)) return null
     val textLayout = layout ?: return null
     val selectionOffset = selectionEnd.takeIf { it >= 0 } ?: return null
@@ -45,7 +46,8 @@ internal fun EditorEditText.isCollapsedAtomBoundarySelection(start: Int, end: In
 }
 
 internal fun EditorEditText.updateAtomBoundaryCursorVisibility() {
-    val shouldShowCursor = !isCollapsedAtomBoundarySelection(selectionStart, selectionEnd)
+    val shouldShowCursor = !authoritativeCellSelectionActive &&
+        !isCollapsedAtomBoundarySelection(selectionStart, selectionEnd)
     if (isCursorVisible != shouldShowCursor) {
         isCursorVisible = shouldShowCursor
         invalidate()
@@ -100,6 +102,7 @@ internal fun EditorEditText.canonicalListCaretOffset(selStart: Int, selEnd: Int)
 
 internal fun EditorEditText.syncCurrentSelectionToRust() {
     if (!hasLiveEditor()) return
+    if (isTableCellInput && !canDispatchTableCellMutation()) return
     authoritativeNodeSelectionRange?.let { range ->
         if (selectionStart == range.start && selectionEnd == range.end) return
         authoritativeNodeSelectionRange = null
@@ -110,16 +113,26 @@ internal fun EditorEditText.syncCurrentSelectionToRust() {
     val (scalarAnchor, scalarHead) = currentLogicalScalarSelection()
         ?: rawScalarSelection(currentText)
         ?: return
+    val mappedSelection = inputScalarSelection(scalarAnchor, scalarHead) ?: return
 
     v2Driver?.let { driver ->
-        val sync = driver.syncSelection(scalarAnchor, scalarHead)
+        val sync = driver.syncSelection(mappedSelection.first, mappedSelection.second)
         if (sync != null) {
             sync.refreshedUpdateJson?.let { applyRustUpdateJSON(it) }
+            if (isTableCellInput) onTableCellSelectionSynced?.invoke()
+            val editorIdBeforeListener = editorId
+            val driverBeforeListener = v2Driver
+            val cellSyncBeforeListener = if (isTableCellInput) onTableCellSelectionSynced else null
             editorListener?.onSelectionChanged(sync.docAnchor, sync.docHead)
+            if (editorId == editorIdBeforeListener && v2Driver === driverBeforeListener &&
+                onTableCellSelectionSynced === cellSyncBeforeListener
+            ) {
+                cellSyncBeforeListener?.invoke()
+            }
         }
         return
     }
-    onSetSelectionScalarInRustForTesting?.invoke(scalarAnchor, scalarHead)
+    onSetSelectionScalarInRustForTesting?.invoke(mappedSelection.first, mappedSelection.second)
 }
 
 internal fun EditorEditText.currentScalarSelectionImpl(): Pair<Int, Int>? {
@@ -294,6 +307,7 @@ internal fun EditorEditText.applySelectionFromJSON(
         recordImeTraceForTesting("applySelectionFromJSONSkipped", "reason=destroyed type=$type")
         return
     }
+    if (rootTableRenderNeedsRefresh) return
 
     isApplyingRustState = true
     try {
@@ -310,12 +324,23 @@ internal fun EditorEditText.applySelectionFromJSON(
                 val selectionDriver = v2Driver ?: return
                 val scalarAnchor = exactV2ScalarInt(selection.opt("anchorScalar") as? Number)
                     ?: selectionDriver.scalarPositionForDoc(docAnchor)
-                    ?: docAnchor
+                    ?: docAnchor.takeUnless { isTableCellInput || rootTablePositionMap != null }
+                    ?: return
                 val scalarHead = exactV2ScalarInt(selection.opt("headScalar") as? Number)
                     ?: selectionDriver.scalarPositionForDoc(docHead)
-                    ?: docHead
-                val anchorUtf16 = PositionBridge.scalarToUtf16(scalarAnchor, currentText)
-                val headUtf16 = PositionBridge.scalarToUtf16(scalarHead, currentText)
+                    ?: docHead.takeUnless { isTableCellInput || rootTablePositionMap != null }
+                    ?: return
+                val leavesCellSelection = authoritativeCellSelectionActive
+                authoritativeCellSelectionActive = false
+                cellSelectionRootTouchPending = false
+                updateAtomBoundaryCursorVisibility()
+                val localSelection = localScalarSelection(scalarAnchor, scalarHead) ?: run {
+                    if (rootTablePositionMap != null) rootTableSelectionInputBlocked = true
+                    return
+                }
+                rootTableSelectionInputBlocked = false
+                val anchorUtf16 = PositionBridge.scalarToUtf16(localSelection.first, currentText)
+                val headUtf16 = PositionBridge.scalarToUtf16(localSelection.second, currentText)
                 val len = text?.length ?: 0
                 recordImeTraceForTesting(
                     "applySelectionFromJSON",
@@ -326,15 +351,24 @@ internal fun EditorEditText.applySelectionFromJSON(
                     headUtf16.coerceIn(0, len)
                 )
                 rememberLogicalSelection(
-                    scalarAnchor = scalarAnchor,
-                    scalarHead = scalarHead,
+                    scalarAnchor = localSelection.first,
+                    scalarHead = localSelection.second,
                     utf16Anchor = selectionStart,
                     utf16Head = selectionEnd,
                     documentVersion = documentVersion
                 )
+                if (leavesCellSelection) restartInputForEditorIfFocused("cellSelectionExit")
             }
 
             "node" -> {
+                if (isTableCellInput) return
+                authoritativeCellSelectionActive = false
+                cellSelectionRootTouchPending = false
+                updateAtomBoundaryCursorVisibility()
+                if (rootTablePositionMap != null) {
+                    rootTableSelectionInputBlocked = true
+                    return
+                }
                 logicalSelectionSnapshot = null
                 val docPos = exactV2ScalarInt(selection.opt("pos") as? Number) ?: return
                 val nodeSelectionDriver = v2Driver ?: return
@@ -348,10 +382,34 @@ internal fun EditorEditText.applySelectionFromJSON(
             }
 
             "all" -> {
+                if (isTableCellInput) return
+                authoritativeCellSelectionActive = false
+                cellSelectionRootTouchPending = false
+                updateAtomBoundaryCursorVisibility()
+                if (rootTablePositionMap != null) {
+                    rootTableSelectionInputBlocked = true
+                    return
+                }
                 logicalSelectionSnapshot = null
                 authoritativeNodeSelectionRange = null
                 selectAll()
             }
+
+            "cell" -> {
+                if (isTableCellInput) return
+                logicalSelectionSnapshot = null
+                authoritativeNodeSelectionRange = null
+                authoritativeCellSelectionActive = true
+                cellSelectionRootTouchPending = false
+                rootTableSelectionInputBlocked = true
+                retireInputConnectionForEditor()
+                selectionActionMode?.takeIf { it.tag === TextSelectionActionMode }?.finish()
+                val length = text?.length ?: 0
+                setSelection(selectionEnd.coerceIn(0, length))
+                updateAtomBoundaryCursorVisibility()
+            }
+
+            else -> if (rootTablePositionMap != null) rootTableSelectionInputBlocked = true
         }
     } finally {
         isApplyingRustState = false

@@ -37,6 +37,7 @@ import {
     type ControlledValueDelivery,
     type NativeEditorErrorBinding,
     type NativeAtomPosition,
+    type TableToolbarSelection,
 } from './RichTextEditorNativeTypes';
 
 export function useRichTextEditorState(
@@ -74,10 +75,13 @@ export function useRichTextEditorState(
         virtualizeAtoms = false,
         atomViewport,
         remoteSelections,
+        tableDirection,
+        tableToolbar,
         allowImageResizing = true,
         onContentChange,
         onContentChangeJSON,
         onSelectionChange,
+        onTableSelectionGeometryChange,
         onActiveStateChange,
         onHistoryStateChange,
         onFocus,
@@ -353,6 +357,10 @@ export function useRichTextEditorState(
 
     onSelectionChangeRef.current = onSelectionChange;
 
+    const onTableSelectionGeometryChangeRef = useRef(onTableSelectionGeometryChange);
+
+    onTableSelectionGeometryChangeRef.current = onTableSelectionGeometryChange;
+
     const onActiveStateChangeRef = useRef(onActiveStateChange);
 
     onActiveStateChangeRef.current = onActiveStateChange;
@@ -397,6 +405,8 @@ export function useRichTextEditorState(
     const [ autoGrowHeight, setAutoGrowHeight ] = useState<number | null>(null);
 
     const [ isFocused, setIsFocused ] = useState(false);
+
+    const [ tableSelection, setTableSelection ] = useState<TableToolbarSelection | null>(null);
 
     const [ mentionQuery, setMentionQuery ] = useState<MentionQueryChangeEvent | null>(null);
 
@@ -510,6 +520,7 @@ export function useRichTextEditorState(
         activeStateKeyRef.current = null;
         toolbarItemsSerializationCacheRef.current = null;
         setActiveState(EMPTY_ACTIVE_STATE);
+        setTableSelection(null);
         setPushedUpdate(null);
         setAutoGrowHeight(null);
 
@@ -602,6 +613,7 @@ export function useRichTextEditorState(
         nativeErrorBindingRef,
         nativeErrorBinding,
         onSelectionChangeRef,
+        onTableSelectionGeometryChangeRef,
         isFocusedRef,
         setIsFocused,
         onBlurRef,
@@ -654,6 +666,10 @@ export function useRichTextEditorState(
         autoCorrect,
         keyboardType,
         allowImageResizing,
+        tableDirection,
+        tableToolbar,
+        tableSelection,
+        setTableSelection,
         onToolbarAction,
     };
 }

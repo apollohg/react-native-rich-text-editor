@@ -450,3 +450,224 @@ fn prepared_toggle_mark_exact_limits_and_one_under_errors_match_public_eager() {
     assert_eq!(prepared.can_undo(), generic.can_undo());
     assert_eq!(prepared.can_redo(), generic.can_redo());
 }
+
+#[test]
+fn native_mark_writes_store_attributeless_marks_as_empty_map_formats() {
+    use yrs::types::text::{Text, YChange};
+    use yrs::Any;
+
+    let mut engine = transaction_engine();
+    engine
+        .import_json(
+            &json!({
+                "type": "doc",
+                "content": [{
+                    "type": "paragraph",
+                    "content": [
+                        { "type": "text", "text": "plain" },
+                        { "type": "text", "text": "bold", "marks": [{ "type": "bold" }] }
+                    ]
+                }]
+            })
+            .to_string(),
+            TransactionOrigin::DocumentImport,
+        )
+        .unwrap();
+    select_text(&mut engine, 70_030_400, 0, 2);
+    engine
+        .apply_command(
+            70_030_401,
+            TypedCommand::ToggleMark {
+                mark_type: "italic".into(),
+            },
+        )
+        .unwrap()
+        .unwrap();
+    select_text(&mut engine, 70_030_402, 7, 7);
+    engine
+        .apply_command(70_030_403, TypedCommand::InsertText { text: "X".into() })
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(
+        engine.document_json().unwrap()["content"][0]["content"],
+        json!([
+            { "type": "text", "text": "pl", "marks": [{ "type": "italic" }] },
+            { "type": "text", "text": "ain" },
+            { "type": "text", "text": "boXld", "marks": [{ "type": "bold" }] }
+        ])
+    );
+    let txn = engine.doc.transact();
+    let fragment = txn.get_xml_fragment("prosemirror").unwrap();
+    let formats = fragment
+        .successors(&txn)
+        .filter_map(|node| match node {
+            XmlOut::Text(text) => Some(text.diff(&txn, YChange::identity)),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|diff| diff.attributes)
+        .flat_map(|attrs| attrs.into_iter())
+        .map(|(mark, value)| (mark.to_string(), value))
+        .collect::<Vec<_>>();
+    let empty_map = Any::Map(Default::default());
+    assert_eq!(
+        formats,
+        vec![
+            ("italic".to_string(), empty_map.clone()),
+            ("bold".to_string(), empty_map),
+        ],
+        "every attribute-less mark must be stored as the empty map y-prosemirror writes"
+    );
+}
+
+const LEGACY_PEER: u64 = 900;
+const UNMARKING_PEER: u64 = 901;
+const LEGACY_WORD: &str = "hello";
+const LEGACY_WORD_UTF16: u32 = 5;
+const BOLD_MARK: &str = "bold";
+
+fn remote_peer_synced_to(engine: &YrsDocumentEngine, client_id: u64) -> Doc {
+    use yrs::updates::decoder::Decode;
+
+    let peer = Doc::with_options(Options {
+        client_id: ClientID::new(client_id),
+        offset_kind: OffsetKind::Utf16,
+        ..Options::default()
+    });
+    peer.transact_mut()
+        .apply_update(yrs::Update::decode_v1(&engine.encoded_state().unwrap()).unwrap())
+        .unwrap();
+    peer
+}
+
+fn first_paragraph_text<T: ReadTxn>(txn: &T) -> yrs::types::xml::XmlTextRef {
+    let fragment = txn.get_xml_fragment("prosemirror").unwrap();
+    let XmlOut::Element(paragraph) = fragment.get(txn, 0).unwrap() else {
+        panic!("the first block must be an XML element")
+    };
+    let XmlOut::Text(text) = paragraph.get(txn, 0).unwrap() else {
+        panic!("the first block must hold XML text")
+    };
+    text
+}
+
+fn remote_bold_update(peer: &Doc, len_utf16: u32, value: yrs::Any) -> Vec<u8> {
+    use yrs::types::text::Text;
+
+    let mut txn = peer.transact_mut();
+    let before = txn.state_vector();
+    first_paragraph_text(&txn).format(
+        &mut txn,
+        0,
+        len_utf16,
+        yrs::types::Attrs::from([(Arc::<str>::from(BOLD_MARK), value)]),
+    );
+    txn.encode_diff_v1(&before)
+}
+
+fn first_paragraph_bold_runs(engine: &YrsDocumentEngine) -> Vec<(String, Option<yrs::Any>)> {
+    use yrs::types::text::{Text, YChange};
+
+    let txn = engine.doc.transact();
+    first_paragraph_text(&txn)
+        .diff(&txn, YChange::identity)
+        .into_iter()
+        .map(|diff| {
+            (
+                diff.insert.to_string(&txn),
+                diff.attributes.and_then(|attrs| attrs.get(BOLD_MARK).cloned()),
+            )
+        })
+        .collect()
+}
+
+fn engine_with_legacy_bold_word(trailing_text: &str) -> YrsDocumentEngine {
+    let mut engine = transaction_engine();
+    engine
+        .import_json(
+            &json!({
+                "type": "doc",
+                "content": [{
+                    "type": "paragraph",
+                    "content": [{ "type": "text", "text": format!("{LEGACY_WORD}{trailing_text}") }]
+                }]
+            })
+            .to_string(),
+            TransactionOrigin::DocumentImport,
+        )
+        .unwrap();
+    let legacy = remote_bold_update(
+        &remote_peer_synced_to(&engine, LEGACY_PEER),
+        LEGACY_WORD_UTF16,
+        yrs::Any::Bool(true),
+    );
+    engine.apply_remote_update_v1(70_030_500, &legacy).unwrap();
+    engine
+}
+
+#[test]
+fn typing_inside_a_legacy_true_mark_run_keeps_its_format_and_a_concurrent_unmark() {
+    const INSIDE: u32 = 2;
+    const START: u32 = 0;
+
+    for (caret, typed) in [(INSIDE, "heXllo"), (START, "Xhello")] {
+        let mut engine = engine_with_legacy_bold_word("");
+        assert_eq!(
+            first_paragraph_bold_runs(&engine),
+            vec![(LEGACY_WORD.to_owned(), Some(yrs::Any::Bool(true)))],
+            "the fixture must hold a legacy true bold run"
+        );
+        let unmark = remote_bold_update(
+            &remote_peer_synced_to(&engine, UNMARKING_PEER),
+            LEGACY_WORD_UTF16,
+            yrs::Any::Null,
+        );
+
+        select_text(&mut engine, 70_030_501, caret, caret);
+        engine
+            .apply_command(70_030_502, TypedCommand::InsertText { text: "X".into() })
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            first_paragraph_bold_runs(&engine),
+            vec![(typed.to_owned(), Some(yrs::Any::Bool(true)))],
+            "typing at {caret} of a legacy run must reuse its stored true value, so no format pair splits it"
+        );
+
+        engine.apply_remote_update_v1(70_030_503, &unmark).unwrap();
+        assert_eq!(
+            first_paragraph_bold_runs(&engine),
+            vec![(typed.to_owned(), None)],
+            "the concurrent unbold must win across the whole run, including text typed at {caret}"
+        );
+    }
+}
+
+#[test]
+fn marking_across_a_legacy_true_run_formats_only_the_unmarked_text() {
+    const FROM: u32 = 2;
+    const TO: u32 = 8;
+
+    let mut engine = engine_with_legacy_bold_word(" world");
+    select_text(&mut engine, 70_030_510, FROM, TO);
+    engine
+        .apply_command(
+            70_030_511,
+            TypedCommand::ToggleMark {
+                mark_type: BOLD_MARK.into(),
+            },
+        )
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(
+        first_paragraph_bold_runs(&engine),
+        vec![
+            (LEGACY_WORD.to_owned(), Some(yrs::Any::Bool(true))),
+            (" wo".to_owned(), Some(yrs::Any::Map(Default::default()))),
+            ("rld".to_owned(), None),
+        ],
+        "the legacy part of the range already carries an equivalent value and must not be reformatted"
+    );
+}

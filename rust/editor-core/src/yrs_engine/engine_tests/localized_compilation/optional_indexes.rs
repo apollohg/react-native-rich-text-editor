@@ -64,7 +64,7 @@ fn changed_commit_survives_optional_index_allocation_failure_exactly() {
             history_policy: HistoryPolicy::Auto,
         })
         .unwrap();
-    assert!(compiled.localized_insert_admission.is_none());
+    assert!(compiled.localized_textblock_edit_admission.is_none());
 }
 
 #[test]
@@ -134,6 +134,7 @@ fn changed_commit_survives_each_optional_index_allocation_stage() {
                 TransactionOrigin::DocumentImport,
             )
             .unwrap();
+        engine.drop_localized_text_index_for_test();
         let before_document_revision = engine.revision();
         let before_state_revision = engine.state_revision();
         let point = RevisionedPosition {
@@ -184,7 +185,7 @@ fn changed_commit_survives_each_optional_index_allocation_stage() {
                 history_policy: HistoryPolicy::Auto,
             })
             .unwrap();
-        assert!(compiled.localized_insert_admission.is_none());
+        assert!(compiled.localized_textblock_edit_admission.is_none());
     }
 }
 
@@ -254,7 +255,7 @@ fn selection_only_optional_index_copy_failure_degrades_evidence_to_none() {
             history_policy: HistoryPolicy::Auto,
         })
         .unwrap();
-    assert!(compiled.localized_insert_admission.is_none());
+    assert!(compiled.localized_textblock_edit_admission.is_none());
 }
 
 #[test]
@@ -305,7 +306,7 @@ fn selection_only_revision_reseal_allows_following_strict_insert_admission() {
             history_policy: HistoryPolicy::Auto,
         })
         .unwrap();
-    assert!(compiled.localized_insert_admission.is_some());
+    assert!(compiled.localized_textblock_edit_admission.is_some());
 
     engine
         .apply_command(
@@ -345,7 +346,7 @@ fn selection_only_revision_reseal_allows_following_strict_insert_admission() {
             history_policy: HistoryPolicy::Auto,
         })
         .unwrap();
-    assert!(compiled.localized_insert_admission.is_some());
+    assert!(compiled.localized_textblock_edit_admission.is_some());
 }
 
 #[test]
@@ -467,6 +468,7 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
 
     let mut command = fixture();
     let mut command_counts = Vec::new();
+    let mut command_full_encodings = Vec::new();
     reset_active_state_cache_counts_for_test();
     for index in 0..20 {
         reset_full_pass_counts_for_test();
@@ -474,6 +476,8 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
         reset_localized_index_lifecycle_counts_for_test();
         reset_cached_render_counts_for_test();
         reset_localized_render_transition_counts_for_test();
+        let previous_bound = command.encoded_state_upper_bound;
+        let previous_events = command.history.replay_audit_for_test().0;
         command
             .apply_command(
                 70_300 + index as u64,
@@ -481,6 +485,15 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
             )
             .unwrap()
             .unwrap();
+        let exact_admission = command.encoded_state_upper_bound < previous_bound;
+        let replay_rolled = command.history.replay_audit_for_test().0 < previous_events;
+        command_full_encodings.push(usize::from(exact_admission) + usize::from(replay_rolled));
+        if exact_admission {
+            assert_eq!(
+                command.encoded_state_upper_bound,
+                command.encoded_state().unwrap().len()
+            );
+        }
         command_counts.push((
             take_full_pass_counts_for_test(),
             take_localized_lookup_counts_for_test(),
@@ -498,6 +511,7 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
     let expected_commit = (
         FullPassCounts {
             import_model_parses: 0,
+            json_value_deserializations: 0,
             validated_evidence_constructions: 0,
             validation_certificate_constructions: 0,
             planner_simulations: 0,
@@ -505,11 +519,11 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
             canonical_mark_tree_scans: 0,
             canonical_mark_validation_attempts: 0,
             canonical_mark_validation_completions: 0,
-            canonical_mark_nodes_visited: 0,
+            canonical_mark_nodes_visited: 2,
             canonical_identity_predicate_nodes_visited: 0,
-            canonical_projections: 1,
-            canonical_serializations: 2,
-            canonical_hashes: 1,
+            canonical_projections: 0,
+            canonical_serializations: 0,
+            canonical_hashes: 0,
             affected_top_level_scans: 0,
             position_map_clones: 1,
             position_map_compactions: 1,
@@ -521,6 +535,17 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
             render_top_level_start_scans: 0,
             active_applicability_passes: 0,
             ordinary_step_applications: 0,
+            table_projection_derivations: 0,
+            table_command_availability_plans: 0,
+            yrs_tree_walks: 0,
+            whole_state_encodings: 0,
+            mutation_guard_snapshot_requests: 0,
+            compilation_snapshot_scans: 1,
+            compilation_snapshot_reuses: 0,
+            cell_content_keys: 0,
+            attribute_serializations: 0,
+            epoch_block_rebuilds: 0,
+            cell_content_generations: 0,
         },
         (0, 1, 1),
         (0, 1, 1, 0),
@@ -530,6 +555,7 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
     let expected_result = (
         FullPassCounts {
             import_model_parses: 0,
+            json_value_deserializations: 0,
             validated_evidence_constructions: 0,
             validation_certificate_constructions: 0,
             planner_simulations: 0,
@@ -537,11 +563,11 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
             canonical_mark_tree_scans: 0,
             canonical_mark_validation_attempts: 0,
             canonical_mark_validation_completions: 0,
-            canonical_mark_nodes_visited: 0,
+            canonical_mark_nodes_visited: 2,
             canonical_identity_predicate_nodes_visited: 0,
-            canonical_projections: 1,
-            canonical_serializations: 2,
-            canonical_hashes: 1,
+            canonical_projections: 0,
+            canonical_serializations: 0,
+            canonical_hashes: 0,
             affected_top_level_scans: 0,
             position_map_clones: 1,
             position_map_compactions: 1,
@@ -553,6 +579,17 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
             render_top_level_start_scans: 0,
             active_applicability_passes: 1,
             ordinary_step_applications: 0,
+            table_projection_derivations: 1,
+            table_command_availability_plans: 19,
+            yrs_tree_walks: 0,
+            whole_state_encodings: 0,
+            mutation_guard_snapshot_requests: 0,
+            compilation_snapshot_scans: 1,
+            compilation_snapshot_reuses: 0,
+            cell_content_keys: 0,
+            attribute_serializations: 0,
+            epoch_block_rebuilds: 0,
+            cell_content_generations: 0,
         },
         (0, 1, 1),
         (0, 1, 1, 0),
@@ -562,6 +599,7 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
     let expected_command = (
         FullPassCounts {
             import_model_parses: 0,
+            json_value_deserializations: 0,
             validated_evidence_constructions: 0,
             validation_certificate_constructions: 0,
             planner_simulations: 1,
@@ -569,11 +607,11 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
             canonical_mark_tree_scans: 0,
             canonical_mark_validation_attempts: 0,
             canonical_mark_validation_completions: 0,
-            canonical_mark_nodes_visited: 0,
+            canonical_mark_nodes_visited: 2,
             canonical_identity_predicate_nodes_visited: 321,
             canonical_projections: 1,
-            canonical_serializations: 1,
-            canonical_hashes: 1,
+            canonical_serializations: 0,
+            canonical_hashes: 0,
             affected_top_level_scans: 0,
             position_map_clones: 1,
             position_map_compactions: 1,
@@ -585,6 +623,18 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
             render_top_level_start_scans: 0,
             active_applicability_passes: 1,
             ordinary_step_applications: 1,
+            table_projection_derivations: DEBUG_TABLE_AVAILABILITY_PASSES,
+            table_command_availability_plans: DEBUG_TABLE_AVAILABILITY_PASSES
+                * TABLE_AVAILABILITY_PLANS_PER_PASS,
+            yrs_tree_walks: 0,
+            whole_state_encodings: 0,
+            mutation_guard_snapshot_requests: 0,
+            compilation_snapshot_scans: 1,
+            compilation_snapshot_reuses: 0,
+            cell_content_keys: 0,
+            attribute_serializations: 0,
+            epoch_block_rebuilds: 0,
+            cell_content_generations: 0,
         },
         (0, 1, 1),
         (0, 1, 1, 0),
@@ -592,14 +642,26 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
         (1, 1, 0),
     );
     for (index, actual) in commit_counts.iter().enumerate() {
-        assert_eq!(*actual, expected_commit, "direct commit edit {index}");
+        let mut expected = expected_commit;
+        expected.0.compilation_snapshot_scans = usize::from(index == 0);
+        assert_eq!(*actual, expected, "direct commit edit {index}");
     }
     for (index, actual) in result_counts.iter().enumerate() {
-        assert_eq!(*actual, expected_result, "direct result edit {index}");
+        let mut expected = expected_result;
+        expected.0.compilation_snapshot_scans = usize::from(index == 0);
+        assert_eq!(*actual, expected, "direct result edit {index}");
     }
     for (index, actual) in command_counts.iter().enumerate() {
         let mut expected = expected_command;
-        expected.0.active_applicability_passes = usize::from(index == 0);
+        let first = index == 0;
+        expected.0.compilation_snapshot_scans = usize::from(first);
+        expected.0.whole_state_encodings = command_full_encodings[index];
+        expected.0.canonical_serializations = usize::from(!first);
+        expected.0.canonical_hashes = usize::from(!first);
+        expected.0.active_applicability_passes = usize::from(first);
+        expected.0.table_projection_derivations += usize::from(first);
+        expected.0.table_command_availability_plans +=
+            usize::from(first) * TABLE_AVAILABILITY_PLANS_PER_PASS;
         assert_eq!(*actual, expected, "command edit {index}");
     }
 
@@ -620,11 +682,13 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
         let promoted_state = promoted.derived_state.as_ref().unwrap();
         let rebuilt_state = rebuilt.derived_state.as_ref().unwrap();
         assert_eq!(
-            promoted_state.validation_certificate, rebuilt_state.validation_certificate,
+            promoted_state.materialized_identity_for_test().0,
+            rebuilt_state.materialized_identity_for_test().0,
             "sequential edit {index}"
         );
         assert_eq!(
-            promoted_state.localized_text_index, rebuilt_state.localized_text_index,
+            promoted_state.materialized_identity_for_test().1,
+            rebuilt_state.materialized_identity_for_test().1,
             "sequential edit {index}"
         );
     }

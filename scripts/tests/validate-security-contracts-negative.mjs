@@ -13,7 +13,6 @@ try {
         readFileSync(resolve(root, 'scripts/tests/security-contract-fixtures.json'), 'utf8')
     );
     fixture.trickleDeadline.expectedOutcome = 'success';
-    fixture.trickleDeadline.expectedTerminalMs += 1;
     const mutatedPath = join(temporary, 'mutated-fixtures.json');
     writeFileSync(mutatedPath, JSON.stringify(fixture));
 
@@ -32,7 +31,7 @@ try {
     );
     assert.notEqual(result.status, 0, 'security validator accepted mutated trickle outcomes');
     const output = `${result.stdout}\n${result.stderr}`;
-    assert.match(output, /shared whitespace base64 and trickle fixtures.*FAILED|AssertionError/is);
+    assert.match(output, /shared whitespace base64 and trickle fixtures.*FAILED/is);
     assert.doesNotMatch(output, /gradle-8\.14\.3-bin\.zip\.lck/);
     console.log('Security behavior gate negative fixture was rejected.');
 } finally {

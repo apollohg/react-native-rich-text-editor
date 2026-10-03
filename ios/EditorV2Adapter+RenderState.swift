@@ -16,68 +16,79 @@ extension EditorV2Adapter {
         return String(data: strippedData, encoding: .utf8)
     }
 
-    /// Fetch one complete locked render snapshot. This is deliberately the
-    /// only read in the refresh path: never splice a getState revision onto
-    /// the render payload.
-    private func fetchAtomicRenderSnapshot(
-        mirrorScalarSelection: (anchor: UInt32, head: UInt32)?
-    ) -> AtomicRenderSnapshot? {
+    private func fetchNativeFrame(mirrorScalarSelection: (anchor: UInt32, head: UInt32)?) -> FfiNativeRenderFrame? {
+        let stageStarted = PreparedProseInstrumentation.now()
+        defer { PreparedProseInstrumentation.recordTableStage(.nativeFrameAndFFI, start: stageStarted) }
         renderUpdateCallCountForTesting += 1
-        let result: FfiJsonResult
-        if let nativeOwnerId {
-            result = editorV2RenderNative(
-                editorId: editorId,
-                ownerId: String(nativeOwnerId),
-                mirrorScalarAnchor: mirrorScalarSelection?.anchor,
-                mirrorScalarHead: mirrorScalarSelection?.head
-            )
-        } else {
-            result = editorV2RenderUpdate(
-                editorId: editorId,
-                mirrorScalarAnchor: mirrorScalarSelection?.anchor,
-                mirrorScalarHead: mirrorScalarSelection?.head
-            )
+        let result = editorV2RenderNativeFrame(
+            editorId: editorId, ownerId: nativeOwnerId.map(String.init),
+            mirrorScalarAnchor: mirrorScalarSelection?.anchor, mirrorScalarHead: mirrorScalarSelection?.head
+        )
+        switch (result.frame, result.error) {
+        case let (.some(frame), .none): return transformNativeFrameForTesting?(frame) ?? frame
+        case let (.none, .some(error)): emit(error)
+        default: emit(Self.contractError("v2 result must carry exactly one of frame/error"))
         }
-        switch Self.normalizeJsonResult(result) {
-        case .failure(let error):
-            // A render update that fails or violates the frozen shape is a
-            // boundary failure like any other. Returning nil without
-            // reporting it leaves every caller — the paired view and the
-            // stateless render probe alike — holding a bare nil with no
-            // cause to surface, so the engine's own error is what travels.
-            emit(error)
-            return nil
-        case .success(let json):
-            guard let snapshot = Self.parseAtomicRenderSnapshot(json) else {
-                emit(Self.contractError("v2 render update violates the frozen shape"))
-                return nil
-            }
-            return snapshot
-        }
+        return nil
     }
 
     @discardableResult
-    private func adopt(_ snapshot: AtomicRenderSnapshot, strippingViewSelection: Bool) -> EditorV2DerivedUpdate? {
+    private func adopt(
+        _ frame: FfiNativeRenderFrame,
+        strippingViewSelection: Bool
+    ) -> EditorV2DerivedUpdate? {
+        let stageStarted = PreparedProseInstrumentation.now()
+        defer { PreparedProseInstrumentation.recordTableStage(.adapterAdoption, start: stageStarted) }
+        guard let snapshot = Self.parseAtomicRenderSnapshot(frame.snapshotJson) else { return nil }
+        let nextIndex = tableIndex.copy()
+        guard case let .success(changes) = nextIndex.adopt(
+            frame.tables, installedRevision: installedFrameRevision, frameRevision: snapshot.documentRevision
+        ), nextIndex.rootExtents.values.allSatisfy({ $0.scalarEnd <= snapshot.scalarLength }) else { return nil }
+        var candidate = snapshot.renderObject["renderBlocks"] as? [[[String: Any]]]
+        if candidate == nil, let patch = snapshot.renderObject["renderPatch"] as? [String: Any] {
+            if let retained = cachedSemanticRenderBlocks,
+               let base = patch["baseDocumentVersion"] as? String, UInt64(base) == cachedAtomicRenderDocumentRevision,
+               let start = Self.uint32Field(patch, "startIndex"), let delete = Self.uint32Field(patch, "deleteCount"),
+               let inserted = patch["renderBlocks"] as? [[[String: Any]]],
+               UInt64(start) + UInt64(delete) <= UInt64(retained.count) {
+                candidate = retained
+                candidate!.replaceSubrange(Int(start)..<(Int(start) + Int(delete)), with: inserted)
+            } else { return nil }
+        }
+        guard let candidate, Self.validSemanticRenderElements(candidate.joined().map { $0 as Any }, tableIndex: nextIndex) else { return nil }
+        let rootKeys = Set(candidate.joined().compactMap { $0["type"] as? String == "table" ? $0["tableId"] as? String : nil })
+        guard rootKeys == Set(nextIndex.rootExtents.keys) else { return nil }
+        if let selection = snapshot.renderObject["selection"] as? [String: Any], selection["type"] as? String == "cell",
+           EditorCellSelection.resolve(selection, index: nextIndex) == nil { return nil }
         guard let updateJSON = Self.viewUpdate(
             from: snapshot,
             strippingViewSelection: strippingViewSelection
         ) else {
             return nil
         }
+        let tablePresentation = EditorTablePresentationSnapshot(
+            documentRevision: snapshot.documentRevision,
+            baseDocumentRevision: changes.fullReset ? nil : installedFrameRevision,
+            positionEpoch: snapshot.positionEpoch,
+            index: nextIndex, changes: changes
+        )
+        tableIndex = nextIndex
+        installedFrameRevision = snapshot.documentRevision
+        if changes.fullReset { fullFrameAdoptionCountForTesting += 1 } else { deltaFrameAdoptionCountForTesting += 1 }
         baseDocumentRevision = snapshot.documentRevision
         stateRevision = snapshot.stateRevision
         cachedScalarLength = snapshot.scalarLength
         cachedActiveState = snapshot.activeState
         cachedHistoryState = snapshot.historyState
         cachedViewUpdateJSON = updateJSON
-        cachedAtomicRenderJSON = snapshot.atomicRenderJSON
+        cachedAtomicRenderJSON = frame.snapshotJson
+        cachedAtomicRenderSelectionObject = snapshot.renderObject["selection"] as? [String: Any]
         cachedAtomicRenderDocumentRevision = snapshot.documentRevision
+        cachedSemanticRenderBlocks = candidate
+        cachedTablePresentation = tablePresentation
         if let epoch = snapshot.positionEpoch {
             positionEpoch = epoch
         }
-        // This is the engine's selection from the locked snapshot. Keep it
-        // distinct from a caller-provided mirror: treating it as a mirror on
-        // the next refresh would change the frozen no-mirror render shape.
         cachedAuthoritativeScalarSelection = snapshot.selection
         return EditorV2DerivedUpdate(updateJSON: updateJSON, scalarLength: snapshot.scalarLength)
     }
@@ -113,13 +124,12 @@ extension EditorV2Adapter {
         guard let intent = parseExternalReset(resetJSON) else { return nil }
         var reset = intent.payload
         let resetRevision = intent.revision
-        guard let current = fetchAtomicRenderSnapshot(mirrorScalarSelection: nil) else { return nil }
-        if current.documentRevision == resetRevision {
-            return adoptExternalRender(renderJSON)
+        guard validateExternalRender(renderJSON), let current = refreshInternal(mirrorSelection: nil) else { return nil }
+        if baseDocumentRevision == resetRevision {
+            tableResetGeneration &+= 1
+            return current.updateJSON
         }
-        if latestJSDrivenDocumentRevision > resetRevision {
-            return adopt(current, strippingViewSelection: false)?.updateJSON
-        }
+        if latestJSDrivenDocumentRevision > resetRevision { return current.updateJSON }
         switch Self.normalizeJsonResult(editorV2GetState(editorId: editorId)) {
         case .failure(let error):
             emit(error)
@@ -133,7 +143,8 @@ extension EditorV2Adapter {
                 return nil
             }
             if origin != "nativeView" {
-                return refreshInternal(mirrorSelection: nil, strippingViewSelection: false)?.updateJSON
+                tableResetGeneration &+= 1
+                return current.updateJSON
             }
         }
         reset.removeValue(forKey: "documentRevision")
@@ -156,6 +167,7 @@ extension EditorV2Adapter {
             guard let update = refreshInternal(mirrorSelection: nil, strippingViewSelection: false) else {
                 return nil
             }
+            tableResetGeneration &+= 1
             if changed {
                 publishCachedCollaborationSelection()
                 notifyCollaborationMutation()
@@ -171,31 +183,19 @@ extension EditorV2Adapter {
             rejectExternalRenderEnvelope("external editor update adapter is destroyed")
             return nil
         }
-        guard let snapshot = Self.parseAtomicRenderSnapshot(renderJSON),
-              let adopted = adopt(snapshot, strippingViewSelection: false)
-        else {
-            rejectAtomicRenderSnapshot()
-            return nil
-        }
-        if snapshot.positionEpoch == nil, !pinCurrentPositionEpoch(snapshot.documentRevision) {
-            return nil
-        }
-        return adopted.updateJSON
+        guard validateExternalRender(renderJSON) else { return nil }
+        guard let update = refreshInternal(mirrorSelection: nil)?.updateJSON else { return nil }
+        publishCollaborationCellsIfChanged()
+        return update
     }
 
-    /// Validate an externally supplied atomic render without adopting it.
-    /// A preflight commit can make an otherwise valid render stale; callers
-    /// still need to reject malformed envelopes exactly once before replacing
-    /// that stale render with a current atomic refresh.
     func validateExternalRender(_ renderJSON: String) -> Bool {
         guard beginRuntimeOperation() else { return false }
         defer { endRuntimeOperation() }
-        guard !destroyed else {
-            rejectExternalRenderEnvelope("external editor update adapter is destroyed")
-            return false
-        }
-        guard Self.parseAtomicRenderSnapshot(renderJSON) != nil else {
-            rejectAtomicRenderSnapshot()
+        guard !destroyed, let data = renderJSON.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              Self.uint64Field(object, "documentVersion") != nil else {
+            rejectExternalRenderEnvelope("external editor update notice is malformed")
             return false
         }
         return true
@@ -249,13 +249,22 @@ extension EditorV2Adapter {
             )
             return nil
         }
-        guard let snapshot = fetchAtomicRenderSnapshot(mirrorScalarSelection: mirrorSelection),
-              let derived = adopt(snapshot, strippingViewSelection: strippingViewSelection)
-        else {
-            debugNotes.append("deriveUpdateJSON failed")
-            return nil
+        guard let frame = fetchNativeFrame(mirrorScalarSelection: mirrorSelection) else { return nil }
+        if let derived = adopt(frame, strippingViewSelection: strippingViewSelection) { return derived }
+        if frame.tables.kind == .delta {
+            if let ownerId = nativeOwnerId {
+                _ = editorV2ReleaseNativeBinding(editorId: editorId, ownerId: String(ownerId))
+            }
+            guard let full = fetchNativeFrame(mirrorScalarSelection: mirrorSelection) else { return nil }
+            guard full.tables.kind == .full,
+                  let derived = adopt(full, strippingViewSelection: strippingViewSelection) else {
+                emit(Self.contractError("native table frame violates the frozen shape"))
+                return nil
+            }
+            return derived
         }
-        return derived
+        emit(Self.contractError("native table frame violates the frozen shape"))
+        return nil
     }
 
     /// Public recovery entry (stale-revision recovery, external refresh).
@@ -269,7 +278,6 @@ extension EditorV2Adapter {
         guard beginRuntimeOperation() else { return nil }
         defer { endRuntimeOperation() }
         if let ownerId = nativeOwnerId {
-            positionEpoch = nil
             _ = editorV2ReleaseNativeBinding(editorId: editorId, ownerId: String(ownerId))
         }
         return refreshFromRustState(mirrorSelection: nil)
@@ -283,13 +291,45 @@ extension EditorV2Adapter {
         return refreshInternal(mirrorSelection: lastSyncedScalarSelection)?.updateJSON
     }
 
+    func currentSelectionStateJSON() -> String? {
+        guard hasCurrentSelectionState || currentStateJSON() != nil,
+              hasCurrentSelectionState,
+              let documentRevision = cachedAtomicRenderDocumentRevision,
+              let selection = cachedAtomicRenderSelectionObject,
+              let activeState = cachedActiveState,
+              let history = cachedHistoryState,
+              let data = try? JSONSerialization.data(withJSONObject: [
+                  "documentVersion": String(documentRevision),
+                  "selection": selection,
+                  "activeState": activeState,
+                  "historyState": ["canUndo": history.canUndo, "canRedo": history.canRedo]
+              ])
+        else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private var hasCurrentSelectionState: Bool {
+        guard !destroyed, cachedAtomicRenderDocumentRevision == baseDocumentRevision,
+              let rendered = cachedAuthoritativeScalarSelection
+        else { return false }
+        guard let synced = lastSyncedScalarSelection else { return true }
+        return synced == rendered
+    }
+
     /// The initial bind render. The host passes this exact snapshot directly
     /// to the text view and toolbar, so it must not be replayed by a later
     /// independent current-state read.
     func initialUpdateJSON() -> String? {
         guard beginRuntimeOperation() else { return nil }
         defer { endRuntimeOperation() }
-        return refreshInternal(mirrorSelection: nil)?.updateJSON
+        guard let update = refreshInternal(mirrorSelection: nil)?.updateJSON,
+              let blocks = cachedSemanticRenderBlocks,
+              let data = update.data(using: .utf8),
+              var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        object["renderBlocks"] = blocks
+        object["renderPatch"] = NSNull()
+        guard let complete = try? JSONSerialization.data(withJSONObject: object) else { return nil }
+        return String(data: complete, encoding: .utf8)
     }
 
     func documentHtml() -> String? {

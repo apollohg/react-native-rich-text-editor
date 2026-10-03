@@ -1,5 +1,38 @@
 import UIKit
 
+struct RemoteSelectionFrame: Equatable {
+    let editorId: String
+    let documentRevision: UInt64
+
+    static func from(_ raw: Any?) -> RemoteSelectionFrame? {
+        guard let object = raw as? [String: Any],
+              let editorId = object["editorId"] as? String,
+              let editorValue = UInt64(editorId), String(editorValue) == editorId,
+              let revision = object["documentRevision"] as? String,
+              let documentRevision = UInt64(revision), String(documentRevision) == revision
+        else { return nil }
+        return RemoteSelectionFrame(editorId: editorId, documentRevision: documentRevision)
+    }
+
+    static func installed(_ adapter: EditorV2Adapter?) -> RemoteSelectionFrame? {
+        guard let adapter, let revision = adapter.installedFrameRevision else { return nil }
+        return RemoteSelectionFrame(editorId: adapter.editorId, documentRevision: revision)
+    }
+}
+
+struct RemoteCellRectangle: Equatable {
+    let anchorCell: UInt32
+    let headCell: UInt32
+
+    static func from(_ raw: Any?) -> RemoteCellRectangle? {
+        guard let object = raw as? [String: Any],
+              let anchorCell = v2ExactUInt32(object["anchorCell"] as? NSNumber),
+              let headCell = v2ExactUInt32(object["headCell"] as? NSNumber)
+        else { return nil }
+        return RemoteCellRectangle(anchorCell: anchorCell, headCell: headCell)
+    }
+}
+
 struct RemoteSelectionDecoration {
     let clientId: String
     let anchor: UInt32
@@ -7,6 +40,8 @@ struct RemoteSelectionDecoration {
     let color: UIColor
     let name: String?
     let isFocused: Bool
+    var cellRectangle: RemoteCellRectangle?
+    var resolvedAt: RemoteSelectionFrame?
 
     static func from(json: String?) -> [RemoteSelectionDecoration] {
         guard let json,
@@ -30,13 +65,17 @@ struct RemoteSelectionDecoration {
                 return nil
             }
 
+            let resolvedAt = RemoteSelectionFrame.from(item["resolvedAt"])
+            if item["resolvedAt"] != nil && resolvedAt == nil { return nil }
             return RemoteSelectionDecoration(
                 clientId: clientId,
                 anchor: anchor,
                 head: head,
                 color: color,
                 name: item["name"] as? String,
-                isFocused: (item["isFocused"] as? Bool) ?? false
+                isFocused: (item["isFocused"] as? Bool) ?? false,
+                cellRectangle: RemoteCellRectangle.from(item["cellRectangle"]),
+                resolvedAt: resolvedAt
             )
         }
     }
@@ -104,9 +143,13 @@ final class RemoteSelectionOverlayView: UIView {
         let color: UIColor
     }
 
+    static let selectionAlpha: CGFloat = 0.18
+
     weak var textView: EditorTextView?
+    private weak var tableSurface: EditorTableSurface?
     private var editorId: UInt64 = 0
     private var selections: [RemoteSelectionDecoration] = []
+    private var legacyFrame: RemoteSelectionFrame?
     private var selectionViews: [UIView] = []
     private var caretViews: [UIView] = []
 
@@ -121,11 +164,15 @@ final class RemoteSelectionOverlayView: UIView {
         return nil
     }
 
-    func bind(textView: EditorTextView) {
+    func bind(textView: EditorTextView, tableSurface: EditorTableSurface) {
         self.textView = textView
+        self.tableSurface = tableSurface
     }
 
-    func update(selections: [RemoteSelectionDecoration], editorId: UInt64) {
+    func update(selections: [RemoteSelectionDecoration], editorId: UInt64, captureFrame: Bool = true) {
+        if captureFrame || legacyFrame == nil {
+            legacyFrame = RemoteSelectionFrame.installed(EditorV2Registry.adapter(forLegacyId: editorId))
+        }
         self.selections = selections
         self.editorId = editorId
         refresh()
@@ -135,6 +182,7 @@ final class RemoteSelectionOverlayView: UIView {
         guard editorId != 0,
               let textView
         else {
+            tableSurface?.presentRemoteCellSelections([])
             syncSelectionViews(with: [])
             syncCaretViews(with: [])
             return
@@ -142,14 +190,28 @@ final class RemoteSelectionOverlayView: UIView {
 
         var selectionRects: [ColoredRect] = []
         var caretRects: [ColoredRect] = []
+        var cellSelections: [RemoteTableCellSelection] = []
+        let adapter = EditorV2Registry.adapter(forLegacyId: editorId)
+        let tableIndex = adapter?.tableIndex ?? EditorTableIndex()
+        let installedFrame = RemoteSelectionFrame.installed(adapter)
 
         for selection in selections {
+            if selection.resolvedAt != nil || selection.cellRectangle != nil {
+                guard let frame = selection.resolvedAt ?? legacyFrame, frame == installedFrame,
+                      textView.currentRenderBlocksDocumentVersion == frame.documentRevision,
+                      selection.cellRectangle == nil || tableIndex.tableKeys.isEmpty || tableSurface?.presentedDocumentRevision == frame.documentRevision
+                else { continue }
+            }
+            if let cells = drawableCells(for: selection, index: tableIndex) {
+                cellSelections.append(cells)
+                continue
+            }
             let geometry = geometry(for: selection, in: textView)
             for rect in geometry.selectionRects {
                 selectionRects.append(
                     ColoredRect(
                         frame: rect.integral,
-                        color: selection.color.withAlphaComponent(0.18)
+                        color: selection.color.withAlphaComponent(Self.selectionAlpha)
                     )
                 )
             }
@@ -173,8 +235,25 @@ final class RemoteSelectionOverlayView: UIView {
             )
         }
 
+        tableSurface?.presentRemoteCellSelections(cellSelections)
         syncSelectionViews(with: selectionRects)
         syncCaretViews(with: caretRects)
+    }
+
+    private func drawableCells(
+        for selection: RemoteSelectionDecoration,
+        index: EditorTableIndex
+    ) -> RemoteTableCellSelection? {
+        guard let rectangle = selection.cellRectangle,
+              case let .drawable(tableID, sourceIndices) = EditorCellSelection.resolve(
+                  anchor: rectangle.anchorCell, head: rectangle.headCell, index: index
+              )
+        else { return nil }
+        return RemoteTableCellSelection(
+            tableID: tableID,
+            sourceIndices: sourceIndices,
+            color: selection.color.withAlphaComponent(Self.selectionAlpha)
+        )
     }
 
     var hasVisibleDecorations: Bool {

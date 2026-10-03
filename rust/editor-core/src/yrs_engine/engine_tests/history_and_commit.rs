@@ -443,7 +443,9 @@ fn history_snapshot_equality_uses_document_snapshot_arc_identity() {
         resolved_selection: state.resolved_selection.clone(),
         stored_marks: state.stored_marks.clone(),
         text_length: state.canonical_artifact.text_scalar_len(),
-        canonical_fingerprint: state.canonical_artifact.sha256(),
+        canonical_fingerprint: crate::yrs_engine::history::HistoryCanonicalIdentity::Materialized(
+            state.canonical_artifact.sha256(),
+        ),
         derived_output_bytes: state.canonical_artifact.serialized_len(),
         metadata_bytes: retained.get(),
         document_snapshot: Some(document_snapshot),
@@ -534,6 +536,8 @@ fn history_restoration_resolves_only_the_popped_selection_without_a_default_roun
 include!("history_and_commit/snapshot_metadata.rs");
 
 include!("history_and_commit/snapshot_fallback.rs");
+
+include!("history_and_commit/canonical_cache.rs");
 
 include!("history_and_commit/commit_atomicity.rs");
 

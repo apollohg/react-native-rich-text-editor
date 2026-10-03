@@ -97,6 +97,26 @@ tasks.withType(Test).configureEach {
     }
 }
 
+def largeTableUnitTests = 'com.apollohg.editor.tables.TableIntegrationTest.large table*'
+afterEvaluate {
+    if (!tasks.names.contains('testDebugUnitTest')) return
+    def debugUnitTest = tasks.named('testDebugUnitTest')
+    debugUnitTest.configure { filter.excludeTestsMatching largeTableUnitTests }
+    tasks.register('testDebugLargeTableUnitTest', Test) { largeTableTest ->
+        group = 'verification'
+        description = 'Runs the 20,000-slot table unit tests in their own JVM with a larger heap.'
+        def base = debugUnitTest.get()
+        largeTableTest.testClassesDirs = base.testClassesDirs
+        largeTableTest.classpath = base.classpath
+        largeTableTest.systemProperties.putAll(base.systemProperties)
+        largeTableTest.jvmArgs(base.jvmArgs)
+        largeTableTest.maxHeapSize = '2g'
+        largeTableTest.filter.includeTestsMatching largeTableUnitTests
+        largeTableTest.dependsOn(base.dependsOn)
+    }
+    tasks.named('check') { dependsOn 'testDebugLargeTableUnitTest' }
+}
+
 android {
     compileSdkVersion safeExtGet('compileSdkVersion', 35)
     namespace = "com.apollohg.editor"
@@ -111,11 +131,15 @@ android {
         // no implicit/generated DEBUG field is relied on by release drawing.
         buildConfig = true
     }
+    if (project.hasProperty("tableBenchmarkRelease")) {
+        testBuildType "release"
+    }
     buildTypes {
         debug {
             buildConfigField "boolean", "PREPARED_PROSE_INSTRUMENTATION", "true"
         }
         release {
+            if (project.hasProperty("tableBenchmarkRelease")) signingConfig signingConfigs.debug
             buildConfigField "boolean", "PREPARED_PROSE_INSTRUMENTATION", "false"
         }
     }

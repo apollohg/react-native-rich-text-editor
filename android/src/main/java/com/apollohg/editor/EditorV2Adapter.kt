@@ -1,25 +1,9 @@
 package com.apollohg.editor
 
-import org.json.JSONArray
+import com.apollohg.editor.tables.EditorTableIndex
+import com.apollohg.editor.tables.EditorTablePresentationSnapshot
 import org.json.JSONObject
 
-/**
- * The v2 adapter.
- *
- * Owns one v2 editor session (decimal-string handle) and translates the
- * existing native view operations into typed v2 transactions/results. Every
- * mutation is one typed transaction against the tracked base document
- * revision. Transient IME/composing state never reaches the adapter — only
- * final commits do.
- *
- * Render derivation: the v2 render accessor
- * ([EditorV2Backend.renderUpdate] / [EditorV2Backend.resolveScalarSelection]
- * / [EditorV2Backend.docToScalar] / [EditorV2Backend.scalarToDoc]) returns
- * everything the view needs — full render blocks, toolbar active state, the
- * mirrored scalar selection resolved to doc positions, and the lenient
- * doc↔scalar mapping (including the document's scalar extent) — derived
- * directly from the live v2 session.
- */
 internal class EditorV2Adapter private constructor(
     internal val backend: EditorV2Backend,
     val editorId: String,
@@ -47,6 +31,7 @@ internal class EditorV2Adapter private constructor(
     private var nextRequestId: ULong = 0uL
     internal var nativeOwnerId: String? = null
     private var nativeOwnerToken: Long? = null
+    internal val currentNativeOwnerToken: Long? get() = nativeOwnerToken
     internal var positionEpoch: String? = null
     internal var lastRequestIdForTesting: ULong? = null
         private set
@@ -54,11 +39,24 @@ internal class EditorV2Adapter private constructor(
         private set
     internal var lastSyncedScalarSelection: IntArray? = null
     internal var cachedAuthoritativeScalarSelection: IntArray? = null
+    internal var publishedCollaborationCells: Pair<Int, Int>? = null
     internal var cachedScalarLength: Int? = null
     internal var cachedActiveState: JSONObject? = null
     internal var cachedHistoryState: JSONObject? = null
     internal var cachedViewUpdateJson: String? = null
+    internal var cachedViewUpdateObject: JSONObject? = null
     internal var cachedAtomicRenderJson: String? = null
+    internal var cachedAtomicRenderSelectionObject: JSONObject? = null
+    internal var cachedSemanticRenderBlocks: List<List<Any?>>? = null
+    internal var cachedSemanticRenderBlocksRevision: ULong? = null
+    internal var tableIndex = EditorTableIndex()
+    internal var installedFrameRevision: ULong? = null
+    internal var cachedTablePresentation: EditorTablePresentationSnapshot? = null
+    internal var fullFrameAdoptionCountForTesting = 0
+    internal var deltaFrameAdoptionCountForTesting = 0
+    internal var tablePresentationDocumentGeneration: Long = 0
+        private set
+    private var lastTablePresentationResetRevision: ULong? = null
     internal var cachedAtomicRenderDocumentRevision: ULong? = null
     internal var renderUpdateCallCountForTesting = 0
         internal set
@@ -68,6 +66,12 @@ internal class EditorV2Adapter private constructor(
     val debugNotes = mutableListOf<String>()
 
     companion object {
+        private const val TABLE_CELL_DROP_KEY = "cellDrop"
+        private const val TABLE_CELL_DROP_TARGET_KEY = "targetCell"
+        private const val TABLE_CELL_DROP_MOVED_KEY = "movedCells"
+        private const val TABLE_CELL_DROP_ANCHOR_KEY = "anchorCell"
+        private const val TABLE_CELL_DROP_HEAD_KEY = "headCell"
+
         /**
          * Attach to an existing v2 session created through the module's
          * JS-facing `editorV2Create` entry. The session is NOT re-created;
@@ -113,6 +117,11 @@ internal class EditorV2Adapter private constructor(
         nativeOwnerToken = null
         positionEpoch = null
         destroyed = true
+        cachedSemanticRenderBlocks = null
+        cachedSemanticRenderBlocksRevision = null
+        tableIndex = EditorTableIndex()
+        installedFrameRevision = null
+        cachedTablePresentation = null
         val error = backend.destroy(editorId) ?: return null
         if (error.code == "ENGINE_DESTROYED" || error.code == "ENGINE_DESTROYING") return null
         return error
@@ -126,8 +135,8 @@ internal class EditorV2Adapter private constructor(
         limit = ULong.MAX_VALUE.toString()
     )
 
-    private fun buildEnvelope(
-        payload: JSONObject,
+    private inline fun buildEnvelope(
+        payload: () -> String,
         includeBaseRevision: Boolean = true
     ): EditorV2CallResult<String> {
         if (nextRequestId == ULong.MAX_VALUE) {
@@ -144,7 +153,7 @@ internal class EditorV2Adapter private constructor(
                 "\"baseDocumentRevision\":${JSONObject.quote(baseDocumentRevision.toString())}"
             )
         }
-        val payloadJson = payload.toString()
+        val payloadJson = payload()
         if (payloadJson.length > 2) {
             parts.add(payloadJson.substring(1, payloadJson.length - 1))
         }
@@ -155,6 +164,13 @@ internal class EditorV2Adapter private constructor(
 
     internal fun callWithEnvelope(
         payload: JSONObject,
+        includeBaseRevision: Boolean = true,
+        call: (String) -> EditorV2CallResult<String>
+    ): EditorV2CallResult<String> =
+        callWithEnvelopeJson({ payload.toString() }, includeBaseRevision, call)
+
+    private inline fun callWithEnvelopeJson(
+        payload: () -> String,
         includeBaseRevision: Boolean = true,
         call: (String) -> EditorV2CallResult<String>
     ): EditorV2CallResult<String> =
@@ -219,6 +235,19 @@ internal class EditorV2Adapter private constructor(
             }
         }
         releasedOwner?.let { backend.releaseNativeBinding(editorId, it) }
+        val revision = installedFrameRevision ?: return
+        if (!destroyed && revision == baseDocumentRevision) {
+            val error = backend.seedNativeRenderCursor(
+                editorId,
+                requireNotNull(nativeOwnerId),
+                revision.toString()
+            )
+            if (error == null) {
+                pinCurrentPositionEpoch(revision)
+            } else if (error.code != "REVISION_MISMATCH") {
+                emit(error)
+            }
+        }
     }
 
     internal fun releaseNativeBindingOwner(token: Long) {
@@ -304,11 +333,13 @@ internal class EditorV2Adapter private constructor(
     @Synchronized
     internal fun adoptExternalReset(renderJson: String, resetJson: String): String? {
         val reset = parseExternalReset(resetJson) ?: return null
+        val resetRevision = reset.getString("documentRevision").toULong()
+        if (!validateExternalRender(renderJson)) return null
         val current = refreshFromRustState(null) ?: return null
-        if (parseAtomicRenderSnapshot(current)?.documentRevision ==
-            reset.getString("documentRevision").toULong()
-        ) {
-            return adoptExternalRender(renderJson)
+        if (baseDocumentRevision == resetRevision) {
+            return current.also {
+                markTablePresentationReset(resetRevision)
+            }
         }
         if (latestJSDrivenDocumentRevision >
             reset.getString("documentRevision").toULong()
@@ -333,7 +364,7 @@ internal class EditorV2Adapter private constructor(
                     emit(contractError("v2 reset state violates the frozen shape"))
                     return null
                 }
-                if (origin != "nativeView") return refreshFromRustState(null)
+                if (origin != "nativeView") return current
             }
         }
         reset.remove("documentRevision")
@@ -360,6 +391,7 @@ internal class EditorV2Adapter private constructor(
                     return null
                 }
                 val update = refreshFromRustState(null) ?: return null
+                markTablePresentationReset(commit.getString("documentRevision").toULong())
                 if (commit.getBoolean("changed")) {
                     publishCachedCollaborationSelection()
                     notifyCollaborationMutation()
@@ -369,28 +401,21 @@ internal class EditorV2Adapter private constructor(
         }
     }
 
+    internal fun markTablePresentationReset(revision: ULong? = null) {
+        if (revision != null && lastTablePresentationResetRevision == revision) return
+        lastTablePresentationResetRevision = revision
+        tablePresentationDocumentGeneration++
+    }
+
     internal fun adoptExternalRender(renderJson: String): String? {
         if (destroyed) {
             emit(destroyedError())
             return null
         }
-        val snapshot = parseAtomicRenderSnapshot(renderJson)
-        if (snapshot == null) {
-            emit(contractError("v2 atomic render snapshot violates the frozen shape"))
-            return null
+        if (!validateExternalRender(renderJson)) return null
+        return refreshInternal(null, stripViewSelection = false)?.also {
+            publishCollaborationCellsIfChanged()
         }
-        val resolvedPositionEpoch = when {
-            snapshot.positionEpoch != null -> snapshot.positionEpoch
-            nativeOwnerId == null -> positionEpoch
-            else -> pinPositionEpochCandidate(snapshot.documentRevision) ?: return null
-        }
-        val pinned = PinnedAtomicRenderSnapshot(snapshot, resolvedPositionEpoch)
-        return adopt(
-            pinned.snapshot,
-            stripViewSelection = false,
-            engineOwnedSelection = true,
-            resolvedPositionEpoch = pinned.positionEpoch
-        )
     }
 
     internal fun validateExternalRender(renderJson: String): Boolean {
@@ -398,9 +423,13 @@ internal class EditorV2Adapter private constructor(
             emit(destroyedError())
             return false
         }
-        if (parseAtomicRenderSnapshot(renderJson) != null) return true
-        emit(contractError("v2 atomic render snapshot violates the frozen shape"))
-        return false
+        val valid = try {
+            canonicalV2U64(JSONObject(renderJson).opt("documentVersion") as? String) != null
+        } catch (_: org.json.JSONException) {
+            false
+        }
+        if (!valid) emit(contractError("external editor update notice is malformed"))
+        return valid
     }
 
     override fun refreshFromRustState(mirrorSelection: IntArray?): String? =
@@ -425,6 +454,22 @@ internal class EditorV2Adapter private constructor(
 
     override fun currentStateJson(): String? =
         refreshInternal(cachedAuthoritativeScalarSelection?.copyOf(), stripViewSelection = false)
+
+    override fun currentSelectionStateJson(): String? {
+        if (!hasCurrentSelectionState()) currentStateJson() ?: return null
+        if (!hasCurrentSelectionState()) return null
+        return JSONObject()
+            .put("documentVersion", requireNotNull(cachedAtomicRenderDocumentRevision).toString())
+            .put("selection", cachedAtomicRenderSelectionObject)
+            .put("activeState", cachedActiveState)
+            .put("historyState", cachedHistoryState)
+            .toString()
+    }
+
+    private fun hasCurrentSelectionState(): Boolean =
+        !destroyed && cachedAtomicRenderDocumentRevision == baseDocumentRevision &&
+            cachedAtomicRenderSelectionObject != null && cachedActiveState != null &&
+            cachedHistoryState != null
 
     override fun documentHtml(): String? {
         if (destroyed) return null
@@ -474,7 +519,7 @@ internal class EditorV2Adapter private constructor(
             )
                 ?: return null
         return try {
-            JSONObject(update).getJSONObject("selection").toString()
+            requireNotNull(updateSelection(update)).toString()
         } catch (error: Exception) {
             null
         }
@@ -814,21 +859,66 @@ internal class EditorV2Adapter private constructor(
         text: String?,
         plainText: Boolean,
         anchor: Int,
-        head: Int,
-        preserveEngineSelection: Boolean
+        head: Int
+    ): String? = commandAdoptingEngineSelection(
+        pasteCommand(fragment, html, text, plainText),
+        preSelection = intArrayOf(anchor, head)
+    )
+
+    override fun pasteAtEngineSelection(
+        fragment: String?,
+        html: String?,
+        text: String?,
+        plainText: Boolean
+    ): String? = commandAdoptingEngineSelection(pasteCommand(fragment, html, text, plainText))
+
+    fun pasteIntoTableCell(
+        payload: EditorClipboardPayload,
+        plainText: Boolean,
+        targetCell: Int,
+        movedCells: Pair<Int, Int>?
     ): String? {
+        val cellDrop = JSONObject().put(TABLE_CELL_DROP_TARGET_KEY, targetCell)
+        movedCells?.let { (anchor, head) ->
+            cellDrop.put(
+                TABLE_CELL_DROP_MOVED_KEY,
+                JSONObject().put(
+                    TABLE_CELL_DROP_ANCHOR_KEY,
+                    anchor
+                ).put(TABLE_CELL_DROP_HEAD_KEY, head)
+            )
+        }
+        return commandAdoptingEngineSelection(
+            pasteCommand(payload.fragment, payload.html, payload.text, plainText)
+                .put(TABLE_CELL_DROP_KEY, cellDrop)
+        )
+    }
+
+    override fun clearSelectedTableCells(): String? {
+        if (selectedTableCellsMutationAdmission() == null) return null
+        return commandAdoptingEngineSelection(JSONObject().put("type", "deleteBackward"))
+    }
+
+    private fun pasteCommand(
+        fragment: String?,
+        html: String?,
+        text: String?,
+        plainText: Boolean
+    ): JSONObject {
         val command = JSONObject().put("type", "paste")
         fragment?.let { command.put("fragment", it) }
         html?.let { command.put("html", it) }
         text?.let { command.put("text", it) }
         if (plainText) command.put("plainText", true)
-        return performMutation(
-            preSelection = if (preserveEngineSelection) null else intArrayOf(anchor, head),
-            adoptEngineSelection = true
-        ) {
-            callWithEnvelope(JSONObject().put("command", command)) { requestJson ->
-                backend.applyCommand(editorId, requestJson)
-            }
+        return command
+    }
+
+    private fun commandAdoptingEngineSelection(
+        command: JSONObject,
+        preSelection: IntArray? = null
+    ): String? = performMutation(preSelection = preSelection, adoptEngineSelection = true) {
+        callWithEnvelope(JSONObject().put("command", command)) { requestJson ->
+            backend.applyCommand(editorId, requestJson)
         }
     }
 
@@ -932,11 +1022,11 @@ internal class EditorV2Adapter private constructor(
             ) { requestJson ->
                 backend.applyLocalApi(editorId, requestJson)
             }
-        }
+        }?.also { markTablePresentationReset() }
 
     override fun setContentJson(json: String): String? {
-        val document = try {
-            JSONObject(json)
+        val payload = try {
+            prepareJsonReplacementPayload(json)
         } catch (error: Exception) {
             emit(contractError("setContentJson document is not valid JSON"))
             return null
@@ -945,11 +1035,9 @@ internal class EditorV2Adapter private constructor(
             postSelectionMirror = intArrayOf(0, 0),
             includeSelectionInUpdate = true
         ) {
-            callWithEnvelope(
-                JSONObject().put("setJson", document).put("history", "resetAndClear")
-            ) { requestJson ->
+            callWithEnvelopeJson(payload) { requestJson ->
                 backend.applyLocalApi(editorId, requestJson)
             }
-        }
+        }?.also { markTablePresentationReset() }
     }
 }

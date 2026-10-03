@@ -13,7 +13,7 @@ mod text_boundaries;
 mod yrs_compilation;
 
 use super::canonical::CanonicalArtifact;
-use super::derived_state::{LocalizedInsertAdmission, PreparedDerivedEvidence};
+use super::derived_state::{LocalizedTextblockEditAdmission, PreparedDerivedEvidence};
 use super::mutation::{
     LocalizedFormatCompiler, LocalizedInsertCompiler, LocalizedRootWindowCompiler,
     MutationCompiler, MutationLookupPromotion, YrsMutationAction, YrsMutationPlan,
@@ -56,14 +56,19 @@ use observability::{
 };
 #[allow(unused_imports)]
 pub(crate) use positions::map_position;
+pub(in crate::yrs_engine) use positions::node_boundary_position;
 use preview::LocalizedSemanticCompilation;
 #[allow(unused_imports)]
-pub(crate) use selection::selectable_void_at;
+pub(crate) use selection::{cell_admission_error, resolve_cell_opening, selectable_void_at};
 use semantic::compile_transaction_impl;
 use std::sync::Arc;
 use yrs::branch::{Branch, BranchPtr};
 use yrs::types::Attrs;
 use yrs_compilation::compile_transaction_with_yrs_impl;
+pub(super) use yrs_compilation::{
+    CompilationReadScope, CompilationReadScopeStamp, CompilationReadTransaction,
+    CompilationReadView,
+};
 
 #[derive(Clone, Copy)]
 pub(crate) struct CompilationContext<'a> {
@@ -157,12 +162,12 @@ pub(crate) struct PreparedSelectionMutationSeal {
     inserted_scalars: u32,
     inserted_utf16: u32,
     operation_result: super::ResolvedSelection,
-    admission: LocalizedInsertAdmission,
+    admission: LocalizedTextblockEditAdmission,
 }
 
 impl PreparedSelectionMutationSeal {
     pub(crate) fn capture(compiled: &CompiledTransaction) -> Option<Self> {
-        let admission = compiled.localized_insert_admission.as_ref()?;
+        let admission = compiled.localized_textblock_edit_admission.as_ref()?;
         let [YrsMutationAction::InsertText {
             target,
             index_utf16,
@@ -208,7 +213,7 @@ impl PreparedSelectionMutationSeal {
         compiled: &CompiledTransaction,
         authority: &dyn DerivedStateAuthority,
     ) -> bool {
-        let Some(admission) = compiled.localized_insert_admission.as_ref() else {
+        let Some(admission) = compiled.localized_textblock_edit_admission.as_ref() else {
             return false;
         };
         let Ok(authority_seed) = authority.lookup_seed(self.request_id) else {
@@ -293,7 +298,7 @@ pub(crate) struct CompiledTransaction {
     /// Stage E2 admission evidence. The semantic shortcut revalidates it during
     /// compilation; Stage E3 uses the resulting prepared evidence to install
     /// post-commit derived state without rebuilding it.
-    pub localized_insert_admission: Option<LocalizedInsertAdmission>,
+    pub localized_textblock_edit_admission: Option<LocalizedTextblockEditAdmission>,
     pub prepared_derived_evidence: Option<PreparedDerivedEvidence>,
     pub prepared_candidate_validation: Option<super::derived_state::PreparedCandidateValidation>,
     pub prepared_active_state_transition:
@@ -372,13 +377,15 @@ pub(super) fn compile_transaction_with_yrs<T: yrs::ReadTxn>(
     txn: &T,
     fragment: &yrs::types::xml::XmlFragmentRef,
 ) -> OperationResult<CompiledTransaction> {
-    compile_transaction_with_yrs_impl(context, transaction, txn, fragment, None, None, None)
+    let snapshot = std::cell::RefCell::new(std::cell::OnceCell::new());
+    let view = CompilationReadView::new(txn, &snapshot);
+    compile_transaction_with_yrs_impl(context, transaction, &view, fragment, None, None, None)
 }
 
 pub(super) fn compile_transaction_with_yrs_and_stored_marks<T: yrs::ReadTxn>(
     context: CompilationContext<'_>,
     transaction: TypedTransaction,
-    txn: &T,
+    txn: &CompilationReadView<'_, T>,
     fragment: &yrs::types::xml::XmlFragmentRef,
     stored_marks: StoredMarksCompilationContext<'_>,
     engine_view: EngineCompilationView<'_>,
@@ -397,7 +404,7 @@ pub(super) fn compile_transaction_with_yrs_and_stored_marks<T: yrs::ReadTxn>(
 pub(super) fn compile_prepared_transaction_with_yrs_and_stored_marks<T: yrs::ReadTxn>(
     context: CompilationContext<'_>,
     transaction: TypedTransaction,
-    txn: &T,
+    txn: &CompilationReadView<'_, T>,
     fragment: &yrs::types::xml::XmlFragmentRef,
     stored_marks: StoredMarksCompilationContext<'_>,
     prepared: PreparedSemanticContext<'_>,

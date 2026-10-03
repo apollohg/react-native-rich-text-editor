@@ -152,7 +152,7 @@ fn atom_doc_selection_maps_nested_unicode_and_deletes_with_undo() {
     let content = json!([
         { "type": "blockquote", "content": [
             { "type": "paragraph", "content": [{ "type": "text", "text": "😀é" }] },
-            { "type": "counterCard", "attrs": { "count": 7 } },
+            { "type": "counterCard", "attrs": { "count": 7.0 } },
             { "type": "paragraph", "content": [{ "type": "text", "text": "after" }] }
         ] }
     ]);

@@ -154,10 +154,7 @@ extension RenderBridgeTests {
         assertFfiResultContractFailure(result)
         XCTAssertEqual(cleanupHandles, ["900001"])
         XCTAssertNil(EditorV2Registry.adapter(forLegacyId: 900001))
-        XCTAssertEqual(
-            commandPreparation(result: NativeEditorViewRegistry.shared.prepareForCommandJSON(editorId: 900001)),
-            "destroyed"
-        )
+        XCTAssertTrue(NativeEditorViewRegistry.shared.isDestroyed(editorId: 900001))
     }
 
     func testCreateWithNeitherValueNorErrorLeavesNoPairingOrCleanupAttempt() {
@@ -283,6 +280,7 @@ extension RenderBridgeTests {
         XCTAssertNil(finalResult?.error)
     }
 
+    #if DEBUG
     func testRetiringModuleDoesNotClearReplacementCollaborationState() {
         let firstOwner = UUID()
         let replacementOwner = UUID()
@@ -307,6 +305,8 @@ extension RenderBridgeTests {
         NativeCollaborationTransportRegistry.destroyAll(owner: replacementOwner)
     }
 
+    #endif
+
     func testUnpairedDestroyReservesBeforeFfiAndFinalizesLifecycleAlreadyDestroyed() {
         let editorId: UInt64 = 900004
         let registry = NativeEditorViewRegistry.shared
@@ -318,10 +318,6 @@ extension RenderBridgeTests {
             nativeViewId: editorId,
             destroy: { _ in
                 XCTAssertTrue(registry.isDestroyed(editorId: editorId))
-                XCTAssertTrue(
-                    registry.prepareForCommandJSON(editorId: editorId)
-                        .contains("\"ready\":false")
-                )
                 return FfiUnitResult(
                     value: nil,
                     error: FfiError(
