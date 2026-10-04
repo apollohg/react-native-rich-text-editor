@@ -1,4 +1,113 @@
 #[test]
+fn cross_parent_delete_at_cell_text_boundaries_preserves_neighbors_and_history() {
+    const LEFT: &str = "L😀eft";
+    const RIGHT: &str = "R😀ight";
+    const INTERIOR_OFFSET: u32 = 2;
+    let paragraph =
+        |text: &str| json!({"type": "paragraph", "content": [{"type": "text", "text": text}]});
+    let middle = paragraph("middle");
+    let elements = [
+        json!({"type": "horizontalRule"}),
+        json!({"type": "bulletList", "content": [{"type": "listItem", "content": [middle.clone()]}]}),
+        json!({"type": "orderedList", "content": [{"type": "listItem", "content": [middle.clone()]}]}),
+        json!({"type": "taskList", "content": [{"type": "taskItem", "attrs": {"checked": false}, "content": [middle.clone()]}]}),
+        json!({"type": "blockquote", "content": [middle]}),
+        json!({"type": "codeBlock", "content": [{"type": "text", "text": "middle"}]}),
+    ];
+    for element in elements {
+        for (left_cut, right_cut) in [
+            (0, RIGHT.chars().count() as u32),
+            (0, INTERIOR_OFFSET),
+            (INTERIOR_OFFSET, RIGHT.chars().count() as u32),
+        ] {
+            let source = json!({"type": "doc", "content": [{
+                "type": "table", "content": [{"type": "tableRow", "content": [
+                    {"type": "tableCell", "content": [paragraph(LEFT), element, {"type": "paragraph"}, paragraph(RIGHT)]},
+                    {"type": "tableCell", "content": [paragraph("untouched")]}
+                ]}]
+            }]});
+            let table_schema = crate::schema::presets::tiptap_table_schema();
+            let task_schema = attribute_schema();
+            let schema = Schema::new(
+                table_schema
+                    .all_nodes()
+                    .chain(
+                        task_schema
+                            .all_nodes()
+                            .filter(|node| node.name == "taskList" || node.name == "taskItem"),
+                    )
+                    .cloned()
+                    .collect(),
+                table_schema.all_marks().cloned().collect(),
+            );
+            let from = rendered_scalar_offset(&source, &schema, LEFT) + left_cut;
+            let to = rendered_scalar_offset(&source, &schema, RIGHT) + right_cut;
+            let operations = vec![TypedOperation::DeleteRange {
+                range: range_for_test(from, to),
+            }];
+            let (doc, schema, limits, compiled) =
+                compile_operations_with_schema(&source, operations, schema);
+            let expected = to_prosemirror_json(&compiled.preview, &schema);
+            let codec = YrsDocumentCodec::new(&schema, &limits);
+            let fragment = doc.transact().get_xml_fragment("prosemirror").unwrap();
+            let before = codec.read_json(&fragment, &doc.transact()).unwrap();
+            let before_update = doc
+                .transact()
+                .encode_state_as_update_v1(&StateVector::default());
+            let mut undo = UndoManager::<()>::new();
+            undo.expand_scope(&doc, &fragment);
+            let update = {
+                let mut txn = doc.transact_mut();
+                preflight_mutation_plan(122, &compiled.mutation_plan, &txn).unwrap();
+                execute_mutation_plan(compiled.mutation_plan, &mut txn);
+                txn.commit();
+                txn.encode_update_v1()
+            };
+            let actual = codec.read_json(&fragment, &doc.transact()).unwrap();
+            assert_eq!(actual, expected);
+            assert!(update.len() <= compiled.encoded_growth_bound);
+            let expected_text = LEFT
+                .chars()
+                .take(left_cut as usize)
+                .chain(RIGHT.chars().skip(right_cut as usize))
+                .collect::<String>();
+            let cells = &actual["content"][0]["content"][0]["content"];
+            let expected_paragraph = if expected_text.is_empty() {
+                json!({"type": "paragraph"})
+            } else {
+                paragraph(&expected_text)
+            };
+            assert_eq!(
+                cells[0]["content"],
+                json!([expected_paragraph]),
+                "delete {} at {left_cut}..{right_cut}",
+                element["type"]
+            );
+            assert_eq!(cells[1]["content"], json!([paragraph("untouched")]));
+
+            let replica = utf16_doc();
+            {
+                let mut txn = replica.transact_mut();
+                txn.apply_update(Update::decode_v1(&before_update).unwrap())
+                    .unwrap();
+                txn.apply_update(Update::decode_v1(&update).unwrap())
+                    .unwrap();
+            }
+            let replica_txn = replica.transact();
+            let replica_fragment = replica_txn.get_xml_fragment("prosemirror").unwrap();
+            assert_eq!(
+                codec.read_json(&replica_fragment, &replica_txn).unwrap(),
+                actual
+            );
+            assert!(undo.undo_blocking(), "cell deletion must be undoable");
+            assert_eq!(codec.read_json(&fragment, &doc.transact()).unwrap(), before);
+            assert!(undo.redo_blocking(), "cell deletion must be redoable");
+            assert_eq!(codec.read_json(&fragment, &doc.transact()).unwrap(), actual);
+        }
+    }
+}
+
+#[test]
 fn cross_parent_delete_merges_marked_unicode_paragraph_suffix_directly() {
     let source = json!({
         "type": "doc",

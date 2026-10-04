@@ -404,6 +404,7 @@ final class RenderBridge {
                 }
                 isFirstBlock = false
 
+                let blockStart = result.length
                 let attrStr = attributedStringForVoidBlock(
                     nodeType: nodeType,
                     docPos: docPos,
@@ -432,6 +433,7 @@ final class RenderBridge {
                     styled.addAttribute(editorBlockSpacingBoxAttribute, value: EditorRenderedBox(box: box, depth: blockStack.count, leading: 0, trailing: 0), range: NSRange(location: 0, length: styled.length))
                     result.append(styled)
                 } else { result.append(attrStr) }
+                blockRangeObserver?(elementIndex, NSRange(location: blockStart, length: result.length - blockStart))
                 pendingTrailingParagraphSpacing = theme?.effectiveTextStyle(
                     for: nodeType
                 ).spacingAfter

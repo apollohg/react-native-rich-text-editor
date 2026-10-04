@@ -15,7 +15,6 @@ impl MutationCompiler {
         if from_resolved.node_path != to_resolved.node_path {
             return self.delete_cross_parent_structural_range(
                 operation_index,
-                document,
                 &from_resolved,
                 &to_resolved,
             );
@@ -73,7 +72,6 @@ impl MutationCompiler {
     fn delete_cross_parent_structural_range(
         &mut self,
         operation_index: usize,
-        document: &Document,
         from_resolved: &crate::model::ResolvedPos,
         to_resolved: &crate::model::ResolvedPos,
     ) -> OperationResult<()> {
@@ -101,14 +99,6 @@ impl MutationCompiler {
         }
         let first_path = from_resolved.node_path.to_vec();
         let last_path = to_resolved.node_path.to_vec();
-        let first_parent = from_resolved.parent(document);
-        let last_parent = to_resolved.parent(document);
-        let first_content = first_parent
-            .content()
-            .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
-        let last_content = last_parent
-            .content()
-            .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
         let first_target = self
             .structural_parents
             .get(&first_path)
@@ -119,84 +109,17 @@ impl MutationCompiler {
             .get(&last_path)
             .cloned()
             .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
-        let StorageInsertion::InsideText {
-            child_index: first_storage_index,
-            local_scalar: first_scalar,
-            target: first_text,
-            ..
-        } = self
-            .current_storage_insertion(
-                first_content.iter(),
-                &first_target.storage_children,
-                from_resolved.parent_offset,
-            )
-            .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?
-        else {
-            return Err(OperationError::operation_invalid(
-                self.request_id,
-                operation_index,
-                "range",
-                "cross-parent structural deletion must start inside tracked text",
-            ));
-        };
-        let StorageInsertion::InsideText {
-            child_index: last_storage_index,
-            local_scalar: last_scalar,
-            target: last_text,
-            ..
-        } = self
-            .current_storage_insertion(
-                last_content.iter(),
-                &last_target.storage_children,
-                to_resolved.parent_offset,
-            )
-            .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?
-        else {
-            return Err(OperationError::operation_invalid(
-                self.request_id,
-                operation_index,
-                "range",
-                "cross-parent structural deletion must end inside tracked text",
-            ));
-        };
-        let first_storage_len = u32::try_from(first_target.storage_children.len())
-            .map_err(|_| invalid_action_range(self.request_id, operation_index))?;
-        let last_storage_len = u32::try_from(last_target.storage_children.len())
-            .map_err(|_| invalid_action_range(self.request_id, operation_index))?;
-        if first_storage_index + 1 != first_storage_len
-            || last_storage_index + 1 != last_storage_len
-        {
-            return Err(OperationError::operation_invalid(
-                self.request_id,
-                operation_index,
-                "range",
-                "cross-parent structural deletion with non-text endpoint siblings is not lowered yet",
-            ));
-        }
+        let (first_virtual, first_scalar, first_text) = self.resolve_structural_delete_endpoint(
+            operation_index,
+            from_resolved.pos,
+            &first_target.storage_children,
+        )?;
+        let (last_virtual, last_scalar, _) = self.resolve_structural_delete_endpoint(
+            operation_index,
+            to_resolved.pos,
+            &last_target.storage_children,
+        )?;
         let first_id = AsRef::<Branch>::as_ref(&first_text).id();
-        let last_id = AsRef::<Branch>::as_ref(&last_text).id();
-        let first_virtual = self
-            .targets
-            .iter()
-            .position(|candidate| {
-                matches!(
-                    &candidate.kind,
-                    ResolvedTargetKind::Existing { target, .. }
-                        if AsRef::<Branch>::as_ref(target).id() == first_id
-                )
-            })
-            .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
-        let last_virtual = self
-            .targets
-            .iter()
-            .position(|candidate| {
-                matches!(
-                    &candidate.kind,
-                    ResolvedTargetKind::Existing { target, .. }
-                        if AsRef::<Branch>::as_ref(target).id() == last_id
-                )
-            })
-            .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
         if first_virtual >= last_virtual {
             return Err(invalid_action_range(self.request_id, operation_index));
         }
@@ -345,6 +268,33 @@ impl MutationCompiler {
             u32::try_from(self.targets[retained_virtual].text.chars().count())
                 .map_err(|_| invalid_action_range(self.request_id, operation_index))?;
         Ok(())
+    }
+
+    fn resolve_structural_delete_endpoint(
+        &self,
+        operation_index: usize,
+        position: u32,
+        storage_children: &[StorageChildKind],
+    ) -> OperationResult<(usize, u32, XmlTextRef)> {
+        let ResolvedInsertion {
+            target_index,
+            scalar_index,
+        } = self.resolve_insertion(operation_index, position)?;
+        if let (
+            ResolvedTargetKind::Existing { target, .. },
+            Some(StorageChildKind::Text { target: last, .. }),
+        ) = (&self.targets[target_index].kind, storage_children.last())
+        {
+            if AsRef::<Branch>::as_ref(target).id() == AsRef::<Branch>::as_ref(last).id() {
+                return Ok((target_index, scalar_index, target.clone()));
+            }
+        }
+        Err(OperationError::operation_invalid(
+            self.request_id,
+            operation_index,
+            "range",
+            "cross-parent structural deletion endpoint must resolve to its parent's final tracked text",
+        ))
     }
 
     fn current_storage_insertion<'a>(

@@ -2855,4 +2855,334 @@ internal class EditorTableSurfaceMountTest {
             assertTrue(heightSpan(view).heightPx > view.editorEditText.lineHeight)
         }
     }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `horizontal rule in a cell supports surrounding edits and removal`() =
+        exerciseCellElement("horizontalRule")
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `bullet list in a cell supports surrounding edits and removal`() =
+        exerciseCellElement("bulletList")
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `ordered list in a cell supports surrounding edits and removal`() =
+        exerciseCellElement("orderedList")
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `task list in a cell supports surrounding edits and removal`() =
+        exerciseCellElement("taskList")
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `heading in a cell supports surrounding edits and removal`() = exerciseCellElement("h2")
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `quote in a cell supports surrounding edits and removal`() =
+        exerciseCellElement("blockquote")
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `code block in a cell supports surrounding edits and removal`() =
+        exerciseCellElement("codeBlock")
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `hard break in a cell supports surrounding edits and removal`() =
+        exerciseCellElement("hardBreak")
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `mention in a cell supports surrounding edits and removal`() =
+        exerciseCellElement("mention")
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `image in a cell supports surrounding edits and removal`() = exerciseCellElement("image")
+
+    private fun exerciseCellElement(nodeType: String) {
+        for (header in listOf(false, true)) {
+            for (backspace in listOf(false, true)) {
+                exerciseCellElement(nodeType, header, backspace)
+            }
+        }
+    }
+
+    private fun exerciseCellElement(nodeType: String, header: Boolean, backspace: Boolean) {
+        val left = "left"
+        val right = "right"
+        val inside = "middle"
+        val before = "before"
+        val after = "after😀"
+        val neighbour = "untouched"
+        val listTypes = setOf("bulletList", "orderedList", "taskList")
+        val textElements = listTypes + setOf("h2", "blockquote", "codeBlock")
+        fun node(type: String, vararg children: JSONObject): JSONObject = JSONObject()
+            .put("type", type).apply {
+                if (children.isNotEmpty()) put("content", org.json.JSONArray(children.toList()))
+            }
+        val text = node("text").put("text", inside)
+        val paragraph = node("paragraph", text)
+        val element = when (nodeType) {
+            in listTypes -> node(nodeType, node("listItem", paragraph))
+
+            "blockquote" -> node(nodeType, paragraph)
+
+            "h2" -> node(nodeType, text).put("attrs", JSONObject().put("level", 2))
+
+            "codeBlock" -> node(nodeType, text)
+
+            "mention" -> node(nodeType).put("attrs", JSONObject().put("label", "Ada"))
+
+            "image" -> node(
+                nodeType
+            ).put("attrs", JSONObject().put("src", "https://example.test/image.png"))
+
+            else -> node(nodeType)
+        }
+        val schema = JSONObject(config)
+        val nodes = schema.getJSONObject("schema").getJSONArray("nodes")
+        val additions = org.json.JSONArray(
+            """[
+            {"name":"horizontalRule","group":"block","role":"block","isVoid":true,"htmlTag":"hr"},
+            {"name":"hardBreak","group":"inline","role":"hardBreak","isVoid":true,"htmlTag":"br"},
+            {"name":"bulletList","content":"listItem+","group":"block","role":"list","htmlTag":"ul"},
+            {"name":"orderedList","content":"listItem+","group":"block","role":"list","htmlTag":"ol","attrs":{"start":{"default":1}}},
+            {"name":"taskList","content":"listItem+","group":"block","role":"list"},
+            {"name":"listItem","content":"paragraph block*","role":"listItem","attrs":{"checked":{"default":false}}},
+            {"name":"h2","content":"inline*","group":"block","role":"textBlock","htmlTag":"h2","attrs":{"level":{"default":2}}},
+            {"name":"blockquote","content":"block+","group":"block","role":"block","htmlTag":"blockquote"},
+            {"name":"codeBlock","content":"text*","group":"block","role":"textBlock","htmlTag":"pre"},
+            {"name":"mention","group":"inline","role":"inline","isVoid":true,"attrs":{"label":{"default":""}}},
+            {"name":"image","group":"block","role":"block","isVoid":true,"deletableOnBackspace":false,"htmlTag":"img","attrs":{"src":{}}}
+        ]"""
+        )
+        repeat(additions.length()) { nodes.put(additions.getJSONObject(it)) }
+        val document = PlainTableFixture.document(1, 2) { _, column ->
+            if (column == 0) left + right else neighbour
+        }
+        val initial = JSONObject(document)
+        if (nodeType !in setOf("hardBreak", "mention")) {
+            initial.getJSONArray("content").getJSONObject(0).getJSONArray("content")
+                .getJSONObject(0).getJSONArray("content").getJSONObject(0)
+                .put(
+                    "content",
+                    org.json.JSONArray().put(node("paragraph", node("text").put("text", left)))
+                        .put(node("paragraph", node("text").put("text", right)))
+                )
+        }
+        if (!header) {
+            initial.getJSONArray("content").getJSONObject(0).getJSONArray("content")
+                .getJSONObject(0).getJSONArray("content").getJSONObject(0).put("type", "table_cell")
+        }
+        withMountedView(initial.toString(), schema.toString()) { view, adapter, _ ->
+            tapFirstCell(view)
+            fun input(): EditorEditText {
+                assertNotSame(
+                    "$nodeType lost the cell input",
+                    view.editorEditText,
+                    view.activeTextInput
+                )
+                return view.activeTextInput
+            }
+            fun connection() = requireNotNull(input().onCreateInputConnection(EditorInfo()))
+            fun cells(): List<JSONObject> {
+                val rows = JSONObject(requireNotNull(adapter.documentJson()))
+                    .getJSONArray("content").getJSONObject(0).getJSONArray("content")
+                assertEquals("$nodeType changed table rows", 1, rows.length())
+                val cells = rows.getJSONObject(0).getJSONArray("content")
+                assertEquals("$nodeType changed table columns", 2, cells.length())
+                return (0 until cells.length()).map(cells::getJSONObject)
+            }
+            fun descendants(node: JSONObject): List<JSONObject> = listOf(node) +
+                (node.optJSONArray("content") ?: org.json.JSONArray()).let { children ->
+                    (0 until children.length()).flatMap { descendants(children.getJSONObject(it)) }
+                }
+            val originalNeighbour = cells()[1].toString()
+            fun check(expected: String, stage: String) {
+                measure(view, TABLE_HOST_WIDTH)
+                val cell = cells()[0]
+                val actual = descendants(cell).filter { it.optString("type") == "text" }
+                    .joinToString("") { it.getString("text") }
+                assertEquals(
+                    "$nodeType header=$header backspace=$backspace $stage document=$cell input=${input().text} errors=${adapter.debugNotes}",
+                    expected,
+                    actual
+                )
+                assertEquals(
+                    "$nodeType $stage touched neighbour",
+                    originalNeighbour,
+                    cells()[1].toString()
+                )
+                val rendered = input().text.toString()
+                if (expected.isEmpty() || expected == "again") {
+                    assertEquals(
+                        "$nodeType $stage stale native text",
+                        expected,
+                        rendered.replace("\u200B", "")
+                    )
+                    assertTrue(
+                        "$nodeType $stage stale atom decoration",
+                        input().text.getSpans(0, input().text.length, Annotation::class.java)
+                            .none {
+                                it.key == "nativeVoidNodeType" ||
+                                    it.key == RenderBridge.NATIVE_LIST_MARKER_ANNOTATION
+                            }
+                    )
+                }
+                if (expected.isEmpty() || expected == "again") {
+                    val removedDecorations =
+                        listOf(
+                            HorizontalRuleSpan::class.java,
+                            BlockImageSpan::class.java,
+                            CenteredBulletSpan::class.java,
+                            OrderedListMarkerSpan::class.java,
+                            BlockquoteSpan::class.java,
+                            CodeBlockSpan::class.java
+                        )
+                    for (decoration in removedDecorations) {
+                        assertTrue(
+                            "$nodeType $stage stale ${decoration.simpleName}",
+                            input().text.getSpans(0, input().text.length, decoration).isEmpty()
+                        )
+                    }
+                }
+                val layout = requireNotNull(input().layout)
+                listOf(
+                    before,
+                    left,
+                    inside,
+                    after,
+                    right,
+                    "typed",
+                    "again"
+                ).filter(expected::contains).forEach { token ->
+                    val offset = rendered.indexOf(token)
+                    assertTrue("$nodeType $stage missing visible $token in $rendered", offset >= 0)
+                    val line = layout.getLineForOffset(offset)
+                    assertTrue(
+                        "$nodeType $stage collapsed $token",
+                        layout.getLineBottom(line) > layout.getLineTop(line)
+                    )
+                }
+            }
+            input().setSelection(left.length)
+            val selection = requireNotNull(input().currentScalarSelection())
+                .let { requireNotNull(input().inputScalarSelection(it.first, it.second)) }
+            val update = requireNotNull(
+                adapter.insertContentJsonAtSelection(
+                    node("doc", element).toString(),
+                    selection.first,
+                    selection.second
+                )
+            ) { "$nodeType insertion failed: ${adapter.debugNotes}" }
+            assertTrue(input().applyUpdateJSON(update))
+            val middle = if (nodeType in textElements) inside else ""
+            check(left + middle + right, "insert")
+            assertTrue(
+                "$nodeType was not inserted",
+                descendants(cells()[0]).any {
+                    it.optString("type") ==
+                        nodeType
+                }
+            )
+            val insertedText = "typed"
+            assertTrue(connection().commitText(insertedText, 1))
+            check(left + middle + insertedText + right, "type at insertion caret")
+            repeat(insertedText.length) {
+                assertTrue(connection().deleteSurroundingTextInCodePoints(1, 0))
+            }
+            check(left + middle + right, "delete at insertion caret")
+            val content = input().text as Spanned
+            val decoration = when (nodeType) {
+                "horizontalRule" -> HorizontalRuleSpan::class.java
+                "image" -> BlockImageSpan::class.java
+                "bulletList" -> CenteredBulletSpan::class.java
+                "orderedList" -> OrderedListMarkerSpan::class.java
+                "blockquote" -> BlockquoteSpan::class.java
+                "codeBlock" -> CodeBlockSpan::class.java
+                else -> null
+            }
+            if (nodeType == "taskList") {
+                assertTrue(
+                    "task checkbox missing",
+                    content.getSpans(0, content.length, Annotation::class.java)
+                        .any { it.key == RenderBridge.NATIVE_TASK_LIST_MARKER_ANNOTATION }
+                )
+                assertTrue("unchecked task glyph missing", content.toString().contains("☐"))
+            }
+            if (nodeType ==
+                "mention"
+            ) {
+                assertTrue("mention label missing", content.toString().contains("Ada"))
+            }
+            if (decoration != null) {
+                assertTrue(
+                    "$nodeType decoration missing from native text",
+                    content.getSpans(0, content.length, decoration).isNotEmpty()
+                )
+            }
+            input().setSelection(input().text.toString().indexOf(right))
+            assertTrue(connection().commitText(after, 1))
+            check(left + middle + after + right, "type after")
+            input().setSelection(input().text.toString().indexOf(left))
+            assertTrue(connection().commitText(before, 1))
+            check(before + left + middle + after + right, "type before")
+            input().setSelection(input().text.toString().indexOf(before))
+            repeat(before.length) {
+                assertTrue(connection().deleteSurroundingTextInCodePoints(0, 1))
+            }
+            check(left + middle + after + right, "forward delete before")
+            input().setSelection(input().text.toString().indexOf(after) + after.length)
+            repeat(after.codePointCount(0, after.length)) {
+                assertTrue(connection().deleteSurroundingTextInCodePoints(1, 0))
+            }
+            check(left + middle + right, "backspace after")
+            assertTrue(
+                "text deletion removed $nodeType prematurely",
+                descendants(cells()[0]).any {
+                    it.optString("type") ==
+                        nodeType
+                }
+            )
+            if (backspace) {
+                input().setSelection(input().text.length)
+                val maximumBackspaces = input().text.length + descendants(cells()[0]).size * 2
+                var presses = 0
+                while (descendants(cells()[0]).any {
+                        it.optString("type") == "text" ||
+                            it.optString("type") == nodeType
+                    } &&
+                    presses < maximumBackspaces
+                ) {
+                    assertTrue(connection().deleteSurroundingTextInCodePoints(1, 0))
+                    presses++
+                }
+            } else {
+                input().setSelection(0, input().text.length)
+                val localRange = requireNotNull(input().currentScalarSelection())
+                assertNotNull(
+                    "$nodeType unmapped selection $localRange",
+                    input().inputScalarRange(localRange.first, localRange.second)
+                )
+                assertEquals(0, input().selectionStart)
+                assertEquals(input().text.length, input().selectionEnd)
+                assertTrue(connection().deleteSurroundingTextInCodePoints(1, 0))
+            }
+            check("", "delete across element")
+            assertFalse(
+                "selected $nodeType survived deletion: ${cells()[0]}",
+                descendants(cells()[0]).any {
+                    it.optString("type") ==
+                        nodeType
+                }
+            )
+            assertTrue(connection().commitText("again", 1))
+            check("again", "type after removal")
+        }
+    }
 }

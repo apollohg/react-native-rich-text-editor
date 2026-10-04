@@ -361,7 +361,6 @@ internal fun EditorEditText.applySelectionFromJSON(
             }
 
             "node" -> {
-                if (isTableCellInput) return
                 authoritativeCellSelectionActive = false
                 cellSelectionRootTouchPending = false
                 updateAtomBoundaryCursorVisibility()
@@ -372,11 +371,17 @@ internal fun EditorEditText.applySelectionFromJSON(
                 logicalSelectionSnapshot = null
                 val docPos = exactV2ScalarInt(selection.opt("pos") as? Number) ?: return
                 val nodeSelectionDriver = v2Driver ?: return
-                val scalarPos = nodeSelectionDriver.scalarPositionForDoc(docPos) ?: docPos
-                val startUtf16 = PositionBridge.scalarToUtf16(scalarPos, currentText)
+                val scalarPos = exactV2ScalarInt(selection.opt("posScalar") as? Number)
+                    ?: nodeSelectionDriver.scalarPositionForDoc(docPos)
+                    ?: docPos.takeUnless { isTableCellInput }
+                    ?: return
+                if (scalarPos == Int.MAX_VALUE) return
+                val localSelection = localScalarSelection(scalarPos, scalarPos + 1) ?: return
+                val startUtf16 = PositionBridge.scalarToUtf16(localSelection.first, currentText)
                 val len = text?.length ?: 0
                 val clamped = startUtf16.coerceIn(0, len)
-                val endClamped = (clamped + 1).coerceAtMost(len)
+                val endClamped = PositionBridge.scalarToUtf16(localSelection.second, currentText)
+                    .coerceIn(clamped, len)
                 setSelection(clamped, endClamped)
                 authoritativeNodeSelectionRange = ImageSelectionRange(clamped, endClamped)
             }

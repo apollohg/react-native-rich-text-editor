@@ -495,7 +495,6 @@ impl MutationCompiler {
         if from_resolved.node_path != to_resolved.node_path {
             self.delete_cross_parent_structural_range(
                 operation_index,
-                document,
                 &from_resolved,
                 &to_resolved,
             )?;

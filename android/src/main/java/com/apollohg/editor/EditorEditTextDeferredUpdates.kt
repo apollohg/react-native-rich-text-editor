@@ -192,7 +192,6 @@ internal fun EditorEditText.handleStructuralBackspaceImpl() {
 internal fun EditorEditText.selectAtomBeforeEmptyTrailingParagraph(
     driver: EditorV2Driver
 ): Boolean {
-    if (isTableCellInput) return false
     val adapter = driver as? EditorV2Adapter ?: return false
     val content = text ?: return false
     if (selectionStart != selectionEnd) return false
@@ -205,12 +204,20 @@ internal fun EditorEditText.selectAtomBeforeEmptyTrailingParagraph(
     ) {
         return false
     }
-    val atom = content.getSpans(paragraphStart - 2, paragraphStart - 1, AtomBlockSpan::class.java)
-        .firstOrNull { content.getSpanEnd(it) == paragraphStart - 1 } ?: return false
+    val atomStart = paragraphStart - 2
+    val atomEnd = paragraphStart - 1
+    val atomDocPos = content.getSpans(atomStart, atomEnd, AtomBlockSpan::class.java)
+        .firstOrNull { content.getSpanEnd(it) == atomEnd }?.docPos
+        ?: if (isTableCellInput && isExactImageSpanRange(content, atomStart, atomEnd)) {
+            inputScalarAtLocalUtf16(atomStart, raw)?.let(adapter::docPositionForScalar)
+        } else {
+            null
+        }
+        ?: return false
     deferredRustUpdateJSON?.let { applyUpdateJSON(it) }
-    adapter.selectAtomNode(atom.docPos)?.let {
+    adapter.selectAtomNode(atomDocPos)?.let {
         applyUpdateJSON(it, notifyListener = false)
-        editorListener?.onSelectionChanged(atom.docPos, atom.docPos + 1)
+        editorListener?.onSelectionChanged(atomDocPos, atomDocPos + 1)
     }
     return true
 }
