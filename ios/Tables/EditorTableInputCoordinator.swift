@@ -45,7 +45,8 @@ final class EditorTableInputCoordinator {
         baseFont: UIFont,
         textColor: UIColor,
         theme: EditorTheme?,
-        atomConfiguration: AtomRenderConfiguration?
+        atomConfiguration: AtomRenderConfiguration?,
+        imageLoadOwner: RenderImageLoadOwner? = nil
     ) -> Projection? {
         guard let table = index.record(tableKey: tableKey), Int(cellIndex) < table.cells.count,
               let cellDocStart = index.docStart(tableKey: tableKey, cellIndex: Int(cellIndex)),
@@ -63,16 +64,19 @@ final class EditorTableInputCoordinator {
               inputCell.nestedTables.allSatisfy({ $0.scalarStart != nil && $0.scalarEnd != nil }) else { return nil }
 
         var blockRanges: [Int: NSRange] = [:]
-        let renderedWithMarkers = RenderBridge.renderElements(
-            fromArray: elements,
-            baseFont: baseFont,
-            textColor: textColor,
-            theme: theme,
-            atomConfiguration: atomConfiguration,
-            rootTableIDs: tableIDs
-        ) { elementIndex, range in
-            blockRanges[elementIndex] = range
+        let render = {
+            RenderBridge.renderElements(
+                fromArray: elements,
+                baseFont: baseFont,
+                textColor: textColor,
+                theme: theme,
+                atomConfiguration: atomConfiguration,
+                rootTableIDs: tableIDs
+            ) { elementIndex, range in
+                blockRanges[elementIndex] = range
+            }
         }
+        let renderedWithMarkers = imageLoadOwner?.withCurrent(render) ?? render()
         let rendered = NSMutableAttributedString(attributedString: renderedWithMarkers)
         renderedWithMarkers.enumerateAttributes(in: NSRange(location: 0, length: renderedWithMarkers.length)) { attributes, range, _ in
             guard let paragraph = attributes[.paragraphStyle] as? NSParagraphStyle,
@@ -168,6 +172,7 @@ final class EditorTableInputCoordinator {
         }
         if cellInput.textContainerInset != .zero { cellInput.textContainerInset = .zero }
         if cellInput.textContainer.lineFragmentPadding != 0 { cellInput.textContainer.lineFragmentPadding = 0 }
+        cellInput.imageLoadOwner = root.imageLoadOwner
         cellInput.allowImageResizing = root.allowImageResizing
         if cellInput.isEditable != root.isEditable { cellInput.isEditable = root.isEditable }
     }

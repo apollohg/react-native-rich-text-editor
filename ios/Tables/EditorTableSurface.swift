@@ -147,6 +147,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     private var pinnedInputCell: PreparedViewerTableCell?
     var presentedDocumentRevision: UInt64? { presentationRevision }
     private var presentationRevision: UInt64?
+    private var resolvedImageSizes: [String: CGSize] = [:]
     private var preparedWidth: CGFloat = 0
     private var appearanceRevision: UInt64 = 0
     var hostTableDirection: TableLayoutDirection? {
@@ -311,6 +312,15 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
             self?.refreshActiveInputFrame()
             self?.selectionGeometryMayChange()
         }
+        drawingView.onImageIntrinsicMetadata = { [weak self] attachment, size in
+            guard let self, let host = self.interactionHost, attachment.declaredSize == nil,
+                  self.resolvedImageSizes[attachment.id] != size else { return }
+            self.resolvedImageSizes[attachment.id] = size
+            ViewerImageIntrinsicStore.shared.store(size, for: attachment.id)
+            self.invalidateAppearance()
+            self.updateGeometry(from: host.textView)
+            host.setNeedsLayout()
+        }
         drawingView.tableAccessibilityEditing = self
         drawingView.tableDocumentPosition = { [weak self] tableID in
             self?.latestPresentation?.index.tableDocStart(tableKey: tableID)
@@ -370,6 +380,11 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     ) {
         defer { selectionGeometryMayChange() }
         drawingView.setTableOwnerIdentity(ownerIdentity)
+        drawingView.configureImages(
+            generation: ownerIdentity, imagesEnabled: true,
+            policy: textView.imageLoadOwner?.policy ?? .default, owner: textView.imageLoadOwner
+        )
+        if latestPresentation?.documentRevision != presentation.documentRevision { resolvedImageSizes.removeAll() }
         latestPresentation = presentation
         let unanchored = unanchoredTableIDs()
         if accessibilityDocumentRevision != presentation.documentRevision || accessibilityUnanchoredTables != unanchored {
@@ -402,8 +417,10 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         accessibilityDocumentRevision = nil
         accessibilityUnanchoredTables = []
         drawingView.setTableOwnerIdentity(nil)
+        drawingView.cancelConfiguredImages()
         entries.removeAll()
         latestPresentation = nil
+        resolvedImageSizes.removeAll()
         if let pinnedInputCell { pinnedInputCell.layoutStore.unpin(pinnedInputCell.contentKey) }
         pinnedInputCell = nil
         presentationRevision = nil
@@ -1675,6 +1692,18 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
             activeCellClipView.frame = bounds
             inputCoordinator.cellInput.frame = fallback
             return
+        }
+        let imageSizes = Dictionary(uniqueKeysWithValues: presented.content.blocks.compactMap { block in
+            block.imageAttachment.map { ($0.id, $0.bounds.size) }
+        })
+        let input = inputCoordinator.cellInput
+        input.textStorage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: input.textStorage.length)) { value, range, _ in
+            guard let image = value as? BlockImageAttachment,
+                  let position = v2ExactUInt32(input.textStorage.attribute(RenderBridgeAttributes.docPos, at: range.location, effectiveRange: nil) as? NSNumber),
+                  let size = imageSizes["\(position):\(image.source)"], image.tableLayoutSize != size else { return }
+            image.tableLayoutSize = size
+            input.layoutManager.invalidateLayout(forCharacterRange: range, actualCharacterRange: nil)
+            input.layoutManager.invalidateDisplay(forCharacterRange: range)
         }
         let clip = presented.clip.offsetBy(dx: -drawingOffset.x, dy: -drawingOffset.y)
             .intersection(bounds)

@@ -364,7 +364,9 @@ final class ViewerImagePipeline {
 
     static let prefetchMargin: CGFloat = 480
 
-    private let owner: NativeImagePipeline
+    private var owner: NativeImagePipeline
+    private var ownsOwner: Bool
+    private var configuredPolicy: ImageLoadingPolicy?
     private let lock = NSLock()
     private var generation = ""
     private var enabled = false
@@ -378,17 +380,26 @@ final class ViewerImagePipeline {
 
     init(policy: ImageLoadingPolicy, owner: NativeImagePipeline? = nil) {
         self.owner = owner ?? NativeImagePipeline(policy: policy)
+        ownsOwner = owner == nil
+    }
+
+    func bind(owner: NativeImagePipeline) {
+        guard self.owner !== owner else { return }
+        cancel()
+        self.owner = owner
+        ownsOwner = false
     }
 
     func begin(generation: String, imagesEnabled: Bool, policy: ImageLoadingPolicy? = nil) {
         lock.lock()
-        let nextPolicy = policy ?? owner.policy
-        if self.generation == generation, enabled == imagesEnabled, owner.policy == nextPolicy {
+        let nextPolicy = ownsOwner ? (policy ?? owner.policy) : owner.policy
+        if self.generation == generation, enabled == imagesEnabled, configuredPolicy == nextPolicy {
             lock.unlock()
             return
         }
-        owner.cancelAll()
-        if owner.policy != nextPolicy { owner.updatePolicy(nextPolicy) }
+        receipts.values.forEach { $0.cancel() }
+        if ownsOwner, owner.policy != nextPolicy { owner.updatePolicy(nextPolicy) }
+        configuredPolicy = nextPolicy
         self.generation = generation
         enabled = imagesEnabled
         receipts.removeAll()
@@ -405,7 +416,6 @@ final class ViewerImagePipeline {
         receipts.removeAll()
         requested.removeAll()
         lock.unlock()
-        owner.cancelAll()
     }
 
     func acceptsCompletion(generation: String) -> Bool {

@@ -41,6 +41,116 @@ extension EditorTableInputTests {
         try exerciseCellElement("image")
     }
 
+    func testImageInsertedIntoEmptyCellLoadsAndCanBeDeleted() throws {
+        try exerciseLoadedCellImage(checkPixels: true)
+    }
+
+    func testImageInsertedIntoEmptyCellCanBeTappedAndDeleted() throws {
+        try exerciseLoadedCellImage(checkPixels: false)
+    }
+
+    private func exerciseLoadedCellImage(checkPixels: Bool) throws {
+        func json(_ value: Any) throws -> String {
+            try XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: value), encoding: .utf8))
+        }
+        let imageSize = CGSize(width: 80, height: 40)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let image = UIGraphicsImageRenderer(size: imageSize, format: format).image { context in
+            UIColor.red.setFill()
+            context.fill(CGRect(origin: .zero, size: imageSize))
+        }
+        let source = "data:image/png;fixture=\(UUID().uuidString);base64,\(try XCTUnwrap(image.pngData()).base64EncodedString())"
+        var config = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(TableInputTestSchema.tableConfig.utf8)) as? [String: Any])
+        var schema = try XCTUnwrap(config["schema"] as? [String: Any])
+        var nodes = try XCTUnwrap(schema["nodes"] as? [[String: Any]])
+        nodes.append([
+            "name": "image", "group": "block", "role": "block", "isVoid": true,
+            "deletableOnBackspace": false, "htmlTag": "img", "attrs": ["src": [:]]
+        ])
+        schema["nodes"] = nodes
+        config["schema"] = schema
+        let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph"}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"untouched"}]}]}]}]}]}"#
+        try withMountedTable(document: document, configJSON: json(config), cellSelection: nil) { fixture in
+            XCTAssertTrue(fixture.view.bindTableCell(tableID: fixture.tableID, cellIndex: 0, contentRect: .zero))
+            let input = fixture.view.activeTextInput
+            input.selectedRange = NSRange(location: 0, length: 0)
+            let selection = try XCTUnwrap(input.currentLogicalScalarSelection())
+            let fragment: [String: Any] = ["type": "doc", "content": [["type": "image", "attrs": ["src": source]]]]
+            let update = try XCTUnwrap(fixture.adapter.insertContentJson(json(fragment), anchor: selection.anchor, head: selection.head))
+            XCTAssertTrue(input.applyUpdateJSON(update))
+            XCTAssertTrue(fixture.view.activeTextInput === input, "Image insertion retired the cell editor")
+            var attachmentRange: NSRange?
+            var attachment: BlockImageAttachment?
+            input.textStorage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: input.textStorage.length)) { value, range, _ in
+                if let image = value as? BlockImageAttachment { attachment = image; attachmentRange = range }
+            }
+            let loadedAttachment = try XCTUnwrap(attachment)
+            let range = try XCTUnwrap(attachmentRange)
+            if checkPixels {
+                let pendingImage = try XCTUnwrap(fixture.drawing.mountedTablePresentation()?.images.first)
+                // Another mounted editor may resolve this source before this one delivers.
+                ViewerImageIntrinsicStore.shared.store(imageSize, for: pendingImage.attachment.id)
+                let loaded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in loadedAttachment.image != nil }, object: nil)
+                XCTAssertEqual(XCTWaiter.wait(for: [loaded], timeout: 3), .completed, "Cell image never decoded")
+                XCTAssertEqual(loadedAttachment.image?.size, imageSize)
+                func redPixelCount(_ image: UIImage) throws -> Int {
+                    let bitmap = try XCTUnwrap(image.cgImage)
+                    var pixels = [UInt8](repeating: 0, count: bitmap.width * bitmap.height * 4)
+                    let context = try XCTUnwrap(CGContext(data: &pixels, width: bitmap.width, height: bitmap.height,
+                        bitsPerComponent: 8, bytesPerRow: bitmap.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
+                    context.draw(bitmap, in: CGRect(x: 0, y: 0, width: bitmap.width, height: bitmap.height))
+                    return stride(from: 0, to: pixels.count, by: 4).filter {
+                        pixels[$0] > 200 && pixels[$0 + 1] < 30 && pixels[$0 + 2] < 30 && pixels[$0 + 3] > 200
+                    }.count
+                }
+                fixture.view.layoutIfNeeded()
+                input.layoutIfNeeded()
+                let focused = UIGraphicsImageRenderer(bounds: input.bounds, format: format).image { input.layer.render(in: $0.cgContext) }
+                XCTAssertGreaterThan(try redPixelCount(focused), 500, "Focused cell does not paint the image pixels")
+                XCTAssertTrue(fixture.view.bindTableCell(tableID: fixture.tableID, cellIndex: 1, contentRect: .zero))
+                fixture.view.layoutIfNeeded()
+                let painted = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !fixture.drawing.imagePixels.isEmpty }, object: nil)
+                XCTAssertEqual(XCTWaiter.wait(for: [painted], timeout: 3), .completed, "Unfocused table never loads image pixels")
+                let unfocused = UIGraphicsImageRenderer(bounds: fixture.drawing.bounds, format: format).image { _ in
+                    fixture.drawing.drawInstalledLayersForTesting()
+                }
+                XCTAssertGreaterThan(try redPixelCount(unfocused), 500, "Unfocused cell does not paint the image pixels")
+                XCTAssertTrue(fixture.view.bindTableCell(tableID: fixture.tableID, cellIndex: 0, contentRect: .zero))
+            }
+            fixture.view.layoutIfNeeded()
+            input.layoutManager.ensureLayout(for: input.textContainer)
+            let glyphs = input.layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            let bounds = input.layoutManager.boundingRect(forGlyphRange: glyphs, in: input.textContainer)
+            XCTAssertTrue(fixture.view.bindTableCell(tableID: fixture.tableID, cellIndex: 1, contentRect: .zero))
+            let paintedImage = try XCTUnwrap(fixture.drawing.mountedTablePresentation()?.images.first)
+            if checkPixels {
+                XCTAssertEqual(paintedImage.bounds.height / paintedImage.bounds.width, imageSize.height / imageSize.width, accuracy: 0.01,
+                    "This table kept provisional geometry after another editor resolved the image")
+                XCTAssertEqual(bounds.width, paintedImage.bounds.width, accuracy: 1, "Focusing changed image width")
+                XCTAssertEqual(bounds.height, paintedImage.bounds.height, accuracy: 1, "Focusing changed image height")
+            }
+            let point = CGPoint(x: paintedImage.bounds.maxX - 4, y: paintedImage.bounds.midY)
+            let tablePoint = fixture.drawing.convert(point, to: fixture.surface)
+            XCTAssertTrue(fixture.view.activateTableCell(at: tablePoint), "Image cannot be selected by tapping its visible bounds")
+            XCTAssertEqual(input.selectedRange.length, 1, "Tapping a cell image must select the image for deletion")
+            input.deleteBackward()
+            XCTAssertFalse(try json(fixture.documentObject()).contains("\"type\":\"image\""), "Tapped image survived backspace")
+            XCTAssertFalse(input.textStorage.string.contains("\u{FFFC}"), "Deleted image remains in cell input")
+            input.insertText("again")
+            XCTAssertEqual(input.textStorage.string.replacingOccurrences(of: "\u{200B}", with: ""), "again")
+            XCTAssertTrue(try json(fixture.documentObject()).contains("untouched"), "Image deletion changed the neighbouring cell")
+            let pixelsCleared = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in fixture.drawing.imagePixels.isEmpty }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [pixelsCleared], timeout: 3), .completed, "Deleted image retains table pixels")
+            let settled = expectation(description: "Deferred image selection settles")
+            DispatchQueue.main.async { settled.fulfill() }
+            wait(for: [settled], timeout: 1)
+            input.insertText("next")
+            XCTAssertEqual(input.textStorage.string.replacingOccurrences(of: "\u{200B}", with: ""), "againnext", "A deleted image restored stale selection")
+        }
+    }
+
     private func exerciseCellElement(_ nodeType: String) throws {
         for header in [false, true] {
             for backspace in [false, true] {

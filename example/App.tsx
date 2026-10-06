@@ -391,9 +391,10 @@ async function pickImageUri(): Promise<string | null> {
     const saved = await rendered.saveAsync({
         format: SaveFormat.JPEG,
         compress: PICKED_IMAGE_COMPRESSION,
+        base64: true,
     });
 
-    return saved.uri;
+    return saved.base64 == null ? null : `data:image/jpeg;base64,${saved.base64}`;
 }
 
 const styles = StyleSheet.create({

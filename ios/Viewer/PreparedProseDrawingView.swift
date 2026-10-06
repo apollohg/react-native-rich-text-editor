@@ -323,15 +323,22 @@ public final class PreparedProseDrawingView: UIView {
         setNeedsDisplay()
     }
 
+    var onImageIntrinsicMetadata: ((ViewerImageAttachment, CGSize) -> Void)?
+
     @objc(configureImagesWithGeneration:imagesEnabled:policyJSON:)
     public func configureImages(generation: String, imagesEnabled: Bool, policyJSON: String?) {
+        configureImages(generation: generation, imagesEnabled: imagesEnabled, policy: ImageLoadingPolicy.from(json: policyJSON))
+    }
+
+    func configureImages(generation: String, imagesEnabled: Bool, policy: ImageLoadingPolicy, owner: RenderImageLoadOwner? = nil) {
+        if let owner { imagePipeline.bind(owner: owner) }
         imageGeneration = generation
-        imageConfiguration = (imagesEnabled, ImageLoadingPolicy.from(json: policyJSON))
+        imageConfiguration = (imagesEnabled, policy)
         imagePipeline.onPixels = { [weak self] attachment, image in self?.imagePixels[attachment.id] = image }
         imagePipeline.onIntrinsicMetadata = { [weak self] attachment, size in
-            guard let self,
-                  self.imagePipeline.acceptsCompletion(generation: generation),
-                  self.imageRevisions.recordIntrinsicSize(size, for: attachment.id, ordinal: attachment.ordinal, declaredSize: attachment.declaredSize)
+            guard let self, self.imagePipeline.acceptsCompletion(generation: generation) else { return }
+            self.onImageIntrinsicMetadata?(attachment, size)
+            guard self.imageRevisions.recordIntrinsicSize(size, for: attachment.id, ordinal: attachment.ordinal, declaredSize: attachment.declaredSize)
             else { return }
             NotificationCenter.default.post(
                 name: Self.imageMetadataDidResolve,

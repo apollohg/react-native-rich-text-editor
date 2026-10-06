@@ -3,6 +3,25 @@ import UIKit
 import XCTest
 
 extension PreparedProseRevisionTests {
+    func testSharedImageOwnerPreservesOtherSurfaceRequestsAndCombinedLimit() throws {
+        let transport = HoldingImageTransport()
+        let policy = imagePolicy(maxConcurrentRequests: 1)
+        let owner = RenderImageLoadOwner(policy: policy, transport: transport)
+        let root = try XCTUnwrap(owner.startImageLoad(source: "https://example.test/root-image.png") { _ in })
+        defer { root.cancel() }
+        let pipeline = ViewerImagePipeline(policy: policy, owner: owner)
+        pipeline.begin(generation: "table", imagesEnabled: true)
+        let viewport = CGRect(x: 0, y: 0, width: 100, height: 100)
+        let attachment = ViewerImageAttachment(ordinal: 0, id: "table-image", source: "https://example.test/table-image.png", bounds: viewport, declaredSize: nil)
+        pipeline.updateVisibleRect(viewport, attachments: [attachment])
+        XCTAssertEqual(transport.cancelCount, 0, "Starting table images cancelled root image work")
+        XCTAssertEqual(transport.requestCount, 1, "The table exceeded the shared single-request budget")
+        pipeline.cancel()
+        XCTAssertEqual(transport.cancelCount, 0, "Leaving the table cancelled root image work")
+        root.cancel()
+        XCTAssertEqual(transport.cancelCount, 1)
+    }
+
     func testDisabledImagesDoNotCreateAttachmentsOrRequests() {
         let pipeline = ViewerImagePipeline(policy: .default)
         pipeline.begin(generation: "disabled", imagesEnabled: false)

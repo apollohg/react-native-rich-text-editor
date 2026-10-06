@@ -302,7 +302,8 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
                   baseFont: textView.baseFont,
                   textColor: textView.baseTextColor,
                   theme: textView.theme,
-                  atomConfiguration: textView.atomRenderConfiguration
+                  atomConfiguration: textView.atomRenderConfiguration,
+                  imageLoadOwner: imageLoadOwner
               )
         else { return false }
         let nestedHeights = tableSurface.nestedTableHeights(tableID: tableID, cellIndex: cellIndex) ?? [:]
@@ -1447,9 +1448,9 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         guard let hit = tableSurface.cellHit(at: point),
               bindTableCell(tableID: hit.tableID, cellIndex: hit.cellIndex, contentRect: hit.contentRect)
         else { return false }
-        return tableInputCoordinator.cellInput.placeCaret(
-            at: tableSurface.convert(point, to: tableInputCoordinator.cellInput)
-        )
+        let input = tableInputCoordinator.cellInput
+        let location = tableSurface.convert(point, to: input)
+        return input.selectImageAttachment(at: location) || input.placeCaret(at: location)
     }
 
     func selectedImageGeometry() -> (docPos: UInt32, rect: CGRect)? {

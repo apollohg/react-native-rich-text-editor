@@ -107,6 +107,7 @@ final class BlockImageAttachment: NSTextAttachment {
     var preferredWidth: CGFloat?
     var preferredHeight: CGFloat?
     private var loadedImage: UIImage?
+    var tableLayoutSize: CGSize?
 
     init(
         source: String,
@@ -135,6 +136,7 @@ final class BlockImageAttachment: NSTextAttachment {
         glyphPosition position: CGPoint,
         characterIndex charIndex: Int
     ) -> CGRect {
+        if let tableLayoutSize { return CGRect(origin: .zero, size: tableLayoutSize) }
         let lineFragmentWidth = lineFrag.width.isFinite ? lineFrag.width : 0
         let containerWidth = textContainer.map {
             max(0, $0.size.width - ($0.lineFragmentPadding * 2))

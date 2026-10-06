@@ -98,22 +98,27 @@ extension EditorTextView {
     }
 
     private func scheduleDeferredImageSelection(for range: NSRange) {
+        guard range.location < textStorage.length,
+              let attachment = textStorage.attribute(.attachment, at: range.location, effectiveRange: nil) as? NSTextAttachment else { return }
         pendingDeferredImageSelectionRange = range
         pendingDeferredImageSelectionGeneration &+= 1
         let generation = pendingDeferredImageSelectionGeneration
-        DispatchQueue.main.async { [weak self] in
-            self?.applyDeferredImageSelectionIfNeeded(generation: generation)
+        DispatchQueue.main.async { [weak self, weak attachment] in
+            guard let attachment else { return }
+            self?.applyDeferredImageSelectionIfNeeded(generation: generation, attachment: attachment)
         }
     }
 
-    private func applyDeferredImageSelectionIfNeeded(generation: UInt64) {
+    private func applyDeferredImageSelectionIfNeeded(generation: UInt64, attachment: NSTextAttachment) {
         guard pendingDeferredImageSelectionGeneration == generation,
               let pendingRange = pendingDeferredImageSelectionRange
         else {
             return
         }
         pendingDeferredImageSelectionRange = nil
-        guard selectedUtf16Range() != pendingRange else { return }
+        guard selectedUtf16Range() != pendingRange,
+              NSMaxRange(pendingRange) <= textStorage.length,
+              textStorage.attribute(.attachment, at: pendingRange.location, effectiveRange: nil) as? NSTextAttachment === attachment else { return }
         _ = selectImageAttachment(range: pendingRange)
     }
 
