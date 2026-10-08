@@ -4,6 +4,10 @@ import android.text.Annotation
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 
+private fun isRenderedContentSpan(span: Any): Boolean =
+    span is android.text.style.CharacterStyle || span is android.text.style.ParagraphStyle ||
+        span is Annotation || span is CodeBlockMetadataSpan
+
 internal fun EditorEditText.applyFullRenderPreservingEditorState(
     spannable: CharSequence,
     restoreScrollAfterLayout: Boolean = false
@@ -79,12 +83,7 @@ internal fun EditorEditText.applyRenderedSpannable(
         if (styleOnly && spannable is Spanned) {
             editableText.getSpans(0, editableText.length, Any::class.java).filter {
                 editableText.getSpanFlags(it) and Spanned.SPAN_COMPOSING == 0 &&
-                    (
-                        it is android.text.style.CharacterStyle ||
-                            it is android.text.style.ParagraphStyle ||
-                            it is Annotation ||
-                            it is CodeBlockMetadataSpan
-                        )
+                    isRenderedContentSpan(it)
             }.forEach(editableText::removeSpan)
             spannable.getSpans(0, spannable.length, Any::class.java).forEach {
                 editableText.setSpan(
@@ -96,9 +95,10 @@ internal fun EditorEditText.applyRenderedSpannable(
             }
         } else if (replaceRange != null) {
             if (replacedTopLevelStartIndex != null) {
-                removeParagraphSpansOwnedByTopLevelRange(
+                removeRenderSpansOwnedByTopLevelRange(
                     replacedTopLevelStartIndex,
-                    replacedTopLevelDeleteCount
+                    replacedTopLevelDeleteCount,
+                    replaceRange
                 )
             }
             editableText.getSpans(
@@ -208,9 +208,10 @@ internal fun EditorEditText.paragraphSpansStartingAt(offset: Int): List<Paragrap
             )
         }
 
-internal fun EditorEditText.removeParagraphSpansOwnedByTopLevelRange(
+internal fun EditorEditText.removeRenderSpansOwnedByTopLevelRange(
     startIndex: Int,
-    deleteCount: Int
+    deleteCount: Int,
+    replaceRange: RenderReplaceRange
 ) {
     if (deleteCount <= 0) return
     val endIndex = startIndex + deleteCount
@@ -232,11 +233,15 @@ internal fun EditorEditText.removeParagraphSpansOwnedByTopLevelRange(
     editableText
         .getSpans(0, editableText.length, Any::class.java)
         .filter { span ->
-            editableText.getSpanFlags(span) and Spanned.SPAN_PARAGRAPH == Spanned.SPAN_PARAGRAPH
+            editableText.getSpanFlags(span) and Spanned.SPAN_COMPOSING == 0 &&
+                isRenderedContentSpan(span)
         }
         .filter { span ->
             val spanStart = editableText.getSpanStart(span)
             val spanEnd = editableText.getSpanEnd(span)
+            if (spanStart >= replaceRange.endExclusive || spanEnd <= replaceRange.start) {
+                return@filter false
+            }
             val ownerIndex = topLevelAnnotations.firstOrNull { annotation ->
                 annotation.first < spanEnd && annotation.second > spanStart
             }?.third
@@ -325,10 +330,11 @@ internal fun renderedTextMatches(left: CharSequence?, right: CharSequence): Bool
     )
     fun values(text: CharSequence): List<SpanValue>? {
         val spanned = text as? Spanned ?: return emptyList()
-        return spanned.getSpans(0, spanned.length, Any::class.java).filter {
-            it is android.text.style.CharacterStyle || it is android.text.style.ParagraphStyle ||
-                it is Annotation || it is CodeBlockMetadataSpan
-        }.map { span ->
+        return spanned.getSpans(
+            0,
+            spanned.length,
+            Any::class.java
+        ).filter(::isRenderedContentSpan).map { span ->
             val value: Any = when (span) {
                 is android.text.ParcelableSpan -> {
                     val parcel = android.os.Parcel.obtain()
