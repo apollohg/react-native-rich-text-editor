@@ -154,7 +154,7 @@ fn projected_attrs<'a>(
                 .and_then(|spec| spec.attrs.get(*key))
                 .and_then(|attr| attr.default.as_ref())
                 .is_some_and(|default| {
-                    crate::boundary::json_values_equal_stack_safe(default, value)
+                    crate::boundary::json_projection_values_equal_stack_safe(default, value)
                 })
         })
         .chain(

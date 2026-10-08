@@ -597,6 +597,7 @@ fn generic_typed_compilation_uses_staged_authority_without_publishing_base_seed(
     let (commit, result) = engine
         .apply_typed_transaction_with_staged_context(
             transaction,
+            None,
             false,
             &mut OutboundUpdateSink::detached(),
         )
@@ -670,6 +671,7 @@ fn staged_generic_compiler_semantic_failure_is_prewrite_and_atomic() {
     let error = engine
         .apply_typed_transaction_with_staged_context(
             transaction,
+            None,
             false,
             &mut OutboundUpdateSink::detached(),
         )
@@ -704,6 +706,7 @@ fn staged_generic_lookup_transition_failure_is_prewrite_and_atomic() {
     let error = engine
         .apply_typed_transaction_with_staged_context(
             transaction,
+            None,
             false,
             &mut OutboundUpdateSink::detached(),
         )

@@ -302,14 +302,29 @@ pub(crate) fn json_values_equal_stack_safe(
     left: &serde_json::Value,
     right: &serde_json::Value,
 ) -> bool {
+    json_values_equal_with(left, right, |left, right| left == right)
+}
+
+pub(crate) fn json_projection_values_equal_stack_safe(
+    left: &serde_json::Value,
+    right: &serde_json::Value,
+) -> bool {
+    json_values_equal_with(left, right, crate::schema::json_projection_values_equal)
+}
+
+fn json_values_equal_with(
+    left: &serde_json::Value,
+    right: &serde_json::Value,
+    numbers_equal: fn(&serde_json::Value, &serde_json::Value) -> bool,
+) -> bool {
     let mut pending = Vec::new();
     let mut current = Some((left, right));
     while let Some((left, right)) = current {
         match (left, right) {
             (serde_json::Value::Null, serde_json::Value::Null) => {}
             (serde_json::Value::Bool(left), serde_json::Value::Bool(right)) if left == right => {}
-            (serde_json::Value::Number(left), serde_json::Value::Number(right))
-                if left == right => {}
+            (serde_json::Value::Number(_), serde_json::Value::Number(_))
+                if numbers_equal(left, right) => {}
             (serde_json::Value::String(left), serde_json::Value::String(right))
                 if left == right => {}
             (serde_json::Value::Array(left), serde_json::Value::Array(right))
@@ -339,6 +354,45 @@ pub(crate) fn json_values_equal_stack_safe(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn numeric_projection_comparison_keeps_exact_wire_values_at_document_depth() {
+        const COMPARISON_DEPTH: usize = 1024;
+        const INEXACT_INTEGER: u64 = 9_007_199_254_740_993;
+        let mut integer = serde_json::json!({ "colwidth": [132], "start": 7 });
+        let mut wire = serde_json::json!({ "colwidth": [132.0], "start": 7.0 });
+        for _ in 0..COMPARISON_DEPTH {
+            integer = serde_json::json!([integer]);
+            wire = serde_json::json!([wire]);
+        }
+        let integer = StackSafeJsonValue::new(integer);
+        let wire = StackSafeJsonValue::new(wire);
+        assert!(
+            !json_values_equal_stack_safe(integer.as_value(), wire.as_value()),
+            "exact JSON identity must retain numeric representation"
+        );
+        assert!(
+            json_projection_values_equal_stack_safe(integer.as_value(), wire.as_value()),
+            "Yrs float attributes must match their exact integer document values at full depth"
+        );
+        for changed in [
+            serde_json::json!(8.0),
+            serde_json::json!("7"),
+            serde_json::json!(7.25),
+        ] {
+            assert!(
+                !json_projection_values_equal_stack_safe(&serde_json::json!(7), &changed),
+                "numeric projection comparison accepted changed value {changed}"
+            );
+        }
+        assert!(
+            !json_projection_values_equal_stack_safe(
+                &serde_json::json!(INEXACT_INTEGER),
+                &serde_json::json!(INEXACT_INTEGER as f64)
+            ),
+            "a rounded wire float must not admit a changed integer"
+        );
+    }
 
     #[test]
     fn document_stack_reuses_nested_segment_and_resets_after_unwind() {

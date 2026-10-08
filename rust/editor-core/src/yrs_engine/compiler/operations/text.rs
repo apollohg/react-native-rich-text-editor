@@ -169,7 +169,12 @@ impl OperationCompiler<'_> {
                         TextRangeDisposition::Structural => {
                             lowering.delete_structural_range(
                                 operation_index,
-                                &preview,
+                                MutationDocumentContext {
+                                    before: &preview,
+                                    after: &next,
+                                    schema: context.schema,
+                                    limits: context.resource_limits,
+                                },
                                 from,
                                 to,
                             )?;

@@ -9,6 +9,7 @@ impl YrsDocumentEngine {
         &mut self,
         transaction: yrs_engine::TypedTransaction,
         proof: yrs_engine::commands::PreparedCommandProof,
+        initial_selection: Option<(&yrs_engine::SelectionInput, &yrs_engine::ResolvedSelection)>,
         with_result: bool,
         outbound: &mut OutboundUpdateSink<'_>,
     ) -> yrs_engine::OperationResult<(
@@ -32,7 +33,10 @@ impl YrsDocumentEngine {
             .is_some_and(|state| state.mutation_lookup_seed.is_unavailable());
         self.canonical_splice_cache = None;
         let prepared_history = if prepare_history_before_context {
-            self.prepare_execution_command_history_admission(&execution_admission)?
+            self.prepare_execution_command_history_admission(
+                &execution_admission,
+                initial_selection.map(|(_, resolved)| resolved),
+            )?
         } else {
             None
         };
@@ -124,6 +128,7 @@ impl YrsDocumentEngine {
             prepared_history,
             Some(context),
             Some(read_transaction),
+            initial_selection,
             outbound,
         )
     }
@@ -131,6 +136,7 @@ impl YrsDocumentEngine {
     pub(super) fn apply_typed_transaction_with_staged_context(
         &mut self,
         transaction: yrs_engine::TypedTransaction,
+        initial_selection: Option<(&yrs_engine::SelectionInput, &yrs_engine::ResolvedSelection)>,
         with_result: bool,
         outbound: &mut OutboundUpdateSink<'_>,
     ) -> yrs_engine::OperationResult<(
@@ -174,6 +180,7 @@ impl YrsDocumentEngine {
             None,
             Some(context),
             Some(read_transaction),
+            initial_selection,
             outbound,
         )
     }
@@ -185,6 +192,7 @@ impl YrsDocumentEngine {
     ) -> yrs_engine::OperationResult<yrs_engine::TransactionCommit> {
         let (commit, _) = self.apply_typed_transaction_with_staged_context(
             transaction,
+            None,
             false,
             &mut OutboundUpdateSink::detached(),
         )?;
@@ -205,6 +213,7 @@ impl YrsDocumentEngine {
     )> {
         self.apply_typed_transaction_with_staged_context(
             transaction,
+            None,
             with_result,
             &mut OutboundUpdateSink::from_optional_outbox(outbox),
         )
@@ -218,6 +227,7 @@ impl YrsDocumentEngine {
         let request_id = transaction.request_id;
         let (_, result) = self.apply_typed_transaction_with_staged_context(
             transaction,
+            None,
             true,
             &mut OutboundUpdateSink::detached(),
         )?;
@@ -273,6 +283,7 @@ impl YrsDocumentEngine {
             compiled,
             with_result,
             prepared_history,
+            None,
             None,
             None,
             outbound,

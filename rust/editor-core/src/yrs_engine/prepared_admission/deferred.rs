@@ -487,6 +487,7 @@ impl DeferredCommandAdmission {
         Ok(DeferredCommandHistoryEvidence {
             candidate_derivations,
             canonical_fingerprint,
+            canonical_projection_fingerprint: self.candidate_canonical.projection_sha256(),
             canonical_serialized_len,
             canonical_text_scalar_len: self.candidate_canonical.text_scalar_len(),
             canonical_retained_bytes: retained_charge.canonical_retained_bytes,

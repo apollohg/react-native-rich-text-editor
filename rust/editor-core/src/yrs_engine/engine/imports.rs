@@ -546,10 +546,16 @@ impl YrsDocumentEngine {
                 None,
                 Some(context),
                 Some(read_transaction),
+                None,
                 &mut outbound,
             )
         } else {
-            self.apply_typed_transaction_with_staged_context(transaction, false, &mut outbound)
+            self.apply_typed_transaction_with_staged_context(
+                transaction,
+                None,
+                false,
+                &mut outbound,
+            )
         }
         .map_err(RootReplacementError::Transaction)?;
         if history == yrs_engine::ReplacementHistory::ResetAndClear {

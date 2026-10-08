@@ -92,10 +92,11 @@ pub(crate) use observability::{
 pub(crate) use render_evidence::{FinalizedDerivedEvidence, PreparedDerivedEvidence};
 use selection::preserve_with_mapped_fallback;
 pub(crate) use selection::{
-    apply_stored_mark_operation, canonical_marks, exact_point_is_representable,
-    history_selection_to_relative, marks_at_position, operation_result_to_relative,
-    resolve_selection, resolved_from_legacy, resolved_from_legacy_with_view, resolved_to_legacy,
-    selection_table_index, stored_marks_after_selection_change, FinalizedSelectionState,
+    apply_stored_mark_operation, canonical_marks, command_initial_selection_to_relative,
+    exact_point_is_representable, history_selection_to_relative, marks_at_position,
+    operation_result_to_relative, resolve_selection, resolved_from_legacy,
+    resolved_from_legacy_with_view, resolved_to_legacy, selection_table_index,
+    stored_marks_after_selection_change, FinalizedSelectionState,
 };
 use std::sync::Arc;
 pub(crate) use validation::{

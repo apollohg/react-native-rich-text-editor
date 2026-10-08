@@ -104,7 +104,10 @@ fn reserve_replay_roll_baseline(
 
 #[derive(Debug, Clone)]
 pub(crate) enum HistoryCanonicalIdentity {
-    Materialized([u8; 32]),
+    Materialized {
+        fingerprint: [u8; 32],
+        projection_fingerprint: [u8; 32],
+    },
     Retained(super::canonical::CanonicalArtifact),
 }
 
@@ -116,13 +119,16 @@ impl HistoryCanonicalIdentity {
         if snapshot_retained {
             Self::Retained(artifact.clone())
         } else {
-            Self::Materialized(artifact.sha256())
+            Self::Materialized {
+                fingerprint: artifact.sha256(),
+                projection_fingerprint: artifact.projection_sha256(),
+            }
         }
     }
 
     pub(crate) fn fingerprint(&self) -> [u8; 32] {
         match self {
-            Self::Materialized(fingerprint) => *fingerprint,
+            Self::Materialized { fingerprint, .. } => *fingerprint,
             Self::Retained(artifact) => artifact.sha256(),
         }
     }
@@ -130,6 +136,21 @@ impl HistoryCanonicalIdentity {
     pub(crate) fn matches_artifact(&self, artifact: &super::canonical::CanonicalArtifact) -> bool {
         matches!(self, Self::Retained(retained) if retained.ptr_eq(artifact))
             || self.fingerprint() == artifact.sha256()
+    }
+
+    pub(crate) fn matches_projection(
+        &self,
+        artifact: &super::canonical::CanonicalArtifact,
+    ) -> bool {
+        match self {
+            Self::Materialized {
+                projection_fingerprint,
+                ..
+            } => *projection_fingerprint == artifact.projection_sha256(),
+            Self::Retained(retained) => {
+                retained.projection_sha256() == artifact.projection_sha256()
+            }
+        }
     }
 }
 

@@ -27,6 +27,9 @@ pub(super) fn planned_relative_selection<T: yrs::ReadTxn>(
     fragment: &yrs::types::xml::XmlFragmentRef,
     cached_view: Option<CachedCompilationView<'_>>,
 ) -> OperationResult<Option<yrs_engine::RelativeSelection>> {
+    let SelectionIntent::Set(selection) = &transaction.selection_intent else {
+        return Ok(None);
+    };
     let owned_rendered;
     let owned_map;
     let (rendered, map) = if let Some(cached) = cached_view {
@@ -60,17 +63,12 @@ pub(super) fn planned_relative_selection<T: yrs::ReadTxn>(
             head: relative_point("selection.head", head)?,
         })
     };
-    let relative = match &transaction.selection_intent {
-        SelectionIntent::Preserve => return Ok(None),
-        SelectionIntent::Set(yrs_engine::SelectionInput::Text { anchor, head }) => {
-            text(*anchor, *head)?
-        }
-        SelectionIntent::Set(yrs_engine::SelectionInput::Node { at }) => {
-            yrs_engine::RelativeSelection::Node {
-                point: relative_point("selection.at", *at)?,
-            }
-        }
-        SelectionIntent::Set(yrs_engine::SelectionInput::Cell { anchor, head }) => {
+    let relative = match selection {
+        yrs_engine::SelectionInput::Text { anchor, head } => text(*anchor, *head)?,
+        yrs_engine::SelectionInput::Node { at } => yrs_engine::RelativeSelection::Node {
+            point: relative_point("selection.at", *at)?,
+        },
+        yrs_engine::SelectionInput::Cell { anchor, head } => {
             let index = TableProjectionIndex::derive_or_fallback(
                 context.document,
                 context.schema,
@@ -106,8 +104,7 @@ pub(super) fn planned_relative_selection<T: yrs::ReadTxn>(
                 head: cell_point(CELL_SELECTION_HEAD_FIELD, *head)?,
             }
         }
-        SelectionIntent::Set(yrs_engine::SelectionInput::All) => yrs_engine::RelativeSelection::All,
-        SelectionIntent::UseOperationResult => return Ok(None),
+        yrs_engine::SelectionInput::All => yrs_engine::RelativeSelection::All,
     };
     Ok(Some(relative))
 }

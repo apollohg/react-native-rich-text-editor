@@ -494,6 +494,121 @@ pub(crate) fn operation_result_to_relative<T: ReadTxn>(
     }
 }
 
+pub(crate) fn command_initial_selection_to_relative<T: ReadTxn>(
+    txn: &T,
+    fragment: &XmlFragmentRef,
+    input: &crate::yrs_engine::SelectionInput,
+    resolved: &ResolvedSelection,
+    state: &DerivedStateCache,
+    schema: &Schema,
+) -> Option<RelativeSelection> {
+    let requests = match (input, resolved) {
+        (
+            crate::yrs_engine::SelectionInput::Text { anchor, head },
+            ResolvedSelection::Text { anchor: a, head: h },
+        ) => vec![(a.document, anchor.affinity), (h.document, head.affinity)],
+        (crate::yrs_engine::SelectionInput::Node { at }, ResolvedSelection::Node { at: p }) => {
+            vec![(p.document, at.affinity)]
+        }
+        (
+            crate::yrs_engine::SelectionInput::Cell { anchor, head },
+            ResolvedSelection::Cell { anchor: a, head: h },
+        ) => vec![
+            (a.document, anchor.affinity()),
+            (h.document, head.affinity()),
+        ],
+        (crate::yrs_engine::SelectionInput::All, ResolvedSelection::All) => {
+            return Some(RelativeSelection::All);
+        }
+        _ => return None,
+    };
+    relative_selection_at_document_points(
+        txn,
+        fragment,
+        resolved,
+        &requests,
+        schema,
+        state
+            .block_branch_index
+            .as_deref()
+            .map(|index| (index, &state.position_map, &state.document)),
+    )
+}
+
+fn relative_selection_at_document_points<T: ReadTxn>(
+    txn: &T,
+    fragment: &XmlFragmentRef,
+    resolved: &ResolvedSelection,
+    requests: &[(u32, Affinity)],
+    schema: &Schema,
+    indexed_view: Option<(
+        &crate::yrs_engine::block_branch_index::BlockBranchIndex,
+        &PositionMap,
+        &Document,
+    )>,
+) -> Option<RelativeSelection> {
+    let indexed_point = |position, affinity: Affinity| {
+        let index = indexed_view?.0;
+        let assoc = affinity.into();
+        let opposite = match assoc {
+            Assoc::Before => Assoc::After,
+            Assoc::After => Assoc::Before,
+        };
+        let sticky = index
+            .sticky_at_doc_pos(txn, position, assoc, indexed_view?.1, indexed_view?.2)
+            .or_else(|| {
+                index.sticky_at_doc_pos(txn, position, opposite, indexed_view?.1, indexed_view?.2)
+            })?;
+        (index.doc_pos_of_offset(
+            txn,
+            &sticky.get_offset(txn)?,
+            indexed_view?.1,
+            indexed_view?.2,
+        ) == Some(position))
+        .then_some(RelativePoint { sticky, affinity })
+    };
+    let mut points = requests
+        .iter()
+        .map(|&(position, affinity)| indexed_point(position, affinity))
+        .collect::<Vec<_>>();
+    if points.iter().any(Option::is_none) {
+        let positions = requests.iter().map(|request| request.0).collect();
+        let chunks = crate::yrs_engine::position::boundary_chunks_at_doc_positions(
+            txn,
+            fragment,
+            &[positions],
+            schema,
+        )?;
+        for (index, (_, affinity)) in requests.iter().enumerate() {
+            if points[index].is_none() {
+                let boundary = chunks.first()?.anchors.get(index)?;
+                points[index] = Some(RelativePoint {
+                    sticky: match affinity {
+                        Affinity::Before => boundary.before.clone(),
+                        Affinity::After => boundary.after.clone(),
+                    },
+                    affinity: *affinity,
+                });
+            }
+        }
+    }
+    let mut points = points.into_iter().collect::<Option<Vec<_>>>()?.into_iter();
+    match resolved {
+        ResolvedSelection::Text { .. } => Some(RelativeSelection::Text {
+            anchor: points.next()?,
+            head: points.next()?,
+        }),
+        ResolvedSelection::Node { .. } => Some(RelativeSelection::Node {
+            point: points.next()?,
+        }),
+        ResolvedSelection::Cell { .. } => Some(RelativeSelection::Cell {
+            anchor: points.next()?,
+            head: points.next()?,
+        }),
+        ResolvedSelection::All => Some(RelativeSelection::All),
+    }
+}
+
 pub(crate) fn history_selection_to_relative<T: ReadTxn>(
     txn: &T,
     fragment: &XmlFragmentRef,
@@ -504,61 +619,22 @@ pub(crate) fn history_selection_to_relative<T: ReadTxn>(
     #[cfg(test)]
     OPERATION_RESULT_RELATIVE_TRAVERSALS
         .set(OPERATION_RESULT_RELATIVE_TRAVERSALS.get().saturating_add(1));
-    let point = |position, captured: &RelativePoint| {
-        doc_pos_to_relative_point(txn, fragment, position, captured.affinity, schema)
-    };
-    match (expected_relative, expected_resolved) {
+    let requests = match (expected_relative, expected_resolved) {
         (
-            RelativeSelection::Text {
-                anchor: captured_anchor,
-                head: captured_head,
-            },
+            RelativeSelection::Text { anchor: a, head: h },
             ResolvedSelection::Text { anchor, head },
-        ) => Some(RelativeSelection::Text {
-            anchor: point(anchor.document, captured_anchor)?,
-            head: point(head.document, captured_head)?,
-        }),
-        (RelativeSelection::Node { point: captured }, ResolvedSelection::Node { at }) => {
-            Some(RelativeSelection::Node {
-                point: point(at.document, captured)?,
-            })
+        ) => vec![(anchor.document, a.affinity), (head.document, h.affinity)],
+        (RelativeSelection::Node { point }, ResolvedSelection::Node { at }) => {
+            vec![(at.document, point.affinity)]
         }
         (
-            RelativeSelection::Cell {
-                anchor: captured_anchor,
-                head: captured_head,
-            },
+            RelativeSelection::Cell { anchor: a, head: h },
             ResolvedSelection::Cell { anchor, head },
-        ) => Some(RelativeSelection::Cell {
-            anchor: point(anchor.document, captured_anchor)?,
-            head: point(head.document, captured_head)?,
-        }),
-        (RelativeSelection::All, ResolvedSelection::All) => Some(RelativeSelection::All),
-        (
-            RelativeSelection::Text { .. },
-            ResolvedSelection::Node { .. }
-            | ResolvedSelection::Cell { .. }
-            | ResolvedSelection::All,
-        )
-        | (
-            RelativeSelection::Node { .. },
-            ResolvedSelection::Text { .. }
-            | ResolvedSelection::Cell { .. }
-            | ResolvedSelection::All,
-        )
-        | (
-            RelativeSelection::Cell { .. },
-            ResolvedSelection::Text { .. }
-            | ResolvedSelection::Node { .. }
-            | ResolvedSelection::All,
-        )
-        | (
-            RelativeSelection::All,
-            ResolvedSelection::Text { .. }
-            | ResolvedSelection::Node { .. }
-            | ResolvedSelection::Cell { .. },
-        ) => None,
-    }
+        ) => vec![(anchor.document, a.affinity), (head.document, h.affinity)],
+        (RelativeSelection::All, ResolvedSelection::All) => return Some(RelativeSelection::All),
+        _ => return None,
+    };
+    relative_selection_at_document_points(txn, fragment, expected_resolved, &requests, schema, None)
 }
 
 pub(crate) fn exact_point_is_representable<T: ReadTxn>(

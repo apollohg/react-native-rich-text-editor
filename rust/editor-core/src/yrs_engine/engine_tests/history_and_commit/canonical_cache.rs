@@ -323,80 +323,125 @@ fn optional_canonical_cache_allocation_failure_preserves_edit_and_history() {
 #[test]
 fn canonical_cache_edit_after_undo_preserves_redo_metadata_admission() {
     use crate::yrs_engine::canonical::CanonicalSpliceCache;
-    let mut cached = canonical_cache_engine();
-    let mut uncached = canonical_cache_engine();
-    for request_id in 108_700..108_710 {
-        cached
+    const PENDING_SNAPSHOTS: usize = 2;
+    const POST_UNDO_REQUEST: u64 = 108_720;
+    let with_redo = |byte_limit| {
+        let mut cached =
+            canonical_cache_engine_with_limits(byte_limit, CANONICAL_CACHE_TEST_TEXT_BYTES);
+        let mut uncached =
+            canonical_cache_engine_with_limits(byte_limit, CANONICAL_CACHE_TEST_TEXT_BYTES);
+        for request_id in 108_700..108_710 {
+            let actual = cached
+                .apply_typed_transaction(canonical_cache_insert(
+                    &cached,
+                    request_id,
+                    HistoryPolicy::Boundary,
+                ))
+                .unwrap();
+            let expected = CanonicalSpliceCache::without_for_test(|| {
+                uncached.apply_typed_transaction(canonical_cache_insert(
+                    &uncached,
+                    request_id,
+                    HistoryPolicy::Boundary,
+                ))
+            })
+            .unwrap();
+            assert_eq!(actual, expected);
+        }
+        for request_id in 108_710..108_713 {
+            assert_eq!(
+                cached.undo(request_id).unwrap(),
+                uncached.undo(request_id).unwrap()
+            );
+        }
+        assert!(cached.can_redo());
+        assert!(cached.canonical_splice_cache.is_none());
+        (cached, uncached)
+    };
+    let (probe, _) = with_redo(CANONICAL_CACHE_TEST_LIMIT);
+    let compiled = probe
+        .compile_typed_transaction(canonical_cache_insert(
+            &probe,
+            POST_UNDO_REQUEST,
+            HistoryPolicy::Boundary,
+        ))
+        .unwrap();
+    let before = probe.derived_state.as_ref().unwrap();
+    let required_cache = CanonicalSpliceCache::prepare(
+        None,
+        &before.canonical_artifact,
+        compiled.canonical_artifact.as_ref().unwrap(),
+        before.position_map.block_path(0).unwrap(),
+        probe.revision(),
+        probe.revision() + 1,
+        usize::MAX,
+    )
+    .unwrap()
+    .retained_bytes()
+    .unwrap();
+    let pending = crate::yrs_engine::engine::history_state::history_metadata_bytes(
+        None,
+        &probe.fragment_name,
+    ) * PENDING_SNAPSHOTS;
+    let probe_headroom = probe
+        .history
+        .cache_metadata_headroom(POST_UNDO_REQUEST, pending)
+        .unwrap();
+    let reseed_limit = CANONICAL_CACHE_TEST_LIMIT - probe_headroom + required_cache;
+    for byte_limit in [reseed_limit, reseed_limit - 1] {
+        let (mut cached, mut uncached) = with_redo(byte_limit);
+        let headroom = cached
+            .history
+            .cache_metadata_headroom(POST_UNDO_REQUEST, pending)
+            .unwrap();
+        assert_eq!(headroom, required_cache - (reseed_limit - byte_limit));
+        assert!(
+            headroom < byte_limit,
+            "Undo and redo metadata must remain charged before the new edit"
+        );
+        let actual = cached
             .apply_typed_transaction(canonical_cache_insert(
                 &cached,
-                request_id,
+                POST_UNDO_REQUEST,
                 HistoryPolicy::Boundary,
             ))
             .unwrap();
-        CanonicalSpliceCache::without_for_test(|| {
+        let expected = CanonicalSpliceCache::without_for_test(|| {
             uncached.apply_typed_transaction(canonical_cache_insert(
                 &uncached,
-                request_id,
+                POST_UNDO_REQUEST,
                 HistoryPolicy::Boundary,
             ))
         })
         .unwrap();
-    }
-    for request_id in 108_710..108_713 {
-        assert_eq!(
-            cached.undo(request_id).unwrap(),
-            uncached.undo(request_id).unwrap()
-        );
-    }
-    assert!(cached.can_redo());
-    assert!(cached.canonical_splice_cache.is_none());
-    let pending = crate::yrs_engine::engine::history_state::history_metadata_bytes(
-        None,
-        &cached.fragment_name,
-    ) * 2;
-    let headroom = cached
-        .history
-        .cache_metadata_headroom(108_720, pending)
-        .unwrap();
-    assert!(
-        headroom < CANONICAL_CACHE_TEST_LIMIT,
-        "Undo and redo metadata must remain charged before the new edit"
-    );
-    let actual = cached
-        .apply_typed_transaction(canonical_cache_insert(
-            &cached,
-            108_720,
-            HistoryPolicy::Boundary,
-        ))
-        .unwrap();
-    let expected = CanonicalSpliceCache::without_for_test(|| {
-        uncached.apply_typed_transaction(canonical_cache_insert(
-            &uncached,
-            108_720,
-            HistoryPolicy::Boundary,
-        ))
-    })
-    .unwrap();
-    assert_eq!(actual, expected);
-    assert_eq!(cached.document_json(), uncached.document_json());
-    assert_eq!(
-        cached.history.replay_metadata_bytes_for_test(),
-        uncached.history.replay_metadata_bytes_for_test()
-    );
-    assert!(!cached.can_redo());
-    assert_eq!(cached.can_redo(), uncached.can_redo());
-    let cache = cached.canonical_splice_cache.as_ref().expect(
-        "The post-undo edit must seed a cache within headroom including live redo and both pending snapshots",
-    );
-    assert!(cache.retained_bytes().unwrap() <= headroom);
-    let mut request_id = 108_730;
-    while cached.can_undo() || uncached.can_undo() {
-        assert_eq!(
-            cached.undo(request_id).unwrap(),
-            uncached.undo(request_id).unwrap()
-        );
+        assert_eq!(actual, expected);
         assert_eq!(cached.document_json(), uncached.document_json());
-        request_id += 1;
+        assert_eq!(
+            cached.history.replay_metadata_bytes_for_test(),
+            uncached.history.replay_metadata_bytes_for_test()
+        );
+        assert!(!cached.can_redo());
+        assert_eq!(cached.can_redo(), uncached.can_redo());
+        if byte_limit == reseed_limit {
+            let cache = cached.canonical_splice_cache.as_ref().expect(
+                "The post-undo edit must seed a cache at the exact headroom including live redo and both pending snapshots",
+            );
+            assert_eq!(cache.retained_bytes(), Some(headroom));
+        } else {
+            assert!(
+                cached.canonical_splice_cache.is_none(),
+                "One byte under must drop only the optional cache"
+            );
+        }
+        let mut request_id = 108_730;
+        while cached.can_undo() || uncached.can_undo() {
+            assert_eq!(
+                cached.undo(request_id).unwrap(),
+                uncached.undo(request_id).unwrap()
+            );
+            assert_eq!(cached.document_json(), uncached.document_json());
+            request_id += 1;
+        }
     }
 }
 

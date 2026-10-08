@@ -439,6 +439,7 @@ fn private_prepared_command_orchestrator_finalizes_deferred_admission_once() {
         .apply_prepared_command_transaction(
             transaction,
             proof,
+            None,
             true,
             &mut OutboundUpdateSink::detached(),
         )
@@ -597,6 +598,7 @@ fn tampered_localized_history_render_evidence_falls_back_with_exact_results() {
             .apply_prepared_command_transaction(
                 transaction,
                 proof,
+                None,
                 true,
                 &mut OutboundUpdateSink::detached(),
             )
@@ -718,6 +720,7 @@ fn private_prepared_eager_noninsert_uses_staged_context_without_identity() {
         .apply_prepared_command_transaction(
             transaction,
             proof,
+            None,
             true,
             &mut OutboundUpdateSink::detached(),
         )
@@ -797,6 +800,7 @@ fn private_prepared_history_error_precedes_staged_hydration_failure() {
         .apply_prepared_command_transaction(
             transaction,
             proof,
+            None,
             true,
             &mut OutboundUpdateSink::detached(),
         )
@@ -856,6 +860,7 @@ fn private_prepared_deferred_compiler_failure_is_prewrite_and_atomic() {
         .apply_prepared_command_transaction(
             transaction,
             proof,
+            None,
             true,
             &mut OutboundUpdateSink::detached(),
         )
@@ -1432,5 +1437,145 @@ fn compact_root_json_preserves_history_boundaries_and_replay() {
             );
             assert_eq!(actual.document(), oracle.document(), "redo at {limit}");
         }
+    }
+}
+
+#[test]
+fn anchored_prepared_input_charges_marks_from_the_requested_caret_before_hydration() {
+    const FRAGMENT_NAME: &str = "prosemirror";
+    const NOTE_BYTES: usize = 384;
+    const REQUEST: u64 = 65_500;
+    const OLD_SCALAR: u32 = 1;
+    const START_SCALAR: u32 = 0;
+    const REQUESTED_SCALAR: u32 = 2;
+    const ORIGINAL: &str = "ab";
+    const INSERTED: &str = "x";
+    let plain_charge = super::history_metadata_bytes(None, FRAGMENT_NAME) * 2;
+    let limit = plain_charge + NOTE_BYTES;
+    for leading_hard_break in [false, true] {
+        let schema = crate::schema::Schema::from_json(&json!({
+            "nodes": [
+                {"name": "doc", "content": "block+", "role": "doc"},
+                {"name": "paragraph", "content": "inline*", "group": "block", "role": "textBlock"},
+                {"name": "text", "group": "inline", "role": "text"},
+                {"name": "hardBreak", "group": "inline", "role": "hardBreak", "isVoid": true}
+            ],
+            "marks": [{"name": "bold", "attrs": {"note": {"type": "string", "default": ""}}}]
+        }))
+        .unwrap();
+        let mut engine = YrsDocumentEngine::new(YrsEngineConfig {
+            schema,
+            fragment_name: FRAGMENT_NAME.into(),
+            initialization_mode: crate::yrs_engine::InitializationMode::LocalEmpty,
+            resource_limits: ResourceLimits::default(),
+            editing_limits: crate::yrs_engine::EditingLimits {
+                max_derived_output_bytes: limit,
+                ..crate::yrs_engine::EditingLimits::default()
+            },
+            max_length: None,
+            scope: None,
+        })
+        .unwrap();
+        let mut content = Vec::new();
+        if leading_hard_break {
+            content.push(json!({"type": "hardBreak"}));
+        }
+        content.push(json!({"type": "text", "text": ORIGINAL}));
+        engine
+            .import_json(
+                &json!({"type": "doc", "content": [{"type": "paragraph", "content": content}]})
+                    .to_string(),
+                TransactionOrigin::DocumentImport,
+            )
+            .unwrap();
+        select_text(&mut engine, REQUEST, OLD_SCALAR, OLD_SCALAR);
+        engine
+            .apply_command(
+                REQUEST + 1,
+                TypedCommand::SetMark {
+                    mark_type: "bold".into(),
+                    attrs: HashMap::from([("note".into(), json!("n".repeat(NOTE_BYTES)))]),
+                },
+            )
+            .unwrap()
+            .unwrap();
+        let before = engine.document_json().unwrap();
+        assert!(
+            engine
+                .derived_state
+                .as_ref()
+                .unwrap()
+                .mutation_lookup_seed
+                .is_unavailable(),
+            "fixture must exercise history admission before lookup hydration"
+        );
+        assert!(
+            super::history_metadata_bytes(engine.stored_marks(), FRAGMENT_NAME) * 2 > limit,
+            "old caret marks must exceed the actual plain edit budget"
+        );
+        let requested_scalar = if leading_hard_break {
+            START_SCALAR
+        } else {
+            REQUESTED_SCALAR
+        };
+        let point = RevisionedPosition {
+            offset: requested_scalar,
+            kind: EditorOffsetKind::Scalar,
+            affinity: Affinity::After,
+        };
+        crate::yrs_engine::observability::reset_prepared_admission_counts_for_test();
+        let result = engine.apply_command_at_selection_with_outbox(
+            REQUEST + 2,
+            TypedCommand::InsertText {
+                text: INSERTED.into(),
+            },
+            crate::yrs_engine::SelectionInput::Text {
+                anchor: point,
+                head: point,
+            },
+            TransactionOrigin::LocalInput,
+            None,
+        );
+        result
+            .unwrap()
+            .expect("plain edit metadata within budget must admit the native input");
+        let prepared = crate::yrs_engine::observability::take_prepared_admission_counts_for_test();
+        if leading_hard_break {
+            assert!(
+                prepared.deferred_capsules_created > 0
+                    || prepared.staged_identity_materializations > 0,
+                "leading hard-break input must prepare history before hydration: {prepared:?}"
+            );
+        }
+        let expected_content = if leading_hard_break {
+            vec![
+                json!({"type": "text", "text": INSERTED}),
+                json!({"type": "hardBreak"}),
+                json!({"type": "text", "text": ORIGINAL}),
+            ]
+        } else {
+            vec![json!({"type": "text", "text": format!("{ORIGINAL}{INSERTED}")})]
+        };
+        let expected =
+            json!({"type": "doc", "content": [{"type": "paragraph", "content": expected_content}]});
+        assert_eq!(
+            engine.document_json().unwrap(),
+            expected,
+            "old caret bold leaked into input"
+        );
+        assert!(engine.stored_marks().is_none());
+        engine.undo(REQUEST + 3).unwrap().unwrap();
+        assert_eq!(engine.document_json().unwrap(), before);
+        assert!(
+            matches!(engine.resolved_selection(), Some(crate::yrs_engine::ResolvedSelection::Text { anchor, head })
+            if anchor.scalar == requested_scalar && head.scalar == requested_scalar)
+        );
+        assert!(
+            engine.stored_marks().is_none(),
+            "undo restored marks from the old caret"
+        );
+        engine.redo(REQUEST + 4).unwrap().unwrap();
+        assert_eq!(engine.document_json().unwrap(), expected);
+        assert!(engine.stored_marks().is_none());
     }
 }

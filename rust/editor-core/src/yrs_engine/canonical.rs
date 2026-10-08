@@ -8,6 +8,7 @@ use crate::schema::{schema_fingerprint, Schema};
 use crate::serialize::to_prosemirror_json;
 
 mod hash_prefix;
+mod projection_hash;
 mod splice_cache;
 #[cfg(test)]
 pub(crate) use splice_cache::CacheAllocation;
@@ -199,6 +200,7 @@ struct CanonicalArtifactInner {
     retained_charge: OnceLock<Option<CanonicalHistorySnapshotRetainedCharge>>,
     serialized_len: OnceLock<usize>,
     sha256: OnceLock<[u8; 32]>,
+    projection_sha256: OnceLock<[u8; 32]>,
     admission_upper_bound: usize,
     text_scalar_len: u64,
     text_utf8_bytes: usize,
@@ -221,6 +223,7 @@ pub(crate) struct PreparedCanonicalCandidate {
     retained_charge: OnceLock<Option<CanonicalHistorySnapshotRetainedCharge>>,
     serialized_len: OnceLock<usize>,
     sha256: OnceLock<[u8; 32]>,
+    projection_sha256: OnceLock<[u8; 32]>,
     sha256_provenance: OnceLock<[u8; 32]>,
     admission_upper_bound: usize,
     text_scalar_len: u64,
@@ -321,6 +324,7 @@ impl CanonicalArtifact {
             retained_charge: OnceLock::new(),
             serialized_len,
             sha256: OnceLock::new(),
+            projection_sha256: OnceLock::new(),
             admission_upper_bound: admission_upper_bound.or(exact_len).unwrap_or(usize::MAX),
             text_scalar_len,
             text_utf8_bytes,
@@ -387,6 +391,7 @@ impl CanonicalArtifact {
             retained_charge: OnceLock::from(retained_charge),
             serialized_len: OnceLock::from(serialized_len),
             sha256: OnceLock::new(),
+            projection_sha256: OnceLock::new(),
             admission_upper_bound: serialized_len,
             text_scalar_len,
             text_utf8_bytes,
@@ -454,10 +459,23 @@ impl CanonicalArtifact {
             #[cfg(test)]
             SERIALIZATION_COUNT.set(SERIALIZATION_COUNT.get().saturating_add(1));
             let _ = self.0.serialized_len.set(serialized.len());
+            let _ = self.0.projection_sha256.set(
+                projection_hash::projection_sha256(&serialized)
+                    .expect("canonical JSON numbers fit the projection hash token"),
+            );
             #[cfg(test)]
             super::observability::record_canonical_hash();
             canonical_sha256(&serialized)
         })
+    }
+
+    pub(crate) fn projection_sha256(&self) -> [u8; 32] {
+        self.sha256();
+        *self
+            .0
+            .projection_sha256
+            .get()
+            .expect("canonical hashing seals the projection fingerprint")
     }
 
     fn write_canonical_json(&self, output: &mut impl std::io::Write) -> std::io::Result<()> {
@@ -489,6 +507,7 @@ impl CanonicalArtifact {
             retained_charge: self.0.retained_charge.clone(),
             serialized_len: self.0.serialized_len.clone(),
             sha256: self.0.sha256.clone(),
+            projection_sha256: self.0.projection_sha256.clone(),
             admission_upper_bound,
             text_scalar_len: self.0.text_scalar_len,
             text_utf8_bytes: self.0.text_utf8_bytes,
@@ -598,6 +617,7 @@ impl PreparedCanonicalCandidate {
             retained_charge: OnceLock::new(),
             serialized_len: OnceLock::new(),
             sha256: OnceLock::new(),
+            projection_sha256: OnceLock::new(),
             sha256_provenance: OnceLock::new(),
             admission_upper_bound,
             text_scalar_len,
@@ -628,6 +648,10 @@ impl PreparedCanonicalCandidate {
             #[cfg(test)]
             SERIALIZATION_COUNT.set(SERIALIZATION_COUNT.get().saturating_add(1));
             let _ = self.serialized_len.set(serialized.len());
+            let _ = self.projection_sha256.set(
+                projection_hash::projection_sha256(&serialized)
+                    .expect("canonical JSON numbers fit the projection hash token"),
+            );
             #[cfg(test)]
             super::observability::record_canonical_hash();
             let sha256 = canonical_sha256(&serialized);
@@ -654,6 +678,14 @@ impl PreparedCanonicalCandidate {
         // a second candidate serialization before deferred finalization.
         let sha256 = self.sha256();
         (self.serialized_len(), sha256)
+    }
+
+    pub(crate) fn projection_sha256(&self) -> [u8; 32] {
+        self.sha256();
+        *self
+            .projection_sha256
+            .get()
+            .expect("prepared canonical hashing seals the projection fingerprint")
     }
 
     pub(crate) fn matches_exact_source_document(&self, document: &Document) -> bool {
@@ -710,6 +742,7 @@ impl PreparedCanonicalCandidate {
             retained_charge: self.retained_charge,
             serialized_len: self.serialized_len,
             sha256: self.sha256,
+            projection_sha256: self.projection_sha256,
             admission_upper_bound: self.admission_upper_bound,
             text_scalar_len: self.text_scalar_len,
             text_utf8_bytes: self.text_utf8_bytes,

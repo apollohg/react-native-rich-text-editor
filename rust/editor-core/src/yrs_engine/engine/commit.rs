@@ -64,6 +64,7 @@ impl CompiledCommitAuthority<'_, '_> {
 }
 
 impl YrsDocumentEngine {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn apply_compiled_transaction_with_history_and_context(
         &mut self,
         mut compiled: CompiledTransaction,
@@ -71,6 +72,7 @@ impl YrsDocumentEngine {
         prepared_history: Option<yrs_engine::prepared_admission::PreparedCommandHistoryAdmission>,
         prepared_context: Option<yrs_engine::prepared_admission::PreparedMutationContext>,
         read_transaction: Option<CompilationReadTransaction<'_>>,
+        initial_selection: Option<(&yrs_engine::SelectionInput, &yrs_engine::ResolvedSelection)>,
         outbound: &mut OutboundUpdateSink<'_>,
     ) -> yrs_engine::OperationResult<(
         yrs_engine::TransactionCommit,
@@ -465,7 +467,7 @@ impl YrsDocumentEngine {
         {
             previous_canonical_cache = None;
         }
-        let (history_before, history_after_template) = if captures_history {
+        let (mut history_before, mut history_after_template) = if captures_history {
             if let (Some(before), Some(after)) = (
                 prepared_history_before.take(),
                 prepared_history_after.take(),
@@ -562,6 +564,7 @@ impl YrsDocumentEngine {
                         &self.resource_limits,
                         &self.editing_limits,
                         self.max_length,
+                        initial_selection.map(|(_, resolved)| (resolved, &self.schema)),
                         document_snapshot_retained_bytes.map(|bytes| bytes.before),
                     )),
                     Some(history_snapshot_template(
@@ -586,6 +589,97 @@ impl YrsDocumentEngine {
             }
             (None, None)
         };
+        if let (Some((selection, resolved)), Some(before), Some(after)) = (
+            initial_selection,
+            history_before.as_mut(),
+            history_after_template.as_mut(),
+        ) {
+            let affinities_match = match (selection, &installed.relative_selection) {
+                (
+                    yrs_engine::SelectionInput::Text { anchor, head },
+                    yrs_engine::RelativeSelection::Text {
+                        anchor: previous_anchor,
+                        head: previous_head,
+                    },
+                ) => {
+                    anchor.affinity == previous_anchor.affinity
+                        && head.affinity == previous_head.affinity
+                }
+                (
+                    yrs_engine::SelectionInput::Node { at },
+                    yrs_engine::RelativeSelection::Node { point },
+                ) => at.affinity == point.affinity,
+                (
+                    yrs_engine::SelectionInput::Cell { anchor, head },
+                    yrs_engine::RelativeSelection::Cell {
+                        anchor: previous_anchor,
+                        head: previous_head,
+                    },
+                ) => {
+                    anchor.affinity() == previous_anchor.affinity
+                        && head.affinity() == previous_head.affinity
+                }
+                (yrs_engine::SelectionInput::All, yrs_engine::RelativeSelection::All) => true,
+                _ => false,
+            };
+            let reuse_installed = *resolved == installed.resolved_selection && affinities_match;
+            let relative = if reuse_installed {
+                installed.relative_selection.clone()
+            } else {
+                yrs_engine::derived_state::command_initial_selection_to_relative(
+                    &authority_txn,
+                    &authority_fragment,
+                    selection,
+                    resolved,
+                    installed,
+                    &self.schema,
+                )
+                .ok_or_else(|| {
+                    yrs_engine::OperationError::selection_position_invalid(
+                        compiled.request_id,
+                        "selection",
+                        "initial command selection has no exact Yrs boundary",
+                    )
+                })?
+            };
+            let before_metadata_bytes = before.metadata_bytes;
+            let after_metadata_bytes = after.metadata_bytes;
+            before.stored_marks = yrs_engine::derived_state::stored_marks_after_selection_change(
+                before.stored_marks.as_deref(),
+                &before.resolved_selection,
+                resolved,
+                &installed.document,
+                &self.schema,
+            );
+            before.relative_selection = relative;
+            before.resolved_selection = resolved.clone();
+            before.metadata_bytes =
+                history_metadata_bytes(before.stored_marks.as_deref(), &self.fragment_name)
+                    .saturating_add(
+                        before
+                            .document_snapshot
+                            .as_deref()
+                            .map(yrs_engine::derived_state::HistoryDocumentSnapshot::retained_bytes)
+                            .unwrap_or(0),
+                    );
+            let StoredMarksPlan::Set(marks) = &compiled.stored_marks_plan else {
+                unreachable!("captured history has a sealed stored-mark plan")
+            };
+            after.stored_marks = marks.clone();
+            after.metadata_bytes =
+                history_metadata_bytes(after.stored_marks.as_deref(), &self.fragment_name)
+                    .saturating_add(
+                    after
+                        .document_snapshot_retained_bytes
+                        .map(yrs_engine::derived_state::HistoryDocumentSnapshotRetainedBytes::get)
+                        .unwrap_or(0),
+                );
+            if before_metadata_bytes != before.metadata_bytes
+                || after_metadata_bytes != after.metadata_bytes
+            {
+                prepared_history_limits = None;
+            }
+        }
         let history_after_metadata_bytes = history_after_template
             .as_ref()
             .map(|template| template.metadata_bytes)

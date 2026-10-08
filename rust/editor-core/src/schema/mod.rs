@@ -229,19 +229,7 @@ pub struct AttrSpec {
 }
 
 fn attribute_values_equal(left: &serde_json::Value, right: &serde_json::Value) -> bool {
-    match (left, right) {
-        (serde_json::Value::Array(a), serde_json::Value::Array(b)) => {
-            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| attribute_values_equal(a, b))
-        }
-        (serde_json::Value::Object(a), serde_json::Value::Object(b)) => {
-            a.len() == b.len()
-                && a.iter().all(|(key, value)| {
-                    b.get(key)
-                        .is_some_and(|other| attribute_values_equal(value, other))
-                })
-        }
-        _ => json_projection_values_equal(left, right),
-    }
+    crate::boundary::json_projection_values_equal_stack_safe(left, right)
 }
 
 impl AttrSpec {

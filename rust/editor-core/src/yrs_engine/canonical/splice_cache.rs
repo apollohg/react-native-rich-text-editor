@@ -1,5 +1,6 @@
 #[cfg(test)]
 use super::canonical_sha256;
+use super::projection_hash::ProjectionHashPrefix;
 use super::{hash_prefix::Sha256Prefix, CanonicalArtifact, CanonicalArtifactInner};
 use crate::model::Node;
 use serde::de::{DeserializeSeed, MapAccess, SeqAccess, Visitor};
@@ -32,6 +33,7 @@ pub(crate) struct CanonicalSpliceCache {
     revision: u64,
     artifact: Weak<CanonicalArtifactInner>,
     hash_prefix: Sha256Prefix,
+    projection_hash_prefix: ProjectionHashPrefix,
 }
 
 impl CanonicalSpliceCache {
@@ -219,6 +221,11 @@ impl CanonicalSpliceCache {
         } else {
             Sha256Prefix::new(bytes.get(..suffix_range.start)?)?
         };
+        let projection_hash_prefix = if let Some((prior, _, _)) = replacement {
+            prior.projection_hash_prefix.clone()
+        } else {
+            ProjectionHashPrefix::new(bytes.get(..suffix_range.start)?)?
+        };
         let candidate = Self {
             bytes,
             path: owned_path,
@@ -226,6 +233,7 @@ impl CanonicalSpliceCache {
             revision: next_revision,
             artifact: Arc::downgrade(&after.0),
             hash_prefix,
+            projection_hash_prefix,
         };
         candidate.finish(after, previous_bytes, byte_budget)
     }
@@ -317,8 +325,14 @@ impl CanonicalSpliceCache {
         )?;
         #[cfg(test)]
         super::super::observability::record_canonical_hash();
+        let projection_digest = self.projection_hash_prefix.finish(
+            self.bytes.get(self.suffix_range.end..)?,
+            self.bytes.get(self.suffix_range.clone())?,
+        )?;
         let _ = after.0.sha256.set(digest);
+        let _ = after.0.projection_sha256.set(projection_digest);
         debug_assert_eq!(after.0.sha256.get(), Some(&digest));
+        debug_assert_eq!(after.0.projection_sha256.get(), Some(&projection_digest));
         Some(self)
     }
 }
@@ -475,22 +489,43 @@ mod tests {
         const DELETED_SCALARS: u32 = 1;
         let schema = crate::prosemirror_schema();
         let context = CanonicalSchemaContext::new(&schema);
-        for target in 0..BLOCKS {
-            let block = initial(&schema).root().child(0).unwrap().clone();
+        for (nested, target) in [false, true]
+            .into_iter()
+            .flat_map(|nested| (0..BLOCKS).map(move |target| (nested, target)))
+        {
+            let paragraph = initial(&schema).root().child(0).unwrap().clone();
+            let block = if nested {
+                Node::element(
+                    "ordered_list".into(),
+                    HashMap::from([("start".into(), serde_json::json!(7))]),
+                    Fragment::from(vec![Node::element(
+                        "list_item".into(),
+                        HashMap::new(),
+                        Fragment::from(vec![paragraph]),
+                    )]),
+                )
+            } else {
+                paragraph
+            };
             let mut document = Document::new(Node::element(
                 "doc".into(),
                 HashMap::new(),
                 crate::model::Fragment::from(vec![block; BLOCKS]),
             ));
             let mut artifact = context.derive(&document).unwrap();
-            let path = [target as u32];
+            let path = if nested {
+                vec![target as u32, 0, 0]
+            } else {
+                vec![target as u32]
+            };
             let mut cache =
                 CanonicalSpliceCache::prepare(None, &artifact, &artifact, &path, 0, 0, usize::MAX);
             assert!(cache.is_some());
             let position = (0..target)
                 .map(|index| document.root().child(index).unwrap().node_size())
                 .sum::<u32>()
-                + 2;
+                + path.len() as u32
+                + 1;
             let replacement = Step::ReplaceRange {
                 from: position,
                 to: position + DELETED_SCALARS,
@@ -548,12 +583,17 @@ mod tests {
                 assert_eq!(
                     canonical_bytes(&cached),
                     expected,
-                    "target={target}, edit={index}"
+                    "nested={nested}, target={target}, edit={index}"
                 );
                 assert_eq!(
                     after.sha256(),
                     canonical_sha256(&expected),
-                    "target={target}, edit={index}"
+                    "nested={nested}, target={target}, edit={index}"
+                );
+                assert_eq!(
+                    after.0.projection_sha256.get(),
+                    super::super::projection_hash::projection_sha256(&expected).as_ref(),
+                    "projection hash must be cached on nested={nested}, target={target}, edit={index}"
                 );
                 let selected = emitted_range(&expected, &path).unwrap();
                 assert_eq!(
@@ -881,6 +921,11 @@ mod tests {
             artifact.0.sha256.get(),
             Some(&canonical_sha256(&expected)),
             "canonical hash for {path:?}"
+        );
+        assert_eq!(
+            artifact.0.projection_sha256.get(),
+            super::super::projection_hash::projection_sha256(&expected).as_ref(),
+            "projection hash for {path:?}"
         );
     }
 

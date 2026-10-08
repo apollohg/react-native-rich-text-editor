@@ -62,6 +62,14 @@ impl YrsDocumentEngine {
             .derived_state
             .as_ref()
             .ok_or_else(|| yrs_engine::OperationError::engine_not_ready(request_id))?;
+        let command_selection = selection.unwrap_or(&state.resolved_selection);
+        let command_stored_marks = yrs_engine::derived_state::stored_marks_after_selection_change(
+            state.stored_marks.as_deref(),
+            &state.resolved_selection,
+            command_selection,
+            &state.document,
+            &self.schema,
+        );
         let allow_deferred_admission =
             preparation.is_some() && state.mutation_lookup_seed.is_unavailable() && {
                 let canonical_fingerprint = state.canonical_artifact.sha256();
@@ -85,10 +93,10 @@ impl YrsDocumentEngine {
                 document: &state.document,
                 position_map: &state.position_map,
                 rendered_text: &state.rendered_text,
-                selection: selection.unwrap_or(&state.resolved_selection),
+                selection: command_selection,
                 initial_selection,
                 origin,
-                stored_marks: state.stored_marks.as_deref(),
+                stored_marks: command_stored_marks.as_deref(),
                 schema: &self.schema,
                 resource_limits: &self.resource_limits,
                 editing_limits: &self.editing_limits,
@@ -158,12 +166,14 @@ impl YrsDocumentEngine {
                     self.apply_prepared_command_transaction(
                         transaction,
                         proof,
+                        Some((&selection, &resolved)),
                         true,
                         &mut outbound,
                     )?
                 } else {
                     self.apply_typed_transaction_with_staged_context(
                         transaction,
+                        Some((&selection, &resolved)),
                         true,
                         &mut outbound,
                     )?
@@ -311,10 +321,17 @@ impl YrsDocumentEngine {
                 }
                 yrs_engine::CommandPlan::Transaction(transaction) => {
                     if let Some(proof) = preparation.into_inner() {
-                        self.apply_prepared_command_transaction(transaction, proof, true, outbound)?
+                        self.apply_prepared_command_transaction(
+                            transaction,
+                            proof,
+                            None,
+                            true,
+                            outbound,
+                        )?
                     } else {
                         self.apply_typed_transaction_with_staged_context(
                             transaction,
+                            None,
                             true,
                             outbound,
                         )?
@@ -333,6 +350,7 @@ impl YrsDocumentEngine {
     fn prepare_command_history_admission(
         &self,
         semantic: &PreparedSemanticAdmission,
+        initial_selection: Option<&yrs_engine::ResolvedSelection>,
     ) -> yrs_engine::OperationResult<
         Option<yrs_engine::prepared_admission::PreparedCommandHistoryAdmission>,
     > {
@@ -453,11 +471,12 @@ impl YrsDocumentEngine {
             &self.resource_limits,
             &self.editing_limits,
             self.max_length,
+            initial_selection.map(|selection| (selection, &self.schema)),
             retained.map(|pair| pair.before),
         );
         let after = history_snapshot_template(
             candidate_artifact,
-            state.stored_marks.as_deref(),
+            before.stored_marks.as_deref(),
             &self.fragment_name,
             retained.map(|pair| pair.after),
         );
@@ -484,15 +503,16 @@ impl YrsDocumentEngine {
     pub(super) fn prepare_execution_command_history_admission(
         &self,
         semantic: &yrs_engine::prepared_admission::ExecutionSemanticAdmission,
+        initial_selection: Option<&yrs_engine::ResolvedSelection>,
     ) -> yrs_engine::OperationResult<
         Option<yrs_engine::prepared_admission::PreparedCommandHistoryAdmission>,
     > {
         match semantic {
             yrs_engine::prepared_admission::ExecutionSemanticAdmission::Eager(admission) => {
-                self.prepare_command_history_admission(admission)
+                self.prepare_command_history_admission(admission, initial_selection)
             }
             yrs_engine::prepared_admission::ExecutionSemanticAdmission::Deferred(admission) => {
-                self.prepare_deferred_command_history_admission(admission)
+                self.prepare_deferred_command_history_admission(admission, initial_selection)
             }
         }
     }
@@ -500,6 +520,7 @@ impl YrsDocumentEngine {
     fn prepare_deferred_command_history_admission(
         &self,
         deferred: &yrs_engine::prepared_admission::DeferredCommandAdmission,
+        initial_selection: Option<&yrs_engine::ResolvedSelection>,
     ) -> yrs_engine::OperationResult<
         Option<yrs_engine::prepared_admission::PreparedCommandHistoryAdmission>,
     > {
@@ -602,15 +623,17 @@ impl YrsDocumentEngine {
             &self.resource_limits,
             &self.editing_limits,
             self.max_length,
+            initial_selection.map(|selection| (selection, &self.schema)),
             retained.map(|pair| pair.before),
         );
         let after = history_snapshot_template_from_identity(
             evidence.canonical_text_scalar_len,
-            yrs_engine::history::HistoryCanonicalIdentity::Materialized(
-                evidence.canonical_fingerprint,
-            ),
+            yrs_engine::history::HistoryCanonicalIdentity::Materialized {
+                fingerprint: evidence.canonical_fingerprint,
+                projection_fingerprint: evidence.canonical_projection_fingerprint,
+            },
             evidence.canonical_serialized_len,
-            state.stored_marks.as_deref(),
+            before.stored_marks.as_deref(),
             &self.fragment_name,
             retained.map(|pair| pair.after),
         );

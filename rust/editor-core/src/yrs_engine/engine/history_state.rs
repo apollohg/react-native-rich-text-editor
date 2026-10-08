@@ -4,6 +4,7 @@ use crate::yrs_engine::canonical::CanonicalArtifact;
 use crate::yrs_engine::derived_state::DerivedStateCache;
 use crate::yrs_engine::{DocumentScope, YrsEngineError};
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn history_local_state(
     state: &DerivedStateCache,
     fragment_name: &str,
@@ -11,10 +12,23 @@ pub(super) fn history_local_state(
     resource_limits: &ResourceLimits,
     editing_limits: &yrs_engine::EditingLimits,
     max_length: Option<u32>,
+    initial_selection: Option<(&yrs_engine::ResolvedSelection, &crate::schema::Schema)>,
     document_snapshot_retained_bytes: Option<
         yrs_engine::derived_state::HistoryDocumentSnapshotRetainedBytes,
     >,
 ) -> yrs_engine::history::HistoryLocalState {
+    let stored_marks = match initial_selection {
+        Some((selection, schema)) => {
+            yrs_engine::derived_state::stored_marks_after_selection_change(
+                state.stored_marks.as_deref(),
+                &state.resolved_selection,
+                selection,
+                &state.document,
+                schema,
+            )
+        }
+        None => state.stored_marks.clone(),
+    };
     let document_snapshot = document_snapshot_retained_bytes.map(|retained_bytes| {
         state.capture_history_document_snapshot(
             resource_limits,
@@ -25,23 +39,24 @@ pub(super) fn history_local_state(
             retained_bytes,
         )
     });
+    let metadata_bytes = history_metadata_bytes(stored_marks.as_deref(), fragment_name)
+        .saturating_add(
+            document_snapshot
+                .as_deref()
+                .map(yrs_engine::derived_state::HistoryDocumentSnapshot::retained_bytes)
+                .unwrap_or(0),
+        );
     yrs_engine::history::HistoryLocalState {
         relative_selection: state.relative_selection.clone(),
         resolved_selection: state.resolved_selection.clone(),
-        stored_marks: state.stored_marks.clone(),
+        stored_marks,
         text_length: state.canonical_artifact.text_scalar_len(),
         canonical_fingerprint: yrs_engine::history::HistoryCanonicalIdentity::from_artifact(
             &state.canonical_artifact,
             document_snapshot.is_some(),
         ),
         derived_output_bytes: state.canonical_artifact.serialized_len(),
-        metadata_bytes: history_metadata_bytes(state.stored_marks.as_deref(), fragment_name)
-            .saturating_add(
-                document_snapshot
-                    .as_deref()
-                    .map(yrs_engine::derived_state::HistoryDocumentSnapshot::retained_bytes)
-                    .unwrap_or(0),
-            ),
+        metadata_bytes,
         document_snapshot,
     }
 }
@@ -206,6 +221,7 @@ pub(super) fn history_metadata_bytes(
     // container and recursive capacities rather than serialized logical size.
     const FIXED_SELECTION_BYTES: usize = 512;
     const EMPTY_MARKS_SEQUENCE_BYTES: usize = 2;
+    const PROJECTION_FINGERPRINT_BYTES: usize = std::mem::size_of::<[u8; 32]>();
     let stored_marks = stored_marks.unwrap_or_default();
     let mark_bytes = stored_marks
         .len()
@@ -217,7 +233,8 @@ pub(super) fn history_metadata_bytes(
         })
         .unwrap_or(usize::MAX);
     FIXED_SELECTION_BYTES
-        .checked_add(fragment_name.len())
+        .checked_add(PROJECTION_FINGERPRINT_BYTES)
+        .and_then(|bytes| bytes.checked_add(fragment_name.len()))
         .and_then(|bytes| bytes.checked_add(EMPTY_MARKS_SEQUENCE_BYTES))
         .and_then(|bytes| bytes.checked_add(mark_bytes))
         .unwrap_or(usize::MAX)

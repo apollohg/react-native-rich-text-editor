@@ -47,7 +47,7 @@ impl Sha256Prefix {
         Some(combined.state.finalize().into())
     }
 
-    fn update(&mut self, bytes: &[u8]) -> Option<()> {
+    pub(super) fn update(&mut self, bytes: &[u8]) -> Option<()> {
         #[cfg(target_vendor = "apple")]
         for chunk in bytes.chunks(u32::MAX as usize) {
             // SAFETY: chunk covers the supplied CC_LONG length; the context is initialized.

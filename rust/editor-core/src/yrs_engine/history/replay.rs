@@ -224,6 +224,14 @@ impl YrsHistory {
     }
 
     #[cfg(test)]
+    pub(crate) fn next_undo_snapshots_for_test(
+        &self,
+    ) -> Option<(HistorySnapshot, HistorySnapshot)> {
+        let slots = self.manager.undo_stack().last()?.meta().slots();
+        Some((slots.before?.get()?.clone(), slots.after?.get()?.clone()))
+    }
+
+    #[cfg(test)]
     pub(crate) fn replace_next_undo_stored_marks_for_test(&mut self, marks: Vec<Mark>) {
         let metadata = self
             .manager
