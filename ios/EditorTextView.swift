@@ -351,6 +351,7 @@ class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegat
         smartInsertDeleteType = .no
 
         isScrollEnabled = heightBehavior == .fixed
+        keyboardDismissMode = .interactiveWithAccessory
         isEditable = true
         isSelectable = true
 
