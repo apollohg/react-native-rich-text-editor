@@ -46,6 +46,20 @@ final class TableIntegrationTests: XCTestCase {
         static let headerTargetCell = "cell"
         static let headerCellNode = #""type":"table_header""#
         static let mergeTableCells = "mergeTableCells"
+        static let addTableColumn = "addTableColumn"
+        static let beforeSide = "before"
+        static let documentNode = "doc"
+        static let tableNode = "table"
+        static let rowNode = "table_row"
+        static let cellNode = "table_cell"
+        static let paragraphNode = "paragraph"
+        static let textNode = "text"
+        static let cellTextOffset: UInt32 = 2
+        static let paragraphTextOffset: UInt32 = 1
+        static let movedLastCell = 5
+        static let trailingProse = "after"
+        static let continuationDocumentID = "remote-cell-continuation"
+        static let continuationLineageID = "native-editor|remote-cell-continuation"
         static let copy = #selector(UIResponderStandardEditActions.copy(_:))
         static let cut = #selector(UIResponderStandardEditActions.cut(_:))
         static let paste = #selector(UIResponderStandardEditActions.paste(_:))
@@ -876,12 +890,113 @@ final class TableIntegrationTests: XCTestCase {
         )
     }
 
+    func testRemoteColumnInsertionPreservesTypingAndDeletedRowRejectsTheOldInput() throws {
+        var config = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(TableInputTestSchema.tableConfig.utf8)) as? [String: Any])
+        config["initialization"] = ["type": "localHtml", "html": "", "snapshotScope": [
+            "documentId": Integration.continuationDocumentID, "lineageId": Integration.continuationLineageID
+        ]]
+        let configJson = try XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: config), encoding: .utf8))
+        let room = try TableRoomSeed(localConfigJson: configJson, documentJson: Integration.gridDocument)
+        let remoteId = room.makeEditor()
+        defer { destroyV2Editor(id: remoteId) }
+        let remoteAdapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: remoteId))
+        let remote = RemoteTablePeer(adapter: remoteAdapter, requestIdBase: Integration.remoteRequestIdBase)
+        try withTable(Integration.gridDocument, room: room) { fixture in
+            let relay = try TableCollaborationRelay(editorIds: [fixture.adapter.editorId, remoteAdapter.editorId])
+            _ = try relay.exchangeUntilIdle()
+            let originalLast = try fixture.positions()[Integration.gridLast]
+            XCTAssertTrue(fixture.view.bindTableCell(tableID: fixture.tableID, cellIndex: UInt32(Integration.gridLast), contentRect: .zero))
+            let originalInput = fixture.view.activeTextInput
+            XCTAssertTrue(originalInput.becomeFirstResponder())
+            originalInput.selectedRange = NSRange(location: Integration.gridLastText.utf16.count, length: 0)
+            originalInput.syncSelectionImmediately()
+
+            func expectedDocument(_ texts: [[String]], trailing: String = Integration.trailingProse) -> NSDictionary {
+                func paragraph(_ text: String) -> [String: Any] {
+                    var node: [String: Any] = ["type": Integration.paragraphNode]
+                    if !text.isEmpty { node["content"] = [["type": Integration.textNode, "text": text]] }
+                    return node
+                }
+                let rows = texts.map { row in
+                    ["type": Integration.rowNode, "content": row.map {
+                        ["type": Integration.cellNode, "content": [paragraph($0)]]
+                    }] as [String: Any]
+                }
+                return ["type": Integration.documentNode, "content": [
+                    ["type": Integration.tableNode, "content": rows], paragraph(trailing)
+                ]] as NSDictionary
+            }
+            func check(_ expected: NSDictionary, caret: UInt32, nativeText: String?, label: String) throws {
+                fixture.expo.layoutIfNeeded()
+                let input = fixture.view.activeTextInput
+                input.layoutIfNeeded()
+                XCTAssertEqual(try fixture.documentObject(), expected, "\(label): engine document or neighbours changed")
+                let selection = try XCTUnwrap(fixture.adapter.cachedAtomicRenderSelection())
+                XCTAssertEqual(selection["type"] as? String, Integration.textNode, "\(label): selection type")
+                XCTAssertEqual(EditorV2Adapter.uint32Field(selection, "anchor"), caret, "\(label): engine anchor \(selection)")
+                XCTAssertEqual(EditorV2Adapter.uint32Field(selection, "head"), caret, "\(label): engine head \(selection)")
+                XCTAssertTrue(input.isAuthorizedForTableCellInput(), "\(label): stale input authority")
+                let logical = try XCTUnwrap(input.currentLogicalScalarSelection(), "\(label): unmappable native caret")
+                XCTAssertEqual(fixture.adapter.documentPosition(forScalar: logical.anchor), caret, "\(label): native anchor")
+                XCTAssertEqual(fixture.adapter.documentPosition(forScalar: logical.head), caret, "\(label): native head")
+                if let nativeText {
+                    XCTAssertEqual(input.textStorage.string, nativeText, "\(label): stale native cell text")
+                    let binding = try XCTUnwrap(input.tableCellPositionMap?.binding)
+                    XCTAssertEqual(binding.documentRevision, fixture.adapter.baseDocumentRevision, "\(label): stale binding revision")
+                    XCTAssertEqual(binding.positionEpoch, fixture.adapter.positionEpoch, "\(label): stale binding epoch")
+                }
+                let rect = input.caretRect(for: try XCTUnwrap(input.selectedTextRange?.end))
+                XCTAssertTrue(rect.origin.x.isFinite && rect.origin.y.isFinite && rect.height > 0, "\(label): invalid caret \(rect)")
+                XCTAssertTrue(input.bounds.intersects(rect), "\(label): caret outside input \(rect)")
+            }
+
+            try remote.applySelection(documentCellSelection(anchor: originalLast, head: originalLast))
+            try remote.applyCommand(["type": Integration.addTableColumn, "side": Integration.beforeSide])
+            XCTAssertEqual(try relay.exchangeUntilIdle(), [fixture.adapter.editorId])
+            fixture.deliverRemoteCommit()
+            let movedLast = try fixture.positions()[Integration.movedLastCell]
+            XCTAssertEqual(fixture.activeCellPosition(), movedLast, "remote insertion must follow the same logical cell")
+            XCTAssertEqual(fixture.view.activeTextInput.tableCellPositionMap?.binding.cellIndex, UInt32(Integration.movedLastCell))
+            try check(expectedDocument([["A", "", "B"], ["C", "", "D"]]),
+                      caret: movedLast + Integration.cellTextOffset + UInt32(Integration.gridLastText.unicodeScalars.count),
+                      nativeText: Integration.gridLastText, label: "remote column insertion")
+            fixture.view.activeTextInput.insertText(Integration.compositionText)
+            let typedCell = Integration.gridLastText + Integration.compositionText
+            try check(expectedDocument([["A", "", "B"], ["C", "", typedCell]]),
+                      caret: movedLast + Integration.cellTextOffset + UInt32(typedCell.unicodeScalars.count),
+                      nativeText: typedCell, label: "typing after remote column insertion")
+            _ = try relay.exchangeUntilIdle()
+            XCTAssertEqual(fixture.adapter.documentJson(), remoteAdapter.documentJson(), "the typed character must reach the other peer")
+
+            let removedInput = fixture.view.activeTextInput
+            try remote.applySelection(documentCellSelection(anchor: movedLast, head: movedLast))
+            try remote.applyCommand(["type": Integration.deleteTableRows])
+            XCTAssertEqual(try relay.exchangeUntilIdle(), [fixture.adapter.editorId])
+            fixture.deliverRemoteCommit()
+            let surviving = expectedDocument([["A", "", "B"]])
+            XCTAssertTrue(fixture.view.activeTextInput === fixture.view.textView, "the removed cell must hand input to the root")
+            XCTAssertNil(fixture.activeCellPosition())
+            let record = try XCTUnwrap(fixture.adapter.tableRecordsForTesting[fixture.tableID])
+            let fallback = try XCTUnwrap(EditorV2Adapter.uint32Field(record, "sourceEnd")) + Integration.paragraphTextOffset
+            try check(surviving, caret: fallback, nativeText: nil, label: "remote row deletion")
+            removedInput.insertText(Integration.staleCompositionText)
+            originalInput.insertText(Integration.staleCompositionText)
+            XCTAssertEqual(try fixture.documentObject(), surviving, "late edits from the removed cell must be ignored")
+            fixture.view.activeTextInput.insertText(Integration.compositionText)
+            try check(expectedDocument([["A", "", "B"]], trailing: Integration.compositionText + Integration.trailingProse),
+                      caret: fallback + UInt32(Integration.compositionText.unicodeScalars.count), nativeText: nil,
+                      label: "typing after remote row deletion")
+            XCTAssertTrue(fixture.view.textView.textStorage.string.hasSuffix(Integration.compositionText + Integration.trailingProse), "the fallback typing must be visible")
+        }
+    }
+
     private func withTable(
         _ document: String,
         size: CGSize = Integration.editorSize,
+        room: TableRoomSeed? = nil,
         _ body: (Fixture) throws -> Void
     ) throws {
-        let editorId = makeV2Editor(configJson: TableInputTestSchema.tableConfig)
+        let editorId = room?.makeEditor() ?? makeV2Editor(configJson: TableInputTestSchema.tableConfig)
         defer { destroyV2Editor(id: editorId) }
         let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
         let window = makeTestWindow(frame: CGRect(origin: .zero, size: size))
@@ -894,7 +1009,8 @@ final class TableIntegrationTests: XCTestCase {
             window.isHidden = true
         }
         expo.setEditorId(editorId)
-        XCTAssertTrue(expo.richTextView.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
+        let initial = room == nil ? adapter.setContentJson(document) : adapter.initialUpdateJSON()
+        XCTAssertTrue(expo.richTextView.textView.applyUpdateJSON(try XCTUnwrap(initial)))
         expo.layoutIfNeeded()
         let tableID = try adapter.editableTableID()
         let surface = try XCTUnwrap(expo.richTextView.subviews.compactMap { $0 as? EditorTableSurface }.first)

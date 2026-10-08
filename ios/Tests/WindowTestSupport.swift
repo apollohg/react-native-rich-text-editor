@@ -9,6 +9,41 @@ func makeTestWindow(frame: CGRect) -> UIWindow {
     return window
 }
 
+struct MountedEditorTestFixture {
+    static let releaseTimeout: TimeInterval = 3
+
+    let editorId: UInt64
+    let adapter: EditorV2Adapter
+    let view: RichTextEditorView
+    let window: UIWindow?
+
+    func close() {
+        _ = view.activeTextInput.resignFirstResponder()
+        view.editorId = 0
+        view.removeFromSuperview()
+        window?.isHidden = true
+        destroyV2Editor(id: editorId)
+    }
+}
+
+func makeMountedEditorFixture(
+    config: String, document: String, size: CGSize, windowed: Bool = false
+) throws -> MountedEditorTestFixture {
+    let editorId = makeV2Editor(configJson: config)
+    var finished = false
+    defer { if !finished { destroyV2Editor(id: editorId) } }
+    let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+    let frame = CGRect(origin: .zero, size: size)
+    let window = windowed ? makeTestWindow(frame: frame) : nil
+    let view = RichTextEditorView(frame: frame)
+    window?.addSubview(view)
+    window?.makeKeyAndVisible()
+    view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+    XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
+    finished = true
+    return MountedEditorTestFixture(editorId: editorId, adapter: adapter, view: view, window: window)
+}
+
 final class TableTestFrameClock: NSObject {
     struct Presentation {
         let start: Double

@@ -726,17 +726,7 @@ final class EditorTableNavigationTests: XCTestCase {
     static let editorSize = CGSize(width: 360, height: 220)
     static let geometrySize = CGSize(width: 360, height: 360)
 
-    struct Fixture {
-        let editorId: UInt64
-        let adapter: EditorV2Adapter
-        let view: RichTextEditorView
-        let window: UIWindow?
-
-        func close() {
-            window?.isHidden = true
-            destroyV2Editor(id: editorId)
-        }
-    }
+    typealias Fixture = MountedEditorTestFixture
 
     func makeFixture(
         config: String,
@@ -744,19 +734,7 @@ final class EditorTableNavigationTests: XCTestCase {
         size: CGSize,
         windowed: Bool = false
     ) throws -> Fixture {
-        let editorId = makeV2Editor(configJson: config)
-        var finished = false
-        defer { if !finished { destroyV2Editor(id: editorId) } }
-        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
-        let frame = CGRect(origin: .zero, size: size)
-        let window = windowed ? makeTestWindow(frame: frame) : nil
-        let view = RichTextEditorView(frame: frame)
-        window?.addSubview(view)
-        window?.makeKeyAndVisible()
-        view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
-        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
-        finished = true
-        return Fixture(editorId: editorId, adapter: adapter, view: view, window: window)
+        try makeMountedEditorFixture(config: config, document: document, size: size, windowed: windowed)
     }
 
     func nestedDocument(
