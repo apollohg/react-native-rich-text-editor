@@ -63,6 +63,9 @@ tasks.register('buildHostEditorCore', Exec) {
         fileTree(new File(repositoryRoot, 'rust/editor-core')) {
             include 'Cargo.toml', 'Cargo.lock', 'build.rs', 'src/**/*.rs'
         },
+        fileTree(new File(repositoryRoot, 'rust/vendor')) {
+            include '**/Cargo.toml', '**/Cargo.lock', '**/build.rs', '**/src/**/*.rs'
+        },
         new File(pinnedCargoScript),
         new File(repositoryRoot, 'rust/toolchain.sh'),
     )

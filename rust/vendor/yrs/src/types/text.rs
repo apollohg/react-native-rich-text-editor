@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::convert::{TryFrom, TryInto};
 use std::fmt::Formatter;
 use std::ops::{Deref, DerefMut};
+use std::sync::Arc;
 
 /// A shared data type used for collaborative text editing. It enables multiple users to add and
 /// remove chunks of text in efficient manner. This type is internally represented as a mutable
@@ -1002,6 +1003,12 @@ fn minimize_attr_changes(pos: &mut ItemPosition, attrs: &Attrs) {
     }
 }
 
+fn sorted_attributes(attrs: Attrs) -> Vec<(Arc<str>, Any)> {
+    let mut attrs: Vec<_> = attrs.into_iter().collect();
+    attrs.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+    attrs
+}
+
 fn insert_attributes(
     this: BranchPtr,
     txn: &mut TransactionMut,
@@ -1010,7 +1017,7 @@ fn insert_attributes(
 ) -> Attrs {
     let mut negated_attrs = HashMap::with_capacity(attrs.len());
     let mut store = txn.store_mut();
-    for (k, v) in attrs {
+    for (k, v) in sorted_attributes(attrs) {
         let current_value = pos
             .current_attrs
             .as_ref()
@@ -1067,7 +1074,7 @@ fn insert_negated_attributes(
     }
 
     let mut store = txn.store_mut();
-    for (k, v) in attrs {
+    for (k, v) in sorted_attributes(attrs) {
         let client_id = store.client_id;
         let parent = this.into();
         let item = Item::new(
