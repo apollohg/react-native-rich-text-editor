@@ -148,6 +148,10 @@ enum EditorV2Shadow {
         adapter(for: id)?.deleteBackward(anchor: scalarAnchor, head: scalarHead) ?? "{}"
     }
 
+    static func deleteBackward(id: UInt64) -> String {
+        adapter(for: id)?.applyCommand(["type": "deleteBackward"]) ?? "{}"
+    }
+
     static func deleteAndSplitScalar(id: UInt64, scalarFrom: UInt32, scalarTo: UInt32) -> String {
         adapter(for: id)?.deleteAndSplit(from: scalarFrom, to: scalarTo) ?? "{}"
     }
@@ -313,7 +317,7 @@ enum EditorV2Shadow {
         id: UInt64,
         command: [String: Any]
     ) -> String {
-        adapter(for: id)?.applyClipboardCommand(command) ?? "{}"
+        adapter(for: id)?.applyCommand(command) ?? "{}"
     }
 
     static func insertContentJson(id: UInt64, json: String) -> String {

@@ -493,34 +493,46 @@ extension EditorTextView {
         return (from: cursorScalar, to: cursorScalar + 1)
     }
 
+    func selectAtomBeforeEmptyParagraphForBackwardDelete(cursorUtf16Offset: Int) -> Bool {
+        guard let attachmentOffset = attachmentOffsetBeforeEmptyParagraph(cursorUtf16Offset: cursorUtf16Offset),
+              textStorage.attribute(.attachment, at: attachmentOffset, effectiveRange: nil) is AtomBlockAttachment
+        else { return false }
+        selectedRange = NSRange(location: attachmentOffset, length: 1)
+        noteSelectionDidChange()
+        syncSelectionImmediately()
+        return true
+    }
+
     func trailingVoidBlockDeleteRangeForBackwardDelete(
         cursorUtf16Offset: Int
     ) -> (from: UInt32, to: UInt32)? {
+        guard let attachmentOffset = attachmentOffsetBeforeEmptyParagraph(cursorUtf16Offset: cursorUtf16Offset) else { return nil }
+        return scalarDeleteRangeForVoidAttachment(at: attachmentOffset)
+    }
+
+    private func attachmentOffsetBeforeEmptyParagraph(cursorUtf16Offset: Int) -> Int? {
         let text = textStorage.string as NSString
         guard text.length > 0 else { return nil }
 
         let clampedCursor = min(max(cursorUtf16Offset, 0), text.length)
-        let paragraphProbe = min(max(clampedCursor - 1, 0), text.length - 1)
+        let paragraphProbe = min(clampedCursor, text.length - 1)
         let paragraphRange = text.paragraphRange(for: NSRange(location: paragraphProbe, length: 0))
+        guard UInt32(text.character(at: paragraphRange.location)) == Self.emptyBlockPlaceholderScalar.value else { return nil }
 
-        let placeholderRange = NSRange(location: paragraphRange.location, length: 1)
-        guard placeholderRange.location + placeholderRange.length <= text.length else {
-            return nil
-        }
-
-        let paragraphText = text.substring(with: placeholderRange)
-        guard paragraphText == "\u{200B}" else { return nil }
+        let paragraphText = text.substring(with: paragraphRange).trimmingCharacters(in: .newlines)
+        guard paragraphText == String(Self.emptyBlockPlaceholderScalar) else { return nil }
         guard paragraphRange.location >= 2 else { return nil }
         guard text.character(at: paragraphRange.location - 1) == 0x000A else { return nil }
+        let scalarStart = PositionBridge.utf16OffsetToScalar(paragraphRange.location, in: self)
+        let scalarEnd = PositionBridge.utf16OffsetToScalar(paragraphRange.location + paragraphText.utf16.count, in: self)
+        guard let mapped = inputScalarRange(fromLocal: scalarStart, toLocal: scalarEnd),
+              let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
+              let documentStart = adapter.documentPosition(forScalar: mapped.from),
+              let documentEnd = adapter.documentPosition(forScalar: mapped.to),
+              documentStart == documentEnd
+        else { return nil }
 
-        let attachmentIndex = paragraphRange.location - 2
-        guard
-            let deleteRange = scalarDeleteRangeForVoidAttachment(at: attachmentIndex)
-        else {
-            return nil
-        }
-
-        return deleteRange
+        return paragraphRange.location - 2
     }
 
     private func scalarDeleteRangeForVoidAttachment(

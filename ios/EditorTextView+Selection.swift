@@ -75,6 +75,13 @@ extension EditorTextView {
         return NSRange(location: location, length: length)
     }
 
+    func selectedAtomAttachment() -> AtomBlockAttachment? {
+        guard selectedRange.length == 1, selectedRange.location >= 0,
+              selectedRange.location < textStorage.length
+        else { return nil }
+        return textStorage.attribute(.attachment, at: selectedRange.location, effectiveRange: nil) as? AtomBlockAttachment
+    }
+
     func isAtomBoundaryCaretOffset(_ offset: Int) -> Bool {
         guard offset >= 0, offset <= textStorage.length else { return false }
         if offset < textStorage.length,
@@ -347,6 +354,8 @@ extension EditorTextView {
         let sync: EditorV2SelectionSync?
         if let image = selectedImageSelectionState() {
             sync = EditorV2Shadow.setNodeSelection(id: editorId, docPos: image.docPos)
+        } else if let atom = selectedAtomAttachment() {
+            sync = EditorV2Shadow.setNodeSelection(id: editorId, docPos: atom.docPos)
         } else {
             sync = EditorV2Shadow.setSelectionScalar(
                 id: editorId,

@@ -13,7 +13,7 @@ extension EditorV2Adapter {
         }
     }
 
-    func applyClipboardCommand(_ command: [String: Any]) -> String? {
+    func applyCommand(_ command: [String: Any]) -> String? {
         guard beginRuntimeOperation() else { return nil }
         defer { endRuntimeOperation() }
         return performMutation(adoptEngineSelection: true) {

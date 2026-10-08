@@ -201,7 +201,7 @@ extension EditorTableSurface: TableCellDropHandling {
             }
             command[TableCellDropCommand.cellDropKey] = cellDrop
         }
-        guard let update = mutation.adapter.applyClipboardCommand(command) else { return }
+        guard let update = mutation.adapter.applyCommand(command) else { return }
         mutation.host.activeTextInput.applyUpdateJSON(update)
     }
 

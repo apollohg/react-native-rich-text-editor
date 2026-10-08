@@ -701,6 +701,17 @@ class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegat
         )
 
         if !selectedRange.isEmpty {
+            if let atom = selectedAtomAttachment() {
+                syncSelectionImmediately()
+                guard let selection = EditorV2Registry.adapter(forLegacyId: editorId)?.cachedAtomicRenderSelection(),
+                      selection["type"] as? String == "node",
+                      EditorV2Adapter.uint32Field(selection, "pos") == atom.docPos
+                else { return }
+                performInterceptedInput {
+                    applyUpdateJSON(EditorV2Shadow.deleteBackward(id: editorId))
+                }
+                return
+            }
             guard let range = currentLogicalScalarSelection() else { return }
             performInterceptedInput {
                 deleteScalarRangeInRust(from: range.anchor, to: range.head)
@@ -723,6 +734,9 @@ class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegat
                 performInterceptedInput {
                     deleteBackwardAtSelectionScalarInRust(anchor: cursorPos, head: cursorPos)
                 }
+                return
+            }
+            if selectAtomBeforeEmptyParagraphForBackwardDelete(cursorUtf16Offset: cursorUtf16Offset) {
                 return
             }
             if let marker = PositionBridge.virtualListMarker(
