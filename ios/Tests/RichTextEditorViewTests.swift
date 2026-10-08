@@ -3,13 +3,7 @@ import XCTest
 
 final class RichTextEditorViewTests: XCTestCase {
 
-    /// Attaches `toolbar` to a fixed-width host so Auto Layout has a real width to resolve
-    /// `.fill`-distributed arranged subviews against. `EditorAccessoryToolbarView` sets
-    /// `translatesAutoresizingMaskIntoConstraints = false` on itself with no width/height
-    /// constraint of its own (it self-sizes as an input accessory view in production, where
-    /// the keyboard/window supplies its width) — without a host, `layoutIfNeeded()` on the bare
-    /// view collapses every flexible-width arranged subview to zero instead of distributing
-    /// space, which would make a "does not overlap" assertion pass vacuously.
+    /// Gives stack views a real width so placement assertions cannot pass with collapsed content.
     static func attachToFixedWidthHost(_ toolbar: EditorAccessoryToolbarView, width: CGFloat) -> UIView {
         let host = UIView(frame: CGRect(x: 0, y: 0, width: width, height: 100))
         host.addSubview(toolbar)

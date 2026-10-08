@@ -54,10 +54,7 @@ class NativeEditorExpoView: ExpoView, EditorTextViewDelegate, UIGestureRecognize
     // MARK: - Subviews
 
     let richTextView: RichTextEditorView
-    let accessoryToolbar = EditorAccessoryToolbarView(
-        frame: .zero,
-        inputViewStyle: .keyboard
-    )
+    let accessoryToolbar = EditorAccessoryToolbarView(frame: .zero)
     let accessoryPlaceholder = EditorAccessoryPlaceholderView(frame: .zero)
     var toolbarFramesInWindow: [CGRect] = []
     var lastToolbarTouchUptime: TimeInterval = -Double.infinity
