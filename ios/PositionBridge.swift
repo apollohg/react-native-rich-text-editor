@@ -4,6 +4,8 @@ import UIKit
 // MARK: - PositionBridge
 
 final class PositionBridge {
+    private static let highSurrogateRange: ClosedRange<unichar> = 0xD800...0xDBFF
+    private static let lowSurrogateRange: ClosedRange<unichar> = 0xDC00...0xDFFF
 
     private struct StringConversionTable {
         let utf16ToScalar: [UInt32]
@@ -84,7 +86,8 @@ final class PositionBridge {
         let utf16ToScalar = conversionTable.adjustedUtf16ToScalar
         return scalarToUtf16Offset(
             rootTablePositionMap(in: textView)?.localBoundary(global: scalar) ?? scalar,
-            inAdjustedUtf16ToScalarTable: utf16ToScalar
+            inAdjustedUtf16ToScalarTable: utf16ToScalar,
+            text: textView.textStorage.string as NSString
         )
     }
 
@@ -108,12 +111,13 @@ final class PositionBridge {
 
     static func scalarToUtf16Offset(_ scalar: UInt32, in attributedString: NSAttributedString) -> Int {
         let utf16ToScalar = adjustedConversionTable(for: attributedString)
-        return scalarToUtf16Offset(scalar, inAdjustedUtf16ToScalarTable: utf16ToScalar)
+        return scalarToUtf16Offset(scalar, inAdjustedUtf16ToScalarTable: utf16ToScalar, text: attributedString.string as NSString)
     }
 
     private static func scalarToUtf16Offset(
         _ scalar: UInt32,
-        inAdjustedUtf16ToScalarTable utf16ToScalar: [UInt32]
+        inAdjustedUtf16ToScalarTable utf16ToScalar: [UInt32],
+        text: NSString
     ) -> Int {
         guard scalar > 0, !utf16ToScalar.isEmpty else {
             return 0
@@ -134,6 +138,11 @@ final class PositionBridge {
             }
         }
 
+        if low > 0, low < text.length,
+           highSurrogateRange.contains(text.character(at: low - 1)),
+           lowSurrogateRange.contains(text.character(at: low)) {
+            return low + 1
+        }
         return low
     }
 
@@ -152,7 +161,7 @@ final class PositionBridge {
 
     // MARK: - Grapheme Boundary Snapping
 
-    static func snapToGraphemeBoundary(_ utf16Offset: Int, in text: String) -> Int {
+    static func snapToGraphemeBoundary(_ utf16Offset: Int, in text: String, biasForward: Bool = true) -> Int {
         guard !text.isEmpty else { return 0 }
 
         let nsString = text as NSString
@@ -162,16 +171,13 @@ final class PositionBridge {
             return clampedOffset
         }
 
-        // composedCharacterSequence(at:) returns the full grapheme cluster range
-        // containing the given UTF-16 index. We snap to the end of that range
-        // (forward bias) since that's what a user moving the cursor expects.
         let range = nsString.rangeOfComposedCharacterSequence(at: clampedOffset)
 
         if range.location == clampedOffset {
             return clampedOffset
         }
 
-        return NSMaxRange(range)
+        return biasForward ? NSMaxRange(range) : range.location
     }
 
     // MARK: - UITextRange <-> Scalar Range

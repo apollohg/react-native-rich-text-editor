@@ -131,8 +131,13 @@ enum EditorV2Shadow {
         return adapter.replaceTextRange(from: selection.anchor, to: selection.head, with: text) ?? "{}"
     }
 
-    static func deleteScalarRange(id: UInt64, scalarFrom: UInt32, scalarTo: UInt32) -> String {
-        adapter(for: id)?.deleteScalarRange(from: scalarFrom, to: scalarTo) ?? "{}"
+    static func deleteScalarRange(
+        id: UInt64,
+        scalarFrom: UInt32,
+        scalarTo: UInt32,
+        originalSelection: (anchor: UInt32, head: UInt32)? = nil
+    ) -> String {
+        adapter(for: id)?.deleteScalarRange(from: scalarFrom, to: scalarTo, originalSelection: originalSelection) ?? "{}"
     }
 
     static func deleteRange(id: UInt64, from: UInt32, to: UInt32) -> String {

@@ -620,6 +620,7 @@ class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegat
                 applyUpdateJSON(updateJSON)
             }
         } else {
+            guard !text.isEmpty else { return }
             performInterceptedInput {
                 insertTextInRust(text, at: scalarPos)
             }
@@ -728,7 +729,7 @@ class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegat
                 in: self
             ), marker.paragraphStartUtf16 == cursorUtf16Offset {
                 performInterceptedInput {
-                    deleteScalarRangeInRust(from: cursorPos - 1, to: cursorPos)
+                    deleteScalarRangeInRust(from: cursorPos - 1, to: cursorPos, originalSelection: (cursorPos, cursorPos))
                 }
                 return
             }
@@ -737,7 +738,7 @@ class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegat
                 cursorUtf16Offset: cursorUtf16Offset
             ) {
                 performInterceptedInput {
-                    deleteScalarRangeInRust(from: deleteRange.from, to: deleteRange.to)
+                    deleteScalarRangeInRust(from: deleteRange.from, to: deleteRange.to, originalSelection: (cursorPos, cursorPos))
                 }
                 return
             }
@@ -747,7 +748,7 @@ class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegat
                 cursorScalar: cursorPos
             ) {
                 performInterceptedInput {
-                    deleteScalarRangeInRust(from: deleteRange.from, to: deleteRange.to)
+                    deleteScalarRangeInRust(from: deleteRange.from, to: deleteRange.to, originalSelection: (cursorPos, cursorPos))
                 }
                 return
             }
@@ -760,16 +761,13 @@ class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegat
                 return
             }
 
-            // Find the start of the previous grapheme cluster.
-            // We need to figure out how many scalars the previous grapheme occupies.
-            // Use UITextView's tokenizer to find the previous grapheme boundary.
-            guard let prevPos = position(from: selectedRange.start, offset: -1) else { return }
-            let prevLocalScalar = PositionBridge.textViewToScalar(prevPos, in: self)
+            let previousOffset = PositionBridge.snapToGraphemeBoundary(cursorUtf16Offset - 1, in: textStorage.string, biasForward: false)
+            let prevLocalScalar = PositionBridge.utf16OffsetToScalar(previousOffset, in: self)
             guard let prevScalar = inputScalar(atLocalScalar: prevLocalScalar) else { return }
 
             performInterceptedInput {
                 if prevScalar < cursorPos {
-                    deleteScalarRangeInRust(from: prevScalar, to: cursorPos)
+                    deleteScalarRangeInRust(from: prevScalar, to: cursorPos, originalSelection: (cursorPos, cursorPos))
                 } else {
                     deleteBackwardAtSelectionScalarInRust(anchor: cursorPos, head: cursorPos)
                 }

@@ -3,6 +3,25 @@ import XCTest
 // MARK: - PositionBridge Tests
 
 final class PositionBridgeTests: XCTestCase {
+    func testAttributedAndNativeScalarOffsetsAlwaysLandOnUnicodeBoundaries() {
+        let fixtures: [(String, [Int])] = [
+            ("A😀B", [0, 1, 3, 4]),
+            ("A👨‍👩‍👧‍👦B", [0, 1, 3, 4, 6, 7, 9, 10, 12, 13]),
+            ("A👍🏽B", [0, 1, 3, 5, 6])
+        ]
+        for (text, boundaries) in fixtures {
+            let attributed = NSAttributedString(string: text)
+            let view = UITextView(frame: .zero)
+            view.textStorage.setAttributedString(attributed)
+            for (scalar, expected) in boundaries.enumerated() {
+                XCTAssertEqual(PositionBridge.scalarToUtf16Offset(UInt32(scalar), in: attributed), expected,
+                    "attributed text \(text), scalar \(scalar) split a Unicode scalar")
+                XCTAssertEqual(PositionBridge.scalarToUtf16Offset(UInt32(scalar), in: view), expected,
+                    "native text \(text), scalar \(scalar) split a Unicode scalar")
+            }
+        }
+    }
+
 
     private let tablePositionConfig = #"{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table","attrs":{"class":{"default":null}}},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"class":{"default":null},"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"class":{"default":null},"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"#
 

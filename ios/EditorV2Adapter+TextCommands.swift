@@ -223,23 +223,26 @@ extension EditorV2Adapter {
         )
     }
 
-    func deleteScalarRange(from: UInt32, to: UInt32) -> String? {
+    func deleteScalarRange(
+        from: UInt32,
+        to: UInt32,
+        originalSelection: (anchor: UInt32, head: UInt32)? = nil
+    ) -> String? {
         guard beginRuntimeOperation() else { return nil }
         defer { endRuntimeOperation() }
         guard from < to else { return currentStateJSON() }
+        let command: [String: Any] = [
+            "type": "deleteRange",
+            "range": EditorV2PositionBridge.rangeEnvelope(from: from, to: to)
+        ]
+        if let originalSelection {
+            return commandAtSelection(command, anchor: originalSelection.anchor, head: originalSelection.head)
+        }
         if nativeOwnerId != nil {
             return performNativeIntent(nativeIntent("deleteRange", anchor: from, head: to))?.updateJSON
         }
         return performMutation(postSelectionMirror: (from, from)) {
-            self.callWithEnvelope([
-                "command": [
-                    "type": "deleteRange",
-                    "range": [
-                        "from": EditorV2PositionBridge.positionEnvelope(scalar: from),
-                        "to": EditorV2PositionBridge.positionEnvelope(scalar: to)
-                    ]
-                ] as [String: Any]
-            ]) { requestJson in
+            self.callWithEnvelope(["command": command]) { requestJson in
                 editorV2ApplyCommand(editorId: self.editorId, requestJson: requestJson)
             }
         }
