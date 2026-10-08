@@ -8,6 +8,7 @@ use crate::schema::Schema;
 use crate::tables::admission::TableProjectionIndex;
 use crate::tables::commands::node_starting_at;
 use crate::tables::commands::{TableCommand, DEFAULT_TAB_APPENDS_A_ROW};
+use crate::tables::commands_tests::cell_openings;
 use crate::tables::interchange::{first_editable_position_in_cell, next_outer_cell, CellStep};
 use crate::tables::mutation_guard::{admit_local_mutation, LocalMutationRefusal};
 use crate::tables::normalize_tests::{cell, cell_with, document_with, limits, row, schema, table};
@@ -502,6 +503,68 @@ fn step(
             TypedCommand::Table(TableCommand::MoveToAdjacentCell { step, append_row }),
         )
         .expect("the navigation command plans")
+}
+
+#[test]
+fn tab_enters_fresh_and_cleared_empty_cells_and_keeps_them_editable() {
+    let empty = json!({ "type": CELL_NODE, "content": [{ "type": PARAGRAPH_NODE }] });
+    let mut engine = engine_with(json!({ "type": "doc", "content": [table(vec![
+        row(vec![cell("a"), empty, cell("b")]),
+    ])] }));
+    let positions = cell_openings(&engine);
+    caret_at(&mut engine, positions[FIRST_CELL_ANCHOR] + CELL_TEXT_OFFSET);
+    let before = engine.document_json().unwrap();
+    let revision = engine.revision();
+    step(&mut engine, CellStep::Forward, DEFAULT_TAB_APPENDS_A_ROW);
+    assert_eq!(
+        caret_document_position(&engine),
+        Some(positions[SECOND_CELL_ANCHOR] + CELL_TEXT_OFFSET)
+    );
+    assert_eq!(
+        engine.document_json().unwrap(),
+        before,
+        "Tab must only move the selection"
+    );
+    assert_eq!(
+        engine.revision(),
+        revision,
+        "Tab must not write a document transaction"
+    );
+    engine
+        .apply_command(REQUEST_ID, TypedCommand::InsertText { text: "x".into() })
+        .unwrap();
+    assert_eq!(
+        engine.document_json().unwrap()["content"][0]["content"][0]["content"][SECOND_CELL_ANCHOR]
+            ["content"][0]["content"][0]["text"],
+        "x"
+    );
+    engine
+        .apply_command(REQUEST_ID, TypedCommand::DeleteBackward)
+        .unwrap();
+    assert_eq!(
+        engine.document_json().unwrap(),
+        before,
+        "Backspace restores the empty cell"
+    );
+    step(&mut engine, CellStep::Forward, DEFAULT_TAB_APPENDS_A_ROW);
+    let next = cell_openings(&engine);
+    assert_eq!(
+        caret_document_position(&engine),
+        Some(*next.last().unwrap() + CELL_TEXT_OFFSET)
+    );
+    step(&mut engine, CellStep::Backward, DEFAULT_TAB_APPENDS_A_ROW);
+    assert_eq!(
+        caret_document_position(&engine),
+        Some(next[SECOND_CELL_ANCHOR] + CELL_TEXT_OFFSET)
+    );
+    engine
+        .apply_command(REQUEST_ID, TypedCommand::InsertText { text: "y".into() })
+        .unwrap();
+    assert_eq!(
+        engine.document_json().unwrap()["content"][0]["content"][0]["content"][SECOND_CELL_ANCHOR]
+            ["content"][0]["content"][0]["text"],
+        "y"
+    );
 }
 
 #[test]

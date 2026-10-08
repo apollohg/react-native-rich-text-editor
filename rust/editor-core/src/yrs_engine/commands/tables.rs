@@ -31,14 +31,15 @@ use crate::tables::selection::{cell_opening_containing, resolve_cell_rect};
 use crate::tables::types::TableError;
 use crate::yrs_engine::derived_state::resolved_from_legacy_with_view;
 use crate::yrs_engine::{
-    HistoryPolicy, MovedTableCells, OperationError, OperationResult, ResolvedSelection,
-    SelectionIntent, TypedTransaction,
+    Affinity, EditorOffsetKind, HistoryPolicy, MovedTableCells, OperationError, OperationResult,
+    ResolvedSelection, RevisionedPosition, SelectionIntent, TypedTransaction,
 };
 
 pub(crate) const CLEAR_CELLS_FIELD: &str = "clearTableCells";
 const EXPLICIT_TABLE_COLUMN_FIELD: &str = "column";
 const UNREADABLE_GRID_IS_NOT_AVAILABLE: bool = false;
 const TABLE_COMMAND_OPERATION_INDEX: usize = 0;
+const ADJACENT_CELL_SELECTION_FIELD: &str = "selection.anchor";
 
 pub(crate) struct TableAnchor {
     pub table_pos: u32,
@@ -601,26 +602,33 @@ fn navigating_caret(selection: &Selection) -> Option<u32> {
 }
 
 fn caret_only(context: &PlanningContext<'_>, interior: u32) -> OperationResult<CommandPlan> {
+    let destination = context.document.resolve(interior).map_err(|message| {
+        OperationError::selection_position_invalid(
+            context.request_id,
+            ADJACENT_CELL_SELECTION_FIELD,
+            message,
+        )
+    })?;
+    let point = RevisionedPosition {
+        offset: context
+            .position_map
+            .doc_to_scalar(interior, context.document),
+        kind: EditorOffsetKind::Scalar,
+        // Empty Yrs text branches have no right item for an After anchor.
+        affinity: if destination.parent(context.document).content_size() == 0 {
+            Affinity::Before
+        } else {
+            crate::yrs_engine::DEFAULT_POSITION_AFFINITY
+        },
+    };
     Ok(CommandPlan::SelectionOnly(TypedTransaction {
         request_id: context.request_id,
         base_document_revision: context.revision,
         origin: context.origin,
         operations: Vec::new(),
         selection_intent: SelectionIntent::Set(crate::yrs_engine::SelectionInput::Text {
-            anchor: crate::yrs_engine::RevisionedPosition {
-                offset: context
-                    .position_map
-                    .doc_to_scalar(interior, context.document),
-                kind: crate::yrs_engine::EditorOffsetKind::Scalar,
-                affinity: crate::yrs_engine::DEFAULT_POSITION_AFFINITY,
-            },
-            head: crate::yrs_engine::RevisionedPosition {
-                offset: context
-                    .position_map
-                    .doc_to_scalar(interior, context.document),
-                kind: crate::yrs_engine::EditorOffsetKind::Scalar,
-                affinity: crate::yrs_engine::DEFAULT_POSITION_AFFINITY,
-            },
+            anchor: point,
+            head: point,
         }),
         history_policy: HistoryPolicy::Skip,
     }))

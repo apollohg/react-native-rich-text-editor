@@ -308,10 +308,19 @@ fn native_table_tab_appends_one_row_with_one_trusted_commit() {
     assert!(NativeTransactionBridge::new(&mut session)
         .submit_native_intent(&stale.to_string())
         .is_err());
+    let fresh_epoch = session
+        .pin_position_epoch(TAB_OWNER_ID, session.engine.revision())
+        .unwrap();
+    assert_ne!(
+        serde_json::json!(fresh_epoch.to_string()),
+        stale["positionEpoch"],
+        "rebinding the native input must retire its previous epoch"
+    );
     stale["ownerId"] = serde_json::json!(TAB_OWNER_ID.to_string());
-    assert!(NativeTransactionBridge::new(&mut session)
+    let stale_error = NativeTransactionBridge::new(&mut session)
         .submit_native_intent(&stale.to_string())
-        .is_err());
+        .unwrap_err();
+    assert_eq!(stale_error.code, "POSITION_EPOCH_INVALID");
     assert_eq!(session_audit(&session), after);
 
     let (engine, outbox) = session.engine_and_outbox();
