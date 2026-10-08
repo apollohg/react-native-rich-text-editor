@@ -1,3 +1,79 @@
+fn clear_selected_block_content(
+    document: &Document,
+    schema: &Schema,
+    from: u32,
+    to: u32,
+) -> Option<SemanticCommandPlan> {
+    let start = document.resolve(from).ok()?;
+    let end = document.resolve(to).ok()?;
+    if start.parent_offset != 0 || end.parent_offset != end.parent(document).content_size() {
+        return None;
+    }
+    let common_depth = start
+        .node_path
+        .iter()
+        .zip(end.node_path.iter())
+        .take_while(|(left, right)| left == right)
+        .count();
+    let common_path = &start.node_path[..common_depth];
+    for path in [&start.node_path, &end.node_path] {
+        for depth in common_depth + 1..=path.len() {
+            if schema
+                .node(document.node_at(&path[..depth])?.node_type())?
+                .table_role
+                .is_some()
+            {
+                return None;
+            }
+        }
+    }
+    let container = document.node_at(common_path)?;
+    let spec = schema.node(container.node_type())?;
+    if !matches!(spec.role, NodeRole::Doc)
+        && !matches!(
+            spec.table_role,
+            Some(crate::tables::TableRole::Cell | crate::tables::TableRole::HeaderCell)
+        )
+    {
+        return None;
+    }
+    if start.node_path[common_depth..]
+        .iter()
+        .any(|index| *index != 0)
+    {
+        return None;
+    }
+    for depth in common_depth..end.node_path.len() {
+        let parent = document.node_at(&end.node_path[..depth])?;
+        if end.node_path[depth] as usize + 1 != parent.child_count() {
+            return None;
+        }
+    }
+    let replacement = default_text_block(schema)?;
+    if !spec
+        .content
+        .matches(&[replacement.node_type()], |child, symbol| {
+            schema.node_matches_symbol(child, symbol)
+        })
+    {
+        return None;
+    }
+    let content_start = if common_path.is_empty() {
+        0
+    } else {
+        node_delete_start(document, common_path)?.checked_add(1)?
+    };
+    Some(SemanticCommandPlan {
+        operations: vec![SemanticOperation::ReplaceRange {
+            from: content_start,
+            to: content_start.checked_add(container.content_size())?,
+            content: Fragment::from(vec![replacement]),
+        }],
+        selection_after: Some(Selection::cursor(content_start.checked_add(1)?)),
+        history: SemanticCommandHistory::InputBoundary,
+    })
+}
+
 fn delete_previous_void_block_action(
     document: &Document,
     map: &PositionMap,

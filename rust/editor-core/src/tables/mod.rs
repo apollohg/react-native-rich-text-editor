@@ -20,6 +20,8 @@ mod admission_tests;
 #[cfg(test)]
 mod command_selection_tests;
 #[cfg(test)]
+mod command_sequence_tests;
+#[cfg(test)]
 pub(crate) mod commands_tests;
 #[cfg(test)]
 mod drop_tests;

@@ -279,6 +279,12 @@ fn plan_delete_scalar_range_impl(
 ) -> Result<Option<SemanticCommandPlan>, ()> {
     let doc_from = position_map.scalar_to_doc(scalar_from, document);
     let doc_to = position_map.scalar_to_doc(scalar_to, document);
+    if scalar_from < scalar_to {
+        if let Some(plan) = super::clear_selected_block_content(document, schema, doc_from, doc_to)
+        {
+            return Ok(Some(plan));
+        }
+    }
     if let Some(pos) = super::empty_list_unwrap_pos(
         document,
         position_map,
