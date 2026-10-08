@@ -28,6 +28,9 @@ import com.apollohg.editor.NativeEditorExpoView
 import com.apollohg.editor.NativeEditorExpoViewTestSupport
 import com.apollohg.editor.RemoteSelectionOverlayView
 import com.apollohg.editor.UniffiEditorV2Backend
+import com.apollohg.editor.canDispatchTableCellMutation
+import com.apollohg.editor.initialUpdateJson
+import com.apollohg.editor.inputScalarSelection
 import com.apollohg.editor.tableRecordsForTesting
 import com.apollohg.editor.testExpoContext
 import com.apollohg.editor.viewer.PreparedProseDrawingView
@@ -1286,23 +1289,262 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
         )
     }
 
+    @Test
+    fun `remote column insertion preserves typing and deleted row rejects the old input`() {
+        val config = JSONObject(PlainTableFixture.CONFIG).put(
+            "initialization",
+            JSONObject()
+                .put("type", "localHtml").put("html", "").put(
+                    "snapshotScope",
+                    JSONObject()
+                        .put(
+                            "documentId",
+                            CONTINUATION_DOCUMENT_ID
+                        ).put("lineageId", CONTINUATION_LINEAGE_ID)
+                )
+        )
+        val room = TableRoomSeed(config.toString(), GRID_DOCUMENT)
+        val remoteAdapter = room.makeAdapter()
+        try {
+            val remote = RemoteTablePeer(remoteAdapter, REMOTE_REQUEST_ID_BASE)
+            withTable(GRID_DOCUMENT, room = room) { fixture ->
+                val relay =
+                    TableCollaborationRelay(
+                        listOf(fixture.adapter.editorId, remoteAdapter.editorId)
+                    )
+                relay.exchangeUntilIdle()
+                val originalLast = fixture.positions()[GRID_LAST]
+                fixture.tapCell(originalLast)
+                val originalInput = fixture.view.richTextView.activeTextInput
+                assertTrue(originalInput.requestFocus())
+                originalInput.setSelection(GRID_LAST_TEXT.length)
+                val originalConnection =
+                    requireNotNull(originalInput.onCreateInputConnection(EditorInfo()))
+
+                fun expectedDocument(
+                    texts: List<List<String>>,
+                    trailing: String = TRAILING_PROSE
+                ): JSONObject {
+                    fun paragraph(text: String): JSONObject =
+                        JSONObject().put("type", PARAGRAPH_NODE).apply {
+                            if (text.isNotEmpty()) {
+                                put(
+                                    "content",
+                                    JSONArray().put(
+                                        JSONObject().put("type", TEXT_NODE).put("text", text)
+                                    )
+                                )
+                            }
+                        }
+                    val rows = JSONArray(
+                        texts.map { row ->
+                            JSONObject().put("type", ROW_NODE)
+                                .put(
+                                    "content",
+                                    JSONArray(
+                                        row.map { text ->
+                                            JSONObject().put("type", CELL_NODE)
+                                                .put(
+                                                    "content",
+                                                    JSONArray().put(paragraph(text))
+                                                )
+                                        }
+                                    )
+                                )
+                        }
+                    )
+                    return JSONObject().put("type", DOCUMENT_NODE).put(
+                        "content",
+                        JSONArray()
+                            .put(
+                                JSONObject().put("type", TABLE_NODE).put("content", rows)
+                            ).put(paragraph(trailing))
+                    )
+                }
+                fun check(expected: JSONObject, caret: Int, nativeText: String?, label: String) {
+                    fixture.relayout()
+                    val input = fixture.view.richTextView.activeTextInput
+                    val document = JSONObject(requireNotNull(fixture.adapter.documentJson()))
+                    val selection = JSONObject(
+                        requireNotNull(fixture.adapter.cachedAtomicRenderJson)
+                    ).getJSONObject("selection")
+                    val diagnostic = "$label document=$document native=${input.text} " +
+                        "selection=$selection " +
+                        "local=${input.selectionStart}..${input.selectionEnd} " +
+                        "binding=${input.tableCellPositionMap?.binding} errors=${fixture.adapter.debugNotes}"
+                    assertTrue(
+                        "$diagnostic changed document or neighbours; expected=$expected",
+                        sameJson(expected, document)
+                    )
+                    assertEquals(
+                        "$diagnostic selection type",
+                        TEXT_NODE,
+                        selection.getString("type")
+                    )
+                    assertEquals("$diagnostic engine anchor", caret, selection.getInt("anchor"))
+                    assertEquals("$diagnostic engine head", caret, selection.getInt("head"))
+                    assertTrue(
+                        "$diagnostic stale input authority",
+                        input.canDispatchTableCellMutation()
+                    )
+                    val local =
+                        requireNotNull(input.currentScalarSelection()) {
+                            "$label unmappable local caret"
+                        }
+                    val logical =
+                        requireNotNull(
+                            input.inputScalarSelection(local.first, local.second)
+                        )
+                    assertEquals(
+                        "$diagnostic native anchor",
+                        caret,
+                        fixture.adapter.docPositionForScalar(logical.first)
+                    )
+                    assertEquals(
+                        "$diagnostic native head",
+                        caret,
+                        fixture.adapter.docPositionForScalar(logical.second)
+                    )
+                    if (nativeText != null) {
+                        assertEquals(
+                            "$diagnostic stale native cell text",
+                            nativeText,
+                            input.text.toString()
+                        )
+                        val binding = requireNotNull(input.tableCellPositionMap?.binding)
+                        assertEquals(
+                            "$diagnostic stale binding revision",
+                            fixture.adapter.baseDocumentRevision.toString(),
+                            binding.revision
+                        )
+                        assertEquals(
+                            "$diagnostic stale binding epoch",
+                            fixture.adapter.positionEpoch,
+                            binding.epoch
+                        )
+                    }
+                    val rect = requireNotNull(input.caretRect()) { "$diagnostic missing caret" }
+                    assertTrue(
+                        "$diagnostic invalid caret=$rect",
+                        rect.left.isFinite() && rect.top.isFinite() && rect.height() > 0f
+                    )
+                    assertTrue(
+                        "$diagnostic caret outside input=$rect",
+                        rect.bottom > 0f && rect.top < input.height && rect.right > 0f &&
+                            rect.left < input.width
+                    )
+                }
+
+                remote.applySelection(documentCellSelection(originalLast, originalLast))
+                remote.applyCommand(
+                    JSONObject().put("type", ADD_TABLE_COLUMN).put("side", BEFORE_SIDE)
+                )
+                assertEquals(setOf(fixture.adapter.editorId), relay.exchangeUntilIdle())
+                fixture.deliverRemoteCommit()
+                val movedLast = fixture.positions()[MOVED_LAST_CELL]
+                assertEquals(
+                    "remote insertion must follow the same logical cell",
+                    movedLast.toLong(),
+                    fixture.activeCellPosition()
+                )
+                assertEquals(
+                    MOVED_LAST_CELL,
+                    fixture.view.richTextView.activeTextInput.tableCellPositionMap
+                        ?.binding?.cellIndex
+                )
+                check(
+                    expectedDocument(listOf(listOf("A", "", "B"), listOf("C", "", "D"))),
+                    movedLast + TEXT_OFFSET_INSIDE_CELL + GRID_LAST_TEXT.length,
+                    GRID_LAST_TEXT,
+                    "remote column insertion"
+                )
+                val input = fixture.view.richTextView.activeTextInput
+                val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+                assertTrue(connection.commitText(COMPOSITION_TEXT, CURSOR_AFTER_COMMIT))
+                val typedCell = GRID_LAST_TEXT + COMPOSITION_TEXT
+                check(
+                    expectedDocument(listOf(listOf("A", "", "B"), listOf("C", "", typedCell))),
+                    movedLast + TEXT_OFFSET_INSIDE_CELL + typedCell.length,
+                    typedCell,
+                    "typing after remote column insertion"
+                )
+                relay.exchangeUntilIdle()
+                assertTrue(
+                    "the typed character must reach the other peer",
+                    sameJson(
+                        JSONObject(requireNotNull(fixture.adapter.documentJson())),
+                        JSONObject(requireNotNull(remoteAdapter.documentJson()))
+                    )
+                )
+
+                remote.applySelection(documentCellSelection(movedLast, movedLast))
+                remote.applyCommand(JSONObject().put("type", DELETE_TABLE_ROWS))
+                assertEquals(setOf(fixture.adapter.editorId), relay.exchangeUntilIdle())
+                fixture.deliverRemoteCommit()
+                val surviving = expectedDocument(listOf(listOf("A", "", "B")))
+                assertSame(
+                    "the removed cell must hand input to the root",
+                    fixture.root,
+                    fixture.view.richTextView.activeTextInput
+                )
+                assertNull(fixture.activeCellPosition())
+                val fallback =
+                    requireNotNull(
+                        fixture.adapter.tableRecordsForTesting[fixture.tableId]
+                    ).getInt("sourceEnd") +
+                        PARAGRAPH_TEXT_OFFSET
+                check(surviving, fallback, null, "remote row deletion")
+                assertTrue(connection.commitText(STALE_COMPOSITION_TEXT, CURSOR_AFTER_COMMIT))
+                assertTrue(
+                    originalConnection.commitText(STALE_COMPOSITION_TEXT, CURSOR_AFTER_COMMIT)
+                )
+                assertTrue(
+                    "late edits from the removed cell must be ignored",
+                    sameJson(surviving, JSONObject(requireNotNull(fixture.adapter.documentJson())))
+                )
+                assertTrue(
+                    requireNotNull(fixture.root.onCreateInputConnection(EditorInfo()))
+                        .commitText(COMPOSITION_TEXT, CURSOR_AFTER_COMMIT)
+                )
+                check(
+                    expectedDocument(
+                        listOf(listOf("A", "", "B")),
+                        COMPOSITION_TEXT + TRAILING_PROSE
+                    ),
+                    fallback + COMPOSITION_TEXT.length,
+                    null,
+                    "typing after remote row deletion"
+                )
+                assertTrue(
+                    "fallback typing must be visible",
+                    fixture.root.text.toString().endsWith(COMPOSITION_TEXT + TRAILING_PROSE)
+                )
+            }
+        } finally {
+            remoteAdapter.destroy()
+        }
+    }
+
     private fun withTable(
         document: String,
         viewport: Size = Size(VIEW_WIDTH, VIEW_HEIGHT),
+        room: TableRoomSeed? = null,
         block: (Fixture) -> Unit
     ) {
         val activity = Robolectric.buildActivity(Activity::class.java).setup()
-        val created = UniffiEditorV2Backend.create(
-            PlainTableFixture.CONFIG,
-            null
-        ) as EditorV2CallResult.Ok
-        val adapter = requireNotNull(
-            EditorV2Adapter.attach(
-                UniffiEditorV2Backend,
-                JSONObject(created.value).getString("editorId"),
-                false
+        val adapter = room?.makeAdapter() ?: run {
+            val created = UniffiEditorV2Backend.create(
+                PlainTableFixture.CONFIG,
+                null
+            ) as EditorV2CallResult.Ok
+            requireNotNull(
+                EditorV2Adapter.attach(
+                    UniffiEditorV2Backend,
+                    JSONObject(created.value).getString("editorId"),
+                    false
+                )
             )
-        )
+        }
         val token = EditorV2Registry.register(adapter)
         try {
             val expo = testExpoContext(activity.get())
@@ -1324,7 +1566,15 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
             view.setEditorId(token)
             assertTrue(
                 view.richTextView.editorEditText.applyUpdateJSON(
-                    requireNotNull(adapter.setContentJson(document))
+                    requireNotNull(
+                        if (room ==
+                            null
+                        ) {
+                            adapter.setContentJson(document)
+                        } else {
+                            adapter.initialUpdateJson()
+                        }
+                    )
                 )
             )
             val tableId = requireNotNull(
@@ -1419,6 +1669,20 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
         const val HEADER_TARGET_CELL = "cell"
         const val HEADER_CELL_NODE = "\"type\":\"table_header\""
         const val MERGE_TABLE_CELLS = "mergeTableCells"
+        const val ADD_TABLE_COLUMN = "addTableColumn"
+        const val BEFORE_SIDE = "before"
+        const val DOCUMENT_NODE = "doc"
+        const val TABLE_NODE = "table"
+        const val ROW_NODE = "table_row"
+        const val CELL_NODE = "table_cell"
+        const val PARAGRAPH_NODE = "paragraph"
+        const val TEXT_NODE = "text"
+        const val MOVED_LAST_CELL = 5
+        const val PARAGRAPH_TEXT_OFFSET = 1
+        const val CURSOR_AFTER_COMMIT = 1
+        const val TRAILING_PROSE = "after"
+        const val CONTINUATION_DOCUMENT_ID = "remote-cell-continuation"
+        const val CONTINUATION_LINEAGE_ID = "native-editor|remote-cell-continuation"
         val CELL_MENU_ITEMS = listOf(android.R.id.cut, android.R.id.copy, android.R.id.paste)
 
         const val GRID_LAST_TEXT = "D"

@@ -153,34 +153,7 @@ internal class EditorTableSurfaceMountTest {
         configJSON: String = config,
         backend: EditorV2Backend = UniffiEditorV2Backend,
         block: (RichTextEditorView, EditorV2Adapter, String) -> Unit
-    ) {
-        val created = UniffiEditorV2Backend.create(configJSON, null) as EditorV2CallResult.Ok
-        val adapter = requireNotNull(
-            EditorV2Adapter.attach(
-                backend,
-                JSONObject(created.value).getString("editorId"),
-                false
-            )
-        )
-        val token = EditorV2Registry.register(adapter)
-        try {
-            val update = requireNotNull(adapter.setContentJson(document))
-            val view = RichTextEditorView(RuntimeEnvironment.getApplication())
-            view.editorId = token
-            val applied = view.editorEditText.applyUpdateJSON(
-                requireNotNull(adapter.cachedViewUpdateJson)
-            )
-            assertTrue(
-                "admission=$applied trace=${view.editorEditText.imeTraceSnapshotForTesting()} extents=${adapter.tableIndex.rootExtents} scalar=${adapter.cachedScalarLength} blocks=${adapter.cachedSemanticRenderBlocks}",
-                applied
-            )
-            measure(view, 600)
-            block(view, adapter, update)
-        } finally {
-            EditorV2Registry.remove(adapter.editorId)
-            adapter.destroy()
-        }
-    }
+    ) = withMountedEditorView(document, configJSON, backend, block = block)
 
     private fun withAttachedMountedView(
         document: String,
@@ -669,33 +642,7 @@ internal class EditorTableSurfaceMountTest {
     private fun firstCellText(adapter: EditorV2Adapter): String = cellText(adapter, 0)
 
     private fun tapFirstCell(view: RichTextEditorView, cellIndex: Int = 0) {
-        val canvas = requireNotNull(drawing(view))
-        canvas.measure(
-            View.MeasureSpec.makeMeasureSpec(view.editorEditText.width, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(view.editorEditText.height, View.MeasureSpec.EXACTLY)
-        )
-        canvas.layout(0, 0, canvas.measuredWidth, canvas.measuredHeight)
-        val block = requireNotNull(canvas.preparedLayout?.blocks?.singleOrNull())
-        val cell = requireNotNull(block.tableSurface?.cells?.getOrNull(cellIndex))
-        val bounds = requireNotNull(block.tableBounds)
-        val x =
-            bounds.left + block.tableSurface!!.frameOfCell(cell).left + cell.contentOrigin.first +
-                8f
-        val y =
-            bounds.top + block.tableSurface!!.frameOfCell(cell).top + cell.contentOrigin.second + 8f
-        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, x, y, 0)
-        val up = MotionEvent.obtain(0, 10, MotionEvent.ACTION_UP, x, y, 0)
-        try {
-            assertTrue(view.dispatchTouchEvent(down))
-            val handled = view.dispatchTouchEvent(up)
-            assertTrue(
-                "tap up focus=${view.activeTextInput === view.editorEditText} rootTrace=${view.editorEditText.imeTraceSnapshotForTesting()} doc=${(view.editorEditText.v2Driver as? EditorV2Adapter)?.documentJson()}",
-                handled
-            )
-        } finally {
-            down.recycle()
-            up.recycle()
-        }
+        tapMountedTableCell(view, cellIndex)
     }
 
     @Test
