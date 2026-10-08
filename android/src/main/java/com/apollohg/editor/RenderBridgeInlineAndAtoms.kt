@@ -264,7 +264,7 @@ internal fun RenderBridge.appendVoidInline(
             builder.append("\n")
             val end = builder.length
             builder.setSpan(
-                Annotation("nativeVoidNodeType", nodeType),
+                Annotation(NATIVE_VOID_NODE_TYPE_ANNOTATION, nodeType),
                 start,
                 end,
                 Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
@@ -338,7 +338,7 @@ internal fun RenderBridge.appendVoidBlock(
             Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
         )
         builder.setSpan(
-            Annotation("nativeVoidNodeType", nodeType),
+            Annotation(NATIVE_VOID_NODE_TYPE_ANNOTATION, nodeType),
             start,
             end,
             Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
@@ -514,7 +514,7 @@ internal fun RenderBridge.appendOpaqueInlineAtom(
             Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
         )
         builder.setSpan(
-            Annotation("nativeVoidNodeType", nodeType),
+            Annotation(NATIVE_VOID_NODE_TYPE_ANNOTATION, nodeType),
             start,
             end,
             Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
@@ -579,7 +579,7 @@ internal fun RenderBridge.appendOpaqueInlineAtom(
         Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
     )
     builder.setSpan(
-        Annotation("nativeVoidNodeType", nodeType),
+        Annotation(NATIVE_VOID_NODE_TYPE_ANNOTATION, nodeType),
         start,
         end,
         Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
@@ -630,7 +630,7 @@ internal fun RenderBridge.appendOpaqueBlockAtom(
         Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
     )
     builder.setSpan(
-        Annotation("nativeVoidNodeType", nodeType),
+        Annotation(NATIVE_VOID_NODE_TYPE_ANNOTATION, nodeType),
         start,
         end,
         Spanned.SPAN_EXCLUSIVE_EXCLUSIVE

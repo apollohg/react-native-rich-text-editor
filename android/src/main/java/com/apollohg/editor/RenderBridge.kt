@@ -16,6 +16,7 @@ object RenderBridge {
     internal const val NATIVE_LIST_MARKER_ANNOTATION = "nativeListMarker"
     internal const val NATIVE_SYNTHETIC_PLACEHOLDER_ANNOTATION = "nativeSyntheticPlaceholder"
     internal const val NATIVE_ROOT_TABLE_MARKER_ANNOTATION = "nativeRootTableMarker"
+    internal const val NATIVE_VOID_NODE_TYPE_ANNOTATION = "nativeVoidNodeType"
 
     internal data class RenderBuildState(
         val result: SpannableStringBuilder = SpannableStringBuilder(),

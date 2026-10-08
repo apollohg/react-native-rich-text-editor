@@ -208,7 +208,7 @@ internal fun EditorEditText.selectAtomBeforeEmptyTrailingParagraph(
     val atomEnd = paragraphStart - 1
     val atomDocPos = content.getSpans(atomStart, atomEnd, AtomBlockSpan::class.java)
         .firstOrNull { content.getSpanEnd(it) == atomEnd }?.docPos
-        ?: if (isTableCellInput && isExactImageSpanRange(content, atomStart, atomEnd)) {
+        ?: if (isExactImageSpanRange(content, atomStart, atomEnd)) {
             inputScalarAtLocalUtf16(atomStart, raw)?.let(adapter::docPositionForScalar)
         } else {
             null
