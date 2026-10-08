@@ -232,6 +232,61 @@ impl MutationCompiler {
                 })
             });
         let block_path = resolved.node_path.iter().copied().collect::<Vec<_>>();
+        let wrapper_path = list_item_path.as_deref().unwrap_or(&block_path);
+        if let Some(handle) = self.prepared_elements.get(wrapper_path).cloned() {
+            const WRAPPERS_BEFORE_SPLIT: u32 = 1;
+            const WRAPPERS_AFTER_SPLIT: u32 = 2;
+            let wrapper_index = *wrapper_path
+                .last()
+                .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+            let parent_path = wrapper_path[..wrapper_path.len() - 1].to_vec();
+            let parent = after
+                .node_at(&parent_path)
+                .and_then(Node::content)
+                .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+            let replacement = parent
+                .children()
+                .get(wrapper_index as usize..wrapper_index as usize + WRAPPERS_AFTER_SPLIT as usize)
+                .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+            let mut batch = crate::yrs_engine::codec::prepare_model_nodes(
+                replacement,
+                schema,
+                limits,
+                wrapper_path.len().saturating_add(1),
+            )
+            .map_err(|error| map_prepared_node_error(self.request_id, operation_index, error))?;
+            let empty_text_work = materialize_empty_prepared_textblocks(&mut batch.nodes, schema);
+            let insert_id = handle.insert_id;
+            self.replace_prepared_element_with_children(operation_index, &handle, batch.nodes)?;
+            self.prepared_elements
+                .retain(|_, candidate| candidate.insert_id != insert_id);
+            self.targets.retain(|target| {
+                !matches!(&target.kind, ResolvedTargetKind::Prepared { handle } if handle.insert_id == insert_id)
+            });
+            self.charge_operation_work(
+                operation_index,
+                batch.work.checked_add(empty_text_work).ok_or_else(|| {
+                    work_overflow(self.request_id, operation_index, self.action_limit)
+                })?,
+            )?;
+            if self.structural_parents.contains_key(&parent_path) {
+                self.apply_virtual_structural_splices(
+                    operation_index,
+                    after,
+                    &[VirtualStructuralSplice {
+                        parent_path,
+                        semantic_index: wrapper_index,
+                        semantic_delete: WRAPPERS_BEFORE_SPLIT,
+                        semantic_insert: WRAPPERS_AFTER_SPLIT,
+                        storage_index: wrapper_index,
+                        storage_delete: WRAPPERS_BEFORE_SPLIT,
+                        storage_insert: None,
+                    }],
+                    &[insert_id],
+                )?;
+            }
+            return self.register_prepared_insert_state(operation_index, insert_id, after);
+        }
         let block_target = self
             .structural_parents
             .get(&block_path)
@@ -252,6 +307,58 @@ impl MutationCompiler {
                 "split block has no content",
             )
         })?;
+        let insertion = self.resolve_insertion(operation_index, position)?;
+        if matches!(
+            &self.targets[insertion.target_index].kind,
+            ResolvedTargetKind::Prepared { .. }
+        ) {
+            let end = position
+                .checked_add(block_content.size().saturating_sub(resolved.parent_offset))
+                .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+            let (truncated, _) = crate::transform::apply_step_canonical_marks(
+                before,
+                &crate::transform::Step::DeleteRange {
+                    from: position,
+                    to: end,
+                },
+                schema,
+            )
+            .map_err(|message| {
+                OperationError::operation_invalid(
+                    self.request_id,
+                    operation_index,
+                    "at",
+                    message.to_string(),
+                )
+            })?;
+            if self.delete(operation_index, position, end, &[])? == TextRangeDisposition::Structural
+            {
+                self.delete_structural_range(
+                    operation_index,
+                    MutationDocumentContext {
+                        before,
+                        after: &truncated,
+                        schema,
+                        limits,
+                    },
+                    position,
+                    end,
+                )?;
+            } else {
+                self.rebuild_target_layout(operation_index, &truncated)?;
+            }
+            return self.finish_split_with_created_right(
+                operation_index,
+                after,
+                list_item_path,
+                &block_path,
+                block_target.signature.children.len(),
+                0,
+                0,
+                schema,
+                limits,
+            );
+        }
         if let Some(StorageInsertion::Boundary(move_index)) = self.current_storage_insertion(
             block_content.iter(),
             &block_target.storage_children,
@@ -305,8 +412,9 @@ impl MutationCompiler {
                             semantic_insert: 1,
                             storage_index: item_index,
                             storage_delete: 0,
+                            storage_insert: None,
                         }],
-                        None,
+                        &[],
                     )?;
                     let prepared_id = self.queue_prepared_insert(PendingPreparedInsert {
                         parent: insertion_parent.parent,
@@ -366,7 +474,9 @@ impl MutationCompiler {
                     StorageChildKind::Text { target, .. } => {
                         Some(AsRef::<Branch>::as_ref(target).id())
                     }
-                    StorageChildKind::Element { .. } | StorageChildKind::PreparedElement => None,
+                    StorageChildKind::Element { .. }
+                    | StorageChildKind::PreparedElement
+                    | StorageChildKind::PreparedChild { .. } => None,
                 })
                 .collect::<HashSet<_>>();
             let retained_text_id = block_target.storage_children[..moved_start]
@@ -376,7 +486,9 @@ impl MutationCompiler {
                     StorageChildKind::Text { target, .. } => {
                         Some(AsRef::<Branch>::as_ref(target).id())
                     }
-                    StorageChildKind::Element { .. } | StorageChildKind::PreparedElement => None,
+                    StorageChildKind::Element { .. }
+                    | StorageChildKind::PreparedElement
+                    | StorageChildKind::PreparedChild { .. } => None,
                 });
             if retained_text_id.is_none() {
                 let first_moved_text_id =
@@ -388,7 +500,8 @@ impl MutationCompiler {
                                 Some(AsRef::<Branch>::as_ref(target).id())
                             }
                             StorageChildKind::Element { .. }
-                            | StorageChildKind::PreparedElement => None,
+                            | StorageChildKind::PreparedElement
+                            | StorageChildKind::PreparedChild { .. } => None,
                         });
                 if let (Some(first_moved_text_id), XmlParentRef::Element(parent)) =
                     (first_moved_text_id, &block_target.parent)
@@ -659,7 +772,9 @@ impl MutationCompiler {
                     StorageChildKind::Text { target, .. } => {
                         Some(AsRef::<Branch>::as_ref(target).id())
                     }
-                    StorageChildKind::Element { .. } | StorageChildKind::PreparedElement => None,
+                    StorageChildKind::Element { .. }
+                    | StorageChildKind::PreparedElement
+                    | StorageChildKind::PreparedChild { .. } => None,
                 })
                 .collect::<HashSet<_>>();
             for candidate in &mut self.targets {
@@ -793,6 +908,7 @@ impl MutationCompiler {
             inserted_path.len().saturating_add(1),
         )
         .map_err(|error| map_prepared_node_error(self.request_id, operation_index, error))?;
+        let empty_text_work = materialize_empty_prepared_textblocks(&mut batch.nodes, schema);
         for child in &mut batch.nodes {
             child.index = insertion_index
                 .checked_add(child.index)
@@ -818,6 +934,7 @@ impl MutationCompiler {
                 semantic_insert: 0,
                 storage_index: moved_start,
                 storage_delete: moved_count,
+                storage_insert: None,
             });
         }
         splices.push(VirtualStructuralSplice {
@@ -827,8 +944,9 @@ impl MutationCompiler {
             semantic_insert: 1,
             storage_index: insertion_index,
             storage_delete: 0,
+            storage_insert: None,
         });
-        self.apply_virtual_structural_splices(operation_index, after, &splices, None)?;
+        self.apply_virtual_structural_splices(operation_index, after, &splices, &[])?;
         let prepared_id = self.queue_prepared_insert(PendingPreparedInsert {
             parent: insertion_parent.parent,
             child_index: insertion_index,
@@ -841,6 +959,7 @@ impl MutationCompiler {
         self.register_prepared_insert_state(operation_index, prepared_id, after)?;
         let work = block_children_len
             .checked_add(batch.work)
+            .and_then(|work| work.checked_add(empty_text_work))
             .and_then(|work| work.checked_add(usize::try_from(delete_len_utf16).ok()?))
             .and_then(|work| work.checked_add(suffix_storage_count))
             .and_then(|work| work.checked_add(moved_wrapper_work))

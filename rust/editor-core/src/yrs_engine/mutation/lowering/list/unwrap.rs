@@ -201,8 +201,9 @@ impl MutationCompiler {
                         .map_err(|_| invalid_action_range(self.request_id, operation_index))?,
                     storage_index,
                     storage_delete: 1,
+                    storage_insert: None,
                 }],
-                Some(insert_id),
+                &[insert_id],
             )?;
             self.wrap_checkpoints.remove(&insert_id);
             self.charge_operation_work(
@@ -331,6 +332,7 @@ impl MutationCompiler {
                         storage_index: u32::try_from(delete_index)
                             .map_err(|_| invalid_action_range(self.request_id, operation_index))?,
                         storage_delete: semantic_delete,
+                        storage_insert: None,
                     },
                     VirtualStructuralSplice {
                         parent_path: parent_path.clone(),
@@ -340,9 +342,10 @@ impl MutationCompiler {
                         semantic_insert,
                         storage_index: insert_index,
                         storage_delete: 0,
+                        storage_insert: None,
                     },
                 ],
-                None,
+                &[],
             )?;
             if !batch.nodes.is_empty() {
                 let insert_id = self.queue_prepared_insert(PendingPreparedInsert {
@@ -408,8 +411,9 @@ impl MutationCompiler {
                     .map_err(|_| invalid_action_range(self.request_id, operation_index))?,
                 storage_index,
                 storage_delete: 1,
+                storage_insert: None,
             }],
-            None,
+            &[],
         )?;
         if !batch.nodes.is_empty() {
             let insert_id = self.queue_prepared_insert(PendingPreparedInsert {

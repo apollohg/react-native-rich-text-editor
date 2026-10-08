@@ -147,6 +147,10 @@ enum StorageChildKind {
         signature: Arc<ElementSignature>,
     },
     PreparedElement,
+    PreparedChild {
+        handle: PreparedHandle,
+        scalar_len: Option<u32>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -159,6 +163,10 @@ enum StorageInsertion {
         signature: TargetSignature,
         runs: Vec<PreparedTextRun>,
     },
+    InsidePreparedText {
+        child_index: u32,
+        handle: PreparedHandle,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -169,6 +177,7 @@ struct VirtualStructuralSplice {
     semantic_insert: u32,
     storage_index: u32,
     storage_delete: u32,
+    storage_insert: Option<Vec<StorageChildKind>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -69,6 +69,14 @@ impl MutationCompiler {
             materialize_empty_prepared_textblocks(&mut batch.nodes, schema);
         let (child_index, split_action, split_virtual) = match insertion {
             StorageInsertion::Boundary(child_index) => (child_index, None, None),
+            StorageInsertion::InsidePreparedText { .. } => {
+                return Err(OperationError::operation_invalid(
+                    self.request_id,
+                    operation_index,
+                    "at",
+                    "structural insertion inside an owned prepared text child is not supported",
+                ));
+            }
             StorageInsertion::InsideText {
                 child_index,
                 local_scalar,
@@ -211,6 +219,8 @@ impl MutationCompiler {
                     .get_mut(insert_id)
                     .and_then(Option::as_mut)
                     .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+                let replaced_storage_count = u32::try_from(pending.nodes.len())
+                    .map_err(|_| invalid_action_range(self.request_id, operation_index))?;
                 for child in &mut pending.nodes {
                     child.index = child
                         .index
@@ -234,9 +244,8 @@ impl MutationCompiler {
                     &path,
                     content,
                     resolved.parent_offset,
-                    position,
                     child_index,
-                    node.node_size(),
+                    replaced_storage_count,
                     after,
                 )?;
                 return Ok(());
@@ -258,9 +267,8 @@ impl MutationCompiler {
             &path,
             content,
             resolved.parent_offset,
-            position,
             child_index,
-            node.node_size(),
+            0,
             after,
         )?;
         Ok(())
@@ -375,21 +383,30 @@ impl MutationCompiler {
         parent_path: &[u32],
         before_children: &Fragment,
         parent_offset: u32,
-        absolute_position: u32,
         storage_child_index: u32,
-        inserted_node_size: u32,
+        replaced_storage_count: u32,
         after: &Document,
     ) -> OperationResult<()> {
         let semantic_index = semantic_insertion_index(before_children, parent_offset)
             .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
 
+        let semantic_growth = after
+            .node_at(parent_path)
+            .and_then(Node::content)
+            .and_then(|children| {
+                children
+                    .child_count()
+                    .checked_sub(before_children.child_count())
+            })
+            .and_then(|count| u32::try_from(count).ok())
+            .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
         let remap_path = |path: &mut Vec<u32>| -> OperationResult<()> {
             if path.len() > parent_path.len()
                 && path.starts_with(parent_path)
                 && path[parent_path.len()] >= semantic_index
             {
                 path[parent_path.len()] = path[parent_path.len()]
-                    .checked_add(1)
+                    .checked_add(semantic_growth)
                     .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
             }
             Ok(())
@@ -406,19 +423,24 @@ impl MutationCompiler {
             prepared_elements.insert(path, handle);
         }
         self.prepared_elements = prepared_elements;
-
-        let parent = self
-            .structural_parents
-            .get_mut(parent_path)
-            .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
-        let storage_index = usize::try_from(storage_child_index)
-            .map_err(|_| invalid_action_range(self.request_id, operation_index))?;
-        if storage_index > parent.storage_children.len() {
-            return Err(invalid_action_range(self.request_id, operation_index));
+        for (candidate_id, candidate) in self.prepared_inserts.iter_mut().enumerate() {
+            let Some(candidate) = candidate else {
+                continue;
+            };
+            if candidate_id == insert_id {
+                continue;
+            }
+            if candidate.semantic_parent_path == parent_path {
+                if candidate.first_semantic_index >= semantic_index {
+                    candidate.first_semantic_index = candidate
+                        .first_semantic_index
+                        .checked_add(semantic_growth)
+                        .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+                }
+            } else {
+                remap_path(&mut candidate.semantic_parent_path)?;
+            }
         }
-        parent
-            .storage_children
-            .insert(storage_index, StorageChildKind::PreparedElement);
 
         let nodes = self
             .prepared_inserts
@@ -433,80 +455,23 @@ impl MutationCompiler {
                 work_overflow(self.request_id, operation_index, self.action_limit)
             })?,
         )?;
-        let mut elements = Vec::new();
-        let mut texts = Vec::new();
-        collect_prepared_child_handles(
-            insert_id,
-            &nodes,
-            parent_path,
-            semantic_index,
-            Some(after),
-            &mut elements,
-            &mut texts,
-        )?;
-        for (path, handle) in elements {
-            if self.prepared_elements.insert(path, handle).is_some() {
-                return Err(OperationError::engine_invariant_failed(
-                    self.request_id,
-                    Some(operation_index),
-                    "duplicate inserted prepared element semantic path",
-                ));
-            }
+        let inserted = self.prepared_storage_children(operation_index, insert_id, &nodes)?;
+        let parent = self
+            .structural_parents
+            .get_mut(parent_path)
+            .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+        let storage_index = usize::try_from(storage_child_index)
+            .map_err(|_| invalid_action_range(self.request_id, operation_index))?;
+        let storage_end = storage_index
+            .checked_add(replaced_storage_count as usize)
+            .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+        if storage_end > parent.storage_children.len() {
+            return Err(invalid_action_range(self.request_id, operation_index));
         }
-
-        let positions = self.positions()?;
-        let first_start = texts
-            .first()
-            .and_then(|(path, _, _)| first_text_doc_position(after.root(), path));
-        let insertion = first_start.map_or_else(
-            || positions.partition_point(|(start, _)| *start < absolute_position),
-            |start| positions.partition_point(|(existing, _)| *existing < start),
-        );
-        let old_next_start = positions.get(insertion).map(|(start, _)| *start);
-        let inserted_text_targets = !texts.is_empty();
-        let mut target_index = insertion;
-        let mut current_end = if insertion == 0 {
-            0
-        } else {
-            positions[insertion - 1].1
-        };
-        for (path, handle, runs) in texts {
-            let start = first_text_doc_position(after.root(), &path)
-                .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
-            let text = prepared_runs_text(&runs);
-            let scalar_len = u32::try_from(text.chars().count())
-                .map_err(|_| invalid_action_range(self.request_id, operation_index))?;
-            let gap_before = start
-                .checked_sub(current_end)
-                .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
-            self.targets.insert(
-                target_index,
-                ResolvedText {
-                    kind: ResolvedTargetKind::Prepared { handle },
-                    gap_before,
-                    text,
-                    scalar_len,
-                    base_runs: Vec::new(),
-                    current_runs: runs,
-                    action_slots: Vec::new(),
-                },
-            );
-            current_end = start
-                .checked_add(scalar_len)
-                .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
-            target_index += 1;
-        }
-        if !inserted_text_targets {
-            if let Some(old_next_start) = old_next_start {
-                let shifted = old_next_start
-                    .checked_add(inserted_node_size)
-                    .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
-                self.targets[target_index].gap_before = shifted
-                    .checked_sub(current_end)
-                    .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
-            }
-        }
-        Ok(())
+        parent
+            .storage_children
+            .splice(storage_index..storage_end, inserted);
+        self.register_prepared_insert_state(operation_index, insert_id, after)
     }
 }
 

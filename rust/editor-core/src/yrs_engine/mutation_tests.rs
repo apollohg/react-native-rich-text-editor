@@ -80,6 +80,11 @@ fn compile_and_execute(
         let txn = doc.transact();
         txn.encode_state_as_update_v1(&StateVector::default())
     };
+    let before_json = {
+        let txn = doc.transact();
+        let fragment = txn.get_xml_fragment("prosemirror").unwrap();
+        codec.read_json(&fragment, &txn).unwrap()
+    };
     let before_full_len = before_update.len();
     let compiled = {
         let txn = doc.transact();
@@ -117,6 +122,7 @@ fn compile_and_execute(
     undo.expand_scope(&doc, &fragment);
     let update = if has_actions {
         let mut txn = doc.transact_mut();
+        preflight_mutation_plan(71, &compiled.mutation_plan, &txn).unwrap();
         execute_mutation_plan(compiled.mutation_plan, &mut txn);
         txn.commit();
         txn.encode_update_v1()
@@ -177,6 +183,26 @@ fn compile_and_execute(
         actual_json
     );
     assert_eq!(replica_txn.state_vector(), txn.state_vector());
+    drop(replica_txn);
+    drop(txn);
+    if has_actions {
+        assert!(
+            undo.undo_blocking(),
+            "compiled transaction must be undoable"
+        );
+        assert_eq!(
+            codec.read_json(&fragment, &doc.transact()).unwrap(),
+            before_json
+        );
+        assert!(
+            undo.redo_blocking(),
+            "compiled transaction must be redoable"
+        );
+        assert_eq!(
+            codec.read_json(&fragment, &doc.transact()).unwrap(),
+            actual_json
+        );
+    }
     (
         actual_json,
         expected_json,

@@ -2,10 +2,19 @@ impl MutationCompiler {
     pub(crate) fn delete_structural_range(
         &mut self,
         operation_index: usize,
-        document: &Document,
+        context: MutationDocumentContext<'_>,
         from: u32,
         to: u32,
     ) -> OperationResult<()> {
+        if from == to {
+            return Ok(());
+        }
+        let MutationDocumentContext {
+            before: document,
+            after,
+            schema,
+            limits,
+        } = context;
         let from_resolved = document.resolve(from).map_err(|message| {
             OperationError::operation_invalid(self.request_id, operation_index, "range", message)
         })?;
@@ -15,6 +24,12 @@ impl MutationCompiler {
         if from_resolved.node_path != to_resolved.node_path {
             return self.delete_cross_parent_structural_range(
                 operation_index,
+                MutationDocumentContext {
+                    before: document,
+                    after,
+                    schema,
+                    limits,
+                },
                 &from_resolved,
                 &to_resolved,
             );
@@ -36,20 +51,87 @@ impl MutationCompiler {
                 "semantic structural parent has no tracked Yrs branch",
             )
         })?;
-        let (child_index, child_count) = exact_storage_child_span(
-            content.iter(),
-            &target.storage_children,
-            from_resolved.parent_offset,
-            to_resolved.parent_offset,
-        )
-        .ok_or_else(|| {
-            OperationError::operation_invalid(
-                self.request_id,
-                operation_index,
-                "range",
-                "structural deletion must cover complete XML children",
+        let start = self
+            .current_storage_insertion(
+                content.iter(),
+                &target.storage_children,
+                from_resolved.parent_offset,
             )
-        })?;
+            .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+        let end = self
+            .current_storage_insertion(
+                content.iter(),
+                &target.storage_children,
+                to_resolved.parent_offset,
+            )
+            .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+        let starts_inside_text = matches!(
+            start,
+            StorageInsertion::InsideText { .. } | StorageInsertion::InsidePreparedText { .. }
+        );
+        let child_index = match &start {
+            StorageInsertion::Boundary(index) => *index,
+            StorageInsertion::InsideText { child_index, .. }
+            | StorageInsertion::InsidePreparedText { child_index, .. } => child_index
+                .checked_add(1)
+                .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?,
+        };
+        let child_end = match &end {
+            StorageInsertion::Boundary(index) => *index,
+            StorageInsertion::InsideText { child_index, .. }
+            | StorageInsertion::InsidePreparedText { child_index, .. } => *child_index,
+        };
+        let child_count = child_end
+            .checked_sub(child_index)
+            .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+        let semantic_index = semantic_insertion_index(content, from_resolved.parent_offset)
+            .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+        let after_children = after
+            .node_at(&path)
+            .and_then(Node::content)
+            .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+        let semantic_delete = content
+            .child_count()
+            .checked_sub(after_children.child_count())
+            .and_then(|count| u32::try_from(count).ok())
+            .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+        let positions = self.positions()?;
+        for (insertion, delete_prefix) in [(&end, true), (&start, false)] {
+            if matches!(
+                insertion,
+                StorageInsertion::InsideText { .. } | StorageInsertion::InsidePreparedText { .. }
+            ) {
+                let index = self
+                    .targets
+                    .iter()
+                    .position(|candidate| match (insertion, &candidate.kind) {
+                        (
+                            StorageInsertion::InsideText { target: text, .. },
+                            ResolvedTargetKind::Existing { target, .. },
+                        ) => {
+                            AsRef::<Branch>::as_ref(target).id()
+                                == AsRef::<Branch>::as_ref(text).id()
+                        }
+                        (
+                            StorageInsertion::InsidePreparedText { handle, .. },
+                            ResolvedTargetKind::Prepared { handle: candidate },
+                        ) => handle == candidate,
+                        _ => false,
+                    })
+                    .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+                let (text_start, text_end) = positions[index];
+                let (delete_from, delete_to) = if delete_prefix {
+                    (text_start, to)
+                } else {
+                    (from, text_end)
+                };
+                if self.delete(operation_index, delete_from, delete_to, &[])?
+                    != TextRangeDisposition::Applied
+                {
+                    return Err(invalid_action_range(self.request_id, operation_index));
+                }
+            }
+        }
         self.charge_operation_work(
             operation_index,
             usize::try_from(child_count)
@@ -59,22 +141,164 @@ impl MutationCompiler {
                     work_overflow(self.request_id, operation_index, self.action_limit)
                 })?,
         )?;
-        self.push_action(YrsMutationAction::DeleteXmlChildren {
-            parent: target.parent,
-            child_index,
-            child_count,
-            signature: target.signature,
-            operation_index,
+        let retained = (!starts_inside_text)
+            .then(|| {
+                target.storage_children[child_index as usize..child_end as usize]
+                    .iter()
+                    .enumerate()
+                    .find_map(|(index, child)| match child {
+                        StorageChildKind::Text { target, .. } => {
+                            Some((child_index + index as u32, target.clone()))
+                        }
+                        StorageChildKind::Element { .. }
+                        | StorageChildKind::PreparedElement
+                        | StorageChildKind::PreparedChild { .. } => None,
+                    })
+            })
+            .flatten();
+        let mut deletes = Vec::with_capacity(2);
+        if let Some((retained_index, retained_text)) = retained {
+            let retained_id = AsRef::<Branch>::as_ref(&retained_text).id();
+            let virtual_index = self
+                .targets
+                .iter()
+                .position(|candidate| {
+                    matches!(
+                        &candidate.kind, ResolvedTargetKind::Existing { target, .. }
+                            if AsRef::<Branch>::as_ref(target).id() == retained_id
+                    )
+                })
+                .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+            self.normalize_existing_target_for_split(
+                operation_index,
+                virtual_index,
+                0,
+                Vec::new(),
+            )?;
+            let retained_target = &mut self.targets[virtual_index];
+            retained_target.text.clear();
+            retained_target.scalar_len = 0;
+            retained_target.current_runs.clear();
+            let structural = self
+                .structural_parents
+                .get_mut(&path)
+                .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+            if let StorageChildKind::Text {
+                scalar_len, runs, ..
+            } = &mut structural.storage_children[retained_index as usize]
+            {
+                *scalar_len = 0;
+                runs.clear();
+            }
+            deletes.push((retained_index + 1, child_end - retained_index - 1));
+            deletes.push((child_index, retained_index - child_index));
+        } else {
+            deletes.push((child_index, child_count));
+        }
+        let removed_count = deletes.iter().map(|(_, count)| *count).sum::<u32>();
+        let parent_id = target.parent.id();
+        self.targets.retain(|candidate| {
+            !matches!(&candidate.kind,
+                ResolvedTargetKind::Missing { parent, child_index: gap, .. }
+                    if AsRef::<Branch>::as_ref(parent).id() == parent_id
+                        && *gap > child_index && *gap <= child_end
+            )
         });
-        Ok(())
+        for candidate in &mut self.targets {
+            if let ResolvedTargetKind::Missing {
+                parent,
+                child_index: gap,
+                ..
+            } = &mut candidate.kind
+            {
+                if AsRef::<Branch>::as_ref(parent).id() == parent_id && *gap > child_end {
+                    *gap -= removed_count;
+                }
+            }
+        }
+        let mut removed_prepared = vec![false; target.storage_children.len()];
+        let mut removed_handles = Vec::new();
+        for &(storage_index, storage_delete) in &deletes {
+            for index in storage_index as usize..(storage_index + storage_delete) as usize {
+                match &target.storage_children[index] {
+                    StorageChildKind::PreparedChild { handle, .. } => {
+                        removed_prepared[index] = true;
+                        removed_handles.push(handle.clone());
+                    }
+                    StorageChildKind::PreparedElement => {
+                        return Err(OperationError::operation_invalid(
+                            self.request_id,
+                            operation_index,
+                            "range",
+                            "structural deletion cannot remove an untracked prepared child",
+                        ))
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let preserved = self.remove_prepared_children(operation_index, &removed_handles)?;
+        let mut physical_deletes = Vec::new();
+        for &(storage_index, storage_delete) in &deletes {
+            let end = storage_index + storage_delete;
+            let mut cursor = storage_index;
+            while cursor < end {
+                if removed_prepared[cursor as usize] {
+                    cursor += 1;
+                    continue;
+                }
+                let start = cursor;
+                while cursor < end && !removed_prepared[cursor as usize] {
+                    cursor += 1;
+                }
+                let skipped = u32::try_from(
+                    removed_prepared[..start as usize]
+                        .iter()
+                        .filter(|removed| **removed)
+                        .count(),
+                )
+                .map_err(|_| invalid_action_range(self.request_id, operation_index))?;
+                physical_deletes.push((start - skipped, cursor - start));
+            }
+        }
+        physical_deletes.sort_unstable_by(|left, right| right.0.cmp(&left.0));
+        for (child_index, child_count) in physical_deletes {
+            self.push_action(YrsMutationAction::DeleteXmlChildren {
+                parent: target.parent.clone(),
+                child_index,
+                child_count,
+                signature: target.signature.clone(),
+                operation_index,
+            });
+        }
+        let mut splices = Vec::with_capacity(deletes.len());
+        for (index, (storage_index, storage_delete)) in deletes.into_iter().enumerate() {
+            splices.push(VirtualStructuralSplice {
+                parent_path: path.clone(),
+                semantic_index,
+                semantic_delete: if index == 0 { semantic_delete } else { 0 },
+                semantic_insert: 0,
+                storage_index,
+                storage_delete,
+                storage_insert: None,
+            });
+        }
+        self.apply_virtual_structural_splices(operation_index, after, &splices, &preserved)
     }
 
     fn delete_cross_parent_structural_range(
         &mut self,
         operation_index: usize,
+        context: MutationDocumentContext<'_>,
         from_resolved: &crate::model::ResolvedPos,
         to_resolved: &crate::model::ResolvedPos,
     ) -> OperationResult<()> {
+        let MutationDocumentContext {
+            before: document,
+            after,
+            schema,
+            limits,
+        } = context;
         let common_depth = from_resolved
             .node_path
             .iter()
@@ -91,210 +315,109 @@ impl MutationCompiler {
                 "cross-parent structural deletion endpoints must share a tracked direct parent",
             ));
         }
-        let common_path = from_resolved.node_path[..common_depth].to_vec();
-        let first_child = from_resolved.node_path[common_depth];
-        let last_child = to_resolved.node_path[common_depth];
-        if first_child >= last_child {
-            return Err(invalid_action_range(self.request_id, operation_index));
-        }
-        let first_path = from_resolved.node_path.to_vec();
-        let last_path = to_resolved.node_path.to_vec();
-        let first_target = self
-            .structural_parents
-            .get(&first_path)
-            .cloned()
+        let first_parent = from_resolved.parent(document);
+        let last_parent = to_resolved.parent(document);
+        let clone_work = semantic_node_clone_work(first_parent)
+            .and_then(|work| work.checked_add(semantic_node_clone_work(last_parent)?))
+            .ok_or_else(|| work_overflow(self.request_id, operation_index, self.action_limit))?;
+        self.charge_operation_work(operation_index, clone_work)?;
+        let from = from_resolved.pos;
+        let first_end = from
+            .checked_add(first_parent.content_size() - from_resolved.parent_offset)
             .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
-        let last_target = self
-            .structural_parents
-            .get(&last_path)
-            .cloned()
+        let last_end = to_resolved
+            .pos
+            .checked_add(last_parent.content_size() - to_resolved.parent_offset)
             .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
-        let (first_virtual, first_scalar, first_text) = self.resolve_structural_delete_endpoint(
-            operation_index,
-            from_resolved.pos,
-            &first_target.storage_children,
-        )?;
-        let (last_virtual, last_scalar, _) = self.resolve_structural_delete_endpoint(
-            operation_index,
-            to_resolved.pos,
-            &last_target.storage_children,
-        )?;
-        let first_id = AsRef::<Branch>::as_ref(&first_text).id();
-        if first_virtual >= last_virtual {
-            return Err(invalid_action_range(self.request_id, operation_index));
-        }
-        self.charge_scan_work(
-            operation_index,
-            self.targets[first_virtual]
-                .text
-                .len()
-                .checked_mul(3)
-                .and_then(|work| {
-                    work.checked_add(self.targets[last_virtual].text.len().saturating_mul(2))
-                })
-                .ok_or_else(|| scan_overflow(self.request_id, operation_index, self.scan_limit))?,
-        )?;
-        let first_cut_utf16 = prepared_runs_utf16_at_scalar(
-            self.request_id,
-            operation_index,
-            &self.targets[first_virtual].current_runs,
-            first_scalar,
-        )?;
-        let (desired_left, _) =
-            split_runs_utf16(&self.targets[first_virtual].current_runs, first_cut_utf16)
-                .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
-        self.normalize_existing_target_for_split(
-            operation_index,
-            first_virtual,
-            first_cut_utf16,
-            desired_left.clone(),
-        )?;
-
-        let last_cut_utf16 = prepared_runs_utf16_at_scalar(
-            self.request_id,
-            operation_index,
-            &self.targets[last_virtual].current_runs,
-            last_scalar,
-        )?;
-        let (_, copied_suffix) =
-            split_runs_utf16(&self.targets[last_virtual].current_runs, last_cut_utf16)
-                .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
-        for slot in std::mem::take(&mut self.targets[last_virtual].action_slots) {
-            self.actions[slot] = ActionSlot::Tombstone;
-        }
-        let (retained_text, retained_signature) = match &self.targets[first_virtual].kind {
-            ResolvedTargetKind::Existing { target, signature } => {
-                (target.clone(), signature.clone())
-            }
-            _ => return Err(invalid_action_range(self.request_id, operation_index)),
-        };
-        let mut insertion_utf16 = first_cut_utf16;
-        for run in &copied_suffix {
-            let len_utf16 = u32::try_from(run.text.encode_utf16().count())
-                .map_err(|_| invalid_action_range(self.request_id, operation_index))?;
-            let slot = self.push_action(YrsMutationAction::InsertText {
-                target: retained_text.clone(),
-                index_utf16: insertion_utf16,
-                text: run.text.clone(),
-                len_utf16,
-                attrs: run.attrs.clone(),
-                signature: retained_signature.clone(),
+        let (_, suffix) =
+            crate::transform::apply::split_children_at(last_parent, to_resolved.parent_offset);
+        let suffix = Fragment::from(suffix);
+        let (trimmed, _) = crate::transform::apply_step_canonical_marks(
+            document,
+            &crate::transform::Step::DeleteRange {
+                from,
+                to: first_end,
+            },
+            schema,
+        )
+        .map_err(|message| {
+            OperationError::operation_invalid(
+                self.request_id,
                 operation_index,
-            });
-            self.targets[first_virtual].action_slots.push(slot);
-            insertion_utf16 = insertion_utf16
-                .checked_add(len_utf16)
-                .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
-        }
-
-        let lca_target = self
-            .structural_parents
-            .get(&common_path)
-            .cloned()
-            .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
-        let delete_index = first_child
-            .checked_add(1)
-            .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
-        let delete_count = last_child
-            .checked_sub(first_child)
-            .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
-        self.push_action(YrsMutationAction::DeleteXmlChildren {
-            parent: lca_target.parent,
-            child_index: delete_index,
-            child_count: delete_count,
-            signature: lca_target.signature.clone(),
-            operation_index,
-        });
-
-        let copied_work = copied_suffix.iter().try_fold(0usize, |work, run| {
-            work.checked_add(run.text.len())
-                .and_then(|work| work.checked_add(attrs_work(&run.attrs)))
-        });
-        self.charge_operation_work(
-            operation_index,
-            first_target
-                .signature
-                .children
-                .len()
-                .checked_add(last_target.signature.children.len())
-                .and_then(|work| work.checked_add(lca_target.signature.children.len()))
-                .and_then(|work| work.checked_add(usize::try_from(delete_count).ok()?))
-                .and_then(|work| work.checked_add(copied_work?))
-                .ok_or_else(|| {
-                    work_overflow(self.request_id, operation_index, self.action_limit)
-                })?,
-        )?;
-
-        let deleted_ids = self
-            .structural_parents
-            .iter()
-            .filter(|(path, _)| {
-                path.len() > common_depth
-                    && path[..common_depth] == common_path
-                    && path[common_depth] > first_child
-                    && path[common_depth] <= last_child
-            })
-            .flat_map(|(_, parent)| parent.storage_children.iter())
-            .filter_map(|child| match child {
-                StorageChildKind::Text { target, .. } => Some(AsRef::<Branch>::as_ref(target).id()),
-                StorageChildKind::Element { .. } | StorageChildKind::PreparedElement => None,
-            })
-            .collect::<HashSet<_>>();
-        self.targets.retain(|candidate| {
-            !matches!(
-                &candidate.kind,
-                ResolvedTargetKind::Existing { target, .. }
-                    if deleted_ids.contains(&AsRef::<Branch>::as_ref(target).id())
+                "range",
+                message.to_string(),
             )
-        });
-        let retained_virtual = self
-            .targets
-            .iter()
-            .position(|candidate| {
-                matches!(
-                    &candidate.kind,
-                    ResolvedTargetKind::Existing { target, .. }
-                        if AsRef::<Branch>::as_ref(target).id() == first_id
-                )
-            })
-            .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
-        let mut merged_runs = desired_left;
-        merged_runs.extend(copied_suffix);
-        self.targets[retained_virtual].current_runs = normalize_prepared_runs(merged_runs)
-            .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
-        self.targets[retained_virtual].text =
-            prepared_runs_text(&self.targets[retained_virtual].current_runs);
-        self.targets[retained_virtual].scalar_len =
-            u32::try_from(self.targets[retained_virtual].text.chars().count())
-                .map_err(|_| invalid_action_range(self.request_id, operation_index))?;
-        Ok(())
-    }
-
-    fn resolve_structural_delete_endpoint(
-        &self,
-        operation_index: usize,
-        position: u32,
-        storage_children: &[StorageChildKind],
-    ) -> OperationResult<(usize, u32, XmlTextRef)> {
-        let ResolvedInsertion {
-            target_index,
-            scalar_index,
-        } = self.resolve_insertion(operation_index, position)?;
-        if let (
-            ResolvedTargetKind::Existing { target, .. },
-            Some(StorageChildKind::Text { target: last, .. }),
-        ) = (&self.targets[target_index].kind, storage_children.last())
-        {
-            if AsRef::<Branch>::as_ref(target).id() == AsRef::<Branch>::as_ref(last).id() {
-                return Ok((target_index, scalar_index, target.clone()));
-            }
+        })?;
+        if self.delete(operation_index, from, first_end, &[])? == TextRangeDisposition::Structural {
+            self.delete_structural_range(
+                operation_index,
+                MutationDocumentContext {
+                    before: document,
+                    after: &trimmed,
+                    schema,
+                    limits,
+                },
+                from,
+                first_end,
+            )?;
+        } else {
+            self.rebuild_target_layout(operation_index, &trimmed)?;
         }
-        Err(OperationError::operation_invalid(
-            self.request_id,
+        let remove_from = from
+            .checked_add(crate::tables::commands::NODE_CLOSING_TOKENS)
+            .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+        let remove_to = last_end
+            .checked_add(crate::tables::commands::NODE_CLOSING_TOKENS)
+            .and_then(|end| end.checked_sub(first_end - from))
+            .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+        let (without_blocks, _) = crate::transform::apply_step_canonical_marks(
+            &trimmed,
+            &crate::transform::Step::DeleteRange {
+                from: remove_from,
+                to: remove_to,
+            },
+            schema,
+        )
+        .map_err(|message| {
+            OperationError::operation_invalid(
+                self.request_id,
+                operation_index,
+                "range",
+                message.to_string(),
+            )
+        })?;
+        let delete_action_start = self.actions.len();
+        self.delete_structural_range(
             operation_index,
-            "range",
-            "cross-parent structural deletion endpoint must resolve to its parent's final tracked text",
-        ))
+            MutationDocumentContext {
+                before: &trimmed,
+                after: &without_blocks,
+                schema,
+                limits,
+            },
+            remove_from,
+            remove_to,
+        )?;
+        let sibling_deletes = self.actions.split_off(delete_action_start);
+        self.replace_structural_range(
+            operation_index,
+            MutationDocumentContext {
+                before: &without_blocks,
+                after,
+                schema,
+                limits,
+            },
+            ReplacementInput {
+                from,
+                to: from,
+                boundaries: &[],
+                content: &suffix,
+                canonical_content: None,
+            },
+        )?;
+        // The suffix is inserted into the retained parent before its siblings are removed.
+        self.actions.extend(sibling_deletes);
+        self.rebuild_target_layout(operation_index, after)
     }
 
     fn current_storage_insertion<'a>(
@@ -313,6 +436,14 @@ impl MutationCompiler {
                 _ => None,
             })
             .collect::<HashMap<_, _>>();
+        let prepared_targets = self
+            .targets
+            .iter()
+            .filter_map(|target| match &target.kind {
+                ResolvedTargetKind::Prepared { handle } => Some((handle.clone(), target)),
+                _ => None,
+            })
+            .collect::<HashMap<_, _>>();
         let semantic_children = children.collect::<Vec<_>>();
         let mut semantic_index = 0usize;
         let mut semantic_text_offset = 0u32;
@@ -323,49 +454,75 @@ impl MutationCompiler {
                     u32::try_from(storage_index).ok()?,
                 ));
             }
-            match storage {
-                StorageChildKind::Text {
-                    target, signature, ..
-                } => {
-                    let current = targets.get(&AsRef::<Branch>::as_ref(target).id())?;
-                    let start = offset;
-                    let mut remaining = current.scalar_len;
-                    while remaining > 0 {
-                        let child = *semantic_children.get(semantic_index)?;
-                        if !child.is_text() || semantic_text_offset >= child.node_size() {
-                            return None;
-                        }
-                        let available = child.node_size() - semantic_text_offset;
-                        let consumed = remaining.min(available);
-                        offset = offset.checked_add(consumed)?;
-                        remaining -= consumed;
-                        semantic_text_offset += consumed;
-                        if semantic_text_offset == child.node_size() {
-                            semantic_index += 1;
-                            semantic_text_offset = 0;
-                        }
+            let current = match storage {
+                StorageChildKind::Text { target, .. } => {
+                    Some(*targets.get(&AsRef::<Branch>::as_ref(target).id())?)
+                }
+                StorageChildKind::PreparedChild {
+                    handle,
+                    scalar_len: Some(_),
+                } => prepared_targets.get(handle).copied(),
+                _ => None,
+            };
+            let text_length = match (storage, current) {
+                (_, Some(current)) => Some(current.scalar_len),
+                (
+                    StorageChildKind::PreparedChild {
+                        scalar_len: Some(length),
+                        ..
+                    },
+                    None,
+                ) => Some(*length),
+                _ => None,
+            };
+            if let Some(mut remaining) = text_length {
+                let start = offset;
+                while remaining > 0 {
+                    let child = *semantic_children.get(semantic_index)?;
+                    if !child.is_text() || semantic_text_offset >= child.node_size() {
+                        return None;
                     }
-                    if position > start && position < offset {
-                        return Some(StorageInsertion::InsideText {
-                            child_index: u32::try_from(storage_index).ok()?,
-                            local_scalar: position.checked_sub(start)?,
+                    let consumed = remaining.min(child.node_size() - semantic_text_offset);
+                    offset = offset.checked_add(consumed)?;
+                    remaining -= consumed;
+                    semantic_text_offset += consumed;
+                    if semantic_text_offset == child.node_size() {
+                        semantic_index += 1;
+                        semantic_text_offset = 0;
+                    }
+                }
+                if position > start && position < offset {
+                    let child_index = u32::try_from(storage_index).ok()?;
+                    let local_scalar = position.checked_sub(start)?;
+                    return match storage {
+                        StorageChildKind::Text {
+                            target, signature, ..
+                        } => Some(StorageInsertion::InsideText {
+                            child_index,
+                            local_scalar,
                             target: target.clone(),
                             signature: signature.clone(),
-                            runs: current.current_runs.clone(),
-                        });
-                    }
+                            runs: current?.current_runs.clone(),
+                        }),
+                        StorageChildKind::PreparedChild { handle, .. } => {
+                            Some(StorageInsertion::InsidePreparedText {
+                                child_index,
+                                handle: handle.clone(),
+                            })
+                        }
+                        _ => None,
+                    };
                 }
-                StorageChildKind::Element { .. } | StorageChildKind::PreparedElement => {
-                    if semantic_text_offset != 0 {
-                        return None;
-                    }
-                    let child = *semantic_children.get(semantic_index)?;
-                    if child.is_text() {
-                        return None;
-                    }
-                    offset = offset.checked_add(child.node_size())?;
-                    semantic_index += 1;
+            } else {
+                if semantic_text_offset != 0 {
+                    return None;
                 }
+                let child = *semantic_children.get(semantic_index)?;
+                if child.is_text() {
+                    return None;
+                }
+                offset = offset.checked_add(child.node_size())?;
+                semantic_index += 1;
             }
         }
         (offset == position).then(|| {

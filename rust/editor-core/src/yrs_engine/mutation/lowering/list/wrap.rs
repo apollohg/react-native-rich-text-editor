@@ -119,7 +119,9 @@ impl MutationCompiler {
                     StorageChildKind::Element { target, .. } => {
                         Some(AsRef::<Branch>::as_ref(target).id())
                     }
-                    StorageChildKind::PreparedElement => None,
+                    StorageChildKind::PreparedElement | StorageChildKind::PreparedChild { .. } => {
+                        None
+                    }
                 };
                 if let Some(id) = id {
                     selected_branch_ids.insert(id);

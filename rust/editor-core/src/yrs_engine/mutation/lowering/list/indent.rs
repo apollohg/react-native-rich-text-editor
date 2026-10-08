@@ -173,8 +173,9 @@ impl MutationCompiler {
                     semantic_insert: 0,
                     storage_index: item_index,
                     storage_delete: 1,
+                    storage_insert: None,
                 }],
-                Some(insert_id),
+                &[insert_id],
             )?;
             self.wrap_checkpoints.remove(&insert_id);
             self.charge_operation_work(
@@ -295,6 +296,7 @@ impl MutationCompiler {
                     semantic_insert: 0,
                     storage_index: item_index,
                     storage_delete: 1,
+                    storage_insert: None,
                 },
                 VirtualStructuralSplice {
                     parent_path: destination_path.clone(),
@@ -303,9 +305,10 @@ impl MutationCompiler {
                     semantic_insert: 1,
                     storage_index: storage_insert_index,
                     storage_delete: 0,
+                    storage_insert: None,
                 },
             ],
-            None,
+            &[],
         )?;
         let insert_id = self.queue_prepared_insert(PendingPreparedInsert {
             parent: destination_target.parent,
@@ -512,8 +515,9 @@ impl MutationCompiler {
                         semantic_insert: 1,
                         storage_index: insert_index,
                         storage_delete: 0,
+                        storage_insert: None,
                     }],
-                    Some(source_insert_id),
+                    &[source_insert_id],
                 )?;
                 self.wrap_checkpoints.remove(&source_insert_id);
                 let moved_insert_id = self.queue_prepared_insert(PendingPreparedInsert {
@@ -567,8 +571,9 @@ impl MutationCompiler {
                         semantic_insert: 1,
                         storage_index: insert_index,
                         storage_delete: 0,
+                        storage_insert: None,
                     }],
-                    Some(source_insert_id),
+                    &[source_insert_id],
                 )?;
                 self.wrap_checkpoints.remove(&source_insert_id);
                 let moved_insert_id = self.queue_prepared_insert(PendingPreparedInsert {
@@ -619,6 +624,7 @@ impl MutationCompiler {
                     semantic_insert: 0,
                     storage_index: nested_child_index,
                     storage_delete: 1,
+                    storage_insert: None,
                 },
             )
         } else {
@@ -642,6 +648,7 @@ impl MutationCompiler {
                     semantic_insert: 0,
                     storage_index: selected_index,
                     storage_delete: trailing_count_u32,
+                    storage_insert: None,
                 },
             )
         };
@@ -681,9 +688,10 @@ impl MutationCompiler {
                     semantic_insert: 1,
                     storage_index: insert_index,
                     storage_delete: 0,
+                    storage_insert: None,
                 },
             ],
-            None,
+            &[],
         )?;
         let insert_id = self.queue_prepared_insert(PendingPreparedInsert {
             parent: parent_list_target.parent,
