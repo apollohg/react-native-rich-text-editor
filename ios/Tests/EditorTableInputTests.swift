@@ -2651,7 +2651,11 @@ final class EditorTableInputTests: XCTestCase {
         var payloads: [[String: Any]] = []
 
         func rects(at index: Int) throws -> [CGRect] {
-            let rects = try XCTUnwrap(payloads[index]["rects"] as? [[String: Double]])
+            let payload = try XCTUnwrap(
+                payloads.indices.contains(index) ? payloads[index] : nil,
+                "geometry payload \(index) is missing; recorded \(payloads.count) payloads: \(payloads)"
+            )
+            let rects = try XCTUnwrap(payload["rects"] as? [[String: Double]])
             return try rects.map { try Self.rect($0) }
         }
 
@@ -2783,14 +2787,35 @@ final class EditorTableInputTests: XCTestCase {
 
     func testNativeCellEditMenuVisibilityIsRepublishedForTheToolbarToYield() throws {
         try withExpoTableGeometry(document: fourCellDocument) { fixture in
-            try fixture.selectCells(anchor: 0, head: 3)
-            waitForGeometryFrame()
             let surface = try XCTUnwrap(fixture.host.richTextView.subviews.compactMap { $0 as? EditorTableSurface }.first)
+            let geometryTimeout: TimeInterval = 3
+            let selectedGeometry = expectation(description: "cell selection geometry arrives with the menu hidden")
+            let presentedGeometry = expectation(description: "presented menu geometry arrives with the menu visible")
+            let dismissedGeometry = expectation(description: "dismissed menu geometry arrives with the menu hidden")
+            for expectation in [selectedGeometry, presentedGeometry, dismissedGeometry] {
+                expectation.assertForOverFulfill = true
+            }
+            let originalGeometryDelivered = fixture.host.onTableSelectionGeometryForTesting
+            var expectedGeometry = selectedGeometry
+            var expectedMenuVisibility = false
+            fixture.host.onTableSelectionGeometryForTesting = { payload in
+                originalGeometryDelivered?(payload)
+                if payload["editMenuVisible"] as? Bool == expectedMenuVisibility {
+                    expectedGeometry.fulfill()
+                }
+            }
+            defer {
+                fixture.host.onTableSelectionGeometryForTesting = originalGeometryDelivered
+            }
+            try fixture.selectCells(anchor: 0, head: 3)
+            wait(for: [selectedGeometry], timeout: geometryTimeout)
             XCTAssertEqual(fixture.recorder.payloads.last?["editMenuVisible"] as? Bool, false)
 
+            expectedGeometry = presentedGeometry
+            expectedMenuVisibility = true
             surface.presentCellEditMenu()
             XCTAssertTrue(surface.isCellEditMenuVisible, "the menu presents over the focused cell selection")
-            waitForGeometryFrame()
+            wait(for: [presentedGeometry], timeout: geometryTimeout)
             XCTAssertEqual(fixture.recorder.payloads.count, 2, "showing the menu republishes once: \(fixture.recorder.payloads)")
             XCTAssertEqual(fixture.recorder.payloads.last?["editMenuVisible"] as? Bool, true)
             assertRects(
@@ -2799,8 +2824,10 @@ final class EditorTableInputTests: XCTestCase {
                 "the menu does not move the selection geometry"
             )
 
+            expectedGeometry = dismissedGeometry
+            expectedMenuVisibility = false
             surface.dismissCellEditMenu()
-            waitForGeometryFrame()
+            wait(for: [dismissedGeometry], timeout: geometryTimeout)
             XCTAssertEqual(fixture.recorder.payloads.count, 3, "\(fixture.recorder.payloads)")
             XCTAssertEqual(
                 fixture.recorder.payloads.last?["editMenuVisible"] as? Bool,
