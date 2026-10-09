@@ -1,6 +1,5 @@
 import type {
     DocumentJSON,
-    SchemaDefinition,
     TableDirection,
     TableNodeNames,
 } from '@apollohg/react-native-rich-text-editor';
@@ -213,18 +212,5 @@ export function withTableDirection(
         ...node,
         ...(attrs === undefined ? {} : { attrs }),
         ...(content === undefined ? {} : { content }),
-    };
-}
-
-export function withTableDirectionAttribute(
-    schema: SchemaDefinition,
-    names: TableNodeNames
-): SchemaDefinition {
-    return {
-        ...schema,
-        nodes: schema.nodes.map(node =>
-            node.name === names.table
-                ? { ...node, attrs: { ...node.attrs, [TABLE_DIRECTION_ATTR]: { default: null } } }
-                : node),
     };
 }

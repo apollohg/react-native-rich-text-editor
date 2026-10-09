@@ -3,20 +3,14 @@ import {
     type DocumentJSON,
     type EditorToolbarItem,
     type MentionSuggestion,
-    type TableDirection,
     type TableNamingPreset,
 } from '@apollohg/react-native-rich-text-editor';
 
 import { BOLD, ITALIC, STRIKE, UNDERLINE, heading, link, listItem, paragraph, text } from './documentNodes';
 import {
-    PLAIN_TABLE_SIZES,
-    createIrregularTableDocument,
-    createPlainTable,
-    createRichTableDocument,
     table,
     tableRow,
     textCell,
-    withTableDirection,
     type TableCellKind,
 } from './tableContent';
 import { TASK_ITEM_NODE_NAME, TASK_LIST_NODE_NAME } from './taskList';
@@ -33,38 +27,7 @@ export const SAMPLE_IMAGE_URL = 'https://picsum.photos/seed/native-editor/1200/8
 export const TABLE_NAMING_PRESET: TableNamingPreset = 'prosemirror';
 export const TABLE_NAMES = TABLE_NODE_NAMES[TABLE_NAMING_PRESET];
 
-export const EDITOR_SURFACES = [ 'editor', 'viewer' ] as const;
-export type EditorSurface = (typeof EDITOR_SURFACES)[number];
-export const EDITOR_SURFACE_LABELS: Readonly<Record<EditorSurface, string>> = {
-    editor: 'Editor',
-    viewer: 'Viewer',
-};
-
-export const TABLE_DIRECTIONS: readonly TableDirection[] = [ 'ltr', 'rtl' ];
-export const TABLE_DIRECTION_LABELS: Readonly<Record<TableDirection, string>> = {
-    ltr: 'LTR',
-    rtl: 'RTL',
-};
-
-export const TABLE_TOOLBAR_MODES = [ 'custom', 'default', 'hidden' ] as const;
-export type TableToolbarMode = (typeof TABLE_TOOLBAR_MODES)[number];
-export const TABLE_TOOLBAR_MODE_LABELS: Readonly<Record<TableToolbarMode, string>> = {
-    custom: 'Custom bar',
-    default: 'Default bar',
-    hidden: 'No bar',
-};
-
-export const VIEWPORT_MODES = [ 'full', 'narrow' ] as const;
-export type ViewportMode = (typeof VIEWPORT_MODES)[number];
-export const VIEWPORT_MODE_LABELS: Readonly<Record<ViewportMode, string>> = {
-    full: 'Full width',
-    narrow: 'Narrow',
-};
-
 const REPOSITORY_URL = 'https://github.com/apollohg/react-native-rich-text-editor';
-const MERGED_HEADER_COLSPAN = 2;
-const MERGED_GROUP_ROWSPAN = 2;
-const WIDE_TABLE_COLUMN_WIDTH = 180;
 const COUNTER_CARD_NODE_NAME = 'counterCard';
 
 const REPOSITORY_LINK = link(REPOSITORY_URL);
@@ -79,21 +42,16 @@ function counterCard(title: string, count: number): DocumentJSON {
 
 function showcaseCell(
     kind: TableCellKind,
-    label: string | null,
-    attrs?: Record<string, unknown>
+    label: string | null
 ): DocumentJSON {
-    return textCell(TABLE_NAMES, kind, label, attrs);
-}
-
-function wideTableCell(kind: TableCellKind, label: string): DocumentJSON {
-    return showcaseCell(kind, label, { colwidth: [ WIDE_TABLE_COLUMN_WIDTH ] });
+    return textCell(TABLE_NAMES, kind, label);
 }
 
 /**
  * The initial document is JSON rather than HTML: the HTML importer maps every
  * `<ul>` to a bullet list, so a checklist can only be seeded this way.
  */
-const INITIAL_DOCUMENT: DocumentJSON = {
+export const INITIAL_DOCUMENT: DocumentJSON = {
     type: 'doc',
     content: [
         heading(1, 'Field notes'),
@@ -110,8 +68,7 @@ const INITIAL_DOCUMENT: DocumentJSON = {
             text('links', REPOSITORY_LINK),
             text('.')
         ),
-        heading(2, 'Tables'),
-        heading(3, 'Basic'),
+        heading(2, 'Table'),
         table(
             TABLE_NAMES,
             tableRow(
@@ -131,44 +88,6 @@ const INITIAL_DOCUMENT: DocumentJSON = {
                 showcaseCell('cell', 'Review'),
                 showcaseCell('cell', null),
                 showcaseCell('cell', 'Ready')
-            )
-        ),
-        heading(3, 'Merged cells'),
-        table(
-            TABLE_NAMES,
-            tableRow(
-                TABLE_NAMES,
-                showcaseCell('headerCell', 'Release plan', { colspan: MERGED_HEADER_COLSPAN }),
-                showcaseCell('headerCell', 'Status')
-            ),
-            tableRow(
-                TABLE_NAMES,
-                showcaseCell('cell', 'Core editor', { rowspan: MERGED_GROUP_ROWSPAN }),
-                showcaseCell('cell', 'iOS'),
-                showcaseCell('cell', 'Ready')
-            ),
-            tableRow(TABLE_NAMES, showcaseCell('cell', 'Android'), showcaseCell('cell', 'In review'))
-        ),
-        heading(3, 'Wide table'),
-        table(
-            TABLE_NAMES,
-            tableRow(
-                TABLE_NAMES,
-                wideTableCell('headerCell', 'Phase'),
-                wideTableCell('headerCell', 'Owner'),
-                wideTableCell('headerCell', 'Platform'),
-                wideTableCell('headerCell', 'Priority'),
-                wideTableCell('headerCell', 'Due date'),
-                wideTableCell('headerCell', 'Status')
-            ),
-            tableRow(
-                TABLE_NAMES,
-                wideTableCell('cell', 'Design'),
-                wideTableCell('cell', 'Chloe'),
-                wideTableCell('cell', 'iOS + Android'),
-                wideTableCell('cell', 'High'),
-                wideTableCell('cell', 'Friday'),
-                wideTableCell('cell', 'In progress')
             )
         ),
         {
@@ -217,52 +136,6 @@ const INITIAL_DOCUMENT: DocumentJSON = {
         paragraph(),
     ],
 };
-
-export const DOCUMENT_FIXTURES = [
-    'showcase',
-    'rich',
-    'small',
-    'tall',
-    'wide',
-    'irregular',
-] as const;
-
-export type DocumentFixture = (typeof DOCUMENT_FIXTURES)[number];
-
-export const DOCUMENT_FIXTURE_LABELS: Readonly<Record<DocumentFixture, string>> = {
-    showcase: 'Showcase',
-    rich: 'Rich',
-    small: '3×3',
-    tall: '1000×20',
-    wide: '100×200',
-    irregular: 'Irregular',
-};
-
-export function fixtureDocument(fixture: DocumentFixture): DocumentJSON {
-    switch (fixture) {
-        case 'showcase':
-            return INITIAL_DOCUMENT;
-        case 'rich':
-            return createRichTableDocument({
-                names: TABLE_NAMES,
-                imageUrl: SAMPLE_IMAGE_URL,
-                atom: counterCard('Cells per row', 3),
-                linkUrl: REPOSITORY_URL,
-            });
-        case 'irregular':
-            return createIrregularTableDocument(TABLE_NAMES);
-
-        default: {
-            const { rows, columns } = PLAIN_TABLE_SIZES[fixture];
-
-            return createPlainTable(rows, columns, TABLE_NAMES);
-        }
-    }
-}
-
-export function viewerDocument(document: DocumentJSON, direction: TableDirection): DocumentJSON {
-    return withTableDirection(document, TABLE_NAMES, direction);
-}
 
 export const MENTION_SUGGESTIONS: readonly MentionSuggestion[] = [
     {
