@@ -371,6 +371,7 @@ class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegat
         addGestureRecognizer(caretPlacementTapRecognizer)
         addGestureRecognizer(imageSelectionTapRecognizer)
         installImageSelectionTapDependencies()
+        installTextInteractionDelegates()
 
         addSubview(placeholderLabel)
         refreshPlaceholderVisibility()
@@ -387,6 +388,12 @@ class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegat
             scheduleCodeHighlighting()
         }
         installImageSelectionTapDependencies()
+        installTextInteractionDelegates()
+    }
+
+    override func addInteraction(_ interaction: UIInteraction) {
+        super.addInteraction(interaction)
+        installTextInteractionDelegates()
     }
 
     override func didAddSubview(_ subview: UIView) {
@@ -561,7 +568,7 @@ class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegat
 
     private func heldCaretPosition(at point: CGPoint) -> UITextPosition? {
         guard let selectedTextRange, selectedTextRange.isEmpty,
-              atomAttachmentRange(at: point) != nil || rootTableContains?(point) == true
+              hasTableOrAtom(at: point)
         else { return nil }
         return selectedTextRange.start
     }

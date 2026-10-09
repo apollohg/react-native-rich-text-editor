@@ -26,7 +26,21 @@ class CaretPlacementTapRecognizer: UITapGestureRecognizer {
     }
 }
 
-extension EditorTextView {
+extension EditorTextView: UITextInteractionDelegate {
+    func installTextInteractionDelegates() {
+        for interaction in interactions.compactMap({ $0 as? UITextInteraction }) where interaction.delegate == nil {
+            interaction.delegate = self
+        }
+    }
+
+    func interactionShouldBegin(_ interaction: UITextInteraction, at point: CGPoint) -> Bool {
+        !hasTableOrAtom(at: point)
+    }
+
+    func hasTableOrAtom(at point: CGPoint) -> Bool {
+        atomAttachmentRange(at: point) != nil || rootTableContains?(point) == true
+    }
+
     @objc
     func handleCaretPlacementTap(_ recognizer: UITapGestureRecognizer) {
         guard recognizer.state == .ended else { return }
@@ -39,8 +53,7 @@ extension EditorTextView {
             && editorId != 0
             && !hasImageAttachment(at: point)
             && !hasTaskListMarker(at: point)
-            && atomAttachmentRange(at: point) == nil
-            && rootTableContains?(point) != true
+            && !hasTableOrAtom(at: point)
     }
 
     @discardableResult

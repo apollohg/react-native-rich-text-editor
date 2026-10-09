@@ -26,6 +26,7 @@ final class EditorTableInputTests: XCTestCase {
     private static let mergedRowOneNeighbour = 3
     private static let mergedRowTwoNeighbour = 5
     private static let mergedLastRowFirstCell = 7
+    private static let rootTableMargin: CGFloat = 24
     private let listTableConfig = TableInputTestSchema.listTableConfig
     private let wideTwoCellDocument = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[500]},"content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"table_cell","attrs":{"colwidth":[500]},"content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]}]}]}"#
     private let fourCellDocument = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"three"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"four"}]}]}]}]}]}"#
@@ -1556,13 +1557,17 @@ final class EditorTableInputTests: XCTestCase {
         }
     }
 
-    func testRootTableMarginsRejectCaretPlacementAndKeepFollowingProseEditable() throws {
-        let margin: CGFloat = 24
+    private func withMountedMarginTable(_ body: (MountedTableFixture) throws -> Void) throws {
+        let margin = Self.rootTableMargin
         let theme = EditorTheme(dictionary: ["version": 1, "styles": ["table": [
             "marginTop": margin, "marginBottom": margin, "marginLeft": margin, "marginRight": margin
         ]]])
         let document = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"cell"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"#
-        try withMountedTable(document: document, theme: theme, cellSelection: nil) { fixture in
+        try withMountedTable(document: document, theme: theme, cellSelection: nil, body)
+    }
+
+    func testRootTableMarginsRejectCaretPlacementAndKeepFollowingProseEditable() throws {
+        try withMountedMarginTable { fixture in
             let root = fixture.view.textView
             XCTAssertTrue(root.becomeFirstResponder())
             root.selectedRange = NSRange(location: 2, length: 0)
@@ -1588,7 +1593,7 @@ final class EditorTableInputTests: XCTestCase {
                 ("left", CGPoint(x: (placeholder.minX + table.minX) / 2, y: table.midY)),
                 ("right", CGPoint(x: (table.maxX + placeholder.maxX) / 2, y: table.midY))
             ]
-            for scrollOffset in [CGFloat.zero, margin / 2] {
+            for scrollOffset in [CGFloat.zero, Self.rootTableMargin / 2] {
                 root.contentOffset.y = scrollOffset
                 fixture.surface.updateGeometry(from: root)
                 for (side, point) in points {
@@ -1616,6 +1621,97 @@ final class EditorTableInputTests: XCTestCase {
             XCTAssertTrue(root.textStorage.string.contains("!after"), "typing below the table must reach real prose")
             root.deleteBackward()
             XCTAssertEqual(try fixture.documentObject(), originalDocument, "Backspace below the table must remove that text")
+        }
+    }
+
+    func testLiveTableMarginTapPreservesFocusAndSelection() throws {
+        try LiveGestureProbe.requireOptIn()
+        try withMountedMarginTable { fixture in
+            let window = TouchObservingTestWindow(windowScene: testWindowScene())
+            window.frame = UIScreen.main.bounds
+            window.backgroundColor = .systemBackground
+            let root = fixture.view.textView
+            let viewportHeight: CGFloat = 130
+            fixture.view.frame = CGRect(x: 0, y: 100, width: window.bounds.width, height: viewportHeight)
+            window.addSubview(fixture.view)
+            let status = UILabel(frame: CGRect(x: 0, y: 60, width: window.bounds.width, height: 30))
+            status.backgroundColor = .systemYellow
+            status.textAlignment = .center
+            window.addSubview(status)
+            window.makeKeyAndVisible()
+            defer {
+                window.onTouchEnded = nil
+                _ = root.resignFirstResponder()
+                window.isHidden = true
+            }
+            fixture.view.layoutIfNeeded()
+            fixture.surface.updateGeometry(from: root)
+            XCTAssertFalse(root.isFirstResponder)
+            let table = try XCTUnwrap(fixture.drawing.layout?.blocks.first?.tableBounds)
+            let marginPoint = fixture.drawing.convert(
+                CGPoint(x: table.midX, y: table.maxY + Self.rootTableMargin / 2), to: root
+            )
+            XCTAssertTrue(fixture.surface.rootTableContains(root.convert(marginPoint, to: fixture.surface)))
+            let originalDocument = try fixture.documentObject()
+            let originalRevision = fixture.adapter.baseDocumentRevision
+
+            func tap(_ banner: String, at point: CGPoint) throws {
+                var endedAtTarget = false
+                let locationTolerance: CGFloat = 2
+                window.onTouchEnded = { touch in
+                    let location = touch.location(in: root)
+                    endedAtTarget = abs(location.x - point.x) < locationTolerance && abs(location.y - point.y) < locationTolerance
+                }
+                let screenPoint = root.convert(point, to: window)
+                status.text = "TABLE \(banner) READY \(Int(screenPoint.x)),\(Int(screenPoint.y))"
+                let ended = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in endedAtTarget }, object: nil)
+                XCTAssertEqual(XCTWaiter.wait(for: [ended], timeout: 30), .completed, "a real tap must end at \(banner)")
+                window.onTouchEnded = nil
+                let selectionSettleInterval: TimeInterval = 0.3
+                RunLoop.main.run(until: Date().addingTimeInterval(selectionSettleInterval))
+            }
+
+            let initialRange = root.selectedRange
+            let initialSelection = try fixture.textSelectionScalars()
+            try tap("UNFOCUSED MARGIN", at: marginPoint)
+            XCTAssertFalse(root.isFirstResponder, "an invalid margin tap must not focus the editor at the document start")
+            XCTAssertEqual(root.selectedRange, initialRange, "an invalid margin tap must preserve the native selection")
+            XCTAssertEqual(try fixture.textSelectionScalars().0, initialSelection.0)
+            XCTAssertEqual(try fixture.textSelectionScalars().1, initialSelection.1)
+
+            let editingRange = NSRange(location: 2, length: 0)
+            XCTAssertTrue(root.becomeFirstResponder())
+            root.selectedRange = editingRange
+            root.textViewDidChangeSelection(root)
+            root.syncSelectionImmediately()
+            let editingSelection = try fixture.textSelectionScalars()
+            try tap("FOCUSED MARGIN", at: marginPoint)
+            XCTAssertTrue(root.isFirstResponder)
+            XCTAssertEqual(root.selectedRange, editingRange, "an invalid tap must not reset an existing caret to the document start")
+            XCTAssertEqual(try fixture.textSelectionScalars().0, editingSelection.0)
+            XCTAssertEqual(try fixture.textSelectionScalars().1, editingSelection.1)
+
+            XCTAssertTrue(root.resignFirstResponder())
+            try tap("BLURRED MARGIN", at: marginPoint)
+            XCTAssertFalse(root.isFirstResponder, "an invalid tap must not refocus a previously edited document")
+            XCTAssertEqual(root.selectedRange, editingRange)
+            root.contentOffset.y = Self.rootTableMargin / 2
+            fixture.surface.updateGeometry(from: root)
+            XCTAssertGreaterThan(root.contentOffset.y, 0, "the real margin tap must also be checked after scrolling")
+            try tap("SCROLLED MARGIN", at: marginPoint)
+            XCTAssertFalse(root.isFirstResponder, "scrolling must not turn a margin tap into a focus request")
+            XCTAssertEqual(root.selectedRange, editingRange)
+            XCTAssertEqual(try fixture.textSelectionScalars().0, editingSelection.0)
+            XCTAssertEqual(try fixture.textSelectionScalars().1, editingSelection.1)
+            let after = (root.textStorage.string as NSString).range(of: "after")
+            XCTAssertNotEqual(after.location, NSNotFound)
+            let afterPosition = try XCTUnwrap(root.position(from: root.beginningOfDocument, offset: after.location + 2))
+            let afterCaret = root.caretRect(for: afterPosition)
+            try tap("VALID PROSE", at: CGPoint(x: afterCaret.midX, y: afterCaret.midY))
+            XCTAssertTrue(root.isFirstResponder, "a deliberate prose tap must still focus normally")
+            XCTAssertEqual(root.selectedRange, NSRange(location: after.location + 2, length: 0))
+            XCTAssertEqual(try fixture.documentObject(), originalDocument)
+            XCTAssertEqual(fixture.adapter.baseDocumentRevision, originalRevision)
         }
     }
 

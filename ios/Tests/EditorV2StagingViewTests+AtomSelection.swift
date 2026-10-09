@@ -393,6 +393,53 @@ extension EditorV2StagingViewTests {
         )
     }
 
+    func testScrolledAtomHitTestingKeepsVisibleProseEditable() throws {
+        let paragraphCount = 12
+        let bound = makeTerminalAtomView(
+            html: String(repeating: "<p>Before</p>", count: paragraphCount) + #"<div data-type="counter-card" data-count="7"></div>"#,
+            initialFrame: CGRect(x: 0, y: 0, width: 320, height: 240)
+        )
+        let input = bound.view.textView
+        defer {
+            _ = input.resignFirstResponder()
+            bound.view.removeFromSuperview()
+            bound.window.isHidden = true
+        }
+        let atomRange = (input.textStorage.string as NSString).range(of: LayoutConstants.objectReplacementCharacter)
+        XCTAssertNotEqual(atomRange.location, NSNotFound)
+        input.layoutManager.ensureLayout(for: input.textContainer)
+        input.scrollRangeToVisible(atomRange)
+        flushMain()
+        let atomRect = terminalAtomRect(in: input)
+        XCTAssertGreaterThanOrEqual(input.contentSize.height, atomRect.maxY)
+        input.contentOffset.y = atomRect.maxY - input.bounds.height
+        XCTAssertGreaterThan(input.contentOffset.y, 0, "fixture must scroll to show the terminal atom")
+        let atomPoint = CGPoint(x: atomRect.midX, y: atomRect.midY)
+        XCTAssertTrue(input.bounds.contains(atomPoint), "the actual atom must be visible")
+        let interaction = try XCTUnwrap(input.interactions.compactMap { $0 as? UITextInteraction }.first)
+        let shiftedAtomRect = atomRect.offsetBy(dx: 0, dy: -input.contentOffset.y)
+        let prosePoint = try XCTUnwrap((0..<input.layoutManager.numberOfGlyphs).compactMap { glyph -> CGPoint? in
+            let character = input.layoutManager.characterIndexForGlyph(at: glyph)
+            guard input.textStorage.attribute(.attachment, at: character, effectiveRange: nil) == nil else { return nil }
+            let rect = input.layoutManager.boundingRect(
+                forGlyphRange: NSRange(location: glyph, length: 1), in: input.textContainer
+            ).offsetBy(dx: input.textContainerInset.left, dy: input.textContainerInset.top)
+            guard rect.width > 0, rect.height > 0 else { return nil }
+            let point = CGPoint(x: rect.midX, y: rect.midY)
+            return input.bounds.contains(point) && shiftedAtomRect.contains(point) ? point : nil
+        }.first, "fixture must expose visible prose where a double-applied scroll offset would put the atom")
+
+        XCTAssertEqual(input.atomAttachmentRange(at: atomPoint), atomRange, "hit testing must use the visible atom's content coordinates")
+        XCTAssertFalse(try XCTUnwrap(interaction.delegate?.interactionShouldBegin?(interaction, at: atomPoint)),
+            "native text gestures must leave the atom to its own interaction")
+        XCTAssertNil(input.atomAttachmentRange(at: prosePoint), "scrolling must not create an atom hit over real prose")
+        XCTAssertTrue(try XCTUnwrap(interaction.delegate?.interactionShouldBegin?(interaction, at: prosePoint)),
+            "native prose selection must remain available above a scrolled atom")
+        XCTAssertTrue(input.placeCaret(at: prosePoint), "a deliberate tap on visible prose must still focus and place a caret")
+        XCTAssertTrue(input.isFirstResponder)
+        XCTAssertLessThan(input.selectedRange.location, atomRange.location)
+    }
+
     func testStagingFixedHeightParagraphHitBeforeOffscreenAtomMovesCaret() throws {
         let bound = makeTerminalAtomView(
             html: #"""

@@ -3,6 +3,7 @@ import XCTest
 
 final class TouchObservingTestWindow: UIWindow {
     var onTouchHitTest: ((UIView) -> Void)?
+    var onTouchEnded: ((UITouch) -> Void)?
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         let hit = super.hitTest(point, with: event)
@@ -10,6 +11,14 @@ final class TouchObservingTestWindow: UIWindow {
             onTouchHitTest(hit)
         }
         return hit
+    }
+
+    override func sendEvent(_ event: UIEvent) {
+        super.sendEvent(event)
+        guard event.type == .touches, let touches = event.allTouches else { return }
+        for touch in touches where touch.phase == .ended {
+            onTouchEnded?(touch)
+        }
     }
 }
 
