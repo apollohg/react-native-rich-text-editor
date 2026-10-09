@@ -96,6 +96,11 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         let themeDigest: String
     }
 
+    private struct RootTableAnchor: Equatable {
+        let tableBounds: CGRect
+        let placeholderBounds: CGRect
+    }
+
     private struct ReusableCellKey: Hashable {
         let contentKey: String
         let header: Bool
@@ -157,7 +162,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         }
     }
     private var preparedAppearanceRevision: UInt64?
-    private var mountedTableFrames: [String: CGRect] = [:]
+    private var mountedTableAnchors: [String: RootTableAnchor] = [:]
     private var mountedSurfaces: [String: ViewerTableSurface] = [:]
     private var mountedCanvasSize = CGSize.zero
     private var drawingOffset = CGPoint.zero
@@ -427,7 +432,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         preparedWidth = 0
         preparedAppearanceRevision = nil
         preparedResizePreview = nil
-        mountedTableFrames.removeAll()
+        mountedTableAnchors.removeAll()
         mountedSurfaces.removeAll()
         mountedCanvasSize = .zero
         drawingOffset = .zero
@@ -461,15 +466,15 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         drawingView.tableLayerChanges = latestPresentation?.changes
         drawingView.tableLayerAppearance = "\(appearanceRevision)-\(textView.renderAppearanceRevision)"
         guard !entries.isEmpty else {
-            mountedTableFrames.removeAll()
+            mountedTableAnchors.removeAll()
             mountedSurfaces.removeAll()
             mountedCanvasSize = .zero
             drawingView.excludedTableCellContentLayout = nil
             drawingView.install(layout: nil)
             return
         }
-        let anchors = anchorFrames(in: textView)
-        let tableFrames = anchors.filter { entries[$0.key] != nil }
+        let anchors = rootTableAnchors(in: textView)
+        let tableFrames = anchors.mapValues(\.tableBounds)
         let blocks = entries.values.compactMap { entry -> PreparedProseBlock? in
             guard let frame = tableFrames[entry.tableID] else { return nil }
             return PreparedProseBlock(
@@ -480,7 +485,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
             )
         }.sorted { $0.bounds.minY < $1.bounds.minY }
         guard !blocks.isEmpty else {
-            mountedTableFrames.removeAll()
+            mountedTableAnchors.removeAll()
             mountedSurfaces.removeAll()
             mountedCanvasSize = .zero
             drawingView.excludedTableCellContentLayout = nil
@@ -490,7 +495,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         let currentSurfaces = entries.mapValues(\.surface)
         let canvasSize = canvasSize(for: tableFrames, textView: textView)
         if drawingView.layout == nil
-            || mountedTableFrames != tableFrames
+            || mountedTableAnchors != anchors
             || !sameSurfaces(currentSurfaces, mountedSurfaces)
             || mountedCanvasSize != canvasSize {
             let scale = displayScale(for: textView)
@@ -514,7 +519,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
                 retainedBytes: retainedBytes,
                 tableRetainedBytesAtPreparation: tableRetainedBytes
             ))
-            mountedTableFrames = tableFrames
+            mountedTableAnchors = anchors
             mountedSurfaces = currentSurfaces
             mountedCanvasSize = canvasSize
         }
@@ -627,6 +632,10 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
 
     func rootTableContains(_ point: CGPoint) -> Bool {
         let drawingPoint = convert(point, to: drawingView)
+        if drawingView.bounds.contains(drawingPoint),
+           mountedTableAnchors.values.contains(where: { $0.placeholderBounds.contains(drawingPoint) }) {
+            return true
+        }
         return drawingView.mountedTablePresentation()?.tables.contains {
             entries[$0.surface.identity] != nil && $0.bounds.contains(drawingPoint) && $0.clip.contains(drawingPoint)
         } == true
@@ -1639,9 +1648,9 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         )
     }
 
-    private func anchorFrames(in textView: EditorTextView) -> [String: CGRect] {
+    private func rootTableAnchors(in textView: EditorTextView) -> [String: RootTableAnchor] {
         guard textView.textStorage.length > 0 else { return [:] }
-        var frames: [String: CGRect] = [:]
+        var anchors: [String: RootTableAnchor] = [:]
         let fullRange = NSRange(location: 0, length: textView.textStorage.length)
         textView.textStorage.enumerateAttribute(
             RenderBridgeAttributes.rootTableMarker,
@@ -1660,12 +1669,18 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
                   line.height > 0
             else { return }
             guard let entry = self.entries[tableID] else { return }
-            frames[tableID] = entry.localTableBounds.offsetBy(
-                dx: textView.textContainerInset.left + line.minX,
-                dy: textView.textContainerInset.top + line.minY
+            anchors[tableID] = RootTableAnchor(
+                tableBounds: entry.localTableBounds.offsetBy(
+                    dx: textView.textContainerInset.left + line.minX,
+                    dy: textView.textContainerInset.top + line.minY
+                ),
+                placeholderBounds: line.offsetBy(
+                    dx: textView.textContainerInset.left,
+                    dy: textView.textContainerInset.top
+                )
             )
         }
-        return frames
+        return anchors
     }
 
     private func anchorTableIDs(in textView: EditorTextView) -> Set<String> {

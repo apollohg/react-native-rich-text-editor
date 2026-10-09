@@ -1556,6 +1556,69 @@ final class EditorTableInputTests: XCTestCase {
         }
     }
 
+    func testRootTableMarginsRejectCaretPlacementAndKeepFollowingProseEditable() throws {
+        let margin: CGFloat = 24
+        let theme = EditorTheme(dictionary: ["version": 1, "styles": ["table": [
+            "marginTop": margin, "marginBottom": margin, "marginLeft": margin, "marginRight": margin
+        ]]])
+        let document = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"cell"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"#
+        try withMountedTable(document: document, theme: theme, cellSelection: nil) { fixture in
+            let root = fixture.view.textView
+            XCTAssertTrue(root.becomeFirstResponder())
+            root.selectedRange = NSRange(location: 2, length: 0)
+            root.textViewDidChangeSelection(root)
+            root.syncSelectionImmediately()
+            let originalDocument = try fixture.documentObject()
+            let originalSelection = try fixture.textSelectionScalars()
+            let caret = try XCTUnwrap(root.selectedTextRange).start
+            let full = try XCTUnwrap(root.textRange(from: root.beginningOfDocument, to: root.endOfDocument))
+            let marker = (root.textStorage.string as NSString).range(of: RenderBridge.rootTableAnchor)
+            XCTAssertNotEqual(marker.location, NSNotFound)
+            let glyphs = root.layoutManager.glyphRange(forCharacterRange: marker, actualCharacterRange: nil)
+            let line = root.layoutManager.lineFragmentRect(forGlyphAt: glyphs.location, effectiveRange: nil)
+            let placeholder = line.offsetBy(dx: root.textContainerInset.left, dy: root.textContainerInset.top)
+            let table = try XCTUnwrap(fixture.drawing.layout?.blocks.first?.tableBounds)
+            XCTAssertGreaterThan(table.minY, placeholder.minY, "fixture must expose a top margin")
+            XCTAssertGreaterThan(placeholder.maxY, table.maxY, "fixture must expose the reported bottom margin")
+            XCTAssertGreaterThan(table.minX, placeholder.minX, "fixture must expose a left margin")
+            XCTAssertGreaterThan(placeholder.maxX, table.maxX, "fixture must expose a right margin")
+            let points: [(String, CGPoint)] = [
+                ("top", CGPoint(x: table.midX, y: (placeholder.minY + table.minY) / 2)),
+                ("bottom", CGPoint(x: table.midX, y: (table.maxY + placeholder.maxY) / 2)),
+                ("left", CGPoint(x: (placeholder.minX + table.minX) / 2, y: table.midY)),
+                ("right", CGPoint(x: (table.maxX + placeholder.maxX) / 2, y: table.midY))
+            ]
+            for scrollOffset in [CGFloat.zero, margin / 2] {
+                root.contentOffset.y = scrollOffset
+                fixture.surface.updateGeometry(from: root)
+                for (side, point) in points {
+                    let overMargin = fixture.drawing.convert(point, to: root)
+                    let context = "\(side) table margin at scroll offset \(scrollOffset)"
+                    XCTAssertFalse(root.canPlaceCaret(at: overMargin), context)
+                    XCTAssertFalse(root.placeCaret(at: overMargin), context)
+                    XCTAssertEqual(root.selectedRange, NSRange(location: 2, length: 0), context)
+                    for position in [root.closestPosition(to: overMargin), root.closestPosition(to: overMargin, within: full)] {
+                        XCTAssertEqual(root.offset(from: caret, to: try XCTUnwrap(position)), 0, context)
+                    }
+                    XCTAssertEqual(try fixture.textSelectionScalars().0, originalSelection.0, context)
+                    XCTAssertEqual(try fixture.textSelectionScalars().1, originalSelection.1, context)
+                    XCTAssertEqual(try fixture.documentObject(), originalDocument, context)
+                }
+            }
+            let after = (root.textStorage.string as NSString).range(of: "after")
+            XCTAssertNotEqual(after.location, NSNotFound)
+            let prosePosition = try XCTUnwrap(root.position(from: root.beginningOfDocument, offset: after.location))
+            let proseCaret = root.caretRect(for: prosePosition)
+            let overProse = CGPoint(x: proseCaret.midX, y: proseCaret.midY)
+            XCTAssertTrue(root.placeCaret(at: overProse), "the paragraph below the margin remains editable")
+            XCTAssertEqual(root.selectedRange.location, after.location)
+            root.insertText("!")
+            XCTAssertTrue(root.textStorage.string.contains("!after"), "typing below the table must reach real prose")
+            root.deleteBackward()
+            XCTAssertEqual(try fixture.documentObject(), originalDocument, "Backspace below the table must remove that text")
+        }
+    }
+
     private final class ScriptedTouch: UITouch {
         private let windowPoint: CGPoint
         private let touchedView: UIView
