@@ -5,23 +5,41 @@ const NUMBER_TOKEN_BYTES: usize = 32;
 const NEGATIVE_ZERO_JSON: &[u8] = b"-0.0";
 const POSITIVE_ZERO_JSON: &[u8] = b"0.0";
 
+#[cfg(test)]
+std::thread_local! {
+    static NORMALIZED_INPUT_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(super) fn take_normalized_input_bytes_for_test() -> usize {
+    NORMALIZED_INPUT_BYTES.replace(0)
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct ProjectionHashPrefix {
     hash: Sha256Prefix,
+    normalizer: ProjectionNormalizer,
+}
+
+#[derive(Clone, Debug, Default)]
+struct ProjectionNormalizer {
     number: [u8; NUMBER_TOKEN_BYTES],
     number_len: usize,
     in_string: bool,
     escaped: bool,
+    changed_bytes: bool,
+}
+
+#[derive(Debug)]
+pub(super) struct ProjectionHashSuffix {
+    normalized: Option<Vec<u8>>,
 }
 
 impl ProjectionHashPrefix {
     pub(super) fn new(bytes: &[u8]) -> Option<Self> {
         let mut prefix = Self {
             hash: Sha256Prefix::new(&[])?,
-            number: [0; NUMBER_TOKEN_BYTES],
-            number_len: 0,
-            in_string: false,
-            escaped: false,
+            normalizer: ProjectionNormalizer::default(),
         };
         prefix.write_all(bytes).ok()?;
         Some(prefix)
@@ -31,11 +49,118 @@ impl ProjectionHashPrefix {
         let mut combined = self.clone();
         combined.write_all(first).ok()?;
         combined.write_all(second).ok()?;
-        combined.flush_number().ok()?;
+        combined.normalizer.flush_number(&mut combined.hash).ok()?;
         combined.hash.finish(&[], &[])
     }
 
-    fn flush_number(&mut self) -> std::io::Result<()> {
+    pub(super) fn finish_with_suffix(
+        &self,
+        changed: &[u8],
+        suffix: &[u8],
+        cached_suffix: &ProjectionHashSuffix,
+        exact_digest: [u8; 32],
+    ) -> Option<[u8; 32]> {
+        if !self.normalizer.at_boundary() {
+            return None;
+        }
+        let mut combined = self.clone();
+        combined.write_all(changed).ok()?;
+        if !combined.normalizer.at_boundary() {
+            return None;
+        }
+        if !combined.normalizer.changed_bytes && cached_suffix.normalized.is_none() {
+            return Some(exact_digest);
+        }
+        combined
+            .hash
+            .finish(cached_suffix.normalized.as_deref().unwrap_or(suffix), &[])
+    }
+}
+
+impl ProjectionHashSuffix {
+    pub(super) fn new(bytes: &[u8], byte_budget: usize) -> Option<Self> {
+        let mut normalizer = ProjectionNormalizer::default();
+        normalizer.write(&mut std::io::sink(), bytes).ok()?;
+        if !normalizer.at_boundary() {
+            return None;
+        }
+        if !normalizer.changed_bytes {
+            return Some(Self { normalized: None });
+        }
+        let mut normalized = ProjectionBytes::new(bytes.len(), byte_budget)?;
+        ProjectionNormalizer::default()
+            .write(&mut normalized, bytes)
+            .ok()?;
+        Some(Self {
+            normalized: Some(normalized.bytes),
+        })
+    }
+
+    pub(super) fn copy_with_budget(&self, byte_budget: usize) -> Option<Self> {
+        let normalized = match &self.normalized {
+            Some(bytes) => {
+                let mut copied = ProjectionBytes::new(bytes.len(), byte_budget)?;
+                copied.write_all(bytes).ok()?;
+                Some(copied.bytes)
+            }
+            None => None,
+        };
+        Some(Self { normalized })
+    }
+
+    pub(super) fn retained_bytes(&self) -> usize {
+        self.normalized.as_ref().map_or(0, Vec::capacity)
+    }
+}
+
+struct ProjectionBytes {
+    bytes: Vec<u8>,
+    byte_budget: usize,
+}
+
+impl ProjectionBytes {
+    fn new(initial_capacity: usize, byte_budget: usize) -> Option<Self> {
+        let mut bytes = Vec::new();
+        bytes
+            .try_reserve_exact(initial_capacity.min(byte_budget))
+            .ok()?;
+        (bytes.capacity() <= byte_budget).then_some(Self { bytes, byte_budget })
+    }
+}
+
+impl Write for ProjectionBytes {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        let next_len = self
+            .bytes
+            .len()
+            .checked_add(bytes.len())
+            .filter(|len| *len <= self.byte_budget)
+            .ok_or_else(|| {
+                std::io::Error::other("normalized projection suffix exceeds cache budget")
+            })?;
+        self.bytes
+            .try_reserve_exact(next_len - self.bytes.len())
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::OutOfMemory, error))?;
+        if self.bytes.capacity() > self.byte_budget {
+            return Err(std::io::Error::other(
+                "normalized projection suffix capacity exceeds cache budget",
+            ));
+        }
+        self.bytes.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl ProjectionNormalizer {
+    fn at_boundary(&self) -> bool {
+        !self.in_string && !self.escaped && self.number_len == 0
+    }
+
+    fn flush_number(&mut self, output: &mut impl Write) -> std::io::Result<()> {
         if self.number_len == 0 {
             return Ok(());
         }
@@ -67,9 +192,8 @@ impl ProjectionHashPrefix {
                 .map(str::as_bytes)
                 .unwrap_or(token)
         };
-        self.hash
-            .update(normalized)
-            .ok_or_else(|| std::io::Error::other("projection SHA-256 update failed"))?;
+        self.changed_bytes |= normalized != token;
+        output.write_all(normalized)?;
         self.number_len = 0;
         Ok(())
     }
@@ -85,10 +209,9 @@ impl ProjectionHashPrefix {
         self.number_len += 1;
         Ok(())
     }
-}
-
-impl Write for ProjectionHashPrefix {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+    fn write(&mut self, output: &mut impl Write, bytes: &[u8]) -> std::io::Result<usize> {
+        #[cfg(test)]
+        NORMALIZED_INPUT_BYTES.set(NORMALIZED_INPUT_BYTES.get().saturating_add(bytes.len()));
         let mut raw_start = 0;
         for (index, &byte) in bytes.iter().enumerate() {
             if self.in_string {
@@ -107,21 +230,35 @@ impl Write for ProjectionHashPrefix {
                     raw_start = index + 1;
                     continue;
                 }
-                self.flush_number()?;
+                self.flush_number(output)?;
                 raw_start = index;
             }
             if byte == b'"' {
                 self.in_string = true;
             } else if byte.is_ascii_digit() || byte == b'-' {
-                self.hash
-                    .update(&bytes[raw_start..index])
-                    .ok_or_else(|| std::io::Error::other("projection SHA-256 update failed"))?;
+                output.write_all(&bytes[raw_start..index])?;
                 self.push_number_byte(byte)?;
                 raw_start = index + 1;
             }
         }
-        self.hash
-            .update(&bytes[raw_start..])
+        output.write_all(&bytes[raw_start..])?;
+        Ok(bytes.len())
+    }
+}
+
+impl Write for ProjectionHashPrefix {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.normalizer.write(&mut self.hash, bytes)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Write for Sha256Prefix {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.update(bytes)
             .ok_or_else(|| std::io::Error::other("projection SHA-256 update failed"))?;
         Ok(bytes.len())
     }
@@ -139,6 +276,87 @@ pub(super) fn projection_sha256(bytes: &[u8]) -> Option<[u8; 32]> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn cached_suffix_preserves_projection_identity_for_changes_in_each_json_region() {
+        const INEXACT_INTEGER: u64 = 9_007_199_254_740_993;
+        let text = json!({"text": "😀 7 \\\"-0.0\\\" \\ café"});
+        let regions = [
+            (text.clone(), text.clone(), text.clone()),
+            (json!({"number": 7}), text.clone(), text.clone()),
+            (text.clone(), json!({"number": -0.0}), text.clone()),
+            (text.clone(), text.clone(), json!({"number": 7})),
+            (
+                json!({"number": INEXACT_INTEGER}),
+                json!({"number": 7.25}),
+                json!({"number": u64::MAX}),
+            ),
+        ];
+        for (before, changed, after) in regions {
+            let prefix = format!("[{},", before).into_bytes();
+            let changed = serde_json::to_vec(&changed).unwrap();
+            let suffix = format!(",{}]", after).into_bytes();
+            let full = [&prefix[..], &changed[..], &suffix[..]].concat();
+            let expected = projection_sha256(&full).unwrap();
+            let exact = super::super::canonical_sha256(&full);
+            let cached = ProjectionHashSuffix::new(&suffix, usize::MAX).unwrap();
+            let prefix = ProjectionHashPrefix::new(&prefix).unwrap();
+            take_normalized_input_bytes_for_test();
+            assert_eq!(
+                prefix.finish_with_suffix(&changed, &suffix, &cached, exact),
+                Some(expected),
+                "cached regions must preserve full projection identity: {}",
+                String::from_utf8_lossy(&full)
+            );
+            assert_eq!(take_normalized_input_bytes_for_test(), changed.len());
+        }
+    }
+
+    #[test]
+    fn cached_suffix_rejects_non_neutral_json_boundaries() {
+        let suffix = br#"}]"#;
+        let cached = ProjectionHashSuffix::new(suffix, usize::MAX).unwrap();
+        let exact = super::super::canonical_sha256(b"{}");
+        for prefix in [&br#"[{"text":""#[..], &br#"[{"text":"\"#[..], &b"[7"[..]] {
+            assert!(ProjectionHashPrefix::new(prefix)
+                .unwrap()
+                .finish_with_suffix(b"{}", suffix, &cached, exact)
+                .is_none());
+        }
+        for changed in [&br#"{"text":""#[..], &br#"{"text":"\"#[..], &b"7"[..]] {
+            assert!(ProjectionHashPrefix::new(b"[")
+                .unwrap()
+                .finish_with_suffix(changed, suffix, &cached, exact)
+                .is_none());
+        }
+        for suffix in [&br#""unfinished"#[..], &br#""escaped\"#[..], &b"7"[..]] {
+            assert!(ProjectionHashSuffix::new(suffix, usize::MAX).is_none());
+        }
+    }
+
+    #[test]
+    fn normalized_suffix_expansion_and_copy_stay_within_the_byte_budget() {
+        let suffix = br#",{"number":7}]"#;
+        let normalized = br#",{"number":7.0}]"#;
+        let cached = ProjectionHashSuffix::new(suffix, normalized.len()).unwrap();
+        assert_eq!(cached.normalized.as_deref(), Some(&normalized[..]));
+        assert_eq!(cached.retained_bytes(), normalized.len());
+        assert!(ProjectionHashSuffix::new(suffix, normalized.len() - 1).is_none());
+        assert!(cached.copy_with_budget(normalized.len() - 1).is_none());
+        assert_eq!(
+            cached
+                .copy_with_budget(normalized.len())
+                .unwrap()
+                .normalized,
+            cached.normalized
+        );
+        assert_eq!(
+            ProjectionHashSuffix::new(br#",{"text":"7"}]"#, 0)
+                .unwrap()
+                .retained_bytes(),
+            0
+        );
+    }
 
     #[test]
     fn projection_hash_matches_numeric_equality_across_every_chunk_boundary() {

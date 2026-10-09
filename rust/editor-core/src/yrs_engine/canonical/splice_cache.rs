@@ -1,6 +1,6 @@
 #[cfg(test)]
 use super::canonical_sha256;
-use super::projection_hash::ProjectionHashPrefix;
+use super::projection_hash::{ProjectionHashPrefix, ProjectionHashSuffix};
 use super::{hash_prefix::Sha256Prefix, CanonicalArtifact, CanonicalArtifactInner};
 use crate::model::Node;
 use serde::de::{DeserializeSeed, MapAccess, SeqAccess, Visitor};
@@ -34,6 +34,7 @@ pub(crate) struct CanonicalSpliceCache {
     artifact: Weak<CanonicalArtifactInner>,
     hash_prefix: Sha256Prefix,
     projection_hash_prefix: ProjectionHashPrefix,
+    projection_hash_suffix: ProjectionHashSuffix,
 }
 
 impl CanonicalSpliceCache {
@@ -94,6 +95,7 @@ impl CanonicalSpliceCache {
     pub(crate) fn retained_bytes(&self) -> Option<usize> {
         Self::fixed_bytes()?
             .checked_add(self.bytes.capacity())?
+            .checked_add(self.projection_hash_suffix.retained_bytes())?
             .checked_add(
                 self.path
                     .capacity()
@@ -226,6 +228,14 @@ impl CanonicalSpliceCache {
         } else {
             ProjectionHashPrefix::new(bytes.get(..suffix_range.start)?)?
         };
+        let suffix_budget = byte_budget.checked_sub(retained)?;
+        let projection_hash_suffix = if let Some((prior, _, _)) = replacement {
+            prior
+                .projection_hash_suffix
+                .copy_with_budget(suffix_budget)?
+        } else {
+            ProjectionHashSuffix::new(bytes.get(suffix_range.clone())?, suffix_budget)?
+        };
         let candidate = Self {
             bytes,
             path: owned_path,
@@ -234,6 +244,7 @@ impl CanonicalSpliceCache {
             artifact: Arc::downgrade(&after.0),
             hash_prefix,
             projection_hash_prefix,
+            projection_hash_suffix,
         };
         candidate.finish(after, previous_bytes, byte_budget)
     }
@@ -325,9 +336,11 @@ impl CanonicalSpliceCache {
         )?;
         #[cfg(test)]
         super::super::observability::record_canonical_hash();
-        let projection_digest = self.projection_hash_prefix.finish(
+        let projection_digest = self.projection_hash_prefix.finish_with_suffix(
             self.bytes.get(self.suffix_range.end..)?,
             self.bytes.get(self.suffix_range.clone())?,
+            &self.projection_hash_suffix,
+            digest,
         )?;
         let _ = after.0.sha256.set(digest);
         let _ = after.0.projection_sha256.set(projection_digest);
@@ -561,6 +574,7 @@ mod tests {
                 let prior_path = previous.path.as_ptr();
                 let fits_buffer = after.serialized_len() <= previous.bytes.capacity();
                 reset_canonical_artifact_counts_for_test();
+                super::super::projection_hash::take_normalized_input_bytes_for_test();
                 cache = CanonicalSpliceCache::prepare(
                     cache,
                     &artifact,
@@ -571,6 +585,11 @@ mod tests {
                     usize::MAX,
                 );
                 let cached = cache.as_ref().unwrap();
+                assert_eq!(
+                    super::super::projection_hash::take_normalized_input_bytes_for_test(),
+                    cached.bytes.len() - cached.suffix_range.end,
+                    "nested={nested}, target={target}, edit={index}: a cache hit must normalize only the changed text block"
+                );
                 assert_eq!(
                     take_canonical_artifact_counts_for_test().1,
                     0,
@@ -779,6 +798,127 @@ mod tests {
             "The cache must not keep the source document artifact alive"
         );
         assert_eq!(cache.retained_bytes(), Some(charge));
+    }
+
+    #[test]
+    fn normalized_suffix_capacity_is_charged_for_fresh_and_reused_caches() {
+        const EXCESS_BUFFER_BYTES: usize = 4096;
+        let schema = crate::prosemirror_schema();
+        let context = CanonicalSchemaContext::new(&schema);
+        let paragraph = initial(&schema).root().child(0).unwrap().clone();
+        let list = Node::element(
+            "ordered_list".into(),
+            HashMap::from([("start".into(), serde_json::json!(7))]),
+            Fragment::from(vec![Node::element(
+                "list_item".into(),
+                HashMap::new(),
+                Fragment::from(vec![paragraph.clone()]),
+            )]),
+        );
+        let document = Document::new(Node::element(
+            "doc".into(),
+            HashMap::new(),
+            Fragment::from(vec![paragraph, list]),
+        ));
+        let artifact = context.derive(&document).unwrap();
+        let seed = || {
+            CanonicalSpliceCache::prepare(None, &artifact, &artifact, &[0], 0, 0, usize::MAX)
+                .unwrap()
+        };
+        let cache = seed();
+        let suffix_charge = cache.projection_hash_suffix.retained_bytes();
+        assert!(
+            suffix_charge > cache.suffix_range.len(),
+            "integer normalization expands the immutable suffix"
+        );
+        let charge = cache.retained_bytes().unwrap();
+        assert_eq!(
+            charge,
+            CanonicalSpliceCache::fixed_bytes().unwrap()
+                + cache.bytes.capacity()
+                + cache.path.capacity() * std::mem::size_of::<u32>()
+                + suffix_charge
+        );
+        assert!(
+            CanonicalSpliceCache::prepare(None, &artifact, &artifact, &[0], 0, 0, charge).is_some()
+        );
+        assert!(
+            CanonicalSpliceCache::prepare(None, &artifact, &artifact, &[0], 0, 0, charge - 1)
+                .is_none()
+        );
+        assert!(CanonicalSpliceCache::prepare(
+            Some(seed()),
+            &artifact,
+            &artifact,
+            &[0],
+            0,
+            1,
+            charge * 2
+        )
+        .is_some());
+        assert!(CanonicalSpliceCache::prepare(
+            Some(seed()),
+            &artifact,
+            &artifact,
+            &[0],
+            0,
+            1,
+            charge * 2 - 1
+        )
+        .is_none());
+        let oversized = || {
+            let mut cache = seed();
+            cache.bytes.reserve_exact(EXCESS_BUFFER_BYTES);
+            cache
+        };
+        let (changed_document, _) = apply_step(
+            &document,
+            &Step::InsertText {
+                pos: 2,
+                text: "🙂".into(),
+                marks: vec![],
+            },
+            &schema,
+        )
+        .unwrap();
+        let after = context.derive(&changed_document).unwrap();
+        let old_charge = oversized().retained_bytes().unwrap();
+        let fresh_charge =
+            CanonicalSpliceCache::prepare(None, &after, &after, &[0], 0, 0, usize::MAX)
+                .unwrap()
+                .retained_bytes()
+                .unwrap();
+        let exact_budget = old_charge + fresh_charge;
+        assert!(
+            old_charge * 2 > exact_budget,
+            "oversized storage must take the fresh normalized-suffix copy branch"
+        );
+        let compact = CanonicalSpliceCache::prepare(
+            Some(oversized()),
+            &artifact,
+            &after,
+            &[0],
+            0,
+            1,
+            exact_budget,
+        )
+        .expect("fresh normalized-suffix copy fits the exact old-plus-new budget");
+        assert_eq!(compact.retained_bytes(), Some(fresh_charge));
+        assert_eq!(
+            compact.projection_hash_suffix.retained_bytes(),
+            suffix_charge
+        );
+        assert_canonical(&compact, &after, &[0]);
+        assert!(CanonicalSpliceCache::prepare(
+            Some(oversized()),
+            &artifact,
+            &after,
+            &[0],
+            0,
+            1,
+            exact_budget - 1,
+        )
+        .is_none());
     }
 
     #[test]
