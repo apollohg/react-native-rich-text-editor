@@ -28,6 +28,7 @@ internal class PreparedProseLayoutCache(
     private val publishedKeys = mutableSetOf<ProseLayoutKey>()
     private val cellShapeCatalog = PreparedCellShapeCatalog()
     private var benchmarkCensusKeys: MutableSet<ProseLayoutKey>? = null
+    private var hasRetainedTableLayouts = false
 
     fun value(
         key: ProseLayoutKey,
@@ -49,17 +50,13 @@ internal class PreparedProseLayoutCache(
         val started = PreparedProseInstrumentation.now()
         synchronized(lock) {
             benchmarkCensusKeys?.add(key)
-            completed[key]?.let {
-                createPendingLeaseIfActiveLocked(it, fabricGeneration, shouldCreateFabricLease)
-                finishMutationLocked(fabricGeneration)
-                PreparedProseInstrumentation.cacheLookup(started, true)
-                return it
-            }
             // Completed entries are deliberately disposable. Any live owner is
             // still an immutable complete-key source for a different surface.
-            liveLayoutLocked(key)?.let {
-                createPendingLeaseIfActiveLocked(it, fabricGeneration, shouldCreateFabricLease)
-                finishMutationLocked(fabricGeneration)
+            (completed[key] ?: liveLayoutLocked(key))?.let {
+                if (fabricGeneration != null || hasRetainedTableLayouts) {
+                    createPendingLeaseIfActiveLocked(it, fabricGeneration, shouldCreateFabricLease)
+                    finishMutationLocked(fabricGeneration)
+                }
                 PreparedProseInstrumentation.cacheLookup(started, true)
                 return it
             }
@@ -375,6 +372,10 @@ internal class PreparedProseLayoutCache(
         retireUnownedPublicationsLocked()
         buildContext?.close()
         cellShapeCatalog.synchronizeOwners(liveLayoutsLocked())
+        hasRetainedTableLayouts = completed.values.any { it.hasTableSurfaces } ||
+            pendingLeases.values.any { it.hasTableSurfaces } ||
+            mountedLeases.values.any { it.hasTableSurfaces } ||
+            directMounted.values.any { it.hasTableSurfaces }
         publishTotalsLocked()
     }
 

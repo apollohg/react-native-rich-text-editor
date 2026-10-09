@@ -2796,6 +2796,21 @@ class ViewerTableTest {
             second.currentRetainedBytes,
             cache.retainedBytesForTesting
         )
+        val flat = cell("flat", budget - second.currentRetainedBytes)
+        cache.value(flat.key) { flat }
+        assertEquals(
+            "Flat and table parents initially fit the budget",
+            2,
+            cache.completedCountForTesting
+        )
+        second.blocks.single().tableSurface!!.cells[0].content
+        assertTrue(cache.value(flat.key) { error("Flat artifact must remain cached") } === flat)
+        assertEquals(
+            "A flat cache hit must still recharge another parent's grown table store",
+            1,
+            cache.completedCountForTesting
+        )
+        assertEquals(flat.currentRetainedBytes, cache.retainedBytesForTesting)
     }
 
     private class CellGeometryProbe {
