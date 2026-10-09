@@ -182,9 +182,9 @@ final class EditorTableCommandSequenceTests: XCTestCase {
                 if grid[reference!].allSatisfy(\.header) {
                     reference = insertion == 0 || insertion == grid.count ? nil : insertion
                 }
-                let fresh = grid[0].indices.map { c in
-                    Cell(header: reference.map { grid[$0][c].header } ?? false, paragraphs: [""],
-                        widths: grid.compactMap { $0[c].widths }.first)
+                let fresh = grid[0].indices.map { columnIndex in
+                    Cell(header: reference.map { grid[$0][columnIndex].header } ?? false, paragraphs: [""],
+                        widths: grid.compactMap { $0[columnIndex].widths }.first)
                 }
                 grid.insert(fresh, at: insertion)
                 if self == .rowBefore {
@@ -216,9 +216,11 @@ final class EditorTableCommandSequenceTests: XCTestCase {
             case .headerCell, .headerRow, .headerColumn:
                 let rows = self == .headerColumn ? Array(grid.indices) : [row]
                 let columns = self == .headerRow ? Array(grid[row].indices) : [column]
-                let holdsHeader = rows.contains { r in columns.contains { grid[r][$0].header } }
-                for r in rows {
-                    for c in columns where !holdsHeader || grid[r][c].header { grid[r][c].header = !holdsHeader }
+                let holdsHeader = rows.contains { rowIndex in columns.contains { grid[rowIndex][$0].header } }
+                for rowIndex in rows {
+                    for columnIndex in columns where !holdsHeader || grid[rowIndex][columnIndex].header {
+                        grid[rowIndex][columnIndex].header = !holdsHeader
+                    }
                 }
             case .resize:
                 for index in grid.indices { grid[index][column].widths = [Sequence.resizedWidth] }

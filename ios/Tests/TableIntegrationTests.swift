@@ -958,13 +958,13 @@ final class TableIntegrationTests: XCTestCase {
             XCTAssertEqual(fixture.activeCellPosition(), movedLast, "remote insertion must follow the same logical cell")
             XCTAssertEqual(fixture.view.activeTextInput.tableCellPositionMap?.binding.cellIndex, UInt32(Integration.movedLastCell))
             try check(expectedDocument([["A", "", "B"], ["C", "", "D"]]),
-                      caret: movedLast + Integration.cellTextOffset + UInt32(Integration.gridLastText.unicodeScalars.count),
-                      nativeText: Integration.gridLastText, label: "remote column insertion")
+                caret: movedLast + Integration.cellTextOffset + UInt32(Integration.gridLastText.unicodeScalars.count),
+                nativeText: Integration.gridLastText, label: "remote column insertion")
             fixture.view.activeTextInput.insertText(Integration.compositionText)
             let typedCell = Integration.gridLastText + Integration.compositionText
             try check(expectedDocument([["A", "", "B"], ["C", "", typedCell]]),
-                      caret: movedLast + Integration.cellTextOffset + UInt32(typedCell.unicodeScalars.count),
-                      nativeText: typedCell, label: "typing after remote column insertion")
+                caret: movedLast + Integration.cellTextOffset + UInt32(typedCell.unicodeScalars.count),
+                nativeText: typedCell, label: "typing after remote column insertion")
             _ = try relay.exchangeUntilIdle()
             XCTAssertEqual(fixture.adapter.documentJson(), remoteAdapter.documentJson(), "the typed character must reach the other peer")
 
@@ -984,8 +984,8 @@ final class TableIntegrationTests: XCTestCase {
             XCTAssertEqual(try fixture.documentObject(), surviving, "late edits from the removed cell must be ignored")
             fixture.view.activeTextInput.insertText(Integration.compositionText)
             try check(expectedDocument([["A", "", "B"]], trailing: Integration.compositionText + Integration.trailingProse),
-                      caret: fallback + UInt32(Integration.compositionText.unicodeScalars.count), nativeText: nil,
-                      label: "typing after remote row deletion")
+                caret: fallback + UInt32(Integration.compositionText.unicodeScalars.count), nativeText: nil,
+                label: "typing after remote row deletion")
             XCTAssertTrue(fixture.view.textView.textStorage.string.hasSuffix(Integration.compositionText + Integration.trailingProse), "the fallback typing must be visible")
         }
     }

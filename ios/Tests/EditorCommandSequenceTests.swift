@@ -286,8 +286,7 @@ final class EditorCommandSequenceTests: XCTestCase {
                     try check(fixture, context: context, expected: leftText + middleText + rightText,
                         neighbour: neighbour, label: label + "/initial")
                     input.selectedRange = originalSelection
-                    if inserted.isEmpty { input.deleteBackward() }
-                    else { input.insertText(inserted) }
+                    if inserted.isEmpty { input.deleteBackward() } else { input.insertText(inserted) }
                     let prefix = retainedLeft + inserted
                     let resultBlocks = [paragraph(prefix + retainedRight)]
                     try checkBlocks(fixture, context: context, blocks: resultBlocks, offset: prefix.utf16.count,
@@ -490,12 +489,10 @@ final class EditorCommandSequenceTests: XCTestCase {
             XCTAssertGreaterThan(caret.height, 0, "\(label): collapsed caret")
             XCTAssertTrue(input.bounds.insetBy(dx: -caret.width, dy: -caret.height).intersects(caret), "\(label): invisible caret \(caret) bounds=\(input.bounds)")
         }
-        for token in expected.isEmpty ? [] : [expected] {
-            if token.rangeOfCharacter(from: .newlines) == nil {
-                // List markers and paragraph separators may split the visible string.
-                for part in ["left", "middle", "typed", "right", "again"] where token.contains(part) {
-                    XCTAssertTrue(input.textStorage.string.contains(part), "\(label): visible text missing \(part)")
-                }
+        for token in expected.isEmpty ? [] : [expected] where token.rangeOfCharacter(from: .newlines) == nil {
+            // List markers and paragraph separators may split the visible string.
+            for part in ["left", "middle", "typed", "right", "again"] where token.contains(part) {
+                XCTAssertTrue(input.textStorage.string.contains(part), "\(label): visible text missing \(part)")
             }
         }
     }
@@ -535,7 +532,7 @@ final class EditorCommandSequenceTests: XCTestCase {
     private func clear(_ fixture: MountedEditorTestFixture, context: String, mode: String, name: String, preservesFormatting: Bool, label: String) throws {
         let input = fixture.view.activeTextInput
         input.selectedRange = NSRange(location: mode == "selection" ? 0 : input.textStorage.length,
-                                      length: mode == "selection" ? input.textStorage.length : 0)
+            length: mode == "selection" ? input.textStorage.length : 0)
         let budget = mode == "selection" ? Self.selectedDeletePresses : input.textStorage.length +
             descendants(try scope(document(fixture), context: context)).count * Self.boundaryBackspaceAllowance
         for press in 0..<budget {
@@ -673,7 +670,7 @@ final class EditorCommandSequenceTests: XCTestCase {
             let seed = try blocks.map { try scopedDocument(corpus, context: context, blocks: $0) }
                 ?? initialDocument(corpus, context: context, inline: inline)
             let fixture = try makeMountedEditorFixture(config: json(XCTUnwrap(corpus["config"])),
-                                                       document: seed, size: Self.editorSize, windowed: true)
+                document: seed, size: Self.editorSize, windowed: true)
             defer { fixture.close() }
             var neighbour: String?
             if context != Self.rootContext {
@@ -847,8 +844,7 @@ final class EditorCommandSequenceTests: XCTestCase {
     private func paragraph(runs: [(String, [String])]) -> [String: Any] {
         var combined: [(String, [String])] = []
         for (text, marks) in runs where !text.isEmpty {
-            if combined.last?.1 == marks { combined[combined.count - Self.nodeContentOffset].0 += text }
-            else { combined.append((text, marks)) }
+            if combined.last?.1 == marks { combined[combined.count - Self.nodeContentOffset].0 += text } else { combined.append((text, marks)) }
         }
         return paragraph(combined.map { textNode($0.0, marks: $0.1) })
     }
@@ -999,8 +995,8 @@ final class EditorCommandSequenceTests: XCTestCase {
                             let stage = label + "/phase \(phase)"
                             let selection = try XCTUnwrap(input.currentLogicalScalarSelection())
                             let update = try XCTUnwrap(fixture.adapter.insertContentJson(
-                                                        json(["type": "doc", "content": [try XCTUnwrap(fragment["node"])] ]),
-                                                        anchor: selection.anchor, head: selection.head), stage)
+                                json(["type": "doc", "content": [try XCTUnwrap(fragment["node"])] ]),
+                                anchor: selection.anchor, head: selection.head), stage)
                             XCTAssertTrue(input.applyUpdateJSON(update), stage)
                             let middle = try XCTUnwrap(fragment["text"] as? String)
                             let left = phase == 0 ? prefix : ""
@@ -1010,9 +1006,9 @@ final class EditorCommandSequenceTests: XCTestCase {
                                 $0["type"] as? String == fragment["name"] as? String
                             }, "\(stage): inserted node missing")
                             try probe(fixture, corpus: corpus, context: context, expected: left + middle + probeText + right,
-                                      neighbour: neighbour, label: stage)
+                                neighbour: neighbour, label: stage)
                             try clear(fixture, context: context, mode: mode, name: XCTUnwrap(fragment["name"] as? String),
-                                      preservesFormatting: fragment["preservesFormatting"] as? Bool == true, label: stage)
+                                preservesFormatting: fragment["preservesFormatting"] as? Bool == true, label: stage)
                             try check(fixture, context: context, expected: "", neighbour: neighbour, label: stage + "/clear")
                         }
                         let recovery = try XCTUnwrap(corpus["recovery"] as? String)
