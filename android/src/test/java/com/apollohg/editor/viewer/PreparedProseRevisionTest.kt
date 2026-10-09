@@ -26,6 +26,25 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 class PreparedProseRevisionTest {
     @Test
+    fun sha256KeepsLowercaseUtf8DigestIdentity() {
+        val vectors = listOf(
+            "" to "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "abc" to "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            "é🙂\u0000漢字" to
+                "83cb7637655137a242469c289dbfee1f4c48e95efb5be9a93c1227c39d1bae85",
+            (Char.MIN_VALUE..'\u00ff').joinToString("") to
+                "9799e3eb6096a48f515a94324200b7af24251a4131eccf9a2cd65d012a1f5c71"
+        )
+        vectors.forEachIndexed { index, (source, expected) ->
+            assertEquals(
+                "UTF-8 digest vector $index must preserve every encoded byte",
+                expected,
+                sha256(source)
+            )
+        }
+    }
+
+    @Test
     fun visibleImagesAreAdmittedBeforePrefetchAndReleasedOutsideTheWindow() {
         val budget = DecodedBitmapBudget(1024 * 1024)
         val bitmap = Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888)

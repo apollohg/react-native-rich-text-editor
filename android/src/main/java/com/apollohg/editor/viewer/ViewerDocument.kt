@@ -880,10 +880,19 @@ private fun mentionPrefix(configJson: String): String? = runCatching {
     root.optJSONObject("mentions")?.optionalString("prefix") ?: root.optionalString("mentionPrefix")
 }.getOrNull()
 
-internal fun sha256(value: String): String = MessageDigest.getInstance(
-    "SHA-256"
-).digest(value.toByteArray(Charsets.UTF_8)).joinToString("") {
-    "%02x".format(it)
+private const val HEX_DIGITS = "0123456789abcdef"
+private const val HEX_DIGIT_BITS = 4
+private const val HEX_DIGIT_MASK = 0x0F
+private const val HEX_DIGITS_PER_BYTE = 2
+
+internal fun sha256(value: String): String {
+    val digest = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
+    return buildString(digest.size * HEX_DIGITS_PER_BYTE) {
+        digest.forEach { byte ->
+            append(HEX_DIGITS[(byte.toInt() ushr HEX_DIGIT_BITS) and HEX_DIGIT_MASK])
+            append(HEX_DIGITS[byte.toInt() and HEX_DIGIT_MASK])
+        }
+    }
 }
 
 private fun parseTableAttributes(value: Any?): Map<String, JSONObject>? {

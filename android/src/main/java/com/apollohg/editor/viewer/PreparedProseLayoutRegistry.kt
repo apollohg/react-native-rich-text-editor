@@ -2,7 +2,6 @@ package com.apollohg.editor.viewer
 
 import com.apollohg.editor.ProseViewerError
 import com.apollohg.editor.tables.TableLayoutDirection
-import java.security.MessageDigest
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -754,9 +753,7 @@ internal class PreparedProseLayoutRegistry(
             .map { it.toString() }
             .sorted()
             .joinToString("\n")
-        val digest = MessageDigest.getInstance("SHA-256")
-            .digest(material.toByteArray(Charsets.UTF_8))
-            .joinToString("") { "%02x".format(it) }
+        val digest = sha256(material)
         return BenchmarkResidentCensus(count = keys.size, digest = digest)
     }
 
