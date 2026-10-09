@@ -8,6 +8,18 @@ extension EditorTextView {
         isFirstResponder ? self : focusedTableCellInput?()
     }
 
+    var keyboardOcclusionFrameInScreen: CGRect? {
+        guard let window, let input = keyboardCaretInput,
+              let accessory = input.inputAccessoryView, let accessoryWindow = accessory.window,
+              !accessory.isHidden, !accessoryWindow.isHidden,
+              accessoryWindow.screen === window.screen
+        else { return keyboardFrameInScreen }
+        let accessoryFrame = accessory.convert(accessory.bounds, to: window.screen.coordinateSpace)
+            .intersection(window.screen.bounds)
+        guard !accessoryFrame.isNull, !accessoryFrame.isEmpty else { return keyboardFrameInScreen }
+        return keyboardFrameInScreen.map { $0.intersection(window.screen.bounds).union(accessoryFrame) } ?? accessoryFrame
+    }
+
     @objc func handleKeyboardFrameChange(_ notification: Notification) {
         guard keyboardCaretInput != nil || keyboardFrameInScreen != nil else { return }
         if notification.name == UIResponder.keyboardWillHideNotification {
@@ -32,8 +44,8 @@ extension EditorTextView {
 
     func updateKeyboardInset() {
         var overlap: CGFloat = 0
-        if isScrollEnabled, let window, let keyboardFrameInScreen {
-            let frameInWindow = window.convert(keyboardFrameInScreen, from: window.screen.coordinateSpace)
+        if isScrollEnabled, let window, let keyboardOcclusionFrameInScreen {
+            let frameInWindow = window.convert(keyboardOcclusionFrameInScreen, from: window.screen.coordinateSpace)
             let keyboardFrame = convert(frameInWindow, from: window)
             let intersection = bounds.intersection(keyboardFrame)
             if !intersection.isNull, intersection.maxY >= bounds.maxY - 1 {

@@ -54,6 +54,7 @@ final class EditorAccessoryToolbarView: UIView {
     var editMenuPresenter: AnyObject?
     var onPressItem: ((NativeToolbarItem) -> Void)?
     var onSelectMentionSuggestion: ((NativeMentionSuggestion) -> Void)?
+    var onKeyboardGeometryMayChange: (() -> Void)?
     var isShowingMentionSuggestions: Bool {
         !mentionButtons.isEmpty && !mentionScrollView.isHidden && scrollView.isHidden
     }
@@ -126,6 +127,11 @@ final class EditorAccessoryToolbarView: UIView {
             self.accessoryBottomSafeAreaInset = self.safeAreaInsets.bottom
             self.updateAccessoryHeight()
         }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        onKeyboardGeometryMayChange?()
     }
 
     private func updateAccessoryHeight() {

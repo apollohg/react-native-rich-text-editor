@@ -78,11 +78,22 @@ extension RichTextEditorViewTests {
         let themedRowHeight: CGFloat = 64
         let mentionRowHeight: CGFloat = 52
         let themedKeyboardOffset: CGFloat = 10
-        func assertMountedHeight(_ state: String, rowHeight: CGFloat, keyboardOffset: CGFloat = 0, line: UInt = #line) {
+        func keyboardHostFrameInScreen() -> CGRect {
+            controller.view.convert(controller.view.keyboardLayoutGuide.layoutFrame, to: window.screen.coordinateSpace)
+        }
+        func assertMountedHeight(_ state: String, rowHeight: CGFloat, keyboardOffset: CGFloat = 0, line: UInt = #line) throws {
             let verticalPadding: CGFloat = 12
             let expectedContentHeight = rowHeight + verticalPadding + keyboardOffset
+            let screenBoundsWithTolerance = window.screen.bounds.insetBy(
+                dx: -NativeEditorExpoView.layoutEpsilon, dy: -NativeEditorExpoView.layoutEpsilon
+            )
             let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-                toolbar.window != nil
+                let keyboardFrame = keyboardHostFrameInScreen()
+                let toolbarFrame = toolbar.convert(toolbar.bounds, to: window.screen.coordinateSpace)
+                return input.isFirstResponder && toolbar.window != nil && keyboardFrame.height > 0
+                    && screenBoundsWithTolerance.contains(toolbarFrame)
+                    && toolbarFrame.minY <= keyboardFrame.minY + NativeEditorExpoView.layoutEpsilon
+                    && toolbarFrame.maxY + NativeEditorExpoView.layoutEpsilon >= keyboardFrame.minY
                     && abs(toolbar.bounds.height - expectedContentHeight - toolbar.safeAreaInsets.bottom) <= NativeEditorExpoView.layoutEpsilon
                     && abs(toolbar.bodyStackView.bounds.height - rowHeight) <= NativeEditorExpoView.layoutEpsilon
             }, object: toolbar)
@@ -98,35 +109,77 @@ extension RichTextEditorViewTests {
             XCTAssertTrue(toolbar.safeAreaLayoutGuide.layoutFrame.contains(toolbar.bodyStackView.convert(toolbar.bodyStackView.bounds, to: toolbar)),
                 "\(state) must keep the row above the bottom safe area", line: line)
             XCTAssertEqual(toolbar.bounds.width, window.bounds.width, accuracy: NativeEditorExpoView.layoutEpsilon, line: line)
-            if let keyboardFrame = input.keyboardFrameInScreen {
-                let toolbarFrame = toolbar.convert(toolbar.bounds, to: window.screen.coordinateSpace)
-                XCTAssertEqual(toolbarFrame.minY, keyboardFrame.minY, accuracy: NativeEditorExpoView.layoutEpsilon,
-                    "the keyboard host must reserve the full accessory height in \(state)", line: line)
+            let keyboardFrame = keyboardHostFrameInScreen()
+            let toolbarFrame = toolbar.convert(toolbar.bounds, to: window.screen.coordinateSpace)
+            XCTAssertGreaterThan(keyboardFrame.height, 0, "\(state) must have a visible keyboard host", line: line)
+            XCTAssertTrue(screenBoundsWithTolerance.contains(toolbarFrame),
+                "\(state) must keep the full accessory on screen: toolbar=\(toolbarFrame), screen=\(window.screen.bounds)", line: line)
+            XCTAssertLessThanOrEqual(toolbarFrame.minY, keyboardFrame.minY + NativeEditorExpoView.layoutEpsilon,
+                "\(state) must start above the keyboard guide: toolbar=\(toolbarFrame), keyboard=\(keyboardFrame)", line: line)
+            XCTAssertGreaterThanOrEqual(toolbarFrame.maxY + NativeEditorExpoView.layoutEpsilon, keyboardFrame.minY,
+                "\(state) must meet the keyboard guide without a gap: toolbar=\(toolbarFrame), keyboard=\(keyboardFrame)", line: line)
+            let occlusionTop = min(toolbarFrame.minY, keyboardFrame.minY)
+            let editableViewportBottom = input.convert(
+                CGPoint(x: input.bounds.midX, y: input.bounds.maxY - input.adjustedContentInset.bottom),
+                to: window.screen.coordinateSpace
+            ).y
+            XCTAssertLessThanOrEqual(editableViewportBottom, occlusionTop + NativeEditorExpoView.layoutEpsilon,
+                "\(state) must keep the editable viewport above the keyboard host: bottom=\(editableViewportBottom), toolbar=\(toolbarFrame), keyboard=\(keyboardFrame), inset=\(input.adjustedContentInset), reported=\(String(describing: input.keyboardFrameInScreen))", line: line)
+            let rowFrame = toolbar.bodyStackView.convert(toolbar.bodyStackView.bounds, to: window.screen.coordinateSpace)
+            XCTAssertTrue(screenBoundsWithTolerance.contains(rowFrame),
+                "\(state) must keep the full toolbar row on screen: row=\(rowFrame)", line: line)
+            var ancestor = toolbar.bodyStackView.superview
+            while let current = ancestor {
+                if current.clipsToBounds {
+                    let clippingFrame = current.convert(current.bounds, to: window.screen.coordinateSpace)
+                    XCTAssertTrue(clippingFrame.insetBy(
+                        dx: -NativeEditorExpoView.layoutEpsilon, dy: -NativeEditorExpoView.layoutEpsilon
+                    ).contains(rowFrame),
+                        "\(state) row is clipped by \(type(of: current)): row=\(rowFrame), clip=\(clippingFrame)", line: line)
+                }
+                ancestor = current.superview
             }
+            let visibleControl: UIButton
+            if toolbar.isShowingMentionSuggestions {
+                visibleControl = try XCTUnwrap(toolbar.mentionButtonAtForTesting(0), "\(state) must show a mention chip", line: line)
+            } else {
+                visibleControl = try XCTUnwrap(toolbar.buttonBindings.first { binding in
+                    let button = binding.button
+                    let center = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: window.screen.coordinateSpace)
+                    return !button.isHidden && button.alpha > 0 && !button.bounds.isEmpty && rowFrame.contains(center)
+                }?.button, "\(state) must show a toolbar button", line: line)
+            }
+            let controlWindow = try XCTUnwrap(visibleControl.window, "\(state) control must belong to the native keyboard window", line: line)
+            let controlCenter = visibleControl.convert(
+                CGPoint(x: visibleControl.bounds.midX, y: visibleControl.bounds.midY), to: controlWindow
+            )
+            let hit = controlWindow.hitTest(controlCenter, with: nil)
+            XCTAssertTrue(hit === visibleControl || hit?.isDescendant(of: visibleControl) == true,
+                "\(state) control must receive native window hit testing: control=\(visibleControl), center=\(controlCenter), hit=\(String(describing: hit))", line: line)
         }
 
         XCTAssertTrue(input.becomeFirstResponder())
-        assertMountedHeight("default toolbar", rowHeight: defaultRowHeight)
+        try assertMountedHeight("default toolbar", rowHeight: defaultRowHeight)
         view.setThemeJson(#"{"toolbar":{"appearance":"native","height":64,"keyboardOffset":10}}"#)
-        assertMountedHeight("themed toolbar", rowHeight: themedRowHeight, keyboardOffset: themedKeyboardOffset)
+        try assertMountedHeight("themed toolbar", rowHeight: themedRowHeight, keyboardOffset: themedKeyboardOffset)
         let suggestion = try XCTUnwrap(NativeMentionSuggestion(dictionary: [
             "key": "alice", "title": "Alice", "label": "@alice", "attrs": ["label": "@alice"]
         ]))
         _ = toolbar.setMentionSuggestions([suggestion])
         input.reloadInputViews()
-        assertMountedHeight("mention suggestions", rowHeight: mentionRowHeight, keyboardOffset: themedKeyboardOffset)
+        try assertMountedHeight("mention suggestions", rowHeight: mentionRowHeight, keyboardOffset: themedKeyboardOffset)
         let chip = try XCTUnwrap(toolbar.mentionButtonAtForTesting(0))
         XCTAssertGreaterThan(chip.bounds.width, 0)
         XCTAssertGreaterThan(chip.bounds.height, 0)
         XCTAssertTrue(toolbar.bounds.contains(chip.convert(chip.bounds, to: toolbar)))
         _ = toolbar.setMentionSuggestions([])
         input.reloadInputViews()
-        assertMountedHeight("restored themed toolbar", rowHeight: themedRowHeight, keyboardOffset: themedKeyboardOffset)
+        try assertMountedHeight("restored themed toolbar", rowHeight: themedRowHeight, keyboardOffset: themedKeyboardOffset)
         view.setThemeJson(nil)
-        assertMountedHeight("restored default toolbar", rowHeight: defaultRowHeight)
+        try assertMountedHeight("restored default toolbar", rowHeight: defaultRowHeight)
         XCTAssertTrue(input.resignFirstResponder())
         XCTAssertTrue(input.becomeFirstResponder())
-        assertMountedHeight("refocused toolbar", rowHeight: defaultRowHeight)
+        try assertMountedHeight("refocused toolbar", rowHeight: defaultRowHeight)
         let typedText = "awake"
         input.insertText(typedText)
         XCTAssertTrue(EditorV2Shadow.getHtml(id: editorId).contains(typedText))

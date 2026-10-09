@@ -214,6 +214,9 @@ extension NativeEditorExpoView {
     }
 
     func configureAccessoryToolbar() {
+        accessoryToolbar.onKeyboardGeometryMayChange = { [weak self] in
+            self?.richTextView.textView.updateKeyboardInset()
+        }
         accessoryToolbar.onPressItem = { [weak self] item in
             self?.handleToolbarItemPress(item)
         }

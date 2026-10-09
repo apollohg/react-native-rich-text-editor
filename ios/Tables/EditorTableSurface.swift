@@ -939,7 +939,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         var viewport = visible.intersection(padded)
         guard !viewport.isNull, !viewport.isEmpty else { return nil }
         if let window = host.window,
-           let keyboardFrame = host.textView.keyboardFrameInScreen {
+           let keyboardFrame = host.textView.keyboardOcclusionFrameInScreen {
             let windowFrame = window.convert(keyboardFrame, from: window.screen.coordinateSpace)
             let occlusion = drawingView.convert(windowFrame, from: window)
             if viewport.intersects(occlusion) {
