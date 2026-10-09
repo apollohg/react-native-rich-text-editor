@@ -138,12 +138,13 @@ extension EditorTextView {
         replacementRange: (from: UInt32, to: UInt32)?
     ) -> String? {
         guard editorId != 0,
+              isAuthorizedForTableCellInput(forScalarRange: replacementRange),
               let adapter = EditorV2Registry.adapter(forLegacyId: editorId)
         else {
             return nil
         }
         var adoptedUpdateJSON: String?
-        performInterceptedInput(flushPendingNativeTextMutation: false) {
+        performAuthorizedInterceptedInput(flushPendingNativeTextMutation: false) {
             if let replacementRange {
                 if replacementRange.from == replacementRange.to {
                     adoptedUpdateJSON = adapter.insertText(text, atScalar: replacementRange.from)
@@ -172,12 +173,13 @@ extension EditorTextView {
         replacementRange: (from: UInt32, to: UInt32)?
     ) -> EditorV2Adapter.NativeMutationRender? {
         guard editorId != 0,
+              isAuthorizedForTableCellInput(forScalarRange: replacementRange),
               let adapter = EditorV2Registry.adapter(forLegacyId: editorId)
         else {
             return nil
         }
         var commit: EditorV2Adapter.NativeMutationRender?
-        performInterceptedInput(flushPendingNativeTextMutation: false) {
+        performAuthorizedInterceptedInput(flushPendingNativeTextMutation: false) {
             if let replacementRange {
                 if replacementRange.from == replacementRange.to {
                     commit = adapter.insertTextWithNativeOutcome(

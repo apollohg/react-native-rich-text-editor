@@ -7,6 +7,7 @@ struct TableScalarExtent: Equatable {
 
 struct RootTablePositionMap {
     private struct Marker {
+        let tableID: String
         let localStart: UInt32
         let extent: TableScalarExtent
         var localEnd: UInt32 { localStart + 1 }
@@ -49,7 +50,7 @@ struct RootTablePositionMap {
                 stop.pointee = true
                 return
             }
-            let marker = Marker(localStart: localStart, extent: extent)
+            let marker = Marker(tableID: key, localStart: localStart, extent: extent)
             markers.append(marker)
             delta += UInt64(marker.delta)
         }
@@ -67,6 +68,34 @@ struct RootTablePositionMap {
         guard local <= localLength,
               !markers.contains(where: { $0.localStart <= local && local <= $0.localEnd }) else { return nil }
         return globalBoundary(local: local)
+    }
+
+    func applyingTextReplacement(fromLocal: UInt32, toLocal: UInt32, newLocalLength: UInt32) -> RootTablePositionMap? {
+        guard toLocal <= localLength,
+              globalRange(from: fromLocal, to: toLocal) != nil,
+              newLocalLength >= localLength - (toLocal - fromLocal)
+        else { return nil }
+        let delta = Int64(newLocalLength) - Int64(localLength)
+        guard let newGlobalLength = UInt32(exactly: Int64(globalLength) + delta) else { return nil }
+        var projectedMarkers: [Marker] = []
+        for marker in markers {
+            let shift = marker.localStart > toLocal ? delta : 0
+            guard let localStart = UInt32(exactly: Int64(marker.localStart) + shift),
+                  let scalarStart = UInt32(exactly: Int64(marker.extent.scalarStart) + shift),
+                  let scalarEnd = UInt32(exactly: Int64(marker.extent.scalarEnd) + shift)
+            else { return nil }
+            projectedMarkers.append(Marker(
+                tableID: marker.tableID,
+                localStart: localStart,
+                extent: TableScalarExtent(scalarStart: scalarStart, scalarEnd: scalarEnd)
+            ))
+        }
+        return RootTablePositionMap(
+            markers: projectedMarkers,
+            localLength: newLocalLength,
+            globalLength: newGlobalLength,
+            extents: Dictionary(uniqueKeysWithValues: projectedMarkers.map { ($0.tableID, $0.extent) })
+        )
     }
 
     func globalRange(from: UInt32, to: UInt32) -> Range<UInt32>? {

@@ -2,6 +2,11 @@ import os
 import UIKit
 
 extension EditorTextView {
+    private struct NativeMutationSelectionStorage {
+        let storage: NSAttributedString
+        let rootTablePositionMap: RootTablePositionMap?
+    }
+
     struct NativeTextMutation {
         let from: UInt32
         let to: UInt32
@@ -39,12 +44,16 @@ extension EditorTextView {
     private func authorizedStorageApplying(
         _ replacementText: String,
         inUtf16Range range: NSRange
-    ) -> NSAttributedString {
+    ) -> NativeMutationSelectionStorage? {
+        let rootTablePositionMap = PositionBridge.rootTablePositionMap(in: self)
         guard range.location >= 0,
               range.length >= 0,
               NSMaxRange(range) <= lastAuthorizedAttributedTextStorage.length
         else {
-            return lastAuthorizedAttributedTextStorage
+            return NativeMutationSelectionStorage(
+                storage: lastAuthorizedAttributedTextStorage,
+                rootTablePositionMap: rootTablePositionMap
+            )
         }
         let patched = NSMutableAttributedString(
             attributedString: lastAuthorizedAttributedTextStorage
@@ -52,7 +61,18 @@ extension EditorTextView {
         // The string overload inherits the replaced run's attributes, which is
         // exactly what keeps the structure the keyboard's replacement dropped.
         patched.replaceCharacters(in: range, with: replacementText)
-        return patched
+        let projectedRootTablePositionMap: RootTablePositionMap?
+        if let rootTablePositionMap {
+            guard let projected = rootTablePositionMap.applyingTextReplacement(
+                fromLocal: PositionBridge.utf16OffsetToScalar(range.location, in: lastAuthorizedAttributedTextStorage),
+                toLocal: PositionBridge.utf16OffsetToScalar(NSMaxRange(range), in: lastAuthorizedAttributedTextStorage),
+                newLocalLength: PositionBridge.utf16OffsetToScalar(patched.length, in: patched)
+            ) else { return nil }
+            projectedRootTablePositionMap = projected
+        } else {
+            projectedRootTablePositionMap = nil
+        }
+        return NativeMutationSelectionStorage(storage: patched, rootTablePositionMap: projectedRootTablePositionMap)
     }
 
     func nativeTextMutationFromAuthorizedDiff(
@@ -125,14 +145,11 @@ extension EditorTextView {
             location: prefix,
             length: authorizedEnd - prefix
         )
+        let selectionStorage = authorizedStorageApplying(replacementText, inUtf16Range: authorizedReplacementUtf16Range)
         let selectedScalarRange = targetSelectionUtf16Range.flatMap { range in
-            scalarRange(
-                forUtf16Range: range,
-                in: authorizedStorageApplying(
-                    replacementText,
-                    inUtf16Range: authorizedReplacementUtf16Range
-                )
-            )
+            selectionStorage.flatMap {
+                scalarRange(forUtf16Range: range, in: $0.storage, rootTablePositionMap: $0.rootTablePositionMap)
+            }
         }
         let preservesAuthorizedSelectionDirection = lastAuthorizedSelectionIsBackward
             && targetSelectionUtf16Range.map { targetSelection in
@@ -150,9 +167,10 @@ extension EditorTextView {
             authorizedEnd,
             in: lastAuthorizedAttributedTextStorage
         )
+        let rootTablePositionMap = PositionBridge.rootTablePositionMap(in: self)
         guard let mutationRange = inputScalarRange(
-            fromLocal: localMutationStart,
-            toLocal: localMutationEnd
+            fromLocal: rootTablePositionMap?.globalBoundary(local: localMutationStart) ?? localMutationStart,
+            toLocal: rootTablePositionMap?.globalBoundary(local: localMutationEnd) ?? localMutationEnd
         ) else { return nil }
 
         return NativeTextMutation(
@@ -290,7 +308,10 @@ extension EditorTextView {
         }
         let selectedScalarRange = shouldUseCurrentSelection
             ? selectionRangeForConversion.flatMap {
-                scalarRange(forUtf16Range: $0, in: selectionConversionStorage)
+                let range = $0
+                return selectionConversionStorage.flatMap {
+                    scalarRange(forUtf16Range: range, in: $0.storage, rootTablePositionMap: $0.rootTablePositionMap)
+                }
             }
             : nil
         let preservesCapturedSelectionDirection = selectedScalarRange.map { selectedRange in

@@ -45,6 +45,51 @@ final class RootTablePositionMapTests: XCTestCase {
         XCTAssertNil(map.localScalar(global: 8))
     }
 
+    func testTextReplacementProjectsTablesBeforeBetweenAndAfterTheEdit() throws {
+        let text = rendered("a\n\u{200B}\nbc\n\u{200B}\nd", markers: [
+            ("first", NSRange(location: 2, length: 1)), ("second", NSRange(location: 7, length: 1))
+        ])
+        let map = try XCTUnwrap(RootTablePositionMap.fromRendered(text, extents: [
+            "first": TableScalarExtent(scalarStart: 2, scalarEnd: 6),
+            "second": TableScalarExtent(scalarStart: 10, scalarEnd: 13)
+        ], scalarLength: 15))
+        func assertProjection(
+            _ name: String, range: Range<UInt32>, length: UInt32,
+            first: TableScalarExtent, second: TableScalarExtent, caret: (local: UInt32, global: UInt32)
+        ) throws {
+            let projected = try XCTUnwrap(map.applyingTextReplacement(
+                fromLocal: range.lowerBound, toLocal: range.upperBound, newLocalLength: length
+            ), name)
+            XCTAssertEqual(projected.extents["first"], first, name)
+            XCTAssertEqual(projected.extents["second"], second, name)
+            XCTAssertEqual(projected.globalScalar(local: caret.local), caret.global, name)
+            XCTAssertEqual(projected.localScalar(global: caret.global), caret.local, name)
+            XCTAssertTrue(projected.isInputRangeSafe(from: caret.global, to: caret.global), name)
+            XCTAssertFalse(projected.isInputRangeSafe(from: first.scalarStart, to: first.scalarEnd), name)
+            let opaqueTableScalarDelta: UInt32 = 5
+            XCTAssertEqual(projected.globalBoundary(local: length), length + opaqueTableScalarDelta, name)
+        }
+        try assertProjection("before", range: 0..<1, length: 13,
+            first: TableScalarExtent(scalarStart: 5, scalarEnd: 9),
+            second: TableScalarExtent(scalarStart: 13, scalarEnd: 16), caret: (4, 4))
+        try assertProjection("between", range: 4..<6, length: 13,
+            first: TableScalarExtent(scalarStart: 2, scalarEnd: 6),
+            second: TableScalarExtent(scalarStart: 13, scalarEnd: 16), caret: (9, 12))
+        try assertProjection("after", range: 9..<10, length: 15,
+            first: TableScalarExtent(scalarStart: 2, scalarEnd: 6),
+            second: TableScalarExtent(scalarStart: 10, scalarEnd: 13), caret: (15, 20))
+        try assertProjection("shorter", range: 4..<6, length: 9,
+            first: TableScalarExtent(scalarStart: 2, scalarEnd: 6),
+            second: TableScalarExtent(scalarStart: 9, scalarEnd: 12), caret: (5, 8))
+        XCTAssertEqual(map.globalBoundary(local: 10), 15, "projection must preserve the original ruler")
+        XCTAssertNil(map.applyingTextReplacement(fromLocal: 2, toLocal: 3, newLocalLength: 10), "a native edit cannot replace a table marker")
+        XCTAssertNil(map.applyingTextReplacement(fromLocal: 1, toLocal: 4, newLocalLength: 10), "a native edit cannot cross a table")
+        XCTAssertNil(map.applyingTextReplacement(fromLocal: 6, toLocal: 4, newLocalLength: 10), "reversed ranges must be refused")
+        XCTAssertNil(map.applyingTextReplacement(fromLocal: 9, toLocal: 11, newLocalLength: 10), "out-of-bounds ranges must be refused")
+        XCTAssertNil(map.applyingTextReplacement(fromLocal: 4, toLocal: 6, newLocalLength: 7), "the new length cannot remove text outside the edit")
+        XCTAssertNil(map.applyingTextReplacement(fromLocal: 4, toLocal: 6, newLocalLength: .max), "global positions must not overflow")
+    }
+
     func testMalformedMarkersAndExtentsAreRejected() {
         let valid = rendered("\u{200B}\nz", markers: [("table", NSRange(location: 0, length: 1))])
         let extent = TableScalarExtent(scalarStart: 0, scalarEnd: 4)

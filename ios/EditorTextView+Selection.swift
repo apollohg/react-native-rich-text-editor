@@ -159,10 +159,20 @@ extension EditorTextView: UITextInteractionDelegate {
 
     func scalarRange(
         forUtf16Range range: NSRange,
-        in storage: NSAttributedString
+        in storage: NSAttributedString,
+        rootTablePositionMap: RootTablePositionMap? = nil
     ) -> (from: UInt32, to: UInt32)? {
         let start = PositionBridge.utf16OffsetToScalar(range.location, in: storage)
         let end = PositionBridge.utf16OffsetToScalar(NSMaxRange(range), in: storage)
+        if let rootTablePositionMap {
+            let from = rootTablePositionMap.globalBoundary(local: start)
+            let to = rootTablePositionMap.globalBoundary(local: end)
+            guard !rootTableSelectionInputBlocked,
+                  rootTablePositionMap.isRangeRepresentable(from: from, to: to),
+                  rootTablePositionMap.isInputRangeSafe(from: from, to: to)
+            else { return nil }
+            return (from, to)
+        }
         return inputScalarRange(fromLocal: start, toLocal: end)
     }
 
@@ -470,7 +480,19 @@ extension EditorTextView: UITextInteractionDelegate {
         currentLogicalScalarSelection()
     }
 
-    func isAuthorizedForTableCellInput() -> Bool {
+    func isAuthorizedForTableCellInput(forScalarRange range: (from: UInt32, to: UInt32)? = nil) -> Bool {
+        guard hasAuthorizedNativeInputOwner() else { return false }
+        guard tableCellPositionMap == nil else { return true }
+        guard let scalarRange = range ?? selectedTextRange.map({ PositionBridge.textRangeToScalarRange($0, in: self) })
+        else { return true }
+        return PositionBridge.isRootTextInputRangeSafe(
+            from: min(scalarRange.from, scalarRange.to),
+            to: max(scalarRange.from, scalarRange.to),
+            in: self
+        )
+    }
+
+    func hasAuthorizedNativeInputOwner() -> Bool {
         guard !authoritativeCellSelectionActive else { return false }
         guard let map = tableCellPositionMap else {
             guard !rootTableSelectionInputBlocked else { return false }
@@ -478,13 +500,7 @@ extension EditorTextView: UITextInteractionDelegate {
                 guard let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
                       hasAuthorizedRootNativeOwner(adapter) else { return false }
             }
-            guard let selection = selectedTextRange else { return true }
-            let scalarRange = PositionBridge.textRangeToScalarRange(selection, in: self)
-            return PositionBridge.isRootTextInputRangeSafe(
-                from: scalarRange.from,
-                to: scalarRange.to,
-                in: self
-            )
+            return true
         }
         guard let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
               adapter.baseDocumentRevision == map.binding.documentRevision,

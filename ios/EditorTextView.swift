@@ -593,9 +593,10 @@ class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegat
             super.insertText(text)
             return
         }
-        guard isAuthorizedForTableCellInput() else { return }
+        guard hasAuthorizedNativeInputOwner() else { return }
         guard finishExternalTextCompositionBeforeInteractionIfNeeded() else { return }
         guard flushPendingNativeTextMutationCommitIfNeeded() else { return }
+        guard isAuthorizedForTableCellInput() else { return }
         if !isReplayingDeferredInsertText, !deferredInsertTexts.isEmpty {
             enqueueDeferredInsertText(text)
             return
@@ -688,9 +689,10 @@ class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegat
             super.deleteBackward()
             return
         }
-        guard isAuthorizedForTableCellInput() else { return }
+        guard hasAuthorizedNativeInputOwner() else { return }
         guard finishExternalTextCompositionBeforeInteractionIfNeeded() else { return }
         guard flushPendingNativeTextMutationCommitIfNeeded() else { return }
+        guard isAuthorizedForTableCellInput() else { return }
         guard !isCollapsedAtomBoundary(selectedUtf16Range()) else { return }
 
         if markedTextReplacementScalarRange != nil || markedTextRange != nil {
@@ -815,9 +817,10 @@ class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegat
             super.replace(range, withText: text)
             return
         }
-        guard isAuthorizedForTableCellInput() else { return }
+        guard hasAuthorizedNativeInputOwner() else { return }
         guard finishExternalTextCompositionBeforeInteractionIfNeeded() else { return }
         guard flushPendingNativeTextMutationCommitIfNeeded() else { return }
+        guard isAuthorizedForTableCellInput() else { return }
         let replacementUtf16Range = NSRange(
             location: offset(from: beginningOfDocument, to: range.start),
             length: offset(from: range.start, to: range.end)
@@ -876,11 +879,12 @@ class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegat
     override func setMarkedText(_ markedText: String?, selectedRange: NSRange) {
         ensureInternalTextViewDelegate()
         if markedText != nil {
-            guard isAuthorizedForTableCellInput() else { return }
+            guard hasAuthorizedNativeInputOwner() else { return }
         }
         guard finishExternalTextCompositionBeforeInteractionIfNeeded() else { return }
         if markedText != nil {
             guard flushPendingNativeTextMutationCommitIfNeeded() else { return }
+            guard isAuthorizedForTableCellInput() else { return }
             captureMarkedTextReplacementRangeIfNeeded()
         } else if markedTextReplacementScalarRange == nil, markedTextRange == nil {
             guard flushPendingNativeTextMutationCommitIfNeeded() else { return }

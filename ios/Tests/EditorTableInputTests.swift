@@ -1624,6 +1624,118 @@ final class EditorTableInputTests: XCTestCase {
         }
     }
 
+    func testSpaceAutocorrectAfterTableKeepsCaretAtCompletedWordOnScheduledCommit() throws {
+        try assertSpaceAutocorrectAfterTable(flushBeforeNextInput: true)
+    }
+
+    func testSpaceAutocorrectAfterTableKeepsCaretAtCompletedWordBeforeNextInput() throws {
+        try assertSpaceAutocorrectAfterTable(flushBeforeNextInput: false)
+    }
+
+    func testSpaceAutocorrectBetweenTablesKeepsCaretBeforeShiftedTable() throws {
+        try assertSpaceAutocorrectAfterTable(flushBeforeNextInput: true, followedByTable: true)
+    }
+
+    func testSpaceAutocorrectBetweenTablesCommitsBeforeNextInput() throws {
+        try assertSpaceAutocorrectAfterTable(flushBeforeNextInput: false, followedByTable: true)
+    }
+
+    func testSpaceAutocorrectBetweenTablesCommitsBeforeBackspace() throws {
+        try assertSpaceAutocorrectAfterTable(flushBeforeNextInput: false, followedByTable: true) { input in
+            input.deleteBackward()
+            input.insertText(" !")
+        }
+    }
+
+    func testSpaceAutocorrectBetweenTablesCommitsBeforeNativeReplacement() throws {
+        try assertSpaceAutocorrectAfterTable(flushBeforeNextInput: false, followedByTable: true) { input in
+            input.replace(try XCTUnwrap(input.selectedTextRange), withText: "!")
+        }
+    }
+
+    func testSpaceAutocorrectBetweenTablesCommitsBeforeComposition() throws {
+        try assertSpaceAutocorrectAfterTable(flushBeforeNextInput: false, followedByTable: true) { input in
+            input.setMarkedText("!", selectedRange: NSRange(location: 1, length: 0))
+            input.unmarkText()
+        }
+    }
+
+    private func assertSpaceAutocorrectAfterTable(
+        flushBeforeNextInput: Bool, followedByTable: Bool = false,
+        nextInputAction: ((EditorTextView) throws -> Void)? = nil
+    ) throws {
+        let replacedPrefix = "thue"
+        let replacementPrefix = "thrus"
+        let originalWord = "thueh "
+        let completedWord = "thrush "
+        let nextInput = "!"
+        let baseDocument = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"untouched table text"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"thueh "}]}]}"#
+        var documentObject = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(baseDocument.utf8)) as? [String: Any])
+        var blocks = try XCTUnwrap(documentObject["content"] as? [[String: Any]])
+        let wordParagraphIndex = blocks.count - 1
+        if followedByTable {
+            blocks.append(try XCTUnwrap(blocks.first { $0["type"] as? String == "table" }))
+            blocks.append(["type": "paragraph", "content": [["type": "text", "text": "after"]]])
+            documentObject["content"] = blocks
+        }
+        let document = try XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: documentObject), encoding: .utf8))
+        try withMountedTable(document: document, cellSelection: nil) { fixture in
+            let input = fixture.view.textView
+            XCTAssertTrue(input.becomeFirstResponder())
+            let wordRange = (input.textStorage.string as NSString).range(of: originalWord)
+            XCTAssertNotEqual(wordRange.location, NSNotFound)
+            input.selectedRange = NSRange(location: NSMaxRange(wordRange), length: 0)
+            input.textViewDidChangeSelection(input)
+            input.syncSelectionImmediately()
+            let originalText = input.lastAuthorizedText
+            let originalDocument = try fixture.documentObject()
+            let wordScalar = PositionBridge.utf16OffsetToScalar(wordRange.location, in: input)
+            let expectedText = (originalText as NSString).replacingCharacters(in: wordRange, with: completedWord)
+            let expectedCaret = wordRange.location + completedWord.utf16.count
+            let expectedScalar = wordScalar + UInt32(completedWord.unicodeScalars.count)
+            XCTAssertTrue(PositionBridge.hasRootTableScalarExtents(in: input), "fixture must collapse a real root table in TextKit")
+
+            input.textStorage.replaceCharacters(
+                in: NSRange(location: wordRange.location, length: replacedPrefix.utf16.count),
+                with: NSAttributedString(string: replacementPrefix)
+            )
+            input.selectedRange = NSRange(location: expectedCaret, length: 0)
+            input.textViewDidChangeSelection(input)
+            if flushBeforeNextInput {
+                let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                    !input.nativeTextMutationCommitScheduled && input.pendingNativeTextMutation == nil
+                }, object: nil)
+                XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: MountedEditorTestFixture.releaseTimeout), .completed)
+                XCTAssertEqual(input.textStorage.string, expectedText, "the accepted correction must survive its native commit")
+                XCTAssertEqual(input.selectedRange, NSRange(location: expectedCaret, length: 0),
+                    "Space autocorrect after a table must keep the native caret after the completed word")
+                XCTAssertEqual(try fixture.textSelectionScalars().0, expectedScalar)
+                XCTAssertEqual(try fixture.textSelectionScalars().1, expectedScalar)
+            }
+            if let nextInputAction {
+                try nextInputAction(input)
+            } else {
+                input.insertText(nextInput)
+            }
+            let expectedTextAfterInput = (expectedText as NSString).replacingCharacters(
+                in: NSRange(location: expectedCaret, length: 0), with: nextInput
+            )
+            XCTAssertEqual(input.textStorage.string, expectedTextAfterInput, "next input must follow the completed word")
+            XCTAssertEqual(input.selectedRange, NSRange(location: expectedCaret + nextInput.utf16.count, length: 0))
+            XCTAssertEqual(try fixture.textSelectionScalars().0, expectedScalar + UInt32(nextInput.unicodeScalars.count))
+            XCTAssertEqual(try fixture.textSelectionScalars().1, expectedScalar + UInt32(nextInput.unicodeScalars.count))
+            var expectedBlocks = try XCTUnwrap(originalDocument["content"] as? [[String: Any]])
+            var paragraph = expectedBlocks[wordParagraphIndex]
+            var text = try XCTUnwrap((paragraph["content"] as? [[String: Any]])?.first)
+            text["text"] = completedWord + nextInput
+            paragraph["content"] = [text]
+            expectedBlocks[wordParagraphIndex] = paragraph
+            let expectedDocument: NSDictionary = ["type": "doc", "content": expectedBlocks]
+            XCTAssertEqual(try fixture.documentObject(), expectedDocument, "correction must preserve the table and preceding prose")
+            XCTAssertEqual(input.reconciliationCount, 0, "an accepted keyboard correction must not be rolled back")
+        }
+    }
+
     func testLiveTableMarginTapPreservesFocusAndSelection() throws {
         try LiveGestureProbe.requireOptIn()
         try withMountedMarginTable { fixture in
