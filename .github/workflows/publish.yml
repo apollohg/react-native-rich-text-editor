@@ -461,7 +461,9 @@ jobs:
                   key: ios-security-host-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.ios-toolchain.outputs.xcode }}-${{ steps.ios-codegen.outputs.hash }}-${{ hashFiles('ios/**', 'ios-tests/**', 'scripts/tests/*.json', 'common/cpp/**', 'ReactNativeProseEditor.podspec', 'src/specs/**', 'react-native.config.js', 'example/package-lock.json', 'scripts/run-ios-tests.sh', 'scripts/require-native-artifacts.sh') }}
 
             - name: Install iOS test dependencies
-              run: npm run install:ios-test-pods
+              run: |
+                  npm run install:ios-test-pods
+                  mkdir -p test-results/ios
 
 
             - name: Build iOS test host
@@ -478,9 +480,18 @@ jobs:
                   key: ${{ steps.ios-test-build.outputs.cache-primary-key }}
 
             - name: Run iOS unit tests
-              run: npm run test:ios
+              run: npm run test:ios -- -resultBundlePath test-results/ios/NativeEditorTests.xcresult
               env:
                   NATIVE_EDITOR_IOS_TEST_ACTION: test-without-building
+
+            - name: Upload iOS test results
+              if: always()
+              uses: actions/upload-artifact@v7
+              with:
+                  name: ios-security-test-results
+                  path: test-results/ios
+                  if-no-files-found: ignore
+                  retention-days: 2
 
             - name: Validate iOS security behavior
               run: npm run validate:security -- --release --behavior

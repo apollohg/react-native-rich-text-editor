@@ -461,7 +461,7 @@ assert.match(androidBuildSource, /outputs\.upToDateWhen\s*\{\s*false\s*\}/, 'JVM
 const iosSecurityJob = requireJob('security-ios');
 const iosUnitTestStep = iosSecurityJob.split('- name: Run iOS unit tests')[1]?.split('\n            - name:')[0];
 assert.ok(iosUnitTestStep, 'release validation must run the complete iOS XCTest suite');
-assert.match(iosUnitTestStep, /^\s+run: npm run test:ios\s*$/m, 'release iOS tests must run without test filters');
+assert.match(iosUnitTestStep, /^\s+run: npm run test:ios(?: -- -resultBundlePath test-results\/ios\/NativeEditorTests\.xcresult)?\s*$/m, 'release iOS tests must run without test filters');
 assert.match(iosUnitTestStep, /NATIVE_EDITOR_IOS_TEST_ACTION: test-without-building/);
 assert.doesNotMatch(iosUnitTestStep, /\bif:|continue-on-error:/, 'the complete iOS suite must gate publishing on every host cache hit');
 const iosBuildStep = iosSecurityJob.split('- name: Build iOS test host')[1]?.split('\n            - name:')[0];
