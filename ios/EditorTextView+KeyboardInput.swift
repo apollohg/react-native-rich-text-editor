@@ -518,6 +518,7 @@ extension EditorTextView {
         let paragraphProbe = min(clampedCursor, text.length - 1)
         let paragraphRange = text.paragraphRange(for: NSRange(location: paragraphProbe, length: 0))
         guard UInt32(text.character(at: paragraphRange.location)) == Self.emptyBlockPlaceholderScalar.value else { return nil }
+        guard textStorage.attribute(RenderBridgeAttributes.listContext, at: paragraphRange.location, effectiveRange: nil) == nil else { return nil }
 
         let paragraphText = text.substring(with: paragraphRange).trimmingCharacters(in: .newlines)
         guard paragraphText == String(Self.emptyBlockPlaceholderScalar) else { return nil }

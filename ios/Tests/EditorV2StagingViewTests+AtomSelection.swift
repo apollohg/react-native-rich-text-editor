@@ -47,6 +47,86 @@ extension EditorV2StagingViewTests {
         XCTAssertEqual(v2DocumentText(bound.adapter), "Beforeafter", "the atom and both text neighbours must survive")
     }
 
+    func testBackspaceLiftsEmptyListItemAfterCustomAtomBeforeSelectingAtom() throws {
+        let bound = makeTerminalAtomView()
+        let view = bound.view
+        let input = view.textView
+        defer {
+            _ = input.resignFirstResponder()
+            view.removeFromSuperview()
+            bound.window.isHidden = true
+        }
+        let document = #"""
+            {"type":"doc","content":[
+                {"type":"paragraph","content":[{"type":"text","text":"Before"}]},
+                {"type":"counterCard","attrs":{"count":7}},
+                {"type":"ordered_list","content":[
+                    {"type":"list_item","content":[{"type":"paragraph"}]}
+                ]}
+            ]}
+            """#
+        XCTAssertTrue(input.applyUpdateJSON(try XCTUnwrap(bound.adapter.setContentJson(document))))
+        let initialDocument = try v2DocumentJSON(bound.adapter)
+        let initialBlocks = try XCTUnwrap(initialDocument["content"] as? [[String: Any]])
+        let listItems = try XCTUnwrap(initialBlocks.last?["content"] as? [[String: Any]])
+        let itemBlocks = try XCTUnwrap(listItems.first?["content"] as? [[String: Any]])
+        let emptyParagraph = try XCTUnwrap(itemBlocks.first)
+        let precedingParagraph = try XCTUnwrap(initialBlocks.first)
+        let liftedDocument: NSDictionary = [
+            "type": "doc",
+            "content": Array(initialBlocks.dropLast()) + [emptyParagraph]
+        ]
+        let atomRange = (input.textStorage.string as NSString).range(of: LayoutConstants.objectReplacementCharacter)
+        guard atomRange.location != NSNotFound else { return XCTFail("fixture did not render its custom atom") }
+        let atom = try XCTUnwrap(input.textStorage.attribute(.attachment, at: atomRange.location, effectiveRange: nil) as? AtomBlockAttachment)
+        XCTAssertTrue(input.becomeFirstResponder())
+        setCollapsedCaret(in: input, utf16Offset: input.textStorage.length)
+        input.textViewDidChangeSelection(input)
+        flushMain()
+        let initialSelection = try XCTUnwrap(bound.adapter.cachedAtomicRenderSelection()) as NSDictionary
+
+        input.deleteBackward()
+
+        XCTAssertEqual(try v2DocumentJSON(bound.adapter), liftedDocument,
+            "Backspace must lift the empty list item to a plain paragraph before selecting its preceding custom atom")
+        let selection = try XCTUnwrap(bound.adapter.cachedAtomicRenderSelection())
+        XCTAssertEqual(try XCTUnwrap(selection["type"] as? String), "text",
+            "the atom must remain unselected while Backspace removes the trailing list structure")
+        XCTAssertEqual(try XCTUnwrap(EditorV2Adapter.uint32Field(selection, "anchor")),
+            try XCTUnwrap(EditorV2Adapter.uint32Field(selection, "head")),
+            "lifting an empty list item must leave a collapsed authoritative text selection")
+        XCTAssertEqual(input.selectedRange.length, 0, "lifting an empty list item must leave a collapsed native caret")
+        input.performToolbarUndo()
+        XCTAssertEqual(try v2DocumentJSON(bound.adapter), initialDocument,
+            "Undo must restore the exact empty list structure and its custom atom neighbour")
+        XCTAssertEqual(try XCTUnwrap(bound.adapter.cachedAtomicRenderSelection()) as NSDictionary, initialSelection,
+            "Undo must restore the authoritative caret in the empty list item")
+        input.performToolbarRedo()
+        XCTAssertEqual(try v2DocumentJSON(bound.adapter), liftedDocument,
+            "Redo must lift the same empty list item without deleting the atom")
+        XCTAssertEqual(try XCTUnwrap(bound.adapter.cachedAtomicRenderSelection()) as NSDictionary, selection as NSDictionary,
+            "Redo must restore the authoritative caret in the lifted paragraph")
+
+        input.deleteBackward()
+        XCTAssertEqual(try v2DocumentJSON(bound.adapter), liftedDocument,
+            "only after removing list structure may the next Backspace select the preceding atom")
+        let atomSelection = try XCTUnwrap(bound.adapter.cachedAtomicRenderSelection())
+        XCTAssertEqual(try XCTUnwrap(atomSelection["type"] as? String), "node")
+        XCTAssertEqual(try XCTUnwrap(EditorV2Adapter.uint32Field(atomSelection, "pos")), atom.docPos)
+        XCTAssertEqual(input.selectedRange, atomRange)
+        input.deleteBackward()
+        let deletedDocument: NSDictionary = ["type": "doc", "content": [precedingParagraph, emptyParagraph]]
+        XCTAssertEqual(try v2DocumentJSON(bound.adapter), deletedDocument,
+            "deleting the selected atom must leave the preceding text and lifted empty paragraph")
+        input.performToolbarUndo()
+        XCTAssertEqual(try v2DocumentJSON(bound.adapter), liftedDocument,
+            "Undo must restore the deleted atom without restoring the already removed list")
+        XCTAssertEqual(input.selectedRange, atomRange)
+        input.performToolbarRedo()
+        XCTAssertEqual(try v2DocumentJSON(bound.adapter), deletedDocument,
+            "Redo must remove the same atom while preserving the lifted paragraph")
+    }
+
     func testBackspaceThroughExampleContentAfterCustomAtomKeepsAtomDeletable() throws {
         let bound = makeTerminalAtomView()
         let view = bound.view
@@ -93,6 +173,11 @@ extension EditorV2StagingViewTests {
             if after == before, input.selectedRange == beforeSelection { break }
         }
         XCTAssertTrue(atomSelected, "deleting the example's ordered list and rule must reach a selectable CounterCard")
+        let selectedDocument = try v2DocumentJSON(bound.adapter)
+        let selectedBlocks = try XCTUnwrap(selectedDocument["content"] as? [[String: Any]])
+        XCTAssertEqual(try selectedBlocks.map { try XCTUnwrap($0["type"] as? String) },
+            ["paragraph", "counterCard", "paragraph"],
+            "all following list structure must be removed before Backspace selects CounterCard, document=\(selectedDocument)")
         input.deleteBackward()
         XCTAssertFalse(try XCTUnwrap(bound.adapter.documentJson()).contains("counterCard"))
         XCTAssertFalse(input.textStorage.string.contains(LayoutConstants.objectReplacementCharacter))
