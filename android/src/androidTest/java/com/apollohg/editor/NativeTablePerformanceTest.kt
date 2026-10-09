@@ -1249,6 +1249,10 @@ class NativeTablePerformanceTest {
         val host = onMain { EditorHost().also { it.load(Fixture(rows, columns, false).source()) } }
         try {
             val input = onMain { host.bind(0) }
+            instrumentation.awaitStableTableViewport(
+                onMain { host.drawing },
+                TimeUnit.SECONDS.toMillis(FRAME_TIMEOUT_SECONDS)
+            )
             for (text in listOf(TYPING_TEXT, LINE_BREAK_TEXT)) {
                 val counters = PreparedProseInstrumentation.TablePerformanceCounters()
                 var inspections = 0

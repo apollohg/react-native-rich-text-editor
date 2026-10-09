@@ -6,6 +6,8 @@ import android.graphics.PointF
 import android.graphics.Rect
 import android.graphics.RectF
 import android.os.SystemClock
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.test.core.app.ActivityScenario
 import com.apollohg.editor.viewer.PreparedProseDrawingView
 import java.io.File
@@ -24,6 +26,39 @@ internal fun PreparedProseDrawingView.unobstructedTableViewport(): RectF {
     window.offset(-location[0], -location[1])
     if (!local.intersect(window)) return RectF()
     return RectF(local)
+}
+
+internal fun Instrumentation.awaitStableTableViewport(
+    drawing: PreparedProseDrawingView,
+    timeoutMs: Long,
+    requireIme: Boolean = false
+) {
+    val deadline = SystemClock.uptimeMillis() + timeoutMs
+    var previous: RectF? = null
+    var stableSamples = 0
+    var detail = "table viewport not observed"
+    do {
+        waitForIdleSync()
+        var ready = false
+        var viewport = RectF()
+        runOnMainSync {
+            val layout = drawing.preparedLayout
+            val tables = layout?.blocks?.mapNotNull { it.tableSurface }.orEmpty()
+            val pending = tables.any { it.hasPendingMeasurements }
+            val ime = ViewCompat.getRootWindowInsets(drawing)
+                ?.isVisible(WindowInsetsCompat.Type.ime()) == true
+            viewport = drawing.unobstructedTableViewport()
+            ready = tables.isNotEmpty() && !pending && !viewport.isEmpty &&
+                !drawing.isLayoutRequested && (!requireIme || ime)
+            detail = "pending=$pending layoutRequested=${drawing.isLayoutRequested} " +
+                "ime=$ime requireIme=$requireIme viewport=$viewport"
+        }
+        stableSamples = if (ready && viewport == previous) stableSamples + 1 else 0
+        previous = viewport
+        if (stableSamples >= TABLE_VIEWPORT_STABLE_SAMPLES) return
+        SystemClock.sleep(TABLE_FRAME_INTERVAL_MS)
+    } while (SystemClock.uptimeMillis() < deadline)
+    error("Table measurements and viewport did not settle: $detail")
 }
 
 internal fun Instrumentation.tableCellScreenPoint(
@@ -61,7 +96,7 @@ internal fun Instrumentation.tableCellScreenPoint(
         }
         if (point != null && point == previous) return requireNotNull(point)
         previous = point
-        SystemClock.sleep(CELL_REVEAL_FRAME_MS)
+        SystemClock.sleep(TABLE_FRAME_INTERVAL_MS)
     } while (SystemClock.uptimeMillis() < deadline)
     error("No settled, unobstructed tap target: $detail")
 }
@@ -83,4 +118,5 @@ internal fun Instrumentation.saveDeviceScreenshot(filename: String): File {
 
 private const val PNG_QUALITY = 100
 private const val CELL_REVEAL_TIMEOUT_MS = 3_000L
-private const val CELL_REVEAL_FRAME_MS = 16L
+private const val TABLE_FRAME_INTERVAL_MS = 16L
+private const val TABLE_VIEWPORT_STABLE_SAMPLES = 8

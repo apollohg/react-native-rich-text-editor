@@ -17,6 +17,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SdkSuppress
 import androidx.test.platform.app.InstrumentationRegistry
 import com.apollohg.editor.tables.PlainTableFixture
+import com.apollohg.editor.viewer.PreparedProseDrawingView
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import org.json.JSONObject
@@ -155,8 +156,10 @@ class NativeTableHostTest {
                 )
             }
             instrumentation.waitForIdleSync()
+            lateinit var typingDrawing: PreparedProseDrawingView
             scenario.onActivity { activity ->
                 val drawing = tableHosts(activity.richTextView).single()
+                typingDrawing = drawing
                 assertTrue(
                     drawing.accessibilityNodeProvider.performAction(
                         nodeId,
@@ -165,7 +168,11 @@ class NativeTableHostTest {
                     )
                 )
             }
-            instrumentation.waitForIdleSync()
+            instrumentation.awaitStableTableViewport(
+                typingDrawing,
+                LARGE_TABLE_LAYOUT_TIMEOUT_MS,
+                requireIme = true
+            )
             var retainedNodeRecords = emptyMap<String, Int>()
             scenario.onActivity { activity ->
                 val drawing = tableHosts(activity.richTextView).single()
