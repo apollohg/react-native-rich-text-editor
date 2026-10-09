@@ -1,10 +1,14 @@
 import UIKit
 import XCTest
 
-func makeTestWindow(frame: CGRect) -> UIWindow {
+func testWindowScene() -> UIWindowScene {
     let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
     precondition(scenes.count == 1, "NativeEditorTestHost must provide exactly one connected window scene")
-    let window = UIWindow(windowScene: scenes[0])
+    return scenes[0]
+}
+
+func makeTestWindow(frame: CGRect) -> UIWindow {
+    let window = UIWindow(windowScene: testWindowScene())
     window.frame = frame
     return window
 }

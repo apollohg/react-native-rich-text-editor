@@ -144,15 +144,14 @@ final class EditorTableInputTests: XCTestCase {
 
         func assertBodyEdgeDoesNotClaimAResize(
             cellIndex index: Int,
-            physicalDelta: CGFloat,
             _ message: String
         ) throws {
             let edge = try trailingEdgeHostPoint(cellIndex: index)
             let point = drawing.convert(edge, from: view)
             XCTAssertNil(drawing.hitResizeEdge(at: point), "\(message): not a resize handle")
             XCTAssertFalse(surface.beginResizeDrag(at: edge), "\(message): a drag must not start a resize")
-            XCTAssertTrue(
-                drawing.canScrollTables(in: drawing.tableChain(at: point), by: physicalDelta),
+            XCTAssertGreaterThan(
+                drawing.tableScrollRange(in: drawing.tableChain(at: point)).maximum, 0,
                 "\(message): the drag stays available to the table pan"
             )
         }
@@ -1190,7 +1189,7 @@ final class EditorTableInputTests: XCTestCase {
                     "the \(label) edge resizes"
                 )
                 try fixture.assertBodyEdgeDoesNotClaimAResize(
-                    cellIndex: Self.gridSize, physicalDelta: -Self.bodySwipeDistance,
+                    cellIndex: Self.gridSize,
                     "a body-row edge below the \(label)"
                 )
             }
@@ -1311,7 +1310,7 @@ final class EditorTableInputTests: XCTestCase {
                 )
             }
             try fixture.assertBodyEdgeDoesNotClaimAResize(
-                cellIndex: Self.gridSize, physicalDelta: -Self.bodySwipeDistance, "an unselected column's body edge"
+                cellIndex: Self.gridSize, "an unselected column's body edge"
             )
             let edge = try fixture.trailingEdgeHostPoint(cellIndex: middleColumn[1])
             XCTAssertTrue(fixture.surface.beginResizeDrag(at: edge))
@@ -1354,7 +1353,7 @@ final class EditorTableInputTests: XCTestCase {
             fixture.surface.endResizeDrag(at: CGPoint(x: handle.x - 40, y: handle.y))
             XCTAssertEqual(try fixture.columnWidths(row: 0).first, [Self.narrowColumnWidth + 40])
             try fixture.assertBodyEdgeDoesNotClaimAResize(
-                cellIndex: Self.gridSize, physicalDelta: Self.bodySwipeDistance, "an RTL body-row edge"
+                cellIndex: Self.gridSize, "an RTL body-row edge"
             )
         }
     }
@@ -1576,43 +1575,32 @@ final class EditorTableInputTests: XCTestCase {
         }
     }
 
-    func testTablePanBeginsAtTouchDownAndClaimsOnlyScrollableDirections() throws {
+    func testTablePanAdmitsTouchesAtBothEdges() throws {
         try withMountedTable(document: try narrowColumnGridDocument(headerRow: false), cellSelection: nil) { fixture in
             let pan = try XCTUnwrap(fixture.view.gestureRecognizers?.compactMap {
-                $0 as? TableHorizontalPanGestureRecognizer
+                $0 as? UIPanGestureRecognizer
             }.first { $0.delegate is TableInteractionController }, "the table pan is installed on the editor view")
             let controller = try XCTUnwrap(pan.delegate as? TableInteractionController)
-            let swipe = Self.bodySwipeDistance
-            let leftward = CGPoint(x: -swipe, y: 0)
-            let rightward = CGPoint(x: swipe, y: 0)
             let touchDown = {
                 let point = try fixture.hostPoint(inCell: Self.gridSize + 1)
                 let root = fixture.view.textView
                 let touch = ScriptedTouch(at: root.convert(point, from: fixture.view), in: root)
                 XCTAssertTrue(controller.gestureRecognizer(pan, shouldReceive: touch), "a touch on a table body cell")
-                XCTAssertEqual(pan.translation(in: fixture.view), .zero, "shouldBegin runs before any movement")
-                XCTAssertTrue(
-                    controller.gestureRecognizerShouldBegin(pan),
-                    "an overflowing table's pan may begin at touch-down with zero translation"
-                )
+                XCTAssertFalse(controller.isDragging, "Touch admission must wait for native gesture recognition")
+                let drawingPoint = fixture.drawing.convert(point, from: fixture.view)
+                let range = fixture.drawing.tableScrollRange(in: fixture.drawing.tableChain(at: drawingPoint))
+                XCTAssertEqual(controller.contentOffset.x, range.offset, accuracy: 0.01)
+                XCTAssertEqual(controller.contentSize.width - controller.bounds.width, range.maximum, accuracy: 0.01)
             }
 
             try touchDown()
-            XCTAssertTrue(pan.claimsMovement(by: leftward), "a leftward swipe scrolls the table forward")
-            XCTAssertFalse(
-                pan.claimsMovement(by: rightward),
-                "at offset 0 a rightward swipe cannot scroll, so the pan leaves it to other gestures"
-            )
-            XCTAssertFalse(pan.claimsMovement(by: CGPoint(x: 0, y: swipe)), "a vertical swipe is not a table pan")
-
-            let maximum = try XCTUnwrap(fixture.drawing.mountedTablePresentation()?.tables.first {
+            let surface = try XCTUnwrap(fixture.drawing.mountedTablePresentation()?.tables.first {
                 $0.surface.identity == fixture.tableID
-            }).surface.bounds.width
+            }).surface
+            let maximum = surface.bounds.width - surface.hostViewportWidth
             fixture.drawing.setTableLogicalOffset(maximum, sourceIdentity: fixture.tableID)
             XCTAssertGreaterThan(fixture.drawing.tableLogicalOffset(for: fixture.tableID), 0)
             try touchDown()
-            XCTAssertTrue(pan.claimsMovement(by: rightward), "at the far edge a rightward swipe scrolls back")
-            XCTAssertFalse(pan.claimsMovement(by: leftward), "at the far edge a leftward swipe cannot scroll")
         }
     }
 
@@ -1661,7 +1649,7 @@ final class EditorTableInputTests: XCTestCase {
             fixture.drawing.cancelTableMotion()
             fixture.drawing.setTableLogicalOffset(0, sourceIdentity: fixture.tableID)
             try fixture.assertBodyEdgeDoesNotClaimAResize(
-                cellIndex: bodyCell, physicalDelta: -Self.bodySwipeDistance, "a body-row column edge"
+                cellIndex: bodyCell, "a body-row column edge"
             )
             let edge = try fixture.trailingEdgeHostPoint(cellIndex: bodyCell)
             XCTAssertTrue(

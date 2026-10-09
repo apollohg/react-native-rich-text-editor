@@ -680,23 +680,32 @@ public final class PreparedProseDrawingView: UIView {
         return chain
     }
 
-    func canScrollTables(in chain: [String], by physicalDelta: CGFloat) -> Bool {
-        guard let snapshot = presentationSnapshot() else { return false }
-        return chain.contains { identity in
-            guard let surface = snapshot.tables.first(where: { $0.surface.scrollIdentity == identity })?.surface
-            else { return false }
-            let logicalDelta = physicalDelta * (surface.direction == .rightToLeft ? 1 : -1)
-            let offset = tablePresentationOwner.logicalOffset(for: surface)
+    func tableScrollRange(in chain: [String]) -> (offset: CGFloat, maximum: CGFloat) {
+        guard let snapshot = presentationSnapshot() else { return (0, 0) }
+        return chain.reduce(into: (offset: CGFloat.zero, maximum: CGFloat.zero)) { range, identity in
+            guard let surface = snapshot.tables.first(where: { $0.surface.scrollIdentity == identity })?.surface else { return }
             let maximum = max(0, surface.bounds.width - surface.hostViewportWidth)
-            return logicalDelta > 0 ? offset < maximum : offset > 0
+            range.offset += min(maximum, max(0, tablePresentationOwner.physicalOffset(for: surface)))
+            range.maximum += maximum
         }
     }
 
     @discardableResult
-    func scrollTables(in chain: [String], by physicalDelta: CGFloat) -> CGFloat {
-        guard physicalDelta.isFinite, physicalDelta != 0,
+    func scrollTables(
+        in chain: [String],
+        by physicalDelta: CGFloat,
+        physicalOverscroll: CGFloat = 0,
+        overscrollIdentity: String? = nil
+    ) -> CGFloat {
+        guard physicalDelta.isFinite, physicalOverscroll.isFinite,
+              physicalDelta != 0 || overscrollIdentity != nil,
               let snapshot = presentationSnapshot()
         else { return physicalDelta }
+        let overscrollSurface = overscrollIdentity.flatMap { identity in
+            snapshot.tables.first { $0.surface.scrollIdentity == identity }?.surface
+        }
+        let oldOverscrollOffset = overscrollSurface.map { tablePresentationOwner.physicalOffset(for: $0) }
+        if let overscrollSurface { tablePresentationOwner.setPhysicalOverscroll(0, for: overscrollSurface) }
         var remaining = physicalDelta
         var changed = false
         for identity in chain where remaining != 0 {
@@ -708,6 +717,10 @@ public final class PreparedProseDrawingView: UIView {
             let consumed = (tablePresentationOwner.logicalOffset(for: surface) - old) / direction
             remaining -= consumed
             changed = changed || consumed != 0
+        }
+        if let overscrollSurface {
+            tablePresentationOwner.setPhysicalOverscroll(physicalOverscroll, for: overscrollSurface)
+            changed = changed || oldOverscrollOffset != tablePresentationOwner.physicalOffset(for: overscrollSurface)
         }
         if changed {
             invalidateTableLayers()

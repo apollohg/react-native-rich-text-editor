@@ -6,7 +6,6 @@ final class TableHorizontalPanGestureRecognizer: UIPanGestureRecognizer {
     }
 
     private var initialLocation: CGPoint?
-    var claimsDirection: ((CGFloat) -> Bool)?
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
         guard event.allTouches?.count == 1, let touch = touches.first else {
@@ -31,7 +30,7 @@ final class TableHorizontalPanGestureRecognizer: UIPanGestureRecognizer {
 
     func claimsMovement(by delta: CGPoint) -> Bool {
         guard hypot(delta.x, delta.y) >= Constants.intentSlop else { return true }
-        return TableInteractionController.isHorizontalIntent(delta) && claimsDirection?(delta.x) != false
+        return TableInteractionController.isHorizontalIntent(delta)
     }
 
     override func reset() {
@@ -40,7 +39,7 @@ final class TableHorizontalPanGestureRecognizer: UIPanGestureRecognizer {
     }
 }
 
-final class TableInteractionController: NSObject, UIGestureRecognizerDelegate {
+final class TableInteractionController: UIScrollView, UIScrollViewDelegate, UIGestureRecognizerDelegate {
     private final class WeakScrollView {
         weak var value: UIScrollView?
 
@@ -51,34 +50,46 @@ final class TableInteractionController: NSObject, UIGestureRecognizerDelegate {
 
     private enum Constants {
         static let horizontalRatio: CGFloat = 1.25
-        static let scrollDirections: [CGFloat] = [-1, 1]
-        static let minimumVelocity: CGFloat = 5
-        static let millisecondsPerSecond: Double = 1_000
     }
 
     private weak var host: UIView?
     private weak var drawing: PreparedProseDrawingView?
-    private let pan = TableHorizontalPanGestureRecognizer()
-    private var touchPoint = CGPoint.zero
     private weak var touchedView: UIView?
     private var chain: [String] = []
-    private var previousTranslation: CGFloat = 0
     private var outerScrollViews: [WeakScrollView] = []
-    private var displayLink: CADisplayLink?
-    private var velocity: CGFloat = 0
-    private var lastTimestamp: CFTimeInterval = 0
+    private var lastClampedOffset: CGFloat = 0
+    private var maximumOffset: CGFloat = 0
+    private var overscrollIdentity: String?
+    private var isConfiguringMotion = false
     private var motionGeneration: UInt64 = 0
 
     init(host: UIView, drawing: PreparedProseDrawingView) {
         self.host = host
         self.drawing = drawing
-        super.init()
-        pan.addTarget(self, action: #selector(handlePan(_:)))
-        pan.maximumNumberOfTouches = 1
-        pan.delegate = self
-        pan.claimsDirection = { [weak self] delta in self?.claimsTouch(towards: delta) ?? false }
-        host.addGestureRecognizer(pan)
+        super.init(frame: host.bounds)
+        autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        backgroundColor = .clear
+        isAccessibilityElement = false
+        accessibilityElementsHidden = true
+        contentInsetAdjustmentBehavior = .never
+        showsHorizontalScrollIndicator = false
+        showsVerticalScrollIndicator = false
+        scrollsToTop = false
+        delaysContentTouches = false
+        isDirectionalLockEnabled = true
+        bounces = true
+        delegate = self
+        panGestureRecognizer.maximumNumberOfTouches = 1
+        panGestureRecognizer.delegate = self
+        host.addSubview(self)
+        // UIKit owns drag, deceleration and spring-back; the renderer owns table positions.
+        host.addGestureRecognizer(panGestureRecognizer)
     }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("TableInteractionController does not support NSCoder") }
+
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool { false }
 
     static func isHorizontalIntent(_ translation: CGPoint) -> Bool {
         abs(translation.x) > Constants.horizontalRatio * abs(translation.y)
@@ -86,118 +97,106 @@ final class TableInteractionController: NSObject, UIGestureRecognizerDelegate {
 
     func detach() {
         cancelMotion()
-        pan.view?.removeGestureRecognizer(pan)
+        panGestureRecognizer.view?.removeGestureRecognizer(panGestureRecognizer)
+        delegate = nil
+        removeFromSuperview()
     }
 
     func cancelMotion() {
         motionGeneration &+= 1
-        displayLink?.invalidate()
-        displayLink = nil
-        velocity = 0
+        let previousChain = chain
+        let previousOverscroll = overscrollIdentity
+        let previousOuter = outerScrollViews.compactMap(\.value)
         chain = []
+        overscrollIdentity = nil
         outerScrollViews = []
-        previousTranslation = 0
+        isConfiguringMotion = true
+        if isDragging || isDecelerating {
+            isScrollEnabled = false
+            isScrollEnabled = true
+        }
+        setContentOffset(.zero, animated: false)
+        lastClampedOffset = 0
+        maximumOffset = 0
+        isConfiguringMotion = false
+        if let previousOverscroll {
+            drawing?.scrollTables(in: previousChain, by: 0, overscrollIdentity: previousOverscroll)
+        }
+        for scroll in previousOuter {
+            let limits = horizontalLimits(of: scroll)
+            let clamped = min(limits.maximum, max(limits.minimum, scroll.contentOffset.x))
+            if clamped != scroll.contentOffset.x {
+                scroll.setContentOffset(CGPoint(x: clamped, y: scroll.contentOffset.y), animated: false)
+            }
+        }
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-        guard gestureRecognizer === pan, touch.tapCount == 1,
+        guard gestureRecognizer === panGestureRecognizer, touch.tapCount == 1,
               let drawing, let host, drawing.window != nil,
               touch.view?.window === drawing.window
         else { return false }
         cancelMotion()
         let point = touch.location(in: drawing)
-        guard !drawing.tableChain(at: point).isEmpty else { return false }
+        let selectedChain = drawing.tableChain(at: point)
+        guard !selectedChain.isEmpty else { return false }
         if drawing.mountedTablePresentation()?.atoms.contains(where: {
             $0.bounds.contains(point) && $0.clip.contains(point)
         }) == true, hasOwnedInnerGesture(from: touch.view, through: host) {
             return false
         }
-        touchPoint = point
         touchedView = touch.view
-        return true
-    }
-
-    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        guard gestureRecognizer === pan, let host, let drawing, drawing.window != nil,
-              !nativeSelectionGestureIsActive()
-        else { return false }
-        let selectedChain = drawing.tableChain(at: touchPoint)
-        guard !selectedChain.isEmpty else { return false }
         let outer = horizontalScrollAncestors(of: host)
-        guard Constants.scrollDirections.contains(where: { direction in
-            canScroll(selectedChain, outer, by: direction)
-        }) else { return false }
-        cancelMotion()
+        var range = drawing.tableScrollRange(in: selectedChain)
+        for scroll in outer {
+            let limits = horizontalLimits(of: scroll)
+            range.offset += min(limits.maximum, max(limits.minimum, scroll.contentOffset.x)) - limits.minimum
+            range.maximum += limits.maximum - limits.minimum
+        }
+        guard range.maximum > 0 else { return false }
         chain = selectedChain
         outerScrollViews = outer.map(WeakScrollView.init)
-        previousTranslation = 0
+        overscrollIdentity = outer.isEmpty ? selectedChain.last : nil
+        maximumOffset = range.maximum
+        lastClampedOffset = range.offset
+        isConfiguringMotion = true
+        contentSize = CGSize(width: bounds.width + maximumOffset, height: bounds.height)
+        setContentOffset(CGPoint(x: range.offset, y: 0), animated: false)
+        isConfiguringMotion = false
         return true
     }
 
-    func gestureRecognizer(
-        _ gestureRecognizer: UIGestureRecognizer,
-        shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer
-    ) -> Bool {
-        guard gestureRecognizer === pan, !drawingChainAtTouch().isEmpty,
-              let scrollView = otherGestureRecognizer.view as? UIScrollView,
-              otherGestureRecognizer === scrollView.panGestureRecognizer
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard gestureRecognizer === panGestureRecognizer, let host, let drawing, drawing.window != nil,
+              !chain.isEmpty, !nativeSelectionGestureIsActive()
         else { return false }
-        guard let host else { return false }
-        return scrollView === host || scrollView.isDescendant(of: host)
-            || host.isDescendant(of: scrollView)
+        let velocity = panGestureRecognizer.velocity(in: host)
+        return Self.isHorizontalIntent(velocity)
     }
 
     func gestureRecognizer(
         _ gestureRecognizer: UIGestureRecognizer,
         shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer
     ) -> Bool {
-        gestureRecognizer === pan && otherGestureRecognizer is UIScreenEdgePanGestureRecognizer
+        gestureRecognizer === panGestureRecognizer && otherGestureRecognizer is UIScreenEdgePanGestureRecognizer
     }
 
-    @objc private func handlePan(_ recognizer: UIPanGestureRecognizer) {
-        guard recognizer === pan, let host, let drawing, drawing.window != nil,
-              !chain.isEmpty, !nativeSelectionGestureIsActive()
-        else {
-            cancelMotion()
-            return
-        }
-        switch recognizer.state {
-        case .began, .changed, .ended:
-            let generation = motionGeneration
-            let translation = recognizer.translation(in: host).x
-            let delta = translation - previousTranslation
-            previousTranslation = translation
-            consume(delta)
-            guard generation == motionGeneration else { return }
-            if recognizer.state == .ended {
-                velocity = recognizer.velocity(in: host).x
-                startDecelerationIfNeeded()
-            }
-        case .cancelled, .failed:
-            cancelMotion()
-        default:
-            break
-        }
-    }
-
-    private func claimsTouch(towards delta: CGFloat) -> Bool {
-        guard let host else { return false }
-        return canScroll(drawingChainAtTouch(), horizontalScrollAncestors(of: host), by: delta)
-    }
-
-    private func canScroll(_ chain: [String], _ outer: [UIScrollView], by delta: CGFloat) -> Bool {
-        guard let drawing else { return false }
-        return drawing.canScrollTables(in: chain, by: delta) || outer.contains { canScroll($0, by: delta) }
-    }
-
-    private func drawingChainAtTouch() -> [String] {
-        drawing?.tableChain(at: touchPoint) ?? []
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard !isConfiguringMotion, !chain.isEmpty, let drawing,
+              drawing.window != nil, host?.window === drawing.window
+        else { return }
+        let offset = scrollView.contentOffset.x
+        guard offset.isFinite else { return }
+        let clamped = min(maximumOffset, max(0, offset))
+        let delta = lastClampedOffset - clamped
+        lastClampedOffset = clamped
+        consume(delta, overscroll: offset - clamped)
     }
 
     private func nativeSelectionGestureIsActive() -> Bool {
         var view = touchedView
         while let current = view {
-            for recognizer in current.gestureRecognizers ?? [] where recognizer !== pan {
+            for recognizer in current.gestureRecognizers ?? [] where recognizer !== panGestureRecognizer {
                 if let scroll = current as? UIScrollView, recognizer === scroll.panGestureRecognizer {
                     continue
                 }
@@ -231,88 +230,40 @@ final class TableInteractionController: NSObject, UIGestureRecognizerDelegate {
         var result: [UIScrollView] = []
         var ancestor: UIView? = view
         while let current = ancestor {
-            if let scroll = current as? UIScrollView, scroll.isScrollEnabled,
-               scroll.contentSize.width + scroll.adjustedContentInset.left + scroll.adjustedContentInset.right > scroll.bounds.width {
-                result.append(scroll)
+            if let scroll = current as? UIScrollView, scroll.isScrollEnabled {
+                let limits = horizontalLimits(of: scroll)
+                if limits.maximum > limits.minimum { result.append(scroll) }
             }
             ancestor = current.superview
         }
         return result
     }
 
-    private func canScroll(_ scrollView: UIScrollView?, by delta: CGFloat) -> Bool {
-        guard let scrollView, scrollView.isScrollEnabled, delta != 0 else { return false }
-        let minimum = -scrollView.adjustedContentInset.left
-        let maximum = max(
-            minimum,
-            scrollView.contentSize.width - scrollView.bounds.width
-                + scrollView.adjustedContentInset.right
-        )
-        return delta > 0 ? scrollView.contentOffset.x > minimum : scrollView.contentOffset.x < maximum
+    private func horizontalLimits(of scroll: UIScrollView) -> (minimum: CGFloat, maximum: CGFloat) {
+        let minimum = -scroll.adjustedContentInset.left
+        return (minimum, max(minimum, scroll.contentSize.width - scroll.bounds.width + scroll.adjustedContentInset.right))
     }
 
-    private func consume(_ delta: CGFloat) {
-        guard let drawing, delta.isFinite, delta != 0 else { return }
+    private func consume(_ delta: CGFloat, overscroll: CGFloat) {
+        guard let drawing, delta.isFinite, overscroll.isFinite else { return }
         let generation = motionGeneration
-        let remainder = drawing.scrollTables(in: chain, by: delta)
+        var remaining = drawing.scrollTables(
+            in: chain, by: delta, physicalOverscroll: overscroll,
+            overscrollIdentity: overscrollIdentity
+        )
         guard generation == motionGeneration else { return }
-        guard remainder != 0 else { return }
-        var remaining = remainder
-        for outer in outerScrollViews where remaining != 0 {
-            guard let scroll = outer.value, scroll.isScrollEnabled else { continue }
-            let minimum = -scroll.adjustedContentInset.left
-            let maximum = max(
-                minimum,
-                scroll.contentSize.width - scroll.bounds.width
-                    + scroll.adjustedContentInset.right
-            )
-            let old = scroll.contentOffset.x
-            let next = min(maximum, max(minimum, old - remaining))
-            if next != old {
-                scroll.setContentOffset(CGPoint(x: next, y: scroll.contentOffset.y), animated: false)
+        let outer = outerScrollViews.compactMap(\.value).filter(\.isScrollEnabled)
+        for (index, scroll) in outer.enumerated() {
+            let limits = horizontalLimits(of: scroll)
+            let old = min(limits.maximum, max(limits.minimum, scroll.contentOffset.x))
+            let next = min(limits.maximum, max(limits.minimum, old - remaining))
+            remaining -= old - next
+            let elastic = index == outer.count - 1 && scroll.bounces ? overscroll : 0
+            if scroll.contentOffset.x != next + elastic {
+                scroll.setContentOffset(CGPoint(x: next + elastic, y: scroll.contentOffset.y), animated: false)
                 guard generation == motionGeneration else { return }
-                remaining -= old - scroll.contentOffset.x
             }
         }
-    }
-
-    private func startDecelerationIfNeeded() {
-        guard abs(velocity) >= Constants.minimumVelocity else {
-            cancelMotion()
-            return
-        }
-        lastTimestamp = 0
-        let link = CADisplayLink(target: self, selector: #selector(stepDeceleration(_:)))
-        displayLink = link
-        link.add(to: .main, forMode: .common)
-    }
-
-    @objc private func stepDeceleration(_ link: CADisplayLink) {
-        guard link === displayLink,
-              let drawing, drawing.window != nil, host?.window === drawing.window,
-              !chain.isEmpty else {
-            if link === displayLink { cancelMotion() }
-            return
-        }
-        if lastTimestamp == 0 {
-            lastTimestamp = link.timestamp
-            return
-        }
-        let elapsed = link.timestamp - lastTimestamp
-        lastTimestamp = link.timestamp
-        guard elapsed > 0, elapsed.isFinite else { return }
-        let delta = velocity * elapsed
-        guard canScroll(chain, outerScrollViews.compactMap(\.value), by: delta) else {
-            cancelMotion()
-            return
-        }
-        let generation = motionGeneration
-        consume(delta)
-        guard generation == motionGeneration else { return }
-        let rate = Double(outerScrollViews.compactMap(\.value).first?.decelerationRate.rawValue
-            ?? UIScrollView.DecelerationRate.normal.rawValue)
-        velocity *= CGFloat(pow(rate, elapsed * Constants.millisecondsPerSecond))
-        if abs(velocity) < Constants.minimumVelocity { cancelMotion() }
     }
 }
 

@@ -823,10 +823,11 @@ private struct ViewerTableCellIndex {
 
 final class ViewerTablePresentationOwner {
     private static let mapRetainedBytes = 48
-    private static let entryRetainedBytes = 80
+    private static let entryRetainedBytes = 80 + MemoryLayout<CGFloat>.stride
     private struct Position {
         let column: Int
         let withinColumn: CGFloat
+        var physicalOverscroll: CGFloat = 0
     }
     private var positions: [String: Position] = [:]
     private var pinnedStores: [ObjectIdentifier: (store: TableCellLayoutStore, keys: Set<ProseLayoutKey>)] = [:]
@@ -879,15 +880,26 @@ final class ViewerTablePresentationOwner {
         }
     }
 
+    func setPhysicalOverscroll(_ offset: CGFloat, for surface: ViewerTableSurface) {
+        guard offset.isFinite else { return }
+        var position = positions[surface.scrollIdentity] ?? Position(column: 0, withinColumn: 0)
+        position.physicalOverscroll = offset
+        positions[surface.scrollIdentity] = position
+    }
+
     func retain(surfaces: [ViewerTableSurface]) {
         let live = Set(surfaces.map(\.scrollIdentity))
         positions = positions.filter { live.contains($0.key) }
+        for surface in surfaces where positions[surface.scrollIdentity] != nil {
+            setLogicalOffset(logicalOffset(for: surface), for: surface)
+        }
     }
 
     func physicalOffset(for surface: ViewerTableSurface) -> CGFloat {
         let logical = logicalOffset(for: surface)
         let maximum = maximumOffset(for: surface)
-        return surface.direction == .rightToLeft ? maximum - logical : logical
+        let clamped = surface.direction == .rightToLeft ? maximum - logical : logical
+        return clamped + (positions[surface.scrollIdentity]?.physicalOverscroll ?? 0)
     }
 
     private func clamp(_ offset: CGFloat, for surface: ViewerTableSurface) -> CGFloat {

@@ -1,6 +1,18 @@
 import CoreText
 import XCTest
 
+private final class TableGestureTestWindow: UIWindow {
+    var onTouchHitTest: ((UIView) -> Void)?
+
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        let hit = super.hitTest(point, with: event)
+        if let hit, let onTouchHitTest, event?.type == .touches {
+            onTouchHitTest(hit)
+        }
+        return hit
+    }
+}
+
 private final class TableAtomPanProbe: NSObject {
     var began = false
 
@@ -12,12 +24,20 @@ private final class TableAtomPanProbe: NSObject {
 private final class TablePanLifecycleProbe: NSObject {
     weak var scrollView: UIScrollView?
     var hostOffsetAtEnd: CGFloat?
+    var hostDraggedDuringTablePan = false
+    var nativeOffsetsAtBegin: [CGFloat] = []
 
     init(scrollView: UIScrollView) {
         self.scrollView = scrollView
     }
 
     @objc func handle(_ recognizer: UIPanGestureRecognizer) {
+        if recognizer.state == .began, let driver = recognizer.delegate as? TableInteractionController {
+            nativeOffsetsAtBegin.append(driver.contentOffset.x)
+        }
+        if recognizer.state == .began || recognizer.state == .changed {
+            hostDraggedDuringTablePan = hostDraggedDuringTablePan || scrollView?.isDragging == true
+        }
         if recognizer.state == .ended { hostOffsetAtEnd = scrollView?.contentOffset.x }
     }
 }
@@ -867,12 +887,48 @@ final class ViewerTableTests: XCTestCase {
         XCTAssertEqual(drawing.tableLogicalOffset(for: nested.surface.identity), nestedMaximum, accuracy: 1)
         XCTAssertEqual(drawing.tableLogicalOffset(for: outer.surface.identity), outerMaximum, accuracy: 1)
         XCTAssertEqual(remainder, -extra, accuracy: 1)
-        XCTAssertFalse(drawing.canScrollTables(in: chain, by: -extra))
 
         let reverse = drawing.scrollTables(in: chain, by: nestedMaximum + outerMaximum + extra)
         XCTAssertEqual(drawing.tableLogicalOffset(for: nested.surface.identity), 0, accuracy: 1)
         XCTAssertEqual(drawing.tableLogicalOffset(for: outer.surface.identity), 0, accuracy: 1)
         XCTAssertEqual(reverse, extra, accuracy: 1)
+    }
+
+    func testElasticTablePresentationKeepsLogicalEdgesClampedAndClearsOnReflow() throws {
+        let layout = try prepare(try nestedHeaderImageSource(nestedOverflow: true))
+        let original = try XCTUnwrap(layout.blocks.first { $0.tableSurface != nil }?.tableSurface)
+        let elasticDistance: CGFloat = 24
+        for direction in [TableLayoutDirection.leftToRight, .rightToLeft] {
+            let surface = ViewerTableSurface(
+                identity: original.identity, scrollIdentity: original.scrollIdentity,
+                hostViewportWidth: original.hostViewportWidth, style: original.style,
+                direction: direction, layout: original.layout, cells: original.cells,
+                preparationError: original.preparationError
+            )
+            let maximum = surface.bounds.width - surface.hostViewportWidth
+            XCTAssertGreaterThan(maximum, 0)
+            let owner = ViewerTablePresentationOwner()
+            for logicalEdge in [CGFloat.zero, maximum] {
+                owner.setLogicalOffset(logicalEdge, for: surface)
+                let physicalEdge = owner.physicalOffset(for: surface)
+                let stretch = physicalEdge == 0 ? -elasticDistance : elasticDistance
+                owner.setPhysicalOverscroll(stretch, for: surface)
+                XCTAssertEqual(owner.logicalOffset(for: surface), logicalEdge, "\(direction) elastic presentation must not change the saved logical edge")
+                XCTAssertEqual(owner.physicalOffset(for: surface), physicalEdge + stretch, "\(direction) must display the native elastic displacement")
+                let reflow = ViewerTableSurface(
+                    identity: surface.identity, scrollIdentity: surface.scrollIdentity,
+                    hostViewportWidth: surface.hostViewportWidth - elasticDistance * 2,
+                    style: surface.style, direction: direction, layout: surface.layout,
+                    cells: surface.cells, preparationError: surface.preparationError
+                )
+                owner.retain(surfaces: [reflow])
+                XCTAssertEqual(owner.logicalOffset(for: surface), logicalEdge)
+                XCTAssertEqual(owner.logicalOffset(for: reflow), logicalEdge, "A growing scroll range must not turn stretch into a saved position")
+                let newPhysicalEdge = direction == .rightToLeft
+                    ? reflow.bounds.width - reflow.hostViewportWidth - logicalEdge : logicalEdge
+                XCTAssertEqual(owner.physicalOffset(for: reflow), newPhysicalEdge, "A reflow must not preserve transient edge stretch")
+            }
+        }
     }
 
     func testSameSemanticReflowKeepsMountedTablePositionAndReplacementClearsIt() throws {
@@ -971,6 +1027,113 @@ final class ViewerTableTests: XCTestCase {
         XCTAssertEqual(drawing.tableLogicalOffset(for: surface.identity), afterHorizontal, accuracy: 1)
     }
 
+    func testLiveTableBouncesAndReversesNativeDeceleration() throws {
+        try LiveGestureProbe.requireOptIn()
+        let columnCount = 40
+        let source = try jsonSource(["type": "doc", "content": [
+            ["type": "table", "content": [["type": "table_row", "content": (0..<columnCount).map { cell("Column \($0)") }]]]
+        ]])
+        let layout = try prepare(source)
+        let surface = try XCTUnwrap(layout.blocks.first?.tableSurface)
+        let window = TableGestureTestWindow(windowScene: testWindowScene())
+        window.frame = UIScreen.main.bounds
+        window.backgroundColor = .systemBackground
+        let viewport = CGRect(x: 0, y: 100, width: window.bounds.width, height: 240)
+        let scroll = UIScrollView(frame: viewport)
+        scroll.contentSize = CGSize(width: viewport.width, height: layout.size.height + 500)
+        let drawing = PreparedProseDrawingView(frame: CGRect(origin: .zero, size: layout.size))
+        drawing.install(layout: layout)
+        scroll.addSubview(drawing)
+        window.addSubview(scroll)
+        let status = UILabel(frame: CGRect(x: 0, y: 350, width: window.bounds.width, height: 30))
+        status.backgroundColor = .systemYellow
+        status.textAlignment = .center
+        status.text = "TABLE LEADING BOUNCE READY"
+        window.addSubview(status)
+        window.makeKeyAndVisible()
+        defer {
+            drawing.onTableGeometryChanged = nil
+            window.onTouchHitTest = nil
+            drawing.removeFromSuperview()
+            window.isHidden = true
+        }
+
+        let ownedPan = try XCTUnwrap(scroll.gestureRecognizers?.compactMap { $0 as? UIPanGestureRecognizer }.first {
+            $0.delegate is TableInteractionController
+        })
+        let lifecycle = TablePanLifecycleProbe(scrollView: scroll)
+        ownedPan.addTarget(lifecycle, action: #selector(TablePanLifecycleProbe.handle(_:)))
+        defer { ownedPan.removeTarget(lifecycle, action: #selector(TablePanLifecycleProbe.handle(_:))) }
+        let maximum = surface.bounds.width - surface.hostViewportWidth
+        let anchorIndex = try XCTUnwrap(surface.cells.last?.sourceIndex)
+        for leadingEdge in [true, false] {
+            let logicalEdge: CGFloat = leadingEdge ? 0 : maximum
+            let sign: CGFloat = leadingEdge ? 1 : -1
+            drawing.setTableLogicalOffset(logicalEdge, sourceIdentity: surface.identity)
+            let initialX = try XCTUnwrap(drawing.tableCellGeometry(tableID: surface.identity, sourceIndex: anchorIndex)?.bounds.minX)
+            var peakDisplacement: CGFloat = 0
+            lifecycle.hostOffsetAtEnd = nil
+            drawing.onTableGeometryChanged = { [weak drawing] in
+                guard let x = drawing?.tableCellGeometry(tableID: surface.identity, sourceIndex: anchorIndex)?.bounds.minX else { return }
+                peakDisplacement = max(peakDisplacement, (x - initialX) * sign)
+            }
+            status.text = leadingEdge ? "TABLE LEADING BOUNCE READY" : "TABLE TRAILING BOUNCE READY"
+            let bounced = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in peakDisplacement > 8 }, object: nil)
+            guard XCTWaiter.wait(for: [bounced], timeout: 30) == .completed else {
+                return XCTFail("Outward drag must visibly bounce; leading=\(leadingEdge), peak=\(peakDisplacement)")
+            }
+            let ended = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in lifecycle.hostOffsetAtEnd != nil }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [ended], timeout: 5), .completed, "The real pan must end before spring-back is checked")
+            XCTAssertEqual(drawing.tableLogicalOffset(for: surface.identity), logicalEdge, accuracy: 1)
+            let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                guard let x = drawing.tableCellGeometry(tableID: surface.identity, sourceIndex: anchorIndex)?.bounds.minX else { return false }
+                return abs(x - initialX) < 1
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 5), .completed, "The released table must spring back to its edge")
+            XCTAssertEqual(scroll.contentOffset.y, 0, accuracy: 1, "Horizontal bounce must leave vertical scrolling alone")
+        }
+
+        drawing.onTableGeometryChanged = nil
+        drawing.setTableLogicalOffset(maximum / 2, sourceIdentity: surface.identity)
+        lifecycle.nativeOffsetsAtBegin.removeAll()
+        lifecycle.hostOffsetAtEnd = nil
+        let driver = try XCTUnwrap(ownedPan.delegate as? TableInteractionController)
+        status.text = "TABLE FLICK READY"
+        let coasting = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            driver.isDecelerating && lifecycle.hostOffsetAtEnd != nil
+        }, object: nil)
+        guard XCTWaiter.wait(for: [coasting], timeout: 30) == .completed else {
+            return XCTFail("The released flick must start real native deceleration before it is interrupted")
+        }
+        XCTAssertEqual(lifecycle.nativeOffsetsAtBegin.count, 1)
+        lifecycle.hostOffsetAtEnd = nil
+        var deceleratingAtReverseTouch: Bool?
+        window.onTouchHitTest = { [weak driver, weak drawing] hit in
+            if deceleratingAtReverseTouch == nil, let drawing,
+               hit === drawing || hit.isDescendant(of: drawing) {
+                deceleratingAtReverseTouch = driver?.isDecelerating
+            }
+        }
+        status.text = "TABLE REVERSE READY"
+        let reverseBegan = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            lifecycle.nativeOffsetsAtBegin.count == 2
+        }, object: nil)
+        guard XCTWaiter.wait(for: [reverseBegan], timeout: 5) == .completed else {
+            return XCTFail("A new touch must take control of the coasting table with a second native pan")
+        }
+        let reverseStart = try XCTUnwrap(lifecycle.nativeOffsetsAtBegin.last)
+        XCTAssertEqual(deceleratingAtReverseTouch, true, "The reverse touch must arrive during native deceleration")
+        XCTAssertGreaterThan(reverseStart, maximum / 4, "Catching a flick must preserve the table's position")
+        let reverseEnded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            lifecycle.hostOffsetAtEnd != nil
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [reverseEnded], timeout: 5), .completed)
+        let reversalDistance: CGFloat = 80
+        XCTAssertLessThan(drawing.tableLogicalOffset(for: surface.identity), reverseStart - reversalDistance)
+        XCTAssertGreaterThan(drawing.tableLogicalOffset(for: surface.identity), 0)
+        XCTAssertEqual(scroll.contentOffset.y, 0, accuracy: 1)
+    }
+
     func testLiveTableEdgeHandoff() throws {
         try LiveGestureProbe.requireOptIn()
         let layout = try prepare(try nestedHeaderImageSource(nestedOverflow: true))
@@ -1017,6 +1180,7 @@ final class ViewerTableTests: XCTestCase {
             return XCTFail("owned table pan never reached UIKit ended state")
         }
         let hostAtEnd = try XCTUnwrap(lifecycle.hostOffsetAtEnd)
+        XCTAssertFalse(lifecycle.hostDraggedDuringTablePan, "The parent must receive the table's remainder without starting its own drag")
         let decelerating = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             scroll.contentOffset.x > hostAtEnd + 2
         }, object: nil)
