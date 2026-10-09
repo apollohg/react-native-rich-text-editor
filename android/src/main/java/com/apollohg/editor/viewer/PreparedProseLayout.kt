@@ -194,10 +194,12 @@ internal data class PreparedProseLayout(
             ?: 0L
     }
 ) {
+    internal val hasTableSurfaces: Boolean = blocks.any { it.tableSurface != null }
     internal val nonTableRetainedBytes: Long get() = retainedBytes - tableRetainedBytesAtPreparation
 
     internal val currentRetainedBytes: Long
         get() {
+            if (!hasTableSurfaces) return nonTableRetainedBytes
             var bytes = 0L
             forEachRetainedLayout(
                 {

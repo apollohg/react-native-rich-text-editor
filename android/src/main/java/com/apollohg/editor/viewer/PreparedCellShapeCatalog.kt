@@ -228,6 +228,9 @@ internal fun PreparedCellShapeKey.catalogMetadataBytes(): Long =
         atomGeometryDigest.length * 2L + imageGeometryDigest.length * 2L
 
 internal fun PreparedProseLayout.cellShapeCatalogBytes(): Long {
+    if (!hasTableSurfaces) {
+        return cellShape?.let { it.key.catalogMetadataBytes() + it.retainedBytes } ?: 0L
+    }
     val shapes = Collections.newSetFromMap(IdentityHashMap<PreparedCellShape, Boolean>())
     forEachRetainedLayout(visit = { layout -> layout.cellShape?.let { shapes.add(it) } })
     return shapes.sumOf { it.key.catalogMetadataBytes() + it.retainedBytes }
