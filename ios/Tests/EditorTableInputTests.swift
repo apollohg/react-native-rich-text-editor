@@ -2610,10 +2610,11 @@ final class EditorTableInputTests: XCTestCase {
         }
 
         func selectCells(anchor: Int, head: Int) throws {
+            let currentPositions = try adapter.tableCellPositions(tableID: tableID)
             try host.richTextView.textView.selectTableCells(
                 adapter: adapter,
-                anchor: positions[anchor],
-                head: positions[head]
+                anchor: currentPositions[anchor],
+                head: currentPositions[head]
             )
         }
 
@@ -3318,8 +3319,11 @@ final class EditorTableInputTests: XCTestCase {
             fixture.host.setToolbarButtonsJson(TableToolbarTestItems.historyJson)
             let root = fixture.host.richTextView.textView
             let original = try fixture.adapter.tableCellTexts()
+            let input = try fixture.activateCell(1)
+            input.syncSelectionImmediately()
+            let originalCaret = input.selectedRange
             let originalSelection = try authoritativeSelection(fixture.adapter) as NSDictionary
-            try fixture.activateCell(1).insertText("X")
+            input.insertText("X")
             let edited = try fixture.adapter.tableCellTexts()
             let editedSelection = try authoritativeSelection(fixture.adapter) as NSDictionary
             XCTAssertEqual(edited, [["one", "twoX"], ["three", "four"]], "typing edits the cell")
@@ -3342,11 +3346,11 @@ final class EditorTableInputTests: XCTestCase {
             XCTAssertFalse(root.authoritativeCellSelectionActive, "undo leaves no stale rectangle on the root")
             XCTAssertEqual(fixture.drawing.selectedTableCellSourceIndices, [:], "undo clears the drawn rectangle")
             XCTAssertTrue(view.activeTextInput === cellInput, "the cell holding the restored caret takes the input")
-            XCTAssertEqual(view.activeTableCellPosition, fixture.positions[0])
+            XCTAssertEqual(view.activeTableCellPosition, fixture.positions[1])
             XCTAssertTrue(cellInput.isFirstResponder, "the bound cell takes focus")
             XCTAssertFalse(root.isFirstResponder)
-            XCTAssertEqual(cellInput.textStorage.string, "one")
-            XCTAssertEqual(cellInput.selectedRange, NSRange(location: 0, length: 0), "the caret is restored in the cell")
+            XCTAssertEqual(cellInput.textStorage.string, "two")
+            XCTAssertEqual(cellInput.selectedRange, originalCaret, "the caret is restored in the cell")
 
             try cellInput.pressAccessoryToolbarButton(labeled: TableToolbarTestItems.redoLabel)
             XCTAssertEqual(try fixture.adapter.tableCellTexts(), edited, "redo reapplies the edit")
@@ -3372,7 +3376,11 @@ final class EditorTableInputTests: XCTestCase {
             let view = fixture.host.richTextView
             let root = view.textView
             let original = try fixture.adapter.tableCellTexts()
-            try fixture.activateCell(1).insertText("X")
+            let input = try fixture.activateCell(1)
+            input.syncSelectionImmediately()
+            let originalCaret = input.selectedRange
+            let originalSelection = try authoritativeSelection(fixture.adapter) as NSDictionary
+            input.insertText("X")
             try fixture.selectCells(anchor: 0, head: 1)
             XCTAssertTrue(view.activeTextInput === root, "the rectangle retires the cell input")
             XCTAssertTrue(root.isFirstResponder)
@@ -3390,10 +3398,11 @@ final class EditorTableInputTests: XCTestCase {
             XCTAssertTrue(fixture.host.applyEditorUpdate(try XCTUnwrap(rendered.value)))
 
             XCTAssertEqual(try fixture.adapter.tableCellTexts(), original, "the JavaScript undo restores the document")
+            XCTAssertEqual(try authoritativeSelection(fixture.adapter) as NSDictionary, originalSelection)
             XCTAssertTrue(view.activeTextInput === cellInput, "the cell holding the restored caret takes the input")
-            XCTAssertEqual(view.activeTableCellPosition, fixture.positions[0])
+            XCTAssertEqual(view.activeTableCellPosition, fixture.positions[1])
             XCTAssertTrue(cellInput.isFirstResponder, "the focused editor keeps focus in the bound cell")
-            XCTAssertEqual(cellInput.selectedRange, NSRange(location: 0, length: 0), "the caret is restored in the cell")
+            XCTAssertEqual(cellInput.selectedRange, originalCaret, "the caret is restored in the cell")
         }
     }
 
@@ -3427,13 +3436,17 @@ final class EditorTableInputTests: XCTestCase {
             let view = fixture.host.richTextView
             let root = view.textView
             let originalSelection = try authoritativeSelection(fixture.adapter) as NSDictionary
-            try fixture.activateCell(1).insertText("X")
+            let originalDocument = fixture.adapter.documentJson()
+            root.insertText("X")
+            XCTAssertTrue(root.textStorage.string.hasPrefix("Xintro"), "the history entry edits prose")
+            _ = try fixture.activateCell(1)
             try fixture.selectCells(anchor: 0, head: 1)
             XCTAssertTrue(view.activeTextInput === root)
             XCTAssertTrue(root.isFirstResponder)
             let focus = recordFocus(fixture.host)
 
             try root.pressAccessoryToolbarButton(labeled: TableToolbarTestItems.undoLabel)
+            XCTAssertEqual(fixture.adapter.documentJson(), originalDocument, "undo restores the prose edit")
             XCTAssertEqual(try fixture.adapter.tableCellTexts(), [["one", "two"], ["three", "four"]])
             XCTAssertEqual(try authoritativeSelection(fixture.adapter) as NSDictionary, originalSelection)
             XCTAssertTrue(view.activeTextInput === root, "a restored prose caret stays on the root")
@@ -3466,6 +3479,7 @@ final class EditorTableInputTests: XCTestCase {
             let input = try fixture.activateCell(0)
             input.selectedRange = NSRange(location: input.textStorage.length, length: 0)
             input.textViewDidChangeSelection(input)
+            input.syncSelectionImmediately()
             let originalSelection = try authoritativeSelection(fixture.adapter) as NSDictionary
             input.insertText("X")
             let edited = try fixture.adapter.tableCellTexts()
@@ -3521,12 +3535,15 @@ final class EditorTableInputTests: XCTestCase {
             let root = view.textView
             let originalSelection = try authoritativeSelection(fixture.adapter) as NSDictionary
             XCTAssertEqual(originalSelection["anchorScalar"] as? Int, 0, "the caret starts in the prose")
+            let originalDocument = fixture.adapter.documentJson()
+            root.insertText("X")
+            XCTAssertTrue(root.textStorage.string.hasPrefix("Xintro"), "the history entry edits prose")
             let input = try fixture.activateCell(1)
-            input.insertText("X")
-            XCTAssertEqual(try fixture.adapter.tableCellTexts(), [["one", "twoX"], ["three", "four"]])
+            XCTAssertEqual(try fixture.adapter.tableCellTexts(), [["one", "two"], ["three", "four"]])
             let focus = recordFocus(fixture.host)
 
             try input.pressAccessoryToolbarButton(labeled: TableToolbarTestItems.undoLabel)
+            XCTAssertEqual(fixture.adapter.documentJson(), originalDocument, "undo restores the prose edit")
             XCTAssertEqual(try fixture.adapter.tableCellTexts(), [["one", "two"], ["three", "four"]])
             XCTAssertEqual(try authoritativeSelection(fixture.adapter) as NSDictionary, originalSelection)
             XCTAssertTrue(view.activeTextInput === root, "a prose caret retires the cell input")
