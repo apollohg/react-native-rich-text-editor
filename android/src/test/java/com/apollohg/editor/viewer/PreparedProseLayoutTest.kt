@@ -199,6 +199,12 @@ internal class PreparedProseLayoutTest : PreparedProseLayoutTestFixture() {
         assertEquals(0, traversal.warm.compileCount)
         assertEquals(0, traversal.warm.layoutCount)
         assertEquals(0, traversal.warm.cacheMisses)
+        assertEquals(
+            "warm census includes holders still mounted from the prime endpoint",
+            shortWindow.warmIds.size,
+            traversal.warm.residentKeyCount
+        )
+        assertEquals(traversal.prime.residentKeyDigest, traversal.warm.residentKeyDigest)
 
         val oneItem = literalWindows.single { it.id == "very-long-01" }
         assertEquals(1, oneItem.primeIds.size)
@@ -210,7 +216,14 @@ internal class PreparedProseLayoutTest : PreparedProseLayoutTestFixture() {
             imagesEnabled = true
         ) { oneItemResult = it }
         drainMainLooperUntil { oneItemResult != null }
-        assertEquals(oneItem.id, requireNotNull(oneItemResult).getOrThrow().single().windowId)
+        val oneItemTraversal = requireNotNull(oneItemResult).getOrThrow().single()
+        assertEquals(oneItem.id, oneItemTraversal.windowId)
+        assertEquals(oneItem.primeIds.size, oneItemTraversal.prime.residentKeyCount)
+        assertEquals(oneItem.warmIds.size, oneItemTraversal.warm.residentKeyCount)
+        assertEquals(
+            oneItemTraversal.prime.residentKeyDigest,
+            oneItemTraversal.warm.residentKeyDigest
+        )
 
         val exactEvidence = JSONArray().apply {
             literalWindows.forEach { window ->

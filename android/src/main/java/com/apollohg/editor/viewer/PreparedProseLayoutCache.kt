@@ -126,6 +126,7 @@ internal class PreparedProseLayoutCache(
     }
 
     fun registerDirectMount(owner: String, layout: PreparedProseLayout) = synchronized(lock) {
+        benchmarkCensusKeys?.add(layout.key)
         directMounted[owner] = layout
         retireUnownedPublicationsLocked()
         publishOwnersLocked()
@@ -150,6 +151,7 @@ internal class PreparedProseLayoutCache(
                 abs(layout.key.widthPx - widthPx) <= PIXEL_GRID_ROUNDING_SLACK_PX
         }?.let {
             if (!shouldAcquire()) return@synchronized null
+            benchmarkCensusKeys?.add(it.value.key)
             return@synchronized it.value
         }
         val lease = pendingLeases.entries
@@ -168,6 +170,7 @@ internal class PreparedProseLayoutCache(
                 .filter { it.owner == leaseKey.owner && it != leaseKey }
                 .forEach(mountedLeases::remove)
             mountedLeases[leaseKey] = layout
+            benchmarkCensusKeys?.add(layout.key)
             retireUnownedPublicationsLocked()
             publishOwnersLocked()
             return@synchronized layout
@@ -178,6 +181,7 @@ internal class PreparedProseLayoutCache(
             .filter { it.owner == lease.key.owner && it != lease.key }
             .forEach(mountedLeases::remove)
         mountedLeases[lease.key] = lease.value
+        benchmarkCensusKeys?.add(lease.value.key)
         retireUnownedPublicationsLocked()
         publishOwnersLocked()
         lease.value
@@ -268,8 +272,13 @@ internal class PreparedProseLayoutCache(
     internal val cellShapeCatalogCountForTesting: Int get() = cellShapeCatalog.countForTesting
     internal val cellShapeCatalogRetainedBytesForTesting: Long get() =
         cellShapeCatalog.retainedBytes
-    internal fun beginBenchmarkCensus() = synchronized(lock) {
-        benchmarkCensusKeys = linkedSetOf()
+    internal fun beginBenchmarkCensus(includeMountedLayouts: Boolean = false) = synchronized(lock) {
+        benchmarkCensusKeys = linkedSetOf<ProseLayoutKey>().apply {
+            if (includeMountedLayouts) {
+                directMounted.values.forEach { add(it.key) }
+                mountedLeases.values.forEach { add(it.key) }
+            }
+        }
     }
     internal fun endBenchmarkCensus(): Set<ProseLayoutKey> = synchronized(lock) {
         val liveKeys = completed.keys + pendingLeases.values.map { it.key } +

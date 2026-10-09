@@ -745,7 +745,8 @@ internal class PreparedProseLayoutRegistry(
         layoutCache.registerDirectMount(owner, layout)
     fun releaseDirectMounted(owner: String) = layoutCache.releaseDirectMount(owner)
 
-    internal fun beginBenchmarkResidentCensus() = layoutCache.beginBenchmarkCensus()
+    internal fun beginBenchmarkResidentCensus(includeMountedLayouts: Boolean = false) =
+        layoutCache.beginBenchmarkCensus(includeMountedLayouts)
 
     internal fun endBenchmarkResidentCensus(): BenchmarkResidentCensus {
         val keys = layoutCache.endBenchmarkCensus()
