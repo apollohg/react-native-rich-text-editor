@@ -356,19 +356,31 @@ final class EditorTableCommandSequenceTests: XCTestCase {
         }
     }
 
-    func testInsertRowsBeforeKeepsEveryCellCaretTypeable() throws { try runMatrix(.rowBefore) }
-    func testInsertRowsAfterKeepsEveryCellCaretTypeable() throws { try runMatrix(.rowAfter) }
-    func testInsertColumnsBeforeKeepsEveryCellCaretTypeable() throws { try runMatrix(.columnBefore) }
-    func testInsertColumnsAfterKeepsEveryCellCaretTypeable() throws { try runMatrix(.columnAfter) }
-    func testDeleteRowsMapsEveryCellCaretToTheNextEditablePosition() throws { try runMatrix(.deleteRow) }
-    func testDeleteColumnsMapsEveryCellCaretToTheNextEditablePosition() throws { try runMatrix(.deleteColumn) }
-    func testToggleHeaderCellKeepsEveryCellCaretTypeable() throws { try runMatrix(.headerCell) }
-    func testToggleHeaderRowsKeepsEveryCellCaretTypeable() throws { try runMatrix(.headerRow) }
-    func testToggleHeaderColumnsKeepsEveryCellCaretTypeable() throws { try runMatrix(.headerColumn) }
-    func testResizeColumnsKeepsEveryCellCaretTypeable() throws { try runMatrix(.resize) }
-    func testDeleteTableMapsEveryCellCaretToThePrecedingProseEnd() throws { try runMatrix(.deleteTable) }
+    @MainActor
+    func testInsertRowsBeforeKeepsEveryCellCaretTypeable() async throws { try await runMatrix(.rowBefore) }
+    @MainActor
+    func testInsertRowsAfterKeepsEveryCellCaretTypeable() async throws { try await runMatrix(.rowAfter) }
+    @MainActor
+    func testInsertColumnsBeforeKeepsEveryCellCaretTypeable() async throws { try await runMatrix(.columnBefore) }
+    @MainActor
+    func testInsertColumnsAfterKeepsEveryCellCaretTypeable() async throws { try await runMatrix(.columnAfter) }
+    @MainActor
+    func testDeleteRowsMapsEveryCellCaretToTheNextEditablePosition() async throws { try await runMatrix(.deleteRow) }
+    @MainActor
+    func testDeleteColumnsMapsEveryCellCaretToTheNextEditablePosition() async throws { try await runMatrix(.deleteColumn) }
+    @MainActor
+    func testToggleHeaderCellKeepsEveryCellCaretTypeable() async throws { try await runMatrix(.headerCell) }
+    @MainActor
+    func testToggleHeaderRowsKeepsEveryCellCaretTypeable() async throws { try await runMatrix(.headerRow) }
+    @MainActor
+    func testToggleHeaderColumnsKeepsEveryCellCaretTypeable() async throws { try await runMatrix(.headerColumn) }
+    @MainActor
+    func testResizeColumnsKeepsEveryCellCaretTypeable() async throws { try await runMatrix(.resize) }
+    @MainActor
+    func testDeleteTableMapsEveryCellCaretToThePrecedingProseEnd() async throws { try await runMatrix(.deleteTable) }
 
-    private func runMatrix(_ command: Command) throws {
+    @MainActor
+    private func runMatrix(_ command: Command) async throws {
         for headerRow in [false, true] {
             for row in 0..<Sequence.gridSize {
                 for column in 0..<Sequence.gridSize {
@@ -390,6 +402,9 @@ final class EditorTableCommandSequenceTests: XCTestCase {
                                 try probe(session, document: expected, caret: next, label: label)
                             }
                         }
+                        let cleanup = await waitForClosedFixtureCallbacks(label: label + "/closed fixture callbacks drained")
+                        XCTAssertEqual(cleanup, .completed,
+                            "\(label): closed fixture callbacks blocked the next native editing sequence")
                     }
                 }
             }
@@ -397,10 +412,15 @@ final class EditorTableCommandSequenceTests: XCTestCase {
     }
 
     @MainActor
+    private func waitForClosedFixtureCallbacks(label: String) async -> XCTWaiter.Result {
+        let callbacksDrained = expectation(description: label)
+        DispatchQueue.main.async { callbacksDrained.fulfill() }
+        return await XCTWaiter.fulfillment(of: [callbacksDrained], timeout: MountedEditorTestFixture.releaseTimeout)
+    }
+
+    @MainActor
     func testLongStructuralSelectionHistoryAndRemountTraceStaysEditable() async throws {
-        let previousFixturesDrained = expectation(description: "previous fixture callbacks drained")
-        DispatchQueue.main.async { previousFixturesDrained.fulfill() }
-        let setup = await XCTWaiter.fulfillment(of: [previousFixturesDrained], timeout: MountedEditorTestFixture.releaseTimeout)
+        let setup = await waitForClosedFixtureCallbacks(label: "previous fixture callbacks drained")
         XCTAssertEqual(setup, .completed, "closed fixture callbacks blocked the next native editing sequence")
         guard setup == .completed else { return }
         var document = Document(headerRow: true, widths: nil)
