@@ -1494,7 +1494,7 @@ class NativeTablePerformanceTest {
                 )
                 assertTrue(fixture.name, sample.getInt("wrapCount") > 0)
                 assertTrue(fixture.name, sample.getInt("nonWrapCount") > 0)
-                saveExport()
+                saveExport(TYPING_OUTPUT_FILE)
             }
         }
     }
@@ -1589,6 +1589,7 @@ class NativeTablePerformanceTest {
         const val LINE_BREAK_TEXT = "\n"
         const val RICH_TEXT = "café العربية 👩🏽‍💻"
         const val OUTPUT_FILE = "table-performance-android.json"
+        const val TYPING_OUTPUT_FILE = "table-performance-android-typing.json"
         const val COLD_OUTPUT_FILE = "table-performance-android-cold.json"
         const val SMOKE_OUTPUT_FILE = "table-performance-android-storage-smoke.json"
         const val ADDITIONAL_OUTPUT_ARGUMENT = "additionalTestOutputDir"
