@@ -1,18 +1,6 @@
 import CoreText
 import XCTest
 
-private final class TableGestureTestWindow: UIWindow {
-    var onTouchHitTest: ((UIView) -> Void)?
-
-    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        let hit = super.hitTest(point, with: event)
-        if let hit, let onTouchHitTest, event?.type == .touches {
-            onTouchHitTest(hit)
-        }
-        return hit
-    }
-}
-
 private final class TableAtomPanProbe: NSObject {
     var began = false
 
@@ -1035,7 +1023,7 @@ final class ViewerTableTests: XCTestCase {
         ]])
         let layout = try prepare(source)
         let surface = try XCTUnwrap(layout.blocks.first?.tableSurface)
-        let window = TableGestureTestWindow(windowScene: testWindowScene())
+        let window = TouchObservingTestWindow(windowScene: testWindowScene())
         window.frame = UIScreen.main.bounds
         window.backgroundColor = .systemBackground
         let viewport = CGRect(x: 0, y: 100, width: window.bounds.width, height: 240)

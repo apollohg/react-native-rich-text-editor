@@ -1,6 +1,18 @@
 import UIKit
 import XCTest
 
+final class TouchObservingTestWindow: UIWindow {
+    var onTouchHitTest: ((UIView) -> Void)?
+
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        let hit = super.hitTest(point, with: event)
+        if let hit, let onTouchHitTest, event?.type == .touches {
+            onTouchHitTest(hit)
+        }
+        return hit
+    }
+}
+
 func testWindowScene() -> UIWindowScene {
     let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
     precondition(scenes.count == 1, "NativeEditorTestHost must provide exactly one connected window scene")
