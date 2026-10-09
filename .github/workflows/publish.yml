@@ -59,7 +59,7 @@ jobs:
                       ios/Generated_editor_core.swift
                       ios/editor_coreFFI
                       ios/EditorCore.xcframework
-                  key: native-build-v1-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-ndk-4.1.2-android-27.1.12297006-${{ steps.native-toolchain.outputs.xcode }}-${{ hashFiles('rust/editor-core/src/**', 'rust/editor-core/*.toml', 'rust/editor-core/Cargo.lock', 'rust/editor-core/build.rs', 'rust/editor-core/.cargo/**', 'rust/*.sh', '.cargo/**', 'rust/.cargo/**') }}
+                  key: native-build-v1-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-ndk-4.1.2-android-27.1.12297006-${{ steps.native-toolchain.outputs.xcode }}-${{ hashFiles('rust/editor-core/src/**', 'rust/editor-core/*.toml', 'rust/editor-core/Cargo.lock', 'rust/editor-core/build.rs', 'rust/editor-core/.cargo/**', 'rust/vendor/yrs/**', 'rust/vendor/sha2/**', 'rust/*.sh', 'rust/optimize-swift-bindings.py', 'rust/optimize-kotlin-bindings.py', '.cargo/**', 'rust/.cargo/**') }}
 
             - name: Setup Node
               uses: actions/setup-node@v6
@@ -416,7 +416,7 @@ jobs:
     security-ios:
         needs: build-package
         runs-on: macos-latest
-        timeout-minutes: 25
+        timeout-minutes: 45
         env:
             NATIVE_EDITOR_IOS_DERIVED_DATA: ${{ github.workspace }}/.ci/ios-security
         steps:
@@ -458,15 +458,15 @@ jobs:
               uses: actions/cache/restore@v5
               with:
                   path: .ci/ios-security/Build/Products
-                  key: ios-security-host-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.ios-toolchain.outputs.xcode }}-${{ steps.ios-codegen.outputs.hash }}-${{ hashFiles('ios/**', 'ios-tests/**', 'common/cpp/**', 'ReactNativeProseEditor.podspec', 'src/specs/**', 'react-native.config.js', 'example/package-lock.json', 'scripts/run-ios-tests.sh', 'scripts/require-native-artifacts.sh') }}
+                  key: ios-security-host-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.ios-toolchain.outputs.xcode }}-${{ steps.ios-codegen.outputs.hash }}-${{ hashFiles('ios/**', 'ios-tests/**', 'scripts/tests/*.json', 'common/cpp/**', 'ReactNativeProseEditor.podspec', 'src/specs/**', 'react-native.config.js', 'example/package-lock.json', 'scripts/run-ios-tests.sh', 'scripts/require-native-artifacts.sh') }}
 
             - name: Install iOS test dependencies
               run: npm run install:ios-test-pods
 
 
-            - name: Build iOS security test host
+            - name: Build iOS test host
               if: steps.ios-test-build.outputs.cache-hit != 'true'
-              run: bash scripts/run-ios-tests.sh -only-testing:NativeEditorTests/RenderBridgeTests/testSharedWhitespaceBase64AndTrickleFixturesExecuteAgainstIOSBoundary
+              run: npm run test:ios
               env:
                   NATIVE_EDITOR_IOS_TEST_ACTION: build-for-testing
 
@@ -476,6 +476,11 @@ jobs:
               with:
                   path: .ci/ios-security/Build/Products
                   key: ${{ steps.ios-test-build.outputs.cache-primary-key }}
+
+            - name: Run iOS unit tests
+              run: npm run test:ios
+              env:
+                  NATIVE_EDITOR_IOS_TEST_ACTION: test-without-building
 
             - name: Validate iOS security behavior
               run: npm run validate:security -- --release --behavior

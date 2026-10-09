@@ -46,6 +46,10 @@ const workflowJob = (workflow, jobName, workflowName) => {
 const requireJob = (jobName) => workflowJob(publishWorkflow, jobName, 'publish');
 const requireCiJob = (jobName) => workflowJob(ciWorkflow, jobName, 'CI');
 
+const ciPushTrigger = ciWorkflow.split('\n  push:\n')[1]?.split('\n  pull_request:')[0];
+assert.ok(ciPushTrigger, 'CI must run after changes land on a release branch');
+assert.match(ciPushTrigger, /^\s+- v1\s*$/m, 'CI must validate pushes to the default v1 release branch');
+
 const assertRustCache = (job, jobName) => {
   assert.match(
     job,
@@ -111,6 +115,8 @@ assert.doesNotMatch(nativeRestore, /github\.sha|restore-keys:|release-artifact|\
 for (const input of [
   'rust/editor-core/src/**', 'rust/editor-core/*.toml', 'rust/editor-core/Cargo.lock',
   'rust/editor-core/build.rs', 'rust/editor-core/.cargo/**', 'rust/*.sh',
+  'rust/vendor/yrs/**', 'rust/vendor/sha2/**',
+  'rust/optimize-swift-bindings.py', 'rust/optimize-kotlin-bindings.py',
   '.cargo/**', 'rust/.cargo/**',
 ]) {
   assert.ok(nativeRestore.includes(`'${input}'`), `native cache must include ${input}`);
@@ -453,11 +459,22 @@ const androidBuildSource = await readFile(path.join(repoRoot, 'android/build.gra
 assert.match(androidBuildSource, /outputs\.cacheIf\s*\{\s*false\s*\}/, 'Fixture-driven JVM tests must execute instead of restoring cached results');
 assert.match(androidBuildSource, /outputs\.upToDateWhen\s*\{\s*false\s*\}/, 'JVM tests must re-read external security fixtures');
 const iosSecurityJob = requireJob('security-ios');
+const iosUnitTestStep = iosSecurityJob.split('- name: Run iOS unit tests')[1]?.split('\n            - name:')[0];
+assert.ok(iosUnitTestStep, 'release validation must run the complete iOS XCTest suite');
+assert.match(iosUnitTestStep, /^\s+run: npm run test:ios\s*$/m, 'release iOS tests must run without test filters');
+assert.match(iosUnitTestStep, /NATIVE_EDITOR_IOS_TEST_ACTION: test-without-building/);
+assert.doesNotMatch(iosUnitTestStep, /\bif:|continue-on-error:/, 'the complete iOS suite must gate publishing on every host cache hit');
+const iosBuildStep = iosSecurityJob.split('- name: Build iOS test host')[1]?.split('\n            - name:')[0];
+assert.ok(iosBuildStep, 'release validation must build the complete iOS test host');
+assert.match(iosBuildStep, /^\s+run: npm run test:ios\s*$/m, 'the cached iOS test host must not retain a security-only test filter');
+assert.match(iosBuildStep, /NATIVE_EDITOR_IOS_TEST_ACTION: build-for-testing/);
+assert.match(iosBuildStep, /if: steps\.ios-test-build\.outputs\.cache-hit != 'true'/);
+assert.match(iosSecurityJob, /timeout-minutes:\s*45/, 'release iOS validation must allow the same full-suite budget as CI');
 const iosTestRestore = iosSecurityJob.split('- name: Restore compiled iOS test host')[1]?.split('\n            - name:')[0];
 assert.ok(iosTestRestore);
-assert.match(iosTestRestore, /ios-security-host-v1-.*steps\.ios-toolchain\.outputs\.xcode.*hashFiles/);
+assert.match(iosTestRestore, /ios-security-host-v2-.*steps\.ios-toolchain\.outputs\.xcode.*hashFiles/, 'release validation must invalidate previously filtered iOS test hosts');
 assert.doesNotMatch(iosTestRestore, /restore-keys:|github\.sha/);
-for (const input of ['ios/**', 'ios-tests/**', 'common/cpp/**', 'ReactNativeProseEditor.podspec', 'src/specs/**', 'react-native.config.js', 'example/package-lock.json', 'scripts/run-ios-tests.sh']) {
+for (const input of ['ios/**', 'ios-tests/**', 'scripts/tests/*.json', 'common/cpp/**', 'ReactNativeProseEditor.podspec', 'src/specs/**', 'react-native.config.js', 'example/package-lock.json', 'scripts/run-ios-tests.sh']) {
   assert.ok(iosTestRestore.includes(`'${input}'`), `iOS test host cache must include ${input}`);
 }
 assert.match(iosSecurityJob, /NATIVE_EDITOR_IOS_TEST_ACTION: build-for-testing/);
