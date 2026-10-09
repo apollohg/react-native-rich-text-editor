@@ -1625,6 +1625,35 @@ internal class EditorTableSurfaceMountTest {
         }
 
     @Test
+    fun `root composition after table accepts immediate space through same connection`() =
+        withMountedView { view, adapter, _ ->
+            val root = view.editorEditText
+            val beforeTable = JSONObject(requireNotNull(adapter.documentJson()))
+                .getJSONArray("content").getJSONObject(0).toString()
+            root.setSelection(root.text.length)
+            val connection = requireNotNull(root.onCreateInputConnection(EditorInfo()))
+            val generation = root.inputConnectionGenerationForTesting()
+
+            assertTrue(connection.setComposingText("word", 1))
+            assertTrue(connection.finishComposingText())
+            assertTrue(connection.commitText(" ", 1))
+
+            val diagnostic = root.imeTraceSnapshotForTesting().joinToString("\n")
+            val content = JSONObject(requireNotNull(adapter.documentJson())).getJSONArray("content")
+            assertEquals(diagnostic, beforeTable, content.getJSONObject(0).toString())
+            assertEquals(
+                diagnostic,
+                "afterword ",
+                content.getJSONObject(1).getJSONArray("content").getJSONObject(0).getString("text")
+            )
+            assertTrue(diagnostic, root.text.toString().endsWith("afterword "))
+            assertEquals(diagnostic, root.text.length, root.selectionStart)
+            assertEquals(diagnostic, root.selectionStart, root.selectionEnd)
+            assertEquals(diagnostic, generation, root.inputConnectionGenerationForTesting())
+            assertEquals(diagnostic, "Cell text", firstCellText(adapter))
+        }
+
+    @Test
     fun `root composition commits before a cell takes focus`() = withMountedView {
             view,
             adapter,

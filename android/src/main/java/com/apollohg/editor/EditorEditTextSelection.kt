@@ -364,11 +364,8 @@ internal fun EditorEditText.applySelectionFromJSON(
                 authoritativeCellSelectionActive = false
                 cellSelectionRootTouchPending = false
                 updateAtomBoundaryCursorVisibility()
-                if (rootTablePositionMap != null) {
-                    rootTableSelectionInputBlocked = true
-                    return
-                }
                 logicalSelectionSnapshot = null
+                authoritativeNodeSelectionRange = null
                 val docPos = exactV2ScalarInt(selection.opt("pos") as? Number) ?: return
                 val nodeSelectionDriver = v2Driver ?: return
                 val scalarPos = exactV2ScalarInt(selection.opt("posScalar") as? Number)
@@ -376,7 +373,11 @@ internal fun EditorEditText.applySelectionFromJSON(
                     ?: docPos.takeUnless { isTableCellInput }
                     ?: return
                 if (scalarPos == Int.MAX_VALUE) return
-                val localSelection = localScalarSelection(scalarPos, scalarPos + 1) ?: return
+                val localSelection = localScalarSelection(scalarPos, scalarPos + 1) ?: run {
+                    if (rootTablePositionMap != null) rootTableSelectionInputBlocked = true
+                    return
+                }
+                rootTableSelectionInputBlocked = false
                 val startUtf16 = PositionBridge.scalarToUtf16(localSelection.first, currentText)
                 val len = text?.length ?: 0
                 val clamped = startUtf16.coerceIn(0, len)

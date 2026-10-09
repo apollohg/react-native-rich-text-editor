@@ -53,7 +53,10 @@ internal fun EditorEditText.applyRustUpdateJSON(
         )
         return
     }
-    if (deferredRustUpdateApplicationDepth > 0) {
+    // Root table coordinates must track the accepted document revision.
+    if (deferredRustUpdateApplicationDepth > 0 &&
+        rootTablePositionMap == null && !rootTableRenderNeedsRefresh
+    ) {
         if (deferredRustUpdateJSON != null && deferredRustUpdateJSON != updateJSON) {
             advanceRenderBlocksThroughDeferredUpdate(deferredRustUpdateJSON!!)
         }
