@@ -347,6 +347,7 @@ extension EditorTheme {
         result["contentInsets"] = ["top": inset.top, "left": inset.left, "bottom": inset.bottom, "right": inset.right]
         result["placeholderColor"] = sheet["placeholder"]["color"]
         result["toolbar"] = root["toolbar"]
+        result["table"] = root["table"]
         var mention = sheet["mention"]
         mention["textColor"] = mention["color"]
         mention["style"] = sheet["mention"]

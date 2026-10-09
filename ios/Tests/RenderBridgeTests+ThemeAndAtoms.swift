@@ -2,6 +2,30 @@ import CoreText
 import XCTest
 
 extension RenderBridgeTests {
+    func testTheme_versionedTablePreservesPresentationAndMargins() throws {
+        let theme = try XCTUnwrap(EditorTheme.from(json: """
+        {
+            "version":1,
+            "table":{
+                "minColumnWidth":96,"cellPadding":10,"borderWidth":2,
+                "borderColor":"#123456ff","headerBackgroundColor":"#abcdef80",
+                "selectionColor":"#2468ac40","resizeHandleColor":"#654321ff"
+            },
+            "styles":{"table":{"marginBottom":16}}
+        }
+        """))
+
+        let table = try XCTUnwrap(theme.table, "Versioned themes must retain table presentation")
+        XCTAssertEqual(table.minColumnWidth, 96)
+        XCTAssertEqual(table.cellPadding, 10)
+        XCTAssertEqual(table.borderWidth, 2)
+        XCTAssertEqual(table.borderColor, EditorTheme.color(from: "#123456ff"))
+        XCTAssertEqual(table.headerBackgroundColor, EditorTheme.color(from: "#abcdef80"))
+        XCTAssertEqual(table.selectionColor, EditorTheme.color(from: "#2468ac40"))
+        XCTAssertEqual(table.resizeHandleColor, EditorTheme.color(from: "#654321ff"))
+        XCTAssertEqual(theme.styleSheet?.box("table").margin.bottom, 16)
+    }
+
     func testRender_ruleFreeMentionMatchesLegacyProjection() throws {
         let styles: [String: [String: Any]] = ["mention": ["paddingLeft": 3, "fontSize": 21, "color": "#ff0000ff"]]
         let root: [String: Any] = ["mentions": ["node": ["style": ["paddingRight": 9]]]]

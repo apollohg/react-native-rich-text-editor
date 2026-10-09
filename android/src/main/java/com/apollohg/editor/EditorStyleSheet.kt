@@ -241,7 +241,8 @@ class EditorStyleSheet private constructor(
                     content.bottom,
                     content.left
                 ),
-                styleSheet = sheet
+                styleSheet = sheet,
+                table = com.apollohg.editor.tables.TableStyle.fromJson(root.optJSONObject("table"))
             )
         }
 

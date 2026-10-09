@@ -1,5 +1,10 @@
 package com.apollohg.editor.tables
 
+import com.apollohg.editor.optNullableFloat
+import com.apollohg.editor.optNullableString
+import com.apollohg.editor.parseColor
+import org.json.JSONObject
+
 data class TableStyle(
     val minColumnWidth: Float = 80f,
     val cellPadding: Float = 8f,
@@ -11,6 +16,26 @@ data class TableStyle(
 ) {
     fun isValid() = minColumnWidth.isFinite() && minColumnWidth > 0f &&
         cellPadding.isFinite() && cellPadding >= 0f && borderWidth.isFinite() && borderWidth >= 0f
+
+    companion object {
+        fun fromJson(json: JSONObject?): TableStyle? {
+            if (json == null) return null
+            val defaults = TableStyle()
+            return TableStyle(
+                minColumnWidth = json.optNullableFloat("minColumnWidth") ?: defaults.minColumnWidth,
+                cellPadding = json.optNullableFloat("cellPadding") ?: defaults.cellPadding,
+                borderWidth = json.optNullableFloat("borderWidth") ?: defaults.borderWidth,
+                borderColor =
+                    parseColor(json.optNullableString("borderColor")) ?: defaults.borderColor,
+                headerBackgroundColor = parseColor(json.optNullableString("headerBackgroundColor"))
+                    ?: defaults.headerBackgroundColor,
+                selectionColor = parseColor(json.optNullableString("selectionColor"))
+                    ?: defaults.selectionColor,
+                resizeHandleColor = parseColor(json.optNullableString("resizeHandleColor"))
+                    ?: defaults.resizeHandleColor
+            ).takeIf { it.isValid() }
+        }
+    }
 }
 
 internal fun TableStyle.physical(scale: Float): TableStyle {
