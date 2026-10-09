@@ -5,7 +5,10 @@ import android.text.Selection
 import android.text.Spanned
 import android.text.style.AbsoluteSizeSpan
 import android.text.style.BackgroundColorSpan
+import android.text.style.CharacterStyle
 import android.text.style.ForegroundColorSpan
+import android.text.style.LineHeightSpan
+import android.text.style.ReplacementSpan
 import android.text.style.StrikethroughSpan
 import android.text.style.StyleSpan
 import android.text.style.UnderlineSpan
@@ -180,25 +183,33 @@ internal fun EditorEditText.applyOptimisticPlainTextCommitIfPossible(
 internal fun EditorEditText.optimisticInlineSpansForInsertion(
     spanned: Spanned,
     insertionStart: Int
-): List<OptimisticInlineSpan> {
-    if (spanned.isEmpty()) return emptyList()
+): List<OptimisticInlineSpan> = textStyleSpansForInsertion(spanned, insertionStart).mapNotNull {
+    cloneOptimisticInlineSpan(it)?.let { clone ->
+        OptimisticInlineSpan(clone, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+    }
+}
+
+internal fun textStyleSpansForInsertion(spanned: Spanned, insertionStart: Int): List<Any> {
+    if (insertionStart !in 0..spanned.length) return emptyList()
     val sourceIndex = when {
-        insertionStart > 0 -> insertionStart - 1
+        spanned.isEmpty() -> 0
+        insertionStart > 0 && spanned[insertionStart - 1] != '\n' -> insertionStart - 1
         insertionStart < spanned.length -> insertionStart
         else -> return emptyList()
     }
-    val queryStart = sourceIndex.coerceIn(0, spanned.length - 1)
-    val queryEnd = (queryStart + 1).coerceAtMost(spanned.length)
-    val spans = mutableListOf<OptimisticInlineSpan>()
-    spanned.getSpans(queryStart, queryEnd, Any::class.java).forEach { span ->
-        if (spanned.getSpanStart(span) > queryStart || spanned.getSpanEnd(span) <= queryStart) {
-            return@forEach
+    return spanned.getSpans(sourceIndex, minOf(sourceIndex + 1, spanned.length), Any::class.java)
+        .filter {
+            (it is CharacterStyle || it is LineHeightSpan) &&
+                it !is ReplacementSpan && it !is TransientComposingTextStyleSpan &&
+                spanned.getSpanStart(it) <= sourceIndex &&
+                (
+                    spanned.getSpanEnd(it) > sourceIndex ||
+                        (
+                            spanned.getSpanStart(it) == insertionStart &&
+                                spanned.getSpanEnd(it) == insertionStart
+                            )
+                    )
         }
-        cloneOptimisticInlineSpan(span)?.let { clone ->
-            spans.add(OptimisticInlineSpan(clone, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE))
-        }
-    }
-    return spans
 }
 
 internal fun EditorEditText.cloneOptimisticInlineSpan(span: Any): Any? = when (span) {

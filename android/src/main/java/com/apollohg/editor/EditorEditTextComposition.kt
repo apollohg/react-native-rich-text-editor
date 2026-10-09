@@ -3,6 +3,8 @@ package com.apollohg.editor
 import android.graphics.Typeface
 import android.text.Editable
 import android.text.Spanned
+import android.text.style.CharacterStyle
+import android.text.style.LineHeightSpan
 import android.view.inputmethod.BaseInputConnection
 
 internal fun EditorEditText.authorizedUtf16RangeImpl(start: Int, end: Int): Pair<Int, Int> {
@@ -87,7 +89,14 @@ internal fun EditorEditText.applyTransientComposingTextStyleForEditorImpl() {
     val end = BaseInputConnection.getComposingSpanEnd(editable)
     if (start < 0 || end < 0 || start >= end || end > editable.length) return
 
-    val textStyle = theme?.effectiveTextStyle("paragraph")
+    val source = lastAuthorizedRenderedText as? Spanned
+    val replacementStart = compositionReplacementRange()?.first ?: start
+    val sourceSpans = source?.let { textStyleSpansForInsertion(it, replacementStart) }.orEmpty()
+    val textStyle = if (sourceSpans.any { it is CharacterStyle }) {
+        null
+    } else {
+        theme?.effectiveTextStyle("paragraph")
+    }
     val resolvedTextSize =
         textStyle?.fontSize?.times(resources.displayMetrics.density) ?: baseFontSize
     val resolvedTextColor = textStyle?.color ?: baseTextColor
@@ -119,6 +128,26 @@ internal fun EditorEditText.applyTransientComposingTextStyleForEditorImpl() {
     if (fontFamily != null) {
         editable.setSpan(
             TransientComposingTypefaceSpan(fontFamily),
+            start,
+            end,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+    }
+    sourceSpans.forEach { sourceSpan ->
+        val span = when (sourceSpan) {
+            is EditorResolvedTextSpan -> TransientComposingResolvedTextSpan(
+                sourceSpan.style,
+                sourceSpan.density
+            )
+
+            is CharacterStyle -> TransientComposingSourceSpan(sourceSpan)
+
+            is LineHeightSpan -> TransientComposingLineHeightSpan(sourceSpan)
+
+            else -> return@forEach
+        }
+        editable.setSpan(
+            span,
             start,
             end,
             Spanned.SPAN_EXCLUSIVE_EXCLUSIVE

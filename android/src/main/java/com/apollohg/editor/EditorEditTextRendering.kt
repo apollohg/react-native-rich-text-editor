@@ -8,6 +8,21 @@ private fun isRenderedContentSpan(span: Any): Boolean =
     span is android.text.style.CharacterStyle || span is android.text.style.ParagraphStyle ||
         span is Annotation || span is CodeBlockMetadataSpan
 
+private fun EditorEditText.replaceRenderedContentSpans(spannable: Spanned) {
+    editableText.getSpans(0, editableText.length, Any::class.java).filter {
+        editableText.getSpanFlags(it) and Spanned.SPAN_COMPOSING == 0 &&
+            isRenderedContentSpan(it)
+    }.forEach(editableText::removeSpan)
+    spannable.getSpans(0, spannable.length, Any::class.java).forEach {
+        editableText.setSpan(
+            it,
+            spannable.getSpanStart(it),
+            spannable.getSpanEnd(it),
+            spannable.getSpanFlags(it)
+        )
+    }
+}
+
 internal fun EditorEditText.applyFullRenderPreservingEditorState(
     spannable: CharSequence,
     restoreScrollAfterLayout: Boolean = false
@@ -81,18 +96,7 @@ internal fun EditorEditText.applyRenderedSpannable(
     beginBatchEdit()
     try {
         if (styleOnly && spannable is Spanned) {
-            editableText.getSpans(0, editableText.length, Any::class.java).filter {
-                editableText.getSpanFlags(it) and Spanned.SPAN_COMPOSING == 0 &&
-                    isRenderedContentSpan(it)
-            }.forEach(editableText::removeSpan)
-            spannable.getSpans(0, spannable.length, Any::class.java).forEach {
-                editableText.setSpan(
-                    it,
-                    spannable.getSpanStart(it),
-                    spannable.getSpanEnd(it),
-                    spannable.getSpanFlags(it)
-                )
-            }
+            replaceRenderedContentSpans(spannable)
         } else if (replaceRange != null) {
             if (replacedTopLevelStartIndex != null) {
                 removeRenderSpansOwnedByTopLevelRange(
@@ -259,6 +263,12 @@ internal fun EditorEditText.authorizeVisibleTextForMatchedOptimisticRender(
     spannable: CharSequence
 ) {
     val startedAt = System.nanoTime()
+    if (spannable is Spanned) {
+        runWithTransientInputMutationGuard {
+            replaceRenderedContentSpans(spannable)
+            true
+        }
+    }
     val visibleText = text?.toString().orEmpty()
     lastAuthorizedText = visibleText
     lastAuthorizedRenderedText = text?.let { SpannableStringBuilder(it) }
@@ -268,6 +278,9 @@ internal fun EditorEditText.authorizeVisibleTextForMatchedOptimisticRender(
     clearCompositionTrackingForEditor()
     lastRenderAppliedPatchForTesting = false
     clearNativeTextMutationAfterBlurWindow()
+    invalidateImeTextCoordinateMapperForEditor()
+    invalidateRenderedContent()
+    refreshCodeHighlighting()
     recordImeTraceForTesting(
         "reuseOptimisticVisibleTextRender",
         "textLength=${visibleText.length} " +

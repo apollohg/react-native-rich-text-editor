@@ -1,7 +1,12 @@
 package com.apollohg.editor
 
+import android.graphics.Paint
+import android.text.TextPaint
 import android.text.style.AbsoluteSizeSpan
+import android.text.style.CharacterStyle
 import android.text.style.ForegroundColorSpan
+import android.text.style.LineHeightSpan
+import android.text.style.MetricAffectingSpan
 import android.text.style.StyleSpan
 import android.text.style.TypefaceSpan
 
@@ -109,5 +114,48 @@ internal class TransientComposingTypefaceSpan(family: String) :
 internal class TransientComposingStyleSpan(style: Int) :
     StyleSpan(style),
     TransientComposingTextStyleSpan
+
+internal class TransientComposingSourceSpan(private val source: CharacterStyle) :
+    MetricAffectingSpan(),
+    TransientComposingTextStyleSpan {
+    override fun updateMeasureState(paint: TextPaint) {
+        (source as? MetricAffectingSpan)?.updateMeasureState(paint)
+    }
+
+    override fun updateDrawState(paint: TextPaint) = source.updateDrawState(paint)
+}
+
+internal class TransientComposingResolvedTextSpan(style: EditorTextStyle, density: Float) :
+    EditorResolvedTextSpan(style, density),
+    TransientComposingTextStyleSpan
+
+internal class TransientComposingLineHeightSpan(private val source: LineHeightSpan) :
+    LineHeightSpan.WithDensity,
+    TransientComposingTextStyleSpan {
+    override fun chooseHeight(
+        text: CharSequence,
+        start: Int,
+        end: Int,
+        spanstartv: Int,
+        v: Int,
+        fm: Paint.FontMetricsInt
+    ) = source.chooseHeight(text, start, end, spanstartv, v, fm)
+
+    override fun chooseHeight(
+        text: CharSequence,
+        start: Int,
+        end: Int,
+        spanstartv: Int,
+        v: Int,
+        fm: Paint.FontMetricsInt,
+        paint: TextPaint
+    ) {
+        if (source is LineHeightSpan.WithDensity) {
+            source.chooseHeight(text, start, end, spanstartv, v, fm, paint)
+        } else {
+            chooseHeight(text, start, end, spanstartv, v, fm)
+        }
+    }
+}
 
 internal data class OptimisticInlineSpan(val span: Any, val flags: Int)
