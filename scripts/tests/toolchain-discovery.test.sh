@@ -99,11 +99,13 @@ printf 'fixture\n' > "$target_dir/$target/release/libeditor_core.so"
 SCRIPT
   chmod +x "$bin_dir/cargo-ndk"
 
+  cp "$repo_root/rust/v2-symbols.sh" "$bin_dir/v2-symbols.sh"
   cat > "$bin_dir/nm" <<'SCRIPT'
 #!/usr/bin/env bash
 set -euo pipefail
-for symbol in $(seq 1 36); do
-  printf 'uniffi_editor_core_fn_func_editor_v2_%s\n' "$symbol"
+source "$(dirname "$0")/v2-symbols.sh"
+for symbol in "${V2_SYMBOLS[@]}"; do
+  printf 'uniffi_editor_core_fn_func_%s\n' "$symbol"
 done
 SCRIPT
   chmod +x "$bin_dir/nm"
@@ -207,6 +209,7 @@ android_fixture_dir="$fixture_root/android-build"
 mkdir -p "$android_fixture_dir/editor-core"
 cp "$repo_root/rust/build-android.sh" "$android_fixture_dir/build-android.sh"
 cp "$repo_root/rust/toolchain.sh" "$android_fixture_dir/toolchain.sh"
+cp "$repo_root/rust/v2-symbols.sh" "$android_fixture_dir/v2-symbols.sh"
 cargo_home="$fixture_root/cargo-home"
 mkdir -p "$cargo_home/bin"
 make_cargo_ndk "$cargo_home/bin"
