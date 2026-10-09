@@ -114,6 +114,7 @@ export const customTableToolbarTheme: EditorToolbarTheme = {
 };
 
 const tableTheme: NonNullable<EditorTheme['table']> = {
+    marginBottom: SPACE.lg,
     minColumnWidth: TABLE_MIN_COLUMN_WIDTH,
     cellPadding: SPACE.sm,
     borderWidth: TABLE_BORDER_WIDTH,

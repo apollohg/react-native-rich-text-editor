@@ -115,7 +115,7 @@ export interface EditorHorizontalRuleStyle extends EditorBorderStyle, EditorMarg
 
 export interface EditorMentionStyle extends EditorInlineStyle, EditorBorderStyle, EditorPaddingStyle {}
 
-export interface EditorTableTheme {
+export interface EditorTableTheme extends EditorMarginStyle {
     minColumnWidth?: number;
     cellPadding?: number;
     borderWidth?: number;
@@ -183,13 +183,13 @@ export type EditorCodeBlockTheme = EditorTextStyle;
 export type NormalizedEditorStyle = Readonly<Record<string, unknown>>;
 export interface NormalizedEditorTheme {
     version: 1;
-    styles?: Partial<Record<keyof EditorStyleMap, NormalizedEditorStyle>>;
+    styles?: Partial<Record<keyof EditorStyleMap | 'table', NormalizedEditorStyle>>;
     rules?: readonly {
         path: readonly (keyof EditorStyleMap)[];
         style: NormalizedEditorStyle;
     }[];
     toolbar?: EditorToolbarTheme;
-    table?: Required<EditorTableTheme>;
+    table?: Required<Omit<EditorTableTheme, keyof EditorMarginStyle>>;
 }
 
 type ExactStyle<T, Shape> = T extends false | null | undefined

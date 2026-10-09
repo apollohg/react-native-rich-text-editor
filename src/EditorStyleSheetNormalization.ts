@@ -310,10 +310,14 @@ function normalizeStyle(
     return result;
 }
 
-function tableTheme(value: unknown): Required<import('./EditorStyleSheetTypes').EditorTableTheme> {
+function tableTheme(value: unknown): {
+    configuration: NonNullable<NormalizedEditorTheme['table']>;
+    style: NormalizedEditorStyle;
+} {
     if (!record(value)) {
         return invalid('table', 'expected table configuration');
     }
+
     const defaults = {
         minColumnWidth: 80,
         cellPadding: 8,
@@ -323,25 +327,46 @@ function tableTheme(value: unknown): Required<import('./EditorStyleSheetTypes').
         selectionColor: '#3B82F633',
         resizeHandleColor: '#3B82F6',
     };
-    const allowed = Object.keys(defaults);
+
+    const margins = spacing('margin');
+    const allowed = [ ...Object.keys(defaults), ...margins ];
+
     for (const key of Object.keys(value)) {
-        if (!allowed.includes(key)) invalid(`table.${key}`, 'unsupported property');
+        if (!allowed.includes(key)) {
+            invalid(`table.${key}`, 'unsupported property');
+        }
     }
+
     const result = { ...defaults };
+
     for (const key of [ 'minColumnWidth', 'cellPadding', 'borderWidth' ] as const) {
         const candidate = value[key];
+
         if (candidate !== undefined) {
             if (typeof candidate !== 'number' || !Number.isFinite(candidate) || candidate < 0 || (key === 'minColumnWidth' && candidate === 0)) {
                 invalid(`table.${key}`, key === 'minColumnWidth' ? 'expected a positive number' : 'expected a nonnegative number');
             }
+
             result[key] = candidate;
         }
     }
+
     for (const key of [ 'borderColor', 'headerBackgroundColor', 'selectionColor', 'resizeHandleColor' ] as const) {
-        if (value[key] !== undefined) result[key] = normalizeEditorColor(value[key], `table.${key}`);
-        else result[key] = normalizeEditorColor(result[key], `table.${key}`);
+        if (value[key] !== undefined) {
+            result[key] = normalizeEditorColor(value[key], `table.${key}`);
+        } else {
+            result[key] = normalizeEditorColor(result[key], `table.${key}`);
+        }
     }
-    return result;
+
+    return {
+        configuration: result,
+        style: normalizeStyle(
+            Object.fromEntries(Object.entries(value).filter(([ key ]) => margins.includes(key))),
+            margins,
+            'table',
+        ),
+    };
 }
 
 export function normalizeEditorTheme(theme: unknown): NormalizedEditorTheme {
@@ -349,7 +374,7 @@ export function normalizeEditorTheme(theme: unknown): NormalizedEditorTheme {
         invalid('theme', 'expected a named style map');
     }
 
-    const styles: Partial<Record<keyof EditorStyleMap, NormalizedEditorStyle>> = {};
+    const styles: NonNullable<NormalizedEditorTheme['styles']> = {};
     const result: NormalizedEditorTheme = { version: 1 };
 
     for (const [ key, value ] of Object.entries(theme)) {
@@ -416,7 +441,15 @@ export function normalizeEditorTheme(theme: unknown): NormalizedEditorTheme {
         }
 
         if (key === 'table') {
-            if (value !== undefined) result.table = tableTheme(value);
+            if (value !== undefined) {
+                const table = tableTheme(value);
+                result.table = table.configuration;
+
+                if (Object.keys(table.style).length) {
+                    styles.table = table.style;
+                }
+            }
+
             continue;
         }
 

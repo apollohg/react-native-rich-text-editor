@@ -84,6 +84,31 @@ import uniffi.editor_core.TableRenderFailure
 @Config(sdk = [34])
 class ViewerTableTest {
     @Test
+    fun `table bottom margin separates following prose without expanding the grid`() {
+        val source = JSONObject(PlainTableFixture.document(1, 1)).apply {
+            getJSONArray("content").put(
+                JSONObject(
+                    """{"type":"paragraph","content":[{"type":"text","text":"after"}]}"""
+                )
+            )
+        }.toString()
+        fun layout(marginBottom: Int) = prepare(
+            source,
+            """{"version":1,"styles":{"table":{"marginBottom":$marginBottom}}}"""
+        )
+
+        val baseline = layout(0)
+        val spaced = layout(16)
+        assertEquals(2, spaced.blocks.size)
+        val baselineGrid = baseline.blocks[0].tableBounds!!
+        val spacedGrid = spaced.blocks[0].tableBounds!!
+        assertEquals("Outer spacing must preserve the grid frame", baselineGrid, spacedGrid)
+        assertEquals(0, baseline.blocks[1].bounds.top - baselineGrid.bottom)
+        assertEquals(16, spaced.blocks[1].bounds.top - spacedGrid.bottom)
+        assertEquals(16, spaced.heightPx - baseline.heightPx)
+    }
+
+    @Test
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
     fun progressiveAccessibilityRevealUsesTheNewlyMeasuredCell() {
         val document =
