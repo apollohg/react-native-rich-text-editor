@@ -15,6 +15,10 @@ extension EditorTextView {
         } else {
             keyboardFrameInScreen = (notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue
         }
+        if notification.name == UIResponder.keyboardDidChangeFrameNotification {
+            updateKeyboardInset()
+            return
+        }
         let duration = (notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?.doubleValue ?? 0
         let curve = (notification.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 0
         UIView.animate(

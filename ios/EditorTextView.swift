@@ -331,7 +331,11 @@ class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegat
             object: nil
         )
 
-        for name in [UIResponder.keyboardWillChangeFrameNotification, UIResponder.keyboardWillHideNotification] {
+        for name in [
+            UIResponder.keyboardWillChangeFrameNotification,
+            UIResponder.keyboardDidChangeFrameNotification,
+            UIResponder.keyboardWillHideNotification
+        ] {
             NotificationCenter.default.addObserver(
                 self,
                 selector: #selector(handleKeyboardFrameChange(_:)),
