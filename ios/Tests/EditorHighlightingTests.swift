@@ -13,7 +13,8 @@ final class EditorHighlightingTests: XCTestCase {
         XCTAssertNotNil(failure)
     }
 
-    func testEditorAppliesAndRemovesPresentationWithoutChangingText() throws {
+    @MainActor
+    func testEditorAppliesAndRemovesPresentationWithoutChangingText() async throws {
         let provider = EditorHighlightingFixtureProvider()
         try NativeCodeHighlightingRegistry.register(provider: provider)
         let view = EditorTextView(frame: CGRect(x: 0, y: 0, width: 320, height: 180))
@@ -26,7 +27,7 @@ final class EditorHighlightingTests: XCTestCase {
         [{"type":"blockStart","nodeType":"codeBlock","language":"rust","depth":0},{"type":"textRun","text":"let answer = 42;","marks":[]},{"type":"blockEnd"}]
         """)
         let original = view.textStorage.string
-        wait(for: [painted], timeout: 3)
+        await fulfillment(of: [painted], timeout: 3)
         XCTAssertEqual(view.textStorage.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor, UIColor.red)
         XCTAssertEqual(view.textStorage.string, original)
         XCTAssertEqual(provider.language, "rust")
