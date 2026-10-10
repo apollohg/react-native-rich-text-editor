@@ -412,13 +412,6 @@ final class EditorTableCommandSequenceTests: XCTestCase {
     }
 
     @MainActor
-    private func waitForClosedFixtureCallbacks(label: String) async -> XCTWaiter.Result {
-        let callbacksDrained = expectation(description: label)
-        DispatchQueue.main.async { callbacksDrained.fulfill() }
-        return await XCTWaiter.fulfillment(of: [callbacksDrained], timeout: MountedEditorTestFixture.releaseTimeout)
-    }
-
-    @MainActor
     func testLongStructuralSelectionHistoryAndRemountTraceStaysEditable() async throws {
         let setup = await waitForClosedFixtureCallbacks(label: "previous fixture callbacks drained")
         XCTAssertEqual(setup, .completed, "closed fixture callbacks blocked the next native editing sequence")

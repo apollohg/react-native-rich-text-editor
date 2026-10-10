@@ -22,15 +22,24 @@ final class EditorCommandSequenceTests: XCTestCase {
     private static let emptyContinuationUnicodeName = "surrogate"
     private static let multilineReplacement = "one\ntwo\nthree"
 
-    func testRootNodePairsWithSelectionDeletion() throws { try runPairs(context: Self.rootContext, mode: "selection") }
-    func testRootNodePairsWithRepeatedBackspace() throws { try runPairs(context: Self.rootContext, mode: "backspace") }
-    func testBodyCellNodePairsWithSelectionDeletion() throws { try runPairs(context: "table_cell", mode: "selection") }
-    func testBodyCellNodePairsWithRepeatedBackspace() throws { try runPairs(context: "table_cell", mode: "backspace") }
-    func testHeaderCellNodePairsWithSelectionDeletion() throws { try runPairs(context: "table_header", mode: "selection") }
-    func testHeaderCellNodePairsWithRepeatedBackspace() throws { try runPairs(context: "table_header", mode: "backspace") }
-    func testRootUnicodeSequences() throws { try runUnicode(context: Self.rootContext) }
-    func testBodyCellUnicodeSequences() throws { try runUnicode(context: "table_cell") }
-    func testHeaderCellUnicodeSequences() throws { try runUnicode(context: "table_header") }
+    @MainActor
+    func testRootNodePairsWithSelectionDeletion() async throws { try await runPairs(context: Self.rootContext, mode: "selection") }
+    @MainActor
+    func testRootNodePairsWithRepeatedBackspace() async throws { try await runPairs(context: Self.rootContext, mode: "backspace") }
+    @MainActor
+    func testBodyCellNodePairsWithSelectionDeletion() async throws { try await runPairs(context: "table_cell", mode: "selection") }
+    @MainActor
+    func testBodyCellNodePairsWithRepeatedBackspace() async throws { try await runPairs(context: "table_cell", mode: "backspace") }
+    @MainActor
+    func testHeaderCellNodePairsWithSelectionDeletion() async throws { try await runPairs(context: "table_header", mode: "selection") }
+    @MainActor
+    func testHeaderCellNodePairsWithRepeatedBackspace() async throws { try await runPairs(context: "table_header", mode: "backspace") }
+    @MainActor
+    func testRootUnicodeSequences() async throws { try await runUnicode(context: Self.rootContext) }
+    @MainActor
+    func testBodyCellUnicodeSequences() async throws { try await runUnicode(context: "table_cell") }
+    @MainActor
+    func testHeaderCellUnicodeSequences() async throws { try await runUnicode(context: "table_header") }
     func testRootReverseSelectionContinuation() throws { try runReverseSelection(context: Self.rootContext) }
     func testBodyCellReverseSelectionContinuation() throws { try runReverseSelection(context: "table_cell") }
     func testHeaderCellReverseSelectionContinuation() throws { try runReverseSelection(context: "table_header") }
@@ -944,7 +953,8 @@ final class EditorCommandSequenceTests: XCTestCase {
         }
     }
 
-    private func runUnicode(context: String) throws {
+    @MainActor
+    private func runUnicode(context: String) async throws {
         let corpus = try corpus()
         let prefix = try XCTUnwrap(corpus["prefix"] as? String)
         let suffix = try XCTUnwrap(corpus["suffix"] as? String)
@@ -974,11 +984,15 @@ final class EditorCommandSequenceTests: XCTestCase {
                         try check(fixture, context: context, expected: left + recovery + right, neighbour: neighbour, label: label + "/recover")
                     }
                 }
+                let cleanup = await waitForClosedFixtureCallbacks(label: label + "/closed fixture callbacks drained")
+                XCTAssertEqual(cleanup, .completed,
+                    "\(label): closed fixture callbacks blocked the next native editing sequence")
             }
         }
     }
 
-    private func runPairs(context: String, mode: String) throws {
+    @MainActor
+    private func runPairs(context: String, mode: String) async throws {
         let corpus = try corpus()
         let fragments = try XCTUnwrap(corpus["fragments"] as? [[String: Any]])
         let prefix = try XCTUnwrap(corpus["prefix"] as? String)
@@ -1016,6 +1030,9 @@ final class EditorCommandSequenceTests: XCTestCase {
                         try check(fixture, context: context, expected: recovery, neighbour: neighbour, label: label + "/recover")
                     }
                 }
+                let cleanup = await waitForClosedFixtureCallbacks(label: label + "/closed fixture callbacks drained")
+                XCTAssertEqual(cleanup, .completed,
+                    "\(label): closed fixture callbacks blocked the next native editing sequence")
             }
         }
     }

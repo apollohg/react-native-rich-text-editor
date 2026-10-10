@@ -69,6 +69,15 @@ func makeMountedEditorFixture(
     return MountedEditorTestFixture(editorId: editorId, adapter: adapter, view: view, window: window)
 }
 
+extension XCTestCase {
+    @MainActor
+    func waitForClosedFixtureCallbacks(label: String) async -> XCTWaiter.Result {
+        let callbacksDrained = expectation(description: label)
+        DispatchQueue.main.async { callbacksDrained.fulfill() }
+        return await XCTWaiter.fulfillment(of: [callbacksDrained], timeout: MountedEditorTestFixture.releaseTimeout)
+    }
+}
+
 final class TableTestFrameClock: NSObject {
     struct Presentation {
         let start: Double
