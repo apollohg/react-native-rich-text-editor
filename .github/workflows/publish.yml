@@ -876,6 +876,10 @@ jobs:
                   sudo udevadm control --reload-rules
                   sudo udevadm trigger --name-match=kvm
 
+            - name: Validate API 24 instrumentation result handling
+              if: matrix.check == 'api24'
+              run: node scripts/tests/android-api24-instrumentation.test.mjs
+
             - name: Run API 24 instrumentation smoke test
               if: matrix.check == 'api24'
               uses: reactivecircus/android-emulator-runner@v2.38.0

@@ -186,6 +186,8 @@ for (const jobName of [
 
 const androidReleaseJob = requireJob('android-release-validation');
 const ciAndroidApi24Job = requireCiJob('android-api-24');
+assert.equal(packageJson.scripts?.['test:android:api24'], 'node scripts/run-android-api24-smoke.mjs',
+  'API 24 validation must run the strict file-backed instrumentation gate');
 const linuxKvmSetup =
   /- name: Enable KVM\s+(?:if: matrix\.check == 'api24'\s+)?run: \|\s+echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS\+="static_node=kvm"' \| sudo tee \/etc\/udev\/rules\.d\/99-kvm4all\.rules\s+sudo udevadm control --reload-rules\s+sudo udevadm trigger --name-match=kvm/;
 assert.match(androidReleaseJob, /runs-on:\s*ubuntu-latest/);
@@ -217,6 +219,16 @@ for (const [job, jobName] of [
   [ciAndroidApi24Job, 'CI API 24 validation'],
 ]) {
   assert.match(job, /arch:\s*x86_64/, `${jobName} must use the accelerated x86_64 image`);
+  assert.match(
+    job,
+    /- name: Validate API 24 instrumentation result handling\s+(?:if: matrix\.check == 'api24'\s+)?run: node scripts\/tests\/android-api24-instrumentation\.test\.mjs[ \t]*$/m,
+    `${jobName} must run the negative instrumentation protocol fixtures`,
+  );
+  assert.match(
+    job,
+    /script: npm run test:android:api24[ \t]*$/m,
+    `${jobName} must run the complete API 24 smoke gate`,
+  );
 }
 assert.match(
   ciWorkflow,
