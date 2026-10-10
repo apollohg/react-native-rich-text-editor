@@ -14,6 +14,8 @@ import {
     withImagesSchema,
     withMentionsSchema,
     withTablesSchema,
+    TASK_LIST_NODE_NAME,
+    withTaskListSchema,
     type EditorAddons,
     createMentionsAddon,
     type EditorTheme,
@@ -38,7 +40,6 @@ import {
     TABLE_NAMING_PRESET,
     TOGGLE_TASK_LIST_ACTION_KEY,
 } from './content';
-import { TASK_LIST_NODE_NAME, withTaskListSchema } from './taskList';
 import {
     editorTheme,
     FONT_SIZE,

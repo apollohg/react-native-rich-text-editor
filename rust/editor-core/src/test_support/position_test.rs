@@ -97,10 +97,7 @@ fn image() -> Node {
     )
 }
 
-/// A minimal schema declaring `taskList`/`taskItem` (by `NodeRole`, not just
-/// name) for tests that build documents using those node type names. The
-/// standard `tiptap_schema()` preset has no task-list node types, since task
-/// lists are an app-supplied schema extension in this editor.
+/// A minimal task-only schema for position mapping tests.
 fn task_list_schema() -> Schema {
     Schema::from_json(&serde_json::json!({
         "nodes": [

@@ -37,6 +37,8 @@ export type DocumentDescriptorLimits = Pick<
 
 /** Node name the built-in image node is stored under. */
 export const IMAGE_NODE_NAME = 'image';
+export const TASK_LIST_NODE_NAME = 'taskList';
+export const TASK_ITEM_NODE_NAME = 'taskItem';
 
 export const HEADING_LEVELS = [ 1,
     2,
@@ -191,6 +193,20 @@ export const tiptapCompatibleSchemaSpec: SchemaSpec = {
             parseDOM: [ { tag: 'li' } ],
             toDOM: [ 'li', 0 ],
         },
+        [TASK_LIST_NODE_NAME]: {
+            content: `${TASK_ITEM_NODE_NAME}+`,
+            group: 'block',
+            role: 'list',
+            parseDOM: [ { tag: 'ul' } ],
+            toDOM: [ 'ul', 0 ],
+        },
+        [TASK_ITEM_NODE_NAME]: {
+            content: 'paragraph block*',
+            role: 'listItem',
+            attrs: { checked: { type: 'boolean', default: false } },
+            parseDOM: [ { tag: 'li' } ],
+            toDOM: [ 'li', 0 ],
+        },
         hardBreak: {
             group: 'inline',
             role: 'hardBreak',
@@ -220,6 +236,17 @@ export const tiptapCompatibleSchemaSpec: SchemaSpec = {
 
 /** Tiptap-compatible serializable schema using camelCase node names. */
 export const tiptapCompatibleSchema: SchemaDefinition = defineSchema(tiptapCompatibleSchemaSpec);
+
+/** Add missing checklist nodes, preserving existing declarations. */
+export function withTaskListSchema(schema: SchemaDefinition): SchemaDefinition {
+    const missingNodes = tiptapCompatibleSchema.nodes.filter(node =>
+        (node.name === TASK_LIST_NODE_NAME || node.name === TASK_ITEM_NODE_NAME) &&
+        !schema.nodes.some(existing => existing.name === node.name));
+
+    return missingNodes.length === 0
+        ? schema
+        : { ...schema, nodes: [ ...schema.nodes, ...missingNodes ] };
+}
 
 /** Keyed authoring definition using ProseMirror names, including upstream `codeBlock`. */
 export const prosemirrorSchemaSpec: SchemaSpec = {

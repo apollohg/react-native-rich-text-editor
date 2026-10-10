@@ -3,10 +3,13 @@ use std::collections::HashMap;
 use crate::schema::content_rule::ContentRule;
 use crate::schema::{AttrSpec, MarkSpec, NodeJsonProjection, NodeRole, NodeSpec, Schema};
 
+const TASK_LIST_NODE_NAME: &str = "taskList";
+const TASK_ITEM_NODE_NAME: &str = "taskItem";
+
 /// Build the Tiptap-compatible schema using camelCase node names.
 ///
 /// Node names: doc, paragraph, blockquote, codeBlock, bulletList, orderedList,
-///             listItem, hardBreak, horizontalRule, image, text.
+///             listItem, taskList, taskItem, hardBreak, horizontalRule, image, text.
 /// Mark names: bold, italic, underline, strike, code, link.
 pub fn tiptap_schema() -> Schema {
     build_schema(NamingConvention::CamelCase)
@@ -322,7 +325,7 @@ fn build_schema_parts(convention: &NamingConvention) -> (Vec<NodeSpec>, Vec<Mark
             table_role: None,
         },
         NodeSpec {
-            name: list_item_name,
+            name: list_item_name.clone(),
             content: ContentRule::parse("paragraph block*").unwrap(),
             group: None,
             attrs: HashMap::new(),
@@ -435,6 +438,31 @@ fn build_schema_parts(convention: &NamingConvention) -> (Vec<NodeSpec>, Vec<Mark
             table_role: None,
         },
     ]);
+
+    if matches!(convention, NamingConvention::CamelCase) {
+        let mut task_list = nodes
+            .iter()
+            .find(|node| node.name == "bulletList")
+            .unwrap()
+            .clone();
+        task_list.name = TASK_LIST_NODE_NAME.to_string();
+        task_list.content = ContentRule::parse(&format!("{TASK_ITEM_NODE_NAME}+")).unwrap();
+        let mut task_item = nodes
+            .iter()
+            .find(|node| node.name == list_item_name)
+            .unwrap()
+            .clone();
+        task_item.name = TASK_ITEM_NODE_NAME.to_string();
+        task_item.attrs.insert(
+            "checked".to_string(),
+            AttrSpec {
+                default: Some(serde_json::json!(false)),
+                has_default: true,
+                constraints: [("type".to_string(), serde_json::json!("boolean"))].into(),
+            },
+        );
+        nodes.extend([task_list, task_item]);
+    }
 
     let marks = vec![
         MarkSpec {

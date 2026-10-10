@@ -18,6 +18,44 @@ fn assert_json_roundtrip(original: &Document, schema: &Schema, label: &str) {
 }
 
 #[test]
+fn test_json_roundtrip_tiptap_task_lists() {
+    let schema = schema();
+    let source = serde_json::json!({
+        "type": "doc",
+        "content": [{
+            "type": "taskList",
+            "content": [{
+                "type": "taskItem",
+                "attrs": { "checked": true },
+                "content": [
+                    { "type": "paragraph", "content": [{ "type": "text", "text": "Done" }] },
+                    { "type": "taskList", "content": [{
+                        "type": "taskItem",
+                        "content": [{ "type": "paragraph" }]
+                    }] }
+                ]
+            }]
+        }]
+    });
+    let parsed = from_prosemirror_json(&source, &schema, UnknownTypeMode::Error)
+        .expect("the Tiptap preset must admit nested task lists");
+    assert_eq!(to_prosemirror_json(&parsed, &schema), source);
+    assert_eq!(
+        schema.node("taskItem").unwrap().attrs["checked"].default,
+        Some(serde_json::json!(false))
+    );
+    assert_eq!(
+        schema.list_item_type_for("taskList").as_deref(),
+        Some("taskItem")
+    );
+    assert_eq!(
+        schema.list_item_type_for("bulletList").as_deref(),
+        Some("listItem")
+    );
+    assert_json_roundtrip(&parsed, &schema, "nested task lists with checked defaults");
+}
+
+#[test]
 fn test_json_roundtrip_plain_paragraph() {
     let d = doc(vec![paragraph(vec![text("Hello")])]);
     assert_json_roundtrip(&d, &schema(), "plain_paragraph");

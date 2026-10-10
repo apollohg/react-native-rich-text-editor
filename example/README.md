@@ -15,7 +15,7 @@ One screen: a title bar, and the editor filling the rest of the screen with the 
 | Links          | The link button opens a URL sheet driven by `onRequestLink`; saving an empty URL removes the link        |
 | Images         | The image button opens the photo library through `onRequestImage`; picks are downscaled before insertion |
 | Lists          | A menu group with bullet, numbered, and task lists, indent and outdent                                   |
-| Task lists     | `taskList.ts` adds the checklist nodes to the schema; tap a checkbox to toggle it, or use the list menu  |
+| Task lists     | Public `withTaskListSchema` adds checklist nodes; tap a checkbox to toggle it, or use the list menu       |
 | Blocks         | Blockquote button, plus divider and line break in the insert menu                                        |
 | History        | Undo and redo at the end of the toolbar                                                                  |
 | Mentions       | Type `@` to see suggestions filtered by the query through `onQueryChange`                                |
@@ -30,7 +30,6 @@ One screen: a title bar, and the editor filling the rest of the screen with the 
 App.tsx                      Screen composition, editor wiring, image picking
 content.ts                   Initial document (JSON), mention suggestions, toolbar items
 theme.ts                     The one palette, spacing scale, editor and mention themes
-taskList.ts                  Checklist node specs and the schema helper that adds them
 components/CounterCard.tsx   The custom atom node and its React component
 components/LinkEditorModal.tsx  URL sheet driven by onRequestLink
 ```

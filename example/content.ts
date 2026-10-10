@@ -1,5 +1,7 @@
 import {
     TABLE_NODE_NAMES,
+    TASK_ITEM_NODE_NAME,
+    TASK_LIST_NODE_NAME,
     type DocumentJSON,
     type EditorToolbarItem,
     type MentionSuggestion,
@@ -13,7 +15,6 @@ import {
     textCell,
     type TableCellKind,
 } from './tableContent';
-import { TASK_ITEM_NODE_NAME, TASK_LIST_NODE_NAME } from './taskList';
 
 export const APP_TITLE = 'React Native Editor';
 
