@@ -3040,10 +3040,28 @@ final class EditorTableInputTests: XCTestCase {
 
     func testBlurClearsGeometryAndSuppressesItUntilRefocus() throws {
         try withExpoTableGeometry(document: wideTwoCellDocument) { fixture in
+            let geometryTimeout: TimeInterval = 3
+            let selectedGeometry = expectation(description: "selected cell geometry arrives before blur")
+            let refocusedGeometry = expectation(description: "selected cell geometry returns after refocus")
+            selectedGeometry.assertForOverFulfill = true
+            refocusedGeometry.assertForOverFulfill = true
+            let originalGeometryDelivered = fixture.host.onTableSelectionGeometryForTesting
+            var expectedGeometry: XCTestExpectation? = selectedGeometry
+            fixture.host.onTableSelectionGeometryForTesting = { payload in
+                originalGeometryDelivered?(payload)
+                guard payload["rects"] != nil else { return }
+                if let expectedGeometry {
+                    expectedGeometry.fulfill()
+                } else {
+                    XCTFail("a blurred editor publishes no geometry: \(payload)")
+                }
+            }
+            defer { fixture.host.onTableSelectionGeometryForTesting = originalGeometryDelivered }
             try fixture.selectCells(anchor: 0, head: 1)
-            waitForGeometryFrame()
+            wait(for: [selectedGeometry], timeout: geometryTimeout)
             XCTAssertEqual(fixture.recorder.payloads.count, 1)
 
+            expectedGeometry = nil
             XCTAssertTrue(fixture.host.richTextView.textView.resignFirstResponder())
             XCTAssertEqual(fixture.recorder.payloads.count, 2, "blur clears synchronously")
             XCTAssertEqual(fixture.recorder.payloads[1] as? [String: String], ["editorId": fixture.adapter.editorId])
@@ -3054,9 +3072,12 @@ final class EditorTableInputTests: XCTestCase {
             waitForGeometryFrame()
             XCTAssertEqual(fixture.recorder.payloads.count, 2, "a blurred editor publishes no geometry")
 
+            expectedGeometry = refocusedGeometry
             XCTAssertTrue(fixture.host.richTextView.textView.becomeFirstResponder())
-            waitForGeometryFrame()
-            XCTAssertEqual(fixture.recorder.payloads.count, 3)
+            wait(for: [refocusedGeometry], timeout: geometryTimeout)
+            XCTAssertTrue(fixture.host.richTextView.textView.isFirstResponder, "refocus keeps the geometry's input focused")
+            XCTAssertEqual(fixture.recorder.payloads.count, 3,
+                "refocus republishes once: scheduled=\(fixture.host.tableSelectionGeometryPublisher.hasScheduledFlushForTesting), payloads=\(fixture.recorder.payloads)")
             assertRects(try fixture.recorder.rects(at: 2), try fixture.expectedWindowRects())
         }
     }
