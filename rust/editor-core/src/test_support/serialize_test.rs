@@ -32,6 +32,8 @@ include!("serialize_test/html_input.rs");
 
 include!("serialize_test/html_roundtrip.rs");
 
+include!("serialize_test/task_html.rs");
+
 include!("serialize_test/json_output.rs");
 
 include!("serialize_test/json_input.rs");

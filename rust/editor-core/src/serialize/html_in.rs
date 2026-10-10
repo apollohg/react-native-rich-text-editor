@@ -231,6 +231,23 @@ fn extract_node_attrs(
 ) -> HashMap<String, serde_json::Value> {
     let mut attrs = super::default_node_attrs(spec);
 
+    if let Some(rules) = &spec.html_rules {
+        for (attr_name, html_attr) in &rules.attr_map {
+            let raw = element_attr(elem, html_attr);
+            if super::is_tiptap_task_item(spec) && attr_name == super::TASK_CHECKED_ATTR {
+                attrs.insert(
+                    attr_name.clone(),
+                    serde_json::Value::Bool(matches!(raw, Some("" | "true"))),
+                );
+            } else if let Some(raw) = raw {
+                if let Some(attr_spec) = spec.attrs.get(attr_name) {
+                    attrs.insert(attr_name.clone(), coerce_rule_attr_value(attr_spec, raw));
+                }
+            }
+        }
+        return attrs;
+    }
+
     for (key, attr_spec) in &spec.attrs {
         if let Some(value) = element_attr(elem, key) {
             attrs.insert(key.clone(), parse_attr_value(key, attr_spec, value));
@@ -448,13 +465,7 @@ fn process_element(
         return Ok(());
     }
 
-    if let Some(node) = build_html_rules_node(tag, elem, schema) {
-        flush_inline_acc(inline_acc, schema, block_acc);
-        block_acc.push(node);
-        return Ok(());
-    }
-
-    if let Some(spec) = schema.node_by_html_tag(tag) {
+    if let Some(spec) = node_spec_for_element(tag, elem, schema) {
         if tag == "img"
             && spec.name == "image"
             && !options.allow_base64_images
@@ -499,11 +510,11 @@ fn process_element(
     Ok(())
 }
 
-fn build_html_rules_node(
+fn node_spec_for_element<'a>(
     tag: &str,
     elem: &scraper::node::Element,
-    schema: &Schema,
-) -> Option<Node> {
+    schema: &'a Schema,
+) -> Option<&'a crate::schema::NodeSpec> {
     for name in schema.nodes_with_html_rules_for_tag(tag) {
         let spec = schema.node(name)?;
         let rules = spec.html_rules.as_ref()?;
@@ -514,16 +525,9 @@ fn build_html_rules_node(
         {
             continue;
         }
-        let mut attrs = super::default_node_attrs(spec);
-        for (attr_name, html_attr) in &rules.attr_map {
-            if let Some(raw) = element_attr(elem, html_attr) {
-                let attr_spec = spec.attrs.get(attr_name)?;
-                attrs.insert(attr_name.clone(), coerce_rule_attr_value(attr_spec, raw));
-            }
-        }
-        return Some(Node::void(name.clone(), attrs));
+        return Some(spec);
     }
-    None
+    schema.node_by_html_tag(tag)
 }
 
 fn coerce_rule_attr_value(spec: &crate::schema::AttrSpec, raw: &str) -> serde_json::Value {
@@ -620,6 +624,16 @@ fn process_schema_node(
         block_acc.push(node);
         return Ok(());
     }
+    if spec.is_void {
+        let node = Node::void(spec.name.clone(), extract_node_attrs(_elem, spec));
+        if matches!(spec.role, NodeRole::HardBreak | NodeRole::Inline) {
+            inline_acc.push(node);
+        } else {
+            flush_inline_acc(inline_acc, schema, block_acc);
+            block_acc.push(node);
+        }
+        return Ok(());
+    }
     match &spec.role {
         NodeRole::HardBreak => {
             inline_acc.push(Node::void(
@@ -628,12 +642,15 @@ fn process_schema_node(
             ));
             Ok(())
         }
-        NodeRole::Block if spec.is_void => {
-            flush_inline_acc(inline_acc, schema, block_acc);
-            block_acc.push(Node::void(
-                spec.name.clone(),
-                extract_node_attrs(_elem, spec),
-            ));
+        NodeRole::Inline if spec.html_rules.is_some() => {
+            inline_acc.push(build_inline_schema_node(
+                node_ref,
+                _elem,
+                spec,
+                schema,
+                options,
+                active_marks,
+            )?);
             Ok(())
         }
         NodeRole::TextBlock => {
@@ -660,7 +677,7 @@ fn process_schema_node(
             let node = Node::element(
                 spec.name.clone(),
                 extract_node_attrs(_elem, spec),
-                Fragment::from(collect_block_children(node_ref, schema, options, &[])?),
+                Fragment::from(collect_list_item_children(node_ref, spec, schema, options)?),
             );
             block_acc.push(node);
             Ok(())
@@ -887,6 +904,31 @@ fn parse_colwidth(raw: &str) -> ColumnWidths {
     }
 }
 
+fn build_inline_schema_node(
+    node_ref: SNodeRef<'_>,
+    elem: &scraper::node::Element,
+    spec: &crate::schema::NodeSpec,
+    schema: &Schema,
+    options: &FromHtmlOptions,
+    active_marks: &[Mark],
+) -> Result<Node, ParseError> {
+    let attrs = extract_node_attrs(elem, spec);
+    if spec.is_void {
+        Ok(Node::void(spec.name.clone(), attrs))
+    } else {
+        Ok(Node::element(
+            spec.name.clone(),
+            attrs,
+            Fragment::from(collect_inline_children(
+                node_ref,
+                schema,
+                options,
+                active_marks,
+            )?),
+        ))
+    }
+}
+
 /// Collect inline children of an element (for paragraph-like nodes).
 fn collect_inline_children(
     parent: SNodeRef<'_>,
@@ -924,12 +966,18 @@ fn collect_inline_children(
                 continue;
             }
 
-            if let Some(spec) = schema.node_by_html_tag(tag) {
-                if spec.is_void && matches!(spec.role, NodeRole::HardBreak | NodeRole::Inline) {
-                    inline_nodes.push(Node::void(
-                        spec.name.clone(),
-                        extract_node_attrs(elem, spec),
-                    ));
+            if let Some(spec) = node_spec_for_element(tag, elem, schema) {
+                if (spec.is_void && matches!(spec.role, NodeRole::HardBreak | NodeRole::Inline))
+                    || (matches!(spec.role, NodeRole::Inline) && spec.html_rules.is_some())
+                {
+                    inline_nodes.push(build_inline_schema_node(
+                        child,
+                        elem,
+                        spec,
+                        schema,
+                        options,
+                        active_marks,
+                    )?);
                     continue;
                 }
             }
@@ -943,6 +991,39 @@ fn collect_inline_children(
     }
 
     Ok(inline_nodes)
+}
+
+fn list_item_content_ref<'a>(
+    item_ref: SNodeRef<'a>,
+    item_spec: &crate::schema::NodeSpec,
+) -> SNodeRef<'a> {
+    if super::is_tiptap_task_item(item_spec) {
+        item_ref
+            .descendants()
+            .find(|child| {
+                child
+                    .value()
+                    .as_element()
+                    .is_some_and(|elem| elem.name() == super::TASK_CONTENT_HTML_TAG)
+            })
+            .unwrap_or(item_ref)
+    } else {
+        item_ref
+    }
+}
+
+fn collect_list_item_children(
+    item_ref: SNodeRef<'_>,
+    item_spec: &crate::schema::NodeSpec,
+    schema: &Schema,
+    options: &FromHtmlOptions,
+) -> Result<Vec<Node>, ParseError> {
+    collect_block_children(
+        list_item_content_ref(item_ref, item_spec),
+        schema,
+        options,
+        &[],
+    )
 }
 
 /// Collect list items from a list element's children.
@@ -960,14 +1041,14 @@ fn collect_list_items(
         let val: &scraper::Node = child.value();
         if let Some(elem) = val.as_element() {
             let tag = elem.name();
-            if let Some(spec) = schema.node_by_html_tag(tag) {
+            if let Some(spec) = node_spec_for_element(tag, elem, schema) {
                 if matches!(spec.role, NodeRole::ListItem) {
                     let item_type = list_item_name
                         .clone()
                         .or_else(fallback_list_item)
                         .unwrap_or_else(|| spec.name.clone());
-                    let li_blocks = collect_block_children(child, schema, options, &[])?;
                     let item_spec = schema.node(&item_type).unwrap_or(spec);
+                    let li_blocks = collect_list_item_children(child, item_spec, schema, options)?;
                     let node = Node::element(
                         item_type,
                         extract_node_attrs(elem, item_spec),

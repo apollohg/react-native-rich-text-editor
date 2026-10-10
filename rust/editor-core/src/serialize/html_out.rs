@@ -44,14 +44,22 @@ pub fn to_html(doc: &Document, schema: &Schema) -> String {
             }
             Frame::Node(node) => {
                 let spec = schema.node(node.node_type());
-                let html_tag = spec.and_then(|spec| spec.html_tag.as_deref());
+                let html_tag = spec.and_then(|spec| {
+                    spec.html_rules
+                        .as_ref()
+                        .map(|rules| rules.tag.as_str())
+                        .or(spec.html_tag.as_deref())
+                });
                 if node.is_void() {
                     if node.node_type() == "mention" {
                         serialize_mention_node(node, &mut buf);
                     } else if node.node_type() == "__opaque" {
                         serialize_opaque_node(node, &mut buf);
-                    } else if let Some(rules) = spec.and_then(|spec| spec.html_rules.as_ref()) {
-                        serialize_html_rules_node(node, rules, &mut buf);
+                    } else if let Some(spec) = spec.filter(|spec| spec.html_rules.is_some()) {
+                        serialize_html_rules_node_open(node, spec, &mut buf);
+                        buf.push_str("</");
+                        buf.push_str(html_tag.expect("HTML rules have a tag"));
+                        buf.push('>');
                     } else if let Some(tag) = html_tag {
                         buf.push('<');
                         buf.push_str(tag);
@@ -63,13 +71,32 @@ pub fn to_html(doc: &Document, schema: &Schema) -> String {
                     continue;
                 }
                 if let Some(tag) = html_tag {
-                    buf.push('<');
-                    buf.push_str(tag);
-                    if let Some(spec) = spec {
-                        serialize_node_attrs(node, spec, &mut buf);
+                    if let Some(spec) = spec.filter(|spec| spec.html_rules.is_some()) {
+                        serialize_html_rules_node_open(node, spec, &mut buf);
+                    } else {
+                        buf.push('<');
+                        buf.push_str(tag);
+                        if let Some(spec) = spec {
+                            serialize_node_attrs(node, spec, &mut buf);
+                        }
+                        buf.push('>');
                     }
-                    buf.push('>');
                     frames.push(Frame::Close(tag));
+                }
+                if spec.is_some_and(super::is_tiptap_task_item) {
+                    buf.push_str("<label><input type=\"checkbox\"");
+                    if node
+                        .attrs()
+                        .get(super::TASK_CHECKED_ATTR)
+                        .and_then(serde_json::Value::as_bool)
+                        == Some(true)
+                    {
+                        buf.push_str(" checked=\"checked\"");
+                    }
+                    buf.push_str("><span></span></label><");
+                    buf.push_str(super::TASK_CONTENT_HTML_TAG);
+                    buf.push('>');
+                    frames.push(Frame::Close(super::TASK_CONTENT_HTML_TAG));
                 }
                 if spec.is_some_and(|spec| spec.table_role == Some(TableRole::Table)) {
                     buf.push('<');
@@ -100,33 +127,39 @@ fn scalar_attribute(value: &serde_json::Value) -> Option<String> {
     }
 }
 
-fn serialize_html_rules_node(node: &Node, rules: &crate::schema::HtmlRules, buf: &mut String) {
+fn serialize_html_rules_node_open(node: &Node, spec: &crate::schema::NodeSpec, buf: &mut String) {
+    let rules = spec.html_rules.as_ref().expect("HTML rules node");
     buf.push('<');
     buf.push_str(&rules.tag);
-    for (name, value) in &rules.static_attrs {
-        buf.push(' ');
-        buf.push_str(name);
-        buf.push_str("=\"");
-        escape_html(value, buf);
-        buf.push('"');
-    }
+    let mut attrs = rules
+        .static_attrs
+        .iter()
+        .map(|(name, value)| (name.as_str(), value.clone()))
+        .collect::<Vec<_>>();
     for (attr_name, html_attr) in &rules.attr_map {
-        let Some(value) = node.attrs().get(attr_name) else {
+        let Some(value) = node.attrs().get(attr_name).or_else(|| {
+            spec.attrs
+                .get(attr_name)
+                .and_then(|attr| attr.default.as_ref())
+        }) else {
             continue;
         };
         if value.is_null() {
             continue;
         }
         let rendered = scalar_attribute(value).unwrap_or_else(|| json_value_string(value));
+        attrs.push((html_attr.as_str(), rendered));
+    }
+    if super::is_tiptap_task_item(spec) {
+        attrs.sort_by(|left, right| left.0.cmp(right.0));
+    }
+    for (name, rendered) in attrs {
         buf.push(' ');
-        buf.push_str(html_attr);
+        buf.push_str(name);
         buf.push_str("=\"");
         escape_html(&rendered, buf);
         buf.push('"');
     }
-    buf.push('>');
-    buf.push_str("</");
-    buf.push_str(&rules.tag);
     buf.push('>');
 }
 

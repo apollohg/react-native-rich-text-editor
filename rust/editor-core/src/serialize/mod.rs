@@ -16,6 +16,18 @@ pub(crate) use json_in::{
 pub(crate) use json_out::node_to_json as node_to_prosemirror_json;
 pub use json_out::to_prosemirror_json;
 
+const TASK_CHECKED_ATTR: &str = "checked";
+const TASK_CONTENT_HTML_TAG: &str = "div";
+
+fn is_tiptap_task_item(spec: &crate::schema::NodeSpec) -> bool {
+    matches!(spec.role, crate::schema::NodeRole::ListItem)
+        && spec.html_rules.as_ref().is_some_and(|rules| {
+            rules.static_attrs.iter().any(|(name, value)| {
+                name == "data-type" && value == crate::schema::presets::TASK_ITEM_NODE_NAME
+            })
+        })
+}
+
 fn default_node_attrs(
     spec: &crate::schema::NodeSpec,
 ) -> std::collections::HashMap<String, serde_json::Value> {

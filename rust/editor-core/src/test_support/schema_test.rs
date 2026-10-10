@@ -126,7 +126,7 @@ fn schema_rejects_incomplete_or_colliding_attr_maps() {
 
     let mut json = atom_schema_json("counter-card");
     json["nodes"][3]["isVoid"] = serde_json::json!(false);
-    assert!(Schema::from_json(&json).is_err());
+    assert!(Schema::from_json(&json).is_ok());
 }
 
 #[test]

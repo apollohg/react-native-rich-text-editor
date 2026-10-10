@@ -33,7 +33,7 @@ export interface NodeJSONProjection {
     attrs?: Record<string, unknown>;
 }
 
-/** Declarative HTML parsing and serialization rules for a void node. */
+/** Declarative HTML parsing and serialization rules for a node. */
 export interface NodeHtmlRules {
     tag: string;
     staticAttrs?: Record<string, string>;
@@ -62,7 +62,7 @@ export interface NodeSpec {
     tableRole?: TableRole;
     /** Tag used when serializing this node to HTML. */
     htmlTag?: string;
-    /** Declarative HTML rules used for lossless void-node round trips. */
+    /** Declarative tag discriminators and attribute mappings for HTML round trips. */
     html?: NodeHtmlRules;
     /** Whether the node holds no content of its own (an image or rule, say). */
     isVoid?: boolean;

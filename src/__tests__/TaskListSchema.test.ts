@@ -11,6 +11,21 @@ import {
 } from '../schemas';
 
 describe('task list schemas', () => {
+    it('retains Tiptap HTML discriminators and checked mapping in resolved schemas', () => {
+        for (const schema of [tiptapCompatibleSchema, withTaskListSchema(defaultSchema)]) {
+            const nodes = resolveDocumentSchema(schema).nodes;
+            expect(nodes.find((node) => node.name === TASK_LIST_NODE_NAME)?.html).toEqual({
+                tag: 'ul',
+                staticAttrs: { 'data-type': TASK_LIST_NODE_NAME },
+            });
+            expect(nodes.find((node) => node.name === TASK_ITEM_NODE_NAME)?.html).toEqual({
+                tag: 'li',
+                staticAttrs: { 'data-type': TASK_ITEM_NODE_NAME },
+                attrMap: { checked: 'data-checked' },
+            });
+        }
+    });
+
     it('constructs task items with unchecked defaults through the Tiptap preset', () => {
         const schema = defineSchema({
             ...tiptapCompatibleSchemaSpec,

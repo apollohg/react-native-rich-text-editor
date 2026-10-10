@@ -48,6 +48,42 @@ fn round_trip(next: Value) -> Value {
 }
 
 #[test]
+fn task_checked_attributes_are_native_yjs_booleans_in_both_directions() {
+    let schema = tiptap_schema();
+    let limits = ResourceLimits::default();
+    let codec = YrsDocumentCodec::new(&schema, &limits);
+    for checked in [true, false] {
+        let next = json!({ "type": "doc", "content": [{
+            "type": "taskList", "content": [{
+                "type": "taskItem", "attrs": { "checked": checked },
+                "content": [{ "type": "paragraph" }]
+            }]
+        }] });
+        let doc = utf16_doc();
+        let mut txn = doc.transact_mut();
+        let fragment = txn.get_or_insert_xml_fragment("prosemirror");
+        codec
+            .apply_json(&fragment, &mut txn, &empty_json("doc"), &next)
+            .unwrap();
+        let list = fragment.get(&txn, 0).unwrap().into_xml_element().unwrap();
+        let item = list.get(&txn, 0).unwrap().into_xml_element().unwrap();
+        assert_eq!(
+            item.get_attribute(&txn, "checked"),
+            Some(yrs::Out::Any(Any::Bool(checked)))
+        );
+        // Mirror y-prosemirror changing an XmlElement attribute on the web.
+        item.insert_attribute(&mut txn, "checked", Any::Bool(!checked));
+        let read = codec.read_json(&fragment, &txn).unwrap();
+        let value = &read["content"][0]["content"][0]["attrs"]["checked"];
+        assert_eq!(
+            value.as_bool(),
+            Some(!checked),
+            "checked must remain a JSON boolean: {read}"
+        );
+    }
+}
+
+#[test]
 fn custom_json_projection_round_trips_through_yrs() {
     let schema = Schema::from_json(&json!({
         "nodes": [

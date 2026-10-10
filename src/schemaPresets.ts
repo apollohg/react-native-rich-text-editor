@@ -199,6 +199,7 @@ export const tiptapCompatibleSchemaSpec: SchemaSpec = {
             role: 'list',
             parseDOM: [ { tag: 'ul' } ],
             toDOM: [ 'ul', 0 ],
+            html: { tag: 'ul', staticAttrs: { 'data-type': TASK_LIST_NODE_NAME } },
         },
         [TASK_ITEM_NODE_NAME]: {
             content: 'paragraph block*',
@@ -206,6 +207,11 @@ export const tiptapCompatibleSchemaSpec: SchemaSpec = {
             attrs: { checked: { type: 'boolean', default: false } },
             parseDOM: [ { tag: 'li' } ],
             toDOM: [ 'li', 0 ],
+            html: {
+                tag: 'li',
+                staticAttrs: { 'data-type': TASK_ITEM_NODE_NAME },
+                attrMap: { checked: 'data-checked' },
+            },
         },
         hardBreak: {
             group: 'inline',

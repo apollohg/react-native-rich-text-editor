@@ -15,7 +15,7 @@ import { resolveDocumentSchema } from '../schemaResolution';
 
 const TABLES_FREE_CANONICAL_SHA256: Readonly<Record<string, string>> = {
     prosemirror: '1f23f42132387529c4910933f6fae78e2c89e49d1afd96dd0aa37df81ddaf745',
-    tiptap: '7d89d4dc20a6f6a137d6bd409564de10604f02fa2bb334e8e05f3604aff4b5c5',
+    tiptap: '9014c14d741747dbd54ca9b19941123473ff0b6060f6d28d450020a790f14cd4',
 };
 
 const TABLES_FREE_PRESETS: ReadonlyArray<[string, SchemaDefinition]> = [

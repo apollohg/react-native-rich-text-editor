@@ -30,13 +30,13 @@ impl Schema {
             if let Some(rules) = &node.html_rules {
                 if !is_safe_atom_html_tag(&rules.tag) {
                     return Err(SchemaValidationError::semantic(format!(
-                        "node '{}' has invalid atom HTML tag '{}'",
+                        "node '{}' has invalid HTML tag '{}'",
                         node.name, rules.tag
                     )));
                 }
                 if rules.static_attrs.is_empty() {
                     return Err(SchemaValidationError::semantic(format!(
-                        "node '{}' atom HTML rules require a static attribute discriminator",
+                        "node '{}' HTML rules require a static attribute discriminator",
                         node.name
                     )));
                 }
@@ -48,13 +48,13 @@ impl Schema {
                     .find(|name| !is_safe_atom_html_attr(name))
                 {
                     return Err(SchemaValidationError::semantic(format!(
-                        "node '{}' has invalid atom HTML attribute '{}'",
+                        "node '{}' has invalid HTML attribute '{}'",
                         node.name, name
                     )));
                 }
-                if !node.is_void || node.allow_undeclared_attrs {
+                if node.allow_undeclared_attrs {
                     return Err(SchemaValidationError::semantic(format!(
-                        "node '{}' atom HTML rules require a void node with declared attributes",
+                        "node '{}' HTML rules require declared attributes",
                         node.name
                     )));
                 }
@@ -71,7 +71,7 @@ impl Schema {
                         .any(|name| !mapped_attrs.contains(name.as_str()))
                 {
                     return Err(SchemaValidationError::semantic(format!(
-                        "node '{}' atom HTML attrMap must cover every declared attribute exactly once",
+                        "node '{}' HTML attrMap must cover every declared attribute exactly once",
                         node.name
                     )));
                 }
@@ -82,7 +82,7 @@ impl Schema {
                     .collect::<HashSet<_>>();
                 if targets.len() != rules.attr_map.len() {
                     return Err(SchemaValidationError::semantic(format!(
-                        "node '{}' atom HTML attrMap targets must be unique",
+                        "node '{}' HTML attrMap targets must be unique",
                         node.name
                     )));
                 }
@@ -92,7 +92,7 @@ impl Schema {
                     .any(|(name, _)| targets.contains(name.as_str()))
                 {
                     return Err(SchemaValidationError::semantic(format!(
-                        "node '{}' atom HTML attrs collide with a static discriminator",
+                        "node '{}' HTML attrs collide with a static discriminator",
                         node.name
                     )));
                 }
@@ -152,7 +152,7 @@ impl Schema {
                 if rules.tag != previous_rules.tag {
                     continue;
                 }
-                consume_schema_work(budget, 1, "schema atom HTML ambiguity work budget exceeded")?;
+                consume_schema_work(budget, 1, "schema HTML ambiguity work budget exceeded")?;
                 let conflicts = rules.static_attrs.iter().any(|(name, value)| {
                     previous_rules
                         .static_attrs
@@ -162,7 +162,7 @@ impl Schema {
                 });
                 if !conflicts {
                     return Err(SchemaValidationError::semantic(format!(
-                        "node '{}' has ambiguous atom HTML rules",
+                        "node '{}' has ambiguous HTML rules",
                         node.name
                     )));
                 }
@@ -331,7 +331,7 @@ impl Schema {
                     .or_insert_with(|| node.name.clone());
             }
             if let Some(rules) = &node.html_rules {
-                consume_schema_work(budget, 1, "schema atom HTML index work budget exceeded")?;
+                consume_schema_work(budget, 1, "schema HTML index work budget exceeded")?;
                 html_rules_by_tag
                     .entry(rules.tag.clone())
                     .or_default()

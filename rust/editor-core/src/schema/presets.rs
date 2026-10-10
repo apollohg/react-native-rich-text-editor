@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 
 use crate::schema::content_rule::ContentRule;
-use crate::schema::{AttrSpec, MarkSpec, NodeJsonProjection, NodeRole, NodeSpec, Schema};
+use crate::schema::{
+    AttrSpec, HtmlRules, MarkSpec, NodeJsonProjection, NodeRole, NodeSpec, Schema,
+};
 
 const TASK_LIST_NODE_NAME: &str = "taskList";
-const TASK_ITEM_NODE_NAME: &str = "taskItem";
+pub(crate) const TASK_ITEM_NODE_NAME: &str = "taskItem";
 
 /// Build the Tiptap-compatible schema using camelCase node names.
 ///
@@ -447,12 +449,22 @@ fn build_schema_parts(convention: &NamingConvention) -> (Vec<NodeSpec>, Vec<Mark
             .clone();
         task_list.name = TASK_LIST_NODE_NAME.to_string();
         task_list.content = ContentRule::parse(&format!("{TASK_ITEM_NODE_NAME}+")).unwrap();
+        task_list.html_rules = Some(HtmlRules {
+            tag: "ul".to_string(),
+            static_attrs: vec![("data-type".to_string(), TASK_LIST_NODE_NAME.to_string())],
+            attr_map: Vec::new(),
+        });
         let mut task_item = nodes
             .iter()
             .find(|node| node.name == list_item_name)
             .unwrap()
             .clone();
         task_item.name = TASK_ITEM_NODE_NAME.to_string();
+        task_item.html_rules = Some(HtmlRules {
+            tag: "li".to_string(),
+            static_attrs: vec![("data-type".to_string(), TASK_ITEM_NODE_NAME.to_string())],
+            attr_map: vec![("checked".to_string(), "data-checked".to_string())],
+        });
         task_item.attrs.insert(
             "checked".to_string(),
             AttrSpec {

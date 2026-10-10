@@ -269,7 +269,12 @@ fn task_list_wrap_availability_matches_schema_and_limits() {
                 },
                 false,
             ),
-            (&crate::tiptap_schema(), ResourceLimits::default(), false),
+            (&crate::tiptap_schema(), ResourceLimits::default(), true),
+            (
+                &crate::schema::presets::prosemirror_schema(),
+                ResourceLimits::default(),
+                false,
+            ),
         ] {
             let state = active_state_for_debug_invariant(
                 &document,

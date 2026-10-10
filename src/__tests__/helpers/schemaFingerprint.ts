@@ -193,6 +193,15 @@ function canonicalNode(node: NodeSpec): CanonicalObject {
         [ 'attrs', canonicalAttrs(node.attrs) ],
         [ 'role', canonicalRole(node) ],
         [ 'htmlTag', node.htmlTag ?? null ],
+        ...(node.html == null
+            ? []
+            : ([
+                [ 'htmlRules', canonicalObject([
+                    [ 'tag', node.html.tag ],
+                    [ 'staticAttrs', canonicalMap(Object.entries(node.html.staticAttrs ?? {})) ],
+                    [ 'attrMap', canonicalMap(Object.entries(node.html.attrMap ?? {})) ],
+                ]) ],
+            ] as const)),
         ...jsonProjection,
         [ 'isVoid', node.isVoid ?? false ],
         ...(node.deletableOnBackspace == null

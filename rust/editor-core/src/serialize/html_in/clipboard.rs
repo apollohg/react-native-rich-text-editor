@@ -190,13 +190,14 @@ fn normalize<'a>(
         tag,
         "b" | "strong" | "i" | "em" | "u" | "s" | "strike" | "del"
     );
-    let known = schema.node_by_html_tag(tag).is_some()
+    let node_spec = node_spec_for_element(tag, element, schema);
+    let content_node = node_spec.map_or(node, |spec| list_item_content_ref(node, spec));
+    let known = node_spec.is_some()
         || schema.mark_by_html_tag(tag).is_some()
         || mark_from_element(tag, element, schema).is_some()
-        || build_mention_node(node, element, schema).is_some()
-        || build_html_rules_node(tag, element, schema).is_some();
+        || build_mention_node(node, element, schema).is_some();
     let block_wrapper = !known && is_clipboard_block(tag);
-    let contains_blocks = node.children().any(|child| {
+    let contains_blocks = content_node.children().any(|child| {
         child
             .value()
             .as_element()
@@ -214,7 +215,11 @@ fn normalize<'a>(
     if let Some(emitted) = emitted_tag {
         write_open_tag(output, emitted, known.then_some(element));
     }
-    for child in node.children() {
+    let task_item = node_spec.is_some_and(super::super::is_tiptap_task_item);
+    if task_item {
+        write_open_tag(output, super::super::TASK_CONTENT_HTML_TAG, None);
+    }
+    for child in content_node.children() {
         normalize(
             child,
             schema,
@@ -226,6 +231,11 @@ fn normalize<'a>(
             contains_blocks,
             output,
         );
+    }
+    if task_item {
+        output.push_str("</");
+        output.push_str(super::super::TASK_CONTENT_HTML_TAG);
+        output.push('>');
     }
     if let Some(emitted) = emitted_tag.filter(|tag| !is_void_html_element(tag)) {
         output.push_str("</");

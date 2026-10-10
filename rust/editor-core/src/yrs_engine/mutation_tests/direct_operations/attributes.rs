@@ -1,4 +1,28 @@
 #[test]
+fn task_checked_mutations_write_boolean_xml_attributes() {
+    let source = json!({ "type": "doc", "content": [{
+        "type": "taskList", "content": [{
+            "type": "taskItem", "content": [{ "type": "paragraph" }]
+        }]
+    }] });
+    for checked in [true, false] {
+        let (_, _, _, compiled) = compile_attribute_operations(
+            source.clone(),
+            vec![HashMap::from([("checked".into(), Value::Bool(checked))])],
+        );
+        assert!(
+            matches!(
+                compiled.mutation_plan.actions.as_slice(),
+                [YrsMutationAction::SetXmlAttribute { key, value: Any::Bool(value), .. }]
+                    if key.as_ref() == "checked" && *value == checked
+            ),
+            "checkbox mutations must write Yjs booleans: {:?}",
+            compiled.mutation_plan.actions
+        );
+    }
+}
+
+#[test]
 fn update_node_attrs_toggles_and_removes_task_item_default() {
     let source = json!({
         "type": "doc",

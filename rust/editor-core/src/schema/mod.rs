@@ -448,24 +448,22 @@ fn parse_html_rules(
     let Some(value) = value else {
         return Ok(None);
     };
-    let object = value.as_object().ok_or_else(|| {
-        BoundaryError::new("SCHEMA_INVALID", "node atom HTML rules must be an object")
-    })?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| BoundaryError::new("SCHEMA_INVALID", "node HTML rules must be an object"))?;
     if object
         .keys()
         .any(|key| !matches!(key.as_str(), "tag" | "staticAttrs" | "attrMap"))
     {
         return Err(BoundaryError::new(
             "SCHEMA_INVALID",
-            "node atom HTML rules contain an unknown field",
+            "node HTML rules contain an unknown field",
         ));
     }
     let tag = object
         .get("tag")
         .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| {
-            BoundaryError::new("SCHEMA_INVALID", "node atom HTML rules missing 'tag'")
-        })?;
+        .ok_or_else(|| BoundaryError::new("SCHEMA_INVALID", "node HTML rules missing 'tag'"))?;
     admit_schema_string(tag, budget, work_limit)?;
 
     let parse_map = |name: &str| -> BoundaryResult<Vec<(String, String)>> {
@@ -475,7 +473,7 @@ fn parse_html_rules(
         let map = value.as_object().ok_or_else(|| {
             BoundaryError::new(
                 "SCHEMA_INVALID",
-                format!("node atom HTML rules '{name}' must be an object"),
+                format!("node HTML rules '{name}' must be an object"),
             )
         })?;
         let mut entries = Vec::with_capacity(map.len());
@@ -483,7 +481,7 @@ fn parse_html_rules(
             let value = value.as_str().ok_or_else(|| {
                 BoundaryError::new(
                     "SCHEMA_INVALID",
-                    format!("node atom HTML rules '{name}' values must be strings"),
+                    format!("node HTML rules '{name}' values must be strings"),
                 )
             })?;
             admit_schema_string(key, budget, work_limit)?;

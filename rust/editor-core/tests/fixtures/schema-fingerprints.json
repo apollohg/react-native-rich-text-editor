@@ -101,7 +101,13 @@
                         "content": "taskItem+",
                         "group": "block",
                         "role": "list",
-                        "htmlTag": "ul"
+                        "htmlTag": "ul",
+                        "html": {
+                            "tag": "ul",
+                            "staticAttrs": {
+                                "data-type": "taskList"
+                            }
+                        }
                     },
                     {
                         "name": "taskItem",
@@ -113,7 +119,16 @@
                             }
                         },
                         "role": "listItem",
-                        "htmlTag": "li"
+                        "htmlTag": "li",
+                        "html": {
+                            "tag": "li",
+                            "staticAttrs": {
+                                "data-type": "taskItem"
+                            },
+                            "attrMap": {
+                                "checked": "data-checked"
+                            }
+                        }
                     },
                     {
                         "name": "hardBreak",
@@ -158,7 +173,7 @@
                     { "name": "link", "attrs": { "href": {} }, "htmlTag": "a" }
                 ]
             },
-            "expectedFingerprint": "9fb5c8e8cddc4abf1ec3288bba7bb6b2b19a77b934813521f0c439ffe0b57c02"
+            "expectedFingerprint": "aeb941c42d743cd9206f0117016465461e0106873347b50d09aa1da1e6fab2cf"
         },
         {
             "name": "default ProseMirror schema",
