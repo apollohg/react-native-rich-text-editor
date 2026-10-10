@@ -1,4 +1,10 @@
+mod input;
+
+pub(crate) use input::try_from_plain_json;
 #[cfg(test)]
+pub(crate) use input::with_legacy_json_for_test;
+use input::Input;
+
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt;
@@ -82,7 +88,7 @@ pub fn from_prosemirror_json_with_limits(
     limits: &ResourceLimits,
 ) -> Result<Document, JsonParseError> {
     let mut budget = ParseBudget::new(limits);
-    let root = parse_node(json, schema, mode, "block", &mut budget)?;
+    let root = parse_node(Input::Value(json), schema, mode, "block", &mut budget)?;
     Ok(Document::new(root))
 }
 
@@ -139,15 +145,15 @@ impl ParseBudget {
 }
 
 fn parse_node(
-    json: &Value,
+    json: Input<'_, '_>,
     schema: &Schema,
     mode: UnknownTypeMode,
     placement: &'static str,
     budget: &mut ParseBudget,
 ) -> Result<Node, JsonParseError> {
-    enum Frame<'json, 'schema> {
+    enum Frame<'json, 'input, 'schema> {
         Visit {
-            json: &'json Value,
+            json: Input<'json, 'input>,
             depth: usize,
             placement: &'static str,
         },
@@ -173,15 +179,8 @@ fn parse_node(
                 placement,
             } => {
                 budget.admit_node(depth)?;
-                let obj = json.as_object().ok_or_else(|| {
-                    JsonParseError::InvalidStructure("node must be a JSON object".into())
-                })?;
-                let raw_type = obj.get("type").and_then(Value::as_str).ok_or_else(|| {
-                    JsonParseError::InvalidStructure(
-                        "node must have a string \"type\" field".into(),
-                    )
-                })?;
-                let raw_attrs = obj.get("attrs").and_then(Value::as_object);
+                let raw_type = json.node_type()?;
+                let raw_attrs = json.attrs();
                 let empty_attrs = Map::new();
                 let normalized_type =
                     normalized_wire_json_node_type(raw_type, raw_attrs.unwrap_or(&empty_attrs));
@@ -221,21 +220,25 @@ fn parse_node(
                     }
                 }
                 let type_name = spec
-                    .map(|spec| spec.name.clone())
-                    .unwrap_or(normalized_type);
+                    .map(|spec| spec.name.as_str())
+                    .unwrap_or(normalized_type.as_ref());
 
                 if type_name == "text" {
-                    built.push(parse_text_node(obj, schema, mode)?);
+                    built.push(parse_text_node(json.text(), json.marks(), schema, mode)?);
                     continue;
                 }
 
-                let Some(spec) = spec.or_else(|| schema.node(&type_name)) else {
+                let Some(spec) = spec.or_else(|| schema.node(type_name)) else {
                     match mode {
                         UnknownTypeMode::Error => {
-                            return Err(JsonParseError::UnknownType(type_name));
+                            return Err(JsonParseError::UnknownType(type_name.to_owned()));
                         }
                         UnknownTypeMode::Preserve => {
-                            built.push(build_opaque_json_node(raw_type, json, placement));
+                            built.push(build_opaque_json_node(
+                                raw_type,
+                                json.original_value(),
+                                placement,
+                            ));
                         }
                         UnknownTypeMode::Skip => {
                             built.push(Node::void("__skip".to_string(), HashMap::new()));
@@ -244,7 +247,7 @@ fn parse_node(
                     continue;
                 };
 
-                let mut attrs = parse_attrs(obj, spec);
+                let mut attrs = parse_attrs(raw_attrs, spec);
                 if let Some(projection) = &spec.json_projection {
                     for name in projection.attrs.keys() {
                         attrs.remove(name);
@@ -256,24 +259,19 @@ fn parse_node(
                     attrs.remove("level");
                 }
                 if spec.is_void {
-                    built.push(Node::void(type_name, attrs));
+                    built.push(Node::void(type_name.to_owned(), attrs));
                     continue;
                 }
 
-                let children: &[Value] = match obj.get("content") {
-                    Some(value) => value.as_array().map(Vec::as_slice).ok_or_else(|| {
-                        JsonParseError::InvalidStructure("\"content\" must be an array".into())
-                    })?,
-                    None => &[],
-                };
+                let children = json.children()?;
                 frames.push(Frame::BuildElement {
-                    type_name,
+                    type_name: type_name.to_owned(),
                     attrs,
                     parent: spec,
                     child_count: children.len(),
                 });
                 let child_depth = depth.saturating_add(1);
-                for child in children.iter().rev() {
+                for child in children.rev() {
                     frames.push(Frame::Visit {
                         json: child,
                         depth: child_depth,
@@ -381,25 +379,26 @@ fn lift_paragraph_images(
 
 /// Parse a text node from a JSON object.
 fn parse_text_node(
-    obj: &serde_json::Map<String, Value>,
+    text: Option<&str>,
+    marks: Option<&Value>,
     schema: &Schema,
     mode: UnknownTypeMode,
 ) -> Result<Node, JsonParseError> {
-    let text = obj.get("text").and_then(|v| v.as_str()).ok_or_else(|| {
+    let text = text.ok_or_else(|| {
         JsonParseError::InvalidStructure("text node must have a string \"text\" field".into())
     })?;
 
-    let marks = parse_marks(obj, schema, mode)?;
+    let marks = parse_marks(marks, schema, mode)?;
     Ok(Node::text(text.to_string(), marks))
 }
 
 /// Parse marks from a node's JSON object.
 fn parse_marks(
-    obj: &serde_json::Map<String, Value>,
+    marks: Option<&Value>,
     schema: &Schema,
     _mode: UnknownTypeMode,
 ) -> Result<Vec<Mark>, JsonParseError> {
-    let marks_val = match obj.get("marks") {
+    let marks_val = match marks {
         Some(v) => v,
         None => return Ok(Vec::new()),
     };
@@ -471,7 +470,7 @@ fn parse_mark_attrs(
 /// Parse node attributes from a node's JSON object, filling in schema defaults
 /// for any missing attributes.
 fn parse_attrs(
-    obj: &serde_json::Map<String, Value>,
+    json_attrs: Option<&serde_json::Map<String, Value>>,
     spec: &crate::schema::NodeSpec,
 ) -> HashMap<String, Value> {
     let mut attrs = super::default_node_attrs(spec);
@@ -479,7 +478,7 @@ fn parse_attrs(
     // Overlay with values from JSON — only attrs the schema declares for this
     // node (parity with the HTML path's extract_node_attrs), unless the spec
     // opts into undeclared attrs (e.g. mention nodes carrying app metadata).
-    if let Some(Value::Object(json_attrs)) = obj.get("attrs") {
+    if let Some(json_attrs) = json_attrs {
         for (key, value) in json_attrs {
             if spec.allow_undeclared_attrs || spec.attrs.contains_key(key) {
                 attrs.insert(
@@ -596,28 +595,23 @@ pub(crate) fn rehydrate_reserved_html_opaque(document: &Document) -> Document {
     Document::new(rehydrate_reserved_html_opaque_node(document.root()))
 }
 
-pub(crate) fn normalized_wire_json_node_type(tag: &str, attrs: &Map<String, Value>) -> String {
+pub(crate) fn normalized_wire_json_node_type<'a>(
+    tag: &'a str,
+    attrs: &Map<String, Value>,
+) -> Cow<'a, str> {
     if tag == "heading" {
         let level = attrs.get("level").and_then(|value| match value {
-            Value::Number(number) => number
-                .as_u64()
-                .and_then(|value| u8::try_from(value).ok())
-                .or_else(|| number.as_i64().and_then(|value| u8::try_from(value).ok()))
-                .or_else(|| {
-                    number.as_f64().and_then(|value| {
-                        (value.is_finite() && value.fract() == 0.0)
-                            .then(|| u8::try_from(value as i64).ok())
-                            .flatten()
-                    })
-                }),
+            Value::Number(_) => {
+                crate::model::integral_unsigned(value).and_then(|level| u8::try_from(level).ok())
+            }
             Value::String(value) => parse_wire_heading_level_str(value),
             _ => None,
         });
         if let Some(level @ 1..=6) = level {
-            return format!("h{level}");
+            return Cow::Owned(format!("h{level}"));
         }
     }
-    tag.to_string()
+    Cow::Borrowed(tag)
 }
 
 fn rehydrate_reserved_html_opaque_node(node: &Node) -> Node {
@@ -775,7 +769,9 @@ fn normalize_json_object_aliases<'a>(
 fn parse_heading_level_value(value: Option<&Value>) -> Option<u8> {
     let value = value?;
     let level = match value {
-        Value::Number(number) => number.as_u64().and_then(|value| u8::try_from(value).ok())?,
+        Value::Number(_) => {
+            crate::model::integral_unsigned(value).and_then(|level| u8::try_from(level).ok())?
+        }
         Value::String(value) => parse_wire_heading_level_str(value)?,
         _ => return None,
     };

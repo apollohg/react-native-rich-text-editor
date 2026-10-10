@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 
 const root = mkdtempSync(join(tmpdir(), 'ios-test-actions-'));
 try {
-    for (const file of ['scripts/run-ios-tests.sh', 'scripts/require-native-artifacts.sh']) {
+    for (const file of ['scripts/run-ios-tests.sh', 'scripts/run-ios-on-device.sh', 'scripts/require-native-artifacts.sh']) {
         mkdirSync(dirname(join(root, file)), { recursive: true });
         copyFileSync(new URL(`../../${file}`, import.meta.url), join(root, file));
     }
@@ -28,6 +28,36 @@ try {
         assert.equal(args[args.indexOf('-derivedDataPath') + 1], join(root, 'derived'));
         assert.ok(args.includes('-only-testing:NativeEditorTests/RenderBridgeTests'));
     }
+    const deviceRun = spawnSync(
+        'bash',
+        [
+            join(root, 'scripts/run-ios-on-device.sh'),
+            '--class',
+            'TablePerformanceTests',
+            '--configuration',
+            'Release',
+        ],
+        {
+            cwd: root,
+            env: {
+                ...process.env,
+                PATH: `${root}/bin:${process.env.PATH}`,
+                CAPTURE: join(root, 'args'),
+                IOS_DEVICE_ID: 'fixture-device',
+                IOS_DEVELOPMENT_TEAM: 'fixture-team',
+                IOS_DESTINATION: 'platform=iOS,id=fixture-device',
+            },
+            encoding: 'utf8',
+        }
+    );
+    assert.equal(deviceRun.status, 0, deviceRun.stderr);
+    const deviceArgs = readFileSync(join(root, 'args'), 'utf8').trim().split('\n');
+    assert.ok(deviceArgs.includes('-only-testing:NativeEditorTests/TablePerformanceTests'));
+    assert.equal(deviceArgs[deviceArgs.indexOf('-configuration') + 1], 'Release');
+    assert.equal(
+        deviceArgs[deviceArgs.indexOf('-scheme') + 1],
+        'NativeEditorPreparedProsePerformance'
+    );
 } finally {
     rmSync(root, { recursive: true, force: true });
 }

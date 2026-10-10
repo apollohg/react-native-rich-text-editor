@@ -165,7 +165,7 @@ impl MutationLookupSeed {
         yrs_state_epoch: u64,
         document_revision: u64,
     ) -> OperationResult<Self> {
-        Self::build_with_capacity_hint(
+        Self::build_with_branch_index(
             request_id,
             txn,
             fragment,
@@ -179,6 +179,7 @@ impl MutationLookupSeed {
             document_revision,
             None,
         )
+        .map(|(seed, _)| seed)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -390,7 +391,7 @@ impl MutationLookupSeed {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn build_with_capacity_hint<T: ReadTxn>(
+    pub(crate) fn build_with_branch_index<T: ReadTxn>(
         request_id: u64,
         txn: &T,
         fragment: &XmlFragmentRef,
@@ -402,28 +403,40 @@ impl MutationLookupSeed {
         schema_fingerprint: &str,
         yrs_state_epoch: u64,
         document_revision: u64,
-        target_capacity_hint: Option<usize>,
-    ) -> OperationResult<Self> {
+        position_map: Option<&crate::position::PositionMap>,
+    ) -> OperationResult<(
+        Self,
+        Option<Option<crate::yrs_engine::block_branch_index::BlockBranchIndex>>,
+    )> {
         #[cfg(test)]
         LOOKUP_SEED_BUILD_COUNT.set(LOOKUP_SEED_BUILD_COUNT.get().saturating_add(1));
-        let payload =
-            build_lookup_seed_payload(request_id, txn, fragment, schema, target_capacity_hint)?;
-        Ok(Self {
-            binding: MutationLookupBinding {
-                source_document: source_document.clone(),
-                canonical_artifact: None,
-                resource_limits: resource_limits.clone(),
-                editing_limits: editing_limits.clone(),
-                max_length,
-                store_token: txn.store() as *const _ as usize,
-                fragment_id: AsRef::<Branch>::as_ref(fragment).id(),
-                schema_fingerprint: Arc::from(schema_fingerprint),
-                yrs_state_epoch,
-                document_revision,
-                history_store_snapshot: None,
+        let (payload, branch_index) = build_lookup_seed_payload_with_branch_index(
+            request_id,
+            txn,
+            fragment,
+            schema,
+            None,
+            position_map,
+        )?;
+        Ok((
+            Self {
+                binding: MutationLookupBinding {
+                    source_document: source_document.clone(),
+                    canonical_artifact: None,
+                    resource_limits: resource_limits.clone(),
+                    editing_limits: editing_limits.clone(),
+                    max_length,
+                    store_token: txn.store() as *const _ as usize,
+                    fragment_id: AsRef::<Branch>::as_ref(fragment).id(),
+                    schema_fingerprint: Arc::from(schema_fingerprint),
+                    yrs_state_epoch,
+                    document_revision,
+                    history_store_snapshot: None,
+                },
+                state: MutationLookupSeedState::Ready(payload),
             },
-            state: MutationLookupSeedState::Ready(payload),
-        })
+            branch_index,
+        ))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -549,6 +562,32 @@ impl MutationLookupSeed {
     }
 
     #[cfg(test)]
+    pub(crate) fn replacement_target_for_test(&self) -> Option<BranchID> {
+        self.ready_payload()?.target_materialization_work.replacement.as_ref().map(|(target, _)| target.clone())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn materialization_entries_for_test(&self) -> HashMap<BranchID, usize> {
+        self.ready_payload()
+            .unwrap()
+            .target_materialization_work
+            .iter()
+            .map(|(key, value)| (key.clone(), *value))
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn shares_materialization_base_for_test(&self, other: &Self) -> bool {
+        match (self.ready_payload(), other.ready_payload()) {
+            (Some(left), Some(right)) => Arc::ptr_eq(
+                &left.target_materialization_work.base,
+                &right.target_materialization_work.base,
+            ),
+            _ => false,
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn has_same_ready_payload_for_test(&self, other: &Self) -> bool {
         match (self.ready_payload(), other.ready_payload()) {
             (Some(left), Some(right)) => {
@@ -622,32 +661,8 @@ impl MutationLookupSeed {
                 "localized mutation lookup promotion has an invalid source shape",
             ));
         }
-        let mut target_materialization_work = HashMap::new();
-        target_materialization_work
-            .try_reserve(payload.target_materialization_work.len())
-            .map_err(|_| {
-                OperationError::engine_invariant_failed(
-                    promotion.request_id,
-                    None,
-                    "localized mutation lookup promotion allocation failed",
-                )
-            })?;
-        target_materialization_work.extend(
-            payload
-                .target_materialization_work
-                .iter()
-                .map(|(target, work)| (target.clone(), *work)),
-        );
-        for (target_id, old_work, new_work) in &promotion.materialization_work_updates {
-            if target_materialization_work.get(target_id).copied() != Some(*old_work) {
-                return Err(OperationError::engine_invariant_failed(
-                    promotion.request_id,
-                    None,
-                    "localized mutation lookup promotion does not match its seed",
-                ));
-            }
-            target_materialization_work.insert(target_id.clone(), *new_work);
-        }
+        let target_materialization_work =
+            payload.target_materialization_work.promoted(promotion)?;
         #[cfg(test)]
         if promotion.source == MutationLookupPromotionSource::ExistingInsert {
             LOOKUP_SEED_PROMOTION_COUNT.set(LOOKUP_SEED_PROMOTION_COUNT.get().saturating_add(1));
@@ -670,7 +685,7 @@ impl MutationLookupSeed {
                 target_count: payload.target_count,
                 pending_traversal_work: promotion.next_pending_traversal_work,
                 path_parent_widths: payload.path_parent_widths.clone(),
-                target_materialization_work: Arc::new(target_materialization_work),
+                target_materialization_work,
             }),
         })
     }
@@ -726,6 +741,83 @@ impl MutationLookupSeed {
                 history_store_snapshot: None,
             },
             state: MutationLookupSeedState::Unavailable,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn with_textblock_replaced<C: ReadTxn, N: ReadTxn>(
+        &self,
+        request_id: u64,
+        current_txn: &C,
+        next_txn: &N,
+        element: &BranchID,
+        path_len: usize,
+        schema: &Schema,
+        next: &Self,
+    ) -> OperationResult<Self> {
+        let mismatch = || {
+            OperationError::engine_invariant_failed(
+                request_id,
+                None,
+                "localized textblock lookup promotion does not match its sealed subtree",
+            )
+        };
+        let payload = self.ready_payload().ok_or_else(mismatch)?;
+        if self.binding.store_token != current_txn.store() as *const _ as usize
+            || self.binding.fragment_id != next.binding.fragment_id
+            || self.binding.schema_fingerprint != next.binding.schema_fingerprint
+            || next.binding.document_revision <= self.binding.document_revision
+        {
+            return Err(mismatch());
+        }
+        let before = textblock_lookup_payload(request_id, current_txn, element, path_len, schema)?;
+        let after = textblock_lookup_payload(request_id, next_txn, element, path_len, schema)?;
+        let target_count = payload
+            .target_count
+            .checked_sub(before.target_count)
+            .and_then(|count| count.checked_add(after.target_count))
+            .ok_or_else(mismatch)?;
+        let pending_traversal_work = payload
+            .pending_traversal_work
+            .checked_sub(before.pending_traversal_work)
+            .and_then(|work| work.checked_add(after.pending_traversal_work))
+            .ok_or_else(mismatch)?;
+        let path_parent_widths = replace_lookup_entries(
+            request_id,
+            &payload.path_parent_widths,
+            &before.path_parent_widths,
+            &after.path_parent_widths,
+        )?;
+        let target_materialization_work = replace_lookup_entries(
+            request_id,
+            payload
+                .target_materialization_work
+                .effective_map(request_id)?
+                .as_ref(),
+            before
+                .target_materialization_work
+                .effective_map(request_id)?
+                .as_ref(),
+            after
+                .target_materialization_work
+                .effective_map(request_id)?
+                .as_ref(),
+        )?;
+        probe_lookup_seed_publication(
+            request_id,
+            "bindingPublication",
+            std::mem::size_of::<MutationLookupBinding>(),
+        )?;
+        Ok(Self {
+            binding: next.binding.clone(),
+            state: MutationLookupSeedState::Ready(MutationLookupPayload {
+                target_count,
+                pending_traversal_work,
+                path_parent_widths: Arc::new(path_parent_widths),
+                target_materialization_work: TargetMaterializationWork::new(
+                    target_materialization_work,
+                ),
+            }),
         })
     }
 
@@ -834,4 +926,90 @@ impl MutationLookupSeed {
         )?;
         Ok(Arc::new(rebound))
     }
+}
+
+fn textblock_lookup_payload<T: ReadTxn>(
+    request_id: u64,
+    txn: &T,
+    element: &BranchID,
+    path_len: usize,
+    schema: &Schema,
+) -> OperationResult<MutationLookupPayload> {
+    let invalid = || {
+        OperationError::engine_invariant_failed(
+            request_id,
+            None,
+            "localized lookup target is not a surviving textblock",
+        )
+    };
+    let branch = element.get_branch(txn).ok_or_else(invalid)?;
+    if !matches!(branch.type_ref(), yrs::types::TypeRef::XmlElement(_)) {
+        return Err(invalid());
+    }
+    let node = XmlElementRef::from(branch);
+    if wire_element_semantics(&node, txn, schema) != (false, true) {
+        return Err(invalid());
+    }
+    let ancestor_depth = path_len.checked_sub(1).ok_or_else(invalid)?;
+    let mut collector = ImportLookupMaterializationCollector::for_subtree(
+        request_id,
+        element.clone(),
+        ancestor_depth,
+        node.len(txn) as usize,
+    );
+    drive_lookup_materialization_collector(
+        txn,
+        schema,
+        std::iter::once(XmlOut::Element(node)),
+        &mut collector,
+        &mut None,
+    );
+    collector.finish_payload()
+}
+
+fn replace_lookup_entries(
+    request_id: u64,
+    original: &HashMap<BranchID, usize>,
+    before: &HashMap<BranchID, usize>,
+    after: &HashMap<BranchID, usize>,
+) -> OperationResult<HashMap<BranchID, usize>> {
+    let mismatch = || {
+        OperationError::engine_invariant_failed(
+            request_id,
+            None,
+            "localized lookup subtree entries disagree with the retained payload",
+        )
+    };
+    let capacity = original
+        .len()
+        .checked_sub(before.len())
+        .and_then(|len| len.checked_add(after.len()))
+        .ok_or_else(mismatch)?;
+    let mut replaced = HashMap::new();
+    replaced
+        .try_reserve(capacity)
+        .map_err(|_| lookup_seed_allocation_error(request_id, "mapGrowth"))?;
+    for (key, value) in original {
+        if let Some(expected) = before.get(key) {
+            if expected != value {
+                return Err(mismatch());
+            }
+        } else {
+            replaced.insert(key.clone(), *value);
+        }
+    }
+    if before.keys().any(|key| !original.contains_key(key)) {
+        return Err(mismatch());
+    }
+    for (key, value) in after {
+        if replaced.insert(key.clone(), *value).is_some() {
+            return Err(mismatch());
+        }
+    }
+    probe_lookup_seed_publication(
+        request_id,
+        "mapPublication",
+        std::mem::size_of::<HashMap<BranchID, usize>>(),
+    )?;
+    Ok(replaced)
 }

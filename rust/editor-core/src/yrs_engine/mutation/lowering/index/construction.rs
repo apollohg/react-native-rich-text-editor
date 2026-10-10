@@ -129,6 +129,137 @@ impl MutationCompiler {
         Ok(())
     }
 
+    fn remove_prepared_children(
+        &mut self,
+        operation_index: usize,
+        handles: &[PreparedHandle],
+    ) -> OperationResult<Vec<usize>> {
+        if handles.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut removed = HashMap::<usize, Vec<usize>>::new();
+        for handle in handles {
+            let [ordinal] = handle.ordinal_path.as_ref() else {
+                return Err(invalid_action_range(self.request_id, operation_index));
+            };
+            removed.entry(handle.insert_id).or_default().push(*ordinal);
+        }
+        let storage_work = self
+            .structural_parents
+            .values()
+            .try_fold(0usize, |work, parent| {
+                work.checked_add(parent.storage_children.len())
+            })
+            .ok_or_else(|| work_overflow(self.request_id, operation_index, self.action_limit))?;
+        let work = self
+            .targets
+            .len()
+            .checked_add(self.prepared_elements.len())
+            .and_then(|work| work.checked_add(storage_work))
+            .and_then(|work| work.checked_mul(removed.len()))
+            .ok_or_else(|| work_overflow(self.request_id, operation_index, self.action_limit))?;
+        self.charge_operation_work(operation_index, work)?;
+        let mut preserved = Vec::with_capacity(removed.len());
+        for (insert_id, mut ordinals) in removed {
+            ordinals.sort_unstable();
+            ordinals.dedup();
+            let pending = self
+                .prepared_inserts
+                .get(insert_id)
+                .and_then(Option::as_ref)
+                .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+            let removal_work =
+                pending
+                    .nodes
+                    .len()
+                    .checked_mul(ordinals.len())
+                    .ok_or_else(|| {
+                        work_overflow(self.request_id, operation_index, self.action_limit)
+                    })?;
+            self.charge_operation_work(operation_index, removal_work)?;
+            for &ordinal in ordinals.iter().rev() {
+                self.replace_prepared_element_with_children(
+                    operation_index,
+                    &PreparedHandle {
+                        insert_id,
+                        ordinal_path: vec![ordinal].into_boxed_slice(),
+                    },
+                    Vec::new(),
+                )?;
+            }
+            let remap = |handle: &mut PreparedHandle| {
+                if handle.insert_id != insert_id {
+                    return true;
+                }
+                let Some(root) = handle.ordinal_path.first_mut() else {
+                    return false;
+                };
+                match ordinals.binary_search(root) {
+                    Ok(_) => false,
+                    Err(deleted_before) => {
+                        *root -= deleted_before;
+                        true
+                    }
+                }
+            };
+            self.targets.retain_mut(|target| match &mut target.kind {
+                ResolvedTargetKind::Prepared { handle } => remap(handle),
+                _ => true,
+            });
+            self.prepared_elements.retain(|_, handle| remap(handle));
+            for parent in self.structural_parents.values_mut() {
+                for child in &mut parent.storage_children {
+                    if let StorageChildKind::PreparedChild { handle, .. } = child {
+                        remap(handle);
+                    }
+                }
+            }
+            if self.prepared_inserts[insert_id]
+                .as_ref()
+                .is_some_and(|pending| pending.nodes.is_empty())
+            {
+                self.prepared_inserts[insert_id] = None;
+                for slot in &mut self.actions {
+                    if matches!(slot, ActionSlot::PreparedInsert(candidate) if *candidate == insert_id)
+                    {
+                        *slot = ActionSlot::Tombstone;
+                    }
+                }
+            } else {
+                preserved.push(insert_id);
+            }
+        }
+        Ok(preserved)
+    }
+
+    fn prepared_storage_children(
+        &self,
+        operation_index: usize,
+        insert_id: usize,
+        nodes: &[PreparedXmlChild],
+    ) -> OperationResult<Vec<StorageChildKind>> {
+        nodes
+            .iter()
+            .enumerate()
+            .map(|(ordinal, child)| {
+                Ok(StorageChildKind::PreparedChild {
+                    handle: PreparedHandle {
+                        insert_id,
+                        ordinal_path: vec![ordinal].into_boxed_slice(),
+                    },
+                    scalar_len: match &child.node {
+                        PreparedXmlNode::Text { runs } => Some(checked_scalar_len(
+                            self.request_id,
+                            Some(operation_index),
+                            &prepared_runs_text(runs),
+                        )?),
+                        PreparedXmlNode::Element { .. } => None,
+                    },
+                })
+            })
+            .collect()
+    }
+
     pub(crate) fn new<T: ReadTxn>(
         request_id: u64,
         txn: &T,
@@ -212,7 +343,9 @@ impl MutationCompiler {
                 StorageChildKind::Text { target, runs, .. } => {
                     Some((AsRef::<Branch>::as_ref(target).id(), runs.clone()))
                 }
-                StorageChildKind::Element { .. } | StorageChildKind::PreparedElement => None,
+                StorageChildKind::Element { .. }
+                | StorageChildKind::PreparedElement
+                | StorageChildKind::PreparedChild { .. } => None,
             })
             .collect::<HashMap<_, _>>();
         let mut previous_end = 0u32;
@@ -351,6 +484,7 @@ impl MutationCompiler {
             fragment,
             schema,
             LocalizedTextblockLocator::Insert(locator),
+            None,
         )?
         else {
             return Ok((eager, MutationCompilerBuild::EagerFallback));

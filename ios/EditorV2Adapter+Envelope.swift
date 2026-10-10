@@ -57,11 +57,11 @@ extension EditorV2Adapter {
     func bindAutonomousErrorOwner(token: UUID, _ callback: @escaping (FfiError) -> Void) {
         guard beginRuntimeOperation() else { return }
         defer { endRuntimeOperation() }
-        claimNativeBinding(token: token, replaceExisting: true)
         autonomousErrorLock.lock()
         autonomousErrorOwnerToken = token
         autonomousErrorCallback = callback
         autonomousErrorLock.unlock()
+        claimNativeBinding(token: token, replaceExisting: true)
     }
 
     func clearAutonomousErrorOwner(token: UUID) {
@@ -106,7 +106,10 @@ extension EditorV2Adapter {
     private func claimNativeBinding(token: UUID, replaceExisting: Bool) {
         if !replaceExisting, nativeOwnerToken != nil { return }
         if nativeOwnerToken == token { return }
-        releaseNativeOwner()
+        let replacingExistingOwner = nativeOwnerToken != nil
+        if replacingExistingOwner {
+            releaseNativeOwner()
+        }
         Self.nativeOwnerLock.lock()
         guard Self.nextNativeOwnerId < UInt64.max else {
             Self.nativeOwnerLock.unlock()
@@ -117,6 +120,23 @@ extension EditorV2Adapter {
         nativeOwnerId = Self.nextNativeOwnerId
         nativeOwnerToken = token
         Self.nativeOwnerLock.unlock()
+        if let revision = installedFrameRevision, revision == baseDocumentRevision, let ownerId = nativeOwnerId {
+            let result = editorV2SeedNativeRenderCursor(editorId: editorId, ownerId: String(ownerId), documentRevision: String(revision))
+            switch (result.value, result.error) {
+            case (.some(true), .none): break
+            case let (.none, .some(error)) where error.code == Self.revisionMismatchCode: return
+            case let (.none, .some(error)): emit(error); return
+            default: emit(Self.contractError("native render cursor seed violates the frozen unit-result shape")); return
+            }
+            guard pinCurrentPositionEpoch(revision) else { return }
+            if let presentation = cachedTablePresentation {
+                cachedTablePresentation = EditorTablePresentationSnapshot(
+                    documentRevision: revision, baseDocumentRevision: presentation.baseDocumentRevision,
+                    positionEpoch: positionEpoch,
+                    index: presentation.index, changes: presentation.changes
+                )
+            }
+        }
     }
 
     func releaseNativeBindingOwner(token: UUID) {
@@ -186,12 +206,18 @@ extension EditorV2Adapter {
         if includeBaseRevision {
             parts.append("\"baseDocumentRevision\":\"\(baseDocumentRevision)\"")
         }
+        var envelope = Data(("{" + parts.joined(separator: ",")).utf8)
+        let objectDelimitersByteCount = "{}".utf8.count
         if let data = try? JSONSerialization.data(withJSONObject: payload),
-           let payloadJson = String(data: data, encoding: .utf8),
-           payloadJson.count > 2 {
-            parts.append(String(payloadJson.dropFirst().dropLast()))
+           data.count > objectDelimitersByteCount {
+            envelope.append(contentsOf: ",".utf8)
+            envelope.append(data.dropFirst().dropLast())
         }
-        return .success("{\(parts.joined(separator: ","))}")
+        envelope.append(contentsOf: "}".utf8)
+        guard let json = String(data: envelope, encoding: .utf8) else {
+            return .failure(contractError("request envelope is not valid UTF-8"))
+        }
+        return .success(json)
     }
 
     func callWithEnvelope(

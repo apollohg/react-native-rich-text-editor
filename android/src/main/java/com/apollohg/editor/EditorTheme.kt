@@ -493,6 +493,7 @@ data class EditorTheme(
     val backgroundColor: Int? = null,
     val borderRadius: Float? = null,
     val contentInsets: EditorContentInsets? = null,
+    val table: com.apollohg.editor.tables.TableStyle? = null,
     val styleSheet: EditorStyleSheet? = null
 ) {
     companion object {
@@ -532,7 +533,8 @@ data class EditorTheme(
                 placeholderColor = parseColor(root.optNullableString("placeholderColor")),
                 backgroundColor = parseColor(root.optNullableString("backgroundColor")),
                 borderRadius = root.optNullableFloat("borderRadius"),
-                contentInsets = EditorContentInsets.fromJson(root.optJSONObject("contentInsets"))
+                contentInsets = EditorContentInsets.fromJson(root.optJSONObject("contentInsets")),
+                table = com.apollohg.editor.tables.TableStyle.fromJson(root.optJSONObject("table"))
             )
         }
     }

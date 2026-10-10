@@ -1,4 +1,39 @@
 impl CachedRenderBlocks {
+    pub(crate) fn visit_table_records<'a>(
+        &'a self,
+        output: &mut Vec<(u32, &'a crate::tables::render::TableRenderRecord)>,
+    ) {
+        let mut pending: Vec<_> = self
+            .blocks
+            .iter()
+            .rev()
+            .map(|block| (0, block.elements.as_slice()))
+            .collect();
+        while let Some((origin, elements)) = pending.pop() {
+            for element in elements.iter().rev() {
+                if let RenderElement::Table { table, doc_offset } = element {
+                    let table_pos = origin + doc_offset;
+                    output.push((table_pos, table));
+                    if !self
+                        .table_projection_index
+                        .has_nested_table(table_pos, table_pos + table.structure.doc_size)
+                    {
+                        continue;
+                    }
+                    let starts = crate::tables::render::absolute_cell_starts(table, table_pos)
+                        .collect::<Vec<_>>();
+                    pending.extend(
+                        starts
+                            .into_iter()
+                            .zip(&table.cells)
+                            .rev()
+                            .map(|(start, cell)| (start, cell.elements.as_slice())),
+                    );
+                }
+            }
+        }
+    }
+
     pub(crate) fn build(
         document: &Document,
         schema: &Schema,
@@ -8,7 +43,7 @@ impl CachedRenderBlocks {
         check_forced_cached_render_error()?;
         ensure_document_render_limits(document, schema, limits)?;
         let schema_fingerprint = Arc::<str>::from(schema_fingerprint(schema));
-        Self::build_after_validation(document, schema, limits, schema_fingerprint)
+        Self::build_after_validation(document, schema, limits, schema_fingerprint, None, None)
     }
 
     /// Builds a cache from an exact document whose node/depth bounds and
@@ -22,6 +57,8 @@ impl CachedRenderBlocks {
         sealed_schema_fingerprint: &str,
         validated_node_count: usize,
         validated_max_depth: usize,
+        table_projection: Option<&crate::tables::admission::AdmittedTableProjection>,
+        rendered_text: Option<&mut crate::render::RenderedTextBuilder>,
     ) -> Result<Self, CachedRenderError> {
         record_cached_build();
         check_forced_cached_render_error()?;
@@ -37,6 +74,10 @@ impl CachedRenderBlocks {
             schema,
             limits,
             Arc::<str>::from(sealed_schema_fingerprint),
+            table_projection.and_then(|projection| {
+                projection.matching_index(document, sealed_schema_fingerprint, limits)
+            }),
+            rendered_text,
         )
     }
 
@@ -45,7 +86,16 @@ impl CachedRenderBlocks {
         schema: &Schema,
         limits: &ResourceLimits,
         schema_fingerprint: Arc<str>,
+        table_projection_index: Option<Arc<TableProjectionIndex>>,
+        mut rendered_text: Option<&mut crate::render::RenderedTextBuilder>,
     ) -> Result<Self, CachedRenderError> {
+        let table_projection_index = table_projection_index.unwrap_or_else(|| {
+            Arc::new(TableProjectionIndex::derive_or_fallback(
+                document, schema, limits,
+            ))
+        });
+        let mut context =
+            TableRenderContext::new(Arc::clone(&table_projection_index), &schema_fingerprint);
         let root = document.root();
         let mut blocks = Vec::new();
         blocks
@@ -58,9 +108,15 @@ impl CachedRenderBlocks {
             let node = root
                 .child(index)
                 .ok_or(CachedRenderError::CacheInvariantViolation)?;
-            let block = render_cached_block(node, schema, start_pos)?;
+            let block = render_cached_block(
+                node,
+                schema,
+                start_pos,
+                &mut context,
+                rendered_text.as_deref_mut(),
+            )?;
             element_count = element_count
-                .checked_add(block.elements.len())
+                .checked_add(block.element_count)
                 .ok_or(CachedRenderError::ResourceLimitExceeded)?;
             if element_count > max_cached_elements(limits)? {
                 return Err(CachedRenderError::ResourceLimitExceeded);
@@ -71,10 +127,13 @@ impl CachedRenderBlocks {
             blocks.push(block);
         }
 
+        context.retain_referenced_attributes(blocks.iter().map(|block| block.elements.as_slice()));
         let cache = Self {
             blocks,
             document_root_seal: root.clone(),
             schema_fingerprint,
+            table_projection_index,
+            table_attributes: context.attributes,
         };
         #[cfg(any(test, debug_assertions))]
         cache.assert_slow_invariant(document, schema);
@@ -86,60 +145,47 @@ impl CachedRenderBlocks {
     pub(crate) fn rendered_text(&self, schema: &Schema) -> String {
         #[cfg(test)]
         crate::yrs_engine::observability::record_rendered_text_derivation();
-        let mut text = String::new();
-        let mut pending_prefix = String::new();
-        let mut started_block = false;
-        for element in self.blocks.iter().flat_map(|block| block.elements.iter()) {
-            match element {
-                RenderElement::BlockStart {
-                    node_type,
-                    list_context,
-                    ..
-                } => {
-                    if let Some(context) = list_context {
-                        pending_prefix = if context.kind.as_deref() == Some("task") {
-                            crate::render::task_list_marker_string(context.checked.unwrap_or(false))
-                        } else {
-                            crate::render::list_marker_string(context.ordered, context.index)
-                        };
-                    }
-                    if schema
-                        .node(node_type)
-                        .is_some_and(|spec| matches!(spec.role, NodeRole::TextBlock))
-                    {
-                        if started_block {
-                            text.push('\n');
-                        }
-                        started_block = true;
-                        text.push_str(&pending_prefix);
-                        pending_prefix.clear();
-                    }
-                }
-                RenderElement::TextRun { text: value, .. } => text.push_str(value),
-                RenderElement::VoidInline { .. } => text.push('\n'),
-                RenderElement::VoidBlock { .. } => {
-                    if started_block {
-                        text.push('\n');
-                    }
-                    started_block = true;
-                    text.push('\u{fffc}');
-                }
-                RenderElement::OpaqueInlineAtom {
-                    node_type, label, ..
-                } => text.push_str(&crate::render::opaque_atom_visible_string(node_type, label)),
-                RenderElement::OpaqueBlockAtom {
-                    node_type, label, ..
-                } => {
-                    if started_block {
-                        text.push('\n');
-                    }
-                    started_block = true;
-                    text.push_str(&crate::render::opaque_atom_visible_string(node_type, label));
-                }
-                RenderElement::BlockEnd => {}
-            }
+        let mut text = crate::render::RenderedTextBuilder::default();
+        for element in self
+            .blocks
+            .iter()
+            .flat_map(|block| crate::tables::render::source_elements(&block.elements))
+        {
+            text.push(element, schema);
         }
-        text
+        text.finish()
+    }
+
+    pub(crate) fn root_blocks(&self) -> impl Iterator<Item = &[RenderElement]> {
+        self.blocks.iter().map(|block| block.elements.as_slice())
+    }
+
+    pub(crate) fn table_cell_output_bytes(
+        &self,
+        index: usize,
+        actual: &crate::tables::render::TableRenderRecord,
+    ) -> Option<usize> {
+        let block = self.blocks.get(index)?;
+        let [RenderElement::Table { table: cached, .. }] = block.elements.as_slice() else {
+            return None;
+        };
+        if !cached.shares_data_with(actual)
+            && (cached.cells.len() != actual.cells.len()
+                || !cached
+                    .cells
+                    .iter()
+                    .zip(&actual.cells)
+                    .all(|(cached, actual)| Arc::ptr_eq(cached, actual)))
+        {
+            return None;
+        }
+        Some(*block.cell_output_bytes.get_or_init(|| {
+            cached.cells.iter().fold(0usize, |bytes, cell| {
+                bytes.saturating_add(
+                    cell.retained_bytes(crate::render::output_bytes::render_element_bytes),
+                )
+            })
+        }))
     }
 
     pub(crate) fn materialize(&self) -> Vec<Vec<RenderElement>> {
@@ -165,6 +211,11 @@ impl CachedRenderBlocks {
 
         fn element_bytes(element: &RenderElement) -> Option<usize> {
             match element {
+                RenderElement::Table { table, .. } => {
+                    let bytes = table
+                        .retained_bytes(|element| element_bytes(element).unwrap_or(usize::MAX));
+                    (bytes < usize::MAX).then_some(bytes)
+                }
                 RenderElement::TextRun { text, marks } => {
                     let slots = marks
                         .capacity()
@@ -257,6 +308,16 @@ impl CachedRenderBlocks {
         })?;
         crate::model::arc_allocation_retained_bytes(std::mem::size_of::<Self>())?
             .checked_add(blocks)?
+            .checked_add(
+                self.table_attributes
+                    .iter()
+                    .try_fold(0usize, |total, (key, json)| {
+                        total
+                            .checked_add(std::mem::size_of::<(String, Arc<str>)>())?
+                            .checked_add(key.capacity())?
+                            .checked_add(crate::model::arc_allocation_retained_bytes(json.len())?)
+                    })?,
+            )?
             .checked_add(self.document_root_seal.history_snapshot_retained_bytes()?)?
             .checked_add(crate::model::arc_allocation_retained_bytes(
                 self.schema_fingerprint.len(),
@@ -264,13 +325,13 @@ impl CachedRenderBlocks {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn transition_localized_insert(
+    pub(crate) fn transition_localized_textblock(
         &self,
         old_document: &Document,
         new_document: &Document,
         schema: &Schema,
         target_index: usize,
-        inserted_scalars: u32,
+        document_delta: i32,
         limits: &ResourceLimits,
     ) -> Result<CachedRenderTransition, CachedRenderError> {
         check_forced_cached_render_error()?;
@@ -279,7 +340,6 @@ impl CachedRenderBlocks {
             || old_document.root().child_count() != new_document.root().child_count()
             || target_index >= self.blocks.len()
             || self.blocks.len() > limits.max_document_nodes
-            || inserted_scalars == 0
         {
             return Err(CachedRenderError::CacheInvariantViolation);
         }
@@ -298,7 +358,7 @@ impl CachedRenderBlocks {
             .ok_or(CachedRenderError::CacheInvariantViolation)?;
         let expected_target_size = old_target_node
             .node_size()
-            .checked_add(inserted_scalars)
+            .checked_add_signed(document_delta)
             .ok_or(CachedRenderError::PositionOverflow)?;
         if !old_target_block.node.shares_storage_with(old_target_node)
             || old_target_block.node_size != old_target_node.node_size()
@@ -307,6 +367,49 @@ impl CachedRenderBlocks {
             return Err(CachedRenderError::CacheInvariantViolation);
         }
 
+        let changed_position = changed_textblock_position(
+            old_target_node,
+            new_target_node,
+            old_target_block.start_pos,
+            schema,
+        );
+        let table_projection_index = Arc::new(
+            changed_position
+                .map(|position| {
+                    self.table_projection_index
+                        .carry_after_textblock_edit(position, document_delta)
+                })
+                .unwrap_or_else(|| {
+                    TableProjectionIndex::derive_or_fallback(new_document, schema, limits)
+                }),
+        );
+        let mut context = TableRenderContext::new(
+            Arc::clone(&table_projection_index),
+            &self.schema_fingerprint,
+        );
+        context.attributes = self.table_attributes.clone();
+        let localized_table = match changed_position {
+            Some(position) => render_localized_table_block(
+                old_target_block,
+                new_target_node,
+                schema,
+                position,
+                document_delta,
+                &mut context,
+            )?,
+            None => None,
+        };
+        let preserves_table_attributes = localized_table.is_some();
+        if localized_table.is_none() {
+            for block in &self.blocks {
+                context.retain_cells(
+                    &block.elements,
+                    &block.node,
+                    block.start_pos,
+                    &self.table_projection_index,
+                );
+            }
+        }
         check_forced_localized_render_allocation_failure()?;
         let mut blocks = Vec::new();
         blocks
@@ -335,7 +438,7 @@ impl CachedRenderBlocks {
                 return Err(CachedRenderError::CacheInvariantViolation);
             }
             element_count = element_count
-                .checked_add(block.elements.len())
+                .checked_add(block.element_count)
                 .ok_or(CachedRenderError::ResourceLimitExceeded)?;
             if element_count > max_elements {
                 return Err(CachedRenderError::ResourceLimitExceeded);
@@ -343,10 +446,18 @@ impl CachedRenderBlocks {
             blocks.push(block.clone());
         }
 
-        let target_block =
-            render_cached_block(new_target_node, schema, old_target_block.start_pos)?;
+        let target_block = match localized_table {
+            Some(block) => block,
+            None => render_cached_block(
+                new_target_node,
+                schema,
+                old_target_block.start_pos,
+                &mut context,
+                None,
+            )?,
+        };
         element_count = element_count
-            .checked_add(target_block.elements.len())
+            .checked_add(target_block.element_count)
             .ok_or(CachedRenderError::ResourceLimitExceeded)?;
         check_forced_localized_render_resource_failure()?;
         if element_count > max_elements {
@@ -376,12 +487,12 @@ impl CachedRenderBlocks {
             check_forced_localized_render_position_failure()?;
             let new_start = old_block
                 .start_pos
-                .checked_add(inserted_scalars)
+                .checked_add_signed(document_delta)
                 .ok_or(CachedRenderError::PositionOverflow)?;
             let block = rebase_cached_block(old_block, new_node, new_start)
                 .ok_or(CachedRenderError::CacheInvariantViolation)?;
             element_count = element_count
-                .checked_add(block.elements.len())
+                .checked_add(block.element_count)
                 .ok_or(CachedRenderError::ResourceLimitExceeded)?;
             if element_count > max_elements {
                 return Err(CachedRenderError::ResourceLimitExceeded);
@@ -393,10 +504,16 @@ impl CachedRenderBlocks {
         if blocks.len() != new_root.child_count() {
             return Err(CachedRenderError::CacheInvariantViolation);
         }
+        if !preserves_table_attributes {
+            context
+                .retain_referenced_attributes(blocks.iter().map(|block| block.elements.as_slice()));
+        }
         let cache = Self {
             blocks,
             document_root_seal: new_root.clone(),
             schema_fingerprint: Arc::clone(&self.schema_fingerprint),
+            table_projection_index,
+            table_attributes: context.attributes,
         };
         #[cfg(any(test, debug_assertions))]
         cache.assert_slow_invariant(new_document, schema);
@@ -418,6 +535,24 @@ impl CachedRenderBlocks {
         affected_indices: &[usize],
         limits: &ResourceLimits,
     ) -> Result<CachedRenderTransition, CachedRenderError> {
+        let table_projection_index = Arc::new(TableProjectionIndex::derive_or_fallback(
+            new_document,
+            schema,
+            limits,
+        ));
+        let mut context = TableRenderContext::new(
+            Arc::clone(&table_projection_index),
+            &self.schema_fingerprint,
+        );
+        context.attributes = self.table_attributes.clone();
+        for block in &self.blocks {
+            context.retain_cells(
+                &block.elements,
+                &block.node,
+                block.start_pos,
+                &self.table_projection_index,
+            );
+        }
         record_cached_transition();
         check_forced_cached_render_error()?;
         ensure_document_render_limits(new_document, schema, limits)?;
@@ -428,10 +563,15 @@ impl CachedRenderBlocks {
             return Self::full_transition(new_document, schema, limits);
         }
         if old_document == new_document {
+            if self.table_projection_index.as_ref() != table_projection_index.as_ref() {
+                return Self::full_transition(new_document, schema, limits);
+            }
             let cache = Self {
                 blocks: self.blocks.clone(),
                 document_root_seal: new_document.root().clone(),
                 schema_fingerprint: Arc::clone(&self.schema_fingerprint),
+                table_projection_index,
+                table_attributes: self.table_attributes.clone(),
             };
             #[cfg(any(test, debug_assertions))]
             cache.assert_slow_invariant(new_document, schema);
@@ -476,16 +616,16 @@ impl CachedRenderBlocks {
 
         let mut element_count = blocks.iter().try_fold(0usize, |total, block| {
             total
-                .checked_add(block.elements.len())
+                .checked_add(block.element_count)
                 .ok_or(CachedRenderError::ResourceLimitExceeded)
         })?;
         for (index, start_pos) in starts.iter().enumerate().take(new_suffix).skip(prefix) {
             let node = new_root
                 .child(index)
                 .ok_or(CachedRenderError::CacheInvariantViolation)?;
-            let block = render_cached_block(node, schema, *start_pos)?;
+            let block = render_cached_block(node, schema, *start_pos, &mut context, None)?;
             element_count = element_count
-                .checked_add(block.elements.len())
+                .checked_add(block.element_count)
                 .ok_or(CachedRenderError::ResourceLimitExceeded)?;
             if element_count > max_cached_elements(limits)? {
                 return Err(CachedRenderError::ResourceLimitExceeded);
@@ -508,7 +648,7 @@ impl CachedRenderBlocks {
                 return Self::full_transition(new_document, schema, limits);
             };
             element_count = element_count
-                .checked_add(block.elements.len())
+                .checked_add(block.element_count)
                 .ok_or(CachedRenderError::ResourceLimitExceeded)?;
             if element_count > max_cached_elements(limits)? {
                 return Err(CachedRenderError::ResourceLimitExceeded);
@@ -519,10 +659,13 @@ impl CachedRenderBlocks {
             return Self::full_transition(new_document, schema, limits);
         }
 
+        context.retain_referenced_attributes(blocks.iter().map(|block| block.elements.as_slice()));
         let cache = Self {
             blocks,
             document_root_seal: new_root.clone(),
             schema_fingerprint: Arc::clone(&self.schema_fingerprint),
+            table_projection_index,
+            table_attributes: context.attributes,
         };
         #[cfg(any(test, debug_assertions))]
         cache.assert_slow_invariant(new_document, schema);
@@ -560,16 +703,6 @@ impl CachedRenderBlocks {
             affected_indices,
             old_document != new_document,
         )
-    }
-
-    pub(crate) fn classify_cached_transition_to(
-        &self,
-        new_cache: &Self,
-    ) -> CachedRenderTransitionUpdate {
-        if self.schema_fingerprint != new_cache.schema_fingerprint {
-            return CachedRenderTransitionUpdate::Full(new_cache.materialize());
-        }
-        classify_cached_transition(self, new_cache, &[], true)
     }
 
     pub(crate) fn matches_identity(&self, document: &Document, schema_fingerprint: &str) -> bool {

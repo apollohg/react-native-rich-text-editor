@@ -119,12 +119,6 @@ internal fun NativeEditorExpoView.hasPendingEditorUpdateForCurrentEditor(): Bool
 internal fun NativeEditorExpoView.hasPendingEditorResetUpdateForCurrentEditor(): Boolean =
     hasPendingEditorResetUpdateForEditor(richTextView.editorId)
 
-internal fun NativeEditorExpoView.pendingEditorUpdateCommandPreparationJSON(): String =
-    NativeEditorViewRegistry.commandPreparationJSON(
-        ready = false,
-        blockedReason = "pendingUpdate"
-    )
-
 internal fun NativeEditorExpoView.shouldBlockEditorCommandForPendingUpdate(): Boolean =
     hasPendingEditorResetUpdateForCurrentEditor() || hasPendingEditorUpdateForCurrentEditor()
 
@@ -341,7 +335,7 @@ internal fun NativeEditorExpoView.schedulePendingEditorUpdateRetry(kind: Pending
         richTextView.editorEditText.editorId == richTextView.editorId
     ) {
         pendingEditorUpdateForcedRecoveryAttempted = true
-        richTextView.editorEditText.discardTransientNativeInputForExternalRecovery()
+        richTextView.activeTextInput.discardTransientNativeInputForExternalRecovery()
     }
     if (!pastFastRetryBudget) {
         pendingEditorUpdateRetryAttempts += 1

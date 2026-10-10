@@ -26,6 +26,7 @@ import com.apollohg.editor.EditorTextStyle
 import com.apollohg.editor.EditorTheme
 import com.apollohg.editor.OrderedListMarkerFormatter
 import com.apollohg.editor.ProseViewerError
+import com.apollohg.editor.tables.TableLayoutDirection
 import java.text.Bidi
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -128,20 +129,24 @@ internal data class PreparedProseTheme(
     val atomPaddingVerticalPx: Int,
     val viewerAtoms: ViewerAtomConfiguration? = null,
     val sourceTheme: EditorTheme? = null,
-    val codeHighlighting: com.apollohg.editor.NativeCodeHighlightingConfig? = null
+    val codeHighlighting: com.apollohg.editor.NativeCodeHighlightingConfig? = null,
+    val tableDirection: TableLayoutDirection = TableLayoutDirection.LEFT_TO_RIGHT
 ) {
+    val tableStyle: com.apollohg.editor.tables.TableStyle
+        get() = sourceTheme?.table ?: com.apollohg.editor.tables.TableStyle()
     companion object {
         fun resolve(
             themeJson: String?,
             density: Float,
             fontScale: Float = 1f,
-            semanticGeneration: String = "standalone-theme"
+            semanticGeneration: String = "standalone-theme",
+            editorTheme: EditorTheme? = null
         ): PreparedProseTheme {
             val decoded = EditorTheme.fromJson(themeJson)
             require(themeJson.isNullOrBlank() || decoded != null) {
                 "Invalid viewer theme version or payload shape."
             }
-            val theme = decoded ?: EditorTheme()
+            val theme = editorTheme ?: decoded ?: EditorTheme()
             val resolvedFontScale = fontScale.takeIf { it.isFinite() && it > 0f } ?: 1f
             val scaledDensity = density * resolvedFontScale
             fun px(value: Float, fallback: Float): Int = max(

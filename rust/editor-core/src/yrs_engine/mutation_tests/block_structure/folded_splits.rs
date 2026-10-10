@@ -81,7 +81,7 @@ fn split_sequences_materialize_only_the_compact_final_plan() {
         panic!("prepared marked text expected")
     };
     assert_eq!(prepared_text_for_test(runs), "B");
-    assert_eq!(runs[0].attrs.get("bold"), Some(&Any::Bool(true)));
+    assert_eq!(runs[0].attrs.get("bold"), Some(&Any::Map(Default::default())));
 
     let heading = json!({
         "type": "doc",

@@ -156,7 +156,7 @@ extension RichTextEditorViewTests {
         XCTAssertTrue(errors.errors.isEmpty)
 
         var malformed = parseJSONObject(oldRender)
-        malformed.removeValue(forKey: "historyState")
+        malformed.removeValue(forKey: "documentVersion")
         view.setPendingEditorUpdateJson(try encodedJSONObject(malformed))
         view.setPendingEditorUpdateEditorId(String(editorId))
         view.setPendingEditorUpdateRevision(2)

@@ -11,6 +11,7 @@ import com.facebook.react.uimanager.ReactStylesDiffMap
 import com.facebook.react.uimanager.StateWrapper
 import com.facebook.react.uimanager.ThemedReactContext
 import java.lang.reflect.Proxy
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
@@ -24,6 +25,56 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class PreparedProseViewerManagerUnitsTest {
+    @Test
+    fun `geometry revisions retain stale policy and invalidate on font change`() {
+        val state = PreparedProseViewerManager.ViewState(createStateMap = { JavaOnlyMap() })
+        val publications = mutableListOf<com.facebook.react.bridge.WritableMap>()
+        val wrapper = Proxy.newProxyInstance(
+            StateWrapper::class.java.classLoader,
+            arrayOf(StateWrapper::class.java)
+        ) { _, method, arguments ->
+            if (method.name ==
+                "updateState"
+            ) {
+                publications +=
+                    arguments!!.single() as com.facebook.react.bridge.WritableMap
+            }
+            null
+        } as StateWrapper
+        val initial = PreparedProseViewerManager.FabricStateRevisions(
+            0,
+            0,
+            4,
+            tableGeometryPolicy = TableGeometryPolicy.INITIAL
+        )
+        state.replaceStateWrapper(wrapper, initial)
+        val revision = nextTableGeometryRevision()
+        state.publishTableGeometryRevision(revision, TableGeometryPolicy.STAGED)
+        state.replaceStateWrapper(wrapper, initial)
+        assertEquals(revision, state.requestOrNull()!!.tableGeometryRevision)
+        assertEquals(TableGeometryPolicy.STAGED, state.requestOrNull()!!.tableGeometryPolicy)
+        state.publishFontRevision(1)
+        assertEquals(revision, state.requestOrNull()!!.tableGeometryRevision)
+        assertEquals(TableGeometryPolicy.EAGER, state.requestOrNull()!!.tableGeometryPolicy)
+        state.replaceStateWrapper(
+            wrapper,
+            initial.copy(
+                tableGeometryRevision = revision,
+                tableGeometryPolicy = TableGeometryPolicy.STAGED
+            )
+        )
+        assertEquals(
+            "A stale same-revision policy cannot restore obsolete staged geometry",
+            TableGeometryPolicy.EAGER,
+            state.requestOrNull()!!.tableGeometryPolicy
+        )
+        assertEquals(
+            TableGeometryPolicy.EAGER.stateValue.toDouble(),
+            publications.last().getDouble("tableGeometryPolicy"),
+            0.0
+        )
+    }
+
     @Test
     fun `Fabric viewer observes font registration before its first state mount`() {
         ViewerFontEnvironment.resetFamilyRegistryForTesting()
@@ -175,6 +226,72 @@ class PreparedProseViewerManagerUnitsTest {
     }
 
     @Test
+    fun `atom dispatch ownership rejects released and replaced Fabric leases`() {
+        val state = PreparedProseViewerManager.ViewState().apply {
+            revisions = PreparedProseViewerManager.FabricStateRevisions(0, 0, 77)
+            source = "first"
+        }
+        val surface = FabricSurfaceToken(71, 19)
+        val registry = PreparedProseLayoutRegistry.shared
+        registry.registerFabricLease(surface, 77)
+        val first = state.adopt(surface, requireNotNull(state.requestOrNull()))
+        val artifact = preparedArtifact("atom-owner")
+        state.installAtomArtifact(first, artifact)
+        assertTrue(state.ownsAtomArtifact(first, artifact))
+
+        state.source = "replacement"
+        val replacement = state.adopt(surface, requireNotNull(state.requestOrNull()))
+        assertTrue(first != replacement)
+        assertTrue(!state.ownsAtomArtifact(first, artifact))
+
+        registry.releaseFabricGeneration(replacement)
+        assertTrue(!state.ownsAtomArtifact(replacement, artifact))
+        state.release()
+    }
+
+    @Test
+    fun `final atom dispatch emits one envelope only for its active owner`() {
+        val manager = PreparedProseViewerManager()
+        val view = PreparedProseDrawingView(RuntimeEnvironment.getApplication())
+        val state = PreparedProseViewerManager.ViewState().apply {
+            source = "compiler-backed-table-owner"
+            themeJson =
+                """{"viewerAtoms":{"generation":"g1","revision":"r1",""" +
+                """"nodeTypes":["card"],"estimatedHeights":{"card":40}}}"""
+            revisions = PreparedProseViewerManager.FabricStateRevisions(0, 0, 88)
+        }
+        val surface = FabricSurfaceToken(72, 20)
+        val registry = PreparedProseLayoutRegistry.shared
+        registry.registerFabricLease(surface, 88)
+        val generation = state.adopt(surface, requireNotNull(state.requestOrNull()))
+        val artifact = preparedArtifact("atom-event").copy(
+            viewerAtoms = listOf(PreparedViewerAtom("card", 17, "{\"id\":17}", Rect(3, 4, 53, 44)))
+        )
+        view.install(artifact)
+        state.installAtomArtifact(generation, artifact)
+        installState(manager, view, state)
+        val events = mutableListOf<ViewerAtomLayoutEvent>()
+        manager.atomLayoutEventSinkForTesting = events::add
+
+        dispatchAtomLayout(manager, view, state)
+        dispatchAtomLayout(manager, view, state)
+        assertEquals(1, events.size)
+        val event = events.single()
+        assertEquals("g1", event.generation)
+        assertEquals("r1", event.revision)
+        val envelope = JSONObject(event.atomsJson)
+        assertEquals("viewer-atoms-v2", envelope.getString("format"))
+        assertTrue(envelope.getLong("presentationSequence") > 0)
+        assertEquals(0, envelope.getJSONArray("atoms").length())
+
+        registry.deactivateFabricLease(surface, generation.leaseHandle)
+        state.installAtomArtifact(generation, artifact)
+        dispatchAtomLayout(manager, view, state)
+        assertEquals(1, events.size)
+        state.release()
+    }
+
+    @Test
     fun `drawing view translates interactions and accessibility into the content box`() {
         val view = PreparedProseDrawingView(RuntimeEnvironment.getApplication())
         val artifact = preparedArtifact("content-origin").copy(
@@ -236,6 +353,34 @@ class PreparedProseViewerManagerUnitsTest {
         blocks = emptyList(),
         retainedBytes = 0
     )
+
+    @Suppress("UNCHECKED_CAST")
+    private fun installState(
+        manager: PreparedProseViewerManager,
+        view: PreparedProseDrawingView,
+        state: PreparedProseViewerManager.ViewState
+    ) {
+        val states = PreparedProseViewerManager::class.java.getDeclaredField("states")
+            .apply {
+                isAccessible = true
+            }.get(
+                manager
+            ) as MutableMap<PreparedProseDrawingView, PreparedProseViewerManager.ViewState>
+        states[view] = state
+    }
+
+    private fun dispatchAtomLayout(
+        manager: PreparedProseViewerManager,
+        view: PreparedProseDrawingView,
+        state: PreparedProseViewerManager.ViewState
+    ) {
+        PreparedProseViewerManager::class.java.getDeclaredMethod(
+            "dispatchAtomLayout",
+            PreparedProseDrawingView::class.java,
+            PreparedProseViewerManager.ViewState::class.java,
+            PreparedMountTicket::class.java
+        ).apply { isAccessible = true }.invoke(manager, view, state, null)
+    }
 
     @Suppress("UNCHECKED_CAST")
     private fun fontEnvironment(

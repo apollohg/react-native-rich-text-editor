@@ -23,7 +23,7 @@ fn promoted_marked_fragmented_non_bmp_insert_preserves_second_insert_exact_work_
     let block = PositionMap::build(&document, &schema)
         .block(0)
         .unwrap()
-        .clone();
+        .into_owned();
     let first_position = block.doc_start;
     let doc = seeded_document(&source, &schema, &limits);
     let txn = doc.transact();
@@ -62,6 +62,7 @@ fn promoted_marked_fragmented_non_bmp_insert_preserves_second_insert_exact_work_
         "schema-a",
         3,
         2,
+        None,
     )
     .unwrap()
     .expect("fragmented marked text must localize")
@@ -89,7 +90,9 @@ fn promoted_marked_fragmented_non_bmp_insert_preserves_second_insert_exact_work_
         .prepare_promotion(
             &txn,
             &fragment,
-            &promotion,
+            promotion
+                .as_ref()
+                .expect("an existing-text insert promotes the lookup seed"),
             &document,
             &after,
             &limits,
@@ -105,7 +108,7 @@ fn promoted_marked_fragmented_non_bmp_insert_preserves_second_insert_exact_work_
     let second_block = PositionMap::build(&after, &schema)
         .block(0)
         .unwrap()
-        .clone();
+        .into_owned();
     let second_position = first_position + 1;
 
     let compile_eager = |action_limit, scan_limit| {
@@ -135,6 +138,7 @@ fn promoted_marked_fragmented_non_bmp_insert_preserves_second_insert_exact_work_
             "schema-a",
             4,
             3,
+            None,
         )?
         .expect("promoted fragmented marked text must localize again")
         .compile(0, second_position, "界", std::slice::from_ref(&italic))
@@ -174,7 +178,7 @@ fn promoted_insert_materialization_work_admits_chained_localized_format() {
     let block = PositionMap::build(&document, &schema)
         .block(0)
         .unwrap()
-        .clone();
+        .into_owned();
     let insert_position = block.doc_start + 1;
     let doc = seeded_document(&source, &schema, &limits);
     let txn = doc.transact();
@@ -213,6 +217,7 @@ fn promoted_insert_materialization_work_admits_chained_localized_format() {
         "schema-a",
         5,
         8,
+        None,
     )
     .unwrap()
     .expect("existing insert must localize")
@@ -236,14 +241,16 @@ fn promoted_insert_materialization_work_admits_chained_localized_format() {
     let after_block = PositionMap::build(&after, &schema)
         .block(0)
         .unwrap()
-        .clone();
+        .into_owned();
     let txn = doc.transact();
     let fragment = txn.get_xml_fragment("prosemirror").unwrap();
     let promoted = seed
         .prepare_promotion(
             &txn,
             &fragment,
-            &promotion,
+            promotion
+                .as_ref()
+                .expect("an existing-text insert promotes the lookup seed"),
             &document,
             &after,
             &limits,
@@ -313,7 +320,7 @@ fn localized_format_promotion_derives_current_work_in_one_target_pass() {
     let block = PositionMap::build(&document, &schema)
         .block(0)
         .unwrap()
-        .clone();
+        .into_owned();
     let doc = seeded_document(&source, &schema, &limits);
     {
         let mut txn = doc.transact_mut();

@@ -3,6 +3,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+source "$repo_root/rust/v2-symbols.sh"
 fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/native-editor-generated-bindings.XXXXXX")"
 trap 'rm -rf "$fixture_dir"' EXIT
 
@@ -41,12 +42,12 @@ expected_viewer_method_checksums="$(grep -Eo 'uniffi_editor_core_checksum_method
   "$repo_root/rust/bindings/swift/editor_coreFFI.h" | sort -u)"
 expected_viewer_lifecycle_symbols="$(grep -Eo 'uniffi_editor_core_fn_(clone|free)_viewercompileddocument' \
   "$repo_root/rust/bindings/swift/editor_coreFFI.h" | sort -u)"
-[[ "$(printf '%s\n' "$expected_function_symbols" | sed '/^$/d' | wc -l | tr -d ' ')" == "36" ]] || {
-  echo "ERROR: generated FFI header must expose exactly 36 editor_v2 functions" >&2
+[[ "$(printf '%s\n' "$expected_function_symbols" | sed '/^$/d' | wc -l | tr -d ' ')" == "${#V2_SYMBOLS[@]}" ]] || {
+  echo "ERROR: generated FFI header must expose exactly ${#V2_SYMBOLS[@]} editor_v2 functions" >&2
   exit 1
 }
-[[ "$(printf '%s\n' "$expected_checksum_symbols" | sed '/^$/d' | wc -l | tr -d ' ')" == "36" ]] || {
-  echo "ERROR: generated FFI header must expose exactly 36 editor_v2 checksums" >&2
+[[ "$(printf '%s\n' "$expected_checksum_symbols" | sed '/^$/d' | wc -l | tr -d ' ')" == "${#V2_SYMBOLS[@]}" ]] || {
+  echo "ERROR: generated FFI header must expose exactly ${#V2_SYMBOLS[@]} editor_v2 checksums" >&2
   exit 1
 }
 [[ "$expected_viewer_function_symbols" == "uniffi_editor_core_fn_func_viewer_compile" ]] || {
@@ -57,12 +58,12 @@ expected_viewer_lifecycle_symbols="$(grep -Eo 'uniffi_editor_core_fn_(clone|free
   echo "ERROR: generated FFI header must expose the viewer_compile checksum" >&2
   exit 1
 }
-[[ "$(printf '%s\n' "$expected_viewer_method_symbols" | sed '/^$/d' | wc -l | tr -d ' ')" == "6" ]] || {
-  echo "ERROR: generated FFI header must expose exactly six ViewerCompiledDocument methods" >&2
+[[ "$(printf '%s\n' "$expected_viewer_method_symbols" | sed '/^$/d' | wc -l | tr -d ' ')" == "${#VIEWER_METHODS[@]}" ]] || {
+  echo "ERROR: generated FFI header must expose exactly ${#VIEWER_METHODS[@]} ViewerCompiledDocument methods" >&2
   exit 1
 }
-[[ "$(printf '%s\n' "$expected_viewer_method_checksums" | sed '/^$/d' | wc -l | tr -d ' ')" == "6" ]] || {
-  echo "ERROR: generated FFI header must expose exactly six ViewerCompiledDocument checksums" >&2
+[[ "$(printf '%s\n' "$expected_viewer_method_checksums" | sed '/^$/d' | wc -l | tr -d ' ')" == "${#VIEWER_METHODS[@]}" ]] || {
+  echo "ERROR: generated FFI header must expose exactly ${#VIEWER_METHODS[@]} ViewerCompiledDocument checksums" >&2
   exit 1
 }
 [[ "$(printf '%s\n' "$expected_viewer_lifecycle_symbols" | sed '/^$/d' | wc -l | tr -d ' ')" == "2" ]] || {
@@ -139,4 +140,7 @@ if grep -En '[[:blank:]]+$' \
   exit 1
 fi
 
-echo "Generated binding normalization, 36 editor-v2 symbol, viewer ABI, checksum, and copy validation passed."
+bash "$repo_root/scripts/tests/validate-swift-reader.sh"
+python3 "$repo_root/scripts/tests/validate-kotlin-encoder.py"
+
+echo "Generated binding normalization, ${#V2_SYMBOLS[@]} editor-v2 symbol, viewer ABI, checksum, and copy validation passed."

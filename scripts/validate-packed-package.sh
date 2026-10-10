@@ -4,6 +4,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 manifest_path="$repo_root/scripts/package-abi-manifest.json"
+source "$repo_root/rust/v2-symbols.sh"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/native-editor-packed-package.XXXXXX")"
 trap 'rm -rf "$work_dir"' EXIT
 
@@ -56,8 +57,8 @@ manifest_entries() {
   ruby -rjson -e '
     manifest = JSON.parse(File.read(ARGV.fetch(0)))
     editor_functions = manifest.fetch("functions")
-    abort "package ABI manifest must contain exactly 36 editor_v2 functions" unless editor_functions.length == 36
     editor_names = editor_functions.map { |entry| entry.fetch("name") }
+    abort "package ABI manifest editor functions differ from the declared exports" unless editor_names.sort == ARGV.fetch(1).split.sort
     abort "package ABI manifest contains duplicate editor function names" unless editor_names.uniq.length == editor_names.length
     abort "package ABI manifest contains a non-v2 editor function" unless editor_names.all? { |name| name.start_with?("editor_v2_") }
 
@@ -74,7 +75,7 @@ manifest_entries() {
     methods = viewer_object.fetch("methods")
     method_names = methods.map { |entry| entry.fetch("name") }
     abort "package ABI manifest ViewerCompiledDocument methods are duplicate" unless method_names.uniq.length == method_names.length
-    abort "package ABI manifest ViewerCompiledDocument methods are incomplete" unless method_names.sort == %w[elements is_empty preferred_text_block_name retained_bytes_decimal semantic_key trailing_empty_text_block_count]
+    abort "package ABI manifest ViewerCompiledDocument methods are incomplete" unless method_names.sort == ARGV.fetch(2).split.sort
 
     version = manifest.fetch("version")
     puts ["function", version.fetch("name"), version.fetch("checksum")].join("\t")
@@ -90,7 +91,7 @@ manifest_entries() {
     methods.sort_by { |entry| entry.fetch("name") }.each do |entry|
       puts ["method", "#{viewer_object.fetch("name")}_#{entry.fetch("name")}", entry.fetch("checksum")].join("\t")
     end
-  ' "$manifest_path"
+  ' "$manifest_path" "${V2_SYMBOLS[*]}" "${VIEWER_METHODS[*]}"
 }
 
 expected_symbol_names() {
@@ -361,6 +362,15 @@ reject_dist_symbol() {
   fi
 }
 
+table_consumer_config() {
+  node - "$1" <<'NODE'
+const path = require('node:path');
+const { withTablesSchema, prosemirrorSchema } = require(path.resolve(process.argv[2], 'dist/schemas.js'));
+const config = { schema: withTablesSchema(prosemirrorSchema), initialization: { type: 'localEmpty' } };
+process.stdout.write(Buffer.from(JSON.stringify(config)).toString('base64'));
+NODE
+}
+
 validate_ios_consumer() {
   local root="$1"
   local tarball_path="$2"
@@ -498,6 +508,21 @@ func packedEditorCoreLinkProbe() {
   _ = editorV2CollaborationNackOutbound(editorId: "1", generation: "1", leaseId: "1")
   _ = editorV2CollaborationDetach(editorId: "1")
   _ = editorV2CollaborationReattach(editorId: "1")
+}
+SWIFT
+  local table_config
+  table_config="$(table_consumer_config "$resolved_package_dir")" || fail "Cannot generate packed table schema"
+  cat >> "$ios_project/PackedConsumer/Probe.swift" <<SWIFT
+import Foundation
+
+func packedTableLinkProbe(frame: FfiTableFrame, cell: FfiTableCellRecord) {
+  let config = String(data: Data(base64Encoded: "$table_config")!, encoding: .utf8)!
+  _ = editorV2Create(configJson: config, snapshotState: nil)
+  _ = editorV2RenderNativeFrame(editorId: "1", ownerId: nil, mirrorScalarAnchor: nil, mirrorScalarHead: nil)
+  _ = frame.cellUpdates
+  _ = frame.extents
+  _ = cell.inputBlocks
+  _ = cell.nestedTables
 }
 SWIFT
   if [[ -n "${CODE_HIGHLIGHTING_TARBALL:-}" ]]; then
@@ -687,6 +712,17 @@ object PackedEditorCoreProbe {
   }
 }
 KOTLIN
+  local table_config
+  table_config="$(table_consumer_config "$root")" || fail "Cannot generate packed table schema"
+  cat >> "$android_consumer/android/app/src/main/java/com/apollohg/nativeeditorexample/PackedEditorCoreProbe.kt" <<KOTLIN
+
+fun packedTableLinkProbe(frame: FfiTableFrame, cell: FfiTableCellRecord) {
+  val config = String(android.util.Base64.decode("$table_config", android.util.Base64.DEFAULT), Charsets.UTF_8)
+  editorV2Create(config, null)
+  editorV2RenderNativeFrame("1", null, null, null)
+  listOf(frame.cellUpdates, frame.extents, cell.inputBlocks, cell.nestedTables)
+}
+KOTLIN
   (
     cd "$android_consumer/android"
     PACKED_EDITOR_ANDROID_DIR="$root/android" \
@@ -802,6 +838,7 @@ validate_packed_package_root() {
   local ffi_header_count modulemap_count
 
   validate_package_entries "$root"
+  node "$repo_root/scripts/tests/validate-table-package.mjs" "$root"
   "$repo_root/scripts/validate-android-rn076-consumer.sh" --validate-package-root "$root"
   validate_abi_root "$root"
   validate_xcframework "$root/ios/EditorCore.xcframework" "$(ios_deployment_target "$root")"

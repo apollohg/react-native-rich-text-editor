@@ -1,6 +1,10 @@
 package com.apollohg.editor
 
+import android.text.Annotation
+import android.text.Spanned
 import com.apollohg.editor.EditorEditText.Companion.EMPTY_BLOCK_PLACEHOLDER
+
+private const val SINGLE_SCALAR_GRAPHEME_LENGTH = 1
 
 /**
  * Handle surrounding text deletion from the IME.
@@ -13,6 +17,7 @@ import com.apollohg.editor.EditorEditText.Companion.EMPTY_BLOCK_PLACEHOLDER
 internal fun EditorEditText.handleDeleteImpl(beforeLength: Int, afterLength: Int) {
     if (!isEditable) return
     if (isApplyingRustState) return
+    if (isTableCellInput && !canDispatchTableCellMutation()) return
     val selectionRange = normalizedUtf16SelectionRange()
     if (selectionRange != null &&
         isCollapsedAtomBoundarySelection(selectionRange.first, selectionRange.second)
@@ -80,6 +85,7 @@ internal fun EditorEditText.handleDeleteImpl(beforeLength: Int, afterLength: Int
 internal fun EditorEditText.handleBackspaceImpl() {
     if (!isEditable) return
     if (isApplyingRustState) return
+    if (isTableCellInput && !canDispatchTableCellMutation()) return
     val selectionRange = normalizedUtf16SelectionRange() ?: return
     if (isCollapsedAtomBoundarySelection(selectionRange.first, selectionRange.second)) return
     if (editorId == 0L) {
@@ -88,12 +94,10 @@ internal fun EditorEditText.handleBackspaceImpl() {
         if (start != end) {
             editable.delete(start, end)
         } else if (start > 0) {
-            val prevBoundary = PositionBridge.snapToGraphemeBoundary(
-                start - 1,
-                text?.toString() ?: ""
+            editable.delete(
+                PositionBridge.graphemeBoundaryBefore(start, editable.toString()),
+                start
             )
-            val adjustedPrev = if (prevBoundary >= start) maxOf(0, start - 1) else prevBoundary
-            editable.delete(adjustedPrev, start)
         }
         return
     }
@@ -102,10 +106,22 @@ internal fun EditorEditText.handleBackspaceImpl() {
     val currentText = text?.toString() ?: ""
     val (start, end) = selectionRange
     val logicalSelection = currentLogicalScalarSelection()
+    val previousUtf16 = PositionBridge.graphemeBoundaryBefore(start, currentText)
+    val graphemeScalars = currentText.codePointCount(previousUtf16, start)
+    val containsVoid = (text as? Spanned)?.getSpans(previousUtf16, start, Annotation::class.java)
+        ?.any { it.key == RenderBridge.NATIVE_VOID_NODE_TYPE_ANNOTATION } == true
 
     if (start != end) {
         val (scalarStart, scalarEnd) = normalizedScalarSelectionRange(currentText) ?: return
         deleteRangeInRust(scalarStart, scalarEnd)
+    } else if (logicalSelection != null && logicalSelection.first == logicalSelection.second &&
+        graphemeScalars > SINGLE_SCALAR_GRAPHEME_LENGTH && !containsVoid &&
+        !renderedRangeContainsGeneratedStructure(previousUtf16, start)
+    ) {
+        deleteRangeInRust(
+            (logicalSelection.first - graphemeScalars).coerceAtLeast(0),
+            logicalSelection.second
+        )
     } else if (logicalSelection != null && logicalSelection.first == logicalSelection.second) {
         deleteBackwardAtSelectionScalarInRust(logicalSelection.first, logicalSelection.second)
     } else if (start > 0) {
@@ -114,14 +130,7 @@ internal fun EditorEditText.handleBackspaceImpl() {
             deleteBackwardAtSelectionScalarInRust(scalarCursor, scalarCursor)
             return
         }
-        // Cursor: delete one grapheme cluster backward.
-        // Find the previous grapheme boundary by snapping (start - 1).
-        val breakIter = java.text.BreakIterator.getCharacterInstance()
-        breakIter.setText(currentText)
-        val prevBoundary = breakIter.preceding(start)
-        val prevUtf16 = if (prevBoundary == java.text.BreakIterator.DONE) 0 else prevBoundary
-
-        val scalarStart = PositionBridge.utf16ToScalar(prevUtf16, currentText)
+        val scalarStart = PositionBridge.utf16ToScalar(previousUtf16, currentText)
         val scalarEnd = PositionBridge.utf16ToScalar(start, currentText)
         if (scalarStart < scalarEnd) {
             deleteRangeInRust(scalarStart, scalarEnd)
@@ -134,6 +143,7 @@ internal fun EditorEditText.handleBackspaceImpl() {
 }
 
 internal fun EditorEditText.handleForwardDeleteImpl() {
+    if (isTableCellInput && !canDispatchTableCellMutation()) return
     if (!isEditable) return
     if (isApplyingRustState) return
     val selectionRange = normalizedUtf16SelectionRange() ?: return
@@ -189,6 +199,7 @@ internal fun EditorEditText.handleForwardDeleteImpl() {
  * Handle return/enter key as a block split operation.
  */
 internal fun EditorEditText.handleReturnKeyImpl() {
+    if (isTableCellInput && !canDispatchTableCellMutation()) return
     if (!isEditable) return
     if (isApplyingRustState) return
 
@@ -215,6 +226,7 @@ internal fun EditorEditText.handleReturnKeyImpl() {
  * Handle Shift+Enter as an inline hard break insertion.
  */
 internal fun EditorEditText.handleHardBreakImpl() {
+    if (isTableCellInput && !canDispatchTableCellMutation()) return
     if (!isEditable) return
     if (isApplyingRustState) return
     if (isCollapsedAtomBoundarySelection(selectionStart, selectionEnd)) return
@@ -228,7 +240,8 @@ internal fun EditorEditText.handleHardBreakImpl() {
     }
     if (discardTransientInputForDestroyedEditorIfNeeded()) return
 
-    val selection = currentScalarSelection() ?: return
+    val selection =
+        currentScalarSelection()?.let { inputScalarSelection(it.first, it.second) } ?: return
     v2Driver?.let { driver ->
         driver.insertNode(preferredHardBreakNodeType(), selection.first, selection.second)?.let {
             applyUpdateJSON(it)
@@ -236,15 +249,15 @@ internal fun EditorEditText.handleHardBreakImpl() {
     }
 }
 
-/**
- * Handle hardware Tab / Shift+Tab as list indent / outdent when the caret is in a list.
- */
 internal fun EditorEditText.handleTabImpl(shiftPressed: Boolean): Boolean {
+    if (isTableCellInput && !canDispatchTableCellMutation()) return false
     if (!isEditable) return false
     if (isApplyingRustState) return false
     if (!hasLiveEditor()) return false
+    if (isTableCellInput) return onTableCellTab?.invoke(shiftPressed) == true
     if (!isSelectionInsideList()) return false
-    val selection = currentScalarSelection() ?: return false
+    val selection = currentScalarSelection()?.let { inputScalarSelection(it.first, it.second) }
+        ?: return false
 
     v2Driver?.let { driver ->
         val update = if (shiftPressed) {

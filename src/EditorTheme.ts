@@ -12,6 +12,7 @@ export type {
     EditorHorizontalRuleTheme,
     EditorBlockquoteTheme,
     EditorCodeBlockTheme,
+    EditorTableTheme,
 } from './EditorStyleSheetTypes';
 
 /**
@@ -183,7 +184,7 @@ export function serializeEditorTheme(
     const normalized = theme === undefined ? undefined : normalizeEditorTheme(theme);
 
     const cleanedTheme =
-        normalized && (normalized.styles || normalized.rules || normalized.toolbar)
+        normalized && (normalized.styles || normalized.rules || normalized.toolbar || normalized.table)
             ? stripUndefined(normalized)
             : undefined;
 

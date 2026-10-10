@@ -8,10 +8,11 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 
 internal const val PIXEL_GRID_ROUNDING_SLACK_PX = 1
+internal const val PREPARED_LAYOUT_UNMOUNTED_BYTE_BUDGET = 32L * 1024L * 1024L
 
 /** Byte-bounded unmounted LRU plus exact Fabric and direct immutable owners. */
 internal class PreparedProseLayoutCache(
-    private val byteBudget: Long = 32L * 1024L * 1024L,
+    private val byteBudget: Long = PREPARED_LAYOUT_UNMOUNTED_BYTE_BUDGET,
     private val pendingLeaseBudget: Int = 256
 ) {
     private val lock = Any()
@@ -25,26 +26,37 @@ internal class PreparedProseLayoutCache(
     private val directMounted = mutableMapOf<String, PreparedProseLayout>()
     private val mountIndex = mutableMapOf<ProseMountKey, ProseLayoutKey>()
     private val publishedKeys = mutableSetOf<ProseLayoutKey>()
+    private val cellShapeCatalog = PreparedCellShapeCatalog()
     private var benchmarkCensusKeys: MutableSet<ProseLayoutKey>? = null
+    private var hasRetainedTableLayouts = false
 
     fun value(
         key: ProseLayoutKey,
         fabricGeneration: FabricGenerationToken? = null,
         shouldCreateFabricLease: () -> Boolean = { true },
         build: () -> PreparedProseLayout
+    ): PreparedProseLayout = valueWithCellShapeContext(
+        key,
+        fabricGeneration,
+        shouldCreateFabricLease
+    ) { build() }
+
+    fun valueWithCellShapeContext(
+        key: ProseLayoutKey,
+        fabricGeneration: FabricGenerationToken? = null,
+        shouldCreateFabricLease: () -> Boolean = { true },
+        build: (PreparedCellShapeBuildContext) -> PreparedProseLayout
     ): PreparedProseLayout {
         val started = PreparedProseInstrumentation.now()
         synchronized(lock) {
             benchmarkCensusKeys?.add(key)
-            completed[key]?.let {
-                createPendingLeaseIfActiveLocked(it, fabricGeneration, shouldCreateFabricLease)
-                PreparedProseInstrumentation.cacheLookup(started, true)
-                return it
-            }
             // Completed entries are deliberately disposable. Any live owner is
             // still an immutable complete-key source for a different surface.
-            liveLayoutLocked(key)?.let {
-                createPendingLeaseIfActiveLocked(it, fabricGeneration, shouldCreateFabricLease)
+            (completed[key] ?: liveLayoutLocked(key))?.let {
+                if (fabricGeneration != null || hasRetainedTableLayouts) {
+                    createPendingLeaseIfActiveLocked(it, fabricGeneration, shouldCreateFabricLease)
+                    finishMutationLocked(fabricGeneration)
+                }
                 PreparedProseInstrumentation.cacheLookup(started, true)
                 return it
             }
@@ -55,45 +67,63 @@ internal class PreparedProseLayoutCache(
             val layout = existing.join()
             synchronized(lock) {
                 createPendingLeaseIfActiveLocked(layout, fabricGeneration, shouldCreateFabricLease)
+                finishMutationLocked(fabricGeneration)
             }
             PreparedProseInstrumentation.cacheLookup(started, true, true)
             return layout
         }
         PreparedProseInstrumentation.cacheLookup(started, false)
+        val cellContext = cellShapeCatalog.newBuildContext()
         val layout = try {
-            build()
+            build(cellContext)
         } catch (error: Throwable) {
-            fresh.completeExceptionally(error)
-            inFlight.remove(key, fresh)
+            try {
+                cellContext.close()
+                synchronized(lock) { finishMutationLocked(fabricGeneration) }
+            } finally {
+                fresh.completeExceptionally(error)
+                inFlight.remove(key, fresh)
+            }
             throw error
         }
-        synchronized(lock) {
-            // A rival direct/live owner may have published while this caller
-            // built. Reuse it and discard the duplicate before publication.
-            val canonical = liveLayoutLocked(key) ?: completed[key] ?: layout
-            if (canonical === layout && BuildConfig.PREPARED_PROSE_INSTRUMENTATION &&
-                !publishedKeys.add(key)
-            ) {
-                PreparedProseInstrumentation.duplicatePublication()
-                check(false) {
-                    "Prepared prose layout published twice for a live semantic/width/revision key."
+        try {
+            synchronized(lock) {
+                // A rival direct/live owner may have published while this caller
+                // built. Reuse it and discard the duplicate before publication.
+                val canonical = liveLayoutLocked(key) ?: completed[key] ?: layout
+                if (canonical === layout && BuildConfig.PREPARED_PROSE_INSTRUMENTATION &&
+                    !publishedKeys.add(key)
+                ) {
+                    PreparedProseInstrumentation.duplicatePublication()
+                    check(false) {
+                        "Prepared prose layout published twice for a live semantic/width/revision key."
+                    }
                 }
+                if (canonical === layout && layout.retainedBytes <= byteBudget) {
+                    completed[key] = layout
+                    mountIndex[mountKey(key)] = key
+                }
+                createPendingLeaseIfActiveLocked(
+                    canonical,
+                    fabricGeneration,
+                    shouldCreateFabricLease
+                )
+                finishMutationLocked(fabricGeneration, cellContext)
+                fresh.complete(canonical)
+                return canonical
             }
-            if (canonical === layout && layout.retainedBytes <= byteBudget) {
-                completed[key] = layout
-                mountIndex[mountKey(key)] = key
-            }
-            createPendingLeaseIfActiveLocked(canonical, fabricGeneration, shouldCreateFabricLease)
-            enforceBudgetLocked(preferredGeneration = fabricGeneration)
-            retireUnownedPublicationsLocked()
-            publishOwnersLocked()
-            fresh.complete(canonical)
+        } catch (error: Throwable) {
+            cellContext.close()
+            synchronized(lock) { finishMutationLocked(fabricGeneration) }
+            fresh.completeExceptionally(error)
+            throw error
+        } finally {
             inFlight.remove(key, fresh)
-            return canonical
         }
     }
 
     fun registerDirectMount(owner: String, layout: PreparedProseLayout) = synchronized(lock) {
+        benchmarkCensusKeys?.add(layout.key)
         directMounted[owner] = layout
         retireUnownedPublicationsLocked()
         publishOwnersLocked()
@@ -118,6 +148,7 @@ internal class PreparedProseLayoutCache(
                 abs(layout.key.widthPx - widthPx) <= PIXEL_GRID_ROUNDING_SLACK_PX
         }?.let {
             if (!shouldAcquire()) return@synchronized null
+            benchmarkCensusKeys?.add(it.value.key)
             return@synchronized it.value
         }
         val lease = pendingLeases.entries
@@ -136,6 +167,7 @@ internal class PreparedProseLayoutCache(
                 .filter { it.owner == leaseKey.owner && it != leaseKey }
                 .forEach(mountedLeases::remove)
             mountedLeases[leaseKey] = layout
+            benchmarkCensusKeys?.add(layout.key)
             retireUnownedPublicationsLocked()
             publishOwnersLocked()
             return@synchronized layout
@@ -146,6 +178,7 @@ internal class PreparedProseLayoutCache(
             .filter { it.owner == lease.key.owner && it != lease.key }
             .forEach(mountedLeases::remove)
         mountedLeases[lease.key] = lease.value
+        benchmarkCensusKeys?.add(lease.value.key)
         retireUnownedPublicationsLocked()
         publishOwnersLocked()
         lease.value
@@ -233,8 +266,16 @@ internal class PreparedProseLayoutCache(
             mountedLeases.size
     }
     internal val pendingLeaseCountForTesting: Int get() = synchronized(lock) { pendingLeases.size }
-    internal fun beginBenchmarkCensus() = synchronized(lock) {
-        benchmarkCensusKeys = linkedSetOf()
+    internal val cellShapeCatalogCountForTesting: Int get() = cellShapeCatalog.countForTesting
+    internal val cellShapeCatalogRetainedBytesForTesting: Long get() =
+        cellShapeCatalog.retainedBytes
+    internal fun beginBenchmarkCensus(includeMountedLayouts: Boolean = false) = synchronized(lock) {
+        benchmarkCensusKeys = linkedSetOf<ProseLayoutKey>().apply {
+            if (includeMountedLayouts) {
+                directMounted.values.forEach { add(it.key) }
+                mountedLeases.values.forEach { add(it.key) }
+            }
+        }
     }
     internal fun endBenchmarkCensus(): Set<ProseLayoutKey> = synchronized(lock) {
         val liveKeys = completed.keys + pendingLeases.values.map { it.key } +
@@ -269,9 +310,6 @@ internal class PreparedProseLayoutCache(
             .filter { it.owner == lease.owner && it != lease }
             .forEach(pendingLeases::remove)
         if (mountedLeases[lease] == null) pendingLeases[lease] = layout
-        enforceBudgetLocked(preferredGeneration = generation)
-        retireUnownedPublicationsLocked()
-        publishOwnersLocked()
     }
 
     private fun enforceBudgetLocked(preferredGeneration: FabricGenerationToken?) {
@@ -284,6 +322,7 @@ internal class PreparedProseLayoutCache(
                 ) {
                     mountIndex.remove(mountKey(completedEntry.key))
                 }
+                cellShapeCatalog.synchronizeOwners(liveLayoutsLocked())
                 continue
             }
             // A duplicate pending handoff can be the only exact artifact for
@@ -295,6 +334,7 @@ internal class PreparedProseLayoutCache(
                 it.key.generation != preferredGeneration && pendingRemovalLowersBudgetLocked(it)
             } ?: break
             pendingLeases.remove(pendingEntry.key)
+            cellShapeCatalog.synchronizeOwners(liveLayoutsLocked())
         }
         // Shared immutable artifacts may make a pending handoff free zero
         // bytes. Its owner metadata still needs a hard cap in long feeds.
@@ -322,7 +362,26 @@ internal class PreparedProseLayoutCache(
         )
     }
 
-    private fun publishOwnersLocked() {
+    private fun finishMutationLocked(
+        preferredGeneration: FabricGenerationToken?,
+        buildContext: PreparedCellShapeBuildContext? = null
+    ) {
+        cellShapeCatalog.synchronizeOwners(liveLayoutsLocked())
+        enforceBudgetLocked(preferredGeneration)
+        cellShapeCatalog.synchronizeOwners(liveLayoutsLocked())
+        retireUnownedPublicationsLocked()
+        buildContext?.close()
+        cellShapeCatalog.synchronizeOwners(liveLayoutsLocked())
+        hasRetainedTableLayouts = completed.values.any { it.hasTableSurfaces } ||
+            pendingLeases.values.any { it.hasTableSurfaces } ||
+            mountedLeases.values.any { it.hasTableSurfaces } ||
+            directMounted.values.any { it.hasTableSurfaces }
+        publishTotalsLocked()
+    }
+
+    private fun publishOwnersLocked() = finishMutationLocked(null)
+
+    private fun publishTotalsLocked() {
         PreparedProseInstrumentation.cacheUpdated(
             unmountedBytes = unmountedBytesLocked(),
             unmountedResidentCount = completed.size.toLong()
@@ -382,7 +441,7 @@ internal class PreparedProseLayoutCache(
 
     private fun uniqueBytes(layouts: Collection<PreparedProseLayout>): Long {
         val seen = identitySet(layouts)
-        return seen.sumOf { it.retainedBytes }
+        return seen.sumOf { it.currentRetainedBytes + it.cellShapeCatalogBytes() }
     }
 
     private val FabricLeaseKey.owner: FabricLeaseOwner
@@ -390,4 +449,7 @@ internal class PreparedProseLayoutCache(
 
     private fun mountKey(key: ProseLayoutKey) =
         ProseMountKey(key.generationIdentity, key.widthPx, key.densityBits)
+
+    private fun liveLayoutsLocked(): Collection<PreparedProseLayout> =
+        completed.values + pendingLeases.values + mountedLeases.values + directMounted.values
 }

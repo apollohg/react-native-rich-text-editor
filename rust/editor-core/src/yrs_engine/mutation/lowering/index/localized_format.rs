@@ -52,6 +52,7 @@ impl LocalizedFormatCompiler {
             fragment,
             schema,
             LocalizedTextblockLocator::Format(locator),
+            None,
         )?
         else {
             return Ok(None);
@@ -98,7 +99,7 @@ impl LocalizedFormatCompiler {
                 virtual_delete_visits: 0,
             },
             seed_pending_traversal_work: seed_payload.pending_traversal_work,
-            seed_materialization_work: Arc::clone(&seed_payload.target_materialization_work),
+            seed_materialization_work: seed_payload.target_materialization_work.clone(),
         }))
     }
 
@@ -321,6 +322,7 @@ fn localized_existing_textblock_targets<T: ReadTxn>(
     fragment: &XmlFragmentRef,
     schema: &Schema,
     locator: LocalizedTextblockLocator<'_>,
+    read_scope: Option<crate::yrs_engine::compiler::CompilationReadScope<'_>>,
 ) -> OperationResult<Option<LocalizedTextblockTargets>> {
     let Some((semantic_block, block_start, block_end)) =
         semantic_node_bounds(locator.document(), locator.block_path())
@@ -338,12 +340,21 @@ fn localized_existing_textblock_targets<T: ReadTxn>(
     if !valid_range {
         return Ok(None);
     }
+    let creates_text = matches!(locator, LocalizedTextblockLocator::Insert(_))
+        && semantic_block
+            .content()
+            .is_some_and(|content| content.child_count() == 0);
     if semantic_block.is_void()
         || !schema
             .node(semantic_block.node_type())
             .is_some_and(|spec| matches!(spec.role, NodeRole::TextBlock))
         || semantic_block.content().is_none_or(|content| {
-            content.child_count() == 0 || content.iter().any(|child| !child.is_text())
+            (content.child_count() == 0 && !creates_text)
+                || content.iter().any(|child| {
+                    !child.is_text()
+                        && !(matches!(locator, LocalizedTextblockLocator::Insert(_))
+                            && child.is_void())
+                })
         })
     {
         return Ok(None);
@@ -353,19 +364,18 @@ fn localized_existing_textblock_targets<T: ReadTxn>(
     let mut branch_path = Vec::<(BranchID, u32)>::new();
     let mut path_parent_widths = HashMap::<BranchID, usize>::new();
     let mut semantic_path = Vec::<u32>::new();
+    let observed_scope =
+        read_scope.filter(|scope| scope.begin_observed_path(txn, locator.block_path().len()));
     for &child_index in locator.block_path() {
-        let children = match &parent {
-            XmlParentRef::Fragment(parent) => parent.children(txn).collect::<Vec<_>>(),
-            XmlParentRef::Element(parent) => parent.children(txn).collect::<Vec<_>>(),
-        };
-        path_parent_widths.insert(parent.id(), children.len());
-        let Some(child) = usize::try_from(child_index)
-            .ok()
-            .and_then(|index| children.get(index))
-        else {
+        let (child, width) = parent.child_with_width(txn, child_index);
+        path_parent_widths.insert(parent.id(), width);
+        let Some(child) = child else {
             return Ok(None);
         };
-        let XmlOut::Element(element) = child else {
+        if let Some(scope) = observed_scope {
+            scope.observe_path_child(txn, parent.id(), child_index, &child, width);
+        }
+        let XmlOut::Element(element) = &child else {
             return Ok(None);
         };
         semantic_path.push(child_index);
@@ -386,10 +396,35 @@ fn localized_existing_textblock_targets<T: ReadTxn>(
     };
     let children = textblock.children(txn).collect::<Vec<_>>();
     path_parent_widths.insert(AsRef::<Branch>::as_ref(&textblock).id(), children.len());
+    if creates_text && children.is_empty() {
+        let signature = parent_signature_from_children(&textblock, &branch_path, &children, 0, 0);
+        return Ok(Some(LocalizedTextblockTargets {
+            targets: vec![ResolvedText {
+                kind: ResolvedTargetKind::Missing {
+                    parent: textblock,
+                    child_index: 0,
+                    signature,
+                    create_action: None,
+                },
+                gap_before: block_start,
+                text: String::new(),
+                scalar_len: 0,
+                base_runs: Vec::new(),
+                current_runs: Vec::new(),
+                action_slots: Vec::new(),
+            }],
+            path_parent_widths,
+        }));
+    }
     if children.is_empty()
-        || children
-            .iter()
-            .any(|child| !matches!(child, XmlOut::Text(_)))
+        || children.iter().any(|child| match child {
+            XmlOut::Text(_) => false,
+            XmlOut::Element(element) => {
+                !matches!(locator, LocalizedTextblockLocator::Insert(_))
+                    || !wire_element_is_semantic_void(element, txn, schema)
+            }
+            _ => true,
+        })
     {
         return Ok(None);
     }

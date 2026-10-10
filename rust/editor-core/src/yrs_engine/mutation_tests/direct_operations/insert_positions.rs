@@ -130,7 +130,7 @@ fn opaque_block_insert_at_rendered_break_targets_root_and_preserves_wire_tree() 
     });
     let original = json!({
         "type": "mysteryBlock",
-        "attrs": { "payload": [1, 2, 3] },
+        "attrs": { "payload": [1.0, 2.0, 3.0] },
         "content": [{
             "type": "paragraph",
             "content": [{ "type": "text", "text": "wire-only" }]
@@ -544,7 +544,7 @@ fn existing_unknown_block_wire_tree_is_one_semantic_atom_for_follow_up_text() {
 fn malformed_wire_headings_remain_one_opaque_atom_and_hide_descendants() {
     for attrs in [
         None,
-        Some(json!({ "level": 7 })),
+        Some(json!({ "level": 7.0 })),
         Some(json!({ "level": 2.5 })),
     ] {
         let mut heading = json!({

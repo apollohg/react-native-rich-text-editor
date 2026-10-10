@@ -27,6 +27,7 @@ pub fn normalize_selection(
             let norm_pos = pos_map.normalize_cursor_pos(pos, doc);
             Selection::Node { pos: norm_pos }
         }
+        Selection::Cell { anchor, head } => Selection::Cell { anchor, head },
         Selection::All => Selection::All,
     }
 }

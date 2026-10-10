@@ -26,6 +26,7 @@ pub(crate) struct PreparedCandidateValidation {
     pub(super) max_length: Option<u32>,
     pub(super) schema_fingerprint: Arc<str>,
     pub(super) derivations: CompiledDocumentDerivations,
+    render_blocks: Option<Arc<crate::render::incremental::CachedRenderBlocks>>,
 }
 
 #[derive(Debug)]
@@ -240,12 +241,12 @@ impl PreparedCandidateEvidence {
         {
             return None;
         }
-        Some(state.render_blocks.transition_localized_insert(
+        Some(state.render_blocks.transition_localized_textblock(
             &state.document,
             document,
             schema,
             proof.target_top_level_index,
-            proof.inserted_scalar_delta,
+            i32::try_from(proof.inserted_scalar_delta).ok()?,
             resource_limits,
         ))
     }
@@ -332,6 +333,7 @@ impl PreparedCandidateEvidence {
             document_node_count: self.document_node_count,
         };
         Some(PreparedCandidateValidation {
+            render_blocks: None,
             document: self.document,
             canonical_artifact: canonical_artifact.clone(),
             validation,
@@ -446,6 +448,7 @@ impl PreparedCandidateValidation {
         max_length: Option<u32>,
         schema_fingerprint: &str,
         position_map: PositionMap,
+        rendered: Option<(Arc<crate::render::incremental::CachedRenderBlocks>, String)>,
     ) -> Option<Self> {
         if crate::schema::schema_fingerprint(schema) != schema_fingerprint
             || canonical_artifact.schema_fingerprint() != schema_fingerprint
@@ -459,8 +462,15 @@ impl PreparedCandidateValidation {
         }
         crate::transform::validate_canonical_marks(document, schema).ok()?;
         record_preview_position_map_derivation();
-        record_preview_rendered_text_derivation();
-        let rendered_text = crate::render::rendered_text(document, schema);
+        let (render_blocks, rendered_text) = if let Some((cache, text)) = rendered {
+            if !cache.matches_identity(document, schema_fingerprint) {
+                return None;
+            }
+            (Some(cache), text)
+        } else {
+            record_preview_rendered_text_derivation();
+            (None, crate::render::rendered_text(document, schema))
+        };
         let rendered_scalars = u32::try_from(rendered_text.chars().count()).ok()?;
         if rendered_scalars != position_map.total_scalars() {
             return None;
@@ -482,6 +492,7 @@ impl PreparedCandidateValidation {
             max_length,
             schema_fingerprint: schema_fingerprint.into(),
             derivations,
+            render_blocks,
         })
     }
 
@@ -509,6 +520,10 @@ impl PreparedCandidateValidation {
                 .canonical_artifact
                 .schema_context()
                 .ptr_eq(canonical_schema)
+    }
+
+    pub(crate) fn render_blocks(&self) -> Option<&crate::render::incremental::CachedRenderBlocks> {
+        self.render_blocks.as_deref()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -581,20 +596,40 @@ impl PreparedCandidateValidation {
         {
             return None;
         }
-        let validation_certificate = DocumentValidationCertificate {
-            stats: self.validation.stats,
-            metrics: self.validation.metrics,
-            resource_limits: self.resource_limits,
-            schema_fingerprint: self.schema_fingerprint,
-            canonical_artifact: canonical_artifact.clone(),
-            canonical_fingerprint: canonical_artifact.sha256(),
-            canonical_serialized_len: canonical_artifact.serialized_len(),
-            canonical_fingerprint_materialized: true,
-            raw_text_scalars: canonical_artifact.text_scalar_len(),
-            raw_text_utf8_bytes: canonical_artifact.text_utf8_bytes(),
-            document_revision,
-            state_revision,
-            yrs_state_epoch,
+        let validation_certificate = if self.render_blocks.is_some() {
+            let mut certificate = DocumentValidationCertificate::from_report(
+                document,
+                self.validation,
+                canonical_artifact,
+                &self.resource_limits,
+                &self.schema_fingerprint,
+                document_revision,
+                state_revision,
+                yrs_state_epoch,
+            );
+            certificate.canonical_serialized_len = canonical_artifact.serialized_len();
+            certificate
+        } else {
+            DocumentValidationCertificate {
+                stats: self.validation.stats,
+                depth_counts: DocumentValidationCertificate::subtree_depth_counts(
+                    document.root(),
+                    crate::transform::DOCUMENT_ROOT_DEPTH,
+                )
+                .into(),
+                metrics: self.validation.metrics,
+                resource_limits: self.resource_limits,
+                schema_fingerprint: self.schema_fingerprint,
+                canonical_artifact: canonical_artifact.clone(),
+                canonical_fingerprint: canonical_artifact.sha256(),
+                canonical_serialized_len: canonical_artifact.serialized_len(),
+                canonical_fingerprint_materialized: true,
+                raw_text_scalars: canonical_artifact.text_scalar_len(),
+                raw_text_utf8_bytes: canonical_artifact.text_utf8_bytes(),
+                document_revision,
+                state_revision,
+                yrs_state_epoch,
+            }
         };
         let localized_text_index = LocalizedTextLeafIndex::build(
             document,

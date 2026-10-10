@@ -1,3 +1,5 @@
+const SNAPSHOT_SLOTS_PER_ITEM: usize = 2;
+
 impl YrsHistory {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn pre_admit_capture_limits(
@@ -53,9 +55,8 @@ impl YrsHistory {
             .checked_add(if compatible { 0 } else { before_metadata_bytes })
             .ok_or_else(|| metadata_limit_error(request_id, &self.limits, usize::MAX))?;
         let pending_metadata_bytes = self
-            .replay_metadata_bytes
-            .checked_add(self.unmirrored_stack_metadata_bytes(request_id)?)
-            .and_then(|bytes| bytes.checked_add(prospective_metadata_increment))
+            .retained_metadata_bytes(request_id)?
+            .checked_add(prospective_metadata_increment)
             .unwrap_or(usize::MAX);
         let should_roll = pending_metadata_bytes > self.limits.max_derived_output_bytes
             || self.capture_would_roll(
@@ -309,22 +310,99 @@ impl YrsHistory {
                 .is_some_and(|last| now >= last && now - last < CAPTURE_TIMEOUT_MILLIS)
     }
 
-    fn unmirrored_stack_metadata_bytes(&self, request_id: u64) -> OperationResult<usize> {
-        let mut seen = self
-            .replay_events
-            .iter()
-            .flat_map(|event| match event {
-                ReplayEvent::Recorded { metadata, .. } => {
-                    let slots = metadata.slots();
-                    [slots.before, slots.after]
-                }
-                ReplayEvent::Excluded { .. } | ReplayEvent::Action(_) | ReplayEvent::Boundary => {
-                    [None, None]
-                }
+    fn retained_metadata_bytes(&self, request_id: u64) -> OperationResult<usize> {
+        Ok(self
+            .replay_metadata_bytes
+            .checked_add(self.unmirrored_stack_metadata_bytes(request_id)?)
+            .unwrap_or(usize::MAX))
+    }
+
+    pub(crate) fn cache_metadata_headroom(&self, request_id: u64, pending: usize) -> Option<usize> {
+        self.limits.max_derived_output_bytes.checked_sub(
+            self.retained_metadata_bytes(request_id)
+                .ok()?
+                .checked_add(pending)?,
+        )
+    }
+
+    fn undo_metadata_is_mirrored(&self) -> bool {
+        if !self.manager.redo_stack().is_empty() || self.replay_events.is_empty() {
+            return false;
+        }
+        let mut recorded = self.replay_events.iter().rev().filter_map(|event| {
+            if let ReplayEvent::Recorded { metadata, .. } = event {
+                #[cfg(test)]
+                super::observability::HISTORY_REPLAY_METADATA_VISITS
+                    .set(super::observability::HISTORY_REPLAY_METADATA_VISITS.get() + 1);
+                Some(metadata)
+            } else {
+                None
+            }
+        });
+        let all_mirrored = self.manager.undo_stack().iter().rev().all(|item| {
+            #[cfg(test)]
+            super::observability::HISTORY_STACK_METADATA_VISITS
+                .set(super::observability::HISTORY_STACK_METADATA_VISITS.get() + 1);
+            recorded.next().is_some_and(|metadata| {
+                Arc::ptr_eq(&item.meta().0, &metadata.0) && !metadata.0.is_poisoned()
             })
-            .flatten()
-            .map(|slot| slot.identity())
-            .collect::<HashSet<_>>();
+        });
+        if !all_mirrored {
+            return false;
+        }
+        // Preserve poisoned-lock behavior when the ordinary scan reads the entire ledger.
+        self.manager.undo_stack().len() < self.replay_events.len() / SNAPSHOT_SLOTS_PER_ITEM
+            || recorded.all(|metadata| !metadata.0.is_poisoned())
+    }
+
+    fn unmirrored_stack_metadata_bytes(&self, request_id: u64) -> OperationResult<usize> {
+        // Shared metadata wrappers prove every stack slot is already in the replay ledger.
+        if self.undo_metadata_is_mirrored() {
+            return Ok(0);
+        }
+        let stack_items = self
+            .manager
+            .undo_stack()
+            .len()
+            .saturating_add(self.manager.redo_stack().len());
+        // Coalesced typing has many replay records sharing very few stack slots.
+        let subtract_mirrored = stack_items < self.replay_events.len() / SNAPSHOT_SLOTS_PER_ITEM;
+        let mut slot_ids = HashSet::new();
+        if subtract_mirrored {
+            for item in self
+                .manager
+                .undo_stack()
+                .iter()
+                .chain(self.manager.redo_stack())
+            {
+                #[cfg(test)]
+                super::observability::HISTORY_STACK_METADATA_VISITS
+                    .set(super::observability::HISTORY_STACK_METADATA_VISITS.get() + 1);
+                for identity in item.meta().slot_identities().into_iter().flatten() {
+                    slot_ids.insert(identity);
+                }
+            }
+        }
+        for event in self.replay_events.iter().rev() {
+            if subtract_mirrored && slot_ids.is_empty() {
+                return Ok(0);
+            }
+            if let ReplayEvent::Recorded { metadata, .. } = event {
+                #[cfg(test)]
+                super::observability::HISTORY_REPLAY_METADATA_VISITS
+                    .set(super::observability::HISTORY_REPLAY_METADATA_VISITS.get() + 1);
+                for identity in metadata.slot_identities().into_iter().flatten() {
+                    if subtract_mirrored {
+                        slot_ids.remove(&identity);
+                    } else {
+                        slot_ids.insert(identity);
+                    }
+                }
+            }
+        }
+        if subtract_mirrored && slot_ids.is_empty() {
+            return Ok(0);
+        }
         let mut total = 0usize;
         for item in self
             .manager
@@ -332,9 +410,17 @@ impl YrsHistory {
             .iter()
             .chain(self.manager.redo_stack())
         {
+            #[cfg(test)]
+            super::observability::HISTORY_STACK_METADATA_VISITS
+                .set(super::observability::HISTORY_STACK_METADATA_VISITS.get() + 1);
             let slots = item.meta().slots();
             for slot in [slots.before, slots.after].into_iter().flatten() {
-                if seen.insert(slot.identity()) {
+                let count_slot = if subtract_mirrored {
+                    slot_ids.remove(&slot.identity())
+                } else {
+                    slot_ids.insert(slot.identity())
+                };
+                if count_slot {
                     let snapshot = slot.get().ok_or_else(|| {
                         OperationError::engine_invariant_failed(
                             request_id,

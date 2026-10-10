@@ -6,8 +6,9 @@ extension EditorTextView {
         guard markedTextReplacementScalarRange == nil else { return }
 
         guard let selectedRange = selectedTextRange else {
-            let scalarPos = PositionBridge.cursorScalarOffset(in: self)
-            let utf16Pos = PositionBridge.scalarToUtf16Offset(scalarPos, in: lastAuthorizedText)
+            let localScalar = PositionBridge.cursorScalarOffset(in: self)
+            guard let scalarPos = inputScalar(atLocalScalar: localScalar) else { return }
+            let utf16Pos = PositionBridge.scalarToUtf16Offset(localScalar, in: lastAuthorizedText)
             markedTextReplacementScalarRange = (from: scalarPos, to: scalarPos)
             markedTextReplacementUtf16Range = NSRange(
                 location: utf16Pos,
@@ -16,11 +17,11 @@ extension EditorTextView {
             return
         }
 
-        let scalarRange = PositionBridge.textRangeToScalarRange(selectedRange, in: self)
+        guard let scalarRange = currentLogicalScalarSelection() else { return }
         let startUtf16 = offset(from: beginningOfDocument, to: selectedRange.start)
         let endUtf16 = offset(from: beginningOfDocument, to: selectedRange.end)
 
-        markedTextReplacementScalarRange = (from: scalarRange.from, to: scalarRange.to)
+        markedTextReplacementScalarRange = (from: scalarRange.anchor, to: scalarRange.head)
         markedTextReplacementUtf16Range = NSRange(
             location: min(startUtf16, endUtf16),
             length: abs(endUtf16 - startUtf16)
@@ -31,9 +32,9 @@ extension EditorTextView {
         if let markedTextReplacementScalarRange {
             return markedTextReplacementScalarRange
         }
-        guard let selectedRange = selectedTextRange else { return nil }
-        let scalarRange = PositionBridge.textRangeToScalarRange(selectedRange, in: self)
-        return (from: scalarRange.from, to: scalarRange.to)
+        guard selectedTextRange != nil else { return nil }
+        guard let selection = currentLogicalScalarSelection() else { return nil }
+        return (from: selection.anchor, to: selection.head)
     }
 
     func clearMarkedTextTracking() {
@@ -137,12 +138,13 @@ extension EditorTextView {
         replacementRange: (from: UInt32, to: UInt32)?
     ) -> String? {
         guard editorId != 0,
+              isAuthorizedForTableCellInput(forScalarRange: replacementRange),
               let adapter = EditorV2Registry.adapter(forLegacyId: editorId)
         else {
             return nil
         }
         var adoptedUpdateJSON: String?
-        performInterceptedInput(flushPendingNativeTextMutation: false) {
+        performAuthorizedInterceptedInput(flushPendingNativeTextMutation: false) {
             if let replacementRange {
                 if replacementRange.from == replacementRange.to {
                     adoptedUpdateJSON = adapter.insertText(text, atScalar: replacementRange.from)
@@ -154,9 +156,10 @@ extension EditorTextView {
                     )
                 }
             } else {
+                guard let position = currentLogicalScalarSelection()?.head else { return }
                 adoptedUpdateJSON = adapter.insertText(
                     text,
-                    atScalar: PositionBridge.cursorScalarOffset(in: self)
+                    atScalar: position
                 )
             }
             guard let adoptedUpdateJSON else { return }
@@ -170,12 +173,13 @@ extension EditorTextView {
         replacementRange: (from: UInt32, to: UInt32)?
     ) -> EditorV2Adapter.NativeMutationRender? {
         guard editorId != 0,
+              isAuthorizedForTableCellInput(forScalarRange: replacementRange),
               let adapter = EditorV2Registry.adapter(forLegacyId: editorId)
         else {
             return nil
         }
         var commit: EditorV2Adapter.NativeMutationRender?
-        performInterceptedInput(flushPendingNativeTextMutation: false) {
+        performAuthorizedInterceptedInput(flushPendingNativeTextMutation: false) {
             if let replacementRange {
                 if replacementRange.from == replacementRange.to {
                     commit = adapter.insertTextWithNativeOutcome(
@@ -190,7 +194,7 @@ extension EditorTextView {
                     )
                 }
             } else {
-                let position = PositionBridge.cursorScalarOffset(in: self)
+                guard let position = currentLogicalScalarSelection()?.head else { return }
                 commit = adapter.insertTextWithNativeOutcome(text, atScalar: position)
             }
             guard let commit else { return }
@@ -252,6 +256,15 @@ extension EditorTextView {
 
         let stateJSON = EditorV2Shadow.getCurrentState(id: editorId)
         applyUpdateJSON(stateJSON)
+    }
+
+    func restoreAuthorizedTextSnapshot() {
+        guard textStorage.string != lastAuthorizedText else { return }
+        _ = applyAttributedRender(
+            NSAttributedString(attributedString: lastAuthorizedAttributedTextStorage),
+            usedPatch: false,
+            positionCacheUpdate: .invalidate
+        )
     }
 
     func previewMarkedTextReplacementRange(

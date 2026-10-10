@@ -1,8 +1,15 @@
-import { useCallback, useImperativeHandle, useRef } from 'react';
+import { useCallback, useImperativeHandle, useMemo, useRef } from 'react';
 import { type AtomAttrsUpdate } from './atoms';
 import { AtomUpdateAttrsError, type AtomInstance } from './atomInstances';
 import { resolveAtomAttrsUpdate } from './atomUpdates';
-import { NativeEditorErrorBase, NativeEditorOperationError } from './NativeEditorBoundaryError';
+import { COMMAND_NOT_APPLICABLE_ERROR_CODE, NativeEditorErrorBase } from './NativeEditorBoundaryError';
+import {
+    destroyedHandleError,
+    invalidV2ResultError,
+    localOperationError,
+} from './NativeEditorResultNormalization';
+import { normalizeTableCommand } from './TableNormalization';
+import { type TableCommand } from './TableTypes';
 import { type DocumentJSON, type NativeEditorDocumentHandle } from './NativeEditorBridge';
 import { type EditorToolbarHeadingLevel } from './EditorToolbar';
 import { buildImageFragmentJson, type ImageNodeAttributes } from './schemas';
@@ -15,6 +22,11 @@ import { type useRichTextEditorState } from './useRichTextEditorState';
 import { type useRichTextEditorUpdates } from './useRichTextEditorUpdates';
 import { isRevisionMismatchError, parseCaretRectJson } from './RichTextEditorSerialization';
 import { type RichTextEditorRef, type RichTextEditorCaretRect } from './RichTextEditorTypes';
+
+const MUTATION_REJECTED_MESSAGE = 'NativeRichTextEditor: mutation rejected while editable is false';
+const ENGINE_NOT_READY_MESSAGE = 'NativeRichTextEditor: the editor document is not ready';
+const TABLE_COMMAND_NOT_APPLICABLE_MESSAGE =
+    'NativeRichTextEditor: the table command does not apply to the current document and selection';
 
 export function useRichTextEditorCommands(
     context: Pick<
@@ -264,20 +276,15 @@ export function useRichTextEditorCommands(
             refreshAtomsFromUpdate ]
     );
 
+    const rejectWhenNotEditable = useCallback(() => {
+        if (!editableRef.current) {
+            throw localOperationError('MUTATION_REJECTED', MUTATION_REJECTED_MESSAGE);
+        }
+    }, []);
+
     const runEngineMutation = useCallback(
         (invoke: (baseDocumentRevision: string) => unknown) => {
-            if (!editableRef.current) {
-                throw new NativeEditorOperationError({
-                    domain: 'operation',
-                    code: 'MUTATION_REJECTED',
-                    message: 'NativeRichTextEditor: mutation rejected while editable is false',
-                    requestId: null,
-                    operationIndex: null,
-                    limit: null,
-                    actual: null,
-                    details: null,
-                });
-            }
+            rejectWhenNotEditable();
 
             const baseRevision = latestRevisionRef.current;
 
@@ -302,7 +309,66 @@ export function useRichTextEditorCommands(
 
             afterLocalEngineMutation();
         },
-        [ afterLocalEngineMutation, document, latestRevisionRef ]
+        [ afterLocalEngineMutation, document, latestRevisionRef, rejectWhenNotEditable ]
+    );
+
+    const runTableCommand = useCallback(
+        async(command: TableCommand): Promise<void> => {
+            const request = normalizeTableCommand(command);
+
+            if (documentHandle.isDestroyed) {
+                throw destroyedHandleError();
+            }
+
+            rejectWhenNotEditable();
+            const baseDocumentRevision = latestRevisionRef.current;
+
+            if (baseDocumentRevision == null) {
+                throw localOperationError('ENGINE_NOT_READY', ENGINE_NOT_READY_MESSAGE);
+            }
+
+            let outcome;
+
+            try {
+                outcome =
+                    request.kind === 'selection'
+                        ? bridge.setSelection({ baseDocumentRevision, selection: request.selection })
+                        : bridge.applyCommand({ baseDocumentRevision, command: request.command });
+            } catch (error) {
+                if (isRevisionMismatchError(error)) {
+                    document.refresh();
+                }
+
+                throw error;
+            }
+
+            if (outcome.type === 'notApplicable') {
+                throw localOperationError(
+                    COMMAND_NOT_APPLICABLE_ERROR_CODE,
+                    TABLE_COMMAND_NOT_APPLICABLE_MESSAGE
+                );
+            }
+
+            if (outcome.type !== 'transaction') {
+                throw invalidV2ResultError();
+            }
+
+            if (outcome.changed) {
+                afterLocalEngineMutation();
+
+                return;
+            }
+
+            pushEngineUpdateToView();
+            document.refresh();
+        },
+        [ afterLocalEngineMutation,
+            bridge,
+            document,
+            documentHandle,
+            latestRevisionRef,
+            pushEngineUpdateToView,
+            rejectWhenNotEditable ]
     );
 
     const applyEngineCommand = useCallback(
@@ -436,8 +502,7 @@ export function useRichTextEditorCommands(
         });
     }, [ commandInsertImage, onRequestImageRef, selectionRef ]);
 
-    useImperativeHandle(
-        ref,
+    const editorHandle = useMemo(
         (): RichTextEditorRef => ({
             focus() {
                 nativeViewRef.current?.focus?.();
@@ -497,6 +562,7 @@ export function useRichTextEditorCommands(
             redo: document.redo,
             canUndo: document.canUndo,
             canRedo: document.canRedo,
+            runTableCommand,
         }),
         [ commandToggleMark,
             commandSetLink,
@@ -522,12 +588,20 @@ export function useRichTextEditorCommands(
             document.redo,
             document.canUndo,
             document.canRedo,
+            runTableCommand,
             nativeViewRef,
             externalCompositionManager,
             editable ]
     );
 
+    const editorHandleRef = useRef(editorHandle);
+
+    editorHandleRef.current = editorHandle;
+
+    useImperativeHandle(ref, () => editorHandle, [ editorHandle ]);
+
     return {
+        editorHandleRef,
         openLinkRequest,
         openImageRequest,
         editableRef,

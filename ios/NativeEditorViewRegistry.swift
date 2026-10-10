@@ -160,28 +160,6 @@ final class NativeEditorViewRegistry {
         finalizeDestroy(editorId: editorId)
     }
 
-    func prepareForCommandJSON(editorId: UInt64) -> String {
-        let prepare = { () -> String in
-            if self.destroyingEditorIds.contains(editorId) {
-                return Self.commandPreparationJSON(ready: false, blockedReason: "destroying")
-            }
-            if !self.activeEditorIds.contains(editorId),
-               EditorV2Registry.adapter(forLegacyId: editorId) == nil {
-                return Self.commandPreparationJSON(ready: false, blockedReason: "destroyed")
-            }
-            let views = self.liveRegisteredViews(editorId: editorId).compactMap(\.view)
-            guard let view = views.reversed().first(where: {
-                $0.ownsNativeBinding(editorId: editorId)
-            }) ?? views.last else {
-                self.viewsByEditorId.removeValue(forKey: editorId)
-                return Self.commandPreparationJSON(ready: true)
-            }
-            return view.prepareForEditorCommandJSON()
-        }
-
-        return performOnMain(prepare)
-    }
-
     private func liveRegisteredViews(editorId: UInt64) -> [RegisteredView] {
         let views = viewsByEditorId[editorId]?.filter { $0.view != nil } ?? []
         if views.isEmpty {
@@ -190,31 +168,6 @@ final class NativeEditorViewRegistry {
             viewsByEditorId[editorId] = views
         }
         return views.sorted { $0.order < $1.order }
-    }
-
-    static func commandPreparationJSON(
-        ready: Bool,
-        updateJSON: String? = nil,
-        blockedReason: String? = nil
-    ) -> String {
-        var payload: [String: Any] = ["ready": ready]
-        if let updateJSON {
-            payload["updateJSON"] = updateJSON
-        }
-        if let blockedReason {
-            payload["blockedReason"] = blockedReason
-        }
-        guard let data = try? JSONSerialization.data(withJSONObject: payload),
-              let json = String(data: data, encoding: .utf8)
-        else {
-            if let blockedReason {
-                return ready
-                    ? "{\"ready\":true,\"blockedReason\":\"\(blockedReason)\"}"
-                    : "{\"ready\":false,\"blockedReason\":\"\(blockedReason)\"}"
-            }
-            return ready ? "{\"ready\":true}" : "{\"ready\":false}"
-        }
-        return json
     }
 
     private func performOnMain<T>(_ work: () -> T) -> T {

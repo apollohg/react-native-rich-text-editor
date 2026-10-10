@@ -4,6 +4,25 @@ import android.text.Annotation
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 
+private fun isRenderedContentSpan(span: Any): Boolean =
+    span is android.text.style.CharacterStyle || span is android.text.style.ParagraphStyle ||
+        span is Annotation || span is CodeBlockMetadataSpan
+
+private fun EditorEditText.replaceRenderedContentSpans(spannable: Spanned) {
+    editableText.getSpans(0, editableText.length, Any::class.java).filter {
+        editableText.getSpanFlags(it) and Spanned.SPAN_COMPOSING == 0 &&
+            isRenderedContentSpan(it)
+    }.forEach(editableText::removeSpan)
+    spannable.getSpans(0, spannable.length, Any::class.java).forEach {
+        editableText.setSpan(
+            it,
+            spannable.getSpanStart(it),
+            spannable.getSpanEnd(it),
+            spannable.getSpanFlags(it)
+        )
+    }
+}
+
 internal fun EditorEditText.applyFullRenderPreservingEditorState(
     spannable: CharSequence,
     restoreScrollAfterLayout: Boolean = false
@@ -34,6 +53,7 @@ internal fun EditorEditText.applyRenderedSpannable(
     usedPatch: Boolean,
     preserveInputConnectionForExternalUpdate: Boolean = false
 ) {
+    inputRerendersForTesting += 1
     onBeforeRenderRefresh?.invoke()
     val startedAt = System.nanoTime()
     val previousScrollX = scrollX
@@ -76,28 +96,13 @@ internal fun EditorEditText.applyRenderedSpannable(
     beginBatchEdit()
     try {
         if (styleOnly && spannable is Spanned) {
-            editableText.getSpans(0, editableText.length, Any::class.java).filter {
-                editableText.getSpanFlags(it) and Spanned.SPAN_COMPOSING == 0 &&
-                    (
-                        it is android.text.style.CharacterStyle ||
-                            it is android.text.style.ParagraphStyle ||
-                            it is Annotation ||
-                            it is CodeBlockMetadataSpan
-                        )
-            }.forEach(editableText::removeSpan)
-            spannable.getSpans(0, spannable.length, Any::class.java).forEach {
-                editableText.setSpan(
-                    it,
-                    spannable.getSpanStart(it),
-                    spannable.getSpanEnd(it),
-                    spannable.getSpanFlags(it)
-                )
-            }
+            replaceRenderedContentSpans(spannable)
         } else if (replaceRange != null) {
             if (replacedTopLevelStartIndex != null) {
-                removeParagraphSpansOwnedByTopLevelRange(
+                removeRenderSpansOwnedByTopLevelRange(
                     replacedTopLevelStartIndex,
-                    replacedTopLevelDeleteCount
+                    replacedTopLevelDeleteCount,
+                    replaceRange
                 )
             }
             editableText.getSpans(
@@ -207,9 +212,10 @@ internal fun EditorEditText.paragraphSpansStartingAt(offset: Int): List<Paragrap
             )
         }
 
-internal fun EditorEditText.removeParagraphSpansOwnedByTopLevelRange(
+internal fun EditorEditText.removeRenderSpansOwnedByTopLevelRange(
     startIndex: Int,
-    deleteCount: Int
+    deleteCount: Int,
+    replaceRange: RenderReplaceRange
 ) {
     if (deleteCount <= 0) return
     val endIndex = startIndex + deleteCount
@@ -231,11 +237,15 @@ internal fun EditorEditText.removeParagraphSpansOwnedByTopLevelRange(
     editableText
         .getSpans(0, editableText.length, Any::class.java)
         .filter { span ->
-            editableText.getSpanFlags(span) and Spanned.SPAN_PARAGRAPH == Spanned.SPAN_PARAGRAPH
+            editableText.getSpanFlags(span) and Spanned.SPAN_COMPOSING == 0 &&
+                isRenderedContentSpan(span)
         }
         .filter { span ->
             val spanStart = editableText.getSpanStart(span)
             val spanEnd = editableText.getSpanEnd(span)
+            if (spanStart >= replaceRange.endExclusive || spanEnd <= replaceRange.start) {
+                return@filter false
+            }
             val ownerIndex = topLevelAnnotations.firstOrNull { annotation ->
                 annotation.first < spanEnd && annotation.second > spanStart
             }?.third
@@ -253,6 +263,12 @@ internal fun EditorEditText.authorizeVisibleTextForMatchedOptimisticRender(
     spannable: CharSequence
 ) {
     val startedAt = System.nanoTime()
+    if (spannable is Spanned) {
+        runWithTransientInputMutationGuard {
+            replaceRenderedContentSpans(spannable)
+            true
+        }
+    }
     val visibleText = text?.toString().orEmpty()
     lastAuthorizedText = visibleText
     lastAuthorizedRenderedText = text?.let { SpannableStringBuilder(it) }
@@ -262,6 +278,9 @@ internal fun EditorEditText.authorizeVisibleTextForMatchedOptimisticRender(
     clearCompositionTrackingForEditor()
     lastRenderAppliedPatchForTesting = false
     clearNativeTextMutationAfterBlurWindow()
+    invalidateImeTextCoordinateMapperForEditor()
+    invalidateRenderedContent()
+    refreshCodeHighlighting()
     recordImeTraceForTesting(
         "reuseOptimisticVisibleTextRender",
         "textLength=${visibleText.length} " +
@@ -278,6 +297,7 @@ internal fun EditorEditText.authorizeVisibleTextForMatchedOptimisticRender(
  * @param renderJSON The JSON array string of render elements.
  */
 internal fun EditorEditText.applyRenderJSONImpl(renderJSON: String) {
+    if (isTableCellInput || rootTablePositionMap != null || rootTableRenderNeedsRefresh) return
     standaloneRenderJSON = renderJSON
     cancelPendingImageLoads()
     restartImageLoadsOnAttach = false
@@ -310,4 +330,49 @@ internal fun EditorEditText.applyRenderJSONImpl(renderJSON: String) {
         "applyRenderJSON",
         "jsonLength=${renderJSON.length} totalUs=${nanosToMicros(System.nanoTime() - startedAt)}"
     )
+}
+
+internal fun renderedTextMatches(left: CharSequence?, right: CharSequence): Boolean {
+    if (left?.toString() != right.toString()) return false
+    data class SpanValue(
+        val type: Class<*>,
+        val start: Int,
+        val end: Int,
+        val flags: Int,
+        val value: Any
+    )
+    fun values(text: CharSequence): List<SpanValue>? {
+        val spanned = text as? Spanned ?: return emptyList()
+        return spanned.getSpans(
+            0,
+            spanned.length,
+            Any::class.java
+        ).filter(::isRenderedContentSpan).map { span ->
+            val value: Any = when (span) {
+                is android.text.ParcelableSpan -> {
+                    val parcel = android.os.Parcel.obtain()
+                    try {
+                        span.writeToParcel(parcel, 0)
+                        parcel.marshall().toList()
+                    } finally {
+                        parcel.recycle()
+                    }
+                }
+
+                is EditorResolvedTextSpan -> span.style to span.density
+
+                else -> return null
+            }
+            SpanValue(
+                span.javaClass,
+                spanned.getSpanStart(span),
+                spanned.getSpanEnd(span),
+                spanned.getSpanFlags(span),
+                value
+            )
+        }
+    }
+    val leftValues = values(left ?: return false) ?: return false
+    val rightValues = values(right) ?: return false
+    return leftValues == rightValues
 }

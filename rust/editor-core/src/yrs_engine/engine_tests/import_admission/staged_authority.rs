@@ -154,7 +154,10 @@ fn staged_authority_supplies_every_unavailable_seed_consumer_without_installed_r
                 max_length: engine.max_length,
             },
             transaction.clone(),
-            &txn,
+            &crate::yrs_engine::compiler::CompilationReadView::new(
+                &txn,
+                &std::cell::RefCell::new(std::cell::OnceCell::new()),
+            ),
             &fragment,
             crate::yrs_engine::compiler::StoredMarksCompilationContext {
                 stored_marks: state.stored_marks.as_deref(),
@@ -178,11 +181,14 @@ fn staged_authority_supplies_every_unavailable_seed_consumer_without_installed_r
         )
         .unwrap();
     assert!(compiled.localized_semantic_used);
-    assert!(compiled.localized_insert_admission.is_some());
+    assert!(compiled.localized_textblock_edit_admission.is_some());
     assert!(compiled.prepared_derived_evidence.is_some());
     assert!(compiled.mutation_lookup_transition.is_some());
 
-    let admission = compiled.localized_insert_admission.as_ref().unwrap();
+    let admission = compiled
+        .localized_textblock_edit_admission
+        .as_ref()
+        .unwrap();
     let crate::yrs_engine::compiler::StoredMarksPlan::Set(stored_marks) =
         &compiled.stored_marks_plan
     else {
@@ -591,6 +597,7 @@ fn generic_typed_compilation_uses_staged_authority_without_publishing_base_seed(
     let (commit, result) = engine
         .apply_typed_transaction_with_staged_context(
             transaction,
+            None,
             false,
             &mut OutboundUpdateSink::detached(),
         )
@@ -664,6 +671,7 @@ fn staged_generic_compiler_semantic_failure_is_prewrite_and_atomic() {
     let error = engine
         .apply_typed_transaction_with_staged_context(
             transaction,
+            None,
             false,
             &mut OutboundUpdateSink::detached(),
         )
@@ -698,6 +706,7 @@ fn staged_generic_lookup_transition_failure_is_prewrite_and_atomic() {
     let error = engine
         .apply_typed_transaction_with_staged_context(
             transaction,
+            None,
             false,
             &mut OutboundUpdateSink::detached(),
         )

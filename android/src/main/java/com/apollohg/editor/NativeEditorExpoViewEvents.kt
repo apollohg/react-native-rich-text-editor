@@ -1,18 +1,117 @@
 package com.apollohg.editor
 
+import android.graphics.RectF
+import android.view.View
+import android.view.ViewTreeObserver
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import com.apollohg.editor.NativeEditorExpoView.Companion.EDITOR_UPDATE_EVENT_DEBOUNCE_MS
 import com.apollohg.editor.NativeEditorExpoView.Companion.nanosToMicros
 import com.apollohg.editor.NativeEditorExpoView.NativeCommitKey
 import com.apollohg.editor.NativeEditorExpoView.PendingEditorUpdateEvent
 import com.apollohg.editor.NativeEditorExpoView.PreflightUpdateEvent
-import org.json.JSONObject
+import com.apollohg.editor.tables.TableSelectionGeometry
+import com.apollohg.editor.tables.TableSelectionObstructions
+
+internal class TableSelectionGeometryPublisher(
+    private val frameHost: View,
+    private val resolve: () -> TableSelectionGeometry?,
+    private val emit: (Map<String, Any>) -> Unit
+) {
+    private var published: TableSelectionGeometry? = null
+    private var flushPosted = false
+    private val scheduledFlush = Runnable {
+        flushPosted = false
+        flush()
+    }
+    private val layoutListener = ViewTreeObserver.OnGlobalLayoutListener { scheduleFlush() }
+    private var observedTree: ViewTreeObserver? = null
+
+    fun observeWindowLayout() {
+        if (observedTree?.isAlive == true) return
+        observedTree =
+            frameHost.viewTreeObserver.also { it.addOnGlobalLayoutListener(layoutListener) }
+    }
+
+    fun stopObservingWindowLayout() {
+        observedTree?.takeIf { it.isAlive }?.removeOnGlobalLayoutListener(layoutListener)
+        observedTree = null
+    }
+
+    val hasScheduledFlushForTesting: Boolean get() = flushPosted
+
+    fun scheduleFlush() {
+        if (flushPosted) return
+        flushPosted = true
+        frameHost.postOnAnimation(scheduledFlush)
+    }
+
+    fun flush() {
+        cancelScheduledFlush()
+        val current = resolve()
+        val previous = published
+        if (previous != null && current?.editorId != previous.editorId) {
+            published = null
+            emit(mapOf("editorId" to previous.editorId))
+        }
+        if (current == null || current == published) return
+        published = current
+        emit(current.eventPayload())
+    }
+
+    fun cancelScheduledFlush() {
+        if (flushPosted) frameHost.removeCallbacks(scheduledFlush)
+        flushPosted = false
+    }
+}
+
+internal fun NativeEditorExpoView.currentTableSelectionGeometry(): TableSelectionGeometry? {
+    if (!isAttachedToNativeWindow || !richTextView.activeTextInput.hasFocus()) return null
+    return richTextView.tableSelectionGeometry(tableSelectionObstructions())
+        ?.takeIf { it.editorId == eventEditorId(richTextView.editorId) }
+}
+
+internal fun NativeEditorExpoView.tableSelectionObstructions(): TableSelectionObstructions {
+    val window = rootView
+    val density = resources.displayMetrics.density
+    val insets =
+        rootWindowInsetsForTesting ?: ViewCompat.getRootWindowInsets(this)
+            ?: WindowInsetsCompat.CONSUMED
+    val unsafe = insets.getInsets(
+        WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+    )
+    val keyboardHeight = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+    val width = window.width.toFloat()
+    val height = window.height.toFloat()
+    return TableSelectionObstructions(
+        safeArea = RectF(
+            unsafe.left / density,
+            unsafe.top / density,
+            (width - unsafe.right) / density,
+            (height - unsafe.bottom) / density
+        ),
+        keyboard = if (keyboardHeight > 0) {
+            RectF(0f, (height - keyboardHeight) / density, width / density, height / density)
+        } else {
+            null
+        }
+    )
+}
+
+internal fun NativeEditorExpoView.dispatchTableSelectionGeometry(payload: Map<String, Any>) {
+    onTableSelectionGeometryForTesting?.invoke(payload) ?: onTableSelectionGeometry(payload)
+}
 
 internal fun NativeEditorExpoView.documentVersionFromUpdateJSON(updateJSON: String?): String? =
     try {
         if (updateJSON == null) {
             null
         } else {
-            canonicalV2U64(JSONObject(updateJSON).opt("documentVersion") as? String)
+            canonicalV2U64(
+                (richTextView.editorEditText.v2Driver as? EditorV2Adapter).readOnlyParsedUpdate(
+                    updateJSON
+                ).opt("documentVersion") as? String
+            )
         }
     } catch (_: Throwable) {
         null
@@ -35,7 +134,15 @@ internal fun NativeEditorExpoView.preflightUpdateEventFromJSON(
 ): PreflightUpdateEvent? {
     val update = updateJSON ?: return null
     val documentRevision = documentVersionFromUpdateJSON(update) ?: return null
-    return PreflightUpdateEvent(updateJSON = update, documentRevision = documentRevision)
+    val adapter = EditorV2Registry.adapterForViewToken(richTextView.editorId)
+    val snapshot = if (adapter ==
+        null
+    ) {
+        update
+    } else {
+        adapter.atomicRenderJson(documentRevision) ?: return null
+    }
+    return PreflightUpdateEvent(updateJSON = snapshot, documentRevision = documentRevision)
 }
 
 internal fun NativeEditorExpoView.addPreflightUpdateToEvent(
@@ -101,7 +208,10 @@ internal fun NativeEditorExpoView.dispatchEditorUpdate(
     val noteNanos = System.nanoTime() - startedAt
     val toolbarStartedAt = System.nanoTime()
     if (applyViewState) {
-        NativeToolbarState.fromUpdateJson(updateJSON)?.let { state ->
+        NativeToolbarState.fromUpdateJson(
+            updateJSON,
+            richTextView.editorEditText.v2Driver as? EditorV2Adapter
+        )?.let { state ->
             toolbarState = state
             keyboardToolbarView.applyState(state)
         }

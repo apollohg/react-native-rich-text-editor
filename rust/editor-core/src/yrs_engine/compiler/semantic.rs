@@ -130,25 +130,62 @@ pub(super) fn compile_transaction_impl(
         owned_canonical_schema = CanonicalSchemaContext::new(context.schema);
         &owned_canonical_schema
     };
-    let stored_marks_state = stored_marks_context
-        .as_ref()
-        .map(|state| state.stored_marks.map(<[Mark]>::to_vec));
+    let stored_mark_caret = match &transaction.selection_intent {
+        SelectionIntent::Set(yrs_engine::SelectionInput::Text { anchor, head })
+            if anchor.offset == head.offset
+                && anchor.kind == head.kind
+                && !transaction.operations.is_empty()
+                && transaction.operations.iter().all(|operation| {
+                    let range = match operation {
+                        yrs_engine::TypedOperation::AddMark { range, .. }
+                        | yrs_engine::TypedOperation::RemoveMark { range, .. }
+                        | yrs_engine::TypedOperation::ReplaceMark { range, .. } => range,
+                        _ => return false,
+                    };
+                    range.from.offset == range.to.offset && range.from.kind == range.to.kind
+                }) =>
+        {
+            yrs_engine::position::editor_offset_to_doc_pos(
+                head.offset,
+                head.kind,
+                rendered_text,
+                base_position_map,
+                context.document,
+            )
+            .map(|position| (position, head.affinity))
+        }
+        _ => None,
+    };
+    let stored_marks_state = stored_marks_context.as_ref().map(|state| {
+        let moved = stored_mark_caret.is_some_and(|(position, _)| {
+            !matches!(state.resolved_selection, yrs_engine::ResolvedSelection::Text { anchor, head }
+                    if anchor.document == position && head.document == position)
+        });
+        if moved {
+            None
+        } else {
+            state.stored_marks.map(<[Mark]>::to_vec)
+        }
+    });
     // Set when a caret-anchored SplitBlock carried the stored marks through.
     // Return moves the caret across the new block boundary, so the generic
     // "caret mapped to the same place" compatibility check cannot see it.
     let split_at_caret_kept_stored_marks = false;
-    let tracked_caret = stored_marks_context.as_ref().and_then(|state| {
-        let yrs_engine::ResolvedSelection::Text { anchor, head } = state.resolved_selection else {
-            return None;
-        };
-        let yrs_engine::RelativeSelection::Text {
-            head: relative_head,
-            ..
-        } = state.relative_selection
-        else {
-            return None;
-        };
-        (anchor.document == head.document).then_some((head.document, relative_head.affinity))
+    let tracked_caret = stored_mark_caret.or_else(|| {
+        stored_marks_context.as_ref().and_then(|state| {
+            let yrs_engine::ResolvedSelection::Text { anchor, head } = state.resolved_selection
+            else {
+                return None;
+            };
+            let yrs_engine::RelativeSelection::Text {
+                head: relative_head,
+                ..
+            } = state.relative_selection
+            else {
+                return None;
+            };
+            (anchor.document == head.document).then_some((head.document, relative_head.affinity))
+        })
     });
     let localized_derivations = None;
     let mut operations = OperationCompiler {
@@ -323,6 +360,12 @@ pub(super) fn compile_transaction_impl(
         let after = match &selection_plan {
             SelectionPlan::Preserve => initial.resolved_selection.clone(),
             SelectionPlan::Mapped(selection) | SelectionPlan::Explicit(selection) => {
+                let table_index = yrs_engine::derived_state::selection_table_index(
+                    &preview,
+                    selection,
+                    context.schema,
+                    context.resource_limits,
+                );
                 let resolved = if let Some(derivations) = preview_derivations.as_ref() {
                     yrs_engine::derived_state::resolved_from_legacy_with_view(
                         &preview,
@@ -330,12 +373,14 @@ pub(super) fn compile_transaction_impl(
                         context.schema,
                         &derivations.position_map,
                         &derivations.rendered_text,
+                        &table_index,
                     )
                 } else {
                     yrs_engine::derived_state::resolved_from_legacy(
                         &preview,
                         selection,
                         context.schema,
+                        &table_index,
                     )
                 };
                 resolved.ok_or_else(|| {
@@ -364,7 +409,7 @@ pub(super) fn compile_transaction_impl(
             SelectionIntent::UseOperationResult => {
                 after_is_mapped_tracked_caret || split_at_caret_kept_stored_marks
             }
-            SelectionIntent::Set(_) => false,
+            SelectionIntent::Set(_) => stored_mark_caret.is_some() && after_is_mapped_tracked_caret,
         };
         let after_is_collapsed_text = matches!(
             &after,
@@ -375,7 +420,8 @@ pub(super) fn compile_transaction_impl(
             || (initial.resolved_selection != &after && !compatible_moved_selection)
         {
             stored = None;
-        } else if matches!(transaction.selection_intent, SelectionIntent::Set(_))
+        } else if (matches!(transaction.selection_intent, SelectionIntent::Set(_))
+            && stored_mark_caret.is_none())
             || transaction.operations.is_empty()
         {
             stored = yrs_engine::derived_state::stored_marks_after_selection_change(
@@ -533,7 +579,7 @@ pub(super) fn compile_transaction_impl(
         // seals its current epoch onto the compiled plan before it can leave
         // the stable read view.
         yrs_state_epoch: 0,
-        localized_insert_admission: None,
+        localized_textblock_edit_admission: None,
         prepared_derived_evidence: None,
         prepared_candidate_validation,
         prepared_active_state_transition: None,

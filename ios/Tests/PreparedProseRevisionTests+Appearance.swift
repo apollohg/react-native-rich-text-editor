@@ -108,6 +108,183 @@ extension PreparedProseRevisionTests {
         )
     }
 
+    func testTableCellsKeepTheirPreparationAppearanceOnWorkersAndAfterEviction() throws {
+        let codeNode = "codeBlock"
+        var configuration = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(TableInputTestSchema.tableConfig.utf8)) as? [String: Any])
+        var schema = try XCTUnwrap(configuration["schema"] as? [String: Any])
+        var nodes = try XCTUnwrap(schema["nodes"] as? [[String: Any]])
+        nodes.append(["name": codeNode, "content": "text*", "group": "block", "role": "textBlock"])
+        schema["nodes"] = nodes
+        configuration["schema"] = schema
+        let configJSON = try XCTUnwrap(String(data: try JSONSerialization.data(withJSONObject: configuration), encoding: .utf8))
+        let cells = (0..<8).map { index in
+            ["type": "table_cell", "content": [["type": "paragraph", "content": [
+                ["type": "text", "text": "Appearance cell \(index)"]
+            ]], ["type": codeNode, "content": [["type": "text", "text": "code \(index)"]]]]] as [String: Any]
+        }
+        let source = try XCTUnwrap(String(data: try JSONSerialization.data(withJSONObject: [
+            "type": "doc", "content": [["type": "table", "content": [
+                ["type": "table_row", "content": cells]
+            ]]]
+        ]), encoding: .utf8))
+        for style in [UIUserInterfaceStyle.dark, .light] {
+            let traits = UITraitCollection(userInterfaceStyle: style)
+            let otherTraits = UITraitCollection(userInterfaceStyle: style == .dark ? .light : .dark)
+            for workers in [1, CoreTextProseLayoutEngine.maxTablePreparationWorkers] {
+                let engine = CoreTextProseLayoutEngine()
+                engine.tablePreparationWorkerLimit = workers
+                engine.reusableTableCellStore = TableCellLayoutStore(byteBudget: 0)
+                var initiallyPrepared: [PreparedProseLayout] = []
+                let caller = Thread.current
+                var backgroundPreparations = 0
+                engine.tableCellLayoutObserverForTesting = { _, layout in
+                    initiallyPrepared.append(layout)
+                    if Thread.current !== caller { backgroundPreparations += 1 }
+                }
+                let registry = PreparedProseLayoutRegistry(
+                    compile: PreparedProseLayoutRegistry.compileWithRust,
+                    prepare: { document, key, width, scale in
+                        try engine.prepare(document: document, key: key, widthPoints: width, displayScale: scale)
+                    }
+                )
+                var layout: PreparedProseLayout!
+                traits.performAsCurrent {
+                    layout = registry.measure(request: ProseViewerRequest(source: .json(source),
+                        configuration: .init(configJSON: configJSON)), widthPoints: 320, scale: 2)
+                }
+                engine.tableCellLayoutObserverForTesting = nil
+                let table = try XCTUnwrap(layout.blocks.first?.tableSurface)
+                XCTAssertEqual(initiallyPrepared.count, cells.count)
+                if workers > 1, ProcessInfo.processInfo.activeProcessorCount > 2 {
+                    XCTAssertGreaterThan(backgroundPreparations, 0, "the worker case must actually prepare off the caller thread")
+                }
+                let expected = UIColor.label.resolvedColor(with: traits)
+                let expectedBackground = UIColor.secondarySystemBackground.resolvedColor(with: traits)
+                func assertColors(_ cell: PreparedProseLayout, phase: String) throws {
+                    let label = "\(phase) cell colors must retain style \(style.rawValue), workers \(workers)"
+                    XCTAssertEqual(try foregroundColor(in: cell), expected, label)
+                    let background = try XCTUnwrap(cell.blocks.flatMap(\.fragments).first { $0.kind == .background }?.color)
+                    XCTAssertEqual(UIColor(cgColor: background), expectedBackground, label)
+                }
+                for cell in initiallyPrepared {
+                    try assertColors(cell, phase: "initial")
+                }
+                XCTAssertTrue(table.cells.allSatisfy { $0.cachedContent == nil }, "the zero budget forces actual cache misses")
+                var rebuilt: [PreparedProseLayout] = []
+                otherTraits.performAsCurrent { rebuilt = table.cells.map(\.content) }
+                for cell in rebuilt {
+                    try assertColors(cell, phase: "evicted")
+                }
+            }
+        }
+    }
+
+    func testTableShapeReuseSeparatesLightAndDarkAppearance() throws {
+        let registry = PreparedProseLayoutRegistry()
+        let owner = "appearance-shape-reuse"
+        defer { registry.releaseDirectMounted(owner) }
+        var previous: PreparedProseLayout?
+        for style in [UIUserInterfaceStyle.light, .dark, .light] {
+            let traits = UITraitCollection(userInterfaceStyle: style)
+            var layout: PreparedProseLayout!
+            traits.performAsCurrent {
+                layout = registry.measure(request: ProseViewerRequest(source: .json(TableInputTestSchema.twoCellDocument),
+                    configuration: .init(configJSON: TableInputTestSchema.tableConfig)), widthPoints: 320, scale: 2)
+            }
+            let table = try XCTUnwrap(layout.blocks.first?.tableSurface)
+            for cell in table.cells {
+                XCTAssertEqual(try foregroundColor(in: cell.content), UIColor.label.resolvedColor(with: traits),
+                    "a retained shape from another appearance must not supply this cell's colors")
+            }
+            withExtendedLifetime(previous) { registry.registerDirectMounted(owner, layout: layout) }
+            previous = layout
+        }
+    }
+
+    func testShapeReboundNestedCellKeepsAppearanceAfterEviction() throws {
+        let paragraph: [String: Any] = ["type": "paragraph", "content": [["type": "text", "text": "nested color"]]]
+        let nested: [String: Any] = ["type": "table", "content": [["type": "table_row", "content": [
+            ["type": "table_cell", "content": [paragraph]]
+        ]]]]
+        let outer: [String: Any] = ["type": "table_cell", "content": [nested]]
+        let source = try XCTUnwrap(String(data: try JSONSerialization.data(withJSONObject: ["type": "doc", "content": [
+            ["type": "table", "content": [["type": "table_row", "content": [outer, outer]]]]
+        ]]), encoding: .utf8))
+        let registry = PreparedProseLayoutRegistry()
+        let traits = UITraitCollection(userInterfaceStyle: .dark)
+        var layout: PreparedProseLayout!
+        traits.performAsCurrent {
+            layout = registry.measure(request: ProseViewerRequest(source: .json(source),
+                configuration: .init(configJSON: TableInputTestSchema.tableConfig)), widthPoints: 320, scale: 2)
+        }
+        let table = try XCTUnwrap(layout.blocks.first?.tableSurface)
+        let first = table.cells[0].content
+        let second = table.cells[1].content
+        XCTAssertNotNil(first.cellShape)
+        XCTAssertTrue(first.cellShape === second.cellShape, "the second outer cell must reuse the first shape")
+        let nestedTable = try XCTUnwrap(second.blocks.first?.tableSurface)
+        let cell = try XCTUnwrap(nestedTable.cells.first)
+        let initial = cell.content
+        XCTAssertEqual(try foregroundColor(in: initial), UIColor.label.resolvedColor(with: traits))
+        let pressure = imageLayout(attachments: [])
+        nestedTable.layoutStore.insert(PreparedProseLayout(key: pressure.key, size: pressure.size, blocks: [],
+            retainedBytes: PreparedProseLayoutCache.preparedLayoutUnmountedByteBudget))
+        XCTAssertNil(cell.cachedContent, "the nested store must evict its cell independently of the outer shape")
+        var rebuilt: PreparedProseLayout!
+        UITraitCollection(userInterfaceStyle: .light).performAsCurrent { rebuilt = cell.content }
+        XCTAssertEqual(try foregroundColor(in: rebuilt), UIColor.label.resolvedColor(with: traits))
+        XCTAssertEqual(rebuilt.key, initial.key)
+    }
+
+    func testEditorThemeChangeDoesNotReuseThePreviousCellColors() throws {
+        let id = makeV2Editor(configJson: TableInputTestSchema.tableConfig)
+        defer { destroyV2Editor(id: id) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: id))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 480))
+        let view = RichTextEditorView(frame: window.bounds)
+        window.addSubview(view)
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        view.bindEditor(id: id, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(TableInputTestSchema.twoCellDocument))))
+        for (value, color) in [("#FF0000", UIColor.red), ("#0000FF", UIColor.blue)] {
+            XCTAssertTrue(view.applyTheme(EditorTheme(dictionary: ["text": ["color": value]])))
+            view.layoutIfNeeded()
+            let surface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
+            let drawing = try XCTUnwrap(surface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
+            let table = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface)
+            for cell in table.cells {
+                XCTAssertEqual(try foregroundColor(in: cell.content), color, "theme \(value) must replace cached cell colors")
+            }
+        }
+    }
+
+    func testEditorTraitChangesRefreshPreparedCellColorsWithoutReconfiguration() throws {
+        let id = makeV2Editor(configJson: TableInputTestSchema.tableConfig)
+        defer { destroyV2Editor(id: id) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: id))
+        let size = CGSize(width: 320, height: 480)
+        let view = RichTextEditorView(frame: CGRect(origin: .zero, size: size))
+        view.overrideUserInterfaceStyle = .light
+        let window = hostEditorView(view, size: size)
+        defer { window.isHidden = true }
+        view.bindEditor(id: id, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(TableInputTestSchema.twoCellDocument))))
+        for style in [UIUserInterfaceStyle.light, .dark, .light] {
+            view.overrideUserInterfaceStyle = style
+            view.setNeedsLayout()
+            view.layoutIfNeeded()
+            XCTAssertEqual(view.textView.traitCollection.userInterfaceStyle, style)
+            let surface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
+            let drawing = try XCTUnwrap(surface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
+            let table = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface)
+            for cell in table.cells {
+                XCTAssertEqual(try foregroundColor(in: cell.content), UIColor.label.resolvedColor(with: view.traitCollection),
+                    "style \(style.rawValue) must refresh existing cells without another theme or document update")
+            }
+        }
+    }
+
     func testFabricAppearanceSeparatesLayoutGenerationButNotImagePublication() {
         let registry = PreparedProseLayoutRegistry(compile: { _ in
             ViewerDocument(
@@ -185,7 +362,7 @@ extension PreparedProseRevisionTests {
             frame: CGRect(x: 0, y: 0, width: 160, height: 80),
             layoutRegistry: registry
         )
-        let window = UIWindow(frame: viewer.bounds)
+        let window = makeTestWindow(frame: viewer.bounds)
         let host = UIViewController()
         window.rootViewController = host
         host.view.addSubview(viewer)

@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { PixelRatio, Platform, type NativeSyntheticEvent } from 'react-native';
 import { normalizeNativeEditorV2DecimalId, type Selection } from './NativeEditorBridge';
 import { setActiveEditorToolbarFrameOwnerForEditor } from './EditorToolbar';
@@ -16,7 +16,14 @@ import {
     type NativeAtomLayoutEvent,
     type NativeAtomPosition,
     type NativeToolbarActionEvent,
+    type NativeTableSelectionGeometryEvent,
 } from './RichTextEditorNativeTypes';
+import { describeRejectedV2Record } from './NativeEditorResultNormalization';
+import {
+    isSameTableSelectionGeometry,
+    normalizeNativeTableSelectionGeometry,
+} from './TableNormalization';
+import { type TableSelectionGeometry } from './TableTypes';
 import {
     acceptNativeCommitPayload,
     isRecord,
@@ -41,6 +48,8 @@ export function useRichTextEditorEvents(
         | 'scalarSelectionRef'
         | 'selectionRef'
         | 'onSelectionChangeRef'
+        | 'onTableSelectionGeometryChangeRef'
+        | 'setTableSelection'
         | 'isFocusedRef'
         | 'toolbarFrameOwnerId'
         | 'setIsFocused'
@@ -79,6 +88,8 @@ export function useRichTextEditorEvents(
         selectionRef,
         updateAtomSelection,
         onSelectionChangeRef,
+        onTableSelectionGeometryChangeRef,
+        setTableSelection,
         isFocusedRef,
         toolbarFrameOwnerId,
         setIsFocused,
@@ -233,6 +244,78 @@ export function useRichTextEditorEvents(
             scalarSelectionRef,
             selectionRef,
             updateAtomSelection ]
+    );
+
+    const deliveredTableSelectionGeometryRef = useRef<TableSelectionGeometry | null>(null);
+
+    useEffect(
+        () => () => {
+            if (deliveredTableSelectionGeometryRef.current == null) {
+                return;
+            }
+
+            deliveredTableSelectionGeometryRef.current = null;
+            onTableSelectionGeometryChangeRef.current?.(null);
+        },
+        [ onTableSelectionGeometryChangeRef ]
+    );
+
+    const handleTableSelectionGeometry = useCallback(
+        (event: NativeSyntheticEvent<NativeTableSelectionGeometryEvent>) => {
+            const payload = normalizeNativeTableSelectionGeometry(event?.nativeEvent);
+
+            if (payload == null) {
+                if (__DEV__) {
+                    console.error(
+                        'NativeEditorBridge: native table selection geometry was rejected',
+                        describeRejectedV2Record(event?.nativeEvent)
+                    );
+                }
+
+                return;
+            }
+
+            if (payload.kind === 'cleared') {
+                setTableSelection(current =>
+                    current?.geometry.editorId === payload.editorId ? null : current);
+
+                if (deliveredTableSelectionGeometryRef.current?.editorId !== payload.editorId) {
+                    return;
+                }
+
+                deliveredTableSelectionGeometryRef.current = null;
+                onTableSelectionGeometryChangeRef.current?.(null);
+
+                return;
+            }
+
+            if (documentHandle.isDestroyed || !isForThisEditor(payload.geometry)) {
+                return;
+            }
+
+            const received: TableSelectionGeometry = {
+                ...payload.geometry,
+                ownerId: toolbarFrameOwnerId,
+            };
+            const delivered = deliveredTableSelectionGeometryRef.current;
+            const unchanged = delivered != null && isSameTableSelectionGeometry(delivered, received);
+            const geometry = unchanged ? delivered : received;
+            deliveredTableSelectionGeometryRef.current = geometry;
+            setTableSelection({
+                geometry,
+                obstructions: payload.obstructions,
+                editMenuVisible: payload.editMenuVisible,
+            });
+
+            if (!unchanged) {
+                onTableSelectionGeometryChangeRef.current?.(geometry);
+            }
+        },
+        [ documentHandle.isDestroyed,
+            isForThisEditor,
+            onTableSelectionGeometryChangeRef,
+            setTableSelection,
+            toolbarFrameOwnerId ]
     );
 
     const handleFocusChange = useCallback(
@@ -436,6 +519,7 @@ export function useRichTextEditorEvents(
         handleEditorError,
         handleExternalTextCompositionEnd,
         handleSelectionChange,
+        handleTableSelectionGeometry,
         handleFocusChange,
         handleContentHeightChange,
         handleAtomLayout,

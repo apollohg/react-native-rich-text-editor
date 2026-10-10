@@ -9,19 +9,80 @@ import android.text.style.ForegroundColorSpan
 import android.text.style.StrikethroughSpan
 import android.text.style.UnderlineSpan
 import com.apollohg.editor.ProseViewerConfiguration
+import com.apollohg.editor.ProseViewerError
 import com.apollohg.editor.ProseViewerSource
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import uniffi.editor_core.FfiViewerElement
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class PreparedProseRenderingTest {
+    @Test
+    fun `compiler backed nested tables retain flat records`() {
+        val source = """{"type":"doc","content":[{"type":"table",""" +
+            """"content":[{"type":"table_row",""" +
+            """"content":[{"type":"table_cell",""" +
+            """"content":[{"type":"table",""" +
+            """"content":[{"type":"table_row",""" +
+            """"content":[{"type":"table_cell",""" +
+            """"content":[{"type":"paragraph",""" +
+            """"content":[{"type":"text",""" +
+            """"text":"nested"}]}]}]}]}]}]}]}]}"""
+        val config = """{"schema":{"nodes":[{"name":"doc","content":"block+",""" +
+            """"role":"doc"},{"name":"paragraph","content":"inline*",""" +
+            """"group":"block","role":"textBlock"},{"name":"text",""" +
+            """"content":"","group":"inline","role":"text"},""" +
+            """{"name":"table","content":"table_row+","group":"block",""" +
+            """"role":"block","tableRole":"table",""" +
+            """"attrs":{"class":{"default":null}}},""" +
+            """{"name":"table_row","content":"(table_cell | """ +
+            """table_header)*","role":"block","tableRole":"row"},""" +
+            """{"name":"table_cell","content":"block+","role":"block",""" +
+            """"tableRole":"cell","attrs":{"class":{"default":null},""" +
+            """"colspan":{"type":"number","default":1,"min":1},""" +
+            """"rowspan":{"type":"number","default":1,"min":1},""" +
+            """"colwidth":{"default":null}}},{"name":"table_header",""" +
+            """"content":"block+","role":"block",""" +
+            """"tableRole":"header_cell",""" +
+            """"attrs":{"class":{"default":null},""" +
+            """"colspan":{"type":"number","default":1,"min":1},""" +
+            """"rowspan":{"type":"number","default":1,"min":1},""" +
+            """"colwidth":{"default":null}}}],"marks":[]},""" +
+            """"initialization":{"type":"localEmpty"}}"""
+        val document = compileSource(source, config)
+        val outer = document.blocks.single().table
+        assertNotNull(outer)
+        assertEquals(1, requireNotNull(outer).cells.size)
+        val nestedId = requireNotNull(
+            outer.cells.first().elements.filterIsInstance<FfiViewerElement.Table>().singleOrNull()
+        ).tableId
+        val nested = requireNotNull(document.tableRecords[nestedId])
+        assertEquals(1, nested.cells.size)
+        assertEquals(
+            listOf("nested"),
+            nested.cells.first().elements.filterIsInstance<FfiViewerElement.TextRun>().map {
+                it.text
+            }
+        )
+        assertEquals(1, document.copy().tableRecords[nestedId]?.cells?.size)
+
+        val cellDocument = document.cellDocument(
+            com.apollohg.editor.tables.TableSurfaceSource.from(requireNotNull(outer)).cells.first(),
+            "t${outer.tablePos}"
+        )
+        assertEquals(listOf("table"), cellDocument.blocks.map { it.nodeType })
+        assertEquals(nested.tablePos, cellDocument.blocks.single().table?.tablePos)
+        assertEquals(1, cellDocument.tableRecords[nestedId]?.cells?.size)
+    }
+
     @Test
     fun `fixed density compiler edge fixture has exact nested bidi geometry`() {
         val document = compile(Fixture.finalAndroidEdge)
@@ -88,7 +149,7 @@ class PreparedProseRenderingTest {
         val visualStart = atomLayout.getPrimaryHorizontal(atomOffset)
         val visualEnd = atomLayout.getPrimaryHorizontal(atomOffset + 1)
 
-        assertEquals("4294967295.", outerMarker.label)
+        assertEquals("4293967295.", outerMarker.label)
         assertEquals("•", nestedMarker.label)
         assertTrue("nested anchor must retain the outer marker gutter", nestedAnchor > outerAnchor)
         assertTrue(
@@ -230,7 +291,12 @@ class PreparedProseRenderingTest {
     @Test
     fun `scaled list markers stay centered without changing item spacing`() {
         val document = compileSource(
-            """{"type":"doc","content":[{"type":"bullet_list","content":[{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]}]},{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"second"}]}]}]}]}""",
+            """{"type":"doc","content":[{"type":"bullet_list",""" +
+                """"content":[{"type":"list_item",""" +
+                """"content":[{"type":"paragraph",""" +
+                """"content":[{"type":"text","text":"first"}]}]},""" +
+                """{"type":"list_item","content":[{"type":"paragraph",""" +
+                """"content":[{"type":"text","text":"second"}]}]}]}]}""",
             Fixture.structural.first().configJson
         )
         val regular =
@@ -298,12 +364,20 @@ class PreparedProseRenderingTest {
     fun `terminal block spacing does not increase viewer height`() {
         val fixtures = listOf(
             Triple(
-                """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]},{"type":"paragraph","content":[{"type":"text","text":"second"}]}]}""",
+                """{"type":"doc","content":[{"type":"paragraph",""" +
+                    """"content":[{"type":"text","text":"first"}]},""" +
+                    """{"type":"paragraph","content":[{"type":"text",""" +
+                    """"text":"second"}]}]}""",
                 """{"paragraph":{"spacingAfter":13},"contentInsets":{"bottom":7}}""",
                 13
             ),
             Triple(
-                """{"type":"doc","content":[{"type":"bullet_list","content":[{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]}]},{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"second"}]}]}]}]}""",
+                """{"type":"doc","content":[{"type":"bullet_list",""" +
+                    """"content":[{"type":"list_item",""" +
+                    """"content":[{"type":"paragraph",""" +
+                    """"content":[{"type":"text","text":"first"}]}]},""" +
+                    """{"type":"list_item","content":[{"type":"paragraph",""" +
+                    """"content":[{"type":"text","text":"second"}]}]}]}]}""",
                 """{"list":{"itemSpacing":11,"spacingAfter":20},"contentInsets":{"bottom":7}}""",
                 11
             )
@@ -322,7 +396,11 @@ class PreparedProseRenderingTest {
     @Test
     fun `collapse trailing empty paragraphs preserves interior blocks`() {
         val document = compileSource(
-            """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]},{"type":"paragraph"},{"type":"paragraph","content":[{"type":"text","text":"second"}]},{"type":"paragraph"},{"type":"paragraph"}]}""",
+            """{"type":"doc","content":[{"type":"paragraph",""" +
+                """"content":[{"type":"text","text":"first"}]},""" +
+                """{"type":"paragraph"},{"type":"paragraph",""" +
+                """"content":[{"type":"text","text":"second"}]},""" +
+                """{"type":"paragraph"},{"type":"paragraph"}]}""",
             Fixture.structural.first().configJson
         )
         val engine = StaticLayoutAndroidProseLayoutEngine()
@@ -337,7 +415,17 @@ class PreparedProseRenderingTest {
     @Test
     fun `list spacingAfter replaces terminal item spacing before following content`() {
         val document = compileSource(
-            """{"type":"doc","content":[{"type":"bullet_list","content":[{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]}]},{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"second"}]}]}]},{"type":"bullet_list","content":[{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"third"}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}""",
+            """{"type":"doc","content":[{"type":"bullet_list",""" +
+                """"content":[{"type":"list_item",""" +
+                """"content":[{"type":"paragraph",""" +
+                """"content":[{"type":"text","text":"first"}]}]},""" +
+                """{"type":"list_item","content":[{"type":"paragraph",""" +
+                """"content":[{"type":"text","text":"second"}]}]}]},""" +
+                """{"type":"bullet_list","content":[{"type":"list_item",""" +
+                """"content":[{"type":"paragraph",""" +
+                """"content":[{"type":"text","text":"third"}]}]}]},""" +
+                """{"type":"paragraph","content":[{"type":"text",""" +
+                """"text":"after"}]}]}""",
             Fixture.structural.first().configJson
         )
         val layout = prepare(
@@ -381,7 +469,15 @@ class PreparedProseRenderingTest {
     @Test
     fun `nested list spacingAfter applies before parent content`() {
         val document = compileSource(
-            """{"type":"doc","content":[{"type":"bullet_list","content":[{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"parent"}]},{"type":"bullet_list","content":[{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"nested"}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after nested"}]}]}]}]}""",
+            """{"type":"doc","content":[{"type":"bullet_list",""" +
+                """"content":[{"type":"list_item",""" +
+                """"content":[{"type":"paragraph",""" +
+                """"content":[{"type":"text","text":"parent"}]},""" +
+                """{"type":"bullet_list","content":[{"type":"list_item",""" +
+                """"content":[{"type":"paragraph",""" +
+                """"content":[{"type":"text","text":"nested"}]}]}]},""" +
+                """{"type":"paragraph","content":[{"type":"text",""" +
+                """"text":"after nested"}]}]}]}]}""",
             Fixture.structural.first().configJson
         )
         val layout = prepare(
@@ -396,7 +492,15 @@ class PreparedProseRenderingTest {
     @Test
     fun `nested and outer list spacingAfter stack at a shared ending`() {
         val document = compileSource(
-            """{"type":"doc","content":[{"type":"bullet_list","content":[{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"parent"}]},{"type":"bullet_list","content":[{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"nested"}]}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}""",
+            """{"type":"doc","content":[{"type":"bullet_list",""" +
+                """"content":[{"type":"list_item",""" +
+                """"content":[{"type":"paragraph",""" +
+                """"content":[{"type":"text","text":"parent"}]},""" +
+                """{"type":"bullet_list","content":[{"type":"list_item",""" +
+                """"content":[{"type":"paragraph",""" +
+                """"content":[{"type":"text","text":"nested"}]}]}]}]}]},""" +
+                """{"type":"paragraph","content":[{"type":"text",""" +
+                """"text":"after"}]}]}""",
             Fixture.structural.first().configJson
         )
         val layout = prepare(
@@ -411,7 +515,15 @@ class PreparedProseRenderingTest {
     @Test
     fun `nested list ending with a non-final parent keeps parent item spacing`() {
         val document = compileSource(
-            """{"type":"doc","content":[{"type":"bullet_list","content":[{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"parent"}]},{"type":"bullet_list","content":[{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"nested"}]}]}]}]},{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"second"}]}]}]}]}""",
+            """{"type":"doc","content":[{"type":"bullet_list",""" +
+                """"content":[{"type":"list_item",""" +
+                """"content":[{"type":"paragraph",""" +
+                """"content":[{"type":"text","text":"parent"}]},""" +
+                """{"type":"bullet_list","content":[{"type":"list_item",""" +
+                """"content":[{"type":"paragraph",""" +
+                """"content":[{"type":"text","text":"nested"}]}]}]}]},""" +
+                """{"type":"list_item","content":[{"type":"paragraph",""" +
+                """"content":[{"type":"text","text":"second"}]}]}]}]}""",
             Fixture.structural.first().configJson
         )
         val layout = prepare(
@@ -457,7 +569,10 @@ class PreparedProseRenderingTest {
     @Test
     fun `list markerGap sets the space between the marker and the text`() {
         val document = compileSource(
-            """{"type":"doc","content":[{"type":"bullet_list","content":[{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]}]}]}]}""",
+            """{"type":"doc","content":[{"type":"bullet_list",""" +
+                """"content":[{"type":"list_item",""" +
+                """"content":[{"type":"paragraph",""" +
+                """"content":[{"type":"text","text":"first"}]}]}]}]}""",
             Fixture.structural.first().configJson
         )
 
@@ -480,7 +595,10 @@ class PreparedProseRenderingTest {
     @Test
     fun `list markerGap keeps the marker column left edge fixed`() {
         val document = compileSource(
-            """{"type":"doc","content":[{"type":"bullet_list","content":[{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]}]}]}]}""",
+            """{"type":"doc","content":[{"type":"bullet_list",""" +
+                """"content":[{"type":"list_item",""" +
+                """"content":[{"type":"paragraph",""" +
+                """"content":[{"type":"text","text":"first"}]}]}]}]}""",
             Fixture.structural.first().configJson
         )
         val narrow =
@@ -504,7 +622,10 @@ class PreparedProseRenderingTest {
     @Test
     fun `list marker scale does not resize ordered numbers`() {
         val document = compileSource(
-            """{"type":"doc","content":[{"type":"ordered_list","content":[{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]}]}]}]}""",
+            """{"type":"doc","content":[{"type":"ordered_list",""" +
+                """"content":[{"type":"list_item",""" +
+                """"content":[{"type":"paragraph",""" +
+                """"content":[{"type":"text","text":"first"}]}]}]}]}""",
             Fixture.structural.first().configJson
         )
         val regular =
@@ -653,7 +774,10 @@ class PreparedProseRenderingTest {
     @Test
     fun `oversized marker reserves a nonnegative top and shares the first text baseline`() {
         val document = compileSource(
-            """{"type":"doc","content":[{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"marker"}]}]}]}]}""",
+            """{"type":"doc","content":[{"type":"bulletList",""" +
+                """"content":[{"type":"listItem",""" +
+                """"content":[{"type":"paragraph",""" +
+                """"content":[{"type":"text","text":"marker"}]}]}]}]}""",
             Fixture.structural[2].configJson
         )
         val layout =
@@ -673,7 +797,12 @@ class PreparedProseRenderingTest {
     @Test
     fun `nested list and quote rule right edge excludes both insets`() {
         val document = compileSource(
-            """{"type":"doc","content":[{"type":"blockquote","content":[{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"lead"}]},{"type":"horizontal_rule"}]}]}]}]}""",
+            """{"type":"doc","content":[{"type":"blockquote",""" +
+                """"content":[{"type":"bulletList",""" +
+                """"content":[{"type":"listItem",""" +
+                """"content":[{"type":"paragraph",""" +
+                """"content":[{"type":"text","text":"lead"}]},""" +
+                """{"type":"horizontal_rule"}]}]}]}]}""",
             Fixture.structural[2].configJson
         )
         val rule = prepare(document).blocks.flatMap { it.fragments }.single {
@@ -688,7 +817,8 @@ class PreparedProseRenderingTest {
     @Test
     fun `atom descenders remain inside metric line and atom bounds`() {
         val document = compileSource(
-            """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"opaque","attrs":{"label":"gy"}}]}]}""",
+            """{"type":"doc","content":[{"type":"paragraph",""" +
+                """"content":[{"type":"opaque","attrs":{"label":"gy"}}]}]}""",
             Fixture.structural[2].configJson
         )
         val atom = prepare(document).blocks.flatMap { it.fragments }.single {
@@ -703,15 +833,29 @@ class PreparedProseRenderingTest {
     @Test
     fun `compiler fixed line heights cover final heading code list and density metrics`() {
         val document = compileSource(
-            """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"single"}]},{"type":"paragraph","content":[{"type":"text","text":"wrapped final line needs enough words to wrap at this fixed width"}]},{"type":"paragraph","content":[{"type":"text","text":"hard"},{"type":"hard_break"},{"type":"text","text":"break"}]},{"type":"heading","attrs":{"level":1},"content":[{"type":"text","text":"heading"}]},{"type":"bullet_list","content":[{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"list leaf"}]}]}]}]}""",
+            """{"type":"doc","content":[{"type":"paragraph",""" +
+                """"content":[{"type":"text","text":"single"}]},""" +
+                """{"type":"paragraph","content":[{"type":"text",""" +
+                """"text":"wrapped final line needs enough words to wrap """ +
+                """at this fixed width"}]},{"type":"paragraph",""" +
+                """"content":[{"type":"text","text":"hard"},""" +
+                """{"type":"hard_break"},{"type":"text","text":"break"}]},""" +
+                """{"type":"heading","attrs":{"level":1},""" +
+                """"content":[{"type":"text","text":"heading"}]},""" +
+                """{"type":"bullet_list","content":[{"type":"list_item",""" +
+                """"content":[{"type":"paragraph",""" +
+                """"content":[{"type":"text","text":"list leaf"}]}]}]}]}""",
             Fixture.structural[1].configJson
         )
         val codeDocument = compileSource(
-            """{"type":"doc","content":[{"type":"codeBlock","content":[{"type":"text","text":"code"}]}]}""",
+            """{"type":"doc","content":[{"type":"codeBlock",""" +
+                """"content":[{"type":"text","text":"code"}]}]}""",
             Fixture.multiBlockList.configJson
         )
         val densityOneTheme = PreparedProseTheme.resolve(
-            """{"paragraph":{"fontSize":16,"lineHeight":48},"headings":{"h1":{"lineHeight":64}},"codeBlock":{"text":{"fontSize":14,"lineHeight":48}}}""",
+            """{"paragraph":{"fontSize":16,"lineHeight":48},""" +
+                """"headings":{"h1":{"lineHeight":64}},""" +
+                """"codeBlock":{"text":{"fontSize":14,"lineHeight":48}}}""",
             1f
         )
         val densityOne = prepare(document, densityOneTheme, 160)
@@ -723,7 +867,9 @@ class PreparedProseRenderingTest {
         val natural = prepare(document, naturalTheme, 160)
         val naturalCode = prepare(codeDocument, naturalTheme, 160)
         val naturalAtomDocument = compileSource(
-            """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"opaque","attrs":{"label":"atom"}}]}]}""",
+            """{"type":"doc","content":[{"type":"paragraph",""" +
+                """"content":[{"type":"opaque",""" +
+                """"attrs":{"label":"atom"}}]}]}""",
             Fixture.structural[2].configJson
         )
         val naturalAtom = prepare(
@@ -786,7 +932,9 @@ class PreparedProseRenderingTest {
         ) { "list marker ${metricProjection(document, densityOne)}" }
 
         val densityTwoTheme = PreparedProseTheme.resolve(
-            """{"paragraph":{"fontSize":16,"lineHeight":48},"headings":{"h1":{"lineHeight":64}},"codeBlock":{"text":{"fontSize":14,"lineHeight":48}}}""",
+            """{"paragraph":{"fontSize":16,"lineHeight":48},""" +
+                """"headings":{"h1":{"lineHeight":64}},""" +
+                """"codeBlock":{"text":{"fontSize":14,"lineHeight":48}}}""",
             2f
         )
         val densityTwo = prepare(document, densityTwoTheme, 320)
@@ -820,9 +968,13 @@ class PreparedProseRenderingTest {
                 .filter { it.kind == PreparedProseFragmentKind.TEXT }
                 .all { fragment ->
                     fragment.layout!!.let { layout ->
-                        (layout.text as android.text.Spanned)
-                            .getSpans(0, layout.text.length, FixedLineHeightMetricSpan::class.java)
-                            .isEmpty()
+                        val text = layout.text
+                        text !is android.text.Spanned ||
+                            text.getSpans(
+                                0,
+                                text.length,
+                                FixedLineHeightMetricSpan::class.java
+                            ).isEmpty()
                     }
                 }
         ) { "natural text line-height spans ${metricProjection(document, natural)}" }
@@ -850,7 +1002,9 @@ class PreparedProseRenderingTest {
     @Test
     fun `reduced line height preserves natural extreme text and atom metrics without clipping`() {
         val document = compileSource(
-            """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"large"},{"type":"opaque","attrs":{"label":"atom"}}]}]}""",
+            """{"type":"doc","content":[{"type":"paragraph",""" +
+                """"content":[{"type":"text","text":"large"},""" +
+                """{"type":"opaque","attrs":{"label":"atom"}}]}]}""",
             Fixture.structural[2].configJson
         )
         val natural =
@@ -892,7 +1046,11 @@ class PreparedProseRenderingTest {
             """{"links":{"fontFamily":"monospace","fontSize":23,""" +
                 """"fontWeight":"700","fontStyle":"italic","color":"#13579B"}}"""
         val document = compileSource(
-            """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"שלום","marks":[{"type":"link","attrs":{"href":"https://example.test"}},{"type":"strike"},{"type":"bold"}]}]}]}""",
+            """{"type":"doc","content":[{"type":"paragraph",""" +
+                """"content":[{"type":"text","text":"שלום",""" +
+                """"marks":[{"type":"link",""" +
+                """"attrs":{"href":"https://example.test"}},""" +
+                """{"type":"strike"},{"type":"bold"}]}]}]}""",
             Fixture.structural[2].configJson
         )
         val text = prepare(
@@ -914,11 +1072,25 @@ class PreparedProseRenderingTest {
     }
 
     @Test
-    fun `compiler u32 maximum ordered index and semantic atom position never narrow or wrap`() {
+    fun `compiler index and full u32 atom position never narrow or wrap`() {
         val document = compileSource(
-            """{"type":"doc","content":[{"type":"orderedList","attrs":{"start":4294967295},"content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"max"}]}]}]}]}""",
+            """{"type":"doc","content":[{"type":"orderedList",""" +
+                """"attrs":{"start":4293967295},""" +
+                """"content":[{"type":"listItem",""" +
+                """"content":[{"type":"paragraph",""" +
+                """"content":[{"type":"text","text":"max"}]}]}]}]}""",
             Fixture.structural[2].configJson
         )
+        val overLimit = assertThrows(ProseViewerError::class.java) {
+            compileSource(
+                """{"type":"doc","content":[{"type":"orderedList",""" +
+                    """"attrs":{"start":4293967296},""" +
+                    """"content":[{"type":"listItem",""" +
+                    """"content":[{"type":"paragraph",""" +
+                    """"content":[{"type":"text","text":"over"}]}]}]}]}""",
+                Fixture.structural[2].configJson
+            )
+        }
         val compilerIndex = document.blocks.single().listContext!!.index
         val semanticAtom = ViewerInline.Atom("opaque", 0xFFFF_FFFFL, "{}", "max")
         val atomDocument =
@@ -933,8 +1105,9 @@ class PreparedProseRenderingTest {
                 PreparedProseFragmentKind.MARKER
         }
 
-        assertEquals(0xFFFF_FFFFL, compilerIndex)
-        assertEquals("4294967295.", marker.label)
+        assertEquals(4_293_967_295L, compilerIndex)
+        assertEquals("4293967295.", marker.label)
+        assertEquals("DOCUMENT_INVALID", overLimit.code.value)
         assertEquals(
             0xFFFF_FFFFL,
             (atomDocument.blocks.single().inlines.single() as ViewerInline.Atom).docPos
@@ -1258,7 +1431,15 @@ private data class Fixture(
             Fixture(
                 "nested JSON list and blockquote inheritance",
                 ProseViewerSource.Json(
-                    """{"type":"doc","content":[{"type":"blockquote","content":[{"type":"bullet_list","content":[{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"outer"}]},{"type":"ordered_list","attrs":{"start":12},"content":[{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"inner"}]}]}]}]}]}]}]}"""
+                    """{"type":"doc","content":[{"type":"blockquote",""" +
+                        """"content":[{"type":"bullet_list",""" +
+                        """"content":[{"type":"list_item",""" +
+                        """"content":[{"type":"paragraph",""" +
+                        """"content":[{"type":"text","text":"outer"}]},""" +
+                        """{"type":"ordered_list","attrs":{"start":12},""" +
+                        """"content":[{"type":"list_item",""" +
+                        """"content":[{"type":"paragraph",""" +
+                        """"content":[{"type":"text","text":"inner"}]}]}]}]}]}]}]}"""
                 ),
                 LOCAL_CONFIG,
                 setOf(
@@ -1331,7 +1512,16 @@ private data class Fixture(
             Fixture(
                 "custom atoms task list and snake rule",
                 ProseViewerSource.Json(
-                    """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"mention","attrs":{"label":"Ada","mentionTheme":{"node":{"textColor":"#FF0000","backgroundColor":"#00FF00","borderColor":"#0000FF","borderWidth":2,"borderRadius":9}}}},{"type":"opaque","attrs":{"label":"opaque"}}]},{"type":"taskList","content":[{"type":"listItem","attrs":{"checked":true},"content":[{"type":"paragraph","content":[{"type":"text","text":"task"}]}]}]},{"type":"horizontal_rule"}]}"""
+                    """{"type":"doc","content":[{"type":"paragraph",""" +
+                        """"content":[{"type":"mention","attrs":{"label":"Ada",""" +
+                        """"mentionTheme":{"node":{"textColor":"#FF0000",""" +
+                        """"backgroundColor":"#00FF00","borderColor":"#0000FF",""" +
+                        """"borderWidth":2,"borderRadius":9}}}},{"type":"opaque",""" +
+                        """"attrs":{"label":"opaque"}}]},{"type":"taskList",""" +
+                        """"content":[{"type":"listItem","attrs":{"checked":true},""" +
+                        """"content":[{"type":"paragraph",""" +
+                        """"content":[{"type":"text","text":"task"}]}]}]},""" +
+                        """{"type":"horizontal_rule"}]}"""
                 ),
                 CUSTOM_CONFIG,
                 setOf(PreparedProseFragmentKind.ATOM, PreparedProseFragmentKind.RULE),
@@ -1348,7 +1538,26 @@ private data class Fixture(
             Fixture(
                 "all marks",
                 ProseViewerSource.Json(
-                    """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"bold","marks":[{"type":"bold"}]},{"type":"text","text":"italic","marks":[{"type":"italic"}]},{"type":"text","text":"under","marks":[{"type":"underline"}]},{"type":"text","text":"strike","marks":[{"type":"strike"}]},{"type":"text","text":"code","marks":[{"type":"code"}]},{"type":"text","text":"link","marks":[{"type":"link","attrs":{"href":"https://example.test"}}]},{"type":"text","text":"red","marks":[{"type":"textColor","attrs":{"color":"#FF0000"}}]},{"type":"text","text":"highlight","marks":[{"type":"highlight","attrs":{"color":"#FFF176"}}]},{"type":"text","text":"sized","marks":[{"type":"textStyle","attrs":{"fontFamily":"monospace","fontSize":19}}]},{"type":"text","text":"combo","marks":[{"type":"code"},{"type":"bold"},{"type":"italic"}]}]}]}"""
+                    """{"type":"doc","content":[{"type":"paragraph",""" +
+                        """"content":[{"type":"text","text":"bold",""" +
+                        """"marks":[{"type":"bold"}]},{"type":"text",""" +
+                        """"text":"italic","marks":[{"type":"italic"}]},""" +
+                        """{"type":"text","text":"under",""" +
+                        """"marks":[{"type":"underline"}]},{"type":"text",""" +
+                        """"text":"strike","marks":[{"type":"strike"}]},""" +
+                        """{"type":"text","text":"code",""" +
+                        """"marks":[{"type":"code"}]},{"type":"text",""" +
+                        """"text":"link","marks":[{"type":"link",""" +
+                        """"attrs":{"href":"https://example.test"}}]},""" +
+                        """{"type":"text","text":"red",""" +
+                        """"marks":[{"type":"textColor",""" +
+                        """"attrs":{"color":"#FF0000"}}]},{"type":"text",""" +
+                        """"text":"highlight","marks":[{"type":"highlight",""" +
+                        """"attrs":{"color":"#FFF176"}}]},{"type":"text",""" +
+                        """"text":"sized","marks":[{"type":"textStyle",""" +
+                        """"attrs":{"fontFamily":"monospace","fontSize":19}}]},""" +
+                        """{"type":"text","text":"combo","marks":[{"type":"code"},""" +
+                        """{"type":"bold"},{"type":"italic"}]}]}]}"""
                 ),
                 CUSTOM_CONFIG,
                 setOf(PreparedProseFragmentKind.TEXT),
@@ -1360,7 +1569,19 @@ private data class Fixture(
             Fixture(
                 "multi block nested ordered list boundaries",
                 ProseViewerSource.Json(
-                    """{"type":"doc","content":[{"type":"blockquote","content":[{"type":"orderedList","attrs":{"start":7},"content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]},{"type":"codeBlock","content":[{"type":"text","text":"second"}]},{"type":"opaqueBlock","attrs":{"label":"third"}},{"type":"orderedList","attrs":{"start":12},"content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"nested"}]}]}]}]},{"type":"listItem","content":[{"type":"paragraph"}]}]}]}]}"""
+                    """{"type":"doc","content":[{"type":"blockquote",""" +
+                        """"content":[{"type":"orderedList","attrs":{"start":7},""" +
+                        """"content":[{"type":"listItem",""" +
+                        """"content":[{"type":"paragraph",""" +
+                        """"content":[{"type":"text","text":"first"}]},""" +
+                        """{"type":"codeBlock","content":[{"type":"text",""" +
+                        """"text":"second"}]},{"type":"opaqueBlock",""" +
+                        """"attrs":{"label":"third"}},{"type":"orderedList",""" +
+                        """"attrs":{"start":12},"content":[{"type":"listItem",""" +
+                        """"content":[{"type":"paragraph",""" +
+                        """"content":[{"type":"text","text":"nested"}]}]}]}]},""" +
+                        """{"type":"listItem",""" +
+                        """"content":[{"type":"paragraph"}]}]}]}]}"""
                 ),
                 CUSTOM_CONFIG,
                 setOf(
@@ -1381,7 +1602,12 @@ private data class Fixture(
             Fixture(
                 "unicode emoji bidi hard break and opaque atoms",
                 ProseViewerSource.Json(
-                    """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"שלום 🚀"},{"type":"hardBreak"},{"type":"opaque","attrs":{"label":"inline"}},{"type":"text","text":" café"}]},{"type":"opaqueBlock","attrs":{"label":"block"}}]}"""
+                    """{"type":"doc","content":[{"type":"paragraph",""" +
+                        """"content":[{"type":"text","text":"שלום 🚀"},""" +
+                        """{"type":"hardBreak"},{"type":"opaque",""" +
+                        """"attrs":{"label":"inline"}},{"type":"text","text":" """ +
+                        """café"}]},{"type":"opaqueBlock",""" +
+                        """"attrs":{"label":"block"}}]}"""
                 ),
                 CUSTOM_CONFIG,
                 setOf(PreparedProseFragmentKind.TEXT, PreparedProseFragmentKind.ATOM),
@@ -1393,9 +1619,22 @@ private data class Fixture(
                 }
             }
         val finalAndroidEdge = Fixture(
-            name = "fixed density max u32 nested quote code rule and RTL atom",
+            name = "fixed density admitted ordered index nested quote code rule and RTL atom",
             source = ProseViewerSource.Json(
-                """{"type":"doc","content":[{"type":"blockquote","content":[{"type":"orderedList","attrs":{"start":4294967295},"content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"אב"},{"type":"opaque","attrs":{"label":"atom"}},{"type":"text","text":" tail"}]},{"type":"codeBlock","content":[{"type":"text","text":"code"}]},{"type":"horizontal_rule"},{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"nested"}]}]}]}]}]}]}]}"""
+                """{"type":"doc","content":[{"type":"blockquote",""" +
+                    """"content":[{"type":"orderedList",""" +
+                    """"attrs":{"start":4293967295},""" +
+                    """"content":[{"type":"listItem",""" +
+                    """"content":[{"type":"paragraph",""" +
+                    """"content":[{"type":"text","text":"אב"},""" +
+                    """{"type":"opaque","attrs":{"label":"atom"}},""" +
+                    """{"type":"text","text":" tail"}]},{"type":"codeBlock",""" +
+                    """"content":[{"type":"text","text":"code"}]},""" +
+                    """{"type":"horizontal_rule"},{"type":"bulletList",""" +
+                    """"content":[{"type":"listItem",""" +
+                    """"content":[{"type":"paragraph",""" +
+                    """"content":[{"type":"text",""" +
+                    """"text":"nested"}]}]}]}]}]}]}]}"""
             ),
             configJson = CUSTOM_CONFIG,
             expectedKinds = setOf(
@@ -1407,11 +1646,11 @@ private data class Fixture(
                 PreparedProseFragmentKind.ATOM
             ),
             documentExpectation = "four blocks, a nested-list final block, " +
-                "and a max-u32 ordered-list index",
+                "and an admitted ordered-list index",
             assertDocument = { document ->
                 document.blocks.size == 4 &&
                     document.blocks.last().listItemAncestors.size == 2 &&
-                    document.blocks.first().listContext?.index == 0xFFFF_FFFFL
+                    document.blocks.first().listContext?.index == 4_293_967_295L
             },
             expectedGeometry = ExpectedGeometry(
                 heightPx = 158,

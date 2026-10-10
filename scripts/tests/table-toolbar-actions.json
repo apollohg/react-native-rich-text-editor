@@ -1,0 +1,17 @@
+[
+    { "action": "addRowBefore", "applicability": "addTableRowBefore", "command": { "type": "addTableRow", "side": "before" } },
+    { "action": "addRowAfter", "applicability": "addTableRowAfter", "command": { "type": "addTableRow", "side": "after" } },
+    { "action": "deleteRows", "applicability": "deleteTableRows", "command": { "type": "deleteTableRows" } },
+    { "action": "selectRows", "applicability": "selectTableRows", "command": { "type": "selectTableRows" } },
+    { "action": "addColumnBefore", "applicability": "addTableColumnBefore", "command": { "type": "addTableColumn", "side": "before" } },
+    { "action": "addColumnAfter", "applicability": "addTableColumnAfter", "command": { "type": "addTableColumn", "side": "after" } },
+    { "action": "deleteColumns", "applicability": "deleteTableColumns", "command": { "type": "deleteTableColumns" } },
+    { "action": "selectColumns", "applicability": "selectTableColumns", "command": { "type": "selectTableColumns" } },
+    { "action": "toggleHeaderRow", "applicability": "toggleTableHeaderRow", "command": { "type": "toggleTableHeader", "target": "row" } },
+    { "action": "toggleHeaderColumn", "applicability": "toggleTableHeaderColumn", "command": { "type": "toggleTableHeader", "target": "column" } },
+    { "action": "toggleHeaderCell", "applicability": "toggleTableHeaderCell", "command": { "type": "toggleTableHeader", "target": "cell" } },
+    { "action": "mergeCells", "applicability": "mergeTableCells", "command": { "type": "mergeTableCells" } },
+    { "action": "splitCell", "applicability": "splitTableCell", "command": { "type": "splitTableCell" } },
+    { "action": "clearCells", "applicability": "clearTableCells", "command": { "type": "clearTableCells" } },
+    { "action": "deleteTable", "applicability": "deleteTable", "command": { "type": "deleteTable" } }
+]

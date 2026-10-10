@@ -160,10 +160,23 @@ impl MutationCompiler {
             .get(&signature.target)
             .map(|pending| pending.desired.as_slice())
             .unwrap_or(signature.attrs.as_slice());
-        if old_tag != new_tag
-            || old_tag != signature.tag.as_ref()
-            || old_attrs != expected_old_attrs
-        {
+        let spec = schema.node(target_node.node_type());
+        let mut projected_attrs = old_attrs.iter().peekable();
+        let attrs_match = expected_old_attrs.iter().all(|(key, value)| {
+            if projected_attrs
+                .peek()
+                .is_some_and(|(projected_key, _)| projected_key == key)
+            {
+                return projected_attrs
+                    .next()
+                    .is_some_and(|(_, projected)| projected == value);
+            }
+            // Semantic JSON omits defaults that may still be explicit in remote storage.
+            spec.and_then(|spec| spec.attrs.get(key.as_ref()))
+                .and_then(|attr| attr.default.as_ref())
+                .is_some_and(|default| *value == json_to_any(default))
+        }) && projected_attrs.next().is_none();
+        if old_tag != new_tag || old_tag != signature.tag.as_ref() || !attrs_match {
             return Err(OperationError::engine_invariant_failed(
                 self.request_id,
                 Some(operation_index),

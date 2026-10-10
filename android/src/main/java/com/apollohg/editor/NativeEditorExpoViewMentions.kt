@@ -62,7 +62,7 @@ internal fun NativeEditorExpoView.isCaretInsideMention(cursorUtf16: Int): Boolea
     val checkOffsets = listOf(cursorUtf16, (cursorUtf16 - 1).coerceAtLeast(0))
     return checkOffsets.any { offset ->
         editable.getSpans(offset, offset, android.text.Annotation::class.java).any { span ->
-            span.key == "nativeVoidNodeType" && span.value == "mention"
+            span.key == RenderBridge.NATIVE_VOID_NODE_TYPE_ANNOTATION && span.value == "mention"
         }
     }
 }

@@ -11,11 +11,6 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.LargeTest
 import androidx.test.platform.app.InstrumentationRegistry
-import expo.modules.core.ModuleRegistry
-import expo.modules.kotlin.AppContext
-import expo.modules.kotlin.ModulesProvider
-import expo.modules.kotlin.modules.Module
-import java.lang.ref.WeakReference
 import java.util.concurrent.atomic.AtomicReference
 import org.json.JSONArray
 import org.json.JSONObject
@@ -162,10 +157,10 @@ class NativeDeviceCollaborationInitialSyncTest {
     }
 
     private fun createMountedEditor(activity: Activity, editorId: Long): NativeEditorExpoView {
-        initializeSoLoaderIfAvailable(activity)
         val root = FrameLayout(activity).apply {
             setBackgroundColor(Color.WHITE)
         }
+        initializeSoLoaderIfAvailable(activity)
         val expoContext = testExpoContext(activity)
         val editor = NativeEditorExpoView(expoContext.context, expoContext.appContext).apply {
             clipToPadding = false
@@ -227,46 +222,4 @@ class NativeDeviceCollaborationInitialSyncTest {
 
     private fun dp(context: Context, value: Int): Int =
         (value * context.resources.displayMetrics.density).toInt()
-
-    private fun initializeSoLoaderIfAvailable(context: Context) {
-        try {
-            Class
-                .forName("com.facebook.soloader.SoLoader")
-                .getMethod(
-                    "init",
-                    Context::class.java,
-                    Boolean::class.javaPrimitiveType
-                )
-                .invoke(null, context, false)
-        } catch (_: Throwable) {
-            // Some test classpaths do not expose SoLoader directly; in that case the view can
-            // still be exercised as long as the React Native draw path does not require it.
-        }
-    }
-
-    private fun testExpoContext(activity: Activity): TestExpoContext {
-        val reactContext = Class
-            .forName("com.facebook.react.bridge.BridgeReactContext")
-            .getConstructor(Context::class.java)
-            .newInstance(activity) as Context
-
-        reactContext.javaClass
-            .getMethod("onHostResume", Activity::class.java)
-            .invoke(reactContext, activity)
-
-        val modulesProvider = object : ModulesProvider {
-            override fun getModulesMap(): Map<Class<out Module>, String?> = emptyMap()
-        }
-        val constructor = AppContext::class.java.constructors.first { constructor ->
-            constructor.parameterTypes.size == 3
-        }
-        val appContext = constructor.newInstance(
-            modulesProvider,
-            ModuleRegistry(emptyList(), emptyList()),
-            WeakReference(reactContext)
-        ) as AppContext
-        return TestExpoContext(reactContext, appContext)
-    }
-
-    private data class TestExpoContext(val context: Context, val appContext: AppContext)
 }

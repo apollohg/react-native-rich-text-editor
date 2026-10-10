@@ -6,7 +6,11 @@ use super::outbound::OutboundUpdateSink;
 use super::YrsDocumentEngine;
 use crate::model::Document;
 use crate::selection::Selection;
+use crate::tables::selection::{
+    admit_cell_pair, CellAdmission, CELL_SELECTION_ANCHOR_FIELD, CELL_SELECTION_HEAD_FIELD,
+};
 use crate::yrs_engine;
+use crate::yrs_engine::compiler::{cell_admission_error, resolve_cell_opening};
 use crate::yrs_engine::compiler::{
     selectable_void_at, CompiledTransaction, PreparedSemanticAdmission, SelectionPlan,
 };
@@ -37,9 +41,11 @@ impl YrsDocumentEngine {
             None,
             None,
             yrs_engine::TransactionOrigin::LocalCommand,
+            false,
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn plan_command_internal_at_selection<'a>(
         &'a self,
         request_id: u64,
@@ -50,11 +56,20 @@ impl YrsDocumentEngine {
         selection: Option<&'a yrs_engine::ResolvedSelection>,
         initial_selection: Option<&'a yrs_engine::SelectionInput>,
         origin: yrs_engine::TransactionOrigin,
+        admits_textblock_local_intents: bool,
     ) -> yrs_engine::OperationResult<yrs_engine::CommandPlan> {
         let state = self
             .derived_state
             .as_ref()
             .ok_or_else(|| yrs_engine::OperationError::engine_not_ready(request_id))?;
+        let command_selection = selection.unwrap_or(&state.resolved_selection);
+        let command_stored_marks = yrs_engine::derived_state::stored_marks_after_selection_change(
+            state.stored_marks.as_deref(),
+            &state.resolved_selection,
+            command_selection,
+            &state.document,
+            &self.schema,
+        );
         let allow_deferred_admission =
             preparation.is_some() && state.mutation_lookup_seed.is_unavailable() && {
                 let canonical_fingerprint = state.canonical_artifact.sha256();
@@ -78,10 +93,10 @@ impl YrsDocumentEngine {
                 document: &state.document,
                 position_map: &state.position_map,
                 rendered_text: &state.rendered_text,
-                selection: selection.unwrap_or(&state.resolved_selection),
+                selection: command_selection,
                 initial_selection,
                 origin,
-                stored_marks: state.stored_marks.as_deref(),
+                stored_marks: command_stored_marks.as_deref(),
                 schema: &self.schema,
                 resource_limits: &self.resource_limits,
                 editing_limits: &self.editing_limits,
@@ -91,6 +106,7 @@ impl YrsDocumentEngine {
                 canonical_artifact: &state.canonical_artifact,
                 allow_deferred_admission,
                 preparation,
+                localized_textblock_state: admits_textblock_local_intents.then_some(state),
             },
             command,
         )
@@ -138,6 +154,7 @@ impl YrsDocumentEngine {
             Some(&resolved),
             Some(&selection),
             origin,
+            true,
         )? {
             yrs_engine::CommandPlan::NotApplicable => return Ok(None),
             yrs_engine::CommandPlan::SelectionOnly(transaction) => {
@@ -149,12 +166,14 @@ impl YrsDocumentEngine {
                     self.apply_prepared_command_transaction(
                         transaction,
                         proof,
+                        Some((&selection, &resolved)),
                         true,
                         &mut outbound,
                     )?
                 } else {
                     self.apply_typed_transaction_with_staged_context(
                         transaction,
+                        Some((&selection, &resolved)),
                         true,
                         &mut outbound,
                     )?
@@ -255,6 +274,33 @@ impl YrsDocumentEngine {
                     at: resolved_point(pos)?,
                 })
             }
+            yrs_engine::SelectionInput::Cell { anchor, head } => {
+                let opening = |field: &'static str, point| {
+                    resolve_cell_opening(
+                        &state.table_projection_index,
+                        point,
+                        &state.rendered_text,
+                        &state.position_map,
+                        &state.document,
+                        request_id,
+                        field,
+                    )
+                };
+                let anchor = opening(CELL_SELECTION_ANCHOR_FIELD, *anchor)?;
+                let head = opening(CELL_SELECTION_HEAD_FIELD, *head)?;
+                let admission = admit_cell_pair(&state.table_projection_index, anchor, head);
+                if admission != CellAdmission::Admitted {
+                    return Err(cell_admission_error(
+                        request_id,
+                        CELL_SELECTION_ANCHOR_FIELD,
+                        admission,
+                    ));
+                }
+                Ok(yrs_engine::ResolvedSelection::Cell {
+                    anchor: resolved_point(anchor)?,
+                    head: resolved_point(head)?,
+                })
+            }
             yrs_engine::SelectionInput::All => Ok(yrs_engine::ResolvedSelection::All),
         }
     }
@@ -275,10 +321,17 @@ impl YrsDocumentEngine {
                 }
                 yrs_engine::CommandPlan::Transaction(transaction) => {
                     if let Some(proof) = preparation.into_inner() {
-                        self.apply_prepared_command_transaction(transaction, proof, true, outbound)?
+                        self.apply_prepared_command_transaction(
+                            transaction,
+                            proof,
+                            None,
+                            true,
+                            outbound,
+                        )?
                     } else {
                         self.apply_typed_transaction_with_staged_context(
                             transaction,
+                            None,
                             true,
                             outbound,
                         )?
@@ -297,6 +350,7 @@ impl YrsDocumentEngine {
     fn prepare_command_history_admission(
         &self,
         semantic: &PreparedSemanticAdmission,
+        initial_selection: Option<&yrs_engine::ResolvedSelection>,
     ) -> yrs_engine::OperationResult<
         Option<yrs_engine::prepared_admission::PreparedCommandHistoryAdmission>,
     > {
@@ -401,6 +455,7 @@ impl YrsDocumentEngine {
             state,
             expected_document,
             candidate_artifact,
+            None,
             &candidate_derivations,
             &candidate_render.cache,
             state.stored_marks.as_deref(),
@@ -416,11 +471,12 @@ impl YrsDocumentEngine {
             &self.resource_limits,
             &self.editing_limits,
             self.max_length,
+            initial_selection.map(|selection| (selection, &self.schema)),
             retained.map(|pair| pair.before),
         );
         let after = history_snapshot_template(
             candidate_artifact,
-            state.stored_marks.as_deref(),
+            before.stored_marks.as_deref(),
             &self.fragment_name,
             retained.map(|pair| pair.after),
         );
@@ -447,15 +503,16 @@ impl YrsDocumentEngine {
     pub(super) fn prepare_execution_command_history_admission(
         &self,
         semantic: &yrs_engine::prepared_admission::ExecutionSemanticAdmission,
+        initial_selection: Option<&yrs_engine::ResolvedSelection>,
     ) -> yrs_engine::OperationResult<
         Option<yrs_engine::prepared_admission::PreparedCommandHistoryAdmission>,
     > {
         match semantic {
             yrs_engine::prepared_admission::ExecutionSemanticAdmission::Eager(admission) => {
-                self.prepare_command_history_admission(admission)
+                self.prepare_command_history_admission(admission, initial_selection)
             }
             yrs_engine::prepared_admission::ExecutionSemanticAdmission::Deferred(admission) => {
-                self.prepare_deferred_command_history_admission(admission)
+                self.prepare_deferred_command_history_admission(admission, initial_selection)
             }
         }
     }
@@ -463,6 +520,7 @@ impl YrsDocumentEngine {
     fn prepare_deferred_command_history_admission(
         &self,
         deferred: &yrs_engine::prepared_admission::DeferredCommandAdmission,
+        initial_selection: Option<&yrs_engine::ResolvedSelection>,
     ) -> yrs_engine::OperationResult<
         Option<yrs_engine::prepared_admission::PreparedCommandHistoryAdmission>,
     > {
@@ -545,6 +603,11 @@ impl YrsDocumentEngine {
             state,
             evidence.canonical_retained_bytes,
             evidence.source_document_retained_bytes,
+            yrs_engine::derived_state::DocumentValidationCertificate::subtree_depth_counts(
+                expected_document.root(),
+                crate::transform::DOCUMENT_ROOT_DEPTH,
+            )
+            .len(),
             &evidence.candidate_derivations,
             &candidate_render.cache,
             state.stored_marks.as_deref(),
@@ -560,13 +623,17 @@ impl YrsDocumentEngine {
             &self.resource_limits,
             &self.editing_limits,
             self.max_length,
+            initial_selection.map(|selection| (selection, &self.schema)),
             retained.map(|pair| pair.before),
         );
         let after = history_snapshot_template_from_identity(
             evidence.canonical_text_scalar_len,
-            evidence.canonical_fingerprint,
+            yrs_engine::history::HistoryCanonicalIdentity::Materialized {
+                fingerprint: evidence.canonical_fingerprint,
+                projection_fingerprint: evidence.canonical_projection_fingerprint,
+            },
             evidence.canonical_serialized_len,
-            state.stored_marks.as_deref(),
+            before.stored_marks.as_deref(),
             &self.fragment_name,
             retained.map(|pair| pair.after),
         );

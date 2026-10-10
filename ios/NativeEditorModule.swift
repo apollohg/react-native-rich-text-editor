@@ -744,7 +744,8 @@ public class NativeEditorModule: BaseModule, @preconcurrency AnyModule {
                 "onToolbarAction",
                 "onAddonEvent",
                 "onEditorError",
-                "onExternalTextCompositionEnd"
+                "onExternalTextCompositionEnd",
+                "onTableSelectionGeometry"
             )
 
             Prop("editorId") { (view: NativeEditorExpoView, id: String) in
@@ -788,6 +789,12 @@ public class NativeEditorModule: BaseModule, @preconcurrency AnyModule {
             }
             Prop("allowImageResizing") { (view: NativeEditorExpoView, allowImageResizing: Bool) in
                 view.setAllowImageResizing(allowImageResizing)
+            }
+            Prop("tableDirection") { (view: NativeEditorExpoView, tableDirection: String?) in
+                view.setTableDirection(tableDirection)
+            }
+            Prop("tableEditMenuEnabled") { (view: NativeEditorExpoView, enabled: Bool) in
+                view.richTextView.tableEditMenuEnabled = enabled
             }
             Prop("imageLoadingPolicyJson") { (view: NativeEditorExpoView, json: String?) in
                 view.setImageLoadingPolicyJson(json)

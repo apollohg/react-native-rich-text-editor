@@ -205,17 +205,27 @@ struct PreparedProseAtomSlot {
 
 final class PreparedProseBlock {
     let atomSlot: PreparedProseAtomSlot?
+    let imageAttachment: ViewerImageAttachment?
+    let tableBounds: CGRect?
     let fragments: [PreparedProseFragment]
     let bounds: CGRect
+    let tableSurface: ViewerTableSurface?
 
-    init(fragments: [PreparedProseFragment], bounds: CGRect, atomSlot: PreparedProseAtomSlot? = nil) {
+    init(fragments: [PreparedProseFragment], bounds: CGRect, atomSlot: PreparedProseAtomSlot? = nil, imageAttachment: ViewerImageAttachment? = nil, tableSurface: ViewerTableSurface? = nil, tableBounds: CGRect? = nil) {
         self.atomSlot = atomSlot
+        self.imageAttachment = imageAttachment
+        self.tableBounds = tableBounds
         self.fragments = fragments
         self.bounds = bounds
+        self.tableSurface = tableSurface
+    }
+
+    var nonTableRetainedBytes: Int {
+        160 + fragments.reduce(0) { $0 + $1.estimatedRetainedBytes } + (atomSlot?.estimatedRetainedBytes ?? 0)
     }
 
     var estimatedRetainedBytes: Int {
-        160 + fragments.reduce(0) { $0 + $1.estimatedRetainedBytes } + (atomSlot?.estimatedRetainedBytes ?? 0)
+        nonTableRetainedBytes + (tableSurface?.retainedBytes ?? 0)
     }
 
     /// Compatibility initializer retained for test seams.
@@ -236,10 +246,23 @@ struct PreparedProseInteraction: Hashable {
     let docPos: UInt32?
     let label: String
     let attrsJSON: String?
+    /// Local prepared-block index, retained so mounted traversal never infers source order from paint bounds.
+    let sourceBlockIndex: Int?
+
+    init(kind: Kind, rects: [CGRect], href: String?, visibleText: String, docPos: UInt32?, label: String, attrsJSON: String?, sourceBlockIndex: Int? = nil) {
+        self.kind = kind
+        self.rects = rects
+        self.href = href
+        self.visibleText = visibleText
+        self.docPos = docPos
+        self.label = label
+        self.attrsJSON = attrsJSON
+        self.sourceBlockIndex = sourceBlockIndex
+    }
 
     var estimatedRetainedBytes: Int {
         144 + rects.count * 64 + (href?.utf8.count ?? 0) * 2 + visibleText.utf8.count * 2
-            + label.utf8.count * 2 + (attrsJSON?.utf8.count ?? 0)
+            + label.utf8.count * 2 + (attrsJSON?.utf8.count ?? 0) + (sourceBlockIndex == nil ? 0 : 8)
     }
 }
 
@@ -252,21 +275,34 @@ struct PreparedProseAccessibilityNode: Hashable {
     let role: Role
     let label: String
     let rects: [CGRect]
+    let sourceBlockIndex: Int?
 
-    init(interactionIndex: Int?, role: Role, label: String, bounds: CGRect) {
-        self.init(interactionIndex: interactionIndex, role: role, label: label, rects: [bounds])
+    init(interactionIndex: Int?, role: Role, label: String, bounds: CGRect, sourceBlockIndex: Int? = nil) {
+        self.init(interactionIndex: interactionIndex, role: role, label: label, rects: [bounds], sourceBlockIndex: sourceBlockIndex)
     }
 
-    init(interactionIndex: Int?, role: Role, label: String, rects: [CGRect]) {
+    init(interactionIndex: Int?, role: Role, label: String, rects: [CGRect], sourceBlockIndex: Int? = nil) {
         self.interactionIndex = interactionIndex
         self.role = role
         self.label = label
         self.rects = rects
+        self.sourceBlockIndex = sourceBlockIndex
     }
 
     var bounds: CGRect { rects.reduce(.null) { $0.union($1) } }
 
-    var estimatedRetainedBytes: Int { 96 + rects.count * 64 + label.utf8.count * 2 }
+    var estimatedRetainedBytes: Int {
+        Self.estimatedRetainedBytes(label: label, rectangleCount: rects.count, sourceBlockIndex: sourceBlockIndex)
+    }
+
+    static func estimatedRetainedBytes(label: String, rectangleCount: Int, sourceBlockIndex: Int?) -> Int {
+        let nodeBytes = 96
+        let rectangleBytes = 64
+        let labelByteMultiplier = 2
+        let sourceIndexBytes = 8
+        return nodeBytes + rectangleCount * rectangleBytes + label.utf8.count * labelByteMultiplier
+            + (sourceBlockIndex == nil ? 0 : sourceIndexBytes)
+    }
 }
 
 public final class PreparedProseLayout: NSObject {
@@ -281,7 +317,51 @@ public final class PreparedProseLayout: NSObject {
     let accessibilityNodes: [PreparedProseAccessibilityNode]
     let imageAttachments: [ViewerImageAttachment]
     let retainedBytes: Int
+    private let tableRetainedBytesAtPreparation: Int
+    var currentRetainedBytes: Int {
+        var bytes = 0
+        forEachRetainedLayout(
+            visit: { bytes += $0.retainedBytes - $0.tableRetainedBytesAtPreparation },
+            storeBytes: { bytes += $0 },
+            table: { bytes += $0.metadataRetainedBytes }
+        )
+        return bytes
+    }
+    var cellShapeCatalogRetainedBytes: Int {
+        var shapes: [ObjectIdentifier: PreparedCellShape] = [:]
+        forEachRetainedLayout { layout in
+            if let shape = layout.cellShape { shapes[ObjectIdentifier(shape)] = shape }
+        }
+        return shapes.values.reduce(0) { $0 + $1.catalogRetainedBytes }
+    }
+
+    func forEachRetainedLayout(
+        visit: (PreparedProseLayout) -> Void,
+        storeBytes: (Int) -> Void = { _ in },
+        table: (ViewerTableSurface) -> Void = { _ in }
+    ) {
+        var layouts = Set<ObjectIdentifier>()
+        var stores = Set<ObjectIdentifier>()
+        var surfaces = Set<ObjectIdentifier>()
+        func walk(_ layout: PreparedProseLayout) {
+            guard layouts.insert(ObjectIdentifier(layout)).inserted else { return }
+            visit(layout)
+            for block in layout.blocks {
+                guard let surface = block.tableSurface else { continue }
+                if surfaces.insert(ObjectIdentifier(surface)).inserted { table(surface) }
+                surface.forEachLayoutStore { store in
+                    guard stores.insert(ObjectIdentifier(store)).inserted else { return }
+                    let snapshot = store.residentSnapshot
+                    storeBytes(snapshot.keyBytes)
+                    snapshot.layouts.forEach(walk)
+                }
+            }
+        }
+        walk(self)
+    }
     let error: ProseViewerError?
+    let cellShape: PreparedCellShape?
+    let cellPreparation: (() -> PreparedProseLayout)?
 
     init(
         key: ProseLayoutKey,
@@ -294,7 +374,10 @@ public final class PreparedProseLayout: NSObject {
         error: ProseViewerError? = nil,
         decorations: [PreparedProseFragment] = [],
         highlightingRequest: PreparedViewerHighlightingRequest? = nil,
-        highlightingResolved: Bool = false
+        highlightingResolved: Bool = false,
+        cellShape: PreparedCellShape? = nil,
+        cellPreparation: (() -> PreparedProseLayout)? = nil,
+        tableRetainedBytesAtPreparation: Int? = nil
     ) {
         self.highlightingRequest = highlightingRequest
         self.highlightingResolved = highlightingResolved
@@ -309,13 +392,36 @@ public final class PreparedProseLayout: NSObject {
         self.accessibilityNodes = accessibilityNodes
         self.imageAttachments = imageAttachments
         self.retainedBytes = retainedBytes
+        self.tableRetainedBytesAtPreparation = tableRetainedBytesAtPreparation ?? blocks.reduce(0) { $0 + ($1.tableSurface?.retainedBytes ?? 0) }
         self.error = error
+        self.cellShape = cellShape
+        self.cellPreparation = cellPreparation
         super.init()
+    }
+
+    func withCellShape(_ shape: PreparedCellShape?, preparation: (() -> PreparedProseLayout)? = nil) -> PreparedProseLayout {
+        PreparedProseLayout(
+            key: key,
+            size: size,
+            blocks: blocks,
+            interactions: interactions,
+            accessibilityNodes: accessibilityNodes,
+            imageAttachments: imageAttachments,
+            retainedBytes: retainedBytes,
+            error: error,
+            decorations: decorations,
+            highlightingRequest: highlightingRequest,
+            highlightingResolved: highlightingResolved,
+            cellShape: shape,
+            cellPreparation: preparation ?? cellPreparation,
+            tableRetainedBytesAtPreparation: tableRetainedBytesAtPreparation
+        )
     }
 
     static func error(key: ProseLayoutKey, width: CGFloat, error: ProseViewerError) -> PreparedProseLayout {
         PreparedProseLayout(key: key, size: CGSize(width: width, height: 0), blocks: [], retainedBytes: 0, error: error)
     }
+
 }
 
 private extension Int {

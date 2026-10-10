@@ -1,5 +1,8 @@
 import { NativeEditorBoundaryError } from './NativeEditorBoundaryError';
 
+export const DEFAULT_MAX_TABLE_GRID_SLOTS = 25_000;
+export const HARD_MAX_TABLE_GRID_SLOTS = 4_000_000;
+
 /**
  * Bounds on the documents, schemas, and collaboration payloads the Rust core
  * will admit. Set them on `NativeEditorCreateConfig.limits.resource` when
@@ -27,6 +30,7 @@ export interface EditorResourceLimits {
     maxCollaborationMessageBytes?: number;
     /** Byte ceiling for an encoded Yjs state : imported room snapshots and exported ones. */
     maxEncodedStateBytes?: number;
+    maxTableGridSlots?: number;
 }
 
 /**
@@ -84,6 +88,7 @@ export interface ResolvedEditorResourceLimits {
     maxSchemaExpressionBytes: number;
     maxCollaborationMessageBytes: number;
     maxEncodedStateBytes: number;
+    maxTableGridSlots: number;
 }
 
 /** The value used for each {@link EditorResourceLimits} field left unset. */
@@ -95,6 +100,7 @@ export const DEFAULT_EDITOR_RESOURCE_LIMITS: Readonly<ResolvedEditorResourceLimi
     maxSchemaExpressionBytes: 64 * 1024,
     maxCollaborationMessageBytes: 10 * 1024 * 1024,
     maxEncodedStateBytes: 50 * 1024 * 1024,
+    maxTableGridSlots: DEFAULT_MAX_TABLE_GRID_SLOTS,
 };
 
 /** The ceiling each {@link EditorResourceLimits} field may not exceed. */
@@ -106,6 +112,7 @@ export const HARD_EDITOR_RESOURCE_LIMITS: Readonly<ResolvedEditorResourceLimits>
     maxSchemaExpressionBytes: 1024 * 1024,
     maxCollaborationMessageBytes: 64 * 1024 * 1024,
     maxEncodedStateBytes: 256 * 1024 * 1024,
+    maxTableGridSlots: HARD_MAX_TABLE_GRID_SLOTS,
 };
 
 const HARD_EDITOR_EDITING_LIMITS: Readonly<Required<EditorEditingLimits>> = {

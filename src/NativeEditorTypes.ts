@@ -17,7 +17,7 @@ import {
  * measured in Unicode scalars instead of document positions.
  */
 export interface Selection {
-    type: 'text' | 'node' | 'all';
+    type: 'text' | 'node' | 'all' | 'cell';
     /** Fixed end of a text selection. */
     anchor?: number;
     /** Moving end of a text selection. Equals `anchor` for a collapsed caret. */
@@ -30,6 +30,8 @@ export interface Selection {
     headScalar?: number;
     /** `pos` in Unicode scalars. */
     posScalar?: number;
+    anchorCell?: number;
+    headCell?: number;
 }
 
 /**
@@ -42,12 +44,22 @@ export class NativeEditorLocalAwarenessSelectionValue {
 
     constructor(
         readonly anchor: number,
-        readonly head: number
-    ) {
-    }
+        readonly head: number,
+    ) {}
 }
 
-export type NativeEditorLocalAwarenessSelection = NativeEditorLocalAwarenessSelectionValue;
+export class NativeEditorLocalAwarenessCellSelectionValue {
+    private readonly _nativeEditorLocalAwarenessCellSelectionBrand!: undefined;
+
+    constructor(
+        readonly anchorCell: number,
+        readonly headCell: number,
+    ) {}
+}
+
+export type NativeEditorLocalAwarenessSelection =
+    | NativeEditorLocalAwarenessSelectionValue
+    | NativeEditorLocalAwarenessCellSelectionValue;
 
 /** What this client publishes to other peers in one awareness update. */
 export interface NativeEditorLocalAwarenessIntent {
@@ -99,16 +111,7 @@ export interface RenderMarkWithAttrs {
 /** A mark on a rendered text run: its name alone, or its name plus attributes. */
 export type RenderMark = string | RenderMarkWithAttrs;
 
-/** One piece of the flattened render stream the engine produces for a document. */
-export interface RenderElement {
-    type:
-        | 'textRun'
-        | 'blockStart'
-        | 'blockEnd'
-        | 'voidInline'
-        | 'voidBlock'
-        | 'opaqueInlineAtom'
-        | 'opaqueBlockAtom';
+interface RenderElementFields {
     text?: string;
     marks?: RenderMark[];
     nodeType?: string;
@@ -121,6 +124,23 @@ export interface RenderElement {
     listContext?: ListContext;
     language?: string;
 }
+
+/** One piece of the flattened render stream the engine produces for a document. */
+export type RenderElement = RenderElementFields &
+    (
+        | { type: 'table'; tableId: string }
+        | {
+              type:
+                  | 'textRun'
+                  | 'blockStart'
+                  | 'blockEnd'
+                  | 'voidInline'
+                  | 'voidBlock'
+                  | 'opaqueInlineAtom'
+                  | 'opaqueBlockAtom';
+              tableId?: never;
+          }
+    );
 
 /**
  * A splice against the previously rendered block list: replace `deleteCount`
@@ -170,16 +190,17 @@ export type NativeEditorAtomicRenderPayload =
     | { renderBlocks: RenderElement[][]; renderPatch: null }
     | { renderBlocks: null; renderPatch: RenderBlocksPatch };
 
-export type NativeEditorAtomicRenderSnapshotShape = NativeEditorAtomicRenderPayload & {
-    selection: Selection;
-    activeState: ActiveState;
-    historyState: HistoryState;
-    documentVersion: string;
-    stateRevision: string;
-    scalarLength: number;
-    /** The core's own answer for whether the document holds no content. */
-    documentIsEmpty: boolean;
-};
+export type NativeEditorAtomicRenderSnapshotShape =
+    NativeEditorAtomicRenderPayload & {
+        selection: Selection;
+        activeState: ActiveState;
+        historyState: HistoryState;
+        documentVersion: string;
+        stateRevision: string;
+        scalarLength: number;
+        /** The core's own answer for whether the document holds no content. */
+        documentIsEmpty: boolean;
+    };
 
 /** A recursively immutable view of the value frozen by renderUpdate(). */
 export type NativeEditorAtomicRenderSnapshot =
@@ -356,6 +377,12 @@ export interface NativeEditorPositionEnvelope {
     affinity?: NativeEditorPositionAffinity;
 }
 
+export interface NativeEditorCellPositionEnvelope {
+    offset: number;
+    kind: NativeEditorOffsetKind | 'document';
+    affinity?: NativeEditorPositionAffinity;
+}
+
 export type NativeEditorSelectionEnvelope =
     | {
           type: 'text';
@@ -363,6 +390,11 @@ export type NativeEditorSelectionEnvelope =
           head: NativeEditorPositionEnvelope;
       }
     | { type: 'node'; at: NativeEditorPositionEnvelope }
+    | {
+          type: 'cell';
+          anchorCell: NativeEditorCellPositionEnvelope;
+          headCell: NativeEditorCellPositionEnvelope;
+      }
     | { type: 'atom'; docPos: number; edge: 'node' | 'before' | 'after' }
     | { type: 'all' };
 
@@ -375,4 +407,9 @@ export interface NativeEditorReplaceDocumentRequest {
     setJson?: DocumentJSON;
     setHtml?: string;
     history: NativeEditorHistoryMode;
+}
+
+export interface NativeEditorResolvedSelectionFrame {
+    editorId: string;
+    documentRevision: string;
 }

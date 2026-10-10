@@ -151,7 +151,7 @@ internal fun RenderBridge.lastCharacterIsHardBreak(builder: SpannableStringBuild
     if (builder.isEmpty()) return false
     val lastIndex = builder.length - 1
     return builder.getSpans(lastIndex, builder.length, Annotation::class.java).any {
-        it.key == "nativeVoidNodeType" && EditorNodeTypes.isHardBreak(it.value)
+        it.key == NATIVE_VOID_NODE_TYPE_ANNOTATION && EditorNodeTypes.isHardBreak(it.value)
     }
 }
 

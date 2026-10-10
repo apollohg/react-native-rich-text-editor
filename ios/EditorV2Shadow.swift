@@ -83,7 +83,7 @@ enum EditorV2Shadow {
     }
 
     static func getSelectionState(id: UInt64) -> String {
-        adapter(for: id)?.currentStateJSON() ?? "{}"
+        adapter(for: id)?.currentSelectionStateJSON() ?? "{}"
     }
 
     static func getSelection(id: UInt64) -> String {
@@ -131,8 +131,13 @@ enum EditorV2Shadow {
         return adapter.replaceTextRange(from: selection.anchor, to: selection.head, with: text) ?? "{}"
     }
 
-    static func deleteScalarRange(id: UInt64, scalarFrom: UInt32, scalarTo: UInt32) -> String {
-        adapter(for: id)?.deleteScalarRange(from: scalarFrom, to: scalarTo) ?? "{}"
+    static func deleteScalarRange(
+        id: UInt64,
+        scalarFrom: UInt32,
+        scalarTo: UInt32,
+        originalSelection: (anchor: UInt32, head: UInt32)? = nil
+    ) -> String {
+        adapter(for: id)?.deleteScalarRange(from: scalarFrom, to: scalarTo, originalSelection: originalSelection) ?? "{}"
     }
 
     static func deleteRange(id: UInt64, from: UInt32, to: UInt32) -> String {
@@ -141,6 +146,10 @@ enum EditorV2Shadow {
 
     static func deleteBackwardAtSelectionScalar(id: UInt64, scalarAnchor: UInt32, scalarHead: UInt32) -> String {
         adapter(for: id)?.deleteBackward(anchor: scalarAnchor, head: scalarHead) ?? "{}"
+    }
+
+    static func deleteBackward(id: UInt64) -> String {
+        adapter(for: id)?.applyCommand(["type": "deleteBackward"]) ?? "{}"
     }
 
     static func deleteAndSplitScalar(id: UInt64, scalarFrom: UInt32, scalarTo: UInt32) -> String {
@@ -308,7 +317,7 @@ enum EditorV2Shadow {
         id: UInt64,
         command: [String: Any]
     ) -> String {
-        adapter(for: id)?.applyClipboardCommand(command) ?? "{}"
+        adapter(for: id)?.applyCommand(command) ?? "{}"
     }
 
     static func insertContentJson(id: UInt64, json: String) -> String {

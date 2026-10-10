@@ -7,6 +7,25 @@ fn local_config() -> String {
     .to_string()
 }
 
+fn table_config() -> String {
+    serde_json::json!({
+        "schema": {
+            "nodes": [
+                {"name": "doc", "content": "block+", "role": "doc"},
+                {"name": "paragraph", "content": "inline*", "group": "block", "role": "textBlock"},
+                {"name": "text", "content": "", "group": "inline", "role": "text"},
+                {"name": "table", "content": "table_row+", "group": "block", "role": "block", "tableRole": "table", "attrs": {"class": {"default": null}}},
+                {"name": "table_row", "content": "(table_cell | table_header)*", "role": "block", "tableRole": "row"},
+                {"name": "table_cell", "content": "block+", "role": "block", "tableRole": "cell", "attrs": {"class": {"default": null}, "colspan": {"type": "number", "default": 1, "min": 1}, "rowspan": {"type": "number", "default": 1, "min": 1}, "colwidth": {"default": null}}},
+                {"name": "table_header", "content": "block+", "role": "block", "tableRole": "header_cell", "attrs": {"class": {"default": null}, "colspan": {"type": "number", "default": 1, "min": 1}, "rowspan": {"type": "number", "default": 1, "min": 1}, "colwidth": {"default": null}}}
+            ],
+            "marks": []
+        },
+        "initialization": {"type": "localEmpty"}
+    })
+    .to_string()
+}
+
 fn mention_config() -> String {
     serde_json::json!({
         "schema": {
@@ -92,6 +111,123 @@ fn compile_json_with(
         images_enabled,
         mention_prefix: None,
     })
+}
+
+fn nested_table_document(nested_text: &str, nested_table_class: &str) -> serde_json::Value {
+    serde_json::json!({
+        "type": "doc",
+        "content": [{
+            "type": "table",
+            "attrs": {"class": "shared-table"},
+            "content": [{
+                "type": "table_row",
+                "content": [{
+                    "type": "table_cell",
+                    "attrs": {"class": "outer-cell"},
+                    "content": [{
+                        "type": "table",
+                        "attrs": {"class": nested_table_class},
+                        "content": [{
+                            "type": "table_row",
+                            "content": [{
+                                "type": "table_cell",
+                                "attrs": {"class": "nested-cell"},
+                                "content": [{
+                                    "type": "paragraph",
+                                    "content": [{"type": "text", "text": nested_text}]
+                                }]
+                            }]
+                        }]
+                    }]
+                }]
+            }]
+        }]
+    })
+}
+
+#[test]
+fn viewer_reuses_the_admitted_table_projection() {
+    use crate::yrs_engine::observability::{
+        reset_full_pass_counts_for_test, take_full_pass_counts_for_test,
+    };
+    let mut config: serde_json::Value = serde_json::from_str(&table_config()).unwrap();
+    for (index, tag) in [(1, "p"), (3, "table"), (4, "tr"), (5, "td"), (6, "th")] {
+        config["schema"]["nodes"][index]["htmlTag"] = serde_json::json!(tag);
+    }
+    for (source_kind, source) in [
+        (
+            FfiViewerSourceKind::Json,
+            nested_table_document("nested", "inner").to_string(),
+        ),
+        (
+            FfiViewerSourceKind::Html,
+            "<table><tr><td><table><tr><td>nested</td></tr></table></td></tr></table>".into(),
+        ),
+    ] {
+        reset_full_pass_counts_for_test();
+        let result = viewer_compile(FfiViewerCompileRequest {
+            source_kind,
+            source,
+            config_json: config.to_string(),
+            images_enabled: true,
+            mention_prefix: None,
+        });
+        assert!(result.error.is_none(), "{:#?}", result.error);
+        let compiled = result.value.unwrap();
+        assert_eq!(compiled.table_records.len(), 2);
+        let passes = take_full_pass_counts_for_test();
+        assert_eq!(passes.table_projection_derivations, 0,
+            "rendering must reuse the exact admitted projection instead of deriving it again: {passes:#?}");
+    }
+}
+
+#[test]
+fn nested_tables_compile_to_ordered_flat_records_and_affect_the_semantic_key() {
+    let compile = |nested_text, nested_table_class| {
+        compile_json_with(
+            nested_table_document(nested_text, nested_table_class),
+            table_config(),
+            true,
+        )
+        .value
+        .expect("nested table compiles")
+    };
+    let first = compile("first", "shared-table");
+    let same = compile("first", "shared-table");
+    let changed = compile("changed", "shared-table");
+    let unshared = compile("first", "other--table");
+
+    let root_table_id = first
+        .elements()
+        .into_iter()
+        .find_map(|element| match element {
+            FfiViewerElement::Table { table_id } => Some(table_id),
+            _ => None,
+        })
+        .expect("root has a table reference");
+    let records = first.table_records();
+    assert_eq!(records.len(), 2);
+    assert!(records
+        .windows(2)
+        .all(|pair| pair[0].table_pos < pair[1].table_pos));
+    assert_eq!(root_table_id, format!("t{}", records[0].table_pos));
+    assert_eq!(records[0].attrs_key, records[1].attrs_key);
+    assert_eq!(
+        first.table_attributes().get(&records[0].attrs_key),
+        Some(&"{\"class\":\"shared-table\"}".to_owned())
+    );
+    assert!(records[0].cells[0].elements.iter().any(|element| matches!(
+        element,
+        FfiViewerElement::Table { table_id }
+            if table_id == &format!("t{}", records[1].table_pos)
+    )));
+    assert_eq!(first.semantic_key(), same.semantic_key());
+    assert_ne!(first.semantic_key(), changed.semantic_key());
+    assert!(
+        first.retained_bytes_decimal().parse::<usize>().unwrap()
+            < unshared.retained_bytes_decimal().parse::<usize>().unwrap(),
+        "the shared attrs payload is retained once"
+    );
 }
 
 #[test]
@@ -734,4 +870,127 @@ fn viewer_enforces_editor_derived_output_limit() {
         error.details_json.as_deref(),
         Some(r#"{"field":"maxDerivedOutputBytes"}"#)
     );
+}
+
+#[test]
+fn viewer_reuses_import_validation_for_the_render_cache() {
+    use crate::yrs_engine::observability::{
+        reset_full_pass_counts_for_test, take_full_pass_counts_for_test,
+    };
+    const ROWS: usize = 1000;
+    const COLUMNS: usize = 20;
+    let source =
+        crate::test_support::large_table_fixture::plain_table_document(ROWS, COLUMNS).to_string();
+    reset_full_pass_counts_for_test();
+    let result = viewer_compile(FfiViewerCompileRequest {
+        source_kind: FfiViewerSourceKind::Json,
+        source,
+        config_json: table_config(),
+        images_enabled: true,
+        mention_prefix: None,
+    });
+    assert!(result.error.is_none(), "{:?}", result.error);
+    let counts = take_full_pass_counts_for_test();
+    assert_eq!(counts.document_validations, 1, "{counts:#?}");
+    assert_eq!(
+        counts.canonical_projections, 0,
+        "a viewer needs no retained canonical JSON: {counts:#?}"
+    );
+    assert_eq!(counts.render_limit_tree_scans, 0, "{counts:#?}");
+    assert_eq!(counts.table_projection_derivations, 0, "{counts:#?}");
+}
+
+#[test]
+fn plain_table_viewer_avoids_document_value_deserialization() {
+    use crate::yrs_engine::observability::{
+        reset_full_pass_counts_for_test, take_full_pass_counts_for_test,
+    };
+    const ROWS: usize = 1000;
+    const COLUMNS: usize = 20;
+    let request = FfiViewerCompileRequest {
+        source_kind: FfiViewerSourceKind::Json,
+        source: crate::test_support::large_table_fixture::plain_table_document(ROWS, COLUMNS)
+            .to_string(),
+        config_json: table_config(),
+        images_enabled: true,
+        mention_prefix: None,
+    };
+    reset_full_pass_counts_for_test();
+    let actual = viewer_compile(request.clone());
+    let actual_values = take_full_pass_counts_for_test().json_value_deserializations;
+    reset_full_pass_counts_for_test();
+    let expected = crate::serialize::json_in::with_legacy_json_for_test(|| viewer_compile(request));
+    let expected_values = take_full_pass_counts_for_test().json_value_deserializations;
+    assert!(actual.error.is_none(), "{:?}", actual.error);
+    assert!(expected.error.is_none(), "{:?}", expected.error);
+    assert_eq!(
+        actual_values + 1,
+        expected_values,
+        "eligible viewer content must avoid exactly its document Value tree"
+    );
+    assert_viewer_documents_equal(actual.value.unwrap(), expected.value.unwrap());
+}
+
+fn assert_viewer_documents_equal(
+    actual: std::sync::Arc<super::ViewerCompiledDocument>,
+    expected: std::sync::Arc<super::ViewerCompiledDocument>,
+) {
+    assert_eq!(actual.table_attributes, expected.table_attributes);
+    assert_eq!(actual.semantic_key, expected.semantic_key);
+    assert_eq!(actual.elements, expected.elements);
+    assert_eq!(actual.table_records, expected.table_records);
+    assert_eq!(actual.is_empty, expected.is_empty);
+    assert_eq!(
+        actual.preferred_text_block_name,
+        expected.preferred_text_block_name
+    );
+    assert_eq!(
+        actual.trailing_empty_text_block_count,
+        expected.trailing_empty_text_block_count
+    );
+    assert_eq!(actual.retained_bytes, expected.retained_bytes);
+}
+
+#[test]
+fn compact_viewer_json_preserves_complete_output_and_error_precedence() {
+    let sources = [
+        r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"a\n\uD83E\uDD80"}]}]}"#,
+        r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"rich","marks":[{"type":"bold"}]}]}]}"#,
+        r#"{"type":"doc","content":[{"type":"future","extra":{"nested":[null]}}]}"#,
+        r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":null,"text":"last wins"}]}]}"#,
+        r#"{"type":"doc","content":[{"type":"paragraph","content":null}]}"#,
+        r#"{"type":"doc","content":[{"type":"paragraph"}]} trailing"#,
+    ];
+    for source in sources {
+        for limits in [
+            serde_json::json!({}),
+            serde_json::json!({"resource":{"maxInputBytes":source.len() - 1}}),
+            serde_json::json!({"resource":{"maxDocumentNodes":2}}),
+            serde_json::json!({"resource":{"maxDocumentDepth":2}}),
+            serde_json::json!({"editing":{"maxDerivedOutputBytes":1}}),
+        ] {
+            let request = FfiViewerCompileRequest {
+                source_kind: FfiViewerSourceKind::Json,
+                source: source.into(),
+                config_json: serde_json::json!({
+                    "initialization":{"type":"localEmpty"}, "limits":limits,
+                })
+                .to_string(),
+                images_enabled: true,
+                mention_prefix: None,
+            };
+            let actual = viewer_compile(request.clone());
+            let expected =
+                crate::serialize::json_in::with_legacy_json_for_test(|| viewer_compile(request));
+            assert_eq!(
+                actual.error, expected.error,
+                "source {source}; limits {limits}"
+            );
+            match (actual.value, expected.value) {
+                (Some(actual), Some(expected)) => assert_viewer_documents_equal(actual, expected),
+                (None, None) => assert!(actual.error.is_some()),
+                _ => panic!("viewer success parity for source {source}; limits {limits}"),
+            }
+        }
+    }
 }

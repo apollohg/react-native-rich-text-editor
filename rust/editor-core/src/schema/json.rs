@@ -165,6 +165,10 @@ impl Schema {
                 .get("allowUndeclaredAttrs")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
+            let table_role = node_val
+                .get("tableRole")
+                .and_then(|v| v.as_str())
+                .and_then(TableRole::from_schema_name);
 
             let role_str = node_val
                 .get("role")
@@ -204,6 +208,7 @@ impl Schema {
                 is_void,
                 deletable_on_backspace,
                 allow_undeclared_attrs,
+                table_role,
             });
         }
 

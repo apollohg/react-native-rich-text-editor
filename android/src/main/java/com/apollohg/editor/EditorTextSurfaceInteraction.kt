@@ -21,8 +21,11 @@ import android.view.ViewConfiguration
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.inputmethod.InputMethodManager
+import com.apollohg.editor.viewer.TableSelectionHandleRole
 import java.text.BreakIterator
 import kotlin.math.abs
+
+internal object TextSelectionActionMode
 
 internal class EditorTextSurfaceInteraction(
     private val view: EditorTextSurface,
@@ -66,7 +69,7 @@ internal class EditorTextSurfaceInteraction(
             object : GestureDetector.SimpleOnGestureListener() {
                 override fun onDown(e: MotionEvent) = true
                 override fun onSingleTapUp(e: MotionEvent): Boolean {
-                    if (moved || draggingHandle != 0) return true
+                    if (moved || draggingHandle != 0 || !view.onSurfaceGestureFocus()) return true
                     view.requestFocus()
                     view.setSelection(view.getOffsetForPosition(e.x, e.y))
                     endSelectionActionMode()
@@ -75,11 +78,12 @@ internal class EditorTextSurfaceInteraction(
                     return true
                 }
                 override fun onDoubleTap(e: MotionEvent): Boolean {
+                    if (!view.onSurfaceGestureFocus()) return true
                     selectWord(e.x, e.y)
                     return true
                 }
                 override fun onLongPress(e: MotionEvent) {
-                    if (draggingHandle != 0 || moved) return
+                    if (draggingHandle != 0 || moved || !view.onSurfaceGestureFocus()) return
                     val offset = view.getOffsetForPosition(e.x, e.y)
                     val from = minOf(view.selectionStart, view.selectionEnd)
                     val to = maxOf(view.selectionStart, view.selectionEnd)
@@ -162,7 +166,7 @@ internal class EditorTextSurfaceInteraction(
         if (event.actionMasked == MotionEvent.ACTION_UP ||
             event.actionMasked == MotionEvent.ACTION_CANCEL
         ) {
-            if (draggingHandle != 0 &&
+            if (event.actionMasked == MotionEvent.ACTION_UP && draggingHandle != 0 &&
                 view.selectionStart != view.selectionEnd
             ) {
                 startSelectionActionMode()
@@ -327,22 +331,31 @@ internal class EditorTextSurfaceInteraction(
         return drawable to Rect(left, top, left + width, top + height)
     }
 
+    fun selectionHandleRoleAt(x: Float, y: Float): TableSelectionHandleRole? =
+        when (hitHandle(x, y)) {
+            1 -> TableSelectionHandleRole.ANCHOR
+            2 -> TableSelectionHandleRole.HEAD
+            else -> null
+        }
+
     private fun hitHandle(x: Float, y: Float): Int {
         if (!handlesVisible) return 0
         val localX = x + view.scrollX - view.totalPaddingLeft
         val localY = y + view.scrollY - view.totalPaddingTop
         val radius = 24f * density
         val offsets = listOf(view.selectionStart, view.selectionEnd)
-        for ((index, offset) in offsets.withIndex()) {
-            val (_, bounds) = handleGeometry(offset) ?: continue
-            if (abs(localX - bounds.exactCenterX()) <= maxOf(radius, bounds.width() / 2f) &&
-                abs(localY - bounds.exactCenterY()) <= maxOf(radius, bounds.height() / 2f)
+        return offsets.mapIndexedNotNull { index, offset ->
+            val (_, bounds) = handleGeometry(offset) ?: return@mapIndexedNotNull null
+            val dx = localX - bounds.exactCenterX()
+            val dy = localY - bounds.exactCenterY()
+            if (abs(dx) <= maxOf(radius, bounds.width() / 2f) &&
+                abs(dy) <= maxOf(radius, bounds.height() / 2f)
             ) {
-                return index +
-                    1
+                index + 1 to dx * dx + dy * dy
+            } else {
+                null
             }
-        }
-        return 0
+        }.minByOrNull { it.second }?.first ?: 0
     }
 
     fun drawHandles(canvas: Canvas) {
@@ -377,11 +390,13 @@ internal class EditorTextSurfaceInteraction(
             null
     }
 
-    private fun startSelectionActionMode() {
-        if (view.selectionActionMode != null) {
-            view.selectionActionMode?.invalidate()
+    internal fun startSelectionActionMode() {
+        val current = view.selectionActionMode
+        if (current?.tag === TextSelectionActionMode) {
+            current.invalidate()
             return
         }
+        current?.finish()
         view.selectionActionMode = view.startActionMode(
             object : ActionMode.Callback2() {
                 override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
@@ -424,7 +439,7 @@ internal class EditorTextSurfaceInteraction(
                     return handled
                 }
                 override fun onDestroyActionMode(mode: ActionMode) {
-                    view.selectionActionMode = null
+                    if (view.selectionActionMode === mode) view.selectionActionMode = null
                 }
                 override fun onGetContentRect(mode: ActionMode, target: View, outRect: Rect) {
                     val layout = view.layout
@@ -462,7 +477,7 @@ internal class EditorTextSurfaceInteraction(
                 }
             },
             ActionMode.TYPE_FLOATING
-        )
+        )?.apply { tag = TextSelectionActionMode }
     }
 
     fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {

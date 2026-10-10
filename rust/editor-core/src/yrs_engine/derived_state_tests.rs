@@ -7,7 +7,7 @@ use crate::schema::presets::tiptap_schema;
 use crate::serialize::{from_prosemirror_json, UnknownTypeMode};
 use crate::yrs_engine::codec::YrsDocumentCodec;
 
-fn initialize_test_document(
+pub(super) fn initialize_test_document(
     schema: &Schema,
     source: serde_json::Value,
 ) -> Option<DerivedStateCache> {
@@ -117,6 +117,7 @@ fn precomputed_document_history_charge_matches_legacy_helper_and_checks_overflow
     let precomputed = history_document_snapshot_retained_bytes_with_precomputed_document_charge(
         charge.source_document_retained_bytes,
         charge.canonical_retained_bytes,
+        state.validation_certificate.depth_counts.len(),
         &state.position_map,
         &state.rendered_text,
         &state.render_blocks,
@@ -130,6 +131,7 @@ fn precomputed_document_history_charge_matches_legacy_helper_and_checks_overflow
         history_document_snapshot_retained_bytes_with_precomputed_document_charge(
             usize::MAX,
             charge.canonical_retained_bytes,
+            state.validation_certificate.depth_counts.len(),
             &state.position_map,
             &state.rendered_text,
             &state.render_blocks,
@@ -347,6 +349,7 @@ fn validated_document_evidence_rejects_every_seal_and_mixed_report_tamper() {
             &schema_fingerprint,
             ValidatedCandidateContext {
                 evidence: &tampered,
+                table_projection: None,
                 canonical_schema: &canonical_schema,
                 fragment_name: "article",
                 engine_epoch: 5,

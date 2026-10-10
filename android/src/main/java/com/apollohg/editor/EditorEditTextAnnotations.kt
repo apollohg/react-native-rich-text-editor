@@ -41,7 +41,7 @@ internal fun EditorEditText.mentionHitAtImpl(x: Float, y: Float): MentionHit? {
         Annotation::class.java
     )
     val mentionAnnotation = annotations.firstOrNull {
-        it.key == "nativeVoidNodeType" && it.value == "mention"
+        it.key == RenderBridge.NATIVE_VOID_NODE_TYPE_ANNOTATION && it.value == "mention"
     } ?: return null
     val docPos = annotations.firstOrNull { it.key == "nativeDocPos" }
         ?.value
@@ -97,7 +97,8 @@ internal fun EditorEditText.accessibleAnnotationsImpl(): List<AccessibleAnnotati
                 text = label
             )
 
-            annotation.key == "nativeVoidNodeType" && annotation.value == "mention" -> {
+            annotation.key == RenderBridge.NATIVE_VOID_NODE_TYPE_ANNOTATION &&
+                annotation.value == "mention" -> {
                 val docPos = annotations.firstOrNull { candidate ->
                     candidate.key == "nativeDocPos" &&
                         spannable.getSpanStart(candidate) == start &&
@@ -136,7 +137,7 @@ internal fun EditorEditText.interactiveAnnotationHitAtImpl(
         Annotation::class.java
     )
     val mentionAnnotation = annotations.firstOrNull {
-        it.key == "nativeVoidNodeType" && it.value == "mention"
+        it.key == RenderBridge.NATIVE_VOID_NODE_TYPE_ANNOTATION && it.value == "mention"
     }
     val annotation = mentionAnnotation ?: annotations.firstOrNull {
         it.key == RenderBridge.NATIVE_LINK_HREF_ANNOTATION && it.value.isNotBlank()

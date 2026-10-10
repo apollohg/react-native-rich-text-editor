@@ -1,10 +1,15 @@
 mod awareness;
+mod block_branch_index;
 mod canonical;
 mod codec;
 mod commands;
 mod compiler;
+#[cfg(test)]
+pub(crate) use compiler::cell_admission_error;
 mod derived_state;
 pub(crate) use derived_state::record_active_state_full_assembly;
+#[cfg(test)]
+pub(crate) use derived_state::take_localized_leaf_text_hashes_for_test;
 mod editing_limits;
 mod engine;
 mod error;
@@ -21,6 +26,7 @@ mod position;
 mod prepared_admission;
 mod snapshot;
 mod update_preflight;
+mod wire_number;
 
 const RAW_STORAGE_WORK_MULTIPLIER: usize = 128;
 
@@ -31,9 +37,15 @@ fn raw_storage_work_limit(limits: &crate::boundary::ResourceLimits) -> usize {
 }
 
 #[allow(unused_imports)]
-pub use awareness::{AwarenessApplied, AwarenessCodec, AwarenessLimits, AwarenessPeer};
+pub use awareness::{
+    decode_relative_cell_rectangle, encode_relative_cell_rectangle, AwarenessApplied,
+    AwarenessCodec, AwarenessLimits, AwarenessPeer, RelativeCellRectangle,
+    AWARENESS_CELL_RECTANGLE_KEY,
+};
+pub(crate) use block_branch_index::BlockBranchIndex;
 pub(crate) use codec::YrsDocumentCodec;
-pub use commands::{CommandPlan, TypedCommand};
+pub(crate) use commands::TableCommandSurface;
+pub use commands::{CommandPlan, MovedTableCells, TableCellDrop, TypedCommand};
 #[allow(unused_imports)]
 pub use editing_limits::{
     EditingLimitOverrides, EditingLimits, HARD_MAX_DERIVED_OUTPUT_BYTES,
@@ -47,16 +59,20 @@ pub use engine::{
 };
 pub use error::{YrsEngineError, YrsEngineResult};
 pub use operation::{
-    Affinity, EditorOffsetKind, HistoryPolicy, OperationError, OperationResult, RenderUpdate,
-    ResolvedPoint, ResolvedSelection, RevisionedPosition, RevisionedRange, SelectionInput,
-    SelectionIntent, StructuralReplacement, TransactionCommit, TypedOperation, TypedTransaction,
-    TypedTransactionResult,
+    Affinity, CellSelectionPoint, EditorOffsetKind, HistoryPolicy, OperationError, OperationResult,
+    RenderUpdate, ResolvedPoint, ResolvedSelection, RevisionedPosition, RevisionedRange,
+    SelectionInput, SelectionIntent, StructuralEdit, StructuralEditBatch, StructuralReplacement,
+    TransactionCommit, TypedOperation, TypedTransaction, TypedTransactionResult,
+    DEFAULT_POSITION_AFFINITY,
 };
 pub use operation::{ReplacementHistory, RootReplacementError};
 pub use origin::{DocumentOrigin, TransactionOrigin};
 pub(crate) use position::editor_offset_to_doc_pos;
 #[allow(unused_imports)]
-pub(crate) use position::{cursor_sticky_index_from_doc_pos, sticky_index_to_doc_pos};
+pub(crate) use position::{
+    cursor_sticky_index_from_doc_pos, relative_selection_resolves, sticky_index_to_doc_pos,
+    surviving_relative_point_to_doc_pos,
+};
 #[allow(unused_imports)]
 pub use position::{
     doc_pos_to_relative_point, relative_point_to_doc_pos, relative_selection_to_selection,
@@ -65,3 +81,16 @@ pub use position::{
 };
 
 pub use snapshot::{DocumentScope, DocumentSnapshot, SNAPSHOT_FORMAT_VERSION};
+
+#[cfg(test)]
+pub(crate) use commands::{
+    structural_edit_batch_for_test, table_action_plan_for_test, TableActionTestRequest,
+};
+
+#[cfg(test)]
+mod block_branch_index_tests;
+
+#[cfg(test)]
+pub(crate) use mutation::{
+    reset_import_lookup_event_count_for_test, take_import_lookup_event_count_for_test,
+};

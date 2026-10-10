@@ -4,6 +4,7 @@ use crate::yrs_engine::canonical::CanonicalArtifact;
 use crate::yrs_engine::derived_state::DerivedStateCache;
 use crate::yrs_engine::{DocumentScope, YrsEngineError};
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn history_local_state(
     state: &DerivedStateCache,
     fragment_name: &str,
@@ -11,10 +12,23 @@ pub(super) fn history_local_state(
     resource_limits: &ResourceLimits,
     editing_limits: &yrs_engine::EditingLimits,
     max_length: Option<u32>,
+    initial_selection: Option<(&yrs_engine::ResolvedSelection, &crate::schema::Schema)>,
     document_snapshot_retained_bytes: Option<
         yrs_engine::derived_state::HistoryDocumentSnapshotRetainedBytes,
     >,
 ) -> yrs_engine::history::HistoryLocalState {
+    let stored_marks = match initial_selection {
+        Some((selection, schema)) => {
+            yrs_engine::derived_state::stored_marks_after_selection_change(
+                state.stored_marks.as_deref(),
+                &state.resolved_selection,
+                selection,
+                &state.document,
+                schema,
+            )
+        }
+        None => state.stored_marks.clone(),
+    };
     let document_snapshot = document_snapshot_retained_bytes.map(|retained_bytes| {
         state.capture_history_document_snapshot(
             resource_limits,
@@ -25,20 +39,24 @@ pub(super) fn history_local_state(
             retained_bytes,
         )
     });
+    let metadata_bytes = history_metadata_bytes(stored_marks.as_deref(), fragment_name)
+        .saturating_add(
+            document_snapshot
+                .as_deref()
+                .map(yrs_engine::derived_state::HistoryDocumentSnapshot::retained_bytes)
+                .unwrap_or(0),
+        );
     yrs_engine::history::HistoryLocalState {
         relative_selection: state.relative_selection.clone(),
         resolved_selection: state.resolved_selection.clone(),
-        stored_marks: state.stored_marks.clone(),
+        stored_marks,
         text_length: state.canonical_artifact.text_scalar_len(),
-        canonical_fingerprint: state.canonical_artifact.sha256(),
+        canonical_fingerprint: yrs_engine::history::HistoryCanonicalIdentity::from_artifact(
+            &state.canonical_artifact,
+            document_snapshot.is_some(),
+        ),
         derived_output_bytes: state.canonical_artifact.serialized_len(),
-        metadata_bytes: history_metadata_bytes(state.stored_marks.as_deref(), fragment_name)
-            .saturating_add(
-                document_snapshot
-                    .as_deref()
-                    .map(yrs_engine::derived_state::HistoryDocumentSnapshot::retained_bytes)
-                    .unwrap_or(0),
-            ),
+        metadata_bytes,
         document_snapshot,
     }
 }
@@ -54,6 +72,7 @@ pub(super) fn history_document_snapshots_fit(
     before: &DerivedStateCache,
     after_document: &crate::model::Document,
     after_canonical_artifact: &CanonicalArtifact,
+    after_validation_depth_slots: Option<usize>,
     after_derivations: &yrs_engine::compiler::CompiledDocumentDerivations,
     after_render_blocks: &crate::render::incremental::CachedRenderBlocks,
     after_stored_marks: Option<&[crate::model::Mark]>,
@@ -62,38 +81,24 @@ pub(super) fn history_document_snapshots_fit(
     scope: Option<&DocumentScope>,
     metadata_limit: usize,
 ) -> Option<HistoryDocumentSnapshotRetainedPair> {
-    history_document_snapshots_fit_with_canonical_charge(
-        before,
-        after_document,
-        after_canonical_artifact.history_snapshot_retained_bytes()?,
-        after_derivations,
-        after_render_blocks,
-        after_stored_marks,
-        schema_fingerprint,
-        fragment_name,
-        scope,
-        metadata_limit,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn history_document_snapshots_fit_with_canonical_charge(
-    before: &DerivedStateCache,
-    after_document: &crate::model::Document,
-    after_canonical_retained_bytes: usize,
-    after_derivations: &yrs_engine::compiler::CompiledDocumentDerivations,
-    after_render_blocks: &crate::render::incremental::CachedRenderBlocks,
-    after_stored_marks: Option<&[crate::model::Mark]>,
-    schema_fingerprint: &str,
-    fragment_name: &str,
-    scope: Option<&DocumentScope>,
-    metadata_limit: usize,
-) -> Option<HistoryDocumentSnapshotRetainedPair> {
-    let after_document_retained_bytes = after_document.history_snapshot_retained_bytes()?;
+    let charge = after_canonical_artifact.history_snapshot_retained_charge()?;
+    let document_retained_bytes =
+        if after_canonical_artifact.matches_exact_source_document(after_document) {
+            charge.source_document_retained_bytes
+        } else {
+            after_document.history_snapshot_retained_bytes()?
+        };
     history_document_snapshots_fit_with_precomputed_after_charge(
         before,
-        after_canonical_retained_bytes,
-        after_document_retained_bytes,
+        charge.canonical_retained_bytes,
+        document_retained_bytes,
+        after_validation_depth_slots.unwrap_or_else(|| {
+            yrs_engine::derived_state::DocumentValidationCertificate::subtree_depth_counts(
+                after_document.root(),
+                crate::transform::DOCUMENT_ROOT_DEPTH,
+            )
+            .len()
+        }),
         after_derivations,
         after_render_blocks,
         after_stored_marks,
@@ -109,6 +114,7 @@ pub(super) fn history_document_snapshots_fit_with_precomputed_after_charge(
     before: &DerivedStateCache,
     after_canonical_retained_bytes: usize,
     after_document_retained_bytes: usize,
+    after_validation_depth_slots: usize,
     after_derivations: &yrs_engine::compiler::CompiledDocumentDerivations,
     after_render_blocks: &crate::render::incremental::CachedRenderBlocks,
     after_stored_marks: Option<&[crate::model::Mark]>,
@@ -117,22 +123,33 @@ pub(super) fn history_document_snapshots_fit_with_precomputed_after_charge(
     scope: Option<&DocumentScope>,
     metadata_limit: usize,
 ) -> Option<HistoryDocumentSnapshotRetainedPair> {
-    let before_retained = yrs_engine::derived_state::history_document_snapshot_retained_bytes(
-        yrs_engine::derived_state::HistoryDocumentSnapshotRetainedInput {
-            document: &before.document,
-            canonical_artifact: &before.canonical_artifact,
-            position_map: &before.position_map,
-            rendered_text: &before.rendered_text,
-            render_blocks: &before.render_blocks,
-            schema_fingerprint,
-            fragment_name,
-            scope,
-        },
+    let before_charge = before
+        .canonical_artifact
+        .history_snapshot_retained_charge()?;
+    let document_charges = before_charge
+        .canonical_retained_bytes
+        .checked_add(before_charge.source_document_retained_bytes)?
+        .checked_add(after_canonical_retained_bytes)?
+        .checked_add(after_document_retained_bytes)?;
+    if document_charges > metadata_limit {
+        return None;
+    }
+    let before_retained = yrs_engine::derived_state::history_document_snapshot_retained_bytes_with_precomputed_document_charge(
+        before_charge.source_document_retained_bytes,
+        before_charge.canonical_retained_bytes,
+        before.validation_certificate.depth_slots(),
+        &before.position_map,
+        &before.rendered_text,
+        &before.render_blocks,
+        schema_fingerprint,
+        fragment_name,
+        scope,
     )?;
     let after_retained =
         yrs_engine::derived_state::history_document_snapshot_retained_bytes_with_precomputed_document_charge(
             after_document_retained_bytes,
             after_canonical_retained_bytes,
+            after_validation_depth_slots,
             &after_derivations.position_map,
             &after_derivations.rendered_text,
             after_render_blocks,
@@ -160,7 +177,10 @@ pub(super) fn history_snapshot_template(
 ) -> yrs_engine::history::HistorySnapshotTemplate {
     history_snapshot_template_from_identity(
         canonical_artifact.text_scalar_len(),
-        canonical_artifact.sha256(),
+        yrs_engine::history::HistoryCanonicalIdentity::from_artifact(
+            canonical_artifact,
+            document_snapshot_retained_bytes.is_some(),
+        ),
         canonical_artifact.serialized_len(),
         stored_marks,
         fragment_name,
@@ -170,7 +190,7 @@ pub(super) fn history_snapshot_template(
 
 pub(super) fn history_snapshot_template_from_identity(
     text_length: u64,
-    canonical_fingerprint: [u8; 32],
+    canonical_fingerprint: yrs_engine::history::HistoryCanonicalIdentity,
     derived_output_bytes: usize,
     stored_marks: Option<&[crate::model::Mark]>,
     fragment_name: &str,
@@ -201,6 +221,7 @@ pub(super) fn history_metadata_bytes(
     // container and recursive capacities rather than serialized logical size.
     const FIXED_SELECTION_BYTES: usize = 512;
     const EMPTY_MARKS_SEQUENCE_BYTES: usize = 2;
+    const PROJECTION_FINGERPRINT_BYTES: usize = std::mem::size_of::<[u8; 32]>();
     let stored_marks = stored_marks.unwrap_or_default();
     let mark_bytes = stored_marks
         .len()
@@ -212,7 +233,8 @@ pub(super) fn history_metadata_bytes(
         })
         .unwrap_or(usize::MAX);
     FIXED_SELECTION_BYTES
-        .checked_add(fragment_name.len())
+        .checked_add(PROJECTION_FINGERPRINT_BYTES)
+        .and_then(|bytes| bytes.checked_add(fragment_name.len()))
         .and_then(|bytes| bytes.checked_add(EMPTY_MARKS_SEQUENCE_BYTES))
         .and_then(|bytes| bytes.checked_add(mark_bytes))
         .unwrap_or(usize::MAX)

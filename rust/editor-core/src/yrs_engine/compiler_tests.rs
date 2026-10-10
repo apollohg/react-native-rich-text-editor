@@ -136,6 +136,7 @@ fn render_parity_schema() -> Schema {
             is_void: true,
             deletable_on_backspace: None,
             allow_undeclared_attrs: true,
+            table_role: None,
         },
         NodeSpec {
             name: "chip".into(),
@@ -149,6 +150,7 @@ fn render_parity_schema() -> Schema {
             is_void: true,
             deletable_on_backspace: None,
             allow_undeclared_attrs: false,
+            table_role: None,
         },
     ]);
     Schema::new(nodes, base.all_marks().cloned().collect())

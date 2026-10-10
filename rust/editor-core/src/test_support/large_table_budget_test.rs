@@ -1,0 +1,324 @@
+use std::time::Instant;
+
+use serde_json::{json, Value};
+
+use super::large_table_fixture::{
+    ffi_empty_editor, ffi_replace_request, ffi_value, fixture_cell_text, keystroke_cell,
+    plain_table_document, session_with_document,
+};
+use crate::ffi_v2::editor as v2;
+use crate::tables::commands::{TableCommand, TableEdge};
+use crate::yrs_engine::observability::{
+    reset_full_pass_counts_for_test, take_full_pass_counts_for_test,
+};
+use crate::yrs_engine::TypedCommand;
+
+const STRUCTURAL_FIXTURE_SIZE: usize = 3;
+const STRUCTURAL_COMMAND_REQUEST_ID: u64 = 2;
+const LEDGER_EPOCH_OWNER: u64 = 7;
+const PROBE_FIXTURES: [(usize, usize); 2] = [(1000, 20), (100, 200)];
+const APPLY_BUDGET_MS: f64 = 0.9;
+const FRAME_BUDGET_MS: f64 = 0.4;
+const COLD_FRAME_BUDGET_MS: f64 = 40.0;
+const IMPORT_BUDGET_MS: f64 = 90.0;
+const PROBE_WARMUP_KEYSTROKES: usize = 5;
+const PROBE_MEASURED_KEYSTROKES: usize = 20;
+const PROBE_KEYSTROKES: usize = PROBE_WARMUP_KEYSTROKES + PROBE_MEASURED_KEYSTROKES;
+const PROBE_OWNER_ID: &str = "41";
+const PROBE_KEYSTROKE_TEXT: &str = "x";
+const PROBE_FIRST_KEYSTROKE_REQUEST_ID: usize = 2;
+const CELL_BOUNDARY_SCALARS: usize = 1;
+const MILLISECONDS_PER_SECOND: f64 = 1_000.0;
+
+#[test]
+fn the_ledger_counts_document_wide_work_on_the_generic_structural_path() {
+    let mut session = session_with_document(&plain_table_document(
+        STRUCTURAL_FIXTURE_SIZE,
+        STRUCTURAL_FIXTURE_SIZE,
+    ));
+    reset_full_pass_counts_for_test();
+
+    let result = session
+        .engine
+        .apply_command(
+            STRUCTURAL_COMMAND_REQUEST_ID,
+            TypedCommand::Table(TableCommand::AddTableRow {
+                side: TableEdge::After,
+            }),
+        )
+        .expect("adding a row after the caret's row plans");
+    assert!(result.is_some(), "adding a row produced no transaction");
+    let passes = take_full_pass_counts_for_test();
+    eprintln!("generic structural path: {passes:#?}");
+    assert_eq!(
+        passes.yrs_tree_walks, 0,
+        "ordinary structural edits must share the lookup traversal for block indexing"
+    );
+    for (kind, count) in [
+        (
+            "table_projection_derivations",
+            passes.table_projection_derivations,
+        ),
+        (
+            "table_command_availability_plans",
+            passes.table_command_availability_plans,
+        ),
+        ("cell_content_keys", passes.cell_content_keys),
+        ("attribute_serializations", passes.attribute_serializations),
+    ] {
+        assert!(
+            count >= 1,
+            "the generic structural path must record {kind}, got {count}"
+        );
+    }
+
+    session
+        .pin_position_epoch(LEDGER_EPOCH_OWNER, session.engine.revision())
+        .expect("the structural result pins an epoch");
+    let pinned = take_full_pass_counts_for_test();
+    let block_count = session
+        .engine
+        .position_map()
+        .expect("the engine is ready")
+        .block_count();
+    assert_eq!(
+        pinned.epoch_block_rebuilds, block_count,
+        "a full pin builds the anchors of every position-map block once: {pinned:#?}"
+    );
+}
+
+fn elapsed_ms(start: Instant) -> f64 {
+    start.elapsed().as_secs_f64() * MILLISECONDS_PER_SECOND
+}
+
+fn median_ms(mut samples: Vec<f64>) -> f64 {
+    samples.sort_by(f64::total_cmp);
+    samples[samples.len() / 2]
+}
+
+fn probe_render(editor_id: &str) -> (Value, f64) {
+    let start = Instant::now();
+    let result = crate::ffi_v2::native_frame::editor_v2_render_native_frame(
+        editor_id.to_owned(),
+        Some(PROBE_OWNER_ID.into()),
+        None,
+        None,
+    );
+    let elapsed = elapsed_ms(start);
+    let frame = result
+        .frame
+        .unwrap_or_else(|| panic!("native frame: {:?}", result.error));
+    (serde_json::from_str(&frame.snapshot_json).unwrap(), elapsed)
+}
+
+fn position_epoch(render: &Value) -> String {
+    render["positionEpoch"]
+        .as_str()
+        .expect("a native render publishes its position epoch")
+        .to_owned()
+}
+
+#[test]
+#[ignore = "release-mode wall-clock probe"]
+fn large_table_keystroke_budget_probe() {
+    let mut violations = Vec::new();
+    for (rows, columns) in PROBE_FIXTURES {
+        let fixture = format!("{rows}x{columns}");
+        let editor_id = ffi_empty_editor();
+        let request = ffi_replace_request(&plain_table_document(rows, columns));
+
+        let start = Instant::now();
+        let replaced = v2::editor_v2_replace_document(editor_id.clone(), request);
+        let import_ms = elapsed_ms(start);
+        ffi_value(&replaced);
+        println!("PROBE {fixture} import {import_ms:.3}");
+        if import_ms > IMPORT_BUDGET_MS {
+            violations.push(format!(
+                "{fixture}: import {import_ms:.3} ms exceeds {IMPORT_BUDGET_MS} ms"
+            ));
+        }
+
+        let (render, first_frame_ms) = probe_render(&editor_id);
+        println!("PROBE {fixture} first_frame {first_frame_ms:.3}");
+        if first_frame_ms > COLD_FRAME_BUDGET_MS {
+            violations.push(format!(
+                "{fixture}: cold frame {first_frame_ms:.3} ms exceeds {COLD_FRAME_BUDGET_MS} ms"
+            ));
+        }
+
+        let cell_scalars = fixture_cell_text(0, 0).chars().count();
+        let content_end =
+            keystroke_cell(rows, columns) * (cell_scalars + CELL_BOUNDARY_SCALARS) + cell_scalars;
+        let mut epoch = position_epoch(&render);
+        let mut apply_samples = Vec::with_capacity(PROBE_MEASURED_KEYSTROKES);
+        let mut frame_samples = Vec::with_capacity(PROBE_MEASURED_KEYSTROKES);
+        for keystroke in 0..PROBE_KEYSTROKES {
+            let caret = content_end + keystroke * PROBE_KEYSTROKE_TEXT.chars().count();
+            let intent = json!({
+                "version": 1,
+                "requestId": (PROBE_FIRST_KEYSTROKE_REQUEST_ID + keystroke).to_string(),
+                "ownerId": PROBE_OWNER_ID,
+                "positionEpoch": epoch,
+                "intent": {
+                    "type": "insertText",
+                    "anchor": caret,
+                    "head": caret,
+                    "text": PROBE_KEYSTROKE_TEXT,
+                },
+            })
+            .to_string();
+            let start = Instant::now();
+            let applied = v2::editor_v2_apply_native_intent(editor_id.clone(), intent);
+            let apply_ms = elapsed_ms(start);
+            ffi_value(&applied);
+            let (render, frame_ms) = probe_render(&editor_id);
+            epoch = position_epoch(&render);
+            if keystroke >= PROBE_WARMUP_KEYSTROKES {
+                apply_samples.push(apply_ms);
+                frame_samples.push(frame_ms);
+            }
+        }
+        let apply_median = median_ms(apply_samples);
+        println!("PROBE {fixture} apply {apply_median:.3}");
+        if apply_median > APPLY_BUDGET_MS {
+            violations.push(format!(
+                "{fixture}: apply median {apply_median:.3} ms exceeds {APPLY_BUDGET_MS} ms"
+            ));
+        }
+        let frame_median = median_ms(frame_samples);
+        println!("PROBE {fixture} frame {frame_median:.3}");
+        if frame_median > FRAME_BUDGET_MS {
+            violations.push(format!(
+                "{fixture}: frame median {frame_median:.3} ms exceeds {FRAME_BUDGET_MS} ms"
+            ));
+        }
+        let cell = keystroke_cell(rows, columns);
+        let (row, column) = (cell / columns, cell % columns);
+        let document = ffi_value(&v2::editor_v2_get_document_json(editor_id.clone()));
+        assert_eq!(
+            document["content"][0]["content"][row]["content"][column]["content"][0]["content"][0]
+                ["text"],
+            format!(
+                "{}{}",
+                fixture_cell_text(row, column),
+                PROBE_KEYSTROKE_TEXT.repeat(PROBE_KEYSTROKES)
+            ),
+            "{fixture}: every probe keystroke lands at the end of the keystroke cell"
+        );
+        assert!(
+            v2::editor_v2_destroy(editor_id).error.is_none(),
+            "the probe editor is destroyed"
+        );
+    }
+    assert!(violations.is_empty(), "{}", violations.join("\n"));
+}
+
+#[test]
+#[ignore = "release-mode wall-clock probe"]
+fn viewer_compile_budget_probe() {
+    const VIEWER_PROBE_SAMPLES: usize = 10;
+    const VIEWER_COMPILE_BUDGET_MS: f64 = 75.0;
+    let mut results = Vec::new();
+    for (rows, columns) in PROBE_FIXTURES {
+        let source = plain_table_document(rows, columns).to_string();
+        let config_json = json!({
+            "schema": crate::tables::tests::tabled_schema_json(crate::tables::tests::PROSEMIRROR_TABLE_NAMES),
+            "initialization": {"type":"localEmpty"}
+        }).to_string();
+        let mut samples = Vec::with_capacity(VIEWER_PROBE_SAMPLES);
+        for _ in 0..VIEWER_PROBE_SAMPLES {
+            let request = crate::viewer::FfiViewerCompileRequest {
+                source_kind: crate::viewer::FfiViewerSourceKind::Json,
+                source: source.clone(),
+                config_json: config_json.clone(),
+                images_enabled: true,
+                mention_prefix: None,
+            };
+            let start = Instant::now();
+            let result = crate::viewer::viewer_compile(request);
+            samples.push(elapsed_ms(start));
+            assert!(
+                result.error.is_none(),
+                "{rows}x{columns}: {:?}",
+                result.error
+            );
+            assert!(result.value.is_some(), "compile returns a document");
+        }
+        let median = median_ms(samples);
+        println!("PROBE viewer {rows}x{columns} median {median:.3} ms, budget {VIEWER_COMPILE_BUDGET_MS}");
+        results.push(median);
+    }
+    assert!(
+        results
+            .iter()
+            .all(|median| *median <= VIEWER_COMPILE_BUDGET_MS),
+        "viewer medians exceed budget: {results:?}"
+    );
+}
+
+const COLD_EPOCH_BUDGET_MS: f64 = 25.0;
+
+#[test]
+#[ignore = "release-mode wall-clock probe"]
+fn cold_position_epoch_budget_probe() {
+    let mut violations = Vec::new();
+    for (rows, columns) in PROBE_FIXTURES {
+        let mut session = session_with_document(&plain_table_document(rows, columns));
+        let start = Instant::now();
+        session
+            .pin_position_epoch(LEDGER_EPOCH_OWNER, session.engine.revision())
+            .expect("cold epoch pins");
+        let elapsed = elapsed_ms(start);
+        println!(
+            "PROBE epoch {rows}x{columns} cold {elapsed:.3} ms, budget {COLD_EPOCH_BUDGET_MS}"
+        );
+        if elapsed > COLD_EPOCH_BUDGET_MS {
+            violations.push(format!(
+                "{rows}x{columns}: cold epoch {elapsed:.3} ms exceeds {COLD_EPOCH_BUDGET_MS} ms"
+            ));
+        }
+    }
+    assert!(violations.is_empty(), "{}", violations.join("\n"));
+}
+
+const KEYSTROKE_EPOCH_BUDGET_MS: f64 = 0.2;
+
+#[test]
+#[ignore = "release-mode wall-clock probe"]
+fn incremental_position_epoch_budget_probe() {
+    let mut violations = Vec::new();
+    for (rows, columns) in PROBE_FIXTURES {
+        let mut session = session_with_document(&plain_table_document(rows, columns));
+        let block = keystroke_cell(rows, columns);
+        let mut epoch = session
+            .pin_position_epoch(LEDGER_EPOCH_OWNER, session.engine.revision())
+            .unwrap();
+        let mut samples = Vec::with_capacity(PROBE_MEASURED_KEYSTROKES);
+        for keystroke in 0..PROBE_KEYSTROKES {
+            let map = session.engine.position_map().unwrap();
+            let caret = map.effective_scalar_start(block) + map.block(block).unwrap().scalar_len;
+            let request = json!({
+                "version": 1, "requestId": (PROBE_FIRST_KEYSTROKE_REQUEST_ID + keystroke).to_string(),
+                "ownerId": LEDGER_EPOCH_OWNER.to_string(), "positionEpoch": epoch.to_string(),
+                "intent": {"type":"insertText", "anchor":caret, "head":caret, "text":PROBE_KEYSTROKE_TEXT}
+            });
+            crate::native_transaction_bridge::NativeTransactionBridge::new(&mut session)
+                .submit_native_intent(&request.to_string())
+                .unwrap();
+            let start = Instant::now();
+            epoch = session
+                .pin_position_epoch(LEDGER_EPOCH_OWNER, session.engine.revision())
+                .unwrap();
+            let elapsed = elapsed_ms(start);
+            if keystroke >= PROBE_WARMUP_KEYSTROKES {
+                samples.push(elapsed);
+            }
+        }
+        let median = median_ms(samples);
+        println!("PROBE epoch {rows}x{columns} keystroke median {median:.3} ms, budget {KEYSTROKE_EPOCH_BUDGET_MS}");
+        if median > KEYSTROKE_EPOCH_BUDGET_MS {
+            violations.push(format!("{rows}x{columns}: keystroke epoch {median:.3} ms exceeds {KEYSTROKE_EPOCH_BUDGET_MS} ms"));
+        }
+    }
+    assert!(violations.is_empty(), "{}", violations.join("\n"));
+}

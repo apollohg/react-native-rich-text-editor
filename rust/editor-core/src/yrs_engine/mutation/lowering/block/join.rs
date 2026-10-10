@@ -226,7 +226,9 @@ impl MutationCompiler {
                     StorageChildKind::Text { target, .. } => {
                         Some(AsRef::<Branch>::as_ref(target).id())
                     }
-                    StorageChildKind::Element { .. } | StorageChildKind::PreparedElement => None,
+                    StorageChildKind::Element { .. }
+                    | StorageChildKind::PreparedElement
+                    | StorageChildKind::PreparedChild { .. } => None,
                 });
             let right_index = self.targets.iter().position(|candidate| {
                 matches!(

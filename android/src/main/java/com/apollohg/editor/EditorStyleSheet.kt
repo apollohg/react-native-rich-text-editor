@@ -77,6 +77,16 @@ class EditorStyleSheet private constructor(
     val styles: Map<String, EditorElementStyle>,
     private val rules: List<EditorStyleRule> = emptyList()
 ) {
+    /** Stable private serialization for prepared-layout eligibility. */
+    internal fun shapingDigest(): String = buildString {
+        styles.toSortedMap().forEach { (name, style) ->
+            append(name).append('=').append(style).append(';')
+        }
+        rules.forEach { rule ->
+            append(rule.path.joinToString(">"))
+                .append('=').append(canonicalJson(rule.style)).append(';')
+        }
+    }
     operator fun get(element: String): EditorElementStyle? = styles[canonicalElement(element)]
 
     fun resolveElement(
@@ -153,6 +163,25 @@ class EditorStyleSheet private constructor(
         }
     }
 
+    private fun canonicalJson(value: JSONObject): String =
+        value.keys().asSequence().toList().sorted().joinToString(
+            prefix = "{",
+            postfix = "}"
+        ) { key -> "$key:${canonicalJsonValue(value.get(key))}" }
+
+    private fun canonicalJsonValue(value: Any?): String = when (value) {
+        is JSONObject -> canonicalJson(value)
+
+        is org.json.JSONArray -> (0 until value.length()).joinToString(
+            prefix = "[",
+            postfix = "]"
+        ) {
+            canonicalJsonValue(value.get(it))
+        }
+
+        else -> value.toString()
+    }
+
     companion object {
         internal fun decodeTheme(root: JSONObject): EditorTheme? {
             if ((root.opt("version") as? Number)?.toDouble() != 1.0 ||
@@ -212,7 +241,8 @@ class EditorStyleSheet private constructor(
                     content.bottom,
                     content.left
                 ),
-                styleSheet = sheet
+                styleSheet = sheet,
+                table = com.apollohg.editor.tables.TableStyle.fromJson(root.optJSONObject("table"))
             )
         }
 

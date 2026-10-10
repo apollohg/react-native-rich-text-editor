@@ -305,6 +305,7 @@ impl ExecutionSemanticAdmission {
 pub(crate) struct DeferredCommandHistoryEvidence {
     pub(crate) candidate_derivations: super::compiler::CompiledDocumentDerivations,
     pub(crate) canonical_fingerprint: [u8; 32],
+    pub(crate) canonical_projection_fingerprint: [u8; 32],
     pub(crate) canonical_serialized_len: usize,
     pub(crate) canonical_text_scalar_len: u64,
     pub(crate) canonical_retained_bytes: usize,

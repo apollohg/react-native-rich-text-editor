@@ -72,6 +72,45 @@ struct PositionEnvelope {
 }
 
 #[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CellPositionEnvelope {
+    offset: u32,
+    kind: CellOffsetKindEnvelope,
+    #[serde(default)]
+    affinity: Option<AffinityEnvelope>,
+}
+
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum CellOffsetKindEnvelope {
+    Scalar,
+    Utf16,
+    Document,
+}
+
+impl From<CellPositionEnvelope> for crate::yrs_engine::CellSelectionPoint {
+    fn from(position: CellPositionEnvelope) -> Self {
+        let affinity = position_affinity(position.affinity);
+        match position.kind {
+            CellOffsetKindEnvelope::Scalar => Self::Editor(RevisionedPosition {
+                offset: position.offset,
+                kind: EditorOffsetKind::Scalar,
+                affinity,
+            }),
+            CellOffsetKindEnvelope::Utf16 => Self::Editor(RevisionedPosition {
+                offset: position.offset,
+                kind: EditorOffsetKind::Utf16,
+                affinity,
+            }),
+            CellOffsetKindEnvelope::Document => Self::Document {
+                opening: position.offset,
+                affinity,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 enum OffsetKindEnvelope {
     Scalar,
@@ -83,6 +122,40 @@ enum OffsetKindEnvelope {
 enum AffinityEnvelope {
     Before,
     After,
+}
+
+fn position_affinity(affinity: Option<AffinityEnvelope>) -> Affinity {
+    match affinity {
+        Some(AffinityEnvelope::Before) => Affinity::Before,
+        Some(AffinityEnvelope::After) => Affinity::After,
+        None => DEFAULT_POSITION_AFFINITY,
+    }
+}
+
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct MovedCellsEnvelope {
+    anchor_cell: u32,
+    head_cell: u32,
+}
+
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CellDropEnvelope {
+    target_cell: u32,
+    moved_cells: Option<MovedCellsEnvelope>,
+}
+
+impl From<CellDropEnvelope> for TableCellDrop {
+    fn from(drop: CellDropEnvelope) -> Self {
+        Self {
+            target_cell: drop.target_cell,
+            moved_cells: drop.moved_cells.map(|moved| MovedTableCells {
+                anchor_cell: moved.anchor_cell,
+                head_cell: moved.head_cell,
+            }),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, serde::Deserialize)]
@@ -100,11 +173,7 @@ impl From<PositionEnvelope> for RevisionedPosition {
                 OffsetKindEnvelope::Scalar => EditorOffsetKind::Scalar,
                 OffsetKindEnvelope::Utf16 => EditorOffsetKind::Utf16,
             },
-            affinity: match position.affinity {
-                Some(AffinityEnvelope::Before) => Affinity::Before,
-                Some(AffinityEnvelope::After) => Affinity::After,
-                None => DEFAULT_POSITION_AFFINITY,
-            },
+            affinity: position_affinity(position.affinity),
         }
     }
 }
@@ -138,6 +207,8 @@ enum CommandEnvelope {
         text: Option<String>,
         #[serde(default, rename = "plainText")]
         plain_text: bool,
+        #[serde(default, rename = "cellDrop")]
+        cell_drop: Option<CellDropEnvelope>,
     },
     SplitBlock,
     DeleteAndSplit,
@@ -199,6 +270,148 @@ enum CommandEnvelope {
         range: RangeEnvelope,
         at: PositionEnvelope,
     },
+    InsertTable {
+        #[serde(default, deserialize_with = "deserialize_optional_table_dimension")]
+        rows: Option<u32>,
+        #[serde(default, deserialize_with = "deserialize_optional_table_dimension")]
+        columns: Option<u32>,
+        #[serde(default, rename = "withHeaderRow")]
+        with_header_row: Option<bool>,
+    },
+    DeleteTable {
+        #[serde(
+            default,
+            rename = "tablePos",
+            deserialize_with = "deserialize_explicit_unsigned"
+        )]
+        table_pos: Option<u32>,
+    },
+    AddTableRow {
+        side: TableEdgeEnvelope,
+    },
+    DeleteTableRows,
+    AddTableColumn {
+        side: TableEdgeEnvelope,
+    },
+    DeleteTableColumns,
+    ToggleTableHeader {
+        target: TableHeaderTargetEnvelope,
+    },
+    SelectTableRows,
+    SelectTableColumns,
+    ClearTableCells,
+    MergeTableCells,
+    SplitTableCell,
+    SetTableColumnWidth {
+        #[serde(deserialize_with = "deserialize_table_column_width")]
+        width: u32,
+        #[serde(default, deserialize_with = "deserialize_explicit_unsigned")]
+        column: Option<u32>,
+        #[serde(
+            default,
+            rename = "tablePos",
+            deserialize_with = "deserialize_explicit_unsigned"
+        )]
+        table_pos: Option<u32>,
+    },
+    MoveToAdjacentCell {
+        step: CellStepEnvelope,
+        #[serde(default, rename = "appendRow")]
+        append_row: Option<bool>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum CellStepEnvelope {
+    Forward,
+    Backward,
+}
+
+impl From<CellStepEnvelope> for CellStep {
+    fn from(step: CellStepEnvelope) -> Self {
+        match step {
+            CellStepEnvelope::Forward => Self::Forward,
+            CellStepEnvelope::Backward => Self::Backward,
+        }
+    }
+}
+
+fn deserialize_table_column_width<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let width = <u32 as serde::Deserialize>::deserialize(deserializer)?;
+    if (MIN_TABLE_COLUMN_WIDTH..=MAX_TABLE_COLUMN_WIDTH).contains(&width) {
+        return Ok(width);
+    }
+    Err(serde::de::Error::custom(format!(
+        "table column width {width} is outside \
+         {MIN_TABLE_COLUMN_WIDTH}..={MAX_TABLE_COLUMN_WIDTH}"
+    )))
+}
+
+fn deserialize_explicit_unsigned<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    <u32 as serde::Deserialize>::deserialize(deserializer).map(Some)
+}
+
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum TableEdgeEnvelope {
+    Before,
+    After,
+}
+
+impl From<TableEdgeEnvelope> for TableEdge {
+    fn from(side: TableEdgeEnvelope) -> Self {
+        match side {
+            TableEdgeEnvelope::Before => Self::Before,
+            TableEdgeEnvelope::After => Self::After,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum TableHeaderTargetEnvelope {
+    Row,
+    Column,
+    Cell,
+}
+
+impl From<TableHeaderTargetEnvelope> for TableHeaderTarget {
+    fn from(target: TableHeaderTargetEnvelope) -> Self {
+        match target {
+            TableHeaderTargetEnvelope::Row => Self::Row,
+            TableHeaderTargetEnvelope::Column => Self::Column,
+            TableHeaderTargetEnvelope::Cell => Self::Cell,
+        }
+    }
+}
+
+fn deserialize_optional_table_dimension<'de, D>(
+    deserializer: D,
+) -> Result<Option<u32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = <Option<u32> as serde::Deserialize>::deserialize(deserializer)?;
+    match value {
+        None => Ok(None),
+        Some(dimension)
+            if (MIN_INSERTED_TABLE_DIMENSION..=MAX_INSERTED_TABLE_DIMENSION)
+                .contains(&dimension) =>
+        {
+            Ok(Some(dimension))
+        }
+        Some(dimension) => Err(serde::de::Error::custom(format!(
+            "table dimension {dimension} is outside \
+             {MIN_INSERTED_TABLE_DIMENSION}..={MAX_INSERTED_TABLE_DIMENSION}"
+        ))),
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -288,6 +501,7 @@ impl From<CommandEnvelope> for TypedCommand {
                 html,
                 text,
                 plain_text,
+                cell_drop,
             } => Self::Paste {
                 fragment,
                 html,
@@ -295,6 +509,7 @@ impl From<CommandEnvelope> for TypedCommand {
                 plain_text,
                 allow_base64_images: false,
                 input_filter: None,
+                cell_drop: cell_drop.map(TableCellDrop::from),
             },
             CommandEnvelope::SplitBlock => Self::SplitBlock,
             CommandEnvelope::DeleteAndSplit => Self::DeleteAndSplit,
@@ -331,6 +546,51 @@ impl From<CommandEnvelope> for TypedCommand {
                 range: range.into(),
                 at: at.into(),
             },
+            CommandEnvelope::InsertTable {
+                rows,
+                columns,
+                with_header_row,
+            } => Self::Table(TableCommand::InsertTable {
+                rows: rows.unwrap_or(DEFAULT_INSERTED_TABLE_ROWS),
+                columns: columns.unwrap_or(DEFAULT_INSERTED_TABLE_COLUMNS),
+                with_header_row: with_header_row.unwrap_or(DEFAULT_INSERTED_TABLE_HEADER_ROW),
+            }),
+            CommandEnvelope::DeleteTable { table_pos } => {
+                Self::Table(TableCommand::DeleteTable { table_pos })
+            }
+            CommandEnvelope::AddTableRow { side } => Self::Table(TableCommand::AddTableRow {
+                side: side.into(),
+            }),
+            CommandEnvelope::DeleteTableRows => Self::Table(TableCommand::DeleteTableRows),
+            CommandEnvelope::AddTableColumn { side } => Self::Table(TableCommand::AddTableColumn {
+                side: side.into(),
+            }),
+            CommandEnvelope::DeleteTableColumns => Self::Table(TableCommand::DeleteTableColumns),
+            CommandEnvelope::ToggleTableHeader { target } => {
+                Self::Table(TableCommand::ToggleTableHeader {
+                    target: target.into(),
+                })
+            }
+            CommandEnvelope::SelectTableRows => Self::Table(TableCommand::SelectTableRows),
+            CommandEnvelope::SelectTableColumns => Self::Table(TableCommand::SelectTableColumns),
+            CommandEnvelope::ClearTableCells => Self::Table(TableCommand::ClearTableCells),
+            CommandEnvelope::MergeTableCells => Self::Table(TableCommand::MergeTableCells),
+            CommandEnvelope::SplitTableCell => Self::Table(TableCommand::SplitTableCell),
+            CommandEnvelope::SetTableColumnWidth {
+                width,
+                column,
+                table_pos,
+            } => Self::Table(TableCommand::SetTableColumnWidth {
+                width,
+                column,
+                table_pos,
+            }),
+            CommandEnvelope::MoveToAdjacentCell { step, append_row } => {
+                Self::Table(TableCommand::MoveToAdjacentCell {
+                    step: step.into(),
+                    append_row: append_row.unwrap_or(DEFAULT_TAB_APPENDS_A_ROW),
+                })
+            }
         }
     }
 }
@@ -344,6 +604,12 @@ enum SelectionEnvelope {
     },
     Node {
         at: PositionEnvelope,
+    },
+    Cell {
+        #[serde(rename = "anchorCell")]
+        anchor_cell: CellPositionEnvelope,
+        #[serde(rename = "headCell")]
+        head_cell: CellPositionEnvelope,
     },
     Atom {
         #[serde(rename = "docPos")]
@@ -369,6 +635,13 @@ impl From<SelectionEnvelope> for SelectionInput {
                 head: head.into(),
             },
             SelectionEnvelope::Node { at } => Self::Node { at: at.into() },
+            SelectionEnvelope::Cell {
+                anchor_cell,
+                head_cell,
+            } => Self::Cell {
+                anchor: anchor_cell.into(),
+                head: head_cell.into(),
+            },
             SelectionEnvelope::All => Self::All,
             SelectionEnvelope::Atom { .. } => {
                 unreachable!("atom selections require document mapping")

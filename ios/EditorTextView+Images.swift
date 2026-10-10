@@ -69,7 +69,8 @@ extension EditorTextView {
             return false
         }
 
-        let scalar = PositionBridge.utf16OffsetToScalar(paragraphStart, in: self)
+        let localScalar = PositionBridge.utf16OffsetToScalar(paragraphStart, in: self)
+        guard let scalar = inputScalar(atLocalScalar: localScalar) else { return false }
         performInterceptedInput {
             toggleTaskItemCheckedAtSelectionScalarInRust(anchor: scalar, head: scalar)
         }
@@ -97,22 +98,27 @@ extension EditorTextView {
     }
 
     private func scheduleDeferredImageSelection(for range: NSRange) {
+        guard range.location < textStorage.length,
+              let attachment = textStorage.attribute(.attachment, at: range.location, effectiveRange: nil) as? NSTextAttachment else { return }
         pendingDeferredImageSelectionRange = range
         pendingDeferredImageSelectionGeneration &+= 1
         let generation = pendingDeferredImageSelectionGeneration
-        DispatchQueue.main.async { [weak self] in
-            self?.applyDeferredImageSelectionIfNeeded(generation: generation)
+        DispatchQueue.main.async { [weak self, weak attachment] in
+            guard let attachment else { return }
+            self?.applyDeferredImageSelectionIfNeeded(generation: generation, attachment: attachment)
         }
     }
 
-    private func applyDeferredImageSelectionIfNeeded(generation: UInt64) {
+    private func applyDeferredImageSelectionIfNeeded(generation: UInt64, attachment: NSTextAttachment) {
         guard pendingDeferredImageSelectionGeneration == generation,
               let pendingRange = pendingDeferredImageSelectionRange
         else {
             return
         }
         pendingDeferredImageSelectionRange = nil
-        guard selectedUtf16Range() != pendingRange else { return }
+        guard selectedUtf16Range() != pendingRange,
+              NSMaxRange(pendingRange) <= textStorage.length,
+              textStorage.attribute(.attachment, at: pendingRange.location, effectiveRange: nil) as? NSTextAttachment === attachment else { return }
         _ = selectImageAttachment(range: pendingRange)
     }
 
@@ -189,8 +195,8 @@ extension EditorTextView {
             )
             guard glyphRange.length > 0 else { return }
             var rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
-            rect.origin.x += textContainerInset.left - contentOffset.x
-            rect.origin.y += textContainerInset.top - contentOffset.y
+            rect.origin.x += textContainerInset.left
+            rect.origin.y += textContainerInset.top
             if rect.contains(location) {
                 resolvedRange = range
                 stop.pointee = true
@@ -215,7 +221,9 @@ extension EditorTextView {
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         if gestureRecognizer === caretPlacementTapRecognizer {
-            return touch.tapCount == 1 && canPlaceCaret(at: touch.location(in: self))
+            if let input = self as? TableCellInputTextView,
+               input.selectionHandleRole(at: touch.location(in: self)) != nil { return false }
+            return !isDecelerating && touch.tapCount == 1 && canPlaceCaret(at: touch.location(in: self))
         }
         guard gestureRecognizer === imageSelectionTapRecognizer,
               touch.tapCount == 1

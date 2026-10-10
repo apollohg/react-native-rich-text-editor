@@ -121,7 +121,7 @@ fn apply_split_block(
 
 /// Split a parent node's children at the given content offset into two vecs.
 /// Text nodes straddling the split point are themselves split.
-fn split_children_at(parent: &Node, offset: u32) -> (Vec<Node>, Vec<Node>) {
+pub(crate) fn split_children_at(parent: &Node, offset: u32) -> (Vec<Node>, Vec<Node>) {
     let content = match parent.content() {
         Some(c) => c,
         None => return (vec![], vec![]),

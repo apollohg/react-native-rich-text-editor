@@ -40,11 +40,15 @@ folly::dynamic toDynamic(const PreparedProseViewerProps& props) {
 folly::dynamic toState(
     uint64_t attachmentRevision,
     uint64_t nativeFontRevision,
+    uint64_t tableGeometryRevision,
+    int32_t tableGeometryPolicy,
     double nativeFontScale,
     uint64_t leaseHandle) {
   return folly::dynamic::object
       ("attachmentRevision", static_cast<int64_t>(attachmentRevision))
       ("nativeFontRevision", static_cast<int64_t>(nativeFontRevision))
+      ("tableGeometryRevision", static_cast<int64_t>(tableGeometryRevision))
+      ("tableGeometryPolicy", tableGeometryPolicy)
       ("nativeFontScale", nativeFontScale)
       ("leaseHandle", std::to_string(static_cast<int64_t>(leaseHandle)));
 }
@@ -176,6 +180,8 @@ Size PreparedProseMeasurementsManager::measure(
     Float /*pointScaleFactor*/,
     uint64_t attachmentRevision,
     uint64_t nativeFontRevision,
+    uint64_t tableGeometryRevision,
+    int32_t tableGeometryPolicy,
     double nativeFontScale,
     int32_t /*userInterfaceStyle*/,
     int32_t /*accessibilityContrast*/,
@@ -213,6 +219,8 @@ Size PreparedProseMeasurementsManager::measure(
     auto stateDynamic = toState(
         attachmentRevision,
         nativeFontRevision,
+        tableGeometryRevision,
+        tableGeometryPolicy,
         nativeFontScale,
         leaseHandle);
     const auto localDataNative = ReadableNativeMap::newObjectCxxArgs(localData);
@@ -262,6 +270,8 @@ void PreparedProseMeasurementsManager::prepareFinalLayout(
     Float pointScaleFactor,
     uint64_t attachmentRevision,
     uint64_t nativeFontRevision,
+    uint64_t tableGeometryRevision,
+    int32_t tableGeometryPolicy,
     double nativeFontScale,
     int32_t /*userInterfaceStyle*/,
     int32_t /*accessibilityContrast*/,
@@ -296,6 +306,8 @@ void PreparedProseMeasurementsManager::prepareFinalLayout(
     auto stateDynamic = toState(
         attachmentRevision,
         nativeFontRevision,
+        tableGeometryRevision,
+        tableGeometryPolicy,
         nativeFontScale,
         leaseHandle);
     const auto localDataNative = ReadableNativeMap::newObjectCxxArgs(localData);

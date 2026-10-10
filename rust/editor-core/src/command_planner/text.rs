@@ -228,7 +228,9 @@ pub(crate) fn plan_delete_backward(
             false,
         );
     }
-    let cursor = selection.from(document);
+    let Some(cursor) = selection.from(document) else {
+        return Ok(None);
+    };
     if let Some(plan) = super::plan_empty_split_action(document, schema, cursor) {
         return Ok(Some(plan));
     }
@@ -277,6 +279,12 @@ fn plan_delete_scalar_range_impl(
 ) -> Result<Option<SemanticCommandPlan>, ()> {
     let doc_from = position_map.scalar_to_doc(scalar_from, document);
     let doc_to = position_map.scalar_to_doc(scalar_to, document);
+    if scalar_from < scalar_to {
+        if let Some(plan) = super::clear_selected_block_content(document, schema, doc_from, doc_to)
+        {
+            return Ok(Some(plan));
+        }
+    }
     if let Some(pos) = super::empty_list_unwrap_pos(
         document,
         position_map,
@@ -553,12 +561,19 @@ pub(crate) fn apply_operations(
     schema: &Schema,
     operations: &[SemanticOperation],
 ) -> Result<Document, ()> {
+    apply_operations_mapped(document, schema, operations).map(|(document, _)| document)
+}
+
+pub(crate) fn apply_operations_mapped(
+    document: &Document,
+    schema: &Schema,
+    operations: &[SemanticOperation],
+) -> Result<(Document, crate::transform::StepMap), ()> {
     let mut transaction = Transaction::new();
     for operation in operations {
         transaction.add_step(operation.as_step());
     }
     transaction
         .apply_steps_unchecked(document, schema)
-        .map(|(document, _)| document)
         .map_err(|_| ())
 }

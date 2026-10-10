@@ -48,7 +48,9 @@ extension RichTextEditorViewTests {
         } else {
             XCTAssertEqual(toolbar.chromeBorderWidthForTesting, 1 / UIScreen.main.scale, accuracy: 0.1)
         }
-        XCTAssertEqual(toolbar.intrinsicContentSize.height, 50, accuracy: 0.1)
+        let minimumNativeRowHeight: CGFloat = 50
+        let verticalContentPadding: CGFloat = 12
+        XCTAssertEqual(toolbar.intrinsicContentSize.height, minimumNativeRowHeight + verticalContentPadding, accuracy: 0.1)
     }
 
     func testAccessoryToolbarAppliesSelectedStateForActiveNativeButton() {

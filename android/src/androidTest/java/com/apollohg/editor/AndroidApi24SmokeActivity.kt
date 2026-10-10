@@ -48,8 +48,14 @@ class AndroidApi24SmokeActivity : Activity() {
         val inputConnection = requireNotNull(editor.onCreateInputConnection(EditorInfo()))
         check(inputConnection.commitText("x", 1))
         check(editor.text?.toString() == "x")
-        check(inputConnection.deleteSurroundingText(1, 0))
-        check(editor.text?.isEmpty() == true)
+        check(
+            requireNotNull(editor.onCreateInputConnection(EditorInfo())).deleteSurroundingText(1, 0)
+        )
+        check(editor.text?.isEmpty() == true) {
+            "delete retained '${editor.text}' at " +
+                "${editor.selectionStart}..${editor.selectionEnd}: " +
+                editor.imeTraceSnapshotForTesting().joinToString("\n")
+        }
         editor.draw(Canvas(Bitmap.createBitmap(320, 96, Bitmap.Config.ARGB_8888)))
 
         runViewerAccessibilityAssertions()

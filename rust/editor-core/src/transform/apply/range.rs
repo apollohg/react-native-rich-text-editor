@@ -80,7 +80,7 @@ fn insert_node_in_children(parent: &Node, offset: u32, insert_node: &Node) -> Ve
 }
 
 fn apply_replace_range(
-    doc: &Document,
+    doc: std::borrow::Cow<'_, Document>,
     from: u32,
     to: u32,
     content: &Fragment,
@@ -95,7 +95,7 @@ fn apply_replace_range(
     let resolved_from = doc.resolve(from).map_err(TransformError::OutOfBounds)?;
 
     if from == to && content.size() == 0 {
-        return Ok((doc.clone(), StepMap::empty()));
+        return Ok((doc.into_owned(), StepMap::empty()));
     }
 
     if from != to {
@@ -103,7 +103,7 @@ fn apply_replace_range(
 
         if resolved_from.node_path != resolved_to.node_path {
             return apply_cross_parent_replace(
-                doc,
+                &doc,
                 from,
                 to,
                 content,
@@ -113,7 +113,7 @@ fn apply_replace_range(
         }
     }
 
-    let parent = resolved_from.parent(doc);
+    let parent = resolved_from.parent(&doc);
     let from_offset = resolved_from.parent_offset;
     let deleted_len = to - from;
     let to_offset = from_offset + deleted_len;
@@ -139,8 +139,16 @@ fn apply_replace_range(
     };
 
     let new_parent = rebuild_element(parent, after_insert);
-    let new_root = replace_node_at_path(doc.root(), &resolved_from.node_path, &new_parent);
-    let new_doc = Document::new(new_root);
+    let new_doc = match doc {
+        std::borrow::Cow::Borrowed(doc) => Document::new(replace_node_at_path(
+            doc.root(),
+            &resolved_from.node_path,
+            &new_parent,
+        )),
+        std::borrow::Cow::Owned(doc) => {
+            doc.replace_node_at_path(&resolved_from.node_path, new_parent)
+        }
+    };
 
     let inserted_size = content.size();
     let map = StepMap::from_replace(from, deleted_len, inserted_size);

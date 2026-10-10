@@ -8,6 +8,7 @@ use crate::boundary::ResourceLimits;
 use crate::model::Document;
 use crate::schema::Schema;
 use crate::serialize::{from_prosemirror_json_with_limits, to_prosemirror_json, UnknownTypeMode};
+use crate::tables::admission::admit_table_shapes;
 use crate::transform::DocumentValidator;
 use crate::yrs_engine;
 use crate::yrs_engine::canonical::{CanonicalArtifact, CanonicalSchemaContext};
@@ -31,6 +32,7 @@ pub(super) enum EngineDocumentState {
 
 pub(super) struct CandidateDocument {
     pub(super) doc: Doc,
+    pub(super) encoded_state_bytes: usize,
     pub(super) state: EngineDocumentState,
     pub(super) durable_client_ids: HashSet<u64>,
     pub(super) validated_import: Option<RootBoundValidationReport>,
@@ -97,6 +99,7 @@ impl YrsDocumentEngine {
         // collection failed, stay conservative and preserve the ordinary
         // receipt/fallback path; a zero-target payload is positive evidence
         // that a private replica cannot accelerate the first mutation.
+        let encoded_state_bytes = encoded_state.len();
         let import_acceleration_eligible = carry_import_encoded_state_receipt
             && lookup_materialization
                 .as_ref()
@@ -120,6 +123,7 @@ impl YrsDocumentEngine {
         };
         let durable_client_ids = HashSet::from([doc.client_id().get()]);
         Ok(CandidateDocument {
+            encoded_state_bytes,
             doc,
             state: EngineDocumentState::Ready {
                 document: source_document,
@@ -137,6 +141,7 @@ impl YrsDocumentEngine {
         candidate: CandidateDocument,
         origin: TransactionOrigin,
     ) -> YrsEngineResult<EngineCommit> {
+        self.canonical_splice_cache = None;
         admit_candidate_derived_output(&candidate, &self.editing_limits)?;
         admit_candidate_max_length(&candidate, self.max_length)?;
         let candidate_document = match &candidate.state {
@@ -312,7 +317,9 @@ impl YrsDocumentEngine {
         );
         self.derived_state = next_derived_state;
         self.durable_client_ids = candidate.durable_client_ids;
+        self.encoded_state_upper_bound = candidate.encoded_state_bytes;
         self.revision = next_revision;
+        self.record_document_change(super::DocumentChangeScope::Document);
         self.state_revision = next_state_revision;
         self.yrs_state_epoch = next_yrs_state_epoch;
         self.last_committed_origin = Some(origin);
@@ -379,6 +386,10 @@ pub(super) fn build_derived_state_for_candidate(
             schema_fingerprint,
             ValidatedCandidateContext {
                 evidence,
+                table_projection: candidate
+                    .validated_import
+                    .as_ref()
+                    .and_then(|validation| validation.table_projection.as_ref()),
                 canonical_schema,
                 fragment_name,
                 engine_epoch,
@@ -528,13 +539,15 @@ pub(super) fn build_local_empty_candidate(
     )
     .map_err(|error| YrsEngineError::parse("CODEC_INVARIANT_FAILED", error))?;
     DocumentValidator::validate(&document, schema, resource_limits)?;
+    admit_table_shapes(&document, schema, resource_limits)?;
     let canonical_artifact = canonical_schema
         .derive(&document)
         .map_err(|error| YrsEngineError::parse("CODEC_INVARIANT_FAILED", error))?;
-    encode_state_bounded(&doc, resource_limits)?;
+    let encoded_state_bytes = encode_state_bounded(&doc, resource_limits)?.len();
 
     let durable_client_ids = HashSet::from([doc.client_id().get()]);
     Ok(CandidateDocument {
+        encoded_state_bytes,
         doc,
         state: EngineDocumentState::Ready {
             document,
@@ -553,8 +566,9 @@ pub(super) fn build_await_remote_candidate(
 ) -> YrsEngineResult<CandidateDocument> {
     let doc = utf16_doc();
     doc.get_or_insert_xml_fragment(fragment_name);
-    encode_state_bounded(&doc, resource_limits)?;
+    let encoded_state_bytes = encode_state_bounded(&doc, resource_limits)?.len();
     Ok(CandidateDocument {
+        encoded_state_bytes,
         doc,
         state: EngineDocumentState::AwaitingRemote,
         durable_client_ids: HashSet::new(),

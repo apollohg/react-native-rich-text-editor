@@ -505,3 +505,131 @@ fn audit_regression_rebind_preserves_remote_removal_clocks() {
         .unwrap();
     assert_eq!(codec.peer_snapshot().len(), 1);
 }
+
+mod cell_rectangle_codec {
+    use serde_json::json;
+    use yrs::{Assoc, Doc, StickyIndex, Text, Transact};
+
+    use super::super::{
+        decode_relative_cell_rectangle, encode_relative_cell_rectangle, RelativeCellRectangle,
+        AWARENESS_CELL_RECTANGLE_KEY,
+    };
+
+    const CURSOR_KEY: &str = "cursor";
+    const SEED_TEXT: &str = "cells";
+    const FIRST_INDEX: u32 = 1;
+    const SECOND_INDEX: u32 = 3;
+    const UNKNOWN_VERSION: u64 = 2;
+
+    fn sticky_pair() -> (StickyIndex, StickyIndex) {
+        let doc = Doc::new();
+        let text = doc.get_or_insert_text("seed");
+        let mut txn = doc.transact_mut();
+        text.insert(&mut txn, 0, SEED_TEXT);
+        let anchor = StickyIndex::at(
+            &txn,
+            yrs::branch::BranchPtr::from(<yrs::TextRef as AsRef<yrs::branch::Branch>>::as_ref(
+                &text,
+            )),
+            FIRST_INDEX,
+            Assoc::After,
+        )
+        .expect("the anchor index exists");
+        let head = StickyIndex::at(
+            &txn,
+            yrs::branch::BranchPtr::from(<yrs::TextRef as AsRef<yrs::branch::Branch>>::as_ref(
+                &text,
+            )),
+            SECOND_INDEX,
+            Assoc::After,
+        )
+        .expect("the head index exists");
+        (anchor, head)
+    }
+
+    fn rectangle() -> RelativeCellRectangle {
+        let (anchor, head) = sticky_pair();
+        RelativeCellRectangle { anchor, head }
+    }
+
+    fn state_with(rectangle: serde_json::Value) -> serde_json::Value {
+        json!({
+            CURSOR_KEY: { "anchor": "standard", "head": "standard" },
+            AWARENESS_CELL_RECTANGLE_KEY: rectangle,
+        })
+    }
+
+    #[test]
+    fn a_rectangle_round_trips_through_base64_relative_positions() {
+        let original = rectangle();
+
+        let state = state_with(encode_relative_cell_rectangle(&original));
+
+        assert_eq!(decode_relative_cell_rectangle(&state), Some(original));
+    }
+
+    #[test]
+    fn the_encoded_rectangle_declares_version_one_and_two_base64_strings() {
+        let encoded = encode_relative_cell_rectangle(&rectangle());
+
+        assert_eq!(encoded["version"], json!(1));
+        assert!(encoded["anchor"].is_string());
+        assert!(encoded["head"].is_string());
+    }
+
+    #[test]
+    fn an_unknown_extension_version_drops_only_the_rectangle() {
+        let mut encoded = encode_relative_cell_rectangle(&rectangle());
+        encoded["version"] = json!(UNKNOWN_VERSION);
+        let state = state_with(encoded);
+
+        assert_eq!(decode_relative_cell_rectangle(&state), None);
+        assert!(state.get(CURSOR_KEY).is_some());
+    }
+
+    #[test]
+    fn malformed_base64_drops_only_the_rectangle() {
+        let mut encoded = encode_relative_cell_rectangle(&rectangle());
+        encoded["anchor"] = json!("not base64!!");
+        let state = state_with(encoded);
+
+        assert_eq!(decode_relative_cell_rectangle(&state), None);
+        assert!(state.get(CURSOR_KEY).is_some());
+    }
+
+    #[test]
+    fn undecodable_relative_position_bytes_drop_only_the_rectangle() {
+        let mut encoded = encode_relative_cell_rectangle(&rectangle());
+        encoded["head"] = json!("////");
+        let state = state_with(encoded);
+
+        assert_eq!(decode_relative_cell_rectangle(&state), None);
+        assert!(state.get(CURSOR_KEY).is_some());
+    }
+
+    #[test]
+    fn an_unexpected_extra_field_drops_only_the_rectangle() {
+        let mut encoded = encode_relative_cell_rectangle(&rectangle());
+        encoded["extra"] = json!(true);
+        let state = state_with(encoded);
+
+        assert_eq!(decode_relative_cell_rectangle(&state), None);
+        assert!(state.get(CURSOR_KEY).is_some());
+    }
+
+    #[test]
+    fn a_peer_state_without_the_extension_yields_no_rectangle() {
+        let state = json!({ CURSOR_KEY: { "anchor": "standard", "head": "standard" } });
+
+        assert_eq!(decode_relative_cell_rectangle(&state), None);
+    }
+
+    #[test]
+    fn a_float_encoded_version_is_accepted_as_version_one() {
+        let mut encoded = encode_relative_cell_rectangle(&rectangle());
+        encoded["version"] = json!(1.0);
+        let state = state_with(encoded);
+
+        assert!(decode_relative_cell_rectangle(&state).is_some());
+    }
+}

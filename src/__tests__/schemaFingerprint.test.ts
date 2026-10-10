@@ -1,8 +1,10 @@
 import fixtures from '../../rust/editor-core/tests/fixtures/schema-fingerprints.json';
 import {
+    TABLE_NODE_NAMES,
     defaultSchema,
     prosemirrorSchema,
     tiptapCompatibleSchema,
+    withTablesSchema,
     type SchemaDefinition,
 } from '../schemas';
 import { testSchemaFingerprint } from './helpers/schemaFingerprint';
@@ -57,6 +59,27 @@ describe('resolved schema fingerprint parity', () => {
         expect(testSchemaFingerprint(schema('info'))).not.toBe(
             testSchemaFingerprint(schema('warning'))
         );
+    });
+
+    it('includes table roles in the canonical fingerprint', () => {
+        const tabled = withTablesSchema(prosemirrorSchema);
+        const swapped: SchemaDefinition = {
+            ...tabled,
+            nodes: tabled.nodes.map(node => {
+                if (node.name === TABLE_NODE_NAMES.prosemirror.cell) {
+                    return { ...node, tableRole: 'header_cell' as const };
+                }
+
+                if (node.name === TABLE_NODE_NAMES.prosemirror.headerCell) {
+                    return { ...node, tableRole: 'cell' as const };
+                }
+
+                return node;
+            }),
+        };
+
+        expect(testSchemaFingerprint(tabled)).not.toBe(testSchemaFingerprint(prosemirrorSchema));
+        expect(testSchemaFingerprint(swapped)).not.toBe(testSchemaFingerprint(tabled));
     });
 
     it('keeps the helper test-only', () => {

@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - v1
   pull_request:
 
 env:
@@ -12,7 +13,7 @@ env:
 jobs:
   js-and-android:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -163,6 +164,9 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      - name: Validate API 24 instrumentation result handling
+        run: node scripts/tests/android-api24-instrumentation.test.mjs
+
       - name: Run API 24 instrumentation smoke test
         uses: reactivecircus/android-emulator-runner@v2.38.0
         with:
@@ -230,6 +234,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p test-results/ios
 
           xcodebuild -version
           runtimes="$(xcrun simctl list runtimes available)"
@@ -308,3 +313,13 @@ jobs:
           -scheme NativeEditorTests
           -sdk iphonesimulator
           -destination '${{ steps.ios-simulator.outputs.destination }}'
+          -resultBundlePath test-results/ios/NativeEditorTests.xcresult
+
+      - name: Upload iOS test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ios-test-results
+          path: test-results/ios
+          if-no-files-found: ignore
+          retention-days: 2

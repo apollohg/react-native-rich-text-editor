@@ -130,6 +130,9 @@ extension EditorTextView {
     }
 
     func prepareForExternalEditorUpdateResult() -> ExternalEditorUpdatePreparation {
+        guard !blockExternalEditorUpdatePreparationForTesting else {
+            return ExternalEditorUpdatePreparation(ready: false, adoptedUpdateJSON: nil)
+        }
         let composition = prepareActiveCompositionForExternalMutation()
         guard composition.ready else {
             return ExternalEditorUpdatePreparation(ready: false, adoptedUpdateJSON: nil)
@@ -331,8 +334,10 @@ extension EditorTextView {
             return .rejected
         }
 
+        guard hasAuthorizedNativeInputOwner() else { return .rejected }
         var adoptedUpdateJSON: String?
-        performInterceptedInput(flushPendingNativeTextMutation: false) {
+        // The captured range and post-selection use their own table maps.
+        performAuthorizedInterceptedInput(flushPendingNativeTextMutation: false) {
             guard let adapter = EditorV2Registry.adapter(forLegacyId: editorId) else { return }
             let postSelection: (anchor: UInt32, head: UInt32)?
             if let anchor = mutation.selectionAnchor,

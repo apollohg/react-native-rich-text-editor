@@ -2,12 +2,34 @@ import os
 import UIKit
 
 extension EditorTextView {
+    private static let keyboardCaretMargin: CGFloat = 8
+
+    private var keyboardCaretInput: EditorTextView? {
+        isFirstResponder ? self : focusedTableCellInput?()
+    }
+
+    var keyboardOcclusionFrameInScreen: CGRect? {
+        guard let window, let input = keyboardCaretInput,
+              let accessory = input.inputAccessoryView, let accessoryWindow = accessory.window,
+              !accessory.isHidden, !accessoryWindow.isHidden,
+              accessoryWindow.screen === window.screen
+        else { return keyboardFrameInScreen }
+        let accessoryFrame = accessory.convert(accessory.bounds, to: window.screen.coordinateSpace)
+            .intersection(window.screen.bounds)
+        guard !accessoryFrame.isNull, !accessoryFrame.isEmpty else { return keyboardFrameInScreen }
+        return keyboardFrameInScreen.map { $0.intersection(window.screen.bounds).union(accessoryFrame) } ?? accessoryFrame
+    }
+
     @objc func handleKeyboardFrameChange(_ notification: Notification) {
-        guard isFirstResponder || keyboardFrameInScreen != nil else { return }
+        guard keyboardCaretInput != nil || keyboardFrameInScreen != nil else { return }
         if notification.name == UIResponder.keyboardWillHideNotification {
             keyboardFrameInScreen = nil
         } else {
             keyboardFrameInScreen = (notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue
+        }
+        if notification.name == UIResponder.keyboardDidChangeFrameNotification {
+            updateKeyboardInset()
+            return
         }
         let duration = (notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?.doubleValue ?? 0
         let curve = (notification.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 0
@@ -22,8 +44,8 @@ extension EditorTextView {
 
     func updateKeyboardInset() {
         var overlap: CGFloat = 0
-        if isScrollEnabled, let window, let keyboardFrameInScreen {
-            let frameInWindow = window.convert(keyboardFrameInScreen, from: window.screen.coordinateSpace)
+        if isScrollEnabled, let window, let keyboardOcclusionFrameInScreen {
+            let frameInWindow = window.convert(keyboardOcclusionFrameInScreen, from: window.screen.coordinateSpace)
             let keyboardFrame = convert(frameInWindow, from: window)
             let intersection = bounds.intersection(keyboardFrame)
             if !intersection.isNull, intersection.maxY >= bounds.maxY - 1 {
@@ -38,10 +60,13 @@ extension EditorTextView {
         keyboardBottomInset = nextInset
         contentInset.bottom += delta
         verticalScrollIndicatorInsets.bottom += delta
-        if overlap > 0, isFirstResponder, let selection = selectedTextRange {
-            let caret = caretRect(for: selection.end)
+        if overlap > 0, let input = keyboardCaretInput, let selection = input.selectedTextRange {
+            let caret = input.caretRect(for: selection.end)
             if !caret.isEmpty {
-                scrollRectToVisible(caret.insetBy(dx: 0, dy: -8), animated: false)
+                scrollVerticallyToReveal(
+                    convert(caret, from: input).insetBy(dx: 0, dy: -Self.keyboardCaretMargin),
+                    within: bounds
+                )
             }
         }
     }
@@ -242,4 +267,21 @@ extension EditorTextView {
         lastAutoGrowMeasuredWidth = 0
     }
 
+}
+
+extension UIScrollView {
+    @discardableResult
+    func scrollVerticallyToReveal(_ rect: CGRect, within viewport: CGRect) -> Bool {
+        let visible = viewport.intersection(bounds.inset(by: adjustedContentInset))
+        guard !visible.isNull, !visible.isEmpty, !rect.isEmpty,
+              rect.minY.isFinite, rect.maxY.isFinite else { return false }
+        let delta = rect.maxY > visible.maxY ? rect.maxY - visible.maxY
+            : min(0, rect.minY - visible.minY)
+        let minimum = -adjustedContentInset.top
+        let maximum = max(minimum, contentSize.height - bounds.height + adjustedContentInset.bottom)
+        let next = min(maximum, max(minimum, contentOffset.y + delta))
+        guard next != contentOffset.y else { return false }
+        setContentOffset(CGPoint(x: contentOffset.x, y: next), animated: false)
+        return true
+    }
 }

@@ -1,0 +1,474 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -37,6 +37,7 @@
+ default = []
+ small-client = []
+ sync = []
++history-audit = []
+ weak = []
+ 
+ [lib]
+--- a/Cargo.toml.orig
++++ b/Cargo.toml.orig
+@@ -14,6 +14,7 @@
+ default = []
+ weak = []
+ sync = []
++history-audit = []
+ small-client = []
+ 
+ [dependencies]
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -678,6 +678,8 @@
+ pub use crate::sticky_index::IndexedSequence;
+ pub use crate::sticky_index::Offset;
+ pub use crate::sticky_index::StickyIndex;
++#[cfg(feature = "history-audit")]
++pub use crate::store::HistoryMetadataAuditItem;
+ pub use crate::store::Store;
+ pub use crate::transact::{
+     AcquireTransaction, AcquireTransactionMut, AsyncTransact, Transact, TransactionAcqError,
+--- a/src/store.rs
++++ b/src/store.rs
+@@ -23,6 +23,55 @@
+ use std::ops::Deref;
+ use std::sync::Arc;
+ 
++#[cfg(feature = "history-audit")]
++#[path = "store_history_audit.rs"]
++mod history_encoding_audit;
++
++#[cfg(all(test, feature = "history-audit"))]
++mod history_audit_tests {
++    use super::*;
++    use crate::{ReadTxn, Text, Transact};
++
++    #[test]
++    fn history_metadata_audit_detects_unencoded_redone_and_keep() {
++        for keep in [false, true] {
++            let doc = Doc::new();
++            let text = doc.get_or_insert_text("text");
++            text.insert(&mut doc.transact_mut(), 0, "a");
++            let encoded = doc
++                .transact()
++                .encode_state_as_update_v1(&StateVector::default());
++            let before = doc.transact().store().history_metadata_audit(16).unwrap();
++            assert_eq!(
++                before,
++                doc.transact().store().history_metadata_audit(16).unwrap()
++            );
++            assert!(doc.transact().store().history_metadata_audit(0).is_none());
++            {
++                let txn = doc.transact_mut();
++                let mut item = txn
++                    .store()
++                    .blocks
++                    .get_item(&ID::new(doc.client_id(), 0))
++                    .unwrap();
++                if keep {
++                    item.info.set_keep();
++                } else {
++                    item.redone = Some(ID::new(doc.client_id(), 0));
++                }
++            }
++            let after = doc
++                .transact()
++                .encode_state_as_update_v1(&StateVector::default());
++            assert_eq!(encoded, after);
++            assert_ne!(
++                before,
++                doc.transact().store().history_metadata_audit(16).unwrap()
++            );
++        }
++    }
++}
++
+ /// Store is a core element of a document. It contains all of the information, like block store
+ /// map of root types, pending updates waiting to be applied once a missing update information
+ /// arrives and all subscribed callbacks.
+@@ -63,7 +112,50 @@
+     pub(crate) linked_by: HashMap<ItemPtr, HashSet<BranchPtr>>,
+ }
+ 
++#[cfg(feature = "history-audit")]
++#[derive(Debug, PartialEq, Eq)]
++pub struct HistoryMetadataAuditItem {
++    pub id: ID,
++    pub len: u32,
++    pub redone: Option<ID>,
++    pub flags: u16,
++}
++
+ impl Store {
++    #[cfg(feature = "history-audit")]
++    pub fn history_metadata_audit(
++        &self,
++        max_items: usize,
++    ) -> Option<Vec<HistoryMetadataAuditItem>> {
++        let mut count = 0usize;
++        let mut clients = 0usize;
++        for (_, blocks) in self.blocks.iter() {
++            clients = clients.checked_add(1)?;
++            count = count.checked_add(blocks.len())?;
++            if count > max_items || clients > max_items {
++                return None;
++            }
++        }
++        let mut items = Vec::new();
++        items.try_reserve_exact(count).ok()?;
++        for (_, blocks) in self.blocks.iter() {
++            for block in blocks.iter() {
++                if let Some(item) = block.as_item() {
++                    if items.len() >= max_items {
++                        return None;
++                    }
++                    items.push(HistoryMetadataAuditItem {
++                        id: item.id,
++                        len: item.len,
++                        redone: item.redone,
++                        flags: item.info.into(),
++                    });
++                }
++            }
++        }
++        items.sort_by_key(|item| (item.id.client, item.id.clock));
++        Some(items)
++    }
+     /// Create a new empty store in context of a given `client_id`.
+     pub(crate) fn new(options: &Options) -> Self {
+         Store {
+--- /dev/null
++++ b/src/store_history_audit.rs
+@@ -0,0 +1,139 @@
++use crate::block::ItemContent;
++use crate::store::Store;
++use crate::types::{TypePtr, TypeRef};
++use crate::Any;
++
++struct Budget {
++    bytes: usize,
++    items: usize,
++}
++
++impl Budget {
++    fn charge(&mut self, bytes: usize) -> Option<()> {
++        self.bytes = self.bytes.checked_sub(bytes)?;
++        Some(())
++    }
++
++    fn item(&mut self, bytes: usize) -> Option<()> {
++        self.items = self.items.checked_sub(1)?;
++        self.charge(bytes)
++    }
++
++    fn payload(&mut self, len: usize) -> Option<()> {
++        // Covers JSON escaping, temporary strings, Vec growth and wire copies.
++        self.charge(len.checked_mul(32)?)
++    }
++
++    fn any(&mut self, value: &Any, depth: usize) -> Option<()> {
++        if depth > 64 {
++            return None;
++        }
++        self.item(256)?;
++        match value {
++            Any::String(value) => self.payload(value.len())?,
++            Any::Buffer(value) => self.payload(value.len())?,
++            Any::Array(values) => {
++                if values.len() > self.items {
++                    return None;
++                }
++                for value in values.iter() {
++                    self.any(value, depth + 1)?;
++                }
++            }
++            Any::Map(values) => {
++                if values.len() > self.items {
++                    return None;
++                }
++                for (key, value) in values.iter() {
++                    self.payload(key.len())?;
++                    self.any(value, depth + 1)?;
++                }
++            }
++            _ => {}
++        }
++        Some(())
++    }
++}
++
++impl Store {
++    pub(crate) fn preflight_history_encoding(
++        &self,
++        max_bytes: usize,
++        max_items: usize,
++    ) -> Option<()> {
++        if self.pending.is_some() || self.pending_ds.is_some() || !self.subdocs.is_empty() {
++            return None;
++        }
++        let mut budget = Budget {
++            bytes: max_bytes,
++            items: max_items,
++        };
++        // Covers encoder growth, state-vector/sort storage and worst-case deletion ranges.
++        budget.charge(4096)?;
++        for (_, blocks) in self.blocks.iter() {
++            budget.item(2048)?;
++            if blocks.len() > budget.items {
++                return None;
++            }
++            for block in blocks.iter() {
++                budget.item(2048)?;
++                let Some(item) = block.as_item() else {
++                    continue;
++                };
++                match &item.parent {
++                    TypePtr::Branch(branch) => {
++                        if branch.item.is_none() {
++                            budget.payload(branch.name.as_ref()?.len())?;
++                        }
++                    }
++                    TypePtr::Named(name) => budget.payload(name.len())?,
++                    TypePtr::ID(_) => {}
++                    TypePtr::Unknown => return None,
++                }
++                if let Some(key) = &item.parent_sub {
++                    budget.payload(key.len())?;
++                }
++                match &item.content {
++                    ItemContent::Any(values) => {
++                        if values.len() > budget.items {
++                            return None;
++                        }
++                        for value in values {
++                            budget.any(value, 0)?;
++                        }
++                    }
++                    ItemContent::Binary(value) => budget.payload(value.len())?,
++                    ItemContent::String(value) => budget.payload(value.as_str().len())?,
++                    ItemContent::JSON(values) => {
++                        if values.len() > budget.items {
++                            return None;
++                        }
++                        for value in values {
++                            budget.item(256)?;
++                            budget.payload(value.len())?;
++                        }
++                    }
++                    ItemContent::Embed(value) => budget.any(value, 0)?,
++                    ItemContent::Format(key, value) => {
++                        budget.payload(key.len())?;
++                        budget.any(value, 0)?;
++                    }
++                    ItemContent::Type(branch) => match &branch.type_ref {
++                        TypeRef::XmlElement(name) => budget.payload(name.len())?,
++                        TypeRef::Array
++                        | TypeRef::Map
++                        | TypeRef::Text
++                        | TypeRef::XmlFragment
++                        | TypeRef::XmlHook
++                        | TypeRef::XmlText
++                        | TypeRef::Undefined => {}
++                        _ => return None,
++                    },
++                    ItemContent::Deleted(_) => {}
++                    ItemContent::Doc(_, _) => return None,
++                }
++            }
++        }
++        Some(())
++    }
++}
+--- a/src/transaction.rs
++++ b/src/transaction.rs
+@@ -1,4 +1,64 @@
+ use crate::block::{Block, BlockRange, Item, ItemContent, ItemPosition, ItemPtr, Prelim, ID};
++
++#[cfg(all(test, feature = "history-audit"))]
++thread_local! {
++    static AUDIT_ENCODINGS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
++}
++
++#[cfg(all(test, feature = "history-audit"))]
++mod bounded_audit_tests {
++    use super::*;
++    use crate::{Doc, Text, Transact};
++
++    #[test]
++    fn history_audit_oversize_stops_before_encoding() {
++        let doc = Doc::new();
++        doc.get_or_insert_text("text")
++            .insert(&mut doc.transact_mut(), 0, &"x".repeat(32768));
++        AUDIT_ENCODINGS.set(0);
++        assert!(doc
++            .transact()
++            .encode_state_for_history_audit(16384, 64)
++            .is_none());
++        assert_eq!(AUDIT_ENCODINGS.get(), 0);
++    }
++
++    #[test]
++    fn history_audit_item_limit_stops_before_encoding() {
++        let doc = Doc::new();
++        doc.get_or_insert_text("text")
++            .insert(&mut doc.transact_mut(), 0, "x");
++        AUDIT_ENCODINGS.set(0);
++        assert!(doc
++            .transact()
++            .encode_state_for_history_audit(16384, 0)
++            .is_none());
++        assert_eq!(AUDIT_ENCODINGS.get(), 0);
++    }
++
++    #[test]
++    fn history_audit_bounded_encoding_preserves_deletions_and_nested_payloads() {
++        use crate::{Map, MapPrelim};
++        let doc = Doc::new();
++        let text = doc.get_or_insert_text("root");
++        let map = doc.get_or_insert_map("map");
++        {
++            let mut txn = doc.transact_mut();
++            text.insert(&mut txn, 0, "deleted and retained");
++            text.remove_range(&mut txn, 0, 8);
++            map.insert(
++                &mut txn,
++                "attrs",
++                MapPrelim::from([(String::from("quoted"), crate::Any::from("\"\\\n"))]),
++            );
++        }
++        let txn = doc.transact();
++        assert_eq!(
++            txn.encode_state_for_history_audit(65536, 64).unwrap(),
++            txn.encode_state_as_update_v1(&StateVector::default())
++        );
++    }
++}
+ use crate::branch::{Branch, BranchPtr};
+ use crate::doc::DocAddr;
+ use crate::error::{Error, UpdateError};
+@@ -141,6 +201,20 @@
+         self.encode_state_as_update(sv, &mut encoder);
+         // check for pending data
+         merge_pending_v1(encoder.to_vec(), self.store())
++    }
++
++    #[cfg(feature = "history-audit")]
++    fn encode_state_for_history_audit(
++        &self,
++        max_bytes: usize,
++        max_items: usize,
++    ) -> Option<Vec<u8>> {
++        self.store()
++            .preflight_history_encoding(max_bytes, max_items)?;
++        #[cfg(test)]
++        AUDIT_ENCODINGS.set(AUDIT_ENCODINGS.get() + 1);
++        let bytes = self.encode_state_as_update_v1(&StateVector::default());
++        (bytes.len() <= max_bytes).then_some(bytes)
+     }
+ 
+     /// Encodes the difference between remote peer state given its `state_vector` and the state
+--- a/src/undo.rs
++++ b/src/undo.rs
+@@ -90,6 +90,53 @@
+     state: Arc<Inner<M>>,
+ }
+ 
++#[cfg(feature = "history-audit")]
++#[derive(Debug, PartialEq, Eq)]
++pub struct HistoryAudit<M> {
++    pub identity: HistoryAuditIdentity,
++    pub last_change: u64,
++    pub undoing: bool,
++    pub redoing: bool,
++    pub undo: Vec<StackItem<M>>,
++    pub redo: Vec<StackItem<M>>,
++}
++
++#[cfg(feature = "history-audit")]
++#[derive(Debug)]
++pub struct HistoryAuditIdentity(Arc<()>);
++
++#[cfg(feature = "history-audit")]
++impl PartialEq for HistoryAuditIdentity {
++    fn eq(&self, other: &Self) -> bool {
++        Arc::ptr_eq(&self.0, &other.0)
++    }
++}
++
++#[cfg(feature = "history-audit")]
++impl Eq for HistoryAuditIdentity {}
++
++#[cfg(all(test, feature = "history-audit"))]
++mod history_identity_tests {
++    use super::*;
++
++    #[test]
++    fn history_audit_retains_manager_identity_without_sharing_mutable_state() {
++        let mut manager = UndoManager::<()>::new();
++        let token = Arc::downgrade(&manager.state.audit_identity);
++        let audit = manager.history_audit(|_| ());
++        manager.reset();
++        assert_eq!(audit, manager.history_audit(|_| ()));
++        drop(manager);
++        assert!(token.upgrade().is_some());
++        assert_ne!(
++            audit.identity,
++            UndoManager::<()>::new().history_audit(|_| ()).identity
++        );
++        drop(audit);
++        assert!(token.upgrade().is_none());
++    }
++}
++
+ #[cfg(feature = "sync")]
+ type UndoFn<M> = Box<dyn FnMut(&TransactionMut, &mut Event<M>) + Send + Sync + 'static>;
+ 
+@@ -113,6 +160,8 @@
+ impl<M> Meta for M where M: Default {}
+ 
+ struct Inner<M> {
++    #[cfg(feature = "history-audit")]
++    audit_identity: Arc<()>,
+     docs: HashMap<Arc<str>, Doc>,
+     scope: HashSet<BranchPtr>,
+     options: Options<M>,
+@@ -147,6 +196,8 @@
+         let undo_stack = UndoStack(std::mem::take(&mut options.init_undo_stack));
+         let redo_stack = UndoStack(std::mem::take(&mut options.init_redo_stack));
+         let mut state = Arc::new(Inner {
++            #[cfg(feature = "history-audit")]
++            audit_identity: Arc::new(()),
+             scope: HashSet::new(),
+             options,
+             undo_stack,
+@@ -490,6 +541,29 @@
+     pub fn reset(&mut self) {
+         let inner = Arc::get_mut(&mut self.state).unwrap();
+         inner.last_change = 0;
++    }
++
++    #[cfg(feature = "history-audit")]
++    pub fn history_audit<F>(&self, freeze: impl Fn(&M) -> F) -> HistoryAudit<F> {
++        let stack = |items: &[StackItem<M>]| {
++            items
++                .iter()
++                .map(|item| StackItem {
++                    doc: item.doc.clone(),
++                    deletions: item.deletions.clone(),
++                    insertions: item.insertions.clone(),
++                    meta: freeze(&item.meta),
++                })
++                .collect()
++        };
++        HistoryAudit {
++            identity: HistoryAuditIdentity(self.state.audit_identity.clone()),
++            last_change: self.state.last_change,
++            undoing: self.state.undoing,
++            redoing: self.state.redoing,
++            undo: stack(&self.state.undo_stack),
++            redo: stack(&self.state.redo_stack),
++        }
+     }
+ 
+     /// Are there any undo steps available?

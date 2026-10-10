@@ -39,10 +39,7 @@ internal class EditorTextSurfaceDragDrop(private val surface: EditorTextSurface)
             return false
         }
         return when (event.action) {
-            DragEvent.ACTION_DRAG_ENTERED -> {
-                editor.requestFocus()
-                true
-            }
+            DragEvent.ACTION_DRAG_ENTERED -> true
 
             DragEvent.ACTION_DRAG_LOCATION -> {
                 if (event.x.isFinite() && event.y.isFinite()) {
@@ -77,7 +74,7 @@ internal class EditorTextSurfaceDragDrop(private val surface: EditorTextSurface)
         }
         if (value.isEmpty()) return false
         if (!editor.prepareForExternalInteractionMutation() || session !== active ||
-            !isCurrent(editor, active)
+            !isCurrent(editor, active) || !editor.onSurfaceGestureFocus()
         ) {
             return false
         }
@@ -85,7 +82,8 @@ internal class EditorTextSurfaceDragDrop(private val surface: EditorTextSurface)
         if (session !== active || !isCurrent(editor, active)) return false
         val offset = editor.getOffsetForPosition(event.x, event.y)
         if (editor.isCollapsedAtomBoundarySelection(offset, offset)) return false
-        val scalar = PositionBridge.utf16ToScalar(offset, editor.text.toString())
+        val scalar =
+            editor.inputPositionScalarAtLocalUtf16(offset, editor.text.toString()) ?: return false
         val update = active.driver.replaceTextRange(scalar, scalar, value)
         if (session !== active || !isCurrent(editor, active)) return false
         editor.applyNonOptimisticRustUpdate(active.driver, update)

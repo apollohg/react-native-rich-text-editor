@@ -30,6 +30,7 @@ impl EditorSession {
             position_epochs: crate::position_epoch::PositionEpochStore::new(
                 crate::position_epoch::PositionEpochLimits::default(),
             ),
+            latest_epoch_snapshot: None,
             native_request_ledgers: std::collections::BTreeMap::new(),
             native_render_cursors: std::collections::BTreeMap::new(),
         })
@@ -37,6 +38,7 @@ impl EditorSession {
 
     pub(crate) fn teardown(&mut self) {
         self.position_epochs.clear();
+        self.latest_epoch_snapshot = None;
         self.native_request_ledgers.clear();
         self.native_render_cursors.clear();
         self.native_bridge.teardown();
@@ -79,9 +81,33 @@ impl EditorSession {
             )
         })?;
         self.position_epochs.admit_boundary_count(count)?;
-        let boundaries = self
-            .engine
-            .build_position_epoch_boundaries()
+        if let Some(previous) = self.latest_epoch_snapshot.as_mut() {
+            if previous.document_revision != document_revision
+                || previous.yrs_state_epoch != self.engine.yrs_state_epoch()
+            {
+                if let Some(update) = self.engine.prepare_position_epoch_update(previous) {
+                    return self.position_epochs.install_update(
+                        owner_id,
+                        self.engine.client_id(),
+                        previous,
+                        update,
+                    );
+                }
+            }
+        }
+        let snapshot = self
+            .latest_epoch_snapshot
+            .as_ref()
+            .filter(|snapshot| {
+                snapshot.document_revision == document_revision
+                    && snapshot.yrs_state_epoch == self.engine.yrs_state_epoch()
+            })
+            .cloned()
+            .or_else(|| {
+                self.engine
+                    .build_position_epoch_snapshot()
+                    .map(std::sync::Arc::new)
+            })
             .ok_or_else(|| {
                 SessionError::new(
                     ErrorDomain::Operation,
@@ -89,18 +115,18 @@ impl EditorSession {
                     "authoritative position epoch could not be built",
                 )
             })?;
-        let epoch = self.position_epochs.install(
-            owner_id,
-            self.engine.client_id(),
-            document_revision,
-            boundaries,
-        )?;
-        let render_blocks = self
-            .engine
-            .cached_render_blocks()
-            .ok_or_else(engine_not_ready)?;
-        self.retain_native_render_cursor(owner_id, document_revision, render_blocks);
+        let epoch =
+            self.position_epochs
+                .install(owner_id, self.engine.client_id(), snapshot.clone())?;
+        self.latest_epoch_snapshot = Some(snapshot);
         Ok(epoch)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn latest_epoch_snapshot_for_test(
+        &self,
+    ) -> Option<std::sync::Arc<crate::position_epoch::EpochSnapshot>> {
+        self.latest_epoch_snapshot.clone()
     }
 
     pub(crate) fn resolve_epoch_range(
@@ -115,37 +141,49 @@ impl EditorSession {
         } else {
             crate::yrs_engine::Affinity::Before
         };
-        let (anchor_boundary, epoch_revision) =
+        let anchor_boundary =
             self.position_epochs
                 .boundary(owner_id, epoch_id, self.engine.client_id(), anchor)?;
-        let (head_boundary, head_epoch_revision) =
+        let head_boundary =
             self.position_epochs
                 .boundary(owner_id, epoch_id, self.engine.client_id(), head)?;
-        debug_assert_eq!(epoch_revision, head_epoch_revision);
-        if epoch_revision == self.engine.revision() {
+        debug_assert_eq!(
+            anchor_boundary.document_revision,
+            head_boundary.document_revision
+        );
+        if anchor_boundary.document_revision == self.engine.revision() {
             return Ok(crate::position_epoch::ResolvedEpochRange {
                 anchor,
                 head,
                 fallback: false,
+                left_table_cell: false,
             });
         }
-        let (resolved_anchor, anchor_fallback) = self
+        let resolved_anchor = self
             .engine
-            .resolve_position_epoch_boundary(anchor_boundary, affinity, anchor)
+            .resolve_position_epoch_boundary(&anchor_boundary, affinity, anchor)
             .ok_or_else(engine_not_ready)?;
-        let (resolved_head, head_fallback) = self
+        let resolved_head = self
             .engine
-            .resolve_position_epoch_boundary(head_boundary, affinity, head)
+            .resolve_position_epoch_boundary(&head_boundary, affinity, head)
             .ok_or_else(engine_not_ready)?;
         Ok(crate::position_epoch::ResolvedEpochRange {
-            anchor: resolved_anchor,
-            head: resolved_head,
-            fallback: anchor_fallback || head_fallback,
+            anchor: resolved_anchor.offset,
+            head: resolved_head.offset,
+            fallback: resolved_anchor.fallback || resolved_head.fallback,
+            left_table_cell: resolved_anchor.left_table_cell || resolved_head.left_table_cell,
         })
     }
 
     pub(crate) fn release_position_epoch_owner(&mut self, owner_id: u64) {
         self.position_epochs.release_owner(owner_id);
+        if self
+            .latest_epoch_snapshot
+            .as_ref()
+            .is_some_and(|snapshot| !self.position_epochs.is_snapshot_pinned(snapshot))
+        {
+            self.latest_epoch_snapshot = None;
+        }
         self.native_render_cursors.remove(&owner_id);
     }
 
@@ -162,10 +200,51 @@ impl EditorSession {
         self.native_render_cursors.insert(
             owner_id,
             NativeRenderCursor {
+                schema_fingerprint: self.engine.schema_fingerprint().to_owned(),
+                table_keys: crate::ffi_v2::render::table_keys(&self.engine)
+                    .expect("ready table identities"),
+                root_projection: crate::ffi_v2::render::root_projection(&self.engine)
+                    .expect("ready root projection"),
                 document_revision,
                 render_blocks,
             },
         );
+    }
+
+    pub(crate) fn seed_native_render_cursor(
+        &mut self,
+        owner_id: u64,
+        document_revision: u64,
+    ) -> Result<(), SessionError> {
+        if document_revision != self.engine.revision() {
+            return Err(SessionError::new(
+                ErrorDomain::Operation,
+                "REVISION_MISMATCH",
+                "native render cursor requires the current document revision",
+            ));
+        }
+        let limit = crate::position_epoch::PositionEpochLimits::default().max_owners;
+        if !self.native_render_cursors.contains_key(&owner_id)
+            && self.native_render_cursors.len() >= limit
+        {
+            let mut error = SessionError::new(
+                ErrorDomain::Operation,
+                "OPERATION_RESOURCE_EXHAUSTED",
+                "native render cursor owner limit exceeded",
+            );
+            error.limit = Some(limit as u64);
+            error.actual = Some(self.native_render_cursors.len() as u64 + 1);
+            return Err(error);
+        }
+        let blocks = self.engine.cached_render_blocks().ok_or_else(|| {
+            SessionError::new(
+                ErrorDomain::Operation,
+                "ENGINE_NOT_READY",
+                "the document engine is not ready",
+            )
+        })?;
+        self.retain_native_render_cursor(owner_id, document_revision, blocks);
+        Ok(())
     }
 
     pub(crate) fn native_request_outcome(
@@ -216,8 +295,7 @@ impl EditorSession {
     }
 
     pub(crate) fn release_native_binding(&mut self, owner_id: u64) {
-        self.position_epochs.release_owner(owner_id);
+        self.release_position_epoch_owner(owner_id);
         self.native_request_ledgers.remove(&owner_id);
-        self.native_render_cursors.remove(&owner_id);
     }
 }

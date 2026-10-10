@@ -220,7 +220,7 @@ fn any_traversal_work(root: &Any) -> Option<usize> {
                     stack.push(value);
                 }
             }
-            Any::Null | Any::Undefined | Any::Bool(_) | Any::Number(_) | Any::BigInt(_) => {}
+            Any::Null | Any::Undefined | Any::Bool(_) | Any::Number(_) => {}
         }
     }
     Some(work)
@@ -408,63 +408,6 @@ fn collect_document_content_positions(
         &mut work,
     )?;
     Ok((positions, work))
-}
-
-fn exact_storage_child_span<'a>(
-    children: impl Iterator<Item = &'a Node>,
-    storage_children: &[StorageChildKind],
-    from: u32,
-    to: u32,
-) -> Option<(u32, u32)> {
-    let semantic_children = children.collect::<Vec<_>>();
-    let mut semantic_index = 0usize;
-    let mut offset = 0u32;
-    let mut start = None;
-    let mut end = None;
-    for (index, storage) in storage_children.iter().enumerate() {
-        if offset == from {
-            start = Some(u32::try_from(index).ok()?);
-        }
-        match storage {
-            StorageChildKind::Text { scalar_len, .. } => {
-                let mut remaining = *scalar_len;
-                while remaining > 0 {
-                    let child = *semantic_children.get(semantic_index)?;
-                    if !child.is_text() {
-                        return None;
-                    }
-                    let width = child.node_size();
-                    if width == 0 || width > remaining {
-                        return None;
-                    }
-                    offset = offset.checked_add(width)?;
-                    remaining -= width;
-                    semantic_index += 1;
-                }
-            }
-            StorageChildKind::Element { .. } | StorageChildKind::PreparedElement => {
-                let child = *semantic_children.get(semantic_index)?;
-                if child.is_text() {
-                    return None;
-                }
-                offset = offset.checked_add(child.node_size())?;
-                semantic_index += 1;
-            }
-        }
-        if offset == to {
-            end = Some(u32::try_from(index + 1).ok()?);
-            break;
-        }
-        if offset > to {
-            return None;
-        }
-    }
-    if from == to || semantic_index > semantic_children.len() {
-        return None;
-    }
-    let start = start?;
-    let end = end?;
-    Some((start, end.checked_sub(start)?))
 }
 
 #[allow(clippy::too_many_arguments)]

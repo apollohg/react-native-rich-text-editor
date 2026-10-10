@@ -281,15 +281,17 @@ fn list_marker_len(schema: &Schema, list_node: &Node, child_index: usize) -> u32
     }
 
     let ordered = schema.is_ordered_list(list_node.node_type());
-    let start = list_node
-        .attrs()
-        .get("start")
-        .and_then(|value| value.as_u64())
-        .unwrap_or(1) as u32;
+    let item_offset = u32::try_from(child_index).expect("validated document index fits u32");
     let index = if ordered {
-        start + child_index as u32
+        let start = render::ordered_list_start(list_node)
+            .expect("position map requires a document with admitted arithmetic");
+        start
+            .checked_add(item_offset)
+            .expect("position map requires a document with admitted arithmetic")
     } else {
-        child_index as u32 + 1
+        item_offset
+            .checked_add(render::DEFAULT_ORDERED_LIST_START)
+            .expect("position map requires a document with admitted arithmetic")
     };
     render::list_marker_string(ordered, index).chars().count() as u32
 }

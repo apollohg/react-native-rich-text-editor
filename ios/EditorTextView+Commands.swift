@@ -98,18 +98,17 @@ extension EditorTextView {
     }
 
     func performToolbarUndo() {
-        guard prepareForToolbarCommand() else { return }
-        performInterceptedInput {
-            let updateJSON = EditorV2Shadow.undo(id: editorId)
-            applyUpdateJSON(updateJSON)
-        }
+        performToolbarHistoryCommand(EditorV2Shadow.undo)
     }
 
     func performToolbarRedo() {
-        guard prepareForToolbarCommand() else { return }
-        performInterceptedInput {
-            let updateJSON = EditorV2Shadow.redo(id: editorId)
-            applyUpdateJSON(updateJSON)
+        performToolbarHistoryCommand(EditorV2Shadow.redo)
+    }
+
+    private func performToolbarHistoryCommand(_ command: (UInt64) -> String) {
+        guard isAuthorizedForHistoryCommand(), prepareForToolbarCommand() else { return }
+        performAuthorizedInterceptedInput {
+            applyUpdateJSON(command(editorId))
         }
     }
 
@@ -157,12 +156,18 @@ extension EditorTextView {
     }
 
     /// Delete a scalar range via the Rust editor.
-    func deleteScalarRangeInRust(from: UInt32, to: UInt32) {
+    func deleteScalarRangeInRust(
+        from: UInt32,
+        to: UInt32,
+        originalSelection: (anchor: UInt32, head: UInt32)? = nil
+    ) {
         guard from < to else { return }
         Self.inputLog.debug(
             "[rust.deleteScalarRange] scalar=\(from)-\(to) selection=\(self.selectionSummary(), privacy: .public)"
         )
-        let updateJSON = EditorV2Shadow.deleteScalarRange(id: editorId, scalarFrom: from, scalarTo: to)
+        let updateJSON = EditorV2Shadow.deleteScalarRange(
+            id: editorId, scalarFrom: from, scalarTo: to, originalSelection: originalSelection
+        )
         applyUpdateJSON(updateJSON)
     }
 

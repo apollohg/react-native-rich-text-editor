@@ -58,4 +58,14 @@ impl Fragment {
     pub(crate) fn children_capacity(&self) -> usize {
         self.children.capacity()
     }
+
+    pub(super) fn replace_node_at_path(&mut self, path: &[u32], replacement: Node) {
+        if self.children.capacity() != self.children.len() {
+            self.children = std::mem::take(&mut self.children)
+                .into_boxed_slice()
+                .into_vec();
+        }
+        self.children[path[0] as usize].replace_node_at_path(&path[1..], replacement);
+        self.size = self.children.iter().map(Node::node_size).sum();
+    }
 }

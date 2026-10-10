@@ -7,7 +7,7 @@ use crate::yrs_engine::compiler::input_limits::{
 };
 #[cfg(test)]
 use crate::yrs_engine::compiler::observability::{check_atomic_failpoint, AtomicFailpoint};
-use crate::yrs_engine::compiler::positions::{resolve_position, resolve_range};
+use crate::yrs_engine::compiler::positions::resolve_range;
 use crate::yrs_engine::compiler::preview::try_localized_semantic_compilation;
 use crate::yrs_engine::compiler::selection::planned_relative_selection;
 use crate::yrs_engine::compiler::semantic::compile_transaction_impl;
@@ -17,18 +17,210 @@ use crate::yrs_engine::compiler::{
     SemanticCompilationShortcuts, StoredMarksCompilationContext, TransactionMutationLowering,
 };
 use crate::yrs_engine::mutation::{
-    crdt_envelope, preflight_mutation_plan, LocalizedFormatCompiler, LocalizedFormatLocator,
-    LocalizedInsertCompiler, LocalizedInsertLocator, LocalizedRootWindowCompiler,
-    LocalizedRootWindowLocator, MutationCompiler,
+    crdt_envelope, preflight_mutation_plan_with_read_scope, LocalizedFormatCompiler,
+    LocalizedFormatLocator, LocalizedInsertCompiler, LocalizedInsertLocator,
+    LocalizedRootWindowCompiler, LocalizedRootWindowLocator, MutationCompiler,
 };
 use crate::yrs_engine::{
     OperationError, OperationResult, SelectionIntent, TypedOperation, TypedTransaction,
 };
 
+#[derive(Debug, Clone)]
+pub(crate) struct CompilationReadScopeStamp(std::sync::Weak<()>);
+
+#[derive(Clone, Copy)]
+pub(crate) struct CompilationReadScope<'a> {
+    identity: &'a std::sync::Arc<()>,
+    store_token: usize,
+    observed_path: &'a std::cell::RefCell<Vec<ObservedPathChild>>,
+}
+
+struct ObservedPathChild {
+    parent: yrs::branch::BranchID,
+    index: u32,
+    child: yrs::branch::BranchID,
+    width: usize,
+}
+
+impl CompilationReadScope<'_> {
+    pub(crate) fn begin_observed_path<T: yrs::ReadTxn>(&self, txn: &T, depth: usize) -> bool {
+        if !self.matches_store(txn) {
+            return false;
+        }
+        let mut observed = self.observed_path.borrow_mut();
+        observed.clear();
+        observed.try_reserve_exact(depth).is_ok()
+    }
+
+    pub(crate) fn observe_path_child<T: yrs::ReadTxn>(
+        &self,
+        txn: &T,
+        parent: yrs::branch::BranchID,
+        index: u32,
+        child: &yrs::types::xml::XmlOut,
+        width: usize,
+    ) {
+        if !self.matches_store(txn) {
+            return;
+        }
+        if index as usize >= width {
+            return;
+        }
+        let mut observed = self.observed_path.borrow_mut();
+        if observed.len() < observed.capacity() {
+            observed.push(ObservedPathChild {
+                parent,
+                index,
+                child: child.id(),
+                width,
+            });
+        }
+    }
+
+    pub(crate) fn observed_child_width<T: yrs::ReadTxn>(
+        &self,
+        txn: &T,
+        parent: &yrs::branch::BranchID,
+        index: u32,
+        child: &yrs::branch::BranchID,
+        depth: usize,
+    ) -> Option<usize> {
+        if !self.matches_store(txn) {
+            return None;
+        }
+        self.observed_path
+            .borrow()
+            .get(depth)
+            .filter(|edge| &edge.parent == parent && edge.index == index && &edge.child == child)
+            .map(|edge| edge.width)
+    }
+
+    pub(crate) fn matches_store<T: yrs::ReadTxn>(&self, txn: &T) -> bool {
+        self.matches_store_token(txn.store() as *const _ as usize)
+    }
+
+    pub(crate) fn matches_store_token(&self, store_token: usize) -> bool {
+        self.store_token == store_token
+    }
+
+    pub(crate) fn stamp(&self) -> CompilationReadScopeStamp {
+        CompilationReadScopeStamp(std::sync::Arc::downgrade(self.identity))
+    }
+}
+
+impl CompilationReadScopeStamp {
+    pub(crate) fn matches(&self, scope: CompilationReadScope<'_>) -> bool {
+        self.0
+            .upgrade()
+            .is_some_and(|identity| std::sync::Arc::ptr_eq(&identity, scope.identity))
+    }
+}
+
+// Only this owner retains the strong scope token and its immutable Yrs lock.
+pub(crate) struct CompilationReadTransaction<'doc> {
+    txn: yrs::Transaction<'doc>,
+    snapshot: std::cell::RefCell<std::cell::OnceCell<yrs::Snapshot>>,
+    scope: Option<std::sync::Arc<()>>,
+    observed_path: std::cell::RefCell<Vec<ObservedPathChild>>,
+}
+
+// Neither the memo nor the borrowed capability can outlive its owner.
+pub(crate) struct CompilationReadView<'a, T> {
+    txn: &'a T,
+    snapshot: &'a std::cell::RefCell<std::cell::OnceCell<yrs::Snapshot>>,
+    scope: Option<CompilationReadScope<'a>>,
+}
+
+impl<'a, T> CompilationReadView<'a, T> {
+    #[cfg(test)]
+    pub(crate) fn new(
+        txn: &'a T,
+        snapshot: &'a std::cell::RefCell<std::cell::OnceCell<yrs::Snapshot>>,
+    ) -> Self {
+        Self {
+            txn,
+            snapshot,
+            scope: None,
+        }
+    }
+
+    pub(crate) fn scope(&self) -> Option<CompilationReadScope<'_>> {
+        self.scope
+    }
+}
+
+impl<'doc> CompilationReadTransaction<'doc> {
+    pub(crate) fn new(txn: yrs::Transaction<'doc>) -> Self {
+        Self {
+            txn,
+            snapshot: std::cell::RefCell::new(std::cell::OnceCell::new()),
+            scope: None,
+            observed_path: std::cell::RefCell::new(Vec::new()),
+        }
+    }
+
+    pub(crate) fn for_immediate_commit(txn: yrs::Transaction<'doc>) -> Self {
+        Self {
+            scope: Some(std::sync::Arc::new(())),
+            ..Self::new(txn)
+        }
+    }
+
+    pub(crate) fn scope(&self) -> Option<CompilationReadScope<'_>> {
+        self.scope.as_ref().map(|identity| CompilationReadScope {
+            identity,
+            store_token: yrs::ReadTxn::store(&self.txn) as *const _ as usize,
+            observed_path: &self.observed_path,
+        })
+    }
+
+    pub(crate) fn clear_snapshot_memo(&self) {
+        self.snapshot.borrow_mut().take();
+    }
+
+    pub(crate) fn view(&self) -> CompilationReadView<'_, yrs::Transaction<'doc>> {
+        CompilationReadView {
+            txn: &self.txn,
+            snapshot: &self.snapshot,
+            scope: self.scope(),
+        }
+    }
+}
+
+impl yrs::ReadTxn for CompilationReadTransaction<'_> {
+    fn store(&self) -> &yrs::Store {
+        self.txn.store()
+    }
+    fn snapshot(&self) -> yrs::Snapshot {
+        self.view().snapshot()
+    }
+}
+
+impl<T: yrs::ReadTxn> yrs::ReadTxn for CompilationReadView<'_, T> {
+    fn store(&self) -> &yrs::Store {
+        self.txn.store()
+    }
+
+    fn snapshot(&self) -> yrs::Snapshot {
+        let snapshot = self.snapshot.borrow();
+        #[cfg(test)]
+        if snapshot.get().is_some() {
+            crate::yrs_engine::observability::record_compilation_snapshot_reuse();
+        }
+        snapshot
+            .get_or_init(|| {
+                #[cfg(test)]
+                crate::yrs_engine::observability::record_compilation_snapshot_scan();
+                self.txn.snapshot()
+            })
+            .clone()
+    }
+}
+
 pub(super) fn compile_transaction_with_yrs_impl<T: yrs::ReadTxn>(
     context: CompilationContext<'_>,
     transaction: TypedTransaction,
-    txn: &T,
+    txn: &CompilationReadView<'_, T>,
     fragment: &yrs::types::xml::XmlFragmentRef,
     stored_marks: Option<StoredMarksCompilationContext<'_>>,
     prepared_semantics: Option<PreparedSemanticContext<'_>>,
@@ -110,31 +302,22 @@ pub(super) fn compile_transaction_with_yrs_impl<T: yrs::ReadTxn>(
         txn,
         context.resource_limits,
     )?;
-    let localized_insert_admission = engine_view.and_then(|view| {
-        let [TypedOperation::InsertText { at, .. }] = transaction.operations.as_slice() else {
-            return None;
-        };
-        resolve_position(
-            request_id,
-            Some(0),
-            "at",
-            *at,
-            view.cached.rendered_text,
-            view.cached.position_map,
-            view.cached.document,
-        )
-        .ok()
-        .and_then(|document_position| {
+    let localized_textblock_edit_admission = engine_view.and_then(|view| {
+        let (_, edit) = view
+            .authority
+            .installed()
+            .textblock_edit_for_transaction(&transaction)?;
+        Some(edit.replaced.start).and_then(|document_position| {
             view.authority
                 .installed()
-                .admit_existing_text_insert_with_authority(
+                .admit_textblock_edit_with_authority(
                     &transaction,
-                    prepared_semantics.is_some(),
                     document_position,
                     txn,
                     fragment,
                     view.authority.lookup_seed(request_id).ok()?,
                     view.authority.materialized_identity(),
+                    context.schema,
                     view.schema_fingerprint,
                     context.resource_limits,
                     context.editing_limits,
@@ -144,19 +327,17 @@ pub(super) fn compile_transaction_with_yrs_impl<T: yrs::ReadTxn>(
         })
     });
     let mut localized_compiler = None;
-    if let (Some(view), [TypedOperation::InsertText { at, text, marks: _ }]) =
-        (engine_view, transaction.operations.as_slice())
-    {
-        if !text.is_empty() && !matches!(transaction.selection_intent, SelectionIntent::Set(_)) {
-            if let Ok(position) = resolve_position(
-                request_id,
-                Some(0),
-                "at",
-                *at,
-                view.cached.rendered_text,
-                view.cached.position_map,
-                view.cached.document,
-            ) {
+    if let Some(view) = engine_view {
+        if !matches!(transaction.selection_intent, SelectionIntent::Set(_)) {
+            if let Some((_, edit)) = view
+                .authority
+                .installed()
+                .textblock_edit_for_transaction(&transaction)
+                .filter(|(_, edit)| {
+                    edit.replaced.is_empty() || localized_textblock_edit_admission.is_some()
+                })
+            {
+                let position = edit.replaced.start;
                 if let Some(block) = view
                     .cached
                     .position_map
@@ -184,6 +365,7 @@ pub(super) fn compile_transaction_with_yrs_impl<T: yrs::ReadTxn>(
                             view.schema_fingerprint,
                             view.yrs_state_epoch,
                             context.document_revision,
+                            txn.scope(),
                         )? {
                             localized_compiler = Some(localized);
                         }
@@ -307,20 +489,12 @@ pub(super) fn compile_transaction_with_yrs_impl<T: yrs::ReadTxn>(
     }
     let localized_semantic = if localized_compiler.is_some() {
         engine_view.and_then(|view| {
-            let admission = localized_insert_admission.as_ref()?;
-            let [TypedOperation::InsertText { at, .. }] = transaction.operations.as_slice() else {
-                return None;
-            };
-            let document_position = resolve_position(
-                request_id,
-                Some(0),
-                "at",
-                *at,
-                view.cached.rendered_text,
-                view.cached.position_map,
-                view.cached.document,
-            )
-            .ok()?;
+            let admission = localized_textblock_edit_admission.as_ref()?;
+            let (_, edit) = view
+                .authority
+                .installed()
+                .textblock_edit_for_transaction(&transaction)?;
+            let document_position = edit.replaced.start;
             let validated = admission.validate_current_with_authority(
                 view.authority.installed(),
                 &transaction,
@@ -329,6 +503,7 @@ pub(super) fn compile_transaction_with_yrs_impl<T: yrs::ReadTxn>(
                 fragment,
                 view.authority.lookup_seed(request_id).ok()?,
                 view.authority.materialized_identity(),
+                context.schema,
                 context.resource_limits,
                 context.editing_limits,
                 context.max_length,
@@ -336,7 +511,7 @@ pub(super) fn compile_transaction_with_yrs_impl<T: yrs::ReadTxn>(
             )?;
             let localized = try_localized_semantic_compilation(context, &transaction, &validated)?;
             if let Some(prepared) = prepared_semantics {
-                if localized.preview != *prepared.expected_preview {
+                if localized.steps.back()?.preview != *prepared.expected_preview {
                     return None;
                 }
             }
@@ -408,7 +583,7 @@ pub(super) fn compile_transaction_with_yrs_impl<T: yrs::ReadTxn>(
             localized: localized_semantic,
         },
     )?;
-    compiled.localized_insert_admission = localized_insert_admission;
+    compiled.localized_textblock_edit_admission = localized_textblock_edit_admission;
     compiled.relative_selection_plan =
         match (&compiled.selection_plan, &transaction.selection_intent) {
             (SelectionPlan::Preserve, _) => RelativeSelectionPlan::Preserve,
@@ -445,29 +620,19 @@ pub(super) fn compile_transaction_with_yrs_impl<T: yrs::ReadTxn>(
                 ));
             }
         };
-    // The server owns this read view through compilation and preflight. The
-    // plan's document guard was captured only after the CRDT clock scan and
-    // its input-work reservation above admitted full snapshot construction.
-    // Preflight checks that sealed snapshot before any eager Yrs target reads.
+    // Guard capture follows the admitted clock scan; preflight authenticates
+    // its snapshot or continuously held read scope before target reads.
     #[cfg(test)]
     check_atomic_failpoint(request_id, AtomicFailpoint::MutationPreflight)?;
-    preflight_mutation_plan(request_id, &compiled.mutation_plan, txn)?;
+    preflight_mutation_plan_with_read_scope(request_id, &compiled.mutation_plan, txn, txn.scope())?;
     if compiled.localized_semantic_used {
         compiled.prepared_derived_evidence = engine_view.and_then(|view| {
-            let admission = compiled.localized_insert_admission.as_ref()?;
-            let [TypedOperation::InsertText { at, .. }] = transaction.operations.as_slice() else {
-                return None;
-            };
-            let document_position = resolve_position(
-                request_id,
-                Some(0),
-                "at",
-                *at,
-                view.cached.rendered_text,
-                view.cached.position_map,
-                view.cached.document,
-            )
-            .ok()?;
+            let admission = compiled.localized_textblock_edit_admission.as_ref()?;
+            let (_, edit) = view
+                .authority
+                .installed()
+                .textblock_edit_for_transaction(&transaction)?;
+            let document_position = edit.replaced.start;
             let validated = admission.validate_current_with_authority(
                 view.authority.installed(),
                 &transaction,
@@ -476,6 +641,7 @@ pub(super) fn compile_transaction_with_yrs_impl<T: yrs::ReadTxn>(
                 fragment,
                 view.authority.lookup_seed(request_id).ok()?,
                 view.authority.materialized_identity(),
+                context.schema,
                 context.resource_limits,
                 context.editing_limits,
                 context.max_length,
@@ -485,6 +651,7 @@ pub(super) fn compile_transaction_with_yrs_impl<T: yrs::ReadTxn>(
                 &compiled.preview,
                 compiled.canonical_artifact.as_ref()?,
                 compiled.preview_derivations.as_ref()?,
+                context.schema,
             )
         });
     }
@@ -515,4 +682,139 @@ pub(super) fn validate_cached_compilation_view<'a>(
         ));
     }
     Ok(cached)
+}
+
+#[cfg(test)]
+mod snapshot_tests {
+    use super::{CompilationReadTransaction, CompilationReadView};
+    use std::cell::{Cell, OnceCell, RefCell};
+    use yrs::{Doc, ReadTxn, Text, Transact};
+
+    struct CountingReadView<'a, T> {
+        txn: &'a T,
+        scans: Cell<usize>,
+    }
+
+    impl<T: ReadTxn> ReadTxn for CountingReadView<'_, T> {
+        fn store(&self) -> &yrs::Store {
+            self.txn.store()
+        }
+        fn snapshot(&self) -> yrs::Snapshot {
+            self.scans.set(self.scans.get() + 1);
+            self.txn.snapshot()
+        }
+    }
+
+    #[test]
+    fn moving_compilation_read_transaction_preserves_the_lock_and_snapshot() {
+        use crate::yrs_engine::observability::{
+            reset_full_pass_counts_for_test, take_full_pass_counts_for_test,
+        };
+        let doc = Doc::new();
+        let text = doc.get_or_insert_text("content");
+        text.insert(&mut doc.transact_mut(), 0, "abcdef");
+        reset_full_pass_counts_for_test();
+        let transaction = CompilationReadTransaction::new(doc.transact());
+        let compiled_snapshot = transaction.view().snapshot();
+        assert!(
+            doc.try_transact_mut().is_err(),
+            "compilation must exclude live writes"
+        );
+        let commit_transaction = transaction;
+        assert!(
+            doc.try_transact_mut().is_err(),
+            "moving the read owner must retain its lock"
+        );
+        assert_eq!(commit_transaction.snapshot(), compiled_snapshot);
+        let passes = take_full_pass_counts_for_test();
+        assert_eq!(passes.compilation_snapshot_scans, 1);
+        assert_eq!(passes.compilation_snapshot_reuses, 1);
+        commit_transaction.clear_snapshot_memo();
+        assert!(commit_transaction.snapshot.borrow().get().is_none());
+        assert!(
+            doc.try_transact_mut().is_err(),
+            "clearing the memo must preserve the read lock"
+        );
+        assert_eq!(commit_transaction.snapshot(), compiled_snapshot);
+        assert_eq!(
+            take_full_pass_counts_for_test().compilation_snapshot_scans,
+            1,
+            "a later snapshot request must recapture from the same locked store"
+        );
+        drop(commit_transaction);
+        text.remove_range(
+            &mut doc
+                .try_transact_mut()
+                .expect("commit must release its read lock"),
+            1,
+            2,
+        );
+        let next = CompilationReadTransaction::new(doc.transact());
+        let next_snapshot = next.snapshot();
+        assert_eq!(compiled_snapshot.state_map, next_snapshot.state_map);
+        assert_ne!(
+            compiled_snapshot.delete_set, next_snapshot.delete_set,
+            "a later transaction must independently capture deletion-only changes"
+        );
+    }
+
+    #[test]
+    fn compilation_snapshot_is_lazy_exact_and_limited_to_one_read_view() {
+        let doc = Doc::new();
+        let text = doc.get_or_insert_text("content");
+        text.insert(&mut doc.transact_mut(), 0, "abcdef");
+        let before = {
+            let txn = doc.transact();
+            let underlying = CountingReadView {
+                txn: &txn,
+                scans: Cell::new(0),
+            };
+            let view = CompilationReadView {
+                txn: &underlying,
+                snapshot: &RefCell::new(OnceCell::new()),
+                scope: None,
+            };
+            assert_eq!(
+                underlying.scans.get(),
+                0,
+                "creating the view must not scan before admission"
+            );
+            let expected = txn.snapshot();
+            for _ in 0..3 {
+                assert_eq!(
+                    view.snapshot(),
+                    expected,
+                    "both state and delete clocks must match the underlying snapshot"
+                );
+            }
+            assert_eq!(
+                underlying.scans.get(),
+                1,
+                "repeated reads must traverse the underlying store once"
+            );
+            expected
+        };
+        text.remove_range(&mut doc.transact_mut(), 1, 2);
+        let txn = doc.transact();
+        let underlying = CountingReadView {
+            txn: &txn,
+            scans: Cell::new(0),
+        };
+        let view = CompilationReadView {
+            txn: &underlying,
+            snapshot: &RefCell::new(OnceCell::new()),
+            scope: None,
+        };
+        let after = view.snapshot();
+        assert_eq!(after, txn.snapshot());
+        assert_eq!(
+            before.state_map, after.state_map,
+            "deletion must exercise unchanged state clocks"
+        );
+        assert_ne!(
+            before.delete_set, after.delete_set,
+            "a later read view must observe deletion-only changes"
+        );
+        assert_eq!(underlying.scans.get(), 1);
+    }
 }

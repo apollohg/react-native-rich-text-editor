@@ -3,6 +3,25 @@ import UIKit
 import XCTest
 
 extension PreparedProseRevisionTests {
+    func testSharedImageOwnerPreservesOtherSurfaceRequestsAndCombinedLimit() throws {
+        let transport = HoldingImageTransport()
+        let policy = imagePolicy(maxConcurrentRequests: 1)
+        let owner = RenderImageLoadOwner(policy: policy, transport: transport)
+        let root = try XCTUnwrap(owner.startImageLoad(source: "https://example.test/root-image.png") { _ in })
+        defer { root.cancel() }
+        let pipeline = ViewerImagePipeline(policy: policy, owner: owner)
+        pipeline.begin(generation: "table", imagesEnabled: true)
+        let viewport = CGRect(x: 0, y: 0, width: 100, height: 100)
+        let attachment = ViewerImageAttachment(ordinal: 0, id: "table-image", source: "https://example.test/table-image.png", bounds: viewport, declaredSize: nil)
+        pipeline.updateVisibleRect(viewport, attachments: [attachment])
+        XCTAssertEqual(transport.cancelCount, 0, "Starting table images cancelled root image work")
+        XCTAssertEqual(transport.requestCount, 1, "The table exceeded the shared single-request budget")
+        pipeline.cancel()
+        XCTAssertEqual(transport.cancelCount, 0, "Leaving the table cancelled root image work")
+        root.cancel()
+        XCTAssertEqual(transport.cancelCount, 1)
+    }
+
     func testDisabledImagesDoNotCreateAttachmentsOrRequests() {
         let pipeline = ViewerImagePipeline(policy: .default)
         pipeline.begin(generation: "disabled", imagesEnabled: false)
@@ -59,7 +78,7 @@ extension PreparedProseRevisionTests {
         let scrollView = UIScrollView(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
         scrollView.contentSize = drawing.bounds.size
         scrollView.addSubview(drawing)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
         window.addSubview(scrollView)
         window.isHidden = false
         defer {
@@ -109,7 +128,7 @@ extension PreparedProseRevisionTests {
         let scrollView = UIScrollView(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
         scrollView.contentSize = viewer.bounds.size
         scrollView.addSubview(viewer)
-        let window = UIWindow(frame: scrollView.bounds)
+        let window = makeTestWindow(frame: scrollView.bounds)
         window.addSubview(scrollView)
         window.isHidden = false
         defer {
@@ -148,7 +167,7 @@ extension PreparedProseRevisionTests {
         scrollView.contentSize = drawing.bounds.size
         scrollView.addSubview(drawing)
         scrollView.contentOffset.y = 1_100
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
         window.addSubview(scrollView)
         window.isHidden = false
         defer { window.isHidden = true }
@@ -165,7 +184,7 @@ extension PreparedProseRevisionTests {
     func testWindowDetachmentReleasesMountedImagePixels() {
         let drawing = PreparedProseDrawingView(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
         drawing.install(layout: imageLayout(attachments: []))
-        let window = UIWindow(frame: drawing.bounds)
+        let window = makeTestWindow(frame: drawing.bounds)
         window.addSubview(drawing)
         window.isHidden = false
         drawing.imagePixels = ["mounted": UIImage()]

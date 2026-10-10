@@ -13,3 +13,8 @@ pub fn viewer_compile(request: FfiViewerCompileRequest) -> FfiViewerCompileResul
 
 #[cfg(test)]
 mod tests;
+
+pub(crate) use compile::viewer_leaf_element;
+
+#[cfg(test)]
+pub(crate) use compile::lower_cached_tables_for_test;

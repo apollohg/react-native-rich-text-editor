@@ -2,6 +2,7 @@ package com.apollohg.editor
 
 import uniffi.editor_core.FfiError
 import uniffi.editor_core.FfiJsonResult
+import uniffi.editor_core.FfiNativeRenderFrame
 import uniffi.editor_core.editorV2ApplyCommand
 import uniffi.editor_core.editorV2ApplyInput
 import uniffi.editor_core.editorV2ApplyLocalApi
@@ -28,11 +29,12 @@ import uniffi.editor_core.editorV2GetState
 import uniffi.editor_core.editorV2PinPositionEpoch
 import uniffi.editor_core.editorV2Redo
 import uniffi.editor_core.editorV2ReleaseNativeBinding
-import uniffi.editor_core.editorV2RenderNative
+import uniffi.editor_core.editorV2RenderNativeFrame
 import uniffi.editor_core.editorV2RenderUpdate
 import uniffi.editor_core.editorV2ReplaceDocument
 import uniffi.editor_core.editorV2ResolveScalarSelection
 import uniffi.editor_core.editorV2ScalarToDoc
+import uniffi.editor_core.editorV2SeedNativeRenderCursor
 import uniffi.editor_core.editorV2SetSelection
 import uniffi.editor_core.editorV2SnapshotExport
 import uniffi.editor_core.editorV2Undo
@@ -209,19 +211,37 @@ internal object UniffiEditorV2Backend : EditorV2Backend {
         return normalize(editorV2RenderUpdate(editorId, anchor, head))
     }
 
-    override fun renderNative(
+    override fun renderNativeFrame(
         editorId: String,
-        ownerId: String,
+        ownerId: String?,
         mirrorAnchor: Int?,
         mirrorHead: Int?
-    ): EditorV2CallResult<String> {
+    ): EditorV2CallResult<FfiNativeRenderFrame> {
         val anchor = mirrorAnchor?.let(::exactV2U32)
         val head = mirrorHead?.let(::exactV2U32)
         if ((mirrorAnchor != null && anchor == null) || (mirrorHead != null && head == null)) {
             return EditorV2CallResult.Err(contractError("render mirror is not an exact u32"))
         }
-        return normalize(editorV2RenderNative(editorId, ownerId, anchor, head))
+        val result = editorV2RenderNativeFrame(editorId, ownerId, anchor, head)
+        val frame = result.frame
+        val error = result.error
+        return when {
+            frame != null && error == null -> EditorV2CallResult.Ok(frame)
+
+            frame == null && error != null -> EditorV2CallResult.Err(error.toV2())
+
+            else -> EditorV2CallResult.Err(
+                contractError("v2 result must carry exactly one of frame/error")
+            )
+        }
     }
+
+    override fun seedNativeRenderCursor(
+        editorId: String,
+        ownerId: String,
+        documentRevision: String
+    ): EditorV2Error? =
+        editorV2SeedNativeRenderCursor(editorId, ownerId, documentRevision).error?.toV2()
 
     override fun pinPositionEpoch(
         editorId: String,

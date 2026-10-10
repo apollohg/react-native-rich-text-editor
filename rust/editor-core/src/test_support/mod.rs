@@ -16,7 +16,10 @@ mod collaboration_awareness_test;
 mod collaboration_outbox_test;
 mod collaboration_protocol_test;
 mod collaboration_transport_state_test;
+pub(crate) mod deterministic_clients;
 mod ffi_v2_test;
+mod large_table_budget_test;
+pub(crate) mod large_table_fixture;
 mod model_test;
 mod native_intent_test;
 mod native_transaction_bridge_test;
@@ -30,6 +33,7 @@ mod session_initialization_test;
 mod session_lifecycle_test;
 mod session_replacement_test;
 mod session_snapshot_lifecycle_test;
+mod textblock_local_commit_test;
 mod transform_test;
 mod yrs_engine_awareness_test;
 mod yrs_engine_compiler_test;
@@ -50,6 +54,7 @@ mod yrs_engine_transaction_property_test;
 mod yrs_engine_transaction_test;
 mod yrs_engine_typing_regression_test;
 mod yrs_engine_upgrade_test;
+mod yrs_undo_determinism_probe;
 
 // Session-registry concurrency guard
 //
@@ -114,3 +119,5 @@ mod registry_concurrency {
         }
     }
 }
+
+pub(crate) mod table_frame_mirror;

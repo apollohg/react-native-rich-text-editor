@@ -83,8 +83,21 @@ pub fn apply_step(
         Step::InsertNode { pos, node } => apply_insert_node(doc, *pos, node, schema),
         Step::UpdateNodeAttrs { pos, attrs } => apply_update_node_attrs(doc, *pos, attrs),
         Step::ReplaceRange { from, to, content } => {
-            apply_replace_range(doc, *from, *to, content, schema)
+            apply_replace_range(std::borrow::Cow::Borrowed(doc), *from, *to, content, schema)
         }
+    }
+}
+
+pub(super) fn apply_owned_step(
+    doc: Document,
+    step: &Step,
+    schema: &Schema,
+) -> Result<(Document, StepMap), TransformError> {
+    match step {
+        Step::ReplaceRange { from, to, content } => {
+            apply_replace_range(std::borrow::Cow::Owned(doc), *from, *to, content, schema)
+        }
+        _ => apply_step(&doc, step, schema),
     }
 }
 

@@ -451,7 +451,9 @@ internal class PreparedProseRecyclerHarness(
     private fun beginDirection() {
         val active = activeWindow ?: return
         active.finishingDirection = false
-        PreparedProseLayoutRegistry.shared.beginBenchmarkResidentCensus()
+        PreparedProseLayoutRegistry.shared.beginBenchmarkResidentCensus(
+            includeMountedLayouts = active.direction == Direction.WARM
+        )
         val evidencePhase = if (active.direction == Direction.WARM &&
             active.phase == PreparedProseInstrumentation.TraversalPhase.COLD
         ) {

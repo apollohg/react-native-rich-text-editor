@@ -1,7 +1,12 @@
 import type { MentionSuggestion } from './addons';
 import { StyleSheet, Text, View } from 'react-native';
 import { MaterialDesignIcons } from '@react-native-vector-icons/material-design-icons';
-import { type EditorToolbarDefaultIconId, type EditorToolbarIcon } from './EditorToolbarTypes';
+import {
+    type EditorToolbarDefaultIconId,
+    type EditorToolbarIcon,
+    type ToolbarButton,
+} from './EditorToolbarTypes';
+import { type EditorToolbarTheme } from './EditorTheme';
 import { BUTTON_HIT } from './EditorToolbarRegistry';
 
 export const BUTTON_VISIBLE = 32;
@@ -89,6 +94,69 @@ export const DEFAULT_MATERIAL_DESIGN_ICONS: Partial<Record<EditorToolbarDefaultI
     undo: 'undo',
     redo: 'redo',
 };
+
+export interface ToolbarMetrics {
+    toolbarHeight: number;
+    buttonHeight: number;
+    paddingVertical: number;
+}
+
+export function resolveToolbarMetrics(theme: EditorToolbarTheme | undefined): ToolbarMetrics {
+    const toolbarHeight = Math.max(theme?.height ?? BUTTON_VISIBLE + TOOLBAR_PADDING_V * 2, 1);
+
+    const buttonHeight =
+        theme?.height == null
+            ? BUTTON_VISIBLE
+            : Math.max(1, Math.min(MAX_BUTTON_SIZE, toolbarHeight - BUTTON_HEIGHT_INSET));
+
+    const paddingVertical =
+        theme?.height == null ? TOOLBAR_PADDING_V : Math.max(0, (toolbarHeight - buttonHeight) / 2);
+
+    return { toolbarHeight, buttonHeight, paddingVertical };
+}
+
+export function resolveToolbarButtonVisuals(
+    button: Pick<ToolbarButton, 'buttonStyle' | 'isActive' | 'isDisabled'>,
+    theme: EditorToolbarTheme | undefined,
+    buttonHeight: number
+) {
+    const activeColor = button.buttonStyle?.activeColor ?? theme?.buttonActiveColor ?? ACTIVE_COLOR;
+
+    const defaultColor = button.buttonStyle?.color ?? theme?.buttonColor ?? DEFAULT_COLOR;
+
+    const disabledColor =
+        button.buttonStyle?.disabledColor ?? theme?.buttonDisabledColor ?? DISABLED_COLOR;
+
+    const backgroundColor =
+        button.buttonStyle?.backgroundColor ?? theme?.buttonBackgroundColor ?? 'transparent';
+
+    const activeBackgroundColor =
+        button.buttonStyle?.activeBackgroundColor ?? theme?.buttonActiveBackgroundColor ?? ACTIVE_BG;
+
+    const disabledBackgroundColor =
+        button.buttonStyle?.disabledBackgroundColor ??
+        theme?.buttonDisabledBackgroundColor ??
+        (button.isActive ? activeBackgroundColor : backgroundColor);
+
+    const requestedIconSize = button.buttonStyle?.iconSize ?? theme?.buttonIconSize;
+
+    return {
+        color: button.isDisabled ? disabledColor : button.isActive ? activeColor : defaultColor,
+        backgroundColor: button.isDisabled
+            ? disabledBackgroundColor
+            : button.isActive
+                ? activeBackgroundColor
+                : backgroundColor,
+        iconSize:
+            requestedIconSize != null && Number.isFinite(requestedIconSize) && requestedIconSize > 0
+                ? Math.min(requestedIconSize, buttonHeight)
+                : undefined,
+        borderRadius: Math.max(
+            0,
+            button.buttonStyle?.borderRadius ?? theme?.buttonBorderRadius ?? BUTTON_RADIUS
+        ),
+    };
+}
 
 export function resolveMentionSuggestionDisplayLabel(
     suggestion: MentionSuggestion,

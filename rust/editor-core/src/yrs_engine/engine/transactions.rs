@@ -1,7 +1,7 @@
 use super::outbound::OutboundUpdateSink;
 use super::YrsDocumentEngine;
 use crate::yrs_engine;
-use crate::yrs_engine::compiler::CompiledTransaction;
+use crate::yrs_engine::compiler::{CompilationReadTransaction, CompiledTransaction};
 use yrs::{ReadTxn, Transact};
 
 impl YrsDocumentEngine {
@@ -9,6 +9,7 @@ impl YrsDocumentEngine {
         &mut self,
         transaction: yrs_engine::TypedTransaction,
         proof: yrs_engine::commands::PreparedCommandProof,
+        initial_selection: Option<(&yrs_engine::SelectionInput, &yrs_engine::ResolvedSelection)>,
         with_result: bool,
         outbound: &mut OutboundUpdateSink<'_>,
     ) -> yrs_engine::OperationResult<(
@@ -30,8 +31,12 @@ impl YrsDocumentEngine {
             .derived_state
             .as_ref()
             .is_some_and(|state| state.mutation_lookup_seed.is_unavailable());
+        self.canonical_splice_cache = None;
         let prepared_history = if prepare_history_before_context {
-            self.prepare_execution_command_history_admission(&execution_admission)?
+            self.prepare_execution_command_history_admission(
+                &execution_admission,
+                initial_selection.map(|(_, resolved)| resolved),
+            )?
         } else {
             None
         };
@@ -46,12 +51,15 @@ impl YrsDocumentEngine {
         }
 
         let (execution_admission, prepared_history) = prepared_execution.into_parts();
+        let authority_doc = self.doc.clone();
+        let read_transaction =
+            CompilationReadTransaction::for_immediate_commit(authority_doc.transact());
         let compiled = {
             let state = self
                 .derived_state
                 .as_ref()
                 .ok_or_else(|| yrs_engine::OperationError::engine_not_ready(request_id))?;
-            let txn = self.doc.transact();
+            let txn = read_transaction.view();
             let fragment = txn
                 .get_xml_fragment(self.fragment_name.as_str())
                 .ok_or_else(|| {
@@ -119,6 +127,8 @@ impl YrsDocumentEngine {
             with_result,
             prepared_history,
             Some(context),
+            Some(read_transaction),
+            initial_selection,
             outbound,
         )
     }
@@ -126,6 +136,7 @@ impl YrsDocumentEngine {
     pub(super) fn apply_typed_transaction_with_staged_context(
         &mut self,
         transaction: yrs_engine::TypedTransaction,
+        initial_selection: Option<(&yrs_engine::SelectionInput, &yrs_engine::ResolvedSelection)>,
         with_result: bool,
         outbound: &mut OutboundUpdateSink<'_>,
     ) -> yrs_engine::OperationResult<(
@@ -145,17 +156,14 @@ impl YrsDocumentEngine {
             );
         }
         let request_id = transaction.request_id;
-        let requires_identity = matches!(
-            transaction.operations.as_slice(),
-            [yrs_engine::TypedOperation::InsertText { .. }]
-        );
-        let mut context = self.prepare_mutation_lookup_seed(request_id)?;
-        if requires_identity {
-            self.prepare_mutation_identity(&mut context)?;
-        }
+        let context = self.prepare_mutation_lookup_seed(request_id)?;
+        let authority_doc = self.doc.clone();
+        let read_transaction =
+            CompilationReadTransaction::for_immediate_commit(authority_doc.transact());
         let compiled = self.with_compiled_base_authority(
             request_id,
             Some(&context),
+            &read_transaction,
             |authority, txn, fragment| {
                 self.compile_typed_transaction_with_read_view(
                     transaction,
@@ -166,7 +174,15 @@ impl YrsDocumentEngine {
                 )
             },
         )?;
-        self.apply_compiled_transaction_with_context(compiled, context, with_result, outbound)
+        self.apply_compiled_transaction_with_history_and_context(
+            compiled,
+            with_result,
+            None,
+            Some(context),
+            Some(read_transaction),
+            initial_selection,
+            outbound,
+        )
     }
 
     #[allow(dead_code)]
@@ -176,6 +192,7 @@ impl YrsDocumentEngine {
     ) -> yrs_engine::OperationResult<yrs_engine::TransactionCommit> {
         let (commit, _) = self.apply_typed_transaction_with_staged_context(
             transaction,
+            None,
             false,
             &mut OutboundUpdateSink::detached(),
         )?;
@@ -196,6 +213,7 @@ impl YrsDocumentEngine {
     )> {
         self.apply_typed_transaction_with_staged_context(
             transaction,
+            None,
             with_result,
             &mut OutboundUpdateSink::from_optional_outbox(outbox),
         )
@@ -209,6 +227,7 @@ impl YrsDocumentEngine {
         let request_id = transaction.request_id;
         let (_, result) = self.apply_typed_transaction_with_staged_context(
             transaction,
+            None,
             true,
             &mut OutboundUpdateSink::detached(),
         )?;
@@ -250,25 +269,6 @@ impl YrsDocumentEngine {
         )
     }
 
-    fn apply_compiled_transaction_with_context(
-        &mut self,
-        compiled: CompiledTransaction,
-        context: yrs_engine::prepared_admission::PreparedMutationContext,
-        with_result: bool,
-        outbound: &mut OutboundUpdateSink<'_>,
-    ) -> yrs_engine::OperationResult<(
-        yrs_engine::TransactionCommit,
-        Option<yrs_engine::TypedTransactionResult>,
-    )> {
-        self.apply_compiled_transaction_with_history_and_context(
-            compiled,
-            with_result,
-            None,
-            Some(context),
-            outbound,
-        )
-    }
-
     pub(super) fn apply_compiled_transaction_with_history(
         &mut self,
         compiled: CompiledTransaction,
@@ -283,6 +283,8 @@ impl YrsDocumentEngine {
             compiled,
             with_result,
             prepared_history,
+            None,
+            None,
             None,
             outbound,
         )

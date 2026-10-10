@@ -228,6 +228,40 @@ class EditorTextSurfaceTest {
     }
 
     @Test
+    fun `window focus rectangle follows the caret within a tall padded surface`() {
+        val editor = measuredEditor("first\nsecond\nthird")
+        val horizontalPadding = 12
+        val verticalPadding = 18
+        editor.setPadding(horizontalPadding, verticalPadding, horizontalPadding, verticalPadding)
+        val viewportHeight = 600
+        editor.measure(
+            View.MeasureSpec.makeMeasureSpec(320, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(viewportHeight, View.MeasureSpec.EXACTLY)
+        )
+        editor.layout(0, 0, editor.measuredWidth, editor.measuredHeight)
+        for (offset in listOf(0, editor.text.indexOf("second"), editor.text.length)) {
+            editor.setSelection(offset)
+            val focused = android.graphics.Rect()
+            editor.getFocusedRect(focused)
+            val line = editor.layout.getLineForOffset(offset)
+            assertEquals(
+                "focus top at offset $offset",
+                editor.layout.editorTextLineTop(line) + verticalPadding,
+                focused.top
+            )
+            assertEquals(
+                "focus bottom at offset $offset",
+                editor.layout.editorTextLineBottom(line) + verticalPadding,
+                focused.bottom
+            )
+            assertTrue(
+                "focus rectangle must identify the caret rather than the full surface: $focused",
+                focused.width() < horizontalPadding
+            )
+        }
+    }
+
+    @Test
     fun `final line selection handles stay inside a surface without bottom padding`() {
         val editor = measuredEditor("abc")
         editor.setPadding(0, 0, 0, 0)

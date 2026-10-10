@@ -1,21 +1,13 @@
 package com.apollohg.editor
 import android.app.Activity
-import android.graphics.Point
 import android.os.Looper
-import android.view.MotionEvent
-import android.view.Window
 import android.view.inputmethod.EditorInfo
 import android.widget.FrameLayout
-import android.widget.ScrollView
-import java.time.Duration
 import java.util.concurrent.atomic.AtomicBoolean
-import org.json.JSONArray
-import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -87,9 +79,7 @@ internal class NativeEditorExpoViewCompositionTest : NativeEditorExpoViewTestFix
 
         shadowOf(Looper.getMainLooper()).idle()
         assertEquals(0L, view.richTextView.editorId)
-        val preparation = JSONObject(NativeEditorViewRegistry.prepareForCommandJSON(editorId))
-        assertFalse(preparation.getBoolean("ready"))
-        assertEquals("destroyed", preparation.getString("blockedReason"))
+        assertNull(EditorV2Registry.adapterForViewToken(editorId))
     }
 
     @Test

@@ -1,10 +1,14 @@
 package com.apollohg.editor
 
+import android.os.Looper
+import android.os.SystemClock
 import android.text.InputType
 import android.text.TextUtils
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -12,11 +16,159 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 internal class EditorInputBoundaryRegressionTest : EditorInputConnectionTestFixture() {
+    @Test
+    fun `IME backspace through example content after card keeps atom deletable`() =
+        assertExampleAtomTailDeletable(withPrecedingTable = false)
+
+    @Test
+    fun `IME backspace through example content with preceding table keeps atom deletable`() =
+        assertExampleAtomTailDeletable(withPrecedingTable = true)
+
+    @Test
+    fun `settled IME backspace through example content with table keeps atom deletable`() =
+        assertExampleAtomTailDeletable(withPrecedingTable = true, settleBetweenDeletes = true)
+
+    @Test
+    fun `IME backspace selects and deletes card after earlier table`() =
+        assertExampleAtomTailDeletable(
+            withPrecedingTable = true,
+            tailDocument = EMPTY_ATOM_TAIL_DOCUMENT
+        )
+
+    @Test
+    fun `code point backspace through example content with table keeps card deletable`() =
+        assertExampleAtomTailDeletable(withPrecedingTable = true) {
+            assertTrue(it.deleteSurroundingTextInCodePoints(1, 0))
+        }
+
+    @Test
+    fun `hardware backspace through example content with table keeps card deletable`() {
+        var eventTime = SystemClock.uptimeMillis()
+        assertExampleAtomTailDeletable(withPrecedingTable = true) { input ->
+            eventTime += HARDWARE_KEY_INTERVAL_MS
+            assertTrue(
+                input.sendKeyEvent(
+                    KeyEvent(eventTime, eventTime, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL, 0)
+                )
+            )
+            assertTrue(
+                input.sendKeyEvent(
+                    KeyEvent(eventTime, eventTime, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DEL, 0)
+                )
+            )
+        }
+    }
+
+    private fun assertExampleAtomTailDeletable(
+        withPrecedingTable: Boolean,
+        settleBetweenDeletes: Boolean = false,
+        tailDocument: String = EXAMPLE_ATOM_TAIL_DOCUMENT,
+        backspace: (InputConnection) -> Unit = { assertTrue(it.deleteSurroundingText(1, 0)) }
+    ) {
+        val document = JSONObject(tailDocument)
+        val blocks = document.getJSONArray("content")
+        if (withPrecedingTable) {
+            val withTable = org.json.JSONArray().put(
+                blocks.getJSONObject(0)
+            ).put(JSONObject(PRECEDING_TABLE))
+            for (index in 1 until blocks.length()) withTable.put(blocks.getJSONObject(index))
+            document.put("content", withTable)
+        }
+        withMountedEditorView(document.toString(), ATOM_CONFIG, windowed = true) {
+                view,
+                adapter,
+                _
+            ->
+            val editor = view.editorEditText
+            editor.applyAtomRenderConfiguration(COUNTER_CARD_CONFIGURATION)
+            assertTrue(editor.requestFocus())
+            val prefixBlocks = JSONObject(
+                requireNotNull(adapter.documentJson())
+            ).getJSONArray("content")
+            val prefixLength = if (withPrecedingTable) 2 else 1
+            val expectedPrefix = (0 until prefixLength).map {
+                prefixBlocks.getJSONObject(it).toString()
+            }
+            editor.setSelection(editor.text!!.length)
+            val input = requireNotNull(editor.onCreateInputConnection(EditorInfo()))
+            val maximumBackspaces = editor.text!!.length + ATOM_BOUNDARY_BACKSPACE_ALLOWANCE
+            var atomSelected = false
+            for (step in 0 until maximumBackspaces) {
+                val beforeDocument = adapter.documentJson()
+                val beforeSelection = adapter.selectionJson()
+                val beforeNativeSelection = editor.selectionStart to editor.selectionEnd
+                backspace(input)
+                if (settleBetweenDeletes) shadowOf(Looper.getMainLooper()).idle()
+                val afterDocument = adapter.documentJson()
+                val selection = JSONObject(requireNotNull(adapter.selectionJson()))
+                val diagnostic = "step=$step document=$afterDocument selection=$selection " +
+                    "native=${editor.text} " +
+                    "caret=${editor.selectionStart}..${editor.selectionEnd}\n" +
+                    editor.imeTraceSnapshotForTesting().joinToString("\n")
+                if (selection.optString("type") == "node") {
+                    val atom = editor.text!!.getSpans(
+                        editor.selectionStart,
+                        editor.selectionEnd,
+                        AtomBlockSpan::class.java
+                    ).firstOrNull()
+                    if (atom?.nodeType == "counterCard") {
+                        atomSelected = true
+                        assertEquals(diagnostic, atom.docPos, selection.getInt("pos"))
+                        assertFalse(diagnostic, editor.rootTableSelectionInputBlocked)
+                        val blocks = JSONObject(
+                            requireNotNull(afterDocument)
+                        ).getJSONArray("content")
+                        assertEquals(
+                            diagnostic,
+                            expectedPrefix.map { JSONObject(it).getString("type") } +
+                                listOf("counterCard", "paragraph"),
+                            (0 until blocks.length()).map {
+                                blocks.getJSONObject(it).getString("type")
+                            }
+                        )
+                        break
+                    }
+                }
+                assertTrue(
+                    "Backspace stuck after example CounterCard: $diagnostic",
+                    afterDocument != beforeDocument || adapter.selectionJson() != beforeSelection ||
+                        (editor.selectionStart to editor.selectionEnd) != beforeNativeSelection
+                )
+            }
+            assertTrue("deleting the example's list and rule must reach CounterCard", atomSelected)
+            backspace(input)
+            assertFalse(requireNotNull(adapter.documentJson()).contains("counterCard"))
+            assertTrue(input.commitText("again", 1))
+            shadowOf(Looper.getMainLooper()).idle()
+            assertTrue(editor.text.toString().endsWith("again"))
+            assertEquals(editor.text!!.length, editor.selectionStart)
+            assertEquals(editor.selectionStart, editor.selectionEnd)
+            val blocks = JSONObject(requireNotNull(adapter.documentJson())).getJSONArray("content")
+            assertEquals(
+                expectedPrefix.map { JSONObject(it).getString("type") } + "paragraph",
+                (0 until blocks.length()).map { blocks.getJSONObject(it).getString("type") }
+            )
+            assertEquals(
+                expectedPrefix,
+                (expectedPrefix.indices).map {
+                    blocks.getJSONObject(it).toString()
+                }
+            )
+            assertEquals(
+                "again",
+                blocks.getJSONObject(
+                    blocks.length() - 1
+                ).getJSONArray("content").getJSONObject(0).getString("text")
+            )
+        }
+    }
+
     @Test
     fun `new unordered list item requests sentence capitalization`() {
         val harness = structuredDeleteHarness("<ul><li><p>First item</p></li></ul>")
@@ -329,18 +481,7 @@ internal class EditorInputBoundaryRegressionTest : EditorInputConnectionTestFixt
 
     private fun atomHarness(): RealExternalCompositionHarness = realExternalCompositionHarness(
         "Before",
-        """
-            {
-                "schema":{"nodes":[
-                    {"name":"doc","content":"block+","role":"doc"},
-                    {"name":"paragraph","content":"text*","group":"block","role":"textBlock"},
-                    {"name":"text","content":"","role":"text"},
-                    {"name":"counterCard","content":"","group":"block","role":"block","isVoid":true},
-                    {"name":"horizontalRule","content":"","group":"block","role":"block","isVoid":true}
-                ],"marks":[]},
-                "initialization":{"type":"localEmpty"}
-            }
-        """.trimIndent()
+        ATOM_CONFIG
     ).also {
         it.editText.applyUpdateJSON(
             requireNotNull(
@@ -352,13 +493,62 @@ internal class EditorInputBoundaryRegressionTest : EditorInputConnectionTestFixt
             ),
             notifyListener = false
         )
-        it.editText.applyAtomRenderConfiguration(
-            AtomRenderConfiguration(
-                setOf("counterCard"),
-                mapOf("counterCard" to 72f),
-                emptyMap()
-            )
-        )
+        it.editText.applyAtomRenderConfiguration(COUNTER_CARD_CONFIGURATION)
         it.adapter.claimNativeBindingIfUnowned(1L)
+    }
+
+    private companion object {
+        val COUNTER_CARD_CONFIGURATION = AtomRenderConfiguration(
+            setOf("counterCard"),
+            mapOf("counterCard" to 72f),
+            emptyMap()
+        )
+        val ATOM_CONFIG = """
+            {
+                "schema":{"nodes":[
+                    {"name":"doc","content":"block+","role":"doc"},
+                    {"name":"paragraph","content":"text*","group":"block","role":"textBlock"},
+                    {"name":"text","content":"","role":"text"},
+                    {"name":"counterCard","content":"","group":"block","role":"block","isVoid":true},
+                    {"name":"horizontalRule","content":"","group":"block","role":"block","isVoid":true},
+                    {"name":"horizontal_rule","content":"","group":"block","role":"block","isVoid":true,"htmlTag":"hr"},
+                    {"name":"ordered_list","content":"list_item+","group":"block","role":"list","htmlTag":"ol"},
+                    {"name":"list_item","content":"paragraph block*","role":"listItem"},
+                    {"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table"},
+                    {"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row"},
+                    {"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},
+                    {"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}
+                ],"marks":[]},
+                "initialization":{"type":"localEmpty"}
+            }
+        """.trimIndent()
+        const val PRECEDING_TABLE = """
+            {"type":"table","content":[{"type":"table_row","content":[
+                {"type":"table_cell","content":[{"type":"paragraph","content":[
+                    {"type":"text","text":"untouched table"}
+                ]}]}
+            ]}]}
+        """
+
+        const val ATOM_BOUNDARY_BACKSPACE_ALLOWANCE = 16
+        const val HARDWARE_KEY_INTERVAL_MS = 10L
+        const val EMPTY_ATOM_TAIL_DOCUMENT = """
+            {"type":"doc","content":[
+                {"type":"paragraph","content":[{"type":"text","text":"Before"}]},
+                {"type":"counterCard"},{"type":"paragraph"}
+            ]}
+        """
+        val EXAMPLE_ATOM_TAIL_DOCUMENT = """
+            {"type":"doc","content":[
+                {"type":"paragraph","content":[{"type":"text","text":"Before"}]},
+                {"type":"counterCard"},
+                {"type":"ordered_list","content":[
+                    {"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"Insert another with the + button"}]}]},
+                    {"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"Tap a counter to select it, then delete it like any block"}]}]}
+                ]},
+                {"type":"horizontal_rule"},
+                {"type":"paragraph"}
+            ]}
+        """.trimIndent()
     }
 }

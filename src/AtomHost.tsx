@@ -79,6 +79,7 @@ export function AtomHost({
     estimatedHeight,
     visible = true,
     onMeasure,
+    onLivenessChange,
     nativeID,
 }: {
     component: AtomComponent;
@@ -87,6 +88,7 @@ export function AtomHost({
     estimatedHeight: number;
     visible?: boolean;
     onMeasure?: (event: import('react-native').LayoutChangeEvent) => void;
+    onLivenessChange?: (pinned: boolean, instance: object) => void;
     nativeID?: string;
 }) {
     const [ measurement, setMeasurement ] = useState({ width, height: estimatedHeight });
@@ -97,6 +99,8 @@ export function AtomHost({
     const latestRequest = useRef(0);
     const applyUpdate = atomProps.updateAttrs;
     const mounted = useRef(true);
+    const livenessInstance = useRef({});
+    const livenessCallback = useRef(onLivenessChange);
 
     useEffect(() => {
         mounted.current = true;
@@ -105,6 +109,18 @@ export function AtomHost({
             mounted.current = false;
         };
     }, []);
+
+    const pinned = focused || active || pending > 0 || atomProps.selected;
+
+    useEffect(() => {
+        livenessCallback.current = onLivenessChange;
+    }, [ onLivenessChange ]);
+
+    useEffect(() => {
+        livenessCallback.current?.(pinned, livenessInstance.current);
+
+        return () => livenessCallback.current?.(false, livenessInstance.current);
+    }, [ pinned ]);
 
     const updateAttrs = useCallback(
         async(update: AtomAttrsUpdate) => {
@@ -155,7 +171,7 @@ export function AtomHost({
     }, [ atomProps.editor ]);
 
     const retainedHeight = measurement.width === width ? measurement.height : estimatedHeight;
-    const show = visible || focused || active || pending > 0 || atomProps.selected;
+    const show = visible || pinned;
 
     return (
         <View

@@ -524,3 +524,184 @@ fn second_history_pop_max_length_drift_rejects_before_live_pop() {
     assert_eq!(repeated.details, error.details);
     assert_eq!(atomic_audit(&engine), before);
 }
+#[test]
+fn fingerprint_only_ordered_list_history_restores_the_full_selected_range() {
+    const METADATA_LIMIT: usize = 4096;
+    const REQUEST_ID: u64 = 108_080;
+    const REPLACEMENT: &str = "again";
+    const ROOT_CONTEXT: &str = "root";
+    const ROOT_START: u32 = 1;
+    const CELL_START: u32 = 4;
+    const CELL_OPENING: u32 = 2;
+    const CELL_BOUNDARY_TOKENS: u32 = 2;
+    let corpus: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../../../scripts/tests/editor-command-sequences.json"
+    ))
+    .unwrap();
+    let list = corpus["fragments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|fragment| fragment["name"] == "orderedList")
+        .unwrap()["node"]
+        .clone();
+    let paragraph =
+        |text: &str| json!({"type": "paragraph", "content": [{"type": "text", "text": text}]});
+    for context in corpus["contexts"].as_array().unwrap() {
+        let context = context.as_str().unwrap();
+        let blocks = vec![
+            paragraph(corpus["prefix"].as_str().unwrap()),
+            list.clone(),
+            paragraph(corpus["suffix"].as_str().unwrap()),
+        ];
+        let blocks = if context == ROOT_CONTEXT {
+            blocks
+        } else {
+            vec![
+                json!({"type": "table", "content": [{"type": "table_row", "content": [
+                    {"type": context, "content": blocks}, {"type": "table_cell", "content": [paragraph(corpus["neighbour"].as_str().unwrap())]}
+                ]}]}),
+            ]
+        };
+        let mut engine = YrsDocumentEngine::new(YrsEngineConfig {
+            schema: crate::schema::Schema::from_json(&corpus["config"]["schema"]).unwrap(),
+            fragment_name: "prosemirror".into(),
+            initialization_mode: crate::yrs_engine::InitializationMode::LocalEmpty,
+            resource_limits: ResourceLimits::default(),
+            editing_limits: crate::yrs_engine::EditingLimits {
+                max_derived_output_bytes: METADATA_LIMIT,
+                ..crate::yrs_engine::EditingLimits::default()
+            },
+            max_length: None,
+            scope: None,
+        })
+        .unwrap();
+        engine
+            .import_json(
+                &json!({"type": "doc", "content": blocks}).to_string(),
+                TransactionOrigin::DocumentImport,
+            )
+            .unwrap();
+        let start = if context == ROOT_CONTEXT {
+            ROOT_START
+        } else {
+            CELL_START
+        };
+        let end = if context == ROOT_CONTEXT {
+            engine.document().unwrap().content_size() - ROOT_START
+        } else {
+            CELL_OPENING
+                + engine
+                    .document()
+                    .unwrap()
+                    .node_at(&[0, 0, 0])
+                    .unwrap()
+                    .node_size()
+                - CELL_BOUNDARY_TOKENS
+        };
+        let point = |position| RevisionedPosition {
+            offset: engine
+                .position_map()
+                .unwrap()
+                .doc_to_scalar(position, engine.document().unwrap()),
+            kind: EditorOffsetKind::Scalar,
+            affinity: Affinity::Before,
+        };
+        engine
+            .apply_typed_transaction(TypedTransaction {
+                request_id: REQUEST_ID,
+                base_document_revision: engine.revision(),
+                origin: TransactionOrigin::LocalApi,
+                operations: vec![],
+                selection_intent: SelectionIntent::Set(SelectionInput::Text {
+                    anchor: point(start),
+                    head: point(end),
+                }),
+                history_policy: HistoryPolicy::Skip,
+            })
+            .unwrap();
+        let original = engine.document_json().unwrap();
+        let original_selection = engine.resolved_selection().cloned();
+        engine
+            .apply_command(REQUEST_ID, TypedCommand::DeleteBackward)
+            .unwrap()
+            .unwrap();
+        let cleared = engine.document_json().unwrap();
+        let cleared_selection = engine.resolved_selection().cloned();
+        let (before, after) = engine.history.next_undo_snapshots_for_test().unwrap();
+        for snapshot in [&before, &after] {
+            assert!(
+                snapshot.document_snapshot.is_none(),
+                "{context}: test unexpectedly retained a document"
+            );
+            assert!(
+                matches!(
+                    snapshot.canonical_fingerprint,
+                    crate::yrs_engine::history::HistoryCanonicalIdentity::Materialized { .. }
+                ),
+                "{context}: expected bounded fingerprints"
+            );
+        }
+        for redo in [false, true] {
+            assert!(
+                engine.undo(REQUEST_ID).unwrap().is_some(),
+                "{context}: undo unavailable"
+            );
+            assert!(
+                crate::boundary::json_projection_values_equal_stack_safe(
+                    &engine.document_json().unwrap(),
+                    &original
+                ),
+                "{context}: undo changed ordered-list content"
+            );
+            assert_eq!(
+                engine.resolved_selection().cloned(),
+                original_selection,
+                "{context}: undo shortened the selected range"
+            );
+            if !redo {
+                assert!(
+                    engine.redo(REQUEST_ID).unwrap().is_some(),
+                    "{context}: redo unavailable"
+                );
+                assert_eq!(
+                    engine.document_json().unwrap(),
+                    cleared,
+                    "{context}: redo changed cleared content"
+                );
+                assert_eq!(
+                    engine.resolved_selection().cloned(),
+                    cleared_selection,
+                    "{context}: redo changed the caret"
+                );
+            }
+        }
+        engine
+            .apply_command(
+                REQUEST_ID,
+                TypedCommand::ReplaceSelectionText {
+                    text: REPLACEMENT.into(),
+                },
+            )
+            .unwrap()
+            .unwrap();
+        let replaced = engine.document_json().unwrap();
+        let scope = if context == ROOT_CONTEXT {
+            &replaced
+        } else {
+            &replaced["content"][0]["content"][0]["content"][0]
+        };
+        assert_eq!(
+            scope["content"],
+            json!([paragraph(REPLACEMENT)]),
+            "{context}: shortened undo selection left original text behind"
+        );
+        if context != ROOT_CONTEXT {
+            assert_eq!(
+                replaced["content"][0]["content"][0]["content"][1],
+                original["content"][0]["content"][0]["content"][1],
+                "{context}: replacement changed its neighbour"
+            );
+        }
+    }
+}

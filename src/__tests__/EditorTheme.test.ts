@@ -1,6 +1,69 @@
+import { EditorStyleSheet } from '../EditorStyleSheet';
 import { serializeEditorTheme } from '../EditorTheme';
 
 describe('EditorTheme serialization', () => {
+    it('routes table margins to native block styles alongside table presentation', () => {
+        const table = Object.freeze({ minColumnWidth: 96, cellPadding: 10, borderColor: '#123456', marginBottom: 16 });
+        const theme = Object.freeze({ table, paragraph: Object.freeze({ marginBottom: 8 }) });
+        expect(EditorStyleSheet.create(theme)).toBe(theme);
+
+        expect(JSON.parse(serializeEditorTheme(theme)!)).toEqual({
+            version: 1,
+            table: {
+                minColumnWidth: 96,
+                cellPadding: 10,
+                borderWidth: 1,
+                borderColor: '#123456ff',
+                headerBackgroundColor: '#f3f4f6ff',
+                selectionColor: '#3b82f633',
+                resizeHandleColor: '#3b82f6ff',
+            },
+            styles: { table: { marginBottom: 16 }, paragraph: { marginBottom: 8 } },
+        });
+
+        expect(table).toEqual({ minColumnWidth: 96, cellPadding: 10, borderColor: '#123456', marginBottom: 16 });
+    });
+
+    it('normalizes table margins with side and axis precedence and explicit zero', () => {
+        const theme = { table: { margin: 12, marginVertical: 8, marginBottom: 0, marginRight: 4 } };
+
+        expect(JSON.parse(serializeEditorTheme(theme)!).styles.table).toEqual({
+            marginTop: 8, marginRight: 4, marginBottom: 0, marginLeft: 12,
+        });
+    });
+
+    it('preserves finite negative table margins using the existing block spacing rules', () => {
+        expect(JSON.parse(serializeEditorTheme({ table: { marginBottom: -4.5 } })!).styles.table).toEqual({ marginBottom: -4.5 });
+    });
+
+    it('does not emit an empty table block style when spacing is omitted', () => {
+        expect(JSON.parse(serializeEditorTheme({ table: { marginBottom: undefined } })!)).not.toHaveProperty('styles');
+    });
+
+    it.each([ NaN,
+        Infinity,
+        -Infinity,
+        '16',
+        true,
+        null ])('rejects invalid table margin %s with its property path', marginBottom => {
+        expect(() => serializeEditorTheme({ table: { marginBottom } } as never)).toThrow('table.marginBottom: expected a finite number');
+    });
+
+    it('normalizes table presentation defaults and overrides', () => {
+        expect(JSON.parse(serializeEditorTheme({ table: { minColumnWidth: 96, borderColor: '#123456' } })!)).toEqual({
+            version: 1,
+            table: {
+                minColumnWidth: 96,
+                cellPadding: 8,
+                borderWidth: 1,
+                borderColor: '#123456ff',
+                headerBackgroundColor: '#f3f4f6ff',
+                selectionColor: '#3b82f633',
+                resizeHandleColor: '#3b82f6ff',
+            },
+        });
+    });
+
     it('serializes flat per-level heading styles', () => {
         expect(
             JSON.parse(

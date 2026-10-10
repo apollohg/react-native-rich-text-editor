@@ -1,7 +1,9 @@
 package com.apollohg.editor
 
+import com.apollohg.editor.tables.EditorTableIndex
 import org.json.JSONArray
 import org.json.JSONObject
+import org.json.JSONTokener
 
 internal fun ulongField(jsonObject: JSONObject, key: String): ULong? =
     canonicalV2U64(jsonObject.opt(key) as? String)?.toULong()
@@ -239,12 +241,31 @@ private fun validRenderElement(value: Any?): Boolean {
     }
 }
 
+internal fun validSemanticRenderElements(
+    elements: List<Any?>,
+    index: EditorTableIndex? = null
+): Boolean {
+    val keys = mutableSetOf<String>()
+    return elements.all { raw ->
+        val element = raw as? JSONObject ?: return@all false
+        if (element.opt("type") != "table") {
+            validRenderElement(element)
+        } else {
+            val key = element.opt("tableId") as? String
+            exactKeys(element, setOf("type", "tableId")) && !key.isNullOrEmpty() && keys.add(key) &&
+                (index == null || index.record(key) != null)
+        }
+    }
+}
+
 private fun validRenderBlocks(value: Any?): Boolean {
     val blocks = value as? JSONArray ?: return false
-    return (0 until blocks.length()).all { blockIndex ->
-        val block = blocks.opt(blockIndex) as? JSONArray ?: return@all false
-        (0 until block.length()).all { validRenderElement(block.opt(it)) }
+    val elements = mutableListOf<Any?>()
+    for (blockIndex in 0 until blocks.length()) {
+        val block = blocks.optJSONArray(blockIndex) ?: return false
+        for (index in 0 until block.length()) elements.add(block.opt(index))
     }
+    return validSemanticRenderElements(elements)
 }
 
 private fun validRenderPatch(value: Any?): Boolean {
@@ -320,12 +341,16 @@ private fun validSelection(value: Any?): Boolean {
 
         "all" -> exactKeys(selection, setOf("type"))
 
+        "cell" -> exactKeys(selection, setOf("type", "anchorCell", "headCell")) &&
+            exactV2U32(selection.opt("anchorCell") as? Number) != null &&
+            exactV2U32(selection.opt("headCell") as? Number) != null
+
         else -> false
     }
 }
 
 internal data class AtomicRenderSnapshot(
-    /** Original validated wire payload for controlled-prop delivery. */
+    val renderObject: JSONObject,
     val atomicRenderJson: String,
     val viewUpdateJson: String,
     val documentRevision: ULong,
@@ -337,14 +362,19 @@ internal data class AtomicRenderSnapshot(
     val positionEpoch: String?
 )
 
-internal data class PinnedAtomicRenderSnapshot(
-    val snapshot: AtomicRenderSnapshot,
-    val positionEpoch: String?
-)
+internal data class TableScalarExtent(val scalarStart: Int, val scalarEnd: Int)
+
+internal fun parseSharedStringJsonObject(json: String): JSONObject {
+    val strings = HashMap<String, String>()
+    return JSONObject(object : JSONTokener(json) {
+        override fun nextString(quote: Char): String =
+            super.nextString(quote).let { strings.getOrPut(it) { it } }
+    })
+}
 
 internal fun parseAtomicRenderSnapshot(json: String): AtomicRenderSnapshot? {
     return try {
-        val jsonObject = JSONObject(json)
+        val jsonObject = parseSharedStringJsonObject(json)
         val requiredKeys =
             setOf(
                 "renderBlocks",
@@ -365,7 +395,7 @@ internal fun parseAtomicRenderSnapshot(json: String): AtomicRenderSnapshot? {
                     renderBlocks === JSONObject.NULL && renderPatch is JSONObject &&
                         validRenderPatch(renderPatch)
                     )
-        if (!onlyKeys(jsonObject, requiredKeys + "positionEpoch") ||
+        if (!onlyKeys(jsonObject, requiredKeys + setOf("positionEpoch")) ||
             requiredKeys.any { !jsonObject.has(it) } ||
             !validRenderPayload ||
             !validSelection(jsonObject.opt("selection")) ||
@@ -391,9 +421,10 @@ internal fun parseAtomicRenderSnapshot(json: String): AtomicRenderSnapshot? {
             null
         }
         jsonObject.remove("positionEpoch")
-        val atomicRenderJson = jsonObject.toString()
+        val atomicRenderJson = json
         jsonObject.remove("scalarLength")
         AtomicRenderSnapshot(
+            jsonObject,
             atomicRenderJson,
             jsonObject.toString(),
             revision,

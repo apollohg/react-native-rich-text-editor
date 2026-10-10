@@ -4,7 +4,7 @@ impl MutationCompiler {
         operation_index: usize,
         after: &Document,
         splices: &[VirtualStructuralSplice],
-        preserved_prepared_insert: Option<usize>,
+        preserved_prepared_inserts: &[usize],
     ) -> OperationResult<()> {
         let traversal_work = splices
             .len()
@@ -42,13 +42,17 @@ impl MutationCompiler {
                     StorageChildKind::Element { target, .. } => {
                         deleted_branch_ids.insert(AsRef::<Branch>::as_ref(target).id());
                     }
-                    StorageChildKind::PreparedElement => {}
+                    StorageChildKind::PreparedElement | StorageChildKind::PreparedChild { .. } => {}
                 }
             }
-            parent.storage_children.splice(
-                storage_start..storage_end,
-                (0..splice.semantic_insert).map(|_| StorageChildKind::PreparedElement),
-            );
+            let inserted = splice.storage_insert.clone().unwrap_or_else(|| {
+                (0..splice.semantic_insert)
+                    .map(|_| StorageChildKind::PreparedElement)
+                    .collect()
+            });
+            parent
+                .storage_children
+                .splice(storage_start..storage_end, inserted);
 
             let mut parents = HashMap::with_capacity(self.structural_parents.len());
             for (path, parent) in std::mem::take(&mut self.structural_parents) {
@@ -68,7 +72,8 @@ impl MutationCompiler {
                                 StorageChildKind::Element { target, .. } => {
                                     deleted_branch_ids.insert(AsRef::<Branch>::as_ref(target).id());
                                 }
-                                StorageChildKind::PreparedElement => {}
+                                StorageChildKind::PreparedElement
+                                | StorageChildKind::PreparedChild { .. } => {}
                             }
                         }
                     }
@@ -83,7 +88,7 @@ impl MutationCompiler {
                         prepared_elements.insert(path, handle);
                     }
                     None => {
-                        if Some(handle.insert_id) != preserved_prepared_insert {
+                        if !preserved_prepared_inserts.contains(&handle.insert_id) {
                             deleted_prepared_insert_ids.insert(handle.insert_id);
                         }
                     }
@@ -95,7 +100,7 @@ impl MutationCompiler {
                 let Some(pending) = pending.as_mut() else {
                     continue;
                 };
-                if Some(insert_id) == preserved_prepared_insert {
+                if preserved_prepared_inserts.contains(&insert_id) {
                     if pending.semantic_parent_path != splice.parent_path {
                         match remap_semantic_path(&pending.semantic_parent_path, splice)? {
                             Some(path) => pending.semantic_parent_path = path,
@@ -236,6 +241,18 @@ impl MutationCompiler {
             &mut texts,
         )?;
         for (path, handle) in elements {
+            if handle.ordinal_path.len() == 1
+                && self
+                    .structural_parents
+                    .get(&semantic_parent_path)
+                    .is_some_and(|parent| {
+                        parent.storage_children.iter().any(|child| matches!(child,
+                StorageChildKind::PreparedChild { handle: candidate, .. } if candidate == &handle
+            ))
+                    })
+            {
+                continue;
+            }
             if self.prepared_elements.insert(path, handle).is_some() {
                 return Err(OperationError::engine_invariant_failed(
                     self.request_id,
@@ -269,7 +286,29 @@ impl MutationCompiler {
         let (content_positions, mut layout_work) =
             collect_document_content_positions(self.request_id, after.root())?;
         let mut existing_starts = HashMap::new();
+        let mut inline_prepared_starts = HashMap::new();
+        let mut inline_prepared_elements = HashMap::new();
         let mut missing_starts = HashMap::<BranchID, Vec<u32>>::new();
+        let current_text_lengths = self
+            .targets
+            .iter()
+            .filter_map(|target| match &target.kind {
+                ResolvedTargetKind::Existing { target: text, .. } => {
+                    Some((AsRef::<Branch>::as_ref(text).id(), target.scalar_len))
+                }
+                ResolvedTargetKind::Missing { .. } | ResolvedTargetKind::Prepared { .. } => None,
+            })
+            .collect::<HashMap<_, _>>();
+        let current_prepared_lengths = self
+            .targets
+            .iter()
+            .filter_map(|target| match &target.kind {
+                ResolvedTargetKind::Prepared { handle } => {
+                    Some((handle.clone(), target.scalar_len))
+                }
+                _ => None,
+            })
+            .collect::<HashMap<_, _>>();
         for (path, parent) in &self.structural_parents {
             let node = after
                 .node_at(path)
@@ -293,47 +332,79 @@ impl MutationCompiler {
             let mut boundaries = Vec::with_capacity(parent.storage_children.len() + 1);
             for storage in &parent.storage_children {
                 boundaries.push(cursor);
-                match storage {
+                let text_length = match storage {
                     StorageChildKind::Text {
                         scalar_len, target, ..
                     } => {
-                        existing_starts.insert(AsRef::<Branch>::as_ref(target).id(), cursor);
-                        let mut remaining = *scalar_len;
-                        while remaining > 0 {
-                            let child = content.child(semantic_index).ok_or_else(|| {
-                                invalid_action_range(self.request_id, operation_index)
-                            })?;
-                            if !child.is_text() || semantic_text_offset >= child.node_size() {
-                                return Err(invalid_action_range(self.request_id, operation_index));
-                            }
-                            let available = child.node_size() - semantic_text_offset;
-                            let consumed = remaining.min(available);
-                            cursor = cursor.checked_add(consumed).ok_or_else(|| {
-                                invalid_action_range(self.request_id, operation_index)
-                            })?;
-                            remaining -= consumed;
-                            semantic_text_offset += consumed;
-                            if semantic_text_offset == child.node_size() {
-                                semantic_index += 1;
-                                semantic_text_offset = 0;
-                            }
-                        }
+                        let id = AsRef::<Branch>::as_ref(target).id();
+                        existing_starts.insert(id.clone(), cursor);
+                        Some(
+                            current_text_lengths
+                                .get(&id)
+                                .copied()
+                                .unwrap_or(*scalar_len),
+                        )
                     }
-                    StorageChildKind::Element { .. } | StorageChildKind::PreparedElement => {
-                        if semantic_text_offset != 0 {
-                            return Err(invalid_action_range(self.request_id, operation_index));
-                        }
+                    StorageChildKind::PreparedChild {
+                        handle,
+                        scalar_len: Some(length),
+                    } => {
+                        inline_prepared_starts.insert(handle.clone(), cursor);
+                        Some(
+                            current_prepared_lengths
+                                .get(handle)
+                                .copied()
+                                .unwrap_or(*length),
+                        )
+                    }
+                    StorageChildKind::Element { .. }
+                    | StorageChildKind::PreparedElement
+                    | StorageChildKind::PreparedChild {
+                        scalar_len: None, ..
+                    } => None,
+                };
+                if let Some(mut remaining) = text_length {
+                    while remaining > 0 {
                         let child = content.child(semantic_index).ok_or_else(|| {
                             invalid_action_range(self.request_id, operation_index)
                         })?;
-                        if child.is_text() {
+                        if !child.is_text() || semantic_text_offset >= child.node_size() {
                             return Err(invalid_action_range(self.request_id, operation_index));
                         }
-                        cursor = cursor.checked_add(child.node_size()).ok_or_else(|| {
+                        let consumed = remaining.min(child.node_size() - semantic_text_offset);
+                        cursor = cursor.checked_add(consumed).ok_or_else(|| {
                             invalid_action_range(self.request_id, operation_index)
                         })?;
-                        semantic_index += 1;
+                        remaining -= consumed;
+                        semantic_text_offset += consumed;
+                        if semantic_text_offset == child.node_size() {
+                            semantic_index += 1;
+                            semantic_text_offset = 0;
+                        }
                     }
+                } else {
+                    if semantic_text_offset != 0 {
+                        return Err(invalid_action_range(self.request_id, operation_index));
+                    }
+                    let child = content
+                        .child(semantic_index)
+                        .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+                    if child.is_text() {
+                        return Err(invalid_action_range(self.request_id, operation_index));
+                    }
+                    if let StorageChildKind::PreparedChild { handle, .. } = storage {
+                        let mut semantic_path = path.clone();
+                        semantic_path.push(
+                            u32::try_from(semantic_index).map_err(|_| {
+                                invalid_action_range(self.request_id, operation_index)
+                            })?,
+                        );
+                        inline_prepared_elements.insert(handle.clone(), semantic_path);
+                    }
+                    cursor = cursor
+                        .checked_add(child.node_size())
+                        .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+                    semantic_index += 1;
                 }
             }
             if semantic_text_offset != 0 || semantic_index != content.child_count() {
@@ -367,10 +438,19 @@ impl MutationCompiler {
                 &mut texts,
             )?;
             for (path, handle, _) in texts {
-                let start = first_text_doc_position(after.root(), &path)
+                let start = inline_prepared_starts
+                    .get(&handle)
+                    .copied()
+                    .or_else(|| first_text_doc_position(after.root(), &path))
                     .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
                 prepared_starts.insert(handle, start);
             }
+        }
+        prepared_starts.extend(inline_prepared_starts);
+        self.prepared_elements
+            .retain(|_, handle| !inline_prepared_elements.contains_key(handle));
+        for (handle, path) in inline_prepared_elements {
+            self.prepared_elements.insert(path, handle);
         }
 
         let target_count = self.targets.len();

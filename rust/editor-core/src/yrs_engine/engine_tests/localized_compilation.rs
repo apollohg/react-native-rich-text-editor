@@ -1,5 +1,378 @@
 use super::*;
 
+const DEBUG_TABLE_AVAILABILITY_PASSES: usize = cfg!(debug_assertions) as usize;
+const TABLE_AVAILABILITY_PLANS_PER_PASS: usize = 19;
+
+#[test]
+fn repeated_local_input_shares_the_materialization_work_base() {
+    use crate::yrs_engine::mutation::{
+        set_lookup_seed_hydration_failpoint_for_test, LookupSeedHydrationFailpoint,
+    };
+    const REQUEST: u64 = 70_146;
+    const TARGETS: [usize; 10] = [0, 0, 0, 1, 1, 1, 0, 0, 1, 1];
+    let mut engine = transaction_engine();
+    engine.import_json(
+        r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"typing🦀"},{"type":"text","text":"bold","marks":[{"type":"bold"}]}]},{"type":"paragraph","content":[{"type":"text","text":"unchanged🦀"}]}]}"#,
+        TransactionOrigin::DocumentImport,
+    ).unwrap();
+    hydrate_import_for_compile_test(&mut engine);
+    let initial_document = engine.document_json().unwrap();
+    let assert_fresh_lookup = |engine: &YrsDocumentEngine| {
+        let state = engine.derived_state.as_ref().unwrap();
+        let txn = engine.doc.transact();
+        let fragment = txn.get_xml_fragment(engine.fragment_name.as_str()).unwrap();
+        let fresh = crate::yrs_engine::mutation::MutationLookupSeed::build(
+            REQUEST,
+            &txn,
+            &fragment,
+            &engine.schema,
+            &state.document,
+            &engine.resource_limits,
+            &engine.editing_limits,
+            engine.max_length,
+            &engine.schema_fingerprint,
+            engine.yrs_state_epoch,
+            engine.revision,
+        )
+        .unwrap();
+        assert!(
+            state
+                .mutation_lookup_seed
+                .has_same_ready_payload_for_test(&fresh),
+            "effective seed must match a full traversal"
+        );
+    };
+    let mut retained = Vec::new();
+    for (edit, target) in TARGETS.into_iter().enumerate() {
+        let before = Arc::clone(&engine.derived_state.as_ref().unwrap().mutation_lookup_seed);
+        retained.push((
+            Arc::clone(&before),
+            before.materialization_entries_for_test(),
+        ));
+        let position = engine
+            .derived_state
+            .as_ref()
+            .unwrap()
+            .position_map
+            .block(target)
+            .unwrap()
+            .scalar_start
+            + 1;
+        let mut transaction = insert_transaction(&engine, REQUEST + edit as u64);
+        transaction.origin = TransactionOrigin::LocalInput;
+        transaction.selection_intent = SelectionIntent::UseOperationResult;
+        transaction.history_policy = HistoryPolicy::Auto;
+        let TypedOperation::InsertText { at, .. } = &mut transaction.operations[0] else {
+            panic!("insert fixture")
+        };
+        at.offset = position;
+        if edit == 3 {
+            let document = engine.document_json().unwrap();
+            let revision = engine.revision();
+            let history = (engine.can_undo(), engine.can_redo());
+            set_lookup_seed_hydration_failpoint_for_test(Some(
+                LookupSeedHydrationFailpoint::PromotionMapReservation,
+            ));
+            let refused = engine.apply_typed_transaction(transaction.clone());
+            set_lookup_seed_hydration_failpoint_for_test(None);
+            assert!(
+                refused.is_err(),
+                "switching targets must exercise the fallback reservation"
+            );
+            assert_eq!(engine.document_json().unwrap(), document);
+            assert_eq!(engine.revision(), revision);
+            assert_eq!((engine.can_undo(), engine.can_redo()), history);
+            assert!(Arc::ptr_eq(
+                &before,
+                &engine.derived_state.as_ref().unwrap().mutation_lookup_seed
+            ));
+        }
+        if edit == 0 {
+            set_lookup_seed_hydration_failpoint_for_test(Some(
+                LookupSeedHydrationFailpoint::PromotionMapReservation,
+            ));
+        }
+        let result = engine
+            .compile_typed_transaction(transaction)
+            .and_then(|compiled| {
+                assert!(
+                    compiled.localized_textblock_edit_admission.is_some(),
+                    "edit {edit}: actual localized input required"
+                );
+                engine.apply_compiled_transaction(compiled, true)
+            });
+        set_lookup_seed_hydration_failpoint_for_test(None);
+        result.unwrap();
+        let state = engine.derived_state.as_ref().unwrap();
+        let current = &state.mutation_lookup_seed;
+        if edit == 0 || TARGETS[edit - 1] == target {
+            assert!(
+                before.shares_materialization_base_for_test(current),
+                "edit {edit}: one target update must not clone the whole materialization map"
+            );
+        }
+        assert_fresh_lookup(&engine);
+        for (snapshot, expected) in &retained {
+            assert_eq!(
+                &snapshot.materialization_entries_for_test(),
+                expected,
+                "edit {edit}: retained seeds must remain immutable"
+            );
+        }
+    }
+    let point = |offset| RevisionedPosition {
+        offset,
+        kind: EditorOffsetKind::Scalar,
+        affinity: Affinity::After,
+    };
+    let scalar_start = engine
+        .derived_state
+        .as_ref()
+        .unwrap()
+        .position_map
+        .block(1)
+        .unwrap()
+        .scalar_start;
+    let edited_target = engine
+        .derived_state
+        .as_ref()
+        .unwrap()
+        .mutation_lookup_seed
+        .replacement_target_for_test()
+        .unwrap();
+    let mut deletion = insert_transaction(&engine, REQUEST + TARGETS.len() as u64);
+    deletion.operations = vec![TypedOperation::DeleteRange {
+        range: RevisionedRange {
+            from: point(scalar_start + 1),
+            to: point(scalar_start + 2),
+        },
+    }];
+    deletion.origin = TransactionOrigin::LocalInput;
+    deletion.selection_intent = SelectionIntent::UseOperationResult;
+    deletion.history_policy = HistoryPolicy::Auto;
+    crate::yrs_engine::mutation::reset_localized_lookup_counts_for_test();
+    let compiled = engine.compile_typed_transaction(deletion).unwrap();
+    assert!(
+        compiled.localized_textblock_edit_admission.is_some(),
+        "deletion must exercise the retained subtree replacement path"
+    );
+    engine.apply_compiled_transaction(compiled, true).unwrap();
+    assert_eq!(
+        crate::yrs_engine::mutation::take_localized_lookup_counts_for_test().0,
+        0,
+        "localized deletion must not rebuild the full lookup seed"
+    );
+    assert_fresh_lookup(&engine);
+    let mut removal = insert_transaction(&engine, REQUEST + TARGETS.len() as u64 + 1);
+    removal.operations = vec![TypedOperation::ReplaceStructure(
+        crate::yrs_engine::StructuralReplacement::new(
+            vec![],
+            1,
+            2,
+            crate::model::Fragment::empty(),
+            crate::selection::Selection::cursor(1),
+        ),
+    )];
+    removal.origin = TransactionOrigin::LocalInput;
+    removal.selection_intent = SelectionIntent::UseOperationResult;
+    removal.history_policy = HistoryPolicy::Auto;
+    engine.apply_typed_transaction(removal).unwrap();
+    assert_fresh_lookup(&engine);
+    let after_removal = engine
+        .derived_state
+        .as_ref()
+        .unwrap()
+        .mutation_lookup_seed
+        .materialization_entries_for_test();
+    assert!(
+        !after_removal.contains_key(&edited_target),
+        "structural deletion removes the overridden branch"
+    );
+    let final_document = engine.document_json().unwrap();
+    let mut history_steps = 0;
+    let mut history_request = REQUEST + TARGETS.len() as u64 + 2;
+    while engine.can_undo() {
+        assert!(engine.undo(history_request).unwrap().is_some());
+        history_steps += 1;
+        history_request += 1;
+    }
+    assert_eq!(engine.document_json().unwrap(), initial_document);
+    for _ in 0..history_steps {
+        assert!(engine.redo(history_request).unwrap().is_some());
+        history_request += 1;
+    }
+    assert_eq!(engine.document_json().unwrap(), final_document);
+    for (snapshot, expected) in retained {
+        assert_eq!(snapshot.materialization_entries_for_test(), expected);
+    }
+}
+
+#[test]
+fn localized_insert_shares_unchanged_branch_index_and_preserves_position_mapping() {
+    let mut engine = transaction_engine();
+    engine
+        .import_json(
+            r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"a🦀b"}]},{"type":"paragraph","content":[{"type":"text","text":"tail"}]}]}"#,
+            TransactionOrigin::DocumentImport,
+        )
+        .unwrap();
+    hydrate_import_for_compile_test(&mut engine);
+    let previous = Arc::clone(
+        engine
+            .derived_state
+            .as_ref()
+            .unwrap()
+            .block_branch_index
+            .as_ref()
+            .unwrap(),
+    );
+    let previous_texts = previous.block_branches(0).unwrap().texts.clone();
+    let mut transaction = insert_transaction(&engine, 70_144);
+    transaction.origin = TransactionOrigin::LocalInput;
+    transaction.selection_intent = SelectionIntent::UseOperationResult;
+    transaction.history_policy = HistoryPolicy::Auto;
+    let compiled = engine.compile_typed_transaction(transaction).unwrap();
+    assert!(
+        compiled.localized_textblock_edit_admission.is_some(),
+        "fixture must use localized input admission"
+    );
+    engine.apply_compiled_transaction(compiled, true).unwrap();
+    let state = engine.derived_state.as_ref().unwrap();
+    let current = state.block_branch_index.as_ref().unwrap();
+    assert!(
+        Arc::ptr_eq(&previous, current),
+        "text insertion must share unchanged branch IDs"
+    );
+    assert_eq!(previous.block_branches(0).unwrap().texts, previous_texts);
+    let txn = engine.doc.transact();
+    let fragment = txn.get_xml_fragment(engine.fragment_name.as_str()).unwrap();
+    let rebuilt = crate::yrs_engine::block_branch_index::BlockBranchIndex::build(
+        &txn,
+        &fragment,
+        &engine.schema,
+        &state.position_map,
+    )
+    .unwrap();
+    for position in 0..=state.document.root().content().unwrap().size() {
+        for assoc in [Assoc::Before, Assoc::After] {
+            let indexed = current.sticky_at_doc_pos(
+                &txn,
+                position,
+                assoc,
+                &state.position_map,
+                &state.document,
+            );
+            let walked = crate::yrs_engine::position::doc_pos_to_sticky_index(
+                &txn,
+                &fragment,
+                position,
+                assoc,
+                &engine.schema,
+            );
+            assert_eq!(
+                indexed,
+                rebuilt.sticky_at_doc_pos(
+                    &txn,
+                    position,
+                    assoc,
+                    &state.position_map,
+                    &state.document,
+                ),
+                "rebuilt position {position}, {assoc:?}"
+            );
+            if let Some(sticky) = indexed {
+                assert_eq!(
+                    Some(&sticky),
+                    walked.as_ref(),
+                    "position {position}, {assoc:?}"
+                );
+                assert_eq!(
+                    current.doc_pos_of_offset(
+                        &txn,
+                        &sticky.get_offset(&txn).unwrap(),
+                        &state.position_map,
+                        &state.document,
+                    ),
+                    crate::yrs_engine::position::sticky_index_to_doc_pos(
+                        &txn,
+                        &fragment,
+                        &sticky,
+                        &engine.schema,
+                    ),
+                    "reverse position {position}, {assoc:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn localized_branch_index_replaces_changed_text_branches_without_mutating_snapshots() {
+    use yrs::types::xml::XmlElementRef;
+
+    let mut engine = transaction_engine();
+    engine
+        .import_json(
+            r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"original"}]}]}"#,
+            TransactionOrigin::DocumentImport,
+        )
+        .unwrap();
+    let original = Arc::clone(
+        engine
+            .derived_state
+            .as_ref()
+            .unwrap()
+            .block_branch_index
+            .as_ref()
+            .unwrap(),
+    );
+    let original_branches = original.block_branches(0).unwrap();
+    let original_texts = original_branches.texts.clone();
+    let mut txn = engine.doc.transact_mut();
+    let element = XmlElementRef::from(original_branches.element.get_branch(&txn).unwrap());
+    let inserted = element.push_back(&mut txn, XmlTextPrelim::new("added"));
+    let inserted_id = AsRef::<Branch>::as_ref(&inserted).id();
+    let expanded = original
+        .with_block_replaced(&txn, 0, &engine.schema)
+        .unwrap();
+    assert!(
+        !Arc::ptr_eq(&original, &expanded),
+        "new text branch requires a new index"
+    );
+    assert_eq!(
+        expanded.block_branches(0).unwrap().texts.as_slice(),
+        &[original_texts[0].clone(), inserted_id.clone()]
+    );
+    assert_eq!(
+        original.block_branches(0).unwrap().texts,
+        original_texts,
+        "retained snapshot must not acquire the new branch"
+    );
+
+    element.remove_range(&mut txn, 0, 1);
+    let reduced = expanded
+        .with_block_replaced(&txn, 0, &engine.schema)
+        .unwrap();
+    assert!(
+        !Arc::ptr_eq(&expanded, &reduced),
+        "removed text branch requires a new index"
+    );
+    assert_eq!(
+        reduced.block_branches(0).unwrap().texts.as_slice(),
+        &[inserted_id]
+    );
+    assert_eq!(
+        expanded.block_branches(0).unwrap().texts.len(),
+        2,
+        "retained expanded snapshot must remain intact"
+    );
+    assert_eq!(original.block_branches(0).unwrap().texts, original_texts);
+    let unchanged = reduced
+        .with_block_replaced(&txn, 0, &engine.schema)
+        .unwrap();
+    assert!(Arc::ptr_eq(&reduced, &unchanged));
+}
+
 #[test]
 fn localized_insert_preserves_semantic_validation_error_precedence_over_lowering_limits() {
     fn constrained_engine() -> YrsDocumentEngine {
@@ -175,6 +548,7 @@ fn existing_text_command_skips_every_proved_document_wide_compiler_pass() {
         take_full_pass_counts_for_test(),
         FullPassCounts {
             import_model_parses: 0,
+            json_value_deserializations: 0,
             validated_evidence_constructions: 0,
             validation_certificate_constructions: 0,
             planner_simulations: 1,
@@ -182,11 +556,11 @@ fn existing_text_command_skips_every_proved_document_wide_compiler_pass() {
             canonical_mark_tree_scans: 0,
             canonical_mark_validation_attempts: 0,
             canonical_mark_validation_completions: 0,
-            canonical_mark_nodes_visited: 0,
+            canonical_mark_nodes_visited: 2,
             canonical_identity_predicate_nodes_visited: 3,
             canonical_projections: 1,
-            canonical_serializations: 1,
-            canonical_hashes: 1,
+            canonical_serializations: 0,
+            canonical_hashes: 0,
             affected_top_level_scans: 0,
             position_map_clones: 1,
             position_map_compactions: 1,
@@ -198,6 +572,18 @@ fn existing_text_command_skips_every_proved_document_wide_compiler_pass() {
             render_top_level_start_scans: 0,
             active_applicability_passes: 1,
             ordinary_step_applications: 1,
+            table_projection_derivations: 1 + DEBUG_TABLE_AVAILABILITY_PASSES,
+            table_command_availability_plans: (1 + DEBUG_TABLE_AVAILABILITY_PASSES)
+                * TABLE_AVAILABILITY_PLANS_PER_PASS,
+            yrs_tree_walks: 0,
+            whole_state_encodings: 0,
+            mutation_guard_snapshot_requests: 0,
+            compilation_snapshot_scans: 1,
+            compilation_snapshot_reuses: 0,
+            cell_content_keys: 0,
+            attribute_serializations: 0,
+            epoch_block_rebuilds: 0,
+            cell_content_generations: 0,
         }
     );
 }
@@ -247,7 +633,7 @@ fn existing_text_admission_certificate_matches_legacy_compiler_and_commit() {
         .compile_typed_transaction(transaction.clone())
         .unwrap();
     let proof = compiled
-        .localized_insert_admission
+        .localized_textblock_edit_admission
         .as_ref()
         .expect("strict-inside existing text produces E1 admission evidence")
         .clone();
@@ -271,6 +657,7 @@ fn existing_text_admission_certificate_matches_legacy_compiler_and_commit() {
             admission_document_position,
             &read_txn,
             &fragment,
+            &engine.schema,
             &engine.resource_limits,
             &engine.editing_limits,
             engine.max_length,
@@ -291,6 +678,7 @@ fn existing_text_admission_certificate_matches_legacy_compiler_and_commit() {
             admission_document_position,
             &read_txn,
             &fragment,
+            &engine.schema,
             &engine.resource_limits,
             &engine.editing_limits,
             engine.max_length,
@@ -306,6 +694,7 @@ fn existing_text_admission_certificate_matches_legacy_compiler_and_commit() {
                     admission_document_position,
                     &read_txn,
                     &fragment,
+                    &engine.schema,
                     &engine.resource_limits,
                     &engine.editing_limits,
                     engine.max_length,
@@ -584,7 +973,7 @@ fn admission_evidence_rejects_unsupported_selection_and_history_contracts() {
     assert!(engine
         .compile_typed_transaction(transaction(SelectionIntent::Preserve, HistoryPolicy::Auto,))
         .unwrap()
-        .localized_insert_admission
+        .localized_textblock_edit_admission
         .is_none());
     assert!(engine
         .compile_typed_transaction(transaction(
@@ -592,7 +981,7 @@ fn admission_evidence_rejects_unsupported_selection_and_history_contracts() {
             HistoryPolicy::Skip,
         ))
         .unwrap()
-        .localized_insert_admission
+        .localized_textblock_edit_admission
         .is_none());
 }
 
@@ -652,42 +1041,31 @@ fn localized_insert_admission_eligibility_is_exact() {
                 HistoryPolicy::Auto,
             ))
             .unwrap()
-            .localized_insert_admission
+            .localized_textblock_edit_admission
             .is_some());
     }
 
-    for boundary in [point(0), point(3)] {
+    for leaf_edge in [point(0), point(3)] {
         assert!(engine
             .compile_typed_transaction(transaction(
                 &engine,
                 TransactionOrigin::LocalInput,
-                boundary,
+                leaf_edge,
                 "x",
                 Vec::new(),
                 SelectionIntent::UseOperationResult,
                 HistoryPolicy::Auto,
             ))
             .unwrap()
-            .localized_insert_admission
-            .is_none());
+            .localized_textblock_edit_admission
+            .is_some());
     }
 
-    for history_policy in [HistoryPolicy::Boundary, HistoryPolicy::Skip] {
-        assert!(engine
-            .compile_typed_transaction(transaction(
-                &engine,
-                TransactionOrigin::LocalInput,
-                point(1),
-                "x",
-                Vec::new(),
-                SelectionIntent::UseOperationResult,
-                history_policy,
-            ))
-            .unwrap()
-            .localized_insert_admission
-            .is_none());
-    }
-    for origin in [TransactionOrigin::LocalCommand, TransactionOrigin::LocalApi] {
+    for origin in [
+        TransactionOrigin::LocalInput,
+        TransactionOrigin::LocalCommand,
+        TransactionOrigin::LocalApi,
+    ] {
         assert!(engine
             .compile_typed_transaction(transaction(
                 &engine,
@@ -699,9 +1077,22 @@ fn localized_insert_admission_eligibility_is_exact() {
                 HistoryPolicy::Boundary,
             ))
             .unwrap()
-            .localized_insert_admission
-            .is_none());
+            .localized_textblock_edit_admission
+            .is_some());
     }
+    assert!(engine
+        .compile_typed_transaction(transaction(
+            &engine,
+            TransactionOrigin::LocalInput,
+            point(1),
+            "x",
+            Vec::new(),
+            SelectionIntent::UseOperationResult,
+            HistoryPolicy::Skip,
+        ))
+        .unwrap()
+        .localized_textblock_edit_admission
+        .is_none());
     assert!(engine
         .compile_typed_transaction(transaction(
             &engine,
@@ -713,7 +1104,7 @@ fn localized_insert_admission_eligibility_is_exact() {
             HistoryPolicy::Auto,
         ))
         .unwrap()
-        .localized_insert_admission
+        .localized_textblock_edit_admission
         .is_none());
     assert!(engine
         .compile_typed_transaction(transaction(
@@ -729,7 +1120,7 @@ fn localized_insert_admission_eligibility_is_exact() {
             HistoryPolicy::Auto,
         ))
         .unwrap()
-        .localized_insert_admission
+        .localized_textblock_edit_admission
         .is_none());
 
     let mut multiple = transaction(
@@ -745,7 +1136,7 @@ fn localized_insert_admission_eligibility_is_exact() {
     assert!(engine
         .compile_typed_transaction(multiple)
         .unwrap()
-        .localized_insert_admission
+        .localized_textblock_edit_admission
         .is_none());
 
     let marked_engine = fixture(true);
@@ -761,7 +1152,7 @@ fn localized_insert_admission_eligibility_is_exact() {
             HistoryPolicy::Auto,
         ))
         .unwrap()
-        .localized_insert_admission
+        .localized_textblock_edit_admission
         .is_some());
     assert!(marked_engine
         .compile_typed_transaction(transaction(
@@ -774,7 +1165,7 @@ fn localized_insert_admission_eligibility_is_exact() {
             HistoryPolicy::Auto,
         ))
         .unwrap()
-        .localized_insert_admission
+        .localized_textblock_edit_admission
         .is_none());
 }
 
@@ -886,3 +1277,306 @@ include!("localized_compilation/optional_indexes.rs");
 include!("localized_compilation/active_state_evidence.rs");
 
 include!("localized_compilation/active_state_parity.rs");
+
+#[test]
+fn a_lazily_materialized_canonical_value_equals_eager_derivation() {
+    use crate::test_support::large_table_fixture::{
+        multi_paragraph_cell_document, plain_table_document, session_with_document,
+    };
+    const TABLE_SIZE: usize = 3;
+    const MULTI_PARAGRAPH_SECOND_PARAGRAPH: [u32; 4] = [0, 1, 1, 2];
+    use crate::transform::{apply_step, Step};
+    use crate::yrs_engine::canonical::{CanonicalArtifact, CanonicalSchemaContext};
+
+    const EQUIVALENCE_SEEDED_STEPS: usize = 200;
+    const SEED: u64 = 0x8a4f_31cb;
+    const MULTIPLIER: u64 = 6364136223846793005;
+    const INCREMENT: u64 = 1442695040888963407;
+    const INSERTIONS: [&str; 5] = ["x", "😀", "\"\n", "é", "ab"];
+    let fixtures = [
+        (
+            plain_table_document(TABLE_SIZE, TABLE_SIZE),
+            vec![0, 1, 1, 0],
+        ),
+        (
+            serde_json::json!({"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Prose"}]}]}),
+            vec![0],
+        ),
+        (
+            multi_paragraph_cell_document(),
+            MULTI_PARAGRAPH_SECOND_PARAGRAPH.to_vec(),
+        ),
+    ];
+    for (fixture, path) in fixtures {
+        let session = session_with_document(&fixture);
+        let schema = session.engine.schema();
+        let context = CanonicalSchemaContext::new(schema);
+        let mut document = session.engine.document().unwrap().clone();
+        let mut artifact = context.derive(&document).unwrap();
+        let mut seed = SEED;
+        for step_index in 0..EQUIVALENCE_SEEDED_STEPS {
+            seed = seed.wrapping_mul(MULTIPLIER).wrapping_add(INCREMENT);
+            let old_block = document.node_at(&path).unwrap();
+            let length = old_block.text_content().chars().count() as u32;
+            let offset = (seed >> u32::BITS) as u32 % (length + 1);
+            let mut position = 0;
+            let mut parent = document.root();
+            for index in &path {
+                for sibling in 0..*index {
+                    position += parent.child(sibling as usize).unwrap().node_size();
+                }
+                parent = parent.child(*index as usize).unwrap();
+                position += 1;
+            }
+            let step = if length > 0 && step_index % INSERTIONS.len() == 0 {
+                let from = position + offset.min(length - 1);
+                Step::DeleteRange { from, to: from + 1 }
+            } else {
+                Step::InsertText {
+                    pos: position + offset,
+                    text: INSERTIONS[seed as usize % INSERTIONS.len()].into(),
+                    marks: Vec::new(),
+                }
+            };
+            let (next, _) = apply_step(&document, &step, schema).unwrap();
+            crate::yrs_engine::observability::reset_full_pass_counts_for_test();
+            let localized = CanonicalArtifact::derive_localized(
+                &artifact,
+                &next,
+                old_block,
+                next.node_at(&path).unwrap(),
+            )
+            .expect("a textblock delta fits");
+            let counts = crate::yrs_engine::observability::take_full_pass_counts_for_test();
+            assert_eq!(
+                counts.canonical_projections, 0,
+                "lazy projection at step {step_index}"
+            );
+            assert_eq!(
+                counts.canonical_serializations, 0,
+                "lazy serialization at step {step_index}"
+            );
+            assert_eq!(counts.canonical_hashes, 0, "lazy hash at step {step_index}");
+            let eager = context.derive(&next).unwrap();
+            assert_eq!(
+                localized.serialized_len(),
+                eager.serialized_len(),
+                "path {path:?}, step {step_index}"
+            );
+            assert_eq!(
+                localized.history_snapshot_retained_charge(),
+                eager.history_snapshot_retained_charge(),
+                "retention path {path:?}, step {step_index}"
+            );
+            assert_eq!(
+                localized.value(),
+                eager.value(),
+                "JSON path {path:?}, step {step_index}"
+            );
+            assert_eq!(
+                localized.sha256(),
+                eager.sha256(),
+                "hash path {path:?}, step {step_index}"
+            );
+            artifact = localized;
+            document = next;
+        }
+    }
+}
+
+#[test]
+fn large_table_canonical_history_charge_exceeds_the_snapshot_budget() {
+    use crate::test_support::large_table_fixture::{plain_table_document, session_with_document};
+    const ROWS: usize = 1000;
+    const COLUMNS: usize = 20;
+    let session = session_with_document(&plain_table_document(ROWS, COLUMNS));
+    let state = session.engine.derived_state.as_ref().unwrap();
+    let charge = state
+        .canonical_artifact
+        .history_snapshot_retained_charge()
+        .unwrap();
+    let budget = session.engine.editing_limits.max_derived_output_bytes;
+    eprintln!(
+        "canonical retained bytes={}, source document bytes={}, history snapshot budget={budget}",
+        charge.canonical_retained_bytes, charge.source_document_retained_bytes
+    );
+    assert!(charge.canonical_retained_bytes > budget);
+}
+
+#[test]
+fn large_table_native_input_reuses_materialization_costs() {
+    use crate::native_transaction_bridge::NativeTransactionBridge;
+    use crate::test_support::large_table_fixture::{
+        fixture_cell_text, keystroke_cell, plain_table_document, session_with_document,
+    };
+    const ROWS: usize = 1_000;
+    const COLUMNS: usize = 20;
+    const OWNER: u64 = 71;
+    const REQUEST: u64 = 71_000;
+    const EDITS: usize = 4;
+    const CHANGED_CELL_METER_VISITS: usize = 2;
+    const CELL_BOUNDARY_SCALARS: usize = 1;
+    let mut session = session_with_document(&plain_table_document(ROWS, COLUMNS));
+    let text_len = fixture_cell_text(0, 0).chars().count();
+    let caret = keystroke_cell(ROWS, COLUMNS) * (text_len + CELL_BOUNDARY_SCALARS) + text_len;
+    for edit in 0..EDITS {
+        let epoch = session
+            .pin_position_epoch(OWNER, session.engine.revision())
+            .unwrap();
+        let before = Arc::clone(
+            &session
+                .engine
+                .derived_state
+                .as_ref()
+                .unwrap()
+                .mutation_lookup_seed,
+        );
+        let request = serde_json::json!({
+            "version": 1, "requestId": (REQUEST + edit as u64).to_string(),
+            "ownerId": OWNER.to_string(), "positionEpoch": epoch.to_string(),
+            "intent": {"type": "insertText", "anchor": caret + edit, "head": caret + edit, "text": "x"},
+        }).to_string();
+        crate::yrs_engine::derived_state::LocalizedTextLeafIndex::take_carried_leaf_copies_for_test(
+        );
+        crate::tables::render::CELL_OUTPUT_METER_VISITS.set(0);
+        crate::yrs_engine::observability::reset_full_pass_counts_for_test();
+        NativeTransactionBridge::new(&mut session)
+            .submit_native_intent(&request)
+            .unwrap();
+        let passes = crate::yrs_engine::observability::take_full_pass_counts_for_test();
+        let cell_visits = crate::tables::render::CELL_OUTPUT_METER_VISITS.replace(0);
+        let copied_leaves = crate::yrs_engine::derived_state::LocalizedTextLeafIndex::take_carried_leaf_copies_for_test();
+        if edit > 0 {
+            assert_eq!(
+                copied_leaves, 0,
+                "native edit {edit} copied unchanged leaf certificates"
+            );
+            assert_eq!(
+                cell_visits, CHANGED_CELL_METER_VISITS,
+                "native edit {edit} must meter only the old and new changed cell"
+            );
+        }
+        let after = &session
+            .engine
+            .derived_state
+            .as_ref()
+            .unwrap()
+            .mutation_lookup_seed;
+        assert!(
+            before.shares_materialization_base_for_test(after),
+            "native table edit {edit} cloned the full materialization map"
+        );
+        assert_eq!(
+            passes.canonical_hashes, 1,
+            "only the approved over-budget history hash is required for native table edit {edit}"
+        );
+        assert_eq!(
+            passes.mutation_guard_snapshot_requests, 0,
+            "native edit {edit} authenticates compiler, live, and candidate guards through the held read scope: {passes:#?}"
+        );
+        assert_eq!(
+            passes.compilation_snapshot_scans, 0,
+            "native insertion must not scan the delete set while its read scope remains held"
+        );
+        assert_eq!(
+            passes.compilation_snapshot_reuses, 0,
+            "held read-scope evidence requires no snapshot reuse"
+        );
+        assert!(
+            session.engine.doc.try_transact_mut().is_ok(),
+            "native edit {edit} left the compilation read lock held after commit"
+        );
+    }
+}
+
+#[test]
+fn localized_history_charges_and_eviction_equal_the_generic_path() {
+    use crate::native_transaction_bridge::NativeTransactionBridge;
+    use crate::test_support::large_table_fixture::{
+        plain_table_document, session_with_document_and_editing_limits,
+    };
+    use crate::yrs_engine::EditingLimits;
+    const HISTORY_EVICTION_KEYSTROKES: usize = 40;
+    const RETAINED_UNITS: u64 = 16;
+    const OWNER_ID: u64 = 71;
+    const FIRST_REQUEST_ID: u64 = 100;
+    const CARET: u32 = 3;
+    let run = |localized: bool| {
+        let _clients = crate::test_support::deterministic_clients::DeterministicClients::new();
+        let mut session = session_with_document_and_editing_limits(
+            &plain_table_document(3, 3),
+            EditingLimits {
+                max_undo_retained_units: RETAINED_UNITS,
+                ..EditingLimits::default()
+            },
+        );
+        let mut records = Vec::new();
+        let mut evicted = false;
+        for index in 0..HISTORY_EVICTION_KEYSTROKES {
+            session.engine.history.force_next_capture_boundary();
+            if !localized {
+                session.engine.drop_localized_text_index_for_test();
+            }
+            let epoch = session
+                .pin_position_epoch(OWNER_ID, session.engine.revision())
+                .unwrap();
+            let request = serde_json::json!({
+                "version": 1,
+                "requestId": (FIRST_REQUEST_ID + index as u64).to_string(),
+                "ownerId": OWNER_ID.to_string(),
+                "positionEpoch": epoch.to_string(),
+                "intent": {"type": "insertText", "anchor": CARET, "head": CARET, "text": "x"},
+            })
+            .to_string();
+            crate::yrs_engine::observability::reset_full_pass_counts_for_test();
+            NativeTransactionBridge::new(&mut session)
+                .submit_native_intent(&request)
+                .unwrap();
+            let counts = crate::yrs_engine::observability::take_full_pass_counts_for_test();
+            if localized {
+                assert_eq!(
+                    (
+                        counts.canonical_projections,
+                        counts.canonical_serializations,
+                        counts.canonical_hashes
+                    ),
+                    (0, 0, 0),
+                    "native edit {index}"
+                );
+            }
+            let counts = session.engine.history.stack_depths_for_test();
+            evicted |= counts.0 < index + 1;
+            records.push((
+                counts,
+                session.engine.retained_history_for_test(),
+                session.engine.document_json().unwrap(),
+            ));
+        }
+        assert!(
+            evicted,
+            "the fixture must evict before {HISTORY_EVICTION_KEYSTROKES} keystrokes"
+        );
+        let mut undo_results = Vec::new();
+        while session.engine.can_undo() {
+            NativeTransactionBridge::new(&mut session)
+                .undo(
+                    FIRST_REQUEST_ID
+                        + HISTORY_EVICTION_KEYSTROKES as u64
+                        + undo_results.len() as u64,
+                )
+                .unwrap();
+            undo_results.push((
+                session.engine.document_json().unwrap(),
+                session.engine.retained_history_for_test(),
+                session.engine.resolved_selection().cloned(),
+            ));
+            assert!(undo_results.len() <= HISTORY_EVICTION_KEYSTROKES);
+        }
+        (records, undo_results)
+    };
+    assert_eq!(
+        run(true),
+        run(false),
+        "history charges, stack depth and every retained undo must agree"
+    );
+}

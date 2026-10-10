@@ -1,3 +1,4 @@
+import { type NativeEditorResolvedSelectionFrame } from './NativeEditorTypes';
 import {
     type NativeEditorErrorBase,
     nativeEditorV2ErrorToException,
@@ -30,6 +31,8 @@ export interface NativeEditorPeerInfo {
     state: Record<string, unknown> | null;
     /** The peer's caret in engine document positions, or null when it published none. */
     cursor: { anchor: number; head: number } | null;
+    cellRectangle: { anchorCell: number; headCell: number } | null;
+    resolvedAt?: NativeEditorResolvedSelectionFrame;
 }
 
 /** One WebSocket frame exchanged during the protocol adapter's prelude. */

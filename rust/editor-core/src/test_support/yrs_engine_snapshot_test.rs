@@ -579,7 +579,7 @@ fn snapshots_transport_opaque_content_and_custom_fragments_across_engines() {
             "type": "callout",
             "attrs": {
                 "kind": "warning",
-                "metadata": [true, null, {"rank": 2}]
+                "metadata": [true, null, {"rank": 2.0}]
             },
             "content": [{"type": "text", "text": "preserve me"}]
         }]

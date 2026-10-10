@@ -1,3 +1,4 @@
+import type { TableRole } from './TableTypes';
 import { withAtomsSchema, type AtomNodeDefinition } from './atoms';
 import { RESERVED_WIRE_NODE_TYPES } from './atomPolicy';
 
@@ -58,6 +59,7 @@ export interface NodeSpec {
      * `ordered`.
      */
     role: string;
+    tableRole?: TableRole;
     /** Tag used when serializing this node to HTML. */
     htmlTag?: string;
     /** Declarative HTML rules used for lossless void-node round trips. */
@@ -122,6 +124,7 @@ export interface SchemaNodeSpec {
     attrs?: Record<string, AttrSpec>;
     /** Native semantic role. Common `doc`, `paragraph`, and `text` shapes are inferred. */
     role?: NodeSpec['role'] | 'heading';
+    tableRole?: TableRole;
     parseDOM?: readonly ParseDOMRule[];
     toDOM?: DOMOutputSpec | AttributeDOMOutputSpec;
     html?: NodeHtmlRules;
@@ -342,6 +345,7 @@ export function defineSchema(spec: SchemaSpec): SchemaDefinition {
             ...(node.group == null ? {} : { group: node.group }),
             ...(node.attrs == null ? {} : { attrs: node.attrs }),
             role: schemaNodeRole(name, node),
+            ...(node.tableRole == null ? {} : { tableRole: node.tableRole }),
             ...(node.html == null ? {} : { html: node.html }),
             ...(node.isVoid == null ? {} : { isVoid: node.isVoid }),
             ...(node.deletableOnBackspace == null

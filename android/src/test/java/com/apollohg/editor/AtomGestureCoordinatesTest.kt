@@ -6,6 +6,7 @@ import android.os.Looper
 import android.view.View
 import android.widget.FrameLayout
 import com.facebook.react.R
+import com.facebook.react.internal.featureflags.ReactNativeFeatureFlagsForTests
 import com.facebook.react.views.view.ReactViewGroup
 import expo.modules.core.ModuleRegistry
 import expo.modules.kotlin.AppContext
@@ -14,6 +15,7 @@ import expo.modules.kotlin.modules.Module
 import java.lang.ref.WeakReference
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
@@ -24,6 +26,11 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], qualifiers = "xhdpi")
 class AtomGestureCoordinatesTest {
+    @Before
+    fun setUpReactFeatureFlags() {
+        ReactNativeFeatureFlagsForTests.setUp()
+    }
+
     @Test
     fun `atom events include visible React host coordinates after native scrolling`() {
         val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
@@ -66,6 +73,7 @@ class AtomGestureCoordinatesTest {
         editor.addAtomChild(host, 0)
         val eventsBeforeScroll = events.size
         view.editorScrollView.scrollTo(0, 120)
+        shadowOf(Looper.getMainLooper()).idle()
         assertEquals(120, view.editorScrollView.scrollY)
         assertTrue(events.size > eventsBeforeScroll)
         val hostLocation = IntArray(2).also(host::getLocationOnScreen)

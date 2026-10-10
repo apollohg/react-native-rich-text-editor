@@ -1,4 +1,5 @@
 import ExpoModulesCore
+import UIKit
 import XCTest
 
 private final class PendingCaretTapRecognizer: CaretPlacementTapRecognizer {
@@ -14,6 +15,98 @@ private final class PendingCaretTapRecognizer: CaretPlacementTapRecognizer {
 }
 
 extension RichTextEditorViewTests {
+    func testLiveStoppingEditorDecelerationPreservesCaretUntilTheNextTap() throws {
+        try LiveGestureProbe.requireOptIn()
+        let editorId = makeV2Editor()
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let window = TouchObservingTestWindow(windowScene: testWindowScene())
+        window.frame = UIScreen.main.bounds
+        window.backgroundColor = .systemBackground
+        let editorFrame = CGRect(x: 0, y: 100, width: window.bounds.width, height: 300)
+        let view = RichTextEditorView(frame: editorFrame)
+        view.editorId = editorId
+        let textView = view.textView
+        let paragraphCount = 120
+        textView.bindEditor(id: editorId, initialHTML: String(repeating: "<p>abcdefghijklmno uvwxyz</p>", count: paragraphCount))
+        window.addSubview(view)
+        let status = UILabel(frame: CGRect(x: 0, y: 60, width: window.bounds.width, height: 30))
+        status.backgroundColor = .systemYellow
+        status.textAlignment = .center
+        window.addSubview(status)
+        window.makeKeyAndVisible()
+        defer {
+            window.onTouchHitTest = nil
+            _ = textView.resignFirstResponder()
+            window.isHidden = true
+        }
+        XCTAssertTrue(textView.becomeFirstResponder())
+        flushMainQueue()
+        view.layoutIfNeeded()
+        textView.selectedRange = NSRange(location: 0, length: 0)
+        textView.textViewDidChangeSelection(textView)
+        flushMainQueue()
+        let originalRange = textView.selectedRange
+        let originalSelection = currentSelection(in: editorId)
+        let originalDocument = try XCTUnwrap(adapter.documentJson())
+        let originalRevision = adapter.baseDocumentRevision
+        let initialScrollOffset: CGFloat = 400
+        textView.setContentOffset(CGPoint(x: 0, y: initialScrollOffset), animated: false)
+        status.text = "EDITOR FLICK READY"
+        let coasting = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            textView.isDecelerating && textView.contentOffset.y > initialScrollOffset
+        }, object: nil)
+        guard XCTWaiter.wait(for: [coasting], timeout: 30) == .completed else {
+            return XCTFail("The real editor flick must decelerate before the stop touch")
+        }
+        XCTAssertEqual(textView.selectedRange, originalRange, "The flick must preserve the caret")
+        var deceleratingAtStopTouch: Bool?
+        window.onTouchHitTest = { [weak textView] hit in
+            guard deceleratingAtStopTouch == nil, let textView,
+                  hit === textView || hit.isDescendant(of: textView)
+            else { return }
+            deceleratingAtStopTouch = textView.isDecelerating
+        }
+        status.text = "EDITOR STOP TOUCH READY"
+        let stopped = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            deceleratingAtStopTouch != nil && !textView.isDecelerating && !textView.isTracking
+        }, object: nil)
+        guard XCTWaiter.wait(for: [stopped], timeout: 5) == .completed else {
+            return XCTFail("The finger must stop the real editor's deceleration")
+        }
+        XCTAssertEqual(deceleratingAtStopTouch, true, "The stop touch must arrive while the editor is coasting")
+        window.onTouchHitTest = nil
+        flushMainQueue()
+        guard textView.selectedRange == originalRange else {
+            return XCTFail("Stopping a flick moved the caret from \(originalRange) to \(textView.selectedRange)")
+        }
+        let stoppedSelection = currentSelection(in: editorId)
+        for endpoint in ["anchor", "head"] {
+            let original = try XCTUnwrap(originalSelection[endpoint] as? NSNumber, "The original core selection must contain \(endpoint)")
+            let stopped = try XCTUnwrap(stoppedSelection[endpoint] as? NSNumber, "The stopped core selection must contain \(endpoint)")
+            XCTAssertEqual(stopped.uint32Value, original.uint32Value, "Stopping a flick must preserve the core selection's \(endpoint)")
+        }
+        let stoppedOffset = textView.contentOffset.y
+        XCTAssertGreaterThan(stoppedOffset, initialScrollOffset, "Stopping a flick must preserve the scrolled viewport")
+        let settleInterval: TimeInterval = 0.2
+        RunLoop.main.run(until: Date().addingTimeInterval(settleInterval))
+        XCTAssertEqual(textView.contentOffset.y, stoppedOffset, accuracy: 1)
+        XCTAssertEqual(textView.selectedRange, originalRange)
+
+        status.text = "EDITOR CARET TAP READY"
+        let placed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            textView.selectedRange != originalRange
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [placed], timeout: 10), .completed, "The next deliberate tap must place the caret normally")
+        flushMainQueue()
+        let placedSelection = currentSelection(in: editorId)
+        let originalHead = try XCTUnwrap(originalSelection["head"] as? NSNumber)
+        let placedHead = try XCTUnwrap(placedSelection["head"] as? NSNumber)
+        XCTAssertNotEqual(placedHead.uint32Value, originalHead.uint32Value)
+        XCTAssertEqual(adapter.baseDocumentRevision, originalRevision)
+        XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), originalDocument)
+    }
+
     func testCaretPlacementTap_emptyDocumentPendingTapDoesNotRecurse() throws {
         try assertEmptyDocumentCaretTap(initiallyFocused: true, placeCaret: false)
     }

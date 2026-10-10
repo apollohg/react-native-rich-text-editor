@@ -1,5 +1,6 @@
 package com.apollohg.editor
 
+import android.graphics.Color
 import android.text.Annotation
 import android.text.Spanned
 import android.view.View
@@ -15,13 +16,58 @@ internal fun RenderBridge.appendElements(
     density: Float,
     hostView: View?,
     atomConfiguration: AtomRenderConfiguration?,
-    topLevelChildIndex: Int? = null
+    topLevelChildIndex: Int? = null,
+    observeSourceElements: Boolean = true
 ) {
     for (i in 0 until elements.length()) {
         val element = elements.optJSONObject(i) ?: continue
         val type = element.optString("type", "")
 
         when (type) {
+            "table" -> {
+                val tableId = element.opt("tableId") as? String ?: continue
+                if (tableId !in state.rootTableIds) continue
+                if (!state.isFirstBlock) {
+                    val spacingPx = ((state.nextBlockSpacingBefore ?: 0f) * density).toInt()
+                    appendInterBlockNewline(
+                        state.result,
+                        baseFontSize,
+                        textColor,
+                        spacingPx,
+                        topLevelChildIndex = topLevelChildIndex
+                    )
+                }
+                state.isFirstBlock = false
+                state.replaceNextBlockSpacing(null)
+                val markerStart = state.result.length
+                state.result.append('\u200B')
+                state.result.setSpan(
+                    Annotation(NATIVE_ROOT_TABLE_MARKER_ANNOTATION, tableId),
+                    markerStart,
+                    markerStart + 1,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+                state.result.setSpan(
+                    android.text.style.ForegroundColorSpan(Color.TRANSPARENT),
+                    markerStart,
+                    markerStart + 1,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+                state.result.setSpan(
+                    android.text.style.AbsoluteSizeSpan(1),
+                    markerStart,
+                    markerStart + 1,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+                if (observeSourceElements) {
+                    state.blockRangeObserver?.invoke(
+                        i,
+                        markerStart,
+                        markerStart + 1
+                    )
+                }
+            }
+
             "textRun" -> {
                 val text = element.optString("text", "")
                 val marksArray = element.optJSONArray("marks")
@@ -84,6 +130,7 @@ internal fun RenderBridge.appendElements(
                 val spacingBefore = theme?.effectiveTextStyle(nodeType)?.spacingAfter
                     ?: theme?.list?.itemSpacing
                 state.replaceNextBlockSpacing(spacingBefore)
+                val rangeStart = state.result.length
                 appendVoidBlock(
                     state.result,
                     nodeType,
@@ -116,6 +163,13 @@ internal fun RenderBridge.appendElements(
                     state.blockStack.size,
                     state.blockStack.map { it.nodeType }
                 )
+                if (observeSourceElements) {
+                    state.blockRangeObserver?.invoke(
+                        i,
+                        rangeStart,
+                        state.result.length
+                    )
+                }
             }
 
             "opaqueInlineAtom" -> {
@@ -166,6 +220,7 @@ internal fun RenderBridge.appendElements(
                 }
                 state.isFirstBlock = false
                 state.replaceNextBlockSpacing(blockSpacing)
+                val rangeStart = state.result.length
                 appendOpaqueBlockAtom(
                     state.result,
                     nodeType,
@@ -177,6 +232,13 @@ internal fun RenderBridge.appendElements(
                     blockSpacing,
                     topLevelChildIndex
                 )
+                if (observeSourceElements) {
+                    state.blockRangeObserver?.invoke(
+                        i,
+                        rangeStart,
+                        state.result.length
+                    )
+                }
             }
 
             "blockStart" -> {
@@ -208,7 +270,8 @@ internal fun RenderBridge.appendElements(
                         density,
                         hostView,
                         atomConfiguration,
-                        topLevelChildIndex
+                        topLevelChildIndex,
+                        observeSourceElements = false
                     )
                 }
                 val isListItemContainer = isListItemNodeType(nodeType) && listContext != null
@@ -274,7 +337,14 @@ internal fun RenderBridge.appendElements(
                     topLevelChildIndex = topLevelChildIndex,
                     markerPending = isListItemContainer,
                     renderStart = state.result.length,
-                    language = element.optNullableString("language")
+                    language = element.optNullableString("language"),
+                    sourceElementIndex = if (observeSourceElements &&
+                        !isListItemNodeType(nodeType) && !isTransparentContainer
+                    ) {
+                        i
+                    } else {
+                        null
+                    }
                 )
                 state.blockStack.add(ctx)
 
@@ -464,22 +534,33 @@ internal fun RenderBridge.appendElements(
                         density = density
                     )
                 }
+                ctx.contentStart = state.result.length
             }
 
             "blockEnd" -> {
                 if (state.blockStack.isNotEmpty()) {
                     val endedAncestors = state.blockStack.dropLast(1).map { it.nodeType }
                     val endedBlock = state.blockStack.removeAt(state.blockStack.lastIndex)
-                    appendTrailingHardBreakPlaceholderIfNeeded(
-                        builder = state.result,
-                        endedBlock = endedBlock,
-                        remainingBlockStack = state.blockStack,
-                        baseFontSize = baseFontSize,
-                        textColor = textColor,
-                        theme = theme,
-                        density = density,
-                        pendingLeadingMargins = state.pendingLeadingMargins
-                    )
+                    if (state.synthesizeEmptyBlocks &&
+                        endedBlock.sourceElementIndex != null &&
+                        endedBlock.contentStart == state.result.length &&
+                        !isListItemNodeType(endedBlock.nodeType) &&
+                        !isTransparentContainer(endedBlock.nodeType)
+                    ) {
+                        state.result.append(LayoutConstants.SYNTHETIC_PLACEHOLDER_CHARACTER)
+                    }
+                    if (state.synthesizeTrailingHardBreakPlaceholders) {
+                        appendTrailingHardBreakPlaceholderIfNeeded(
+                            builder = state.result,
+                            endedBlock = endedBlock,
+                            remainingBlockStack = state.blockStack,
+                            baseFontSize = baseFontSize,
+                            textColor = textColor,
+                            theme = theme,
+                            density = density,
+                            pendingLeadingMargins = state.pendingLeadingMargins
+                        )
+                    }
                     theme?.styleSheet?.let { sheet ->
                         val start = endedBlock.renderStart
                         if (start <= state.result.length) {
@@ -592,7 +673,15 @@ internal fun RenderBridge.appendElements(
                             density,
                             hostView,
                             atomConfiguration,
-                            topLevelChildIndex
+                            topLevelChildIndex,
+                            observeSourceElements = false
+                        )
+                    }
+                    endedBlock.sourceElementIndex?.let { sourceIndex ->
+                        state.blockRangeObserver?.invoke(
+                            sourceIndex,
+                            endedBlock.contentStart,
+                            state.result.length
                         )
                     }
                 }

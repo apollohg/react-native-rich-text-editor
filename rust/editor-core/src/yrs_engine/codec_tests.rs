@@ -67,7 +67,7 @@ fn custom_json_projection_round_trips_through_yrs() {
         "type": "doc",
         "content": [{
             "type": "callout",
-            "attrs": { "tone": "info", "level": 7 },
+            "attrs": { "tone": "info", "level": 7.0 },
             "content": [{ "type": "text", "text": "Projected" }]
         }]
     });
@@ -105,8 +105,44 @@ fn custom_json_projection_round_trips_through_yrs() {
 }
 
 #[test]
-fn ordinary_numeric_attrs_require_the_exact_json_number_representation() {
-    assert!(!any_matches_json(&Any::Number(2.0), Some(&json!(2))));
+fn ordinary_numeric_attrs_match_a_json_number_of_the_same_value() {
+    assert!(any_matches_json(&Any::from(2.0), Some(&json!(2))));
+    assert!(any_matches_json(&Any::from(2_i64), Some(&json!(2.0))));
+    assert!(!any_matches_json(&Any::from(2.5), Some(&json!(2))));
+    assert!(!any_matches_json(&Any::from(3.0), Some(&json!(2))));
+}
+
+#[test]
+fn numeric_projection_preserves_integer_precision_and_nonfinite_nulls() {
+    const FIRST_INEXACT_INTEGER: i64 = (1_i64 << 53) + 1;
+    let limits = ResourceLimits::default();
+    for (value, expected) in [
+        (Any::from(i64::MIN), json!(i64::MIN)),
+        (Any::from(i64::MAX), json!(i64::MAX)),
+        (
+            Any::from(FIRST_INEXACT_INTEGER),
+            json!(FIRST_INEXACT_INTEGER),
+        ),
+        (Any::from(2.5), json!(2.5)),
+        (Any::from(f64::NAN), Value::Null),
+        (Any::from(f64::INFINITY), Value::Null),
+        (Any::from(f64::NEG_INFINITY), Value::Null),
+    ] {
+        assert_eq!(
+            any_to_json_bounded(&value, &limits).unwrap(),
+            expected,
+            "{value:?}"
+        );
+        assert!(any_matches_json(&value, Some(&expected)), "{value:?}");
+    }
+    assert!(!any_matches_json(
+        &Any::from(FIRST_INEXACT_INTEGER),
+        Some(&json!(FIRST_INEXACT_INTEGER as f64)),
+    ));
+    assert!(!any_matches_json(
+        &Any::from(i64::MAX),
+        Some(&json!(i64::MAX as f64)),
+    ));
 }
 
 #[test]
@@ -126,7 +162,7 @@ fn legacy_heading_resolution_precedes_a_native_heading_node() {
         let mut txn = doc.transact_mut();
         let fragment = txn.get_or_insert_xml_fragment("prosemirror");
         let heading = fragment.push_back(&mut txn, XmlElementPrelim::empty("heading"));
-        heading.insert_attribute(&mut txn, "level", Any::BigInt(2));
+        heading.insert_attribute(&mut txn, "level", Any::from(2_i64));
     }
     let txn = doc.transact();
     let fragment = txn.get_xml_fragment("prosemirror").unwrap();
@@ -156,7 +192,7 @@ fn unresolved_legacy_heading_does_not_fall_back_to_a_native_heading_node() {
         let mut txn = doc.transact_mut();
         let fragment = txn.get_or_insert_xml_fragment("prosemirror");
         let heading = fragment.push_back(&mut txn, XmlElementPrelim::empty("heading"));
-        heading.insert_attribute(&mut txn, "level", Any::BigInt(2));
+        heading.insert_attribute(&mut txn, "level", Any::from(2_i64));
     }
     let expected = json!({ "type": "doc", "content": [{ "type": "h2" }] });
     let txn = doc.transact();
@@ -179,7 +215,7 @@ fn projected_native_wire_attributes_must_match_their_canonical_values() {
         let mut txn = doc.transact_mut();
         let fragment = txn.get_or_insert_xml_fragment("prosemirror");
         let heading = fragment.push_back(&mut txn, XmlElementPrelim::empty("h2"));
-        heading.insert_attribute(&mut txn, "level", Any::BigInt(3));
+        heading.insert_attribute(&mut txn, "level", Any::from(3_i64));
     }
     let expected = json!({
         "type": "doc",
@@ -216,7 +252,7 @@ fn legacy_heading_alias_drops_synthetic_level_before_unrelated_projection() {
         let mut txn = doc.transact_mut();
         let fragment = txn.get_or_insert_xml_fragment("prosemirror");
         let heading = fragment.push_back(&mut txn, XmlElementPrelim::empty("heading"));
-        heading.insert_attribute(&mut txn, "level", Any::BigInt(2));
+        heading.insert_attribute(&mut txn, "level", Any::from(2_i64));
     }
     let expected = json!({
         "type": "doc",
@@ -235,3 +271,5 @@ fn legacy_heading_alias_drops_synthetic_level_before_unrelated_projection() {
 include!("codec_tests/json_matching.rs");
 
 include!("codec_tests/roundtrip_limits.rs");
+
+include!("codec_tests/model_preparation.rs");

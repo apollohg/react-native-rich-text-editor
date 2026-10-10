@@ -6,6 +6,10 @@ internal fun EditorEditText.handleCompositionCommitImpl(
     replacementEndUtf16: Int,
     newCursorPosition: Int = 1
 ) {
+    if (!canDispatchTableCellMutation()) {
+        if (rootTablePositionMap != null) restoreAuthorizedTextSnapshotForEditor()
+        return
+    }
     val startedAt = System.nanoTime()
     if (!isEditable) {
         recordImeTraceForTesting(
@@ -44,6 +48,10 @@ internal fun EditorEditText.handleCompositionCommitImpl(
     }
     val scalarStart = PositionBridge.utf16ToScalar(startUtf16, authorizedText)
     val scalarEnd = PositionBridge.utf16ToScalar(endUtf16, authorizedText)
+    if (inputScalarRange(scalarStart, scalarEnd) == null) {
+        if (rootTablePositionMap != null) restoreAuthorizedTextSnapshotForEditor()
+        return
+    }
 
     if (
         startUtf16 <= endUtf16 &&
@@ -112,6 +120,7 @@ internal fun EditorEditText.handleCorrectionCommitImpl(
     renderedOldText: String,
     newText: String
 ): Boolean {
+    if (!canDispatchTableCellMutation()) return false
     if (!isEditable) return true
     if (isApplyingRustState) return true
     if (!hasLiveEditor()) return false
@@ -158,6 +167,13 @@ internal fun EditorEditText.handleCorrectionCommitImpl(
 
     val scalarStart = PositionBridge.utf16ToScalar(snappedStartUtf16, authorizedText)
     val scalarEnd = PositionBridge.utf16ToScalar(snappedEndUtf16, authorizedText)
+    if (inputScalarRange(scalarStart, scalarEnd) == null) {
+        recordImeTraceForTesting(
+            "correctionExplicitNoop",
+            "reason=unmappedRange range=$scalarStart..$scalarEnd"
+        )
+        return false
+    }
     recordImeTraceForTesting(
         "correctionExplicitApply",
         "range=$scalarStart..$scalarEnd newLength=${newText.length}"
@@ -172,6 +188,7 @@ internal fun EditorEditText.handleMissingOldTextCorrectionCommitImpl(
     renderedOldText: String,
     newText: String
 ): Boolean {
+    if (!canDispatchTableCellMutation()) return false
     if (!isEditable) return true
     if (isApplyingRustState) return true
     if (!hasLiveEditor()) return false
@@ -205,6 +222,13 @@ internal fun EditorEditText.handleMissingOldTextCorrectionCommitImpl(
 
     val scalarStart = PositionBridge.utf16ToScalar(snappedStartUtf16, authorizedText)
     val scalarEnd = PositionBridge.utf16ToScalar(snappedEndUtf16, authorizedText)
+    if (inputScalarRange(scalarStart, scalarEnd) == null) {
+        recordImeTraceForTesting(
+            "correctionInferredNoop",
+            "reason=unmappedRange range=$scalarStart..$scalarEnd"
+        )
+        return false
+    }
     recordImeTraceForTesting(
         "correctionInferredApply",
         "range=$scalarStart..$scalarEnd utf16=$snappedStartUtf16..$snappedEndUtf16 newLength=${newText.length}"

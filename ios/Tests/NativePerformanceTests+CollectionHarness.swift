@@ -193,7 +193,7 @@ final class PreparedProseCollectionHarness: NSObject, UICollectionViewDataSource
         layout.minimumLineSpacing = 8
         layout.sectionInset = .zero
         collectionView = UICollectionView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), collectionViewLayout: layout)
-        window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         super.init()
         collectionView.dataSource = self; collectionView.delegate = self
         collectionView.register(PreparedProseCollectionCell.self, forCellWithReuseIdentifier: "prepared")

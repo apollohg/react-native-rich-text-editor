@@ -235,52 +235,24 @@ fn compiled_transaction_state_revision_is_checked_before_result_or_no_op_work() 
 }
 
 #[test]
-fn projected_encoded_ceiling_accepts_exact_and_rejects_one_under_without_new_clock() {
-    let mut exact = transaction_engine();
-    let exact_transaction = insert_transaction(&exact, 73);
-    let exact_compiled = exact
-        .compile_typed_transaction(exact_transaction.clone())
-        .unwrap();
-    let exact_limit = exact
-        .encoded_state()
-        .unwrap()
-        .len()
-        .checked_add(exact_compiled.encoded_growth_bound)
-        .unwrap();
-    exact.resource_limits.max_encoded_state_bytes = exact_limit;
-
-    let commit = exact.apply_typed_transaction(exact_transaction).unwrap();
-
-    assert!(commit.changed);
-    assert!(exact.encoded_state().unwrap().len() <= exact_limit);
-
-    let mut one_under = transaction_engine();
-    let rejected_transaction = insert_transaction(&one_under, 74);
-    let rejected_compiled = one_under
-        .compile_typed_transaction(rejected_transaction.clone())
-        .unwrap();
-    let rejected_limit = one_under
-        .encoded_state()
-        .unwrap()
-        .len()
-        .checked_add(rejected_compiled.encoded_growth_bound)
-        .unwrap()
-        - 1;
-    one_under.resource_limits.max_encoded_state_bytes = rejected_limit;
-    let before = atomic_audit(&one_under);
-
-    let error = one_under
-        .apply_typed_transaction(rejected_transaction)
-        .unwrap_err();
-
-    assert_eq!(error.code, "DOCUMENT_LIMIT_EXCEEDED");
-    assert_eq!(
-        error.details,
-        Some(json!({ "field": "maxEncodedStateBytes" }))
-    );
-    assert_eq!(error.limit, Some(rejected_limit as u64));
-    assert_eq!(error.actual, Some((rejected_limit + 1) as u64));
-    assert_eq!(atomic_audit(&one_under), before);
+fn conservative_encoded_projection_does_not_reject_a_fitting_candidate() {
+    for slack in [0, 1] {
+        let mut engine = transaction_engine();
+        let transaction = insert_transaction(&engine, 73);
+        let compiled = engine
+            .compile_typed_transaction(transaction.clone())
+            .unwrap();
+        let projected = engine.encoded_state().unwrap().len() + compiled.encoded_growth_bound;
+        engine.resource_limits.max_encoded_state_bytes = projected - slack;
+        let commit = engine.apply_typed_transaction(transaction).unwrap();
+        assert!(commit.changed);
+        let exact = engine.encoded_state().unwrap().len();
+        assert!(exact <= engine.resource_limits.max_encoded_state_bytes);
+        assert_eq!(
+            engine.encoded_state_upper_bound,
+            if slack == 0 { projected } else { exact }
+        );
+    }
 }
 
 #[test]

@@ -1,3 +1,4 @@
+import { type NativeEditorResolvedSelectionFrame } from './NativeEditorTypes';
 import {
     type DocumentJSON,
     type HistoryState,
@@ -6,6 +7,9 @@ import {
     type Selection,
 } from './NativeEditorBridge';
 import { type ImageNodeAttributes } from './schemas';
+import { type ReactNode } from 'react';
+import { type TableCommand, type TableDirection, type TableSelectionGeometry } from './TableTypes';
+import { type TableToolbarState } from './useTableToolbar';
 import { type EditorToolbarHeadingLevel, type EditorToolbarItem } from './EditorToolbar';
 import { type EditorImageLoadingPolicy } from './ImageLoadingPolicy';
 import { type RichTextEditorFocusPreservingRefs } from './useFocusPreservingFrames';
@@ -86,6 +90,9 @@ export interface RemoteSelectionDecoration {
     /** Whether that peer's editor holds focus. The caret bar is drawn only when
      *  true; the highlighted range is drawn either way. Absent counts as false. */
     isFocused?: boolean;
+    cellRectangle?: { anchorCell: number; headCell: number };
+    /** Receiver frame for asynchronous coordinates; unstamped rectangles expire with the current frame. */
+    resolvedAt?: NativeEditorResolvedSelectionFrame;
 }
 
 export interface LinkRequestContext {
@@ -176,6 +183,7 @@ export interface RichTextEditorProps {
     onContentChangeJSON?: (json: DocumentJSON) => void;
     /** Called when selection changes (engine doc positions). */
     onSelectionChange?: (selection: Selection) => void;
+    onTableSelectionGeometryChange?: (geometry: TableSelectionGeometry | null) => void;
     /** Called when active formatting state changes. */
     onActiveStateChange?: (state: ReadonlyActiveState) => void;
     /** Called when undo/redo availability changes. */
@@ -204,6 +212,9 @@ export interface RichTextEditorProps {
     atomViewport?: AtomViewport;
     /** Remote awareness selections rendered as native overlays. */
     remoteSelections?: readonly RemoteSelectionDecoration[];
+    tableDirection?: TableDirection;
+    /** Defaults to a native long-press menu on iOS and Android. */
+    tableToolbar?: false | ((state: TableToolbarState) => ReactNode);
     /**
      * Shared v2 document session : the only construction path. The native
      * view binds to the same session (its editorId is passed straight to the
@@ -287,6 +298,7 @@ export interface RichTextEditorRef {
     canUndo(): boolean;
     /** Check if redo is available. */
     canRedo(): boolean;
+    runTableCommand(command: TableCommand): Promise<void>;
 }
 
 export interface RichTextEditorCaretRect {

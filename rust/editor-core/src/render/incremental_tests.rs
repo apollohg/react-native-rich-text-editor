@@ -312,7 +312,14 @@ fn localized_render_transition_matches_generic_for_supported_insert_shapes() {
         let affected = target.saturating_sub(1)..old.root().child_count();
         let affected = affected.collect::<Vec<_>>();
         let specialized = cache
-            .transition_localized_insert(&old, &new, &schema, target, inserted_scalars, &limits)
+            .transition_localized_textblock(
+                &old,
+                &new,
+                &schema,
+                target,
+                i32::try_from(inserted_scalars).unwrap(),
+                &limits,
+            )
             .unwrap();
         let generic = cache.transition(&old, &new, &schema, &[], &limits).unwrap();
         assert_eq!(specialized.update, generic.update);
@@ -455,25 +462,27 @@ fn localized_render_transition_accepts_exact_element_capacity_and_rejects_one_un
         .map(Vec::len)
         .max()
         .unwrap();
-    let exact_nodes = required_elements.div_ceil(3);
+    const TABLE_GRID_ALLOWANCE: usize = 1;
+    let exact_nodes = (required_elements - TABLE_GRID_ALLOWANCE).div_ceil(3);
     assert!(
         exact_nodes > 1,
         "fixture must make one-under resource-bound"
     );
     let exact = ResourceLimits {
         max_document_nodes: exact_nodes,
+        max_table_grid_slots: TABLE_GRID_ALLOWANCE,
         ..default_limits.clone()
     };
     let one_under = ResourceLimits {
         max_document_nodes: exact_nodes - 1,
-        ..default_limits
+        ..exact.clone()
     };
 
     assert!(cache
-        .transition_localized_insert(&old, &new, &schema, 0, 1, &exact)
+        .transition_localized_textblock(&old, &new, &schema, 0, 1, &exact)
         .is_ok());
     assert!(matches!(
-        cache.transition_localized_insert(&old, &new, &schema, 0, 1, &one_under),
+        cache.transition_localized_textblock(&old, &new, &schema, 0, 1, &one_under),
         Err(super::CachedRenderError::ResourceLimitExceeded)
     ));
 }
@@ -491,11 +500,11 @@ fn localized_render_transition_rejects_unsealed_shape_and_delta_facts() {
     let cache = CachedRenderBlocks::build(&old, &schema, &limits).unwrap();
 
     assert!(matches!(
-        cache.transition_localized_insert(&old, &new, &schema, 1, 2, &limits),
+        cache.transition_localized_textblock(&old, &new, &schema, 1, 2, &limits),
         Err(super::CachedRenderError::CacheInvariantViolation)
     ));
     assert!(matches!(
-        cache.transition_localized_insert(&old, &new, &schema, 3, 1, &limits),
+        cache.transition_localized_textblock(&old, &new, &schema, 3, 1, &limits),
         Err(super::CachedRenderError::CacheInvariantViolation)
     ));
 
@@ -506,7 +515,7 @@ fn localized_render_transition_rejects_unsealed_shape_and_delta_facts() {
         paragraph(vec![text("extra")]),
     ]);
     assert!(matches!(
-        cache.transition_localized_insert(&old, &changed_cardinality, &schema, 1, 1, &limits,),
+        cache.transition_localized_textblock(&old, &changed_cardinality, &schema, 1, 1, &limits,),
         Err(super::CachedRenderError::CacheInvariantViolation)
     ));
 
@@ -516,7 +525,14 @@ fn localized_render_transition_rejects_unsealed_shape_and_delta_facts() {
         paragraph(vec![text("last")]),
     ]);
     assert!(matches!(
-        cache.transition_localized_insert(&old, &foreign_unchanged_blocks, &schema, 1, 1, &limits,),
+        cache.transition_localized_textblock(
+            &old,
+            &foreign_unchanged_blocks,
+            &schema,
+            1,
+            1,
+            &limits,
+        ),
         Err(super::CachedRenderError::CacheInvariantViolation)
     ));
 }
@@ -855,7 +871,7 @@ fn incremental_ordered_list_indices_are_exact_or_structured_overflow() {
 }
 
 #[test]
-fn ordered_list_start_defaults_only_when_absent_and_rejects_present_malformed_values() {
+fn ordered_list_start_defaults_when_absent_or_null_and_rejects_malformed_values() {
     let schema = tiptap_schema();
     let limits = ResourceLimits::default();
     let missing = doc(vec![ordered_list_with_start(
@@ -863,20 +879,27 @@ fn ordered_list_start_defaults_only_when_absent_and_rejects_present_malformed_va
         vec![list_item(vec![paragraph(vec![text("first")])])],
     )]);
 
-    let blocks = try_render_blocks(&missing, &schema).expect("missing start defaults to one");
-    let RenderElement::BlockStart {
-        list_context: Some(context),
-        ..
-    } = &blocks[0][0]
-    else {
-        panic!("ordered-list item must carry a list context");
-    };
-    assert_eq!(context.index, 1);
+    let null_start = doc(vec![ordered_list_with_start(
+        Some(serde_json::Value::Null),
+        vec![list_item(vec![paragraph(vec![text("first")])])],
+    )]);
+
+    for (document, label) in [(missing, "missing"), (null_start, "null")] {
+        let blocks = try_render_blocks(&document, &schema)
+            .unwrap_or_else(|error| panic!("{label} start defaults to one, got {error:?}"));
+        let RenderElement::BlockStart {
+            list_context: Some(context),
+            ..
+        } = &blocks[0][0]
+        else {
+            panic!("ordered-list item must carry a list context");
+        };
+        assert_eq!(context.index, 1, "{label} start must default to one");
+    }
 
     for start in [
         serde_json::json!(-1),
         serde_json::json!(1.5),
-        serde_json::Value::Null,
         serde_json::json!("1"),
         serde_json::json!(u64::from(u32::MAX) + 1),
     ] {
@@ -886,11 +909,11 @@ fn ordered_list_start_defaults_only_when_absent_and_rejects_present_malformed_va
         )]);
         assert!(matches!(
             CachedRenderBlocks::build(&malformed, &schema, &limits),
-            Err(super::CachedRenderError::PositionOverflow)
+            Err(super::CachedRenderError::InvalidOrderedListStart)
         ));
         assert!(matches!(
             try_render_blocks(&malformed, &schema),
-            Err(super::CachedRenderError::PositionOverflow)
+            Err(super::CachedRenderError::InvalidOrderedListStart)
         ));
     }
 }
@@ -924,5 +947,605 @@ proptest! {
         let expected = render_blocks(&new_doc, &schema);
 
         assert_update_reconstructs(old_render, &transition, &expected);
+    }
+}
+
+fn web_authored_ordered_list(start: serde_json::Value, labels: &[&str]) -> Document {
+    let items = labels
+        .iter()
+        .map(|label| {
+            serde_json::json!({
+                "type": "listItem",
+                "content": [{
+                    "type": "paragraph",
+                    "content": [{ "type": "text", "text": label }],
+                }],
+            })
+        })
+        .collect::<Vec<_>>();
+    let json = serde_json::json!({
+        "type": "doc",
+        "content": [{
+            "type": "orderedList",
+            "attrs": { "start": start },
+            "content": items,
+        }],
+    });
+    crate::serialize::from_prosemirror_json(
+        &json,
+        &tiptap_schema(),
+        crate::serialize::UnknownTypeMode::Error,
+    )
+    .expect("web-authored ordered list must import")
+}
+
+#[test]
+fn cached_render_accepts_a_web_authored_float_ordered_list_start() {
+    let schema = tiptap_schema();
+    let limits = ResourceLimits::default();
+    let document = web_authored_ordered_list(serde_json::json!(3.0), &["Three", "Four"]);
+
+    let blocks = try_render_blocks(&document, &schema)
+        .expect("a float-valued start of 3.0 must render instead of raising PositionOverflow");
+    CachedRenderBlocks::build(&document, &schema, &limits)
+        .expect("a float-valued start of 3.0 must build cached render blocks");
+
+    let indexes = blocks
+        .iter()
+        .flatten()
+        .filter_map(|element| match element {
+            RenderElement::BlockStart {
+                list_context: Some(context),
+                ..
+            } => Some(context.index),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        indexes,
+        vec![3, 4],
+        "a float-valued start of 3.0 must number the cached render from 3"
+    );
+}
+
+#[test]
+fn localized_table_edits_preserve_source_correspondence_and_fresh_render_parity() {
+    const ROWS: usize = 3;
+    const COLUMNS: usize = 3;
+    const INSERTION: &str = "changed🙂";
+    const CELL_TEXT_OFFSET: u32 = 2;
+    let schema = crate::schema::presets::prosemirror_table_schema();
+    let limits = ResourceLimits::default();
+    for irregular in [false, true] {
+        let mut source =
+            crate::test_support::large_table_fixture::plain_table_document(ROWS, COLUMNS);
+        for row in source["content"][0]["content"].as_array_mut().unwrap() {
+            for cell in row["content"].as_array_mut().unwrap() {
+                cell["content"][0]["content"][0]["text"] = serde_json::json!("same");
+            }
+        }
+        if irregular {
+            source["content"][0]["content"][0]["content"][0]["type"] =
+                serde_json::json!("table_header");
+            source["content"][0]["content"][0]["content"][0]["attrs"]["colspan"] =
+                serde_json::json!(2);
+            source["content"][0]["content"][1]["content"]
+                .as_array_mut()
+                .unwrap()
+                .pop();
+        }
+        let old = crate::serialize::from_prosemirror_json(
+            &source,
+            &schema,
+            crate::serialize::UnknownTypeMode::Error,
+        )
+        .unwrap();
+        let cache = CachedRenderBlocks::build(&old, &schema, &limits).unwrap();
+        let mut records = Vec::new();
+        cache.visit_table_records(&mut records);
+        let (table_pos, table) = records[0];
+        let starts =
+            crate::tables::render::absolute_cell_starts(table, table_pos).collect::<Vec<_>>();
+        for index in [0, starts.len() / 2, starts.len() - 1] {
+            let step = crate::transform::Step::InsertText {
+                pos: starts[index] + CELL_TEXT_OFFSET,
+                text: INSERTION.into(),
+                marks: Vec::new(),
+            };
+            let (new, _) = crate::transform::apply_step(&old, &step, &schema).unwrap();
+            crate::tables::render::CELL_START_VALUE_VISITS.set(0);
+            let transition = cache
+                .transition_localized_textblock(
+                    &old,
+                    &new,
+                    &schema,
+                    0,
+                    INSERTION.chars().count() as i32,
+                    &limits,
+                )
+                .unwrap();
+            const NEXT_CELL_BOUNDARY: usize = 2;
+            assert_eq!(
+                crate::tables::render::CELL_START_VALUE_VISITS.replace(0),
+                (index + NEXT_CELL_BOUNDARY).min(starts.len()),
+                "irregular={irregular}, edit={index}: locate the edited cell without visiting the unused suffix"
+            );
+            let fresh = CachedRenderBlocks::build(&new, &schema, &limits).unwrap();
+            assert_eq!(
+                transition.cache.materialize(),
+                fresh.materialize(),
+                "irregular={irregular}, edited cell={index}"
+            );
+            let mut updated = Vec::new();
+            transition.cache.visit_table_records(&mut updated);
+            for (other, prior) in table.cells.iter().enumerate() {
+                assert_eq!(Arc::ptr_eq(prior, &updated[0].1.cells[other]), other != index,
+                    "irregular={irregular}, edit={index}, source cell={other}: equal text does not exchange cell identities");
+            }
+        }
+    }
+}
+
+#[test]
+fn localized_textblock_nested_table_changes_rebuild_projection() {
+    const CONTAINER: &str = "table_text_container";
+    let mut config =
+        crate::tables::tests::tabled_schema_json(crate::tables::tests::PROSEMIRROR_TABLE_NAMES);
+    config["nodes"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({
+            "name":CONTAINER,"content":"block*","group":"block","role":"textBlock"
+        }));
+    let schema = crate::schema::Schema::from_json(&config).unwrap();
+    let nested = crate::serialize::from_prosemirror_json(
+        &crate::test_support::large_table_fixture::plain_table_document(1, 1),
+        &schema,
+        crate::serialize::UnknownTypeMode::Error,
+    )
+    .unwrap()
+    .root()
+    .child(0)
+    .unwrap()
+    .clone();
+    let limits = ResourceLimits::default();
+    let empty = doc(vec![Node::element(
+        CONTAINER.into(),
+        HashMap::new(),
+        Fragment::from(Vec::new()),
+    )]);
+    let populated = doc(vec![Node::element(
+        CONTAINER.into(),
+        HashMap::new(),
+        Fragment::from(vec![nested]),
+    )]);
+    for (old, new) in [(&empty, &populated), (&populated, &empty)] {
+        let cache = CachedRenderBlocks::build(old, &schema, &limits).unwrap();
+        let delta = new.root().node_size() as i32 - old.root().node_size() as i32;
+        let transition = cache
+            .transition_localized_textblock(old, new, &schema, 0, delta, &limits)
+            .unwrap();
+        let fresh = CachedRenderBlocks::build(new, &schema, &limits).unwrap();
+        assert_eq!(
+            transition
+                .cache
+                .table_projection_index
+                .positions()
+                .collect::<Vec<_>>(),
+            fresh.table_projection_index.positions().collect::<Vec<_>>(),
+            "delta={delta}: added/removed table projection must match fresh derivation"
+        );
+        assert_eq!(
+            transition.cache.materialize(),
+            fresh.materialize(),
+            "delta={delta}: nested content matches fresh rendering"
+        );
+        for block in &transition.cache.blocks {
+            assert_eq!(
+                block.element_count,
+                crate::tables::render::element_count(&block.elements)
+            );
+        }
+    }
+}
+
+#[test]
+fn localized_table_element_counts_follow_split_merge_and_resource_boundaries() {
+    const TABLE_INDEX: usize = 1;
+    const INLINE_OFFSET: u32 = 3;
+    const RENDER_ELEMENTS_PER_NODE: usize = 3;
+    let schema = crate::schema::presets::prosemirror_table_schema();
+    let limits = ResourceLimits::default();
+    let table_document = crate::serialize::from_prosemirror_json(
+        &crate::test_support::large_table_fixture::plain_table_document(3, 3),
+        &schema,
+        crate::serialize::UnknownTypeMode::Error,
+    )
+    .unwrap();
+    let mut document = doc(vec![
+        paragraph(vec![text("before")]),
+        table_document.root().child(0).unwrap().clone(),
+        paragraph(vec![text("after")]),
+    ]);
+    let mut cache = CachedRenderBlocks::build(&document, &schema, &limits).unwrap();
+    let mut records = Vec::new();
+    cache.visit_table_records(&mut records);
+    let (table_pos, table) = records[0];
+    let starts = crate::tables::render::absolute_cell_starts(table, table_pos).collect::<Vec<_>>();
+    let position = starts[starts.len() / 2] + INLINE_OFFSET;
+    for iteration in 0..4 {
+        let inserting = iteration % 2 == 0;
+        let step = if inserting {
+            crate::transform::Step::InsertText {
+                pos: position,
+                text: "x".into(),
+                marks: vec![Mark::new("strong".into(), HashMap::new())],
+            }
+        } else {
+            crate::transform::Step::DeleteRange {
+                from: position,
+                to: position + 1,
+            }
+        };
+        let (next, _) = crate::transform::apply_step(&document, &step, &schema).unwrap();
+        let fresh = CachedRenderBlocks::build(&next, &schema, &limits).unwrap();
+        let required = fresh
+            .blocks
+            .iter()
+            .map(|block| crate::tables::render::element_count(&block.elements))
+            .sum::<usize>();
+        let exact = ResourceLimits {
+            max_document_nodes: fresh.blocks.len(),
+            max_table_grid_slots: required - fresh.blocks.len() * RENDER_ELEMENTS_PER_NODE,
+            ..limits.clone()
+        };
+        let one_under = ResourceLimits {
+            max_table_grid_slots: exact.max_table_grid_slots - 1,
+            ..exact.clone()
+        };
+        let delta = if inserting { 1 } else { -1 };
+        assert!(
+            matches!(
+                cache.transition_localized_textblock(
+                    &document,
+                    &next,
+                    &schema,
+                    TABLE_INDEX,
+                    delta,
+                    &one_under
+                ),
+                Err(super::CachedRenderError::ResourceLimitExceeded)
+            ),
+            "iteration={iteration}: one fewer allowed element must reject the localized edit"
+        );
+        let transition = cache
+            .transition_localized_textblock(&document, &next, &schema, TABLE_INDEX, delta, &exact)
+            .unwrap();
+        assert_eq!(
+            transition.cache.materialize(),
+            fresh.materialize(),
+            "iteration={iteration}"
+        );
+        assert_eq!(transition.cache.table_attributes, fresh.table_attributes);
+        for block in cache.blocks.iter().chain(&transition.cache.blocks) {
+            assert_eq!(block.element_count, crate::tables::render::element_count(&block.elements),
+                "iteration={iteration}: old and new snapshots retain exact counts, including rebased siblings");
+        }
+        assert_eq!(
+            transition.cache.blocks[TABLE_INDEX].element_count as isize
+                - cache.blocks[TABLE_INDEX].element_count as isize,
+            if inserting { 2 } else { -2 },
+            "Marked insertion splits a text run; deletion merges it again"
+        );
+        document = next;
+        cache = transition.cache;
+    }
+    let removed = replace_top_level(&document, TABLE_INDEX, paragraph(vec![text("replacement")]));
+    let transition = cache
+        .transition(&document, &removed, &schema, &[TABLE_INDEX], &limits)
+        .unwrap();
+    let fresh = CachedRenderBlocks::build(&removed, &schema, &limits).unwrap();
+    assert_eq!(transition.cache.materialize(), fresh.materialize());
+    assert!(
+        transition.cache.table_attributes.is_empty(),
+        "Structural fallback must prune attribute keys retained by preceding local edits"
+    );
+    for block in &transition.cache.blocks {
+        assert_eq!(
+            block.element_count,
+            crate::tables::render::element_count(&block.elements)
+        );
+    }
+}
+
+#[test]
+fn table_output_meter_reuses_only_identical_ordered_cell_allocations() {
+    use crate::render::output_bytes::render_element_bytes;
+    use crate::tables::render::CELL_OUTPUT_METER_VISITS;
+    let schema = crate::schema::presets::prosemirror_table_schema();
+    let document = crate::serialize::from_prosemirror_json(
+        &crate::test_support::large_table_fixture::plain_table_document(3, 3),
+        &schema,
+        crate::serialize::UnknownTypeMode::Error,
+    )
+    .unwrap();
+    let cache = CachedRenderBlocks::build(&document, &schema, &ResourceLimits::default()).unwrap();
+    let output = cache.materialize();
+    let RenderElement::Table { table, .. } = &output[0][0] else {
+        panic!("table fixture");
+    };
+    let expected = table.cells.iter().fold(0usize, |bytes, cell| {
+        bytes.saturating_add(cell.retained_bytes(render_element_bytes))
+    });
+    CELL_OUTPUT_METER_VISITS.set(0);
+    assert_eq!(cache.table_cell_output_bytes(0, table), Some(expected));
+    assert_eq!(CELL_OUTPUT_METER_VISITS.replace(0), table.cells.len());
+    assert_eq!(cache.table_cell_output_bytes(0, table), Some(expected));
+    assert_eq!(
+        CELL_OUTPUT_METER_VISITS.replace(0),
+        0,
+        "an unchanged public clone must not recursively meter its cells again"
+    );
+    assert_eq!(cache.table_cell_output_bytes(usize::MAX, table), None);
+    let mut reordered = table.clone();
+    reordered.edit_parts_for_testing(|_, cells| cells.swap(0, 1));
+    assert_eq!(cache.table_cell_output_bytes(0, &reordered), None);
+    let mut duplicated = table.clone();
+    duplicated.edit_parts_for_testing(|_, cells| cells[1] = Arc::clone(&cells[0]));
+    assert_eq!(cache.table_cell_output_bytes(0, &duplicated), None);
+    let mut changed = table.clone();
+    const EXTRA_CAPACITY: usize = 1024;
+    changed.edit_parts_for_testing(|_, cells| {
+        Arc::make_mut(&mut cells[0])
+            .attrs_key
+            .reserve(EXTRA_CAPACITY);
+    });
+    assert_eq!(
+        cache.table_cell_output_bytes(0, &changed),
+        None,
+        "a detached key with different capacity cannot reuse the aggregate"
+    );
+    assert_eq!(
+        cache.table_cell_output_bytes(0, table),
+        Some(expected),
+        "old snapshots remain unchanged"
+    );
+}
+
+#[test]
+fn table_output_meter_tracks_localized_edits_rebases_and_saturation() {
+    use crate::render::output_bytes::render_element_bytes;
+    use crate::tables::render::CELL_OUTPUT_METER_VISITS;
+    const TABLE_INDEX: usize = 1;
+    const INLINE_OFFSET: u32 = 3;
+    let schema = crate::schema::presets::prosemirror_table_schema();
+    let limits = ResourceLimits::default();
+    let table_document = crate::serialize::from_prosemirror_json(
+        &crate::test_support::large_table_fixture::plain_table_document(3, 3),
+        &schema,
+        crate::serialize::UnknownTypeMode::Error,
+    )
+    .unwrap();
+    let mut document = doc(vec![
+        paragraph(vec![text("before")]),
+        table_document.root().child(0).unwrap().clone(),
+    ]);
+    let mut cache = CachedRenderBlocks::build(&document, &schema, &limits).unwrap();
+    let old_snapshot = cache.clone();
+    let mut records = Vec::new();
+    cache.visit_table_records(&mut records);
+    let (table_pos, table) = records[0];
+    let position = crate::tables::render::absolute_cell_starts(table, table_pos)
+        .nth(0)
+        .unwrap()
+        + INLINE_OFFSET;
+    let original = cache.table_cell_output_bytes(TABLE_INDEX, table).unwrap();
+    for iteration in 0..4 {
+        let inserting = iteration % 2 == 0;
+        let step = if inserting {
+            crate::transform::Step::InsertText {
+                pos: position,
+                text: "x".into(),
+                marks: vec![Mark::new("strong".into(), HashMap::new())],
+            }
+        } else {
+            crate::transform::Step::DeleteRange {
+                from: position,
+                to: position + 1,
+            }
+        };
+        let (next, _) = crate::transform::apply_step(&document, &step, &schema).unwrap();
+        let transition = cache
+            .transition_localized_textblock(
+                &document,
+                &next,
+                &schema,
+                TABLE_INDEX,
+                if inserting { 1 } else { -1 },
+                &limits,
+            )
+            .unwrap();
+        let output = transition.cache.materialize();
+        let RenderElement::Table { table, .. } = &output[TABLE_INDEX][0] else {
+            panic!("table fixture");
+        };
+        let expected = table.cells.iter().fold(0usize, |bytes, cell| {
+            bytes.saturating_add(cell.retained_bytes(render_element_bytes))
+        });
+        CELL_OUTPUT_METER_VISITS.set(0);
+        assert_eq!(
+            transition.cache.table_cell_output_bytes(TABLE_INDEX, table),
+            Some(expected),
+            "edit {iteration}"
+        );
+        assert_eq!(
+            CELL_OUTPUT_METER_VISITS.replace(0),
+            0,
+            "edit {iteration}: transferred aggregate avoids full scan"
+        );
+        document = next;
+        cache = transition.cache;
+    }
+    let rebased = super::rebase_cached_block(
+        &cache.blocks[TABLE_INDEX],
+        document.root().child(TABLE_INDEX).unwrap(),
+        cache.blocks[TABLE_INDEX].start_pos + 1,
+    )
+    .unwrap();
+    assert_eq!(
+        rebased.cell_output_bytes.get(),
+        cache.blocks[TABLE_INDEX].cell_output_bytes.get()
+    );
+    let original_output = old_snapshot.materialize();
+    let RenderElement::Table { table, .. } = &original_output[TABLE_INDEX][0] else {
+        panic!("table fixture");
+    };
+    assert_eq!(
+        old_snapshot.table_cell_output_bytes(TABLE_INDEX, table),
+        Some(original)
+    );
+    cache.blocks[TABLE_INDEX].cell_output_bytes = std::sync::OnceLock::from(usize::MAX);
+    let step = crate::transform::Step::InsertText {
+        pos: position,
+        text: "z".into(),
+        marks: vec![],
+    };
+    let (next, _) = crate::transform::apply_step(&document, &step, &schema).unwrap();
+    let transition = cache
+        .transition_localized_textblock(&document, &next, &schema, TABLE_INDEX, 1, &limits)
+        .unwrap();
+    assert!(
+        transition.cache.blocks[TABLE_INDEX]
+            .cell_output_bytes
+            .get()
+            .is_none(),
+        "saturated sum must be recomputed"
+    );
+    let output = transition.cache.materialize();
+    let RenderElement::Table { table, .. } = &output[TABLE_INDEX][0] else {
+        panic!("table fixture");
+    };
+    let expected = table.cells.iter().fold(0usize, |bytes, cell| {
+        bytes.saturating_add(cell.retained_bytes(render_element_bytes))
+    });
+    assert_eq!(
+        transition.cache.table_cell_output_bytes(TABLE_INDEX, table),
+        Some(expected)
+    );
+}
+
+#[test]
+fn retiring_a_table_frame_only_cleans_cells_without_another_owner() {
+    use crate::tables::render::CELL_PAYLOAD_CLEANUP_VISITS;
+    const ROWS: usize = 1000;
+    const COLUMNS: usize = 20;
+    const CELL_TEXT_OFFSET: u32 = 2;
+    const INSERTION: &str = "x";
+    let schema = crate::schema::presets::prosemirror_table_schema();
+    let limits = ResourceLimits::default();
+    let document = crate::serialize::from_prosemirror_json(
+        &crate::test_support::large_table_fixture::plain_table_document(ROWS, COLUMNS),
+        &schema,
+        crate::serialize::UnknownTypeMode::Error,
+    )
+    .unwrap();
+    let cache = CachedRenderBlocks::build(&document, &schema, &limits).unwrap();
+    let edited = crate::test_support::large_table_fixture::keystroke_cell(ROWS, COLUMNS);
+    let (position, old_cells) = {
+        let mut records = Vec::new();
+        cache.visit_table_records(&mut records);
+        let (position, table) = records[0];
+        let starts =
+            crate::tables::render::absolute_cell_starts(table, position).collect::<Vec<_>>();
+        (
+            starts[edited] + CELL_TEXT_OFFSET,
+            table.cells.iter().map(Arc::downgrade).collect::<Vec<_>>(),
+        )
+    };
+    let step = crate::transform::Step::InsertText {
+        pos: position,
+        text: INSERTION.into(),
+        marks: Vec::new(),
+    };
+    let (updated, _) = crate::transform::apply_step(&document, &step, &schema).unwrap();
+    let transition = cache
+        .transition_localized_textblock(
+            &document,
+            &updated,
+            &schema,
+            0,
+            INSERTION.chars().count() as i32,
+            &limits,
+        )
+        .unwrap();
+    let new_cell = {
+        let mut records = Vec::new();
+        transition.cache.visit_table_records(&mut records);
+        Arc::downgrade(&records[0].1.cells[edited])
+    };
+    CELL_PAYLOAD_CLEANUP_VISITS.set(0);
+    drop(cache);
+    assert_eq!(CELL_PAYLOAD_CLEANUP_VISITS.replace(0), 1,
+        "retiring an edited frame must only inspect its replaced cell; all unchanged cells belong to the next frame");
+    for (index, cell) in old_cells.iter().enumerate() {
+        assert_eq!(
+            cell.upgrade().is_some(),
+            index != edited,
+            "old cell {index}: only the replaced allocation should be released"
+        );
+    }
+    assert!(new_cell.upgrade().is_some());
+    drop(transition);
+    assert_eq!(
+        CELL_PAYLOAD_CLEANUP_VISITS.replace(0),
+        ROWS * COLUMNS,
+        "final ownership must clean every remaining cell exactly once"
+    );
+    assert!(old_cells.iter().all(|cell| cell.upgrade().is_none()));
+    assert!(new_cell.upgrade().is_none());
+}
+
+#[test]
+fn localized_table_cell_lookup_rejects_boundaries_and_row_gaps() {
+    const ROWS: usize = 2;
+    const COLUMNS: usize = 2;
+    const CELL_INTERIOR_OFFSET: u32 = 1;
+    let schema = crate::schema::presets::prosemirror_table_schema();
+    let limits = ResourceLimits::default();
+    let document = crate::serialize::from_prosemirror_json(
+        &crate::test_support::large_table_fixture::plain_table_document(ROWS, COLUMNS),
+        &schema,
+        crate::serialize::UnknownTypeMode::Error,
+    )
+    .unwrap();
+    let cache = CachedRenderBlocks::build(&document, &schema, &limits).unwrap();
+    let block = &cache.blocks[0];
+    let [RenderElement::Table { table, doc_offset }] = block.elements.as_slice() else {
+        panic!("table fixture");
+    };
+    let starts =
+        crate::tables::render::absolute_cell_starts(table, *doc_offset).collect::<Vec<_>>();
+    for position in block.start_pos..=block.start_pos + block.node_size {
+        let expected = starts.iter().zip(table.cells.iter()).any(|(start, cell)| {
+            position >= start + CELL_INTERIOR_OFFSET && position < start + cell.doc_size
+        });
+        let mut context = crate::tables::render::TableRenderContext::new(
+            Arc::clone(&cache.table_projection_index),
+            &cache.schema_fingerprint,
+        );
+        let actual = super::render_localized_table_block(
+            block,
+            document.root().child(0).unwrap(),
+            &schema,
+            position,
+            0,
+            &mut context,
+        )
+        .unwrap();
+        assert_eq!(
+            actual.is_some(),
+            expected,
+            "position {position}: only cell interiors permit localized rendering"
+        );
     }
 }

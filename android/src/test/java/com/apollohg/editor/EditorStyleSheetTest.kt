@@ -16,6 +16,32 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 class EditorStyleSheetTest {
     @Test
+    fun `versioned theme preserves table presentation alongside outer margins`() {
+        val theme = EditorTheme.fromJson(
+            """{
+                "version":1,
+                "table":{
+                    "minColumnWidth":96,"cellPadding":10,"borderWidth":2,
+                    "borderColor":"#123456ff","headerBackgroundColor":"#abcdef80",
+                    "selectionColor":"#2468ac40","resizeHandleColor":"#654321ff"
+                },
+                "styles":{"table":{"marginBottom":16}}
+            }"""
+        )!!
+
+        assertNotNull("Versioned themes must retain table presentation", theme.table)
+        val table = theme.table!!
+        assertEquals(96f, table.minColumnWidth, 0f)
+        assertEquals(10f, table.cellPadding, 0f)
+        assertEquals(2f, table.borderWidth, 0f)
+        assertEquals(Color.rgb(0x12, 0x34, 0x56), table.borderColor)
+        assertEquals(Color.argb(0x80, 0xab, 0xcd, 0xef), table.headerBackgroundColor)
+        assertEquals(Color.argb(0x40, 0x24, 0x68, 0xac), table.selectionColor)
+        assertEquals(Color.rgb(0x65, 0x43, 0x21), table.resizeHandleColor)
+        assertEquals(16f, theme.styleSheet!!.box("table").margin.bottom, 0f)
+    }
+
+    @Test
     fun `editor marker baseline ignores noncontiguous quote rules`() {
         fun markerAppearance(rules: String? = null): Pair<Int, Int> {
             val ruleJSON = rules?.let { ",\"rules\":$it" } ?: ""

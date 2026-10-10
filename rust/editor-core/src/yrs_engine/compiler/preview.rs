@@ -1,7 +1,7 @@
-use crate::model::{Document, Fragment, Node};
+use crate::model::Document;
 use crate::position::update::UpdateMode;
 use crate::position::PositionMap;
-use crate::transform::{DocumentValidator, StepMap};
+use crate::transform::{DocumentValidator, Step, StepMap};
 use crate::yrs_engine;
 use crate::yrs_engine::canonical::{CanonicalArtifact, CanonicalSchemaContext};
 use crate::yrs_engine::compiler::admission::PreparedSemanticAdmission;
@@ -10,12 +10,16 @@ use crate::yrs_engine::compiler::observability::FORCE_LOCALIZED_SEMANTIC_ALLOCAT
 use crate::yrs_engine::compiler::{
     document_text_bytes, CompilationContext, CompiledDocumentDerivations, PreparedSemanticContext,
 };
-use crate::yrs_engine::derived_state::ValidatedLocalizedInsertAdmission;
+use crate::yrs_engine::derived_state::ValidatedLocalizedTextblockEditAdmission;
 use crate::yrs_engine::editing_limits::CheckedWork;
 use crate::yrs_engine::{OperationError, OperationResult, TypedOperation, TypedTransaction};
 use std::sync::Arc;
 
 pub(super) struct LocalizedSemanticCompilation {
+    pub(super) steps: std::collections::VecDeque<LocalizedSemanticStep>,
+}
+
+pub(super) struct LocalizedSemanticStep {
     pub(super) position: u32,
     pub(super) preview: Document,
     pub(super) step_map: StepMap,
@@ -28,8 +32,7 @@ pub(super) struct LocalizedSemanticDerivations {
     pub(super) rendered_scalars: u32,
     pub(super) document_text_bytes: usize,
     pub(super) document_node_count: usize,
-    pub(super) raw_text_scalars: u64,
-    pub(super) raw_text_utf8_bytes: usize,
+    pub(super) canonical_artifact: CanonicalArtifact,
 }
 
 pub(super) fn charge_preview_output(
@@ -47,30 +50,6 @@ pub(super) fn charge_preview_output(
             format!("preview serialization failed: {error}"),
         )
     })?;
-    charge_canonical_output(work, request_id, operation_index, &artifact, context)?;
-    Ok(artifact)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn charge_localized_preview_output(
-    work: &mut CheckedWork,
-    request_id: u64,
-    operation_index: usize,
-    preview: &Document,
-    canonical_schema: &CanonicalSchemaContext,
-    context: CompilationContext<'_>,
-    raw_text_scalars: u64,
-    raw_text_utf8_bytes: usize,
-) -> OperationResult<CanonicalArtifact> {
-    let artifact = canonical_schema
-        .derive_with_known_text_metrics(preview, raw_text_scalars, raw_text_utf8_bytes)
-        .map_err(|error| {
-            OperationError::engine_invariant_failed(
-                request_id,
-                Some(operation_index),
-                format!("preview serialization failed: {error}"),
-            )
-        })?;
     charge_canonical_output(work, request_id, operation_index, &artifact, context)?;
     Ok(artifact)
 }
@@ -188,136 +167,131 @@ pub(super) fn scalar_byte_offset(text: &str, scalar_offset: u32) -> Option<usize
     (scalars == scalar_offset).then_some(text.len())
 }
 
-pub(super) fn try_rebuild_element(parent: &Node, children: Vec<Node>) -> Node {
-    Node::element(
-        parent.node_type().to_owned(),
-        parent.attrs().clone(),
-        Fragment::from(children),
-    )
-}
-
-pub(super) fn try_replace_node_at_path(
-    current: &Node,
-    path: &[u32],
-    replacement: Node,
-) -> Option<Node> {
-    if path.is_empty() {
-        return Some(replacement);
-    }
-    let replace_index = usize::try_from(path[0]).ok()?;
-    let content = current.content()?;
-    if replace_index >= content.child_count() {
-        return None;
-    }
-    let mut children = Vec::new();
-    children.try_reserve_exact(content.child_count()).ok()?;
-    let mut replacement = Some(replacement);
-    for (index, child) in content.iter().enumerate() {
-        if index == replace_index {
-            children.push(try_replace_node_at_path(
-                child,
-                &path[1..],
-                replacement.take()?,
-            )?);
-        } else {
-            children.push(child.clone());
-        }
-    }
-    Some(try_rebuild_element(current, children))
-}
-
 pub(super) fn try_localized_semantic_compilation(
     context: CompilationContext<'_>,
     transaction: &TypedTransaction,
-    validated: &ValidatedLocalizedInsertAdmission<'_>,
+    validated: &ValidatedLocalizedTextblockEditAdmission<'_>,
 ) -> Option<LocalizedSemanticCompilation> {
     #[cfg(test)]
     if FORCE_LOCALIZED_SEMANTIC_ALLOCATION_FAILURE.get() {
         return None;
     }
-    let [TypedOperation::InsertText { text, marks, .. }] = transaction.operations.as_slice() else {
-        return None;
-    };
     let position = validated.document_position();
-    let block_path = validated.block_path();
-    let block = context.document.node_at(block_path)?;
-    let child_index = usize::try_from(validated.child_ordinal()).ok()?;
-    let live_leaf = block.child(child_index)?;
-    let live_text = live_leaf.text_str()?;
-    if live_leaf.marks() != marks {
-        return None;
-    }
-    let local_scalar = position.checked_sub(validated.leaf_doc_start())?;
-    if local_scalar == 0 || local_scalar >= live_leaf.node_size() {
-        return None;
-    }
-    let local_byte = scalar_byte_offset(live_text, local_scalar)?;
-    let next_text_bytes = live_text.len().checked_add(text.len())?;
-    let mut next_text = String::new();
-    next_text.try_reserve_exact(next_text_bytes).ok()?;
-    next_text.push_str(&live_text[..local_byte]);
-    next_text.push_str(text);
-    next_text.push_str(&live_text[local_byte..]);
-
-    let mut next_marks = Vec::new();
-    next_marks.try_reserve_exact(live_leaf.marks().len()).ok()?;
-    next_marks.extend_from_slice(live_leaf.marks());
-    let mut next_leaf = Some(Node::text(next_text, next_marks));
-    let content = block.content()?;
-    let mut block_children = Vec::new();
-    block_children
-        .try_reserve_exact(content.child_count())
-        .ok()?;
-    for (index, child) in content.iter().enumerate() {
-        block_children.push(if index == child_index {
-            next_leaf.take()?
-        } else {
-            child.clone()
-        });
-    }
-    if next_leaf.is_some() {
-        return None;
-    }
-    let next_block = try_rebuild_element(block, block_children);
-    let next_root = try_replace_node_at_path(context.document.root(), block_path, next_block)?;
-    let preview = Document::new(next_root);
-    let step_map = StepMap::try_from_insert(position, validated.inserted_scalars())?;
-
-    let rendered_scalar = validated.rendered_scalar_position();
-    let rendered_byte = scalar_byte_offset(validated.rendered_text(), rendered_scalar)?;
-    let rendered_capacity = validated.rendered_text().len().checked_add(text.len())?;
-    let mut rendered_text = String::new();
-    rendered_text.try_reserve_exact(rendered_capacity).ok()?;
-    rendered_text.push_str(&validated.rendered_text()[..rendered_byte]);
-    rendered_text.push_str(text);
-    rendered_text.push_str(&validated.rendered_text()[rendered_byte..]);
-
+    let old_block = context.document.node_at(validated.block_path())?;
+    let old_text = old_block.text_content();
+    let original_start_scalar = validated.rendered_scalar_position();
+    let rendered_byte = scalar_byte_offset(validated.rendered_text(), original_start_scalar)?;
+    let placeholder = crate::render::empty_text_block_placeholder_string();
+    let placeholder_scalars = u32::try_from(placeholder.chars().count()).ok()?;
+    let prefix_end = if validated.creates_leaf() {
+        if !validated.rendered_text()[..rendered_byte].ends_with(placeholder.as_str()) {
+            return None;
+        }
+        rendered_byte.checked_sub(placeholder.len())?
+    } else {
+        rendered_byte
+    };
+    let suffix_start = scalar_byte_offset(validated.rendered_text(), validated.range_end_scalar())?;
+    let removed_rendered_scalars = if validated.creates_leaf() {
+        placeholder_scalars
+    } else {
+        validated
+            .range_end_scalar()
+            .checked_sub(original_start_scalar)?
+    };
     let top_level_count = context.document.root().child_count();
     let affected_start = validated.affected_top_level_index().saturating_sub(1);
     if affected_start >= top_level_count {
         return None;
     }
-    let affected_len = top_level_count.checked_sub(affected_start)?;
-    let mut affected_top_level_blocks = Vec::new();
-    affected_top_level_blocks
-        .try_reserve_exact(affected_len)
-        .ok()?;
-    affected_top_level_blocks.extend(affected_start..top_level_count);
-
-    Some(LocalizedSemanticCompilation {
-        position,
-        preview,
-        step_map,
-        derivations: LocalizedSemanticDerivations {
-            affected_top_level_blocks,
-            rendered_text,
-            rendered_scalars: validated.next_rendered_scalars(),
-            document_text_bytes: validated.next_raw_text_utf8_bytes(),
-            document_node_count: validated.document_node_count(),
-            raw_text_scalars: validated.next_raw_text_scalars(),
-            raw_text_utf8_bytes: validated.next_raw_text_utf8_bytes(),
-        },
-    })
+    let mut steps = std::collections::VecDeque::new();
+    steps.try_reserve(transaction.operations.len()).ok()?;
+    let mut current_document = context.document.clone();
+    let mut current_artifact = validated.canonical_artifact().clone();
+    for operation in &transaction.operations {
+        let (step, text) = match operation {
+            TypedOperation::InsertText { text, marks, .. } => (
+                Step::InsertText {
+                    pos: position,
+                    text: text.clone(),
+                    marks: marks.clone(),
+                },
+                text.as_str(),
+            ),
+            TypedOperation::DeleteRange { .. } => (
+                Step::DeleteRange {
+                    from: position,
+                    to: validated.range_end(),
+                },
+                "",
+            ),
+            TypedOperation::ReplaceRange { content, .. } => (
+                Step::ReplaceRange {
+                    from: position,
+                    to: validated.range_end(),
+                    content: content.clone(),
+                },
+                content.child(0)?.text_str()?,
+            ),
+            _ => return None,
+        };
+        let (preview, step_map) =
+            crate::transform::apply_step(&current_document, &step, context.schema).ok()?;
+        let block = preview.node_at(validated.block_path())?;
+        let inserted = if block.child_count() == 0 {
+            placeholder.as_str()
+        } else {
+            text
+        };
+        let rendered_capacity = validated
+            .rendered_text()
+            .len()
+            .checked_sub(suffix_start.checked_sub(prefix_end)?)?
+            .checked_add(inserted.len())?;
+        let mut rendered_text = String::new();
+        rendered_text.try_reserve_exact(rendered_capacity).ok()?;
+        rendered_text.push_str(&validated.rendered_text()[..prefix_end]);
+        rendered_text.push_str(inserted);
+        rendered_text.push_str(&validated.rendered_text()[suffix_start..]);
+        let block_text = block.text_content();
+        let raw_text_utf8_bytes = validated
+            .base_raw_text_utf8_bytes()
+            .checked_sub(old_text.len())?
+            .checked_add(block_text.len())?;
+        let document_node_count = validated
+            .base_document_node_count()
+            .checked_sub(old_block.child_count())?
+            .checked_add(block.child_count())?;
+        let mut affected_top_level_blocks = Vec::new();
+        affected_top_level_blocks
+            .try_reserve_exact(top_level_count.checked_sub(affected_start)?)
+            .ok()?;
+        affected_top_level_blocks.extend(affected_start..top_level_count);
+        current_artifact = CanonicalArtifact::derive_localized(
+            &current_artifact,
+            &preview,
+            current_document.node_at(validated.block_path())?,
+            block,
+        )?;
+        current_document = preview.clone();
+        steps.push_back(LocalizedSemanticStep {
+            position,
+            preview,
+            step_map,
+            derivations: LocalizedSemanticDerivations {
+                affected_top_level_blocks,
+                rendered_text,
+                rendered_scalars: validated
+                    .base_rendered_scalars()
+                    .checked_sub(removed_rendered_scalars)?
+                    .checked_add(u32::try_from(inserted.chars().count()).ok()?)?,
+                document_text_bytes: raw_text_utf8_bytes,
+                document_node_count,
+                canonical_artifact: current_artifact.clone(),
+            },
+        });
+    }
+    Some(LocalizedSemanticCompilation { steps })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -333,13 +307,12 @@ pub(super) fn derive_preview_document(
     yrs_engine::derived_state::record_preview_position_map_derivation();
     #[cfg(test)]
     yrs_engine::observability::record_position_map_clone();
-    let mut position_map = base_position_map.clone();
     let update_mode = if affected_top_level_blocks.is_empty() && preview != context.document {
         UpdateMode::Rebuild
     } else {
         position_update_mode
     };
-    position_map.update(
+    let position_map = base_position_map.clone_updated_and_compacted(
         composed_map,
         context.document,
         preview,
@@ -348,7 +321,6 @@ pub(super) fn derive_preview_document(
     );
     #[cfg(test)]
     yrs_engine::observability::record_position_map_compaction();
-    position_map.compact();
     yrs_engine::derived_state::record_preview_rendered_text_derivation();
     let rendered_text = crate::render::rendered_text(preview, context.schema);
     let rendered_scalars = u32::try_from(rendered_text.chars().count()).map_err(|_| {
@@ -399,13 +371,12 @@ pub(super) fn derive_localized_preview_document(
     yrs_engine::derived_state::record_preview_position_map_derivation();
     #[cfg(test)]
     yrs_engine::observability::record_position_map_clone();
-    let mut position_map = base_position_map.clone();
     let update_mode = if affected_top_level_blocks.is_empty() && preview != context.document {
         UpdateMode::Rebuild
     } else {
         position_update_mode
     };
-    position_map.update(
+    let position_map = base_position_map.clone_updated_and_compacted(
         composed_map,
         context.document,
         preview,
@@ -414,7 +385,6 @@ pub(super) fn derive_localized_preview_document(
     );
     #[cfg(test)]
     yrs_engine::observability::record_position_map_compaction();
-    position_map.compact();
     if localized.rendered_scalars != position_map.total_scalars() {
         return Err(OperationError::engine_invariant_failed(
             request_id,

@@ -239,7 +239,7 @@ fn ordinary_lookup_collection_fails_fast_while_codec_projection_finishes() {
 }
 
 #[test]
-fn missing_text_fallback_rebuilds_once_then_next_insert_localizes() {
+fn created_text_insert_carries_the_seed_into_the_next_localized_insert() {
     use crate::yrs_engine::mutation::{
         reset_localized_lookup_counts_for_test, take_localized_lookup_counts_for_test,
     };
@@ -255,7 +255,7 @@ fn missing_text_fallback_rebuilds_once_then_next_insert_localizes() {
         .unwrap()
         .expect("existing text insert must apply");
 
-    assert_eq!(take_localized_lookup_counts_for_test(), (1, 1, 1));
+    assert_eq!(take_localized_lookup_counts_for_test(), (0, 2, 1));
 }
 
 #[test]
@@ -289,7 +289,7 @@ fn selection_only_change_retains_document_scoped_lookup_seed() {
 }
 
 #[test]
-fn localized_root_invalidation_rebuilds_ready_once_then_localizes() {
+fn localized_root_invalidation_localizes_created_text_then_rebuilds_ready_once() {
     use crate::yrs_engine::mutation::{
         reset_localized_lookup_counts_for_test, take_localized_lookup_counts_for_test,
     };
@@ -340,20 +340,20 @@ fn localized_root_invalidation_rebuilds_ready_once_then_localizes() {
         .apply_command(70_113_102, TypedCommand::InsertText { text: "x".into() })
         .unwrap()
         .unwrap();
-    assert_eq!(take_localized_lookup_counts_for_test(), (2, 0, 0));
+    assert_eq!(take_localized_lookup_counts_for_test(), (1, 1, 0));
     assert!(engine
         .derived_state
         .as_ref()
         .unwrap()
         .mutation_lookup_seed
-        .is_ready_for_test());
+        .is_unavailable_for_test());
 
     reset_localized_lookup_counts_for_test();
     engine
         .apply_command(70_113_103, TypedCommand::InsertText { text: "y".into() })
         .unwrap()
         .unwrap();
-    assert_eq!(take_localized_lookup_counts_for_test(), (0, 1, 1));
+    assert_eq!(take_localized_lookup_counts_for_test(), (1, 1, 1));
     assert!(engine
         .derived_state
         .as_ref()
@@ -658,4 +658,116 @@ fn multi_operation_and_explicit_selection_inserts_use_sealed_eager_fallback() {
     reset_localized_lookup_counts_for_test();
     engine.apply_typed_transaction(transaction).unwrap();
     assert_eq!(take_localized_lookup_counts_for_test(), (1, 0, 0));
+}
+
+#[test]
+fn combined_lookup_and_branch_index_preserve_both_independent_builders() {
+    use crate::yrs_engine::mutation::{
+        assert_lookup_and_branch_index_parity_for_test,
+        set_lookup_seed_hydration_failpoint_for_test, LookupSeedHydrationFailpoint,
+    };
+    let sources = [
+        (r#"{"type":"doc","content":[{"type":"paragraph"}]}"#, true),
+        (
+            r#"{"type":"doc","content":[{"type":"heading","attrs":{"level":2},"content":[{"type":"text","text":"hé🙂"}]},{"type":"paragraph","content":[{"type":"text","text":"bold","marks":[{"type":"bold"}]}]}]}"#,
+            true,
+        ),
+        (
+            r#"{"type":"doc","content":[{"type":"blockquote","content":[{"type":"paragraph","content":[{"type":"text","text":"nested"}]}]}]}"#,
+            true,
+        ),
+        (
+            r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"hardBreak"},{"type":"text","text":"after"}]}]}"#,
+            false,
+        ),
+        (
+            r#"{"type":"doc","content":[{"type":"horizontal_rule"},{"type":"mystery_widget","attrs":{"x":1}}]}"#,
+            false,
+        ),
+    ];
+    for (source, captured) in sources {
+        let mut engine = transaction_engine();
+        engine
+            .import_json(source, TransactionOrigin::DocumentImport)
+            .unwrap();
+        let txn = engine.doc.transact();
+        let fragment = txn.get_xml_fragment(engine.fragment_name.as_str()).unwrap();
+        let map = &engine.derived_state.as_ref().unwrap().position_map;
+        assert_lookup_and_branch_index_parity_for_test(
+            &txn,
+            &fragment,
+            &engine.schema,
+            map,
+            Some(captured),
+        );
+        for failure in [
+            LookupSeedHydrationFailpoint::InitialReservation,
+            LookupSeedHydrationFailpoint::MapGrowth,
+            LookupSeedHydrationFailpoint::MapPublication,
+        ] {
+            set_lookup_seed_hydration_failpoint_for_test(Some(failure));
+            assert_lookup_and_branch_index_parity_for_test(
+                &txn,
+                &fragment,
+                &engine.schema,
+                map,
+                None,
+            );
+            set_lookup_seed_hydration_failpoint_for_test(None);
+        }
+    }
+}
+
+#[test]
+fn combined_lookup_index_falls_back_for_foreign_xml_without_hiding_errors() {
+    use crate::yrs_engine::mutation::assert_lookup_and_branch_index_parity_for_test;
+    use yrs::types::xml::XmlElementPrelim;
+    use yrs::types::Text;
+    let engine = transaction_engine();
+    let map = &engine.derived_state.as_ref().unwrap().position_map;
+    for variant in 0..4 {
+        let doc = utf16_doc();
+        let mut txn = doc.transact_mut();
+        let fragment = txn.get_or_insert_xml_fragment("content");
+        match variant {
+            0 => {
+                fragment.insert(
+                    &mut txn,
+                    0,
+                    XmlIn::from(XmlFragmentPrelim::new::<_, XmlIn>([
+                        XmlIn::from(XmlTextPrelim::new("")),
+                        XmlIn::from(XmlTextPrelim::new("🦀")),
+                    ])),
+                );
+            }
+            1 => {
+                let atom = fragment.insert(&mut txn, 0, XmlElementPrelim::empty("horizontal_rule"));
+                atom.insert(
+                    &mut txn,
+                    0,
+                    XmlElementPrelim::new("paragraph", [XmlIn::from(XmlTextPrelim::new("hidden"))]),
+                );
+            }
+            2 => {
+                let paragraph = fragment.insert(&mut txn, 0, XmlElementPrelim::empty("paragraph"));
+                for index in 0..8 {
+                    paragraph.insert(&mut txn, index, XmlTextPrelim::new("a🙂"));
+                }
+            }
+            _ => {
+                let paragraph = fragment.insert(&mut txn, 0, XmlElementPrelim::empty("paragraph"));
+                let text = paragraph.insert(&mut txn, 0, XmlTextPrelim::new(""));
+                text.insert_embed(&mut txn, 0, yrs::Any::Bool(true));
+            }
+        }
+        drop(txn);
+        let txn = doc.transact();
+        assert_lookup_and_branch_index_parity_for_test(
+            &txn,
+            &fragment,
+            &engine.schema,
+            map,
+            if variant < 2 { Some(false) } else { None },
+        );
+    }
 }

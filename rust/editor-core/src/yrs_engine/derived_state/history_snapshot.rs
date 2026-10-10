@@ -317,6 +317,7 @@ impl HistoryDocumentSnapshotRetainedBytes {
     }
 }
 
+#[cfg(test)]
 pub(crate) struct HistoryDocumentSnapshotRetainedInput<'a> {
     pub document: &'a Document,
     pub canonical_artifact: &'a CanonicalArtifact,
@@ -334,6 +335,7 @@ pub(super) fn arc_allocation_bound(payload_bytes: usize) -> Option<usize> {
     payload_bytes.checked_add(std::mem::size_of::<[usize; 3]>())
 }
 
+#[cfg(test)]
 pub(crate) fn history_document_snapshot_retained_bytes(
     input: HistoryDocumentSnapshotRetainedInput<'_>,
 ) -> Option<HistoryDocumentSnapshotRetainedBytes> {
@@ -349,6 +351,11 @@ pub(crate) fn history_document_snapshot_retained_bytes(
     history_document_snapshot_retained_bytes_with_precomputed_document_charge(
         retained_charge.source_document_retained_bytes,
         retained_charge.canonical_retained_bytes,
+        DocumentValidationCertificate::subtree_depth_counts(
+            input.document.root(),
+            crate::transform::DOCUMENT_ROOT_DEPTH,
+        )
+        .len(),
         input.position_map,
         input.rendered_text,
         input.render_blocks,
@@ -359,7 +366,7 @@ pub(crate) fn history_document_snapshot_retained_bytes(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[allow(dead_code)]
+#[cfg(test)]
 pub(crate) fn history_document_snapshot_retained_bytes_with_canonical_charge(
     document: &Document,
     canonical_retained_bytes: usize,
@@ -373,6 +380,11 @@ pub(crate) fn history_document_snapshot_retained_bytes_with_canonical_charge(
     history_document_snapshot_retained_bytes_with_precomputed_document_charge(
         document.history_snapshot_retained_bytes()?,
         canonical_retained_bytes,
+        DocumentValidationCertificate::subtree_depth_counts(
+            document.root(),
+            crate::transform::DOCUMENT_ROOT_DEPTH,
+        )
+        .len(),
         position_map,
         rendered_text,
         render_blocks,
@@ -386,6 +398,7 @@ pub(crate) fn history_document_snapshot_retained_bytes_with_canonical_charge(
 pub(crate) fn history_document_snapshot_retained_bytes_with_precomputed_document_charge(
     document_retained_bytes: usize,
     canonical_retained_bytes: usize,
+    validation_depth_slots: usize,
     position_map: &PositionMap,
     rendered_text: &String,
     render_blocks: &crate::render::incremental::CachedRenderBlocks,
@@ -393,11 +406,6 @@ pub(crate) fn history_document_snapshot_retained_bytes_with_precomputed_document
     fragment_name: &str,
     scope: Option<&yrs_engine::DocumentScope>,
 ) -> Option<HistoryDocumentSnapshotRetainedBytes> {
-    // These immutable payloads are shallow-cloned into the snapshot and may
-    // otherwise become unreachable after the next edit. Each helper walks the
-    // complete owned capacity recursively with checked arithmetic. Shared node
-    // roots are deliberately overcounted across the three payloads; that keeps
-    // admission conservative without allocator-identity bookkeeping.
     let shared_payload_bytes = document_retained_bytes
         .checked_add(canonical_retained_bytes)?
         .checked_add(render_blocks.history_snapshot_retained_bytes()?)?;
@@ -420,6 +428,9 @@ pub(crate) fn history_document_snapshot_retained_bytes_with_precomputed_document
         .checked_add(rendered_text.capacity())?
         .checked_add(schema_arc_bytes)?
         .checked_add(validation_schema_arc_bytes)?
+        .checked_add(arc_allocation_bound(
+            validation_depth_slots.checked_mul(std::mem::size_of::<usize>())?,
+        )?)?
         .checked_add(fragment_arc_bytes)?
         .checked_add(scope_string_bytes)?
         .checked_add(shared_payload_bytes)
@@ -706,6 +717,11 @@ impl DerivedStateCache {
         ) {
             return Ok(None);
         }
+        let table_projection_index = snapshot
+            .render_blocks
+            .table_projection_index
+            .as_ref()
+            .clone();
         let Some(relative_selection) = history_selection_to_relative(
             txn,
             fragment,
@@ -729,6 +745,8 @@ impl DerivedStateCache {
             &snapshot.document,
             &snapshot.position_map,
             &snapshot.rendered_text,
+            &table_projection_index,
+            None,
         ) else {
             return Ok(None);
         };
@@ -752,6 +770,13 @@ impl DerivedStateCache {
             document: snapshot.document.clone(),
             canonical_artifact: snapshot.canonical_artifact.clone(),
             position_map: snapshot.position_map.clone(),
+            block_branch_index: crate::yrs_engine::block_branch_index::BlockBranchIndex::build(
+                txn,
+                fragment,
+                schema,
+                &snapshot.position_map,
+            )
+            .map(Arc::new),
             rendered_text: snapshot.rendered_text.clone(),
             rendered_scalars: snapshot.rendered_scalars,
             document_text_bytes: snapshot.document_text_bytes,
@@ -766,8 +791,11 @@ impl DerivedStateCache {
             render_blocks: Arc::clone(&snapshot.render_blocks),
             mutation_lookup_seed,
             validation_certificate,
+            table_projection_index,
             localized_text_index: None,
             active_state_certificate: None,
+            table_command_availability: std::cell::RefCell::new(None),
+            render_active_state: std::cell::OnceCell::new(),
         };
         Ok(Some(RestoredHistoryDocumentState {
             state,

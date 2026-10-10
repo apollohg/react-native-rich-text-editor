@@ -3,12 +3,12 @@ import UIKit
 
 extension NativeEditorExpoView {
     func focus() {
-        _ = richTextView.textView.becomeFirstResponder()
+        _ = richTextView.activeTextInput.becomeFirstResponder()
     }
 
     func blur() {
         clearRecentToolbarTouch()
-        _ = richTextView.textView.resignFirstResponder()
+        _ = richTextView.activeTextInput.resignFirstResponder()
     }
 
     func getCaretRectJson() -> String? {
@@ -36,22 +36,34 @@ extension NativeEditorExpoView {
     }
 
     @objc func textViewDidBeginEditing(_ notification: Notification) {
-        let originatingEditorId = richTextView.textView.editorId
+        guard notification.object as? EditorTextView === richTextView.activeTextInput else { return }
         installOutsideTapRecognizerIfNeeded()
         richTextView.textView.refreshSelectionVisualState()
         refreshMentionQuery()
-        guard let event = Self.editorScopedEventPayload(
-            ["isFocused": true],
-            originatingEditorId: originatingEditorId
-        ) else { return }
-        onFocusChange(event)
+        tableSelectionGeometryPublisher.scheduleFlush()
+        emitFocusChange(true)
     }
 
     @objc func textViewDidEndEditing(_ notification: Notification) {
-        let originatingEditorId = richTextView.textView.editorId
+        guard notification.object as? EditorTextView === richTextView.activeTextInput,
+              !richTextView.textInputs.contains(where: \.isFirstResponder)
+        else {
+            let editorId = richTextView.editorId
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.richTextView.editorId == editorId,
+                      !self.richTextView.textInputs.contains(where: \.isFirstResponder)
+                else { return }
+                self.activeTextInputDidEndEditing()
+            }
+            return
+        }
+        activeTextInputDidEndEditing()
+    }
+
+    private func activeTextInputDidEndEditing() {
         if consumeToolbarFocusPreservationForBlur() {
             DispatchQueue.main.async { [weak self] in
-                _ = self?.richTextView.textView.becomeFirstResponder()
+                _ = self?.richTextView.activeTextInput.becomeFirstResponder()
             }
             return
         }
@@ -59,16 +71,28 @@ extension NativeEditorExpoView {
         uninstallOutsideTapRecognizer()
         richTextView.textView.refreshSelectionVisualState()
         clearMentionQueryStateAndHidePopover()
+        tableSelectionGeometryPublisher.flush()
+        emitFocusChange(false)
+    }
+
+    private func emitFocusChange(_ isFocused: Bool) {
+        let originatingEditorId = richTextView.editorId
+        if lastEmittedFocus?.editorId == originatingEditorId && lastEmittedFocus?.isFocused == isFocused { return }
         guard let event = Self.editorScopedEventPayload(
-            ["isFocused": false],
+            ["isFocused": isFocused],
             originatingEditorId: originatingEditorId
         ) else { return }
-        onFocusChange(event)
+        lastEmittedFocus = (originatingEditorId, isFocused)
+        if let onFocusChangeForTesting {
+            onFocusChangeForTesting(event)
+        } else {
+            onFocusChange(event)
+        }
     }
 
     @objc func handleOutsideTap(_ recognizer: UITapGestureRecognizer) {
         guard recognizer.state == .ended else { return }
-        guard richTextView.textView.isFirstResponder else { return }
+        guard richTextView.activeTextInput.isFirstResponder else { return }
         guard let tapWindow = gestureWindow ?? window else { return }
         let locationInWindow = recognizer.location(in: tapWindow)
         guard shouldHandleOutsideTap(locationInWindow: locationInWindow, touchedView: nil) else {

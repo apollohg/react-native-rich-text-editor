@@ -17,6 +17,8 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
+import com.apollohg.editor.tables.TableCellAccessibility
+import com.apollohg.editor.tables.TableCellPositionMap
 
 /**
  * Rendering surface that routes input through [EditorV2Driver].
@@ -203,6 +205,7 @@ class EditorEditText @JvmOverloads constructor(
      * The plain text from the last Rust-authorized render.
      * Used by [ReconciliationWatcher] to detect unauthorized divergence.
      */
+    internal var inputRerendersForTesting = 0
     internal var lastAuthorizedText: String = ""
 
     /**
@@ -245,6 +248,17 @@ class EditorEditText @JvmOverloads constructor(
     internal var currentRenderBlocksJson: org.json.JSONArray? = null
     internal var currentRenderBlocksDocumentVersion: String? = null
     internal var currentRenderBlocksNeedFullApply = false
+    internal var rootTablePositionMap: RootTablePositionMap? = null
+    internal var rootTableMapDocumentVersion: String? = null
+    internal var rootTableMapPositionEpoch: String? = null
+    internal var rootTableMapTableIds: Set<String> = emptySet()
+    internal var rootTableMapExtents: Map<String, TableScalarExtent> = emptyMap()
+    internal var rootTableHasUnmappedExtent = false
+    internal var rootTableSelectionInputBlocked = false
+    internal var authoritativeCellSelectionActive = false
+    internal var cellSelectionRootTouchPending = false
+    internal var cellEditMenuReplacesTextMenu = false
+    internal var rootTableRenderNeedsRefresh = false
     internal var authorizedVisibleTextNeedsRebuild = false
     internal var logicalSelectionSnapshot: LogicalSelectionSnapshot? = null
     internal var authoritativeNodeSelectionRange: ImageSelectionRange? = null
@@ -282,6 +296,14 @@ class EditorEditText @JvmOverloads constructor(
     internal var onResizeImageAtDocPosForTesting: ((Int, Int, Int) -> Unit)? = null
     internal var onMoveSelectionScalarForTesting: ((Int, Int, Int) -> Unit)? = null
     internal var onBeforeRenderRefresh: (() -> Unit)? = null
+    internal var onTableRootTouch: ((MotionEvent) -> Unit)? = null
+    internal var onTableRootGesture: (() -> Boolean)? = null
+    internal var onRootUpdateApplied: ((org.json.JSONObject?) -> Unit)? = null
+    internal var tableCellDropHandler: ((DragEvent) -> Boolean?)? = null
+    internal var onTableCellSelectionSynced: (() -> Unit)? = null
+    internal var onTableCellTab: ((Boolean) -> Boolean)? = null
+    internal var onTableCellArrow: ((Int, Int) -> Boolean)? = null
+    internal var rootTableNativeOwnerAuthority: ((EditorV2Adapter) -> Boolean)? = null
     internal var blockExternalEditorUpdatePreparationForTesting = false
     internal var blockExternalEditorCommandPreparationForTesting = false
     internal var throwOnNextApplyUpdateForTesting: Throwable? = null
@@ -295,11 +317,24 @@ class EditorEditText @JvmOverloads constructor(
     internal var v2Driver: EditorV2Driver? = null
         set(value) {
             if (field === value) return
+            rootTableRenderNeedsRefresh =
+                rootTableRenderNeedsRefresh || rootTablePositionMap != null
             (field as? EditorV2Adapter)?.releaseNativeBindingOwner(nativeBindingToken)
             field = value
             invalidateCurrentRenderBlocks()
+            rootTablePositionMap = null
+            rootTableMapDocumentVersion = null
+            rootTableMapPositionEpoch = null
+            rootTableMapTableIds = emptySet()
+            rootTableMapExtents = emptyMap()
+            rootTableHasUnmappedExtent = false
+            rootTableSelectionInputBlocked = rootTableRenderNeedsRefresh
             (value as? EditorV2Adapter)?.claimNativeBindingIfUnowned(nativeBindingToken)
         }
+    internal var tableCellPositionMap: TableCellPositionMap? = null
+    internal var isTableCellInput: Boolean = false
+    internal var tableCellInputAuthority: (() -> Boolean)? = null
+    internal var tableCellUpdateConsumer: ((String, Boolean, Boolean) -> Boolean)? = null
     internal val nativeBindingToken = nextNativeBindingToken.incrementAndGet()
 
     internal fun ownsNativeBinding(adapter: EditorV2Adapter): Boolean =
@@ -340,9 +375,12 @@ class EditorEditText @JvmOverloads constructor(
 
     fun setEditorAccessibilityHint(hint: CharSequence?) = setEditorAccessibilityHintImpl(hint)
 
+    internal var tableCellAccessibility: TableCellAccessibility? = null
+
     override fun onInitializeAccessibilityNodeInfo(info: AccessibilityNodeInfo) {
         super.onInitializeAccessibilityNodeInfo(info)
         AccessibilityNodeInfoCompat.wrap(info).tooltipText = editorAccessibilityHint
+        tableCellAccessibility?.populate(this, info)
     }
 
     internal fun nativeCursorDrawRect(): RectF? = nativeCursorDrawRectImpl()
@@ -369,6 +407,37 @@ class EditorEditText @JvmOverloads constructor(
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val tableArrow = isTableCellInput &&
+            event.keyCode in KeyEvent.KEYCODE_DPAD_UP..KeyEvent.KEYCODE_DPAD_RIGHT
+        if (tableArrow && event.action == KeyEvent.ACTION_DOWN) {
+            val signature = hardwareKeyEventSignature(event)
+            if (lastHandledHardwareKeySignature == signature ||
+                didRecentlyHandleHardwareKeyDown(signature)
+            ) {
+                return true
+            }
+        }
+        val arrowStart = if (isTableCellInput && event.action == KeyEvent.ACTION_DOWN &&
+            event.keyCode in KeyEvent.KEYCODE_DPAD_UP..KeyEvent.KEYCODE_DPAD_RIGHT &&
+            !event.isShiftPressed && !event.isCtrlPressed && !event.isAltPressed &&
+            !event.isMetaPressed && selectionStart == selectionEnd &&
+            isAuthorizedForTableCellInput()
+        ) {
+            selectionStart
+        } else {
+            null
+        }
+        val arrowBinding = if (arrowStart != null) tableCellPositionMap?.binding else null
+        if (isTableCellInput && !canDispatchTableCellMutation() &&
+            isReadOnlyTextMutationKeyEvent(event)
+        ) {
+            return true
+        }
+        if (isTableCellInput && !isAuthorizedForTableCellInput() && arrowStart == null &&
+            event.keyCode in KeyEvent.KEYCODE_DPAD_UP..KeyEvent.KEYCODE_DPAD_RIGHT
+        ) {
+            return true
+        }
         if (!isEditable && isReadOnlyTextMutationKeyEvent(event)) {
             return true
         }
@@ -382,7 +451,23 @@ class EditorEditText @JvmOverloads constructor(
         if (handlePrintableHardwareKeyEvent(event) { super.dispatchKeyEvent(event) }) {
             return true
         }
-        return super.dispatchKeyEvent(event)
+        val handled = super.dispatchKeyEvent(event)
+        if (arrowStart != null && arrowBinding == tableCellPositionMap?.binding &&
+            selectionStart == arrowStart && selectionEnd == arrowStart &&
+            isAuthorizedForTableCellInput() &&
+            onTableCellArrow?.invoke(event.keyCode, arrowStart) == true
+        ) {
+            markHandledHardwareKeyDown(hardwareKeyEventSignature(event))
+            return true
+        }
+        if (tableArrow && event.action == KeyEvent.ACTION_UP &&
+            lastHandledHardwareKeySignature?.let {
+                it.keyCode == event.keyCode && it.downTime == event.downTime
+            } == true
+        ) {
+            lastHandledHardwareKeySignature = null
+        }
+        return handled
     }
 
     internal fun handleCompositionKeyEvent(
@@ -442,17 +527,14 @@ class EditorEditText @JvmOverloads constructor(
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        onTableRootTouch?.invoke(event)
         if (event.actionMasked == MotionEvent.ACTION_DOWN &&
             imageSpanHitAt(event.x, event.y) == null
         ) {
             clearExplicitSelectedImageRange()
         }
         if (handleTaskListMarkerTap(event)) {
-            // End the text gesture so its pending long press cannot select the marker.
-            val cancel = MotionEvent.obtain(event)
-            cancel.action = MotionEvent.ACTION_CANCEL
-            super.onTouchEvent(cancel)
-            cancel.recycle()
+            cancelTextGesture(event)
             parent?.requestDisallowInterceptTouchEvent(false)
             return true
         }
@@ -474,7 +556,22 @@ class EditorEditText @JvmOverloads constructor(
         return super.onTouchEvent(event)
     }
 
-    override fun onDragEvent(event: DragEvent): Boolean = when (event.action) {
+    private fun cancelTextGesture(event: MotionEvent) {
+        val cancel = MotionEvent.obtain(event)
+        cancel.action = MotionEvent.ACTION_CANCEL
+        super.onTouchEvent(cancel)
+        cancel.recycle()
+    }
+
+    override fun onSurfaceGestureFocus(): Boolean = onTableRootGesture?.invoke() != false
+
+    override fun onDragEvent(event: DragEvent): Boolean {
+        if (isTableCellInput) return false
+        if (localTextDrag == null) tableCellDropHandler?.invoke(event)?.let { return it }
+        return onTextDragEvent(event)
+    }
+
+    private fun onTextDragEvent(event: DragEvent): Boolean = when (event.action) {
         DragEvent.ACTION_DRAG_STARTED -> {
             val drag = localTextDragFor(event)
             localTextDrag = drag
@@ -490,8 +587,9 @@ class EditorEditText @JvmOverloads constructor(
                 val currentText = text?.toString().orEmpty()
                 val destinationUtf16 = getOffsetForPosition(event.x, event.y)
                     .coerceIn(0, currentText.length)
-                val destination = PositionBridge.utf16ToScalar(destinationUtf16, currentText)
-                performLocalSelectionDrop(drag, destination) || super.onDragEvent(event)
+                val destination = inputPositionScalarAtLocalUtf16(destinationUtf16, currentText)
+                destination != null &&
+                    (performLocalSelectionDrop(drag, destination) || super.onDragEvent(event))
             }
         }
 
@@ -820,6 +918,14 @@ class EditorEditText @JvmOverloads constructor(
      * Selection and copy actions remain available.
      */
     override fun performAccessibilityAction(action: Int, arguments: android.os.Bundle?): Boolean {
+        if (tableCellAccessibility?.perform(action) == true) return true
+        if (isTableCellInput && (
+                action == android.view.accessibility.AccessibilityNodeInfo.ACTION_PASTE ||
+                    action == android.view.accessibility.AccessibilityNodeInfo.ACTION_CUT
+                )
+        ) {
+            return false
+        }
         if (pasteMode == EditorPasteMode.DISABLED &&
             action == android.view.accessibility.AccessibilityNodeInfo.ACTION_PASTE
         ) {
@@ -855,6 +961,17 @@ class EditorEditText @JvmOverloads constructor(
         }
         ensureSelectionVisible()
         if (isApplyingRustState) return
+        if (authoritativeCellSelectionActive && !cellSelectionRootTouchPending) return
+        if (rootTableSelectionInputBlocked) {
+            val current = text?.toString().orEmpty()
+            val start = PositionBridge.utf16ToScalar(selStart, current)
+            val end = PositionBridge.utf16ToScalar(selEnd, current)
+            if (rootTablePositionMap?.globalRange(minOf(start, end), maxOf(start, end)) != null) {
+                rootTableSelectionInputBlocked = false
+                authoritativeCellSelectionActive = false
+                cellSelectionRootTouchPending = false
+            }
+        }
         authoritativeNodeSelectionRange = null
         val wasExternallyComposing = externalTextComposition != null
         if (!commitExternalTextCompositionBeforeInteractionIfNeeded()) return

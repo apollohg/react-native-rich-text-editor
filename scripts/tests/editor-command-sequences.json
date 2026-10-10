@@ -1,0 +1,57 @@
+{
+    "config": {
+        "initialization": { "type": "localEmpty" },
+        "schema": {
+            "nodes": [
+                { "name": "doc", "content": "block+", "role": "doc" },
+                { "name": "paragraph", "content": "inline*", "group": "block", "role": "textBlock" },
+                { "name": "text", "group": "inline", "role": "text" },
+                { "name": "table", "content": "table_row+", "group": "block", "role": "block", "tableRole": "table" },
+                { "name": "table_row", "content": "(table_cell | table_header)*", "role": "block", "tableRole": "row" },
+                { "name": "table_cell", "content": "block+", "role": "block", "tableRole": "cell", "attrs": { "colspan": { "type": "number", "default": 1, "min": 1 }, "rowspan": { "type": "number", "default": 1, "min": 1 }, "colwidth": { "default": null } } },
+                { "name": "table_header", "content": "block+", "role": "block", "tableRole": "header_cell", "attrs": { "colspan": { "type": "number", "default": 1, "min": 1 }, "rowspan": { "type": "number", "default": 1, "min": 1 }, "colwidth": { "default": null } } },
+                { "name": "horizontalRule", "group": "block", "role": "block", "isVoid": true, "htmlTag": "hr" },
+                { "name": "hardBreak", "group": "inline", "role": "hardBreak", "isVoid": true, "htmlTag": "br" },
+                { "name": "bulletList", "content": "listItem+", "group": "block", "role": "list", "htmlTag": "ul" },
+                { "name": "orderedList", "content": "listItem+", "group": "block", "role": "list", "htmlTag": "ol", "attrs": { "start": { "default": 1 } } },
+                { "name": "taskList", "content": "listItem+", "group": "block", "role": "list" },
+                { "name": "listItem", "content": "paragraph block*", "role": "listItem", "attrs": { "checked": { "default": false } } },
+                { "name": "h2", "content": "inline*", "group": "block", "role": "textBlock", "htmlTag": "h2", "attrs": { "level": { "default": 2 } } },
+                { "name": "blockquote", "content": "block+", "group": "block", "role": "block", "htmlTag": "blockquote" },
+                { "name": "codeBlock", "content": "text*", "group": "block", "role": "textBlock", "htmlTag": "pre" },
+                { "name": "mention", "group": "inline", "role": "inline", "isVoid": true, "attrs": { "label": { "default": "" } } },
+                { "name": "image", "group": "block", "role": "block", "isVoid": true, "deletableOnBackspace": false, "htmlTag": "img", "attrs": { "src": {} } }
+            ],
+            "marks": [{ "name": "bold" }, { "name": "italic" }]
+        }
+    },
+    "contexts": ["root", "table_cell", "table_header"],
+    "deletionModes": ["selection", "backspace"],
+    "prefix": "left",
+    "suffix": "right",
+    "neighbour": "untouched",
+    "probe": "typed",
+    "recovery": "again",
+    "fragments": [
+        { "name": "horizontalRule", "text": "", "node": { "type": "horizontalRule" } },
+        { "name": "hardBreak", "inline": true, "text": "", "node": { "type": "hardBreak" } },
+        { "name": "bulletList", "preservesFormatting": true, "text": "middle", "node": { "type": "bulletList", "content": [{ "type": "listItem", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "middle" }] }] }] } },
+        { "name": "orderedList", "preservesFormatting": true, "text": "middle", "node": { "type": "orderedList", "attrs": { "start": 7 }, "content": [{ "type": "listItem", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "middle" }] }] }] } },
+        { "name": "taskList", "preservesFormatting": true, "text": "middle", "node": { "type": "taskList", "content": [{ "type": "listItem", "attrs": { "checked": true }, "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "middle" }] }] }] } },
+        { "name": "h2", "preservesFormatting": true, "text": "middle", "node": { "type": "h2", "attrs": { "level": 2 }, "content": [{ "type": "text", "text": "middle" }] } },
+        { "name": "blockquote", "preservesFormatting": true, "text": "middle", "node": { "type": "blockquote", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "middle" }] }] } },
+        { "name": "codeBlock", "preservesFormatting": true, "text": "middle", "node": { "type": "codeBlock", "content": [{ "type": "text", "text": "middle" }] } },
+        { "name": "mention", "inline": true, "text": "", "node": { "type": "mention", "attrs": { "label": "Ada" } } },
+        { "name": "image", "text": "", "node": { "type": "image", "attrs": { "src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==" } } }
+    ],
+    "unicode": [
+        { "name": "ascii", "text": "Az", "backspaces": ["A", ""], "codePointBackspaces": ["A", ""] },
+        { "name": "surrogate", "text": "A😀", "backspaces": ["A", ""], "codePointBackspaces": ["A", ""] },
+        { "name": "combining", "text": "Aé", "backspaces": ["A", ""], "codePointBackspaces": ["Ae", "A", ""] },
+        { "name": "zwj", "text": "A👨‍👩‍👧‍👦", "backspaces": ["A", ""], "codePointBackspaces": ["A👨‍👩‍👧‍", "A👨‍👩‍👧", "A👨‍👩‍", "A👨‍👩", "A👨‍", "A👨", "A", ""] },
+        { "name": "flag", "text": "A🇦🇺", "backspaces": ["A", ""], "codePointBackspaces": ["A🇦", "A", ""] },
+        { "name": "skinTone", "text": "A👍🏽", "backspaces": ["A", ""], "codePointBackspaces": ["A👍", "A", ""] },
+        { "name": "rtl", "text": "Aאב", "backspaces": ["Aא", "A", ""], "codePointBackspaces": ["Aא", "A", ""] },
+        { "name": "cjk", "text": "A日本", "backspaces": ["A日", "A", ""], "codePointBackspaces": ["A日", "A", ""] }
+    ]
+}

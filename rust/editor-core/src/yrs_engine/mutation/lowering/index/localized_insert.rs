@@ -171,6 +171,7 @@ impl LocalizedInsertCompiler {
         schema_fingerprint: &str,
         yrs_state_epoch: u64,
         document_revision: u64,
+        read_scope: Option<crate::yrs_engine::compiler::CompilationReadScope<'_>>,
     ) -> OperationResult<Option<Self>> {
         if !seed.matches(
             txn,
@@ -188,7 +189,7 @@ impl LocalizedInsertCompiler {
         let Some(seed_payload) = seed.ready_payload() else {
             return Ok(None);
         };
-        let document_guard = capture_document_guard(request_id, txn)?;
+        let document_guard = capture_document_guard_with_read_scope(request_id, txn, read_scope)?;
         let Some(LocalizedTextblockTargets {
             targets,
             path_parent_widths,
@@ -199,6 +200,7 @@ impl LocalizedInsertCompiler {
             fragment,
             schema,
             LocalizedTextblockLocator::Insert(locator),
+            read_scope,
         )?
         else {
             return Ok(None);
@@ -213,7 +215,8 @@ impl LocalizedInsertCompiler {
                     .copied()
                     != Some(signature.capture_work)
             }
-            ResolvedTargetKind::Missing { .. } | ResolvedTargetKind::Prepared { .. } => true,
+            ResolvedTargetKind::Missing { .. } => false,
+            ResolvedTargetKind::Prepared { .. } => true,
         }) {
             return Ok(None);
         }
@@ -258,16 +261,63 @@ impl LocalizedInsertCompiler {
             .map(|(plan, _)| plan)
     }
 
+    pub(crate) fn delete_range(
+        &mut self,
+        operation_index: usize,
+        from: u32,
+        to: u32,
+    ) -> OperationResult<()> {
+        if self.compiler.delete(operation_index, from, to, &[])? != TextRangeDisposition::Applied {
+            return Err(OperationError::engine_invariant_failed(
+                self.compiler.request_id,
+                Some(operation_index),
+                "localized text range crossed a non-text boundary",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn finish_range(self, operation_index: usize) -> OperationResult<YrsMutationPlan> {
+        self.compiler.finish(Some(operation_index))
+    }
+
+    pub(crate) fn compile_range(
+        mut self,
+        operation_index: usize,
+        from: u32,
+        to: u32,
+        text: &str,
+        marks: &[Mark],
+    ) -> OperationResult<YrsMutationPlan> {
+        self.delete_range(operation_index, from, to)?;
+        if !text.is_empty() {
+            self.compiler.insert(operation_index, from, text, marks)?;
+        }
+        self.finish_range(operation_index)
+    }
+
     pub(crate) fn compile_with_promotion(
         mut self,
         operation_index: usize,
         position: u32,
         text: &str,
         marks: &[Mark],
-    ) -> OperationResult<(YrsMutationPlan, MutationLookupPromotion)> {
+    ) -> OperationResult<(YrsMutationPlan, Option<MutationLookupPromotion>)> {
         let base_pending_traversal_work = self.compiler.pending_traversal_work;
         self.compiler
             .insert(operation_index, position, text, marks)?;
+        if self.compiler.actions.iter().any(|slot| {
+            matches!(
+                slot,
+                ActionSlot::Concrete(action)
+                    if matches!(action.as_ref(), YrsMutationAction::CreateText { .. } | YrsMutationAction::DeleteText { .. })
+            )
+        }) {
+            return self
+                .compiler
+                .finish(Some(operation_index))
+                .map(|plan| (plan, None));
+        }
         let (target_id, previous_materialization_work) = self
             .compiler
             .actions
@@ -359,6 +409,6 @@ impl LocalizedInsertCompiler {
         };
         self.compiler
             .finish(Some(operation_index))
-            .map(|plan| (plan, promotion))
+            .map(|plan| (plan, Some(promotion)))
     }
 }

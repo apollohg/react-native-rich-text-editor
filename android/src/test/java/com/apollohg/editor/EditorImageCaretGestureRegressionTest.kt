@@ -8,6 +8,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.widget.EditText
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -63,11 +64,47 @@ class EditorImageCaretGestureRegressionTest {
     @Test
     fun `tap inside image still selects it`() {
         val editor = editor()
+        val (start, end) = tapImageCenter(editor)
+        assertEquals(start, editor.selectionStart)
+        assertEquals(end, editor.selectionEnd)
+    }
+
+    private fun tapImageCenter(editor: EditorEditText): Pair<Int, Int> {
         val span = editor.text.getSpans(0, editor.text.length, BlockImageSpan::class.java).single()
         val start = editor.text.getSpanStart(span)
         val end = editor.text.getSpanEnd(span)
         val bounds = editor.resolvedImageRect(editor.layout, span, start, end)
         tap(editor, bounds.centerX(), bounds.centerY())
+        return start to end
+    }
+
+    @Test
+    fun `an image tap refused by the surface focus hook neither focuses nor selects the image`() {
+        val editor = editor()
+        editor.setSelection(0)
+        var consulted = 0
+        editor.onTableRootGesture = {
+            consulted += 1
+            false
+        }
+        tapImageCenter(editor)
+        assertEquals("the image tap must consult the surface focus hook once", 1, consulted)
+        assertFalse("a refused image tap must not focus the prose", editor.hasFocus())
+        assertNull("a refused image tap must not select the image", editor.selectedImageGeometry())
+        assertEquals("the caret stays where it was", 0, editor.selectionStart)
+    }
+
+    @Test
+    fun `an image tap consults the surface focus hook before the prose takes focus`() {
+        val editor = editor()
+        var focusedWhenConsulted: Boolean? = null
+        editor.onTableRootGesture = {
+            focusedWhenConsulted = editor.hasFocus()
+            true
+        }
+        val (start, end) = tapImageCenter(editor)
+        assertEquals("the hook must run before any focus change", false, focusedWhenConsulted)
+        assertTrue("an allowed image tap focuses the prose", editor.hasFocus())
         assertEquals(start, editor.selectionStart)
         assertEquals(end, editor.selectionEnd)
     }

@@ -24,13 +24,16 @@ pub(super) struct PreparedCompiledCommit {
     pub(super) history_after: Option<yrs_engine::history::HistoryLocalState>,
     pub(super) next_derived_state: Option<DerivedStateCache>,
     pub(super) next_durable_client_ids: HashSet<u64>,
+    pub(super) encoded_state_upper_bound: usize,
     pub(super) next_document_revision: u64,
+    pub(super) change_scope: super::DocumentChangeScope,
     pub(super) next_state_revision: u64,
     pub(super) next_yrs_state_epoch: u64,
     pub(super) publish_active_state_install: bool,
     pub(super) publish_active_state_drop: bool,
     pub(super) result: Option<yrs_engine::TypedTransactionResult>,
     pub(super) next_candidate_cache: Option<PreparedCandidateCache>,
+    pub(super) next_canonical_cache: Option<yrs_engine::canonical::CanonicalSpliceCache>,
 }
 
 impl YrsDocumentEngine {
@@ -98,12 +101,15 @@ impl YrsDocumentEngine {
             yrs_engine::mutation::record_unavailable_lookup_seed_install_for_test();
         }
         self.durable_client_ids = prepared.next_durable_client_ids;
+        self.encoded_state_upper_bound = prepared.encoded_state_upper_bound;
         self.revision = prepared.next_document_revision;
+        self.record_document_change(prepared.change_scope);
         self.state_revision = prepared.next_state_revision;
         self.yrs_state_epoch = prepared.next_yrs_state_epoch;
         self.last_committed_origin = Some(prepared.origin);
         self.document_origin = prepared.origin.into();
         self.prepared_candidate_cache = prepared.next_candidate_cache.take();
+        self.canonical_splice_cache = prepared.next_canonical_cache.take();
         let commit = yrs_engine::TransactionCommit {
             request_id: prepared.request_id,
             changed: true,

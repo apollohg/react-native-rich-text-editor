@@ -52,6 +52,7 @@ internal fun EditorEditText.hasRenderedImageSpans(): Boolean {
 }
 
 internal fun EditorEditText.selectedImageGeometryImpl(): SelectedImageGeometry? {
+    if (isTableCellInput) return null
     if (!imageResizingEnabled) return null
     val spannable = text as? Spanned ?: return null
     val selection = resolvedSelectedImageRange(spannable) ?: return null
@@ -66,8 +67,10 @@ internal fun EditorEditText.selectedImageGeometryImpl(): SelectedImageGeometry? 
 
     val textLayout = layout ?: return null
     val currentText = text?.toString() ?: return null
-    val scalarPos = PositionBridge.utf16ToScalar(spanStart, currentText)
-    val docPos = v2Driver?.docPositionForScalar(scalarPos) ?: scalarPos
+    val scalarPos = inputScalar(PositionBridge.utf16ToScalar(spanStart, currentText)) ?: return null
+    val docPos = v2Driver?.docPositionForScalar(scalarPos)
+        ?: scalarPos.takeIf { rootTablePositionMap == null && !rootTableRenderNeedsRefresh }
+        ?: return null
     val line = textLayout.getLineForOffset(spanStart.coerceAtMost(maxOf(spannable.length - 1, 0)))
     val rect = resolvedImageRect(textLayout, imageSpan, spanStart, spanEnd)
     return SelectedImageGeometry(
@@ -102,6 +105,7 @@ internal fun EditorEditText.relayoutImageResizePreview(span: BlockImageSpan) {
 }
 
 internal fun EditorEditText.resizeImageAtDocPosImpl(docPos: Int, widthPx: Float, heightPx: Float) {
+    if (isTableCellInput) return
     if (!hasLiveEditor()) return
     val density = resources.displayMetrics.density
     val widthDp = maxOf(48, (widthPx / density).roundToInt())
@@ -131,7 +135,6 @@ internal fun EditorEditText.handleImageTap(event: MotionEvent): Boolean {
                     downY = event.y
                 )
             }
-            if (hit != null) requestFocus()
             return hit != null
         }
 
@@ -168,6 +171,7 @@ internal fun EditorEditText.handleImageTap(event: MotionEvent): Boolean {
             }
             val hit = imageSpanHitAt(event.x, event.y) ?: return false
             if (hit.span !== gesture.target) return false
+            if (!onSurfaceGestureFocus()) return true
             requestFocus()
             selectExplicitImageRange(hit.start, hit.end)
             performClick()

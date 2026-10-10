@@ -14,12 +14,24 @@ internal fun EditorEditText.bindEditorImpl(
     initialHTML: String? = null,
     notifyListener: Boolean = true
 ) {
+    val wasTableCellInput = isTableCellInput
     if (id != 0L && NativeEditorViewRegistry.isDestroyed(id)) {
         discardTransientNativeInputForEditorRebind()
+        if (wasTableCellInput) {
+            tableCellPositionMap = null
+            tableCellInputAuthority = null
+            tableCellUpdateConsumer = null
+            v2Driver = null
+        }
         editorId = 0L
         return
     }
-    if (editorId != id) {
+    if (wasTableCellInput) discardTransientNativeInputForEditorRebind()
+    isTableCellInput = false
+    tableCellPositionMap = null
+    tableCellInputAuthority = null
+    tableCellUpdateConsumer = null
+    if (editorId != id && !wasTableCellInput) {
         discardTransientNativeInputForEditorRebind()
     }
     editorId = id
@@ -29,7 +41,13 @@ internal fun EditorEditText.bindEditorImpl(
         if (!initialHTML.isNullOrEmpty()) {
             driver.setContentHtml(initialHTML)?.let { applyUpdateJSON(it, notifyListener = false) }
         } else {
-            driver.currentStateJson()?.let { applyUpdateJSON(it, notifyListener = notifyListener) }
+            val initial =
+                if (driver is EditorV2Adapter) {
+                    driver.initialUpdateJson()
+                } else {
+                    driver.currentStateJson()
+                }
+            initial?.let { applyUpdateJSON(it, notifyListener = notifyListener) }
         }
         return
     }
@@ -39,11 +57,16 @@ internal fun EditorEditText.bindEditorImpl(
  * Unbind from the current editor instance.
  */
 internal fun EditorEditText.unbindEditorImpl() {
+    val wasTableCellInput = isTableCellInput
     if (editorId != 0L) {
         discardTransientNativeInputForEditorRebind()
     }
     editorId = 0
     v2Driver = null
+    isTableCellInput = wasTableCellInput
+    tableCellPositionMap = null
+    tableCellInputAuthority = null
+    tableCellUpdateConsumer = null
 }
 
 internal fun EditorEditText.handleEditorDestroyedFromRegistryImpl(destroyedEditorId: Long) {
@@ -64,12 +87,17 @@ internal fun EditorEditText.setBaseStyleImpl(
     baseBackgroundColor = backgroundColor
     setTextSize(TypedValue.COMPLEX_UNIT_PX, fontSizePx)
     setTextColor(textColor)
-    setBackgroundColor(theme?.backgroundColor ?: backgroundColor)
+    setBackgroundColor(theme?.backgroundColor?.takeUnless { isTableCellInput } ?: backgroundColor)
 }
 
 internal fun EditorEditText.applyThemeImpl(theme: EditorTheme?) {
     this.theme = theme
     renderAppearanceRevision += 1L
+    if (isTableCellInput) {
+        requestLayout()
+        invalidate()
+        return
+    }
     setBackgroundColor(theme?.backgroundColor ?: baseBackgroundColor)
     theme?.styleSheet?.let {
         background =
@@ -97,7 +125,9 @@ internal fun EditorEditText.applyThemeImpl(theme: EditorTheme?) {
             requestLayout()
         }
     } else {
-        standaloneRenderJSON?.let { json ->
+        standaloneRenderJSON?.takeIf {
+            rootTablePositionMap == null && !rootTableRenderNeedsRefresh
+        }?.let { json ->
             reuseImagesDuringThemeUpdate = true
             try {
                 val rendered = RenderBridge.buildSpannable(
@@ -123,10 +153,20 @@ internal fun EditorEditText.applyAtomRenderConfigurationImpl(
     configuration: AtomRenderConfiguration?
 ): Boolean {
     if (atomRenderConfiguration == configuration) return true
+    if (isTableCellInput) {
+        atomRenderConfiguration = configuration
+        renderAppearanceRevision += 1L
+        return true
+    }
     val stateJson = if (hasLiveEditor()) {
         v2Driver?.currentStateJson() ?: return false
     } else {
         null
+    }
+    if (stateJson == null &&
+        (rootTablePositionMap != null || rootTableRenderNeedsRefresh)
+    ) {
+        return false
     }
     atomRenderConfiguration = configuration
     renderAppearanceRevision += 1L

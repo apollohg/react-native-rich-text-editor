@@ -8,7 +8,18 @@ use crate::model::{Document, Fragment, Mark, Node};
 use crate::schema::content_rule::WorkBudget;
 use crate::schema::{NodeRole, Schema};
 use crate::selection::Selection;
+use crate::tables::commands::{
+    TableCommand, TableEdge, TableHeaderTarget, DEFAULT_INSERTED_TABLE_COLUMNS,
+    DEFAULT_INSERTED_TABLE_HEADER_ROW, DEFAULT_INSERTED_TABLE_ROWS, DEFAULT_TAB_APPENDS_A_ROW,
+};
+use crate::tables::interchange::CellStep;
 use crate::transform::{Step, Transaction};
+
+const FIXED_COMMAND_ENTRIES: usize = 8;
+const HEADING_COMMAND_LEVELS: u8 = 6;
+const TABLE_COMMAND_ENTRIES: usize = 18;
+pub(crate) const ACTIVE_COMMAND_ENTRIES: usize =
+    FIXED_COMMAND_ENTRIES + HEADING_COMMAND_LEVELS as usize + TABLE_COMMAND_ENTRIES;
 
 /// Which marks and node types are active at the current selection.
 #[derive(Debug, Clone, PartialEq)]
@@ -51,7 +62,10 @@ fn active_state_impl(
     commands: HashMap<String, bool>,
     limits: &ResourceLimits,
 ) -> ActiveState {
-    let pos = selection.from(document);
+    let pos = match selection.from(document) {
+        Some(from) => from,
+        None => selection.anchor(document),
+    };
     let marks_at = effective_marks_for_selection(document, selection, stored_marks);
     let nodes_at = nodes_at_position(document, pos);
 
@@ -84,7 +98,7 @@ fn active_state_impl(
     }
 
     let (allowed_marks, insertable_nodes) = match selection {
-        Selection::All => (Vec::new(), Vec::new()),
+        Selection::All | Selection::Cell { .. } => (Vec::new(), Vec::new()),
         Selection::Node { .. } => (
             Vec::new(),
             insertable_nodes(document, schema, pos, limits).unwrap_or_default(),
@@ -150,6 +164,25 @@ pub(crate) fn command_applicability_with_known_node_count(
         selection,
         limits,
         document_node_count,
+        None,
+    )
+}
+
+pub(crate) fn command_applicability_with_cached_tables(
+    document: &Document,
+    schema: &Schema,
+    selection: &Selection,
+    limits: &ResourceLimits,
+    document_node_count: usize,
+    table_commands: HashMap<String, bool>,
+) -> HashMap<String, bool> {
+    command_applicability_with_known_node_count_impl(
+        document,
+        schema,
+        selection,
+        limits,
+        document_node_count,
+        Some(table_commands),
     )
 }
 
@@ -159,15 +192,13 @@ fn command_applicability_with_known_node_count_impl(
     selection: &Selection,
     limits: &ResourceLimits,
     document_node_count: usize,
+    cached_table_commands: Option<HashMap<String, bool>>,
 ) -> HashMap<String, bool> {
-    let pos = selection.from(document);
-    let list_context = list_item_context_at(document, schema, pos);
-    let block_range = selected_block_range(
-        document,
-        schema,
-        selection.from(document),
-        selection.to(document),
-    );
+    let text_position = selection.from(document);
+    let list_context = text_position.and_then(|pos| list_item_context_at(document, schema, pos));
+    let block_range = selection
+        .text_range(document)
+        .and_then(|(from, to)| selected_block_range(document, schema, from, to));
     let root_wrap_range = root_wrap_range(document, schema, selection);
     let mut commands = HashMap::new();
     commands.insert(
@@ -193,7 +224,7 @@ fn command_applicability_with_known_node_count_impl(
             block_range.as_ref(),
         ),
     );
-    for level in 1..=6 {
+    for level in 1..=HEADING_COMMAND_LEVELS {
         commands.insert(
             format!("toggleHeading{level}"),
             can_toggle_heading(document, schema, block_range.as_ref(), level),
@@ -205,7 +236,7 @@ fn command_applicability_with_known_node_count_impl(
     );
     commands.insert(
         "toggleTaskItem".into(),
-        can_toggle_task_item(document, schema, pos, limits),
+        text_position.is_some_and(|pos| can_toggle_task_item(document, schema, pos, limits)),
     );
     commands.insert(
         "wrapBulletList".into(),
@@ -241,6 +272,15 @@ fn command_applicability_with_known_node_count_impl(
             root_wrap_range.as_ref(),
         ),
     );
+    if let Some(table_commands) = cached_table_commands {
+        commands.extend(table_commands);
+    } else {
+        let table_commands =
+            crate::yrs_engine::TableCommandSurface::resolve(document, schema, selection, limits);
+        for (name, command) in table_command_surface() {
+            commands.insert(name.into(), table_commands.is_available(command));
+        }
+    }
     commands.insert(
         "wrapTaskList".into(),
         can_apply_list_type_local(
@@ -261,6 +301,83 @@ fn command_applicability_with_known_node_count_impl(
     commands
 }
 
+pub(crate) fn table_command_surface() -> [(&'static str, TableCommand); TABLE_COMMAND_ENTRIES] {
+    [
+        (
+            "insertTable",
+            TableCommand::InsertTable {
+                rows: DEFAULT_INSERTED_TABLE_ROWS,
+                columns: DEFAULT_INSERTED_TABLE_COLUMNS,
+                with_header_row: DEFAULT_INSERTED_TABLE_HEADER_ROW,
+            },
+        ),
+        ("deleteTable", TableCommand::DeleteTable { table_pos: None }),
+        (
+            "addTableRowBefore",
+            TableCommand::AddTableRow {
+                side: TableEdge::Before,
+            },
+        ),
+        (
+            "addTableRowAfter",
+            TableCommand::AddTableRow {
+                side: TableEdge::After,
+            },
+        ),
+        ("deleteTableRows", TableCommand::DeleteTableRows),
+        (
+            "addTableColumnBefore",
+            TableCommand::AddTableColumn {
+                side: TableEdge::Before,
+            },
+        ),
+        (
+            "addTableColumnAfter",
+            TableCommand::AddTableColumn {
+                side: TableEdge::After,
+            },
+        ),
+        ("deleteTableColumns", TableCommand::DeleteTableColumns),
+        (
+            "toggleTableHeaderRow",
+            TableCommand::ToggleTableHeader {
+                target: TableHeaderTarget::Row,
+            },
+        ),
+        (
+            "toggleTableHeaderColumn",
+            TableCommand::ToggleTableHeader {
+                target: TableHeaderTarget::Column,
+            },
+        ),
+        (
+            "toggleTableHeaderCell",
+            TableCommand::ToggleTableHeader {
+                target: TableHeaderTarget::Cell,
+            },
+        ),
+        ("clearTableCells", TableCommand::ClearTableCells),
+        ("selectTableRows", TableCommand::SelectTableRows),
+        ("selectTableColumns", TableCommand::SelectTableColumns),
+        ("mergeTableCells", TableCommand::MergeTableCells),
+        ("splitTableCell", TableCommand::SplitTableCell),
+        (
+            "moveToNextTableCell",
+            TableCommand::MoveToAdjacentCell {
+                step: CellStep::Forward,
+                append_row: DEFAULT_TAB_APPENDS_A_ROW,
+            },
+        ),
+        (
+            "moveToPreviousTableCell",
+            TableCommand::MoveToAdjacentCell {
+                step: CellStep::Backward,
+                append_row: DEFAULT_TAB_APPENDS_A_ROW,
+            },
+        ),
+    ]
+}
+
 #[cfg(test)]
 pub(crate) fn active_state_for_debug_invariant(
     document: &Document,
@@ -276,6 +393,7 @@ pub(crate) fn active_state_for_debug_invariant(
         selection,
         limits,
         document_node_count,
+        None,
     );
     active_state_impl(document, schema, selection, stored_marks, commands, limits)
 }
@@ -568,7 +686,7 @@ fn effective_marks_for_selection(
     let (anchor, head) = match selection {
         Selection::Text { anchor, head } => (anchor, head),
         Selection::Node { pos } => (pos, pos),
-        Selection::All => return Vec::new(),
+        Selection::Cell { .. } | Selection::All => return Vec::new(),
     };
     if anchor == head {
         return stored_marks

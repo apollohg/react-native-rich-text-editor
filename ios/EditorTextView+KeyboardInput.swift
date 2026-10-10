@@ -1,6 +1,37 @@
 import os
 import UIKit
 
+enum TableCellArrowDirection: CaseIterable {
+    case left, right, up, down
+
+    var keyInput: String {
+        switch self {
+        case .left: UIKeyCommand.inputLeftArrow
+        case .right: UIKeyCommand.inputRightArrow
+        case .up: UIKeyCommand.inputUpArrow
+        case .down: UIKeyCommand.inputDownArrow
+        }
+    }
+
+    var layoutDirection: UITextLayoutDirection {
+        switch self {
+        case .left: .left
+        case .right: .right
+        case .up: .up
+        case .down: .down
+        }
+    }
+
+    var action: Selector {
+        switch self {
+        case .left: #selector(EditorTextView.handleTableCellLeftArrowKeyCommand)
+        case .right: #selector(EditorTextView.handleTableCellRightArrowKeyCommand)
+        case .up: #selector(EditorTextView.handleTableCellUpArrowKeyCommand)
+        case .down: #selector(EditorTextView.handleTableCellDownArrowKeyCommand)
+        }
+    }
+}
+
 enum EditorPasteMode: String {
     case rich
     case plainText
@@ -9,6 +40,9 @@ enum EditorPasteMode: String {
 
 struct EditorClipboardPayload {
     static let fragmentType = "com.apollohg.native-editor.fragment"
+    static let htmlType = "public.html"
+    static let plainTextType = "public.utf8-plain-text"
+    static let exportedTypes = [fragmentType, htmlType, plainTextType]
 
     let fragment: String
     let html: String
@@ -35,26 +69,48 @@ struct EditorClipboardPayload {
     func write(to pasteboard: UIPasteboard) -> Bool {
         pasteboard.items = [[
             Self.fragmentType: Data(fragment.utf8),
-            "public.html": Data(html.utf8),
-            "public.utf8-plain-text": text
+            Self.htmlType: Data(html.utf8),
+            Self.plainTextType: text
         ]]
         return pasteboard.data(forPasteboardType: Self.fragmentType) != nil
-            && pasteboard.data(forPasteboardType: "public.html") != nil
+            && pasteboard.data(forPasteboardType: Self.htmlType) != nil
             && pasteboard.string != nil
     }
+
+    var representations: [String: Data] {
+        [
+            Self.fragmentType: Data(fragment.utf8),
+            Self.htmlType: Data(html.utf8),
+            Self.plainTextType: Data(text.utf8)
+        ]
+    }
+
+    func itemProvider() -> NSItemProvider {
+        let provider = NSItemProvider()
+        let representations = representations
+        for type in Self.exportedTypes {
+            let data = representations[type]
+            provider.registerDataRepresentation(forTypeIdentifier: type, visibility: .all) { completion in
+                completion(data, nil)
+                return nil
+            }
+        }
+        return provider
+    }
+}
+
+enum EditorClipboardCut {
+    static let textSelectionCommand: [String: Any] = ["type": "paste", "text": "", "plainText": true]
+    static let cellSelectionCommand: [String: Any] = ["type": "deleteBackward"]
 }
 
 enum EditorClipboardPaste {
     static let maximumRTFBytes = 64 * 1_024 * 1_024
 
-    static let supportedTypes = [
-        EditorClipboardPayload.fragmentType,
-        "public.html",
-        "public.rtf",
-        "public.utf8-plain-text",
-        "public.plain-text",
-        "public.text"
-    ]
+    static let rtfType = "public.rtf"
+    static let plainTextTypes = [EditorClipboardPayload.plainTextType, "public.plain-text", "public.text"]
+    static let supportedTypes = [EditorClipboardPayload.fragmentType, EditorClipboardPayload.htmlType, rtfType]
+        + plainTextTypes
 
     static func hasSupportedContent(in pasteboard: UIPasteboard) -> Bool {
         pasteboard.contains(pasteboardTypes: supportedTypes)
@@ -65,15 +121,34 @@ enum EditorClipboardPaste {
         mode: EditorPasteMode,
         maximumRTFBytes: Int = EditorClipboardPaste.maximumRTFBytes
     ) -> [String: Any]? {
+        command(mode: mode, plainText: pasteboard.string, maximumRTFBytes: maximumRTFBytes) {
+            pasteboard.data(forPasteboardType: $0)
+        }
+    }
+
+    static func command(
+        from representations: [String: Data],
+        mode: EditorPasteMode
+    ) -> [String: Any]? {
+        let plainText = plainTextTypes.lazy.compactMap { utf8String(representations[$0]) }.first
+        return command(mode: mode, plainText: plainText, maximumRTFBytes: maximumRTFBytes) { representations[$0] }
+    }
+
+    private static func command(
+        mode: EditorPasteMode,
+        plainText: String?,
+        maximumRTFBytes: Int,
+        data: (String) -> Data?
+    ) -> [String: Any]? {
         guard mode != .disabled else { return nil }
         var command: [String: Any] = ["type": "paste"]
-        if let fragment = utf8String(pasteboard.data(forPasteboardType: EditorClipboardPayload.fragmentType)) {
+        if let fragment = utf8String(data(EditorClipboardPayload.fragmentType)) {
             command["fragment"] = fragment
         }
-        var html = utf8String(pasteboard.data(forPasteboardType: "public.html"))
-        var text = pasteboard.string
+        var html = utf8String(data(EditorClipboardPayload.htmlType))
+        var text = plainText
         if html == nil,
-           let rtf = pasteboard.data(forPasteboardType: "public.rtf"),
+           let rtf = data(rtfType),
            rtf.count <= maximumRTFBytes,
            let attributed = try? NSAttributedString(
                data: rtf,
@@ -260,13 +335,79 @@ enum EditorClipboardPaste {
 }
 
 extension EditorTextView {
+    func isAtTableCellArrowBoundary(_ direction: TableCellArrowDirection) -> Bool {
+        guard tableCellPositionMap != nil,
+              editorId != 0,
+              isEditable,
+              isAuthorizedForTableCellInput(),
+              selectedRange.length == 0,
+              markedTextRange == nil,
+              !hasPendingCompositionForExternalRefresh,
+              let selected = selectedTextRange,
+              selected.isEmpty,
+              currentScalarSelection() != nil
+        else { return false }
+        if isLoneEmptyPlaceholderBlock { return true }
+        guard let next = position(from: selected.start, in: direction.layoutDirection, offset: 1) else {
+            return true
+        }
+        if direction == .up || direction == .down {
+            guard let currentLine = tableCellVisualLineOrigin(at: selected.start),
+                  let nextLine = tableCellVisualLineOrigin(at: next)
+            else { return false }
+            return direction == .up ? nextLine >= currentLine : nextLine <= currentLine
+        }
+        return offset(from: beginningOfDocument, to: next)
+            == offset(from: beginningOfDocument, to: selected.start)
+    }
+
+    private func tableCellVisualLineOrigin(at position: UITextPosition) -> CGFloat? {
+        let caret = caretRect(for: position)
+        guard !caret.isEmpty, caret.midY.isFinite else { return nil }
+        layoutManager.ensureLayout(for: textContainer)
+        let y = caret.midY - textContainerInset.top
+        if layoutManager.extraLineFragmentTextContainer != nil {
+            let extra = layoutManager.extraLineFragmentRect
+            if extra.minY <= y && y < extra.maxY { return extra.minY }
+        }
+        guard layoutManager.numberOfGlyphs > 0 else { return 0 }
+        let glyph = layoutManager.glyphIndex(
+            for: CGPoint(x: textContainer.lineFragmentPadding, y: y), in: textContainer
+        )
+        let line = layoutManager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        return line.minY <= y && y < line.maxY ? line.minY : nil
+    }
+
+    @objc func handleTableCellLeftArrowKeyCommand() {
+        handleTableCellArrowKeyCommand(.left)
+    }
+
+    @objc func handleTableCellRightArrowKeyCommand() {
+        handleTableCellArrowKeyCommand(.right)
+    }
+
+    @objc func handleTableCellUpArrowKeyCommand() {
+        handleTableCellArrowKeyCommand(.up)
+    }
+
+    @objc func handleTableCellDownArrowKeyCommand() {
+        handleTableCellArrowKeyCommand(.down)
+    }
+
+    private func handleTableCellArrowKeyCommand(_ direction: TableCellArrowDirection) {
+        guard isAtTableCellArrowBoundary(direction) else { return }
+        onTableCellArrow?(direction)
+    }
+
     @discardableResult
     func exportSelectionToPasteboard(_ pasteboard: UIPasteboard = .general) -> Bool {
         ensureInternalTextViewDelegate()
         guard editorId != 0 else { return false }
         guard finishExternalTextCompositionBeforeInteractionIfNeeded() else { return false }
         guard prepareForExternalEditorUpdate() else { return false }
-        guard syncClipboardSelectionToRust(requiresRange: true) != nil else { return false }
+        guard authoritativeCellSelectionActive
+            || syncClipboardSelectionToRust(requiresRange: true) != nil
+        else { return false }
         guard let payload = EditorV2Shadow.clipboardPayload(id: editorId) else { return false }
         return payload.write(to: pasteboard)
     }
@@ -302,6 +443,10 @@ extension EditorTextView {
     }
 
     @objc func handleIndentKeyCommand() {
+        if tableCellPositionMap != nil {
+            onTableCellTab?(false)
+            return
+        }
         handleListDepthKeyCommand(outdent: false)
     }
 
@@ -316,6 +461,10 @@ extension EditorTextView {
     }
 
     @objc func handleOutdentKeyCommand() {
+        if tableCellPositionMap != nil {
+            onTableCellTab?(true)
+            return
+        }
         handleListDepthKeyCommand(outdent: true)
     }
 
@@ -333,37 +482,58 @@ extension EditorTextView {
         else {
             return nil
         }
+        if tableCellPositionMap != nil {
+            let localStart = PositionBridge.utf16OffsetToScalar(cursorUtf16Offset, in: self)
+            let localEnd = PositionBridge.utf16OffsetToScalar(cursorUtf16Offset + 1, in: self)
+            guard let mapped = inputScalarRange(fromLocal: localStart, toLocal: localEnd),
+                  mapped.from == cursorScalar
+            else { return nil }
+            return mapped
+        }
         return (from: cursorScalar, to: cursorScalar + 1)
+    }
+
+    func selectAtomBeforeEmptyParagraphForBackwardDelete(cursorUtf16Offset: Int) -> Bool {
+        guard let attachmentOffset = attachmentOffsetBeforeEmptyParagraph(cursorUtf16Offset: cursorUtf16Offset),
+              textStorage.attribute(.attachment, at: attachmentOffset, effectiveRange: nil) is AtomBlockAttachment
+        else { return false }
+        selectedRange = NSRange(location: attachmentOffset, length: 1)
+        noteSelectionDidChange()
+        syncSelectionImmediately()
+        return true
     }
 
     func trailingVoidBlockDeleteRangeForBackwardDelete(
         cursorUtf16Offset: Int
     ) -> (from: UInt32, to: UInt32)? {
+        guard let attachmentOffset = attachmentOffsetBeforeEmptyParagraph(cursorUtf16Offset: cursorUtf16Offset) else { return nil }
+        return scalarDeleteRangeForVoidAttachment(at: attachmentOffset)
+    }
+
+    private func attachmentOffsetBeforeEmptyParagraph(cursorUtf16Offset: Int) -> Int? {
         let text = textStorage.string as NSString
         guard text.length > 0 else { return nil }
 
         let clampedCursor = min(max(cursorUtf16Offset, 0), text.length)
-        let paragraphProbe = min(max(clampedCursor - 1, 0), text.length - 1)
+        let paragraphProbe = min(clampedCursor, text.length - 1)
         let paragraphRange = text.paragraphRange(for: NSRange(location: paragraphProbe, length: 0))
+        guard UInt32(text.character(at: paragraphRange.location)) == Self.emptyBlockPlaceholderScalar.value else { return nil }
+        guard textStorage.attribute(RenderBridgeAttributes.listContext, at: paragraphRange.location, effectiveRange: nil) == nil else { return nil }
 
-        let placeholderRange = NSRange(location: paragraphRange.location, length: 1)
-        guard placeholderRange.location + placeholderRange.length <= text.length else {
-            return nil
-        }
-
-        let paragraphText = text.substring(with: placeholderRange)
-        guard paragraphText == "\u{200B}" else { return nil }
+        let paragraphText = text.substring(with: paragraphRange).trimmingCharacters(in: .newlines)
+        guard paragraphText == String(Self.emptyBlockPlaceholderScalar) else { return nil }
         guard paragraphRange.location >= 2 else { return nil }
         guard text.character(at: paragraphRange.location - 1) == 0x000A else { return nil }
+        let scalarStart = PositionBridge.utf16OffsetToScalar(paragraphRange.location, in: self)
+        let scalarEnd = PositionBridge.utf16OffsetToScalar(paragraphRange.location + paragraphText.utf16.count, in: self)
+        guard let mapped = inputScalarRange(fromLocal: scalarStart, toLocal: scalarEnd),
+              let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
+              let documentStart = adapter.documentPosition(forScalar: mapped.from),
+              let documentEnd = adapter.documentPosition(forScalar: mapped.to),
+              documentStart == documentEnd
+        else { return nil }
 
-        let attachmentIndex = paragraphRange.location - 2
-        guard
-            let deleteRange = scalarDeleteRangeForVoidAttachment(at: attachmentIndex)
-        else {
-            return nil
-        }
-
-        return deleteRange
+        return paragraphRange.location - 2
     }
 
     private func scalarDeleteRangeForVoidAttachment(
@@ -385,7 +555,7 @@ extension EditorTextView {
             in: self
         )
         guard attachmentEndScalar > 0 else { return nil }
-        return (from: attachmentEndScalar - 1, to: attachmentEndScalar)
+        return inputScalarRange(fromLocal: attachmentEndScalar - 1, toLocal: attachmentEndScalar)
     }
 
     private func handleListDepthKeyCommand(outdent: Bool) {
@@ -456,6 +626,17 @@ extension EditorTextView {
         flushPendingNativeTextMutation: Bool = true,
         _ action: () -> Void
     ) {
+        guard isAuthorizedForTableCellInput() else { return }
+        performAuthorizedInterceptedInput(
+            flushPendingNativeTextMutation: flushPendingNativeTextMutation,
+            action
+        )
+    }
+
+    func performAuthorizedInterceptedInput(
+        flushPendingNativeTextMutation: Bool = true,
+        _ action: () -> Void
+    ) {
         if flushPendingNativeTextMutation, interceptedInputDepth == 0 {
             guard flushPendingNativeTextMutationCommitIfNeeded() else { return }
         }
@@ -521,15 +702,15 @@ extension EditorTextView {
     /// Handle return key press as a block split operation.
     private func handleReturnKey() {
         if let selectedRange = selectedTextRange, !selectedRange.isEmpty {
-            let range = PositionBridge.textRangeToScalarRange(selectedRange, in: self)
+            guard let range = currentLogicalScalarSelection() else { return }
             let updateJSON = EditorV2Shadow.deleteAndSplitScalar(
                 id: editorId,
-                scalarFrom: range.from,
-                scalarTo: range.to
+                scalarFrom: range.anchor,
+                scalarTo: range.head
             )
             applyUpdateJSON(updateJSON)
         } else {
-            let scalarPos = PositionBridge.cursorScalarOffset(in: self)
+            guard let scalarPos = currentLogicalScalarSelection()?.head else { return }
             splitBlockInRust(at: scalarPos)
         }
     }
@@ -539,8 +720,9 @@ extension EditorTextView {
         replacing replacementRange: UITextRange? = nil
     ) -> Bool {
         guard text == "\n" || text == "\r" else { return false }
-        let scalarRange = replacementRange.map {
-            PositionBridge.textRangeToScalarRange($0, in: self)
+        let scalarRange = replacementRange.flatMap {
+            let localRange = PositionBridge.textRangeToScalarRange($0, in: self)
+            return inputScalarRange(fromLocal: localRange.from, toLocal: localRange.to)
         }
         guard commitActiveMarkedTextBeforeReturn() else { return true }
         performInterceptedInput {
@@ -574,8 +756,8 @@ extension EditorTextView {
     /// Paste HTML content through Rust.
     @discardableResult
     func pasteHTML(_ html: String, detectContentChange: Bool = false) -> Bool {
+        guard syncCurrentUIKitSelectionToRust() else { return false }
         let previousHTML = detectContentChange ? EditorV2Shadow.getHtml(id: editorId) : nil
-        syncCurrentUIKitSelectionToRust()
         Self.inputLog.debug(
             "[rust.pasteHTML] html=\(self.preview(html), privacy: .public) selection=\(self.selectionSummary(), privacy: .public)"
         )
@@ -585,24 +767,28 @@ extension EditorTextView {
         return EditorV2Shadow.getHtml(id: editorId) != previousHTML
     }
 
-    private func syncCurrentUIKitSelectionToRust() {
-        guard editorId != 0, let range = selectedTextRange else { return }
-        let anchor = PositionBridge.textViewToScalar(range.start, in: self)
-        let head = PositionBridge.textViewToScalar(range.end, in: self)
+    private func syncCurrentUIKitSelectionToRust() -> Bool {
+        guard editorId != 0, let range = selectedTextRange else { return false }
+        let localAnchor = PositionBridge.textViewToScalar(range.start, in: self)
+        let localHead = PositionBridge.textViewToScalar(range.end, in: self)
+        guard let anchor = inputScalar(atLocalScalar: localAnchor),
+              let head = inputScalar(atLocalScalar: localHead)
+        else { return false }
         EditorV2Shadow.setSelectionScalar(id: editorId, scalarAnchor: anchor, scalarHead: head)
+        return true
     }
 
     /// Paste plain text through Rust.
     func pastePlainText(_ text: String) {
         if let selectedRange = selectedTextRange, !selectedRange.isEmpty {
-            let range = PositionBridge.textRangeToScalarRange(selectedRange, in: self)
+            guard let range = currentLogicalScalarSelection() else { return }
             Self.inputLog.debug(
-                "[rust.pastePlainText.replace] text=\(self.preview(text), privacy: .public) scalar=\(range.from)-\(range.to) selection=\(self.selectionSummary(), privacy: .public)"
+                "[rust.pastePlainText.replace] text=\(self.preview(text), privacy: .public) scalar=\(range.anchor)-\(range.head) selection=\(self.selectionSummary(), privacy: .public)"
             )
             let updateJSON = EditorV2Shadow.replaceTextScalar(
                 id: editorId,
-                scalarFrom: range.from,
-                scalarTo: range.to,
+                scalarFrom: range.anchor,
+                scalarTo: range.head,
                 text: text
             )
             applyUpdateJSON(updateJSON)
@@ -610,7 +796,8 @@ extension EditorTextView {
             Self.inputLog.debug(
                 "[rust.pastePlainText.insert] text=\(self.preview(text), privacy: .public) selection=\(self.selectionSummary(), privacy: .public)"
             )
-            insertTextInRust(text, at: PositionBridge.cursorScalarOffset(in: self))
+            guard let scalarPos = currentLogicalScalarSelection()?.head else { return }
+            insertTextInRust(text, at: scalarPos)
         }
     }
 

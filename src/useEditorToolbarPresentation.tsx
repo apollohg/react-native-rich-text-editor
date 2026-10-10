@@ -3,17 +3,10 @@ import { type useEditorToolbarState } from './useEditorToolbarState';
 import { type useEditorToolbarItems } from './useEditorToolbarItems';
 import { type useEditorToolbarInteractions } from './useEditorToolbarInteractions';
 import {
-    BUTTON_VISIBLE,
-    TOOLBAR_PADDING_V,
-    MAX_BUTTON_SIZE,
-    BUTTON_HEIGHT_INSET,
     MENU_MARGIN,
     MENU_WIDTH,
-    ACTIVE_COLOR,
-    DEFAULT_COLOR,
-    DISABLED_COLOR,
-    ACTIVE_BG,
-    BUTTON_RADIUS,
+    resolveToolbarButtonVisuals,
+    resolveToolbarMetrics,
     styles,
     ToolbarIcon,
     TOOLBAR_RADIUS,
@@ -80,25 +73,11 @@ export function useEditorToolbarPresentation(
 
     const menuHeight = menuGroup ? menuGroup.children.length * 40 + 16 : 0;
 
-    // Sizing contract shared with ios/NativeEditorExpoView.swift
-    // (resolvedToolbarHeight/resolvedButtonSize) and
-    // android/NativeToolbar.kt (resolvedToolbarHeightDp/resolvedButtonSizeDp):
-    // an explicit theme height is honored as-is; buttons are
-    // max(1, min(MAX_BUTTON_SIZE, height - BUTTON_HEIGHT_INSET)).
-    const resolvedToolbarHeight = Math.max(
-        theme?.height ?? BUTTON_VISIBLE + TOOLBAR_PADDING_V * 2,
-        1
-    );
-
-    const resolvedButtonHeight =
-        theme?.height == null
-            ? BUTTON_VISIBLE
-            : Math.max(1, Math.min(MAX_BUTTON_SIZE, resolvedToolbarHeight - BUTTON_HEIGHT_INSET));
-
-    const resolvedToolbarPaddingV =
-        theme?.height == null
-            ? TOOLBAR_PADDING_V
-            : Math.max(0, (resolvedToolbarHeight - resolvedButtonHeight) / 2);
+    const {
+        toolbarHeight: resolvedToolbarHeight,
+        buttonHeight: resolvedButtonHeight,
+        paddingVertical: resolvedToolbarPaddingV,
+    } = resolveToolbarMetrics(theme);
 
     const resolvedSeparatorHeight = Math.max(16, resolvedButtonHeight - 12);
 
@@ -126,49 +105,7 @@ export function useEditorToolbarPresentation(
 
     const resolveButtonVisuals = (
         button: Pick<ToolbarButton, 'buttonStyle' | 'isActive' | 'isDisabled'>
-    ) => {
-        const activeColor =
-            button.buttonStyle?.activeColor ?? theme?.buttonActiveColor ?? ACTIVE_COLOR;
-
-        const defaultColor = button.buttonStyle?.color ?? theme?.buttonColor ?? DEFAULT_COLOR;
-
-        const disabledColor =
-            button.buttonStyle?.disabledColor ?? theme?.buttonDisabledColor ?? DISABLED_COLOR;
-
-        const backgroundColor =
-            button.buttonStyle?.backgroundColor ?? theme?.buttonBackgroundColor ?? 'transparent';
-
-        const activeBackgroundColor =
-            button.buttonStyle?.activeBackgroundColor ??
-            theme?.buttonActiveBackgroundColor ??
-            ACTIVE_BG;
-
-        const disabledBackgroundColor =
-            button.buttonStyle?.disabledBackgroundColor ??
-            theme?.buttonDisabledBackgroundColor ??
-            (button.isActive ? activeBackgroundColor : backgroundColor);
-
-        const requestedIconSize = button.buttonStyle?.iconSize ?? theme?.buttonIconSize;
-
-        return {
-            color: button.isDisabled ? disabledColor : button.isActive ? activeColor : defaultColor,
-            backgroundColor: button.isDisabled
-                ? disabledBackgroundColor
-                : button.isActive
-                    ? activeBackgroundColor
-                    : backgroundColor,
-            iconSize:
-                requestedIconSize != null &&
-                Number.isFinite(requestedIconSize) &&
-                requestedIconSize > 0
-                    ? Math.min(requestedIconSize, resolvedButtonHeight)
-                    : undefined,
-            borderRadius: Math.max(
-                0,
-                button.buttonStyle?.borderRadius ?? theme?.buttonBorderRadius ?? BUTTON_RADIUS
-            ),
-        };
-    };
+    ) => resolveToolbarButtonVisuals(button, theme, resolvedButtonHeight);
 
     const renderButton = (
         button: Pick<

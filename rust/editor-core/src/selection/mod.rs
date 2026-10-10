@@ -30,6 +30,10 @@ pub enum Selection {
         /// Doc position of the void node.
         pos: u32,
     },
+    Cell {
+        anchor: u32,
+        head: u32,
+    },
     /// Selects the entire document content.
     All,
 }
@@ -53,6 +57,10 @@ impl Selection {
         Self::Node { pos }
     }
 
+    pub fn cell(anchor: u32, head: u32) -> Self {
+        Self::Cell { anchor, head }
+    }
+
     /// Create an all-document selection.
     pub fn all() -> Self {
         Self::All
@@ -63,6 +71,7 @@ impl Selection {
         match self {
             Self::Text { anchor, .. } => *anchor,
             Self::Node { pos } => *pos,
+            Self::Cell { anchor, .. } => *anchor,
             Self::All => 0,
         }
     }
@@ -72,22 +81,34 @@ impl Selection {
         match self {
             Self::Text { head, .. } => *head,
             Self::Node { pos } => *pos,
+            Self::Cell { head, .. } => *head,
             Self::All => doc.content_size(),
         }
     }
 
     /// The start of the selection range: `min(anchor, head)`.
-    pub fn from(&self, doc: &Document) -> u32 {
-        let a = self.anchor(doc);
-        let h = self.head(doc);
-        a.min(h)
+    pub fn from(&self, doc: &Document) -> Option<u32> {
+        let (anchor, head) = self.text_endpoints(doc)?;
+        Some(anchor.min(head))
     }
 
     /// The end of the selection range: `max(anchor, head)`.
-    pub fn to(&self, doc: &Document) -> u32 {
-        let a = self.anchor(doc);
-        let h = self.head(doc);
-        a.max(h)
+    pub fn to(&self, doc: &Document) -> Option<u32> {
+        let (anchor, head) = self.text_endpoints(doc)?;
+        Some(anchor.max(head))
+    }
+
+    pub fn text_range(&self, doc: &Document) -> Option<(u32, u32)> {
+        Some((self.from(doc)?, self.to(doc)?))
+    }
+
+    fn text_endpoints(&self, doc: &Document) -> Option<(u32, u32)> {
+        match self {
+            Self::Cell { .. } => None,
+            Self::Text { .. } | Self::Node { .. } | Self::All => {
+                Some((self.anchor(doc), self.head(doc)))
+            }
+        }
     }
 
     /// Whether the selection is collapsed (anchor == head).
@@ -96,6 +117,9 @@ impl Selection {
     /// `All` is empty only if the document has no content.
     #[allow(dead_code)]
     pub fn is_empty(&self, doc: &Document) -> bool {
+        if matches!(self, Self::Cell { .. }) {
+            return false;
+        }
         self.anchor(doc) == self.head(doc)
     }
 
@@ -118,6 +142,10 @@ impl Selection {
             },
             Self::Node { pos } => Self::Node {
                 pos: step_map.map_pos(*pos),
+            },
+            Self::Cell { anchor, head } => Self::Cell {
+                anchor: step_map.map_pos(*anchor),
+                head: step_map.map_pos(*head),
             },
             Self::All => Self::All,
         }

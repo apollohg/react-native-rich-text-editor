@@ -372,6 +372,14 @@ extension EditorTextView {
                 currentMetadata[index].startOffset += delta
             }
         }
+        let retainedStart = patch.startIndex + newEntries.count
+        if retainedStart < currentMetadata.count,
+           let trailingBoundary = renderedPatchMetadata?.entries.dropFirst(newEntries.count).first {
+            // The inserted separator belongs to the first retained child.
+            currentMetadata[retainedStart].startOffset = replaceRange.location + trailingBoundary.startOffset
+        } else if patch.startIndex == 0, newEntries.isEmpty, !currentMetadata.isEmpty {
+            currentMetadata[0].startOffset = 0
+        }
 
         currentTopLevelChildMetadata = currentMetadata
     }
@@ -413,7 +421,7 @@ extension EditorTextView {
     func applyRenderPatchIfPossible(_ patch: ParsedRenderPatch) -> PatchApplyTrace {
         let eligibilityStartedAt = DispatchTime.now().uptimeNanoseconds
         guard hasTopLevelChildMetadata(),
-              let fullReplaceRange = replacementRangeForRenderPatch(
+              var fullReplaceRange = replacementRangeForRenderPatch(
                   startIndex: patch.startIndex,
                   deleteCount: patch.deleteCount
               )
@@ -436,6 +444,13 @@ extension EditorTextView {
                 applyRenderCacheInvalidationNanos: 0,
                 usedSmallPatchTextMutation: false
             )
+        }
+
+        if patch.startIndex == 0, patch.deleteCount > 0, patch.renderBlocks.isEmpty,
+           NSMaxRange(fullReplaceRange) < textStorage.length,
+           (textStorage.string as NSString).substring(with: NSRange(location: NSMaxRange(fullReplaceRange), length: 1)) == "\n" {
+            // Removing the first child also removes the retained child's separator.
+            fullReplaceRange.length += 1
         }
 
         let buildStartedAt = DispatchTime.now().uptimeNanoseconds

@@ -27,18 +27,29 @@ use std::collections::HashMap;
 use crate::boundary::{BoundaryError, BoundedInput, InputKind};
 use crate::ffi_v2::types::{deserialize_canonical_u64, recover_request_id};
 use crate::session::{EditorSession, ErrorDomain, OperationFailureClass, SessionError};
+use crate::tables::commands::{
+    TableCommand, TableEdge, TableHeaderTarget, DEFAULT_INSERTED_TABLE_COLUMNS,
+    DEFAULT_INSERTED_TABLE_HEADER_ROW, DEFAULT_INSERTED_TABLE_ROWS, DEFAULT_TAB_APPENDS_A_ROW,
+    MAX_INSERTED_TABLE_DIMENSION, MAX_TABLE_COLUMN_WIDTH, MIN_INSERTED_TABLE_DIMENSION,
+    MIN_TABLE_COLUMN_WIDTH,
+};
+use crate::tables::interchange::CellStep;
 use crate::yrs_engine::{
-    Affinity, CommandPlan, EditorOffsetKind, HistoryPolicy, OperationError, ReplacementHistory,
-    RevisionedPosition, RevisionedRange, SelectionInput, SelectionIntent, TransactionCommit,
-    TransactionOrigin, TypedCommand, TypedTransaction, TypedTransactionResult, YrsDocumentEngine,
+    Affinity, CommandPlan, EditorOffsetKind, HistoryPolicy, MovedTableCells, OperationError,
+    ReplacementHistory, RevisionedPosition, RevisionedRange, SelectionInput, SelectionIntent,
+    TableCellDrop, TransactionCommit, TransactionOrigin, TypedCommand, TypedTransaction,
+    TypedTransactionResult, YrsDocumentEngine, DEFAULT_POSITION_AFFINITY,
 };
 
-/// The one supported native bridge envelope version.
-const NATIVE_BRIDGE_ENVELOPE_VERSION: u32 = 1;
+#[cfg(test)]
+pub(crate) fn table_command_envelope_for_test(payload: &str) -> Result<TypedCommand, String> {
+    serde_json::from_str::<CommandEnvelope>(payload)
+        .map(TypedCommand::from)
+        .map_err(|error| error.to_string())
+}
 
-/// Affinity used when a data-only position envelope omits it: typing and
-/// selection anchors stick after the addressed position.
-const DEFAULT_POSITION_AFFINITY: Affinity = Affinity::After;
+/// The one supported native bridge envelope version.
+pub(crate) const NATIVE_BRIDGE_ENVELOPE_VERSION: u32 = 1;
 
 /// One structured bridge result. Command planning that finds nothing
 /// applicable is a structured outcome, never a fabricated engine result.
@@ -132,6 +143,9 @@ impl<'session> NativeTransactionBridge<'session> {
             }
             intent => {
                 self.admit_writable(request_id)?;
+                if resolved.left_table_cell {
+                    return Err(crate::position_epoch::table_cell_removed(request_id));
+                }
                 let intent = match intent {
                     NativeIntentEnvelope::InsertText { anchor, head, text } => apply_input_filter(
                         self.session.policy.input_filter_regex(),
@@ -188,13 +202,21 @@ impl<'session> NativeTransactionBridge<'session> {
                             (*allow_base64_images, *input_filter) =
                                 self.session.policy.clipboard_options();
                         }
+                        let origin = if matches!(
+                            command,
+                            TypedCommand::Table(_) | TypedCommand::Paste { .. }
+                        ) {
+                            TransactionOrigin::LocalCommand
+                        } else {
+                            TransactionOrigin::LocalInput
+                        };
                         let (engine, outbox) = self.session.engine_and_outbox();
                         let mut outbox = outbox;
                         let applied = engine.apply_command_at_selection_with_outbox(
                             request_id,
                             command.clone(),
                             selection,
-                            TransactionOrigin::LocalInput,
+                            origin,
                             outbox.as_deref_mut(),
                         );
                         let result = match applied {
@@ -211,7 +233,7 @@ impl<'session> NativeTransactionBridge<'session> {
                                         scalar_limit,
                                         Affinity::Before,
                                     ),
-                                    TransactionOrigin::LocalInput,
+                                    origin,
                                     outbox.as_deref_mut(),
                                 )
                             }
@@ -350,7 +372,7 @@ impl<'session> NativeTransactionBridge<'session> {
                 let point = scalar_position(offset, map.total_scalars(), affinity);
                 match edge {
                     AtomSelectionEdge::Node => SelectionInput::Node { at: point },
-                    _ => SelectionInput::Text {
+                    AtomSelectionEdge::Before | AtomSelectionEdge::After => SelectionInput::Text {
                         anchor: point,
                         head: point,
                     },
@@ -678,7 +700,7 @@ fn config_invalid(request_id: u64, message: impl Into<String>) -> SessionError {
 /// Frozen mapping: the engine emits `OPERATION_RESOURCE_EXHAUSTED` only for
 /// allocation/reservation failures, which preserve their code; everything
 /// else keeps its existing stable code.
-fn operation_error(error: OperationError) -> SessionError {
+pub(crate) fn operation_error(error: OperationError) -> SessionError {
     let failure_class = if error.code == "OPERATION_RESOURCE_EXHAUSTED" {
         OperationFailureClass::AllocationOrReservation
     } else {

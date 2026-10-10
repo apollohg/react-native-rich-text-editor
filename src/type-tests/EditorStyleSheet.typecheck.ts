@@ -15,6 +15,14 @@ const styles = EditorStyleSheet.create({
         paddingBottom: 2,
         paddingLeft: 3,
     },
+    table: {
+        minColumnWidth: 96,
+        cellPadding: 10,
+        margin: 12,
+        marginVertical: 8,
+        marginBottom: 0,
+        marginRight: 4,
+    },
 });
 
 const theme: EditorTheme = styles;
@@ -24,10 +32,12 @@ const paragraphRule: EditorStyleRule = {
     path: [ 'listItem', 'paragraph' ],
     style: { marginBottom: 0 },
 };
+
 const linkRule: EditorStyleRule = {
     path: [ 'link' ],
     style: { color: 'rebeccapurple' },
 };
+
 void paragraphRule;
 void linkRule;
 
@@ -51,6 +61,9 @@ const literalRulePathElement: 'link' = rules.rules[1].path[0];
 void literalRulePathElement;
 
 EditorStyleSheet.create({ rules: undefined });
+
+// @ts-expect-error Table margins use numeric layout units.
+EditorStyleSheet.create({ table: { marginBottom: '16' } });
 
 // @ts-expect-error Mention padding is numeric.
 EditorStyleSheet.create({ mention: { padding: true } });
@@ -76,6 +89,7 @@ EditorStyleSheet.create({ paragraph: { fontWeight: 'semibold' } });
 
 // @ts-expect-error Link rule styles have no box margins.
 EditorStyleSheet.create({ rules: [ { path: [ 'link' ], style: { marginBottom: 12 } } ] });
+
 EditorStyleSheet.create({
     rules: [
         {
@@ -85,6 +99,7 @@ EditorStyleSheet.create({
         },
     ],
 });
+
 // @ts-expect-error Rules require an own style property.
 EditorStyleSheet.create({ rules: [ { path: [ 'paragraph' ] } ] });
 // @ts-expect-error Rules accept only path and style properties.

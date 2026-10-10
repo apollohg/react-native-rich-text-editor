@@ -5,14 +5,18 @@ import XCTest
 final class TestTextDragSession: NSObject, UIDragSession {
     let items: [UIDragItem]
     var localContext: Any?
+    var windowLocation: CGPoint?
     var allowsMoveOperation: Bool { true }
     var isRestrictedToDraggingApplication: Bool { true }
 
-    init(items: [UIDragItem]) {
+    init(items: [UIDragItem], windowLocation: CGPoint? = nil) {
         self.items = items
+        self.windowLocation = windowLocation
     }
 
-    func location(in view: UIView) -> CGPoint { .zero }
+    func location(in view: UIView) -> CGPoint {
+        windowLocation.map { view.convert($0, from: nil) } ?? .zero
+    }
 
     func hasItemsConforming(toTypeIdentifiers typeIdentifiers: [String]) -> Bool {
         items.contains { item in
@@ -34,12 +38,23 @@ final class TestTextDropSession: NSObject, UIDropSession {
     var allowsMoveOperation: Bool { true }
     var isRestrictedToDraggingApplication: Bool { true }
 
-    init(dragSession: UIDragSession) {
+    var windowLocation: CGPoint?
+
+    init(dragSession: UIDragSession, windowLocation: CGPoint? = nil) {
         localDragSession = dragSession
         items = dragSession.items
+        self.windowLocation = windowLocation
     }
 
-    func location(in view: UIView) -> CGPoint { .zero }
+    init(externalItems: [UIDragItem], windowLocation: CGPoint) {
+        localDragSession = nil
+        items = externalItems
+        self.windowLocation = windowLocation
+    }
+
+    func location(in view: UIView) -> CGPoint {
+        windowLocation.map { view.convert($0, from: nil) } ?? .zero
+    }
 
     func hasItemsConforming(toTypeIdentifiers typeIdentifiers: [String]) -> Bool {
         items.contains { item in
@@ -108,6 +123,8 @@ final class TestTextDropRequest: NSObject, UITextDropRequest {
 // transactions. This is the only engine path: no legacy runtime exists.
 final class EditorV2StagingViewTests: XCTestCase {
 
+    static let atomBoundaryBackspaceAllowance = 2
+
     var adapters: [EditorV2Adapter] = []
     var syntheticIds: [UInt64] = []
 
@@ -121,7 +138,7 @@ final class EditorV2StagingViewTests: XCTestCase {
     }
 
     private func hostStagingView(_ view: RichTextEditorView) -> UIWindow {
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 480))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 480))
         let viewController = UIViewController()
         window.rootViewController = viewController
         window.makeKeyAndVisible()
@@ -177,6 +194,9 @@ final class EditorV2StagingViewTests: XCTestCase {
             {"name":"doc","content":"block+","role":"doc"},
             {"name":"paragraph","content":"text*","group":"block","role":"textBlock","htmlTag":"p"},
             {"name":"text","content":"","role":"text"},
+            {"name":"ordered_list","content":"list_item+","group":"block","role":"list","htmlTag":"ol","attrs":{"start":{"default":1}}},
+            {"name":"list_item","content":"paragraph block*","role":"listItem"},
+            {"name":"horizontal_rule","content":"","group":"block","role":"block","isVoid":true,"htmlTag":"hr"},
             {
                 "name":"counterCard",
                 "content":"",
@@ -259,15 +279,17 @@ final class EditorV2StagingViewTests: XCTestCase {
         textView.selectedRange = NSRange(location: utf16Offset, length: 0)
     }
 
+    func v2DocumentJSON(_ adapter: EditorV2Adapter) throws -> NSDictionary {
+        let json = try XCTUnwrap(adapter.documentJson())
+        let data = try XCTUnwrap(json.data(using: .utf8))
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? NSDictionary)
+    }
+
     func v2DocumentText(_ adapter: EditorV2Adapter, file: StaticString = #filePath, line: UInt = #line) -> String {
-        let result = editorV2GetDocumentJson(editorId: adapter.editorId)
-        guard let value = result.value, result.error == nil else {
-            XCTFail("getDocumentJson failed: \(String(describing: result.error))", file: file, line: line)
+        guard let doc = try? v2DocumentJSON(adapter) as? [String: Any] else {
+            XCTFail("getDocumentJson did not return a valid document object", file: file, line: line)
             return ""
         }
-        guard let data = value.data(using: .utf8),
-            let doc = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return "" }
         var pieces: [String] = []
         func walk(_ node: [String: Any]) {
             if let type = node["type"] as? String, type == "text", let text = node["text"] as? String {

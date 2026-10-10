@@ -60,6 +60,14 @@ object PositionBridge {
         return if (nextBoundary == BreakIterator.DONE) text.length else nextBoundary
     }
 
+    internal fun graphemeBoundaryBefore(utf16Offset: Int, text: String): Int {
+        val offset = utf16Offset.coerceIn(0, text.length)
+        if (offset == 0) return offset
+        val iterator = BreakIterator.getCharacterInstance()
+        iterator.setText(text)
+        return iterator.preceding(offset).takeUnless { it == BreakIterator.DONE } ?: 0
+    }
+
     /**
      * Snaps a UTF-16 offset out of the middle of a surrogate pair without
      * applying full grapheme-cluster expansion.

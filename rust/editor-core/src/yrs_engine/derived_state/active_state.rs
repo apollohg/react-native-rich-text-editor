@@ -1,4 +1,4 @@
-use super::insert_admission::LocalizedInsertAdmission;
+use super::insert_admission::LocalizedTextblockEditAdmission;
 use super::observability::{
     record_active_state_cache_drop, record_active_state_public_result_clone,
 };
@@ -465,7 +465,7 @@ impl DerivedStateCache {
         &self,
         request_id: u64,
         authority: &dyn DerivedStateAuthority,
-        admission: &LocalizedInsertAdmission,
+        admission: &LocalizedTextblockEditAdmission,
         preview: &Document,
         result_selection: &ResolvedSelection,
         stored_marks: Option<&[Mark]>,

@@ -61,6 +61,29 @@ extension RichTextEditorViewTests {
         view.frame.size.height = 480
         view.layoutIfNeeded()
         XCTAssertGreaterThan(textView.contentInset.bottom, 0)
+
+        let accessoryHeightAdjustment: CGFloat = 34
+        var finalKeyboardFrame = keyboardFrame
+        finalKeyboardFrame.origin.y -= accessoryHeightAdjustment
+        finalKeyboardFrame.size.height += accessoryHeightAdjustment
+        NotificationCenter.default.post(
+            name: UIResponder.keyboardDidChangeFrameNotification,
+            object: nil,
+            userInfo: [UIResponder.keyboardFrameEndUserInfoKey: NSValue(cgRect: finalKeyboardFrame)]
+        )
+        textView.layoutIfNeeded()
+        XCTAssertEqual(textView.keyboardFrameInScreen, finalKeyboardFrame,
+            "UIKit can finish accessory safe-area sizing with only a did-change notification")
+        XCTAssertEqual(textView.contentInset.bottom, bottomInset + accessoryHeightAdjustment, accuracy: NativeEditorExpoView.layoutEpsilon)
+        let finalCaret = textView.caretRect(for: textView.selectedTextRange!.end)
+        XCTAssertLessThanOrEqual(textView.convert(finalCaret, to: window).maxY, keyboardTop.y - accessoryHeightAdjustment)
+        let finalBottomInset = textView.contentInset.bottom
+        NotificationCenter.default.post(
+            name: UIResponder.keyboardDidChangeFrameNotification,
+            object: nil,
+            userInfo: [UIResponder.keyboardFrameEndUserInfoKey: NSValue(cgRect: finalKeyboardFrame)]
+        )
+        XCTAssertEqual(textView.contentInset.bottom, finalBottomInset, "the final frame must not accumulate insets")
         NotificationCenter.default.post(name: UIResponder.keyboardWillHideNotification, object: nil)
         XCTAssertEqual(textView.contentInset.bottom, 0, accuracy: 0.5)
         textView.resignFirstResponder()

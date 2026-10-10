@@ -446,7 +446,7 @@ fn join_blocks_copies_nested_any_attributes_without_flattening() {
                     "attrs": { "checked": false },
                     "content": [
                         { "type": "paragraph", "content": [{ "type": "text", "text": "b" }] },
-                        { "type": "customBlock", "attrs": { "meta": { "nested": [1, false, "x"] } } }
+                        { "type": "customBlock", "attrs": { "meta": { "nested": [1.0, false, "x"] } } }
                     ]
                 }
             ]
@@ -477,7 +477,7 @@ fn join_blocks_copies_nested_any_attributes_without_flattening() {
     assert_eq!(actual, expected);
     assert_eq!(
         actual["content"][0]["content"][0]["content"][2]["attrs"]["meta"],
-        json!({ "nested": [1, false, "x"] })
+        json!({ "nested": [1.0, false, "x"] })
     );
 }
 

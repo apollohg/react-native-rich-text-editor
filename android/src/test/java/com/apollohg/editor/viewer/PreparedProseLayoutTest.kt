@@ -31,6 +31,8 @@ import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -43,6 +45,36 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 internal class PreparedProseLayoutTest : PreparedProseLayoutTestFixture() {
+    @Test
+    fun `plain layout reuse ignores table measurement viewport changes`() {
+        val engine = CountingLayoutEngine()
+        val registry = testRegistry(engine)
+        val request = request("plain content")
+        val initial = registry.measure(request, 320, 1f, tableMeasurementViewportHeightPx = 0)
+        val resized = registry.measure(request, 320, 1f, tableMeasurementViewportHeightPx = 120)
+        val nextRequest = request.copy(tableMeasurementViewportHeightPx = 240)
+        val requestViewport = registry.measure(nextRequest, 320, 1f)
+        val nextResized = registry.measure(
+            nextRequest,
+            320,
+            1f,
+            tableMeasurementViewportHeightPx = 120
+        )
+        assertSame("plain geometry is independent of the table viewport", initial, resized)
+        assertNotSame("a new request retains its own generation", initial, requestViewport)
+        assertEquals(0, requestViewport.key.tableMeasurementViewportHeightPx)
+        assertSame(
+            "request viewport must also be excluded for plain content",
+            nextResized,
+            requestViewport
+        )
+        assertEquals(
+            "viewport changes must not prepare plain content again",
+            2,
+            engine.preparationCount
+        )
+    }
+
     @Test
     fun `mention activation preserves attributes and rejects a non-object root`() {
         val viewer = ProseViewerView(context, testRegistry(CountingLayoutEngine()))
@@ -167,6 +199,12 @@ internal class PreparedProseLayoutTest : PreparedProseLayoutTestFixture() {
         assertEquals(0, traversal.warm.compileCount)
         assertEquals(0, traversal.warm.layoutCount)
         assertEquals(0, traversal.warm.cacheMisses)
+        assertEquals(
+            "warm census includes holders still mounted from the prime endpoint",
+            shortWindow.warmIds.size,
+            traversal.warm.residentKeyCount
+        )
+        assertEquals(traversal.prime.residentKeyDigest, traversal.warm.residentKeyDigest)
 
         val oneItem = literalWindows.single { it.id == "very-long-01" }
         assertEquals(1, oneItem.primeIds.size)
@@ -178,7 +216,14 @@ internal class PreparedProseLayoutTest : PreparedProseLayoutTestFixture() {
             imagesEnabled = true
         ) { oneItemResult = it }
         drainMainLooperUntil { oneItemResult != null }
-        assertEquals(oneItem.id, requireNotNull(oneItemResult).getOrThrow().single().windowId)
+        val oneItemTraversal = requireNotNull(oneItemResult).getOrThrow().single()
+        assertEquals(oneItem.id, oneItemTraversal.windowId)
+        assertEquals(oneItem.primeIds.size, oneItemTraversal.prime.residentKeyCount)
+        assertEquals(oneItem.warmIds.size, oneItemTraversal.warm.residentKeyCount)
+        assertEquals(
+            oneItemTraversal.prime.residentKeyDigest,
+            oneItemTraversal.warm.residentKeyDigest
+        )
 
         val exactEvidence = JSONArray().apply {
             literalWindows.forEach { window ->

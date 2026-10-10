@@ -8,15 +8,75 @@ private extension Int {
     }
 }
 
+private struct PlainTextTemplate {
+    let font: UIFont
+    let color: UIColor
+    let resolvedColor: CGColor
+    let spacing: CGFloat
+    let traits: UITraitCollection
+    let string: NSAttributedString
+}
+
 extension CoreTextProseLayoutEngine {
+    final class PlainTextPreparation {
+        static let seedText = " "
+        private var cached: PlainTextTemplate?
+
+        func template(
+            paint: PreparedTextPaint,
+            spacing: CGFloat,
+            build: () -> NSAttributedString
+        ) -> NSAttributedString {
+            let resolvedColor = paint.color.cgColor
+            let traits = UITraitCollection.current
+            if let cached, cached.font === paint.font, cached.color === paint.color,
+               cached.resolvedColor == resolvedColor, cached.spacing == spacing,
+               cached.traits.isEqual(traits) { return cached.string }
+            let string = build()
+            cached = PlainTextTemplate(
+                font: paint.font,
+                color: paint.color,
+                resolvedColor: resolvedColor,
+                spacing: spacing,
+                traits: traits,
+                string: string
+            )
+            return string
+        }
+    }
+
     func makeAttributedString(
         _ inlines: [ViewerInline],
         paint: PreparedTextPaint,
         theme: PreparedProseTheme,
         warningSemanticGeneration: String,
-        ancestors: [String] = []
+        paragraphSpacing: CGFloat,
+        ancestors: [String] = [],
+        textPreparation: PlainTextPreparation? = nil
     ) -> PreparedAttributedBlock {
-        let result = NSMutableAttributedString()
+        var template: NSAttributedString?
+        if let textPreparation, inlines.count == 1, theme.styleSheet == nil, paint.textValues.isEmpty,
+           case let .text(text, marks) = inlines[0], !text.isEmpty, marks.isEmpty {
+            template = textPreparation.template(paint: paint, spacing: paragraphSpacing) {
+                let seed = makeAttributedString(
+                    [.text(text: PlainTextPreparation.seedText, marks: [])],
+                    paint: paint,
+                    theme: theme,
+                    warningSemanticGeneration: warningSemanticGeneration,
+                    paragraphSpacing: paragraphSpacing
+                )
+                let immutable = NSAttributedString(attributedString: seed.string)
+                plainTextTemplateBuildObserverForTesting?(immutable)
+                return immutable
+            }
+        }
+        let result = template.map { NSMutableAttributedString(attributedString: $0) } ?? NSMutableAttributedString()
+        let immutableParagraphStyle: NSParagraphStyle?
+        if template == nil {
+            let paragraphStyle = NSMutableParagraphStyle()
+            paragraphStyle.paragraphSpacing = paragraphSpacing
+            immutableParagraphStyle = unsafeDowncast(paragraphStyle.copy() as AnyObject, to: NSParagraphStyle.self)
+        } else { immutableParagraphStyle = nil }
         var atoms: [PreparedAtomSpec] = []
         var semanticRanges: [PreparedSemanticRange] = []
         var accessibilityRanges: [PreparedAccessibilityRange] = []
@@ -39,8 +99,14 @@ extension CoreTextProseLayoutEngine {
         for inline in inlines {
             switch inline {
             case let .text(text: text, marks: marks):
-                let start = result.length
-                result.append(NSAttributedString(string: text, attributes: attributes(for: marks, paint: paint, theme: theme, warningSemanticGeneration: warningSemanticGeneration, ancestors: ancestors)))
+                let start = template == nil ? result.length : 0
+                if template != nil {
+                    result.replaceCharacters(in: NSRange(location: 0, length: result.length), with: text)
+                } else {
+                    var textAttributes = attributes(for: marks, paint: paint, theme: theme, warningSemanticGeneration: warningSemanticGeneration, ancestors: ancestors)
+                    textAttributes[.paragraphStyle] = immutableParagraphStyle!
+                    result.append(NSAttributedString(string: text, attributes: textAttributes))
+                }
                 let range = NSRange(location: start, length: (text as NSString).length)
                 if let href = href(in: marks), !text.isEmpty {
                     let semanticIndex: Int
@@ -58,6 +124,7 @@ extension CoreTextProseLayoutEngine {
                 }
             case let .atom(nodeType: nodeType, docPos: docPos, attrsJSON: attrsJSON, label: label):
                 if nodeType == "hardBreak" || nodeType == "hard_break" {
+                    RenderBridge.overrideTrailingParagraphSpacing(in: result, paragraphSpacing: 0)
                     let range = NSRange(location: result.length, length: 1)
                     result.append(NSAttributedString(string: "\n", attributes: baseAttributes(paint)))
                     appendAccessibilityRange(range, label: "\n", role: .text)
@@ -162,6 +229,7 @@ extension CoreTextProseLayoutEngine {
             }
             return coreTextAttributes(resolved)
         }
+        if marks.isEmpty && paint.textValues.isEmpty { return baseAttributes(paint) }
         var linkTheme: EditorLinkTheme?
         var explicitForeground: UIColor?
         var background: UIColor?
@@ -256,11 +324,11 @@ extension CoreTextProseLayoutEngine {
     ) -> [PreparedProseFragment] {
         let unit = displayScale.isFinite && displayScale > 0 ? 1 / displayScale : 1
         return (CTLineGetGlyphRuns(line) as? [CTRun] ?? []).flatMap { run -> [PreparedProseFragment] in
-            let attributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
-            guard (attributes[preparedStrikeAttribute] as? NSNumber)?.boolValue == true,
-                  let colorValue = attributes[kCTForegroundColorAttributeName as NSAttributedString.Key]
+            let attributes = CTRunGetAttributes(run) as NSDictionary
+            guard (attributes[preparedStrikeAttribute.rawValue] as? NSNumber)?.boolValue == true,
+                  let colorValue = attributes[kCTForegroundColorAttributeName as String]
             else { return [] }
-            guard let color = (attributes[.strikethroughColor] as? UIColor)?.cgColor ?? coreTextColor(colorValue) else { return [] }
+            guard let color = (attributes[NSAttributedString.Key.strikethroughColor.rawValue] as? UIColor)?.cgColor ?? coreTextColor(colorValue) else { return [] }
             var ascent: CGFloat = 0
             let width = CGFloat(CTRunGetTypographicBounds(run, CFRange(location: 0, length: 0), &ascent, nil, nil))
             let stringRange = CTRunGetStringRange(run)
@@ -270,7 +338,7 @@ extension CoreTextProseLayoutEngine {
             guard extent.isFinite, extent > 0, ascent.isFinite, ascent > 0 else { return [] }
             let thickness = max(unit, min(2, ascent * 0.08))
             let centerY = lineOrigin.y - ascent * 0.35
-            let style = NSUnderlineStyle(rawValue: attributes[.strikethroughStyle] as? Int ?? NSUnderlineStyle.single.rawValue)
+            let style = NSUnderlineStyle(rawValue: attributes[NSAttributedString.Key.strikethroughStyle.rawValue] as? Int ?? NSUnderlineStyle.single.rawValue)
             let dotted = style.contains(.patternDot)
             let dashed = style.contains(.patternDash)
             let doubleLine = style.rawValue & 0xff == NSUnderlineStyle.double.rawValue
@@ -307,6 +375,11 @@ extension CoreTextProseLayoutEngine {
 
     func baseAttributes(_ paint: PreparedTextPaint) -> [NSAttributedString.Key: Any] {
         var attributes: [NSAttributedString.Key: Any] = [.font: paint.font, .foregroundColor: paint.color]
+        if paint.textValues.isEmpty {
+            attributes[kCTFontAttributeName as NSAttributedString.Key] = Self.coreTextFont(from: paint.font)
+            attributes[kCTForegroundColorAttributeName as NSAttributedString.Key] = paint.color.cgColor
+            return attributes
+        }
         EditorStyleSheet.applyText(paint.textValues, to: &attributes)
         return coreTextAttributes(attributes)
     }
@@ -325,7 +398,7 @@ extension CoreTextProseLayoutEngine {
         if theme.styleSheet != nil {
             scale = !context.ordered && context.kind != "task"
                 ? EditorTheme.cgFloat(marker["scale"])
-                    ?? LayoutConstants.unorderedListMarkerFontScale
+                ?? LayoutConstants.unorderedListMarkerFontScale
                 : 1
             if !context.ordered, context.kind != "task" {
                 let diameter = EditorLayoutManager.unorderedBulletDrawingRect(usedRect: .zero, lineFragmentRect: .zero, markerWidth: 0, baselineY: 0, baseFont: paint.font, markerScale: scale, origin: .zero).width
@@ -443,8 +516,8 @@ extension CoreTextProseLayoutEngine {
 
     func inlineBackgroundFragments(for line: CTLine, bounds: CGRect) -> [PreparedProseFragment] {
         (CTLineGetGlyphRuns(line) as? [CTRun] ?? []).compactMap { run in
-            let attributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
-            guard let value = attributes[kCTBackgroundColorAttributeName as NSAttributedString.Key] else { return nil }
+            let attributes = CTRunGetAttributes(run) as NSDictionary
+            guard let value = attributes[kCTBackgroundColorAttributeName as String] else { return nil }
             guard let color = coreTextColor(value) else { return nil }
             let range = CTRunGetStringRange(run)
             let start = CGFloat(CTLineGetOffsetForStringIndex(line, range.location, nil))

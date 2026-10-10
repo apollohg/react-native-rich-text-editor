@@ -1,0 +1,18 @@
+--- a/src/undo.rs
++++ b/src/undo.rs
+@@ -699,8 +699,13 @@
+             }
+         }
+ 
+-        for &ptr in to_redo.iter() {
+-            let mut ptr = ptr;
++        // Iterate in a deterministic order: `to_redo` is a `HashSet<ItemPtr>` whose
++        // iteration order varies per process, and each `redo` consumes clock values,
++        // so an unordered walk binds re-inserted content to different IDs run to run.
++        let mut ordered: Vec<_> = to_redo.iter().copied().collect();
++        ordered.sort_unstable_by_key(|ptr| *ptr.id());
++
++        for mut ptr in ordered {
+             change_performed |= ptr
+                 .redo(&mut txn, &to_redo, &item.insertions, stack, other)
+                 .is_some();

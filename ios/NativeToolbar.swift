@@ -1,6 +1,6 @@
 import UIKit
 
-final class EditorAccessoryToolbarView: UIInputView {
+final class EditorAccessoryToolbarView: UIView {
     private static let baseHeight: CGFloat = 50
     private static let mentionRowHeight: CGFloat = 52
     private static let contentSpacing: CGFloat = 6
@@ -39,6 +39,9 @@ final class EditorAccessoryToolbarView: UIInputView {
     private var chromeBottomConstraint: NSLayoutConstraint?
     private var mentionRowHeightConstraint: NSLayoutConstraint?
     private var scrollViewHeightConstraint: NSLayoutConstraint?
+    private var accessoryHeightConstraint: NSLayoutConstraint?
+    private var accessoryBottomSafeAreaInset: CGFloat = 0
+    private var accessoryHeightUpdateScheduled = false
     var buttonBindings: [ButtonBinding] = []
     var separators: [UIView] = []
     var mentionButtons: [MentionSuggestionChipButton] = []
@@ -51,6 +54,7 @@ final class EditorAccessoryToolbarView: UIInputView {
     var editMenuPresenter: AnyObject?
     var onPressItem: ((NativeToolbarItem) -> Void)?
     var onSelectMentionSuggestion: ((NativeMentionSuggestion) -> Void)?
+    var onKeyboardGeometryMayChange: (() -> Void)?
     var isShowingMentionSuggestions: Bool {
         !mentionButtons.isEmpty && !mentionScrollView.isHidden && scrollView.isHidden
     }
@@ -108,21 +112,42 @@ final class EditorAccessoryToolbarView: UIInputView {
         let contentHeight = mentionButtons.isEmpty ? resolvedToolbarHeight : Self.mentionRowHeight
         return CGSize(
             width: UIView.noIntrinsicMetric,
-            height: contentHeight + resolvedKeyboardOffset
+            height: contentHeight + Self.contentSpacing * 2 + resolvedKeyboardOffset + accessoryBottomSafeAreaInset
         )
     }
 
-    convenience init(frame: CGRect) {
-        self.init(frame: frame, inputViewStyle: .keyboard)
+    override func safeAreaInsetsDidChange() {
+        super.safeAreaInsetsDidChange()
+        guard !accessoryHeightUpdateScheduled else { return }
+        accessoryHeightUpdateScheduled = true
+        // Finish UIKit's keyboard layout before changing accessory geometry.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.accessoryHeightUpdateScheduled = false
+            self.accessoryBottomSafeAreaInset = self.safeAreaInsets.bottom
+            self.updateAccessoryHeight()
+        }
     }
 
-    override init(frame: CGRect, inputViewStyle: UIInputView.Style) {
-        super.init(frame: frame, inputViewStyle: inputViewStyle)
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        onKeyboardGeometryMayChange?()
+    }
+
+    private func updateAccessoryHeight() {
+        let height = intrinsicContentSize.height
+        guard let accessoryHeightConstraint, accessoryHeightConstraint.constant != height else { return }
+        accessoryHeightConstraint.constant = height
+        invalidateIntrinsicContentSize()
+    }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
         translatesAutoresizingMaskIntoConstraints = false
-        autoresizingMask = [.flexibleHeight]
+        // Flexible-height accessory sizing can loop during interactive dismissal.
+        autoresizingMask = [.flexibleWidth]
         backgroundColor = .clear
         isOpaque = false
-        allowsSelfSizing = true
         setupView()
         if #available(iOS 16.0, *) {
             let presenter = ToolbarEditMenuPresenter()
@@ -278,7 +303,7 @@ final class EditorAccessoryToolbarView: UIInputView {
         chromeTrailingConstraint?.constant = -resolvedHorizontalInset
         chromeBottomConstraint?.constant = -resolvedKeyboardOffset
         scrollViewHeightConstraint?.constant = resolvedToolbarHeight
-        invalidateIntrinsicContentSize()
+        updateAccessoryHeight()
         for separator in separators {
             separator.backgroundColor = usesNativeAppearance
                 ? UIColor.separator.withAlphaComponent(0.45)
@@ -341,7 +366,6 @@ final class EditorAccessoryToolbarView: UIInputView {
         scrollView.isHidden = hasSuggestions
         mentionRowHeightConstraint?.constant = hasSuggestions ? Self.mentionRowHeight : 0
         apply(theme: theme, animateChrome: hadSuggestions != hasSuggestions)
-        invalidateIntrinsicContentSize()
         setNeedsLayout()
         return hadSuggestions != hasSuggestions
     }
@@ -477,8 +501,11 @@ final class EditorAccessoryToolbarView: UIInputView {
         mentionRowHeightConstraint = mentionHeight
         let scrollViewHeight = scrollView.heightAnchor.constraint(equalToConstant: resolvedToolbarHeight)
         scrollViewHeightConstraint = scrollViewHeight
+        let accessoryHeight = heightAnchor.constraint(equalToConstant: intrinsicContentSize.height)
+        accessoryHeightConstraint = accessoryHeight
 
         NSLayoutConstraint.activate([
+            accessoryHeight,
             chromeView.topAnchor.constraint(equalTo: topAnchor),
             leading,
             trailing,
@@ -494,10 +521,13 @@ final class EditorAccessoryToolbarView: UIInputView {
             glassTintView.trailingAnchor.constraint(equalTo: chromeView.trailingAnchor),
             glassTintView.bottomAnchor.constraint(equalTo: chromeView.bottomAnchor),
 
-            bodyStackView.topAnchor.constraint(equalTo: chromeView.topAnchor, constant: 6),
+            bodyStackView.topAnchor.constraint(equalTo: chromeView.topAnchor, constant: Self.contentSpacing),
             bodyStackView.leadingAnchor.constraint(equalTo: chromeView.leadingAnchor),
             bodyStackView.trailingAnchor.constraint(equalTo: chromeView.trailingAnchor),
-            bodyStackView.bottomAnchor.constraint(equalTo: chromeView.safeAreaLayoutGuide.bottomAnchor, constant: -6),
+            bodyStackView.bottomAnchor.constraint(
+                equalTo: chromeView.safeAreaLayoutGuide.bottomAnchor,
+                constant: -Self.contentSpacing
+            ),
 
             mentionHeight,
 

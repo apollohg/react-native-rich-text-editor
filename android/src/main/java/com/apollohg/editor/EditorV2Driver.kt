@@ -57,9 +57,15 @@ internal interface EditorV2Driver {
         text: String?,
         plainText: Boolean,
         anchor: Int,
-        head: Int,
-        preserveEngineSelection: Boolean = false
+        head: Int
     ): String?
+    fun pasteAtEngineSelection(
+        fragment: String?,
+        html: String?,
+        text: String?,
+        plainText: Boolean
+    ): String?
+    fun clearSelectedTableCells(): String?
     fun toggleMark(markName: String, anchor: Int, head: Int): String?
     fun setMark(markName: String, attrsJson: String, anchor: Int, head: Int): String?
     fun unsetMark(markName: String, anchor: Int, head: Int): String?
@@ -83,6 +89,7 @@ internal interface EditorV2Driver {
     fun docPositionForScalar(scalar: Int): Int?
 
     fun currentStateJson(): String?
+    fun currentSelectionStateJson(): String?
     fun documentHtml(): String?
     fun documentJson(): String?
     fun contentSnapshotJson(): String?

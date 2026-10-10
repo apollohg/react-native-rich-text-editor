@@ -3,7 +3,58 @@ use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
 const MAX_NESTING_DEPTH: usize = 128;
 const MAX_AUTOMATON_STATES: usize = 10_000;
+const COMPACT_MATCH_STATES: usize = u64::BITS as usize;
 pub(crate) const DEFAULT_RUNTIME_WORK_LIMIT: usize = 100_000 * 128;
+
+trait MatchingStates: Default + IntoIterator<Item = usize> {
+    fn insert_state(&mut self, state: usize) -> bool;
+    fn contains_state(&self, state: usize) -> bool;
+    fn is_empty(&self) -> bool;
+}
+
+impl MatchingStates for HashSet<usize> {
+    fn insert_state(&mut self, state: usize) -> bool {
+        self.insert(state)
+    }
+    fn contains_state(&self, state: usize) -> bool {
+        self.contains(&state)
+    }
+    fn is_empty(&self) -> bool {
+        HashSet::is_empty(self)
+    }
+}
+
+#[derive(Default)]
+struct CompactMatchingStates(u64);
+
+impl MatchingStates for CompactMatchingStates {
+    fn insert_state(&mut self, state: usize) -> bool {
+        let mask = 1u64 << state;
+        let inserted = self.0 & mask == 0;
+        self.0 |= mask;
+        inserted
+    }
+
+    fn contains_state(&self, state: usize) -> bool {
+        self.0 & (1u64 << state) != 0
+    }
+    fn is_empty(&self) -> bool {
+        self.0 == 0
+    }
+}
+
+impl Iterator for CompactMatchingStates {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<usize> {
+        if self.0 == 0 {
+            return None;
+        }
+        let state = self.0.trailing_zeros() as usize;
+        self.0 &= self.0 - 1;
+        Some(state)
+    }
+}
 
 pub(crate) struct WorkBudget {
     remaining: Cell<usize>,
@@ -158,15 +209,35 @@ impl ContentRule {
     pub(crate) fn matches_with_budget<T, F>(
         &self,
         children: &[T],
+        symbol_matches: F,
+        budget: &WorkBudget,
+    ) -> Result<bool, ()>
+    where
+        F: FnMut(&T, &str) -> bool,
+    {
+        if self.states.len() <= COMPACT_MATCH_STATES {
+            self.matches_with_states::<CompactMatchingStates, _, _>(
+                children,
+                symbol_matches,
+                budget,
+            )
+        } else {
+            self.matches_with_states::<HashSet<usize>, _, _>(children, symbol_matches, budget)
+        }
+    }
+
+    fn matches_with_states<S: MatchingStates, T, F>(
+        &self,
+        children: &[T],
         mut symbol_matches: F,
         budget: &WorkBudget,
     ) -> Result<bool, ()>
     where
         F: FnMut(&T, &str) -> bool,
     {
-        let mut current = self.epsilon_closure_budgeted([self.start], budget)?;
+        let mut current = self.epsilon_closure_with_states::<S, _>([self.start], budget)?;
         for child in children {
-            let mut next = HashSet::new();
+            let mut next = S::default();
             for state in current {
                 if !budget.consume() {
                     return Err(());
@@ -176,16 +247,16 @@ impl ContentRule {
                         return Err(());
                     }
                     if symbol_matches(child, symbol) {
-                        next.insert(*target);
+                        next.insert_state(*target);
                     }
                 }
             }
             if next.is_empty() {
                 return Ok(false);
             }
-            current = self.epsilon_closure_budgeted(next, budget)?;
+            current = self.epsilon_closure_with_states(next, budget)?;
         }
-        Ok(current.contains(&self.accept))
+        Ok(current.contains_state(self.accept))
     }
 
     /// Return symbols accepted immediately after the supplied prefix.
@@ -411,13 +482,22 @@ impl ContentRule {
     where
         I: IntoIterator<Item = usize>,
     {
-        let mut result = HashSet::new();
-        let mut pending: Vec<usize> = initial.into_iter().collect();
+        self.epsilon_closure_with_states(initial, budget)
+    }
+
+    fn epsilon_closure_with_states<S: MatchingStates, I: IntoIterator<Item = usize>>(
+        &self,
+        initial: I,
+        budget: &WorkBudget,
+    ) -> Result<S, ()> {
+        let mut result = S::default();
+        let mut pending: smallvec::SmallVec<[usize; COMPACT_MATCH_STATES]> =
+            initial.into_iter().collect();
         while let Some(state) = pending.pop() {
             if !budget.consume() {
                 return Err(());
             }
-            if result.insert(state) {
+            if result.insert_state(state) {
                 pending.extend(self.states[state].epsilon.iter().copied());
             }
         }
@@ -842,3 +922,7 @@ mod tests {
         assert!(ContentRule::parse("(a{101}){101}").is_err());
     }
 }
+
+#[cfg(test)]
+#[path = "content_rule/matching_tests.rs"]
+mod matching_tests;

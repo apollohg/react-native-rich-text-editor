@@ -199,6 +199,9 @@ function canonicalNode(node: NodeSpec): CanonicalObject {
             ? []
             : ([ [ 'deletableOnBackspace', node.deletableOnBackspace ] ] as const)),
         [ 'allowUndeclaredAttrs', node.allowUndeclaredAttrs ?? false ],
+        ...(node.tableRole == null
+            ? []
+            : ([ [ 'tableRole', node.tableRole ] ] as const)),
     ]);
 }
 

@@ -302,11 +302,13 @@ fn every_localized_render_stage_failure_falls_back_with_exact_parity() {
         let state = engine.derived_state.as_ref().unwrap();
         let generic_state = generic.derived_state.as_ref().unwrap();
         assert_eq!(
-            state.validation_certificate, generic_state.validation_certificate,
+            state.materialized_identity_for_test().0,
+            generic_state.materialized_identity_for_test().0,
             "{stage:?}"
         );
         assert_eq!(
-            state.localized_text_index, generic_state.localized_text_index,
+            state.materialized_identity_for_test().1,
+            generic_state.materialized_identity_for_test().1,
             "{stage:?}"
         );
         assert_eq!(
@@ -420,7 +422,14 @@ fn localized_render_failure_exposes_only_the_generic_transition_error() {
     assert!(generic.error.message.contains("AllocationFailed"));
     assert_eq!(generic.cached_counts, (0, 1, 0, 0, 0));
     assert_eq!(generic.lifecycle_counts, (0, 0, 0));
-    assert_eq!(generic.full_pass_counts, FullPassCounts::default());
+    assert_eq!(
+        generic.full_pass_counts,
+        FullPassCounts {
+            table_projection_derivations: 1,
+            whole_state_encodings: 1,
+            ..FullPassCounts::default()
+        }
+    );
     for stage in [
         LocalizedRenderFailureStage::Allocation,
         LocalizedRenderFailureStage::Resource,

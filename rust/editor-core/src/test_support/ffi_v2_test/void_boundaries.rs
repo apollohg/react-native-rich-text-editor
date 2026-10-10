@@ -425,12 +425,7 @@ fn forward_delete_before_first_blank_paragraph_does_not_remove_it() {
         { "type": "counterCard", "attrs": { "count": 7 } },
     ]);
     let id = create_handle(config);
-    let render = ok_json(&v2_render::editor_v2_render_native(
-        id.clone(),
-        "4".into(),
-        None,
-        None,
-    ));
+    let render = native_frame_snapshot(&id, "4");
     let epoch = render["positionEpoch"].as_str().unwrap();
 
     let outcome = ok_json(&v2::editor_v2_apply_native_intent(
@@ -760,7 +755,10 @@ fn backspace_in_empty_paragraph_preserves_protected_horizontal_rule() {
             id.clone(),
             command_envelope(2, revision_of(&id), json!({"type": "deleteBackward"})),
         ));
-        assert_eq!(document_json_of(&id), json!({"type": "doc", "content": [rule]}));
+        assert_eq!(
+            document_json_of(&id),
+            json!({"type": "doc", "content": [rule]})
+        );
         destroy_handle(&id);
     }
 }

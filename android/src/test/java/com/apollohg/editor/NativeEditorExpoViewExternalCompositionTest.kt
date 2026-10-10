@@ -93,7 +93,7 @@ class NativeEditorExpoViewExternalCompositionTest : NativeEditorExpoViewTestSupp
             shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(200))
 
             assertEquals("aXc", editText.text.toString())
-            assertEquals(0, backend.calls.count { it == "renderNative" })
+            assertEquals(0, backend.calls.count { it == "renderNativeFrame" })
 
             val resultJson = view.commitExternalTextComposition("speech-remote-first", "Y")
             shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(200))

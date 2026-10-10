@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use serde::Serialize;
 
 use super::{AttrSpec, MarkSpec, NodeRole, NodeSpec, Schema};
+use crate::tables::TableRole;
 
 #[cfg(test)]
 std::thread_local! {
@@ -49,6 +50,8 @@ struct CanonicalNode<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     deletable_on_backspace: Option<bool>,
     allow_undeclared_attrs: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    table_role: Option<&'static str>,
 }
 
 #[derive(Serialize)]
@@ -205,6 +208,7 @@ impl<'a> From<&'a NodeSpec> for CanonicalNode<'a> {
             is_void: spec.is_void,
             deletable_on_backspace: spec.deletable_on_backspace,
             allow_undeclared_attrs: spec.allow_undeclared_attrs,
+            table_role: spec.table_role.map(TableRole::as_str),
         }
     }
 }
@@ -383,6 +387,7 @@ mod tests {
                     is_void: false,
                     deletable_on_backspace: None,
                     allow_undeclared_attrs: false,
+                    table_role: None,
                 },
                 NodeSpec {
                     name: "list".into(),
@@ -396,6 +401,7 @@ mod tests {
                     is_void: false,
                     deletable_on_backspace: None,
                     allow_undeclared_attrs: false,
+                    table_role: None,
                 },
                 NodeSpec {
                     name: "text".into(),
@@ -409,6 +415,7 @@ mod tests {
                     is_void: false,
                     deletable_on_backspace: None,
                     allow_undeclared_attrs: false,
+                    table_role: None,
                 },
             ],
             vec![],

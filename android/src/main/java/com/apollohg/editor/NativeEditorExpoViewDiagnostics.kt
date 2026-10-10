@@ -29,7 +29,7 @@ internal fun NativeEditorExpoView.traceOutsideTapImpl(message: String) {
 
 internal fun NativeEditorExpoView.handleDetachedFromWindowForTestingImpl() {
     prepareForDetachFromWindow()
-    richTextView.editorEditText.retireInputConnectionForHostDetach()
+    richTextView.activeTextInput.retireInputConnectionForHostDetach()
     handleDetachedFromWindow()
 }
 

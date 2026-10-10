@@ -1,0 +1,194 @@
+{
+    "standardLibraryVersion": "1.95.0",
+    "packages": [
+        {
+            "manifest": "rust/editor-core/Cargo.toml",
+            "output": "THIRD_PARTY_NOTICES.md",
+            "description": "`@apollohg/react-native-rich-text-editor` — core Rust engine, generated UniFFI bindings, native dependencies, and copied Material Design Icons assets. The optional `@apollohg/react-native-rich-text-editor-code-highlighting` package has its own notices file.",
+            "supplement": "scripts/notices/core-supplement.md"
+        },
+        {
+            "manifest": "packages/code-highlighting/rust/Cargo.toml",
+            "output": "packages/code-highlighting/THIRD_PARTY_NOTICES.md",
+            "description": "`@apollohg/react-native-rich-text-editor-code-highlighting` — syntect, two-face, their dependencies, and bundled grammar/theme assets. The base editor is a peer dependency and supplies its own notices.",
+            "supplement": "scripts/notices/highlighting-supplement.md",
+            "reviewedAssetVersions": {
+                "syntect": "5.3.0",
+                "two-face": "0.5.1"
+            }
+        }
+    ],
+    "localSources": {
+        "sha2@0.10.9": {
+            "directory": "rust/vendor/sha2",
+            "source": "https://github.com/apollohg/react-native-rich-text-editor/tree/main/rust/vendor/sha2"
+        },
+        "yrs@0.28.0": {
+            "directory": "rust/vendor/yrs",
+            "source": "https://github.com/apollohg/react-native-rich-text-editor/tree/main/rust/vendor/yrs"
+        }
+    },
+    "overrides": {
+        "fxhash@0.2.1": {
+            "license": "Apache-2.0/MIT",
+            "files": [
+                {
+                    "path": "scripts/notices/licenses/fxhash-source-notice.txt",
+                    "source": "https://docs.rs/crate/fxhash/0.2.1/source/lib.rs",
+                    "label": "Upstream source notice"
+                },
+                {
+                    "path": "scripts/notices/licenses/APACHE-2.0.txt",
+                    "source": "https://www.apache.org/licenses/LICENSE-2.0",
+                    "label": "Apache-2.0 (selected alternative)"
+                }
+            ],
+            "note": "This distribution selects the Apache-2.0 alternative."
+        },
+        "mac@0.1.1": {
+            "license": "MIT/Apache-2.0",
+            "files": [
+                {
+                    "path": "scripts/notices/licenses/mac-authorship.txt",
+                    "source": "https://docs.rs/crate/mac/0.1.1/source/README.md",
+                    "label": "Upstream authorship and licensing"
+                },
+                {
+                    "path": "scripts/notices/licenses/APACHE-2.0.txt",
+                    "source": "https://www.apache.org/licenses/LICENSE-2.0",
+                    "label": "Apache-2.0 (selected alternative)"
+                }
+            ],
+            "note": "This distribution selects the Apache-2.0 alternative."
+        },
+        "match_token@0.1.0": {
+            "license": "MIT OR Apache-2.0",
+            "files": [
+                {
+                    "path": "scripts/notices/licenses/match_token-LICENSE-MIT.txt",
+                    "source": "https://raw.githubusercontent.com/servo/html5ever/0e4e125b8672abad4ff14d1e0043d3be9305af6a/LICENSE-MIT",
+                    "label": "match_token-LICENSE-MIT.txt"
+                },
+                {
+                    "path": "scripts/notices/licenses/match_token-LICENSE-APACHE.txt",
+                    "source": "https://raw.githubusercontent.com/servo/html5ever/0e4e125b8672abad4ff14d1e0043d3be9305af6a/LICENSE-APACHE",
+                    "label": "match_token-LICENSE-APACHE.txt"
+                },
+                {
+                    "path": "scripts/notices/licenses/match_token-COPYRIGHT.txt",
+                    "source": "https://raw.githubusercontent.com/servo/html5ever/0e4e125b8672abad4ff14d1e0043d3be9305af6a/COPYRIGHT",
+                    "label": "match_token-COPYRIGHT.txt"
+                }
+            ]
+        },
+        "selectors@0.26.0": {
+            "license": "MPL-2.0",
+            "files": [
+                {
+                    "path": "scripts/notices/licenses/selectors-MPL-2.0.txt",
+                    "source": "https://www.mozilla.org/MPL/2.0/",
+                    "label": "MPL-2.0"
+                }
+            ]
+        },
+        "uniffi@0.29.5": {
+            "license": "MPL-2.0",
+            "files": [
+                {
+                    "path": "scripts/notices/licenses/uniffi-LICENSE.txt",
+                    "source": "https://raw.githubusercontent.com/mozilla/uniffi-rs/856f77b6fdf78fae45bc3c394499df60f8cc5851/LICENSE",
+                    "label": "uniffi-LICENSE.txt"
+                }
+            ]
+        },
+        "uniffi_bindgen@0.29.5": {
+            "license": "MPL-2.0",
+            "files": [
+                {
+                    "path": "scripts/notices/licenses/uniffi-LICENSE.txt",
+                    "source": "https://raw.githubusercontent.com/mozilla/uniffi-rs/856f77b6fdf78fae45bc3c394499df60f8cc5851/LICENSE",
+                    "label": "uniffi-LICENSE.txt"
+                }
+            ]
+        },
+        "uniffi_build@0.29.5": {
+            "license": "MPL-2.0",
+            "files": [
+                {
+                    "path": "scripts/notices/licenses/uniffi-LICENSE.txt",
+                    "source": "https://raw.githubusercontent.com/mozilla/uniffi-rs/856f77b6fdf78fae45bc3c394499df60f8cc5851/LICENSE",
+                    "label": "uniffi-LICENSE.txt"
+                }
+            ]
+        },
+        "uniffi_core@0.29.5": {
+            "license": "MPL-2.0",
+            "files": [
+                {
+                    "path": "scripts/notices/licenses/uniffi-LICENSE.txt",
+                    "source": "https://raw.githubusercontent.com/mozilla/uniffi-rs/856f77b6fdf78fae45bc3c394499df60f8cc5851/LICENSE",
+                    "label": "uniffi-LICENSE.txt"
+                }
+            ]
+        },
+        "uniffi_internal_macros@0.29.5": {
+            "license": "MPL-2.0",
+            "files": [
+                {
+                    "path": "scripts/notices/licenses/uniffi-LICENSE.txt",
+                    "source": "https://raw.githubusercontent.com/mozilla/uniffi-rs/856f77b6fdf78fae45bc3c394499df60f8cc5851/LICENSE",
+                    "label": "uniffi-LICENSE.txt"
+                }
+            ]
+        },
+        "uniffi_macros@0.29.5": {
+            "license": "MPL-2.0",
+            "files": [
+                {
+                    "path": "scripts/notices/licenses/uniffi-LICENSE.txt",
+                    "source": "https://raw.githubusercontent.com/mozilla/uniffi-rs/856f77b6fdf78fae45bc3c394499df60f8cc5851/LICENSE",
+                    "label": "uniffi-LICENSE.txt"
+                }
+            ]
+        },
+        "uniffi_meta@0.29.5": {
+            "license": "MPL-2.0",
+            "files": [
+                {
+                    "path": "scripts/notices/licenses/uniffi-LICENSE.txt",
+                    "source": "https://raw.githubusercontent.com/mozilla/uniffi-rs/856f77b6fdf78fae45bc3c394499df60f8cc5851/LICENSE",
+                    "label": "uniffi-LICENSE.txt"
+                }
+            ]
+        },
+        "uniffi_pipeline@0.29.5": {
+            "license": "MPL-2.0",
+            "files": [
+                {
+                    "path": "scripts/notices/licenses/uniffi-LICENSE.txt",
+                    "source": "https://raw.githubusercontent.com/mozilla/uniffi-rs/856f77b6fdf78fae45bc3c394499df60f8cc5851/LICENSE",
+                    "label": "uniffi-LICENSE.txt"
+                }
+            ]
+        },
+        "uniffi_udl@0.29.5": {
+            "license": "MPL-2.0",
+            "files": [
+                {
+                    "path": "scripts/notices/licenses/uniffi-LICENSE.txt",
+                    "source": "https://raw.githubusercontent.com/mozilla/uniffi-rs/856f77b6fdf78fae45bc3c394499df60f8cc5851/LICENSE",
+                    "label": "uniffi-LICENSE.txt"
+                }
+            ]
+        },
+        "yrs@0.28.0": {
+            "license": "MIT",
+            "files": [
+                {
+                    "path": "scripts/notices/licenses/yrs-LICENSE.txt",
+                    "source": "https://raw.githubusercontent.com/y-crdt/y-crdt/23b7f5693bbf9e7d26340c521ee8647f79bdfba2/LICENSE"
+                }
+            ]
+        }
+    }
+}

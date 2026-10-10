@@ -1,3 +1,15 @@
+fn native_frame_snapshot(id: &str, owner: &str) -> Value {
+    let result = crate::ffi_v2::native_frame::editor_v2_render_native_frame(
+        id.into(),
+        Some(owner.into()),
+        None,
+        None,
+    );
+    assert!(result.error.is_none(), "native frame: {:?}", result.error);
+    serde_json::from_str(&result.frame.expect("native frame").snapshot_json)
+        .expect("native snapshot")
+}
+
 #[test]
 fn native_intent_ffi_is_strict_owner_scoped_and_idempotent() {
     let id = create_handle(json!({
@@ -7,12 +19,7 @@ fn native_intent_ffi_is_strict_owner_scoped_and_idempotent() {
         },
     }));
     assert_eq!(state_of(&id)["documentOrigin"], "import");
-    let render = ok_json(&v2_render::editor_v2_render_native(
-        id.clone(),
-        "4".into(),
-        None,
-        None,
-    ));
+    let render = native_frame_snapshot(&id, "4");
     let epoch = render["positionEpoch"].as_str().unwrap().to_owned();
     let request = json!({
         "version": 1,
@@ -36,12 +43,7 @@ fn native_intent_ffi_is_strict_owner_scoped_and_idempotent() {
         "ffXi seed"
     );
     assert_eq!(state_of(&id)["documentOrigin"], "nativeView");
-    let incremental_render = ok_json(&v2_render::editor_v2_render_native(
-        id.clone(),
-        "4".into(),
-        None,
-        None,
-    ));
+    let incremental_render = native_frame_snapshot(&id, "4");
     assert_eq!(incremental_render["renderBlocks"], Value::Null);
     assert!(incremental_render["renderPatch"].is_object());
     assert_eq!(
@@ -78,12 +80,7 @@ fn native_intent_ffi_is_strict_owner_scoped_and_idempotent() {
         id.clone(),
         "4".into(),
     ));
-    let recovered_render = ok_json(&v2_render::editor_v2_render_native(
-        id.clone(),
-        "4".into(),
-        None,
-        None,
-    ));
+    let recovered_render = native_frame_snapshot(&id, "4");
     assert!(recovered_render["renderBlocks"].is_array());
     assert_eq!(recovered_render["renderPatch"], Value::Null);
     assert_eq!(
@@ -98,7 +95,7 @@ fn native_intent_ffi_is_strict_owner_scoped_and_idempotent() {
 }
 
 #[test]
-fn external_full_render_pin_advances_the_native_patch_base() {
+fn external_full_render_pin_preserves_the_native_patch_base() {
     let document = |first: &str, third: &str| {
         json!({
             "type": "doc",
@@ -112,12 +109,7 @@ fn external_full_render_pin_advances_the_native_patch_base() {
     let id = create_handle(json!({
         "initialization": {"type": "localJson", "json": document("one", "three")},
     }));
-    let initial = ok_json(&v2_render::editor_v2_render_native(
-        id.clone(),
-        "41".into(),
-        None,
-        None,
-    ));
+    let initial = native_frame_snapshot(&id, "41");
     assert_eq!(initial["renderBlocks"].as_array().unwrap().len(), 3);
 
     ok_json(&v2::editor_v2_replace_document(
@@ -148,21 +140,20 @@ fn external_full_render_pin_advances_the_native_patch_base() {
         })
         .to_string(),
     ));
-    let incremental = ok_json(&v2_render::editor_v2_render_native(
-        id.clone(),
-        "41".into(),
-        None,
-        None,
-    ));
+    let incremental = native_frame_snapshot(&id, "41");
     assert_eq!(incremental["renderBlocks"], Value::Null);
-    assert_eq!(incremental["renderPatch"]["startIndex"], 2);
-    assert_eq!(incremental["renderPatch"]["deleteCount"], 1);
+    assert_eq!(
+        incremental["renderPatch"]["baseDocumentVersion"],
+        initial["documentVersion"]
+    );
+    assert_eq!(incremental["renderPatch"]["startIndex"], 0);
+    assert_eq!(incremental["renderPatch"]["deleteCount"], 3);
     assert_eq!(
         incremental["renderPatch"]["renderBlocks"]
             .as_array()
             .unwrap()
             .len(),
-        1
+        3
     );
     destroy_handle(&id);
 }
@@ -170,12 +161,7 @@ fn external_full_render_pin_advances_the_native_patch_base() {
 #[test]
 fn native_intent_ffi_expires_results_outside_the_replay_window() {
     let id = create_handle(json!({ "initialization": { "type": "localEmpty" } }));
-    let render = ok_json(&v2_render::editor_v2_render_native(
-        id.clone(),
-        "7".into(),
-        None,
-        None,
-    ));
+    let render = native_frame_snapshot(&id, "7");
     let epoch = render["positionEpoch"].as_str().unwrap();
     for request_id in 1..=257_u64 {
         let result = v2::editor_v2_apply_native_intent(

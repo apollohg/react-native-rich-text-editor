@@ -1,12 +1,6 @@
 package com.apollohg.editor
-import android.content.Context
 import android.os.Looper
 import android.view.inputmethod.EditorInfo
-import expo.modules.core.ModuleRegistry
-import expo.modules.kotlin.AppContext
-import expo.modules.kotlin.ModulesProvider
-import expo.modules.kotlin.modules.Module
-import java.lang.ref.WeakReference
 import java.math.BigDecimal
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -84,8 +78,6 @@ internal abstract class NativeEditorModuleTestFixture {
         }
     }
 
-    protected data class TestExpoContext(val context: Context, val appContext: AppContext)
-
     protected fun neverSocketFactory() = object : CollaborationSocketFactory {
         override fun makeSocket(
             url: String,
@@ -99,24 +91,5 @@ internal abstract class NativeEditorModuleTestFixture {
         is Map<*, *> -> value.values.any(::containsOrgJsonValue)
         is List<*> -> value.any(::containsOrgJsonValue)
         else -> false
-    }
-
-    protected fun testExpoContext(context: Context): TestExpoContext {
-        val reactContext = Class
-            .forName("com.facebook.react.bridge.BridgeReactContext")
-            .getConstructor(Context::class.java)
-            .newInstance(context) as Context
-        val modulesProvider = object : ModulesProvider {
-            override fun getModulesMap(): Map<Class<out Module>, String?> = emptyMap()
-        }
-        val constructor = AppContext::class.java.constructors.first { candidate ->
-            candidate.parameterTypes.size == 3
-        }
-        val appContext = constructor.newInstance(
-            modulesProvider,
-            ModuleRegistry(emptyList(), emptyList()),
-            WeakReference(reactContext)
-        ) as AppContext
-        return TestExpoContext(reactContext, appContext)
     }
 }

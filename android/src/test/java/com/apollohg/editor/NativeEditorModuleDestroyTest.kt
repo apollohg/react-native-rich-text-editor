@@ -1,20 +1,11 @@
 package com.apollohg.editor
-import android.content.Context
 import android.os.Looper
 import android.view.inputmethod.EditorInfo
-import expo.modules.core.ModuleRegistry
-import expo.modules.kotlin.AppContext
-import expo.modules.kotlin.ModulesProvider
-import expo.modules.kotlin.modules.Module
-import java.lang.ref.WeakReference
-import java.math.BigDecimal
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
-import org.json.JSONArray
 import org.json.JSONObject
-import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -27,7 +18,6 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import uniffi.editor_core.FfiError
-import uniffi.editor_core.FfiJsonResult
 import uniffi.editor_core.FfiUnitResult
 
 @RunWith(RobolectricTestRunner::class)
@@ -47,11 +37,11 @@ internal class NativeEditorModuleDestroyTest : NativeEditorModuleTestFixture() {
         )!!
         val viewToken = EditorV2Registry.register(adapter)
         NativeEditorViewRegistry.markEditorCreated(viewToken)
-        var preparationDuringDestroy: String? = null
+        var reservedDuringDestroy = false
 
         try {
             val result = destroyEditorV2FromModule(adapter.editorId) {
-                preparationDuringDestroy = NativeEditorViewRegistry.prepareForCommandJSON(viewToken)
+                reservedDuringDestroy = NativeEditorViewRegistry.isDestroyed(viewToken)
                 FfiUnitResult(
                     null,
                     FfiError(
@@ -68,10 +58,8 @@ internal class NativeEditorModuleDestroyTest : NativeEditorModuleTestFixture() {
             }
 
             assertEquals("OPERATION_INVALID", result.error?.code)
-            assertTrue(preparationDuringDestroy!!.contains("\"blockedReason\":\"destroyed\""))
-            assertTrue(
-                NativeEditorViewRegistry.prepareForCommandJSON(viewToken).contains("\"ready\":true")
-            )
+            assertTrue(reservedDuringDestroy)
+            assertFalse(NativeEditorViewRegistry.isDestroyed(viewToken))
             assertEquals(viewToken, EditorV2Registry.viewTokenForHandle(adapter.editorId))
         } finally {
             EditorV2Registry.remove(adapter.editorId)
@@ -254,9 +242,7 @@ internal class NativeEditorModuleDestroyTest : NativeEditorModuleTestFixture() {
             assertEquals("retryable", first.error?.message)
             assertEquals(viewToken, EditorV2Registry.viewTokenForHandle(adapter.editorId))
             assertFalse(EditorV2Registry.isHandleDestroyReservedForTesting(adapter.editorId))
-            assertTrue(
-                NativeEditorViewRegistry.prepareForCommandJSON(viewToken).contains("\"ready\":true")
-            )
+            assertFalse(NativeEditorViewRegistry.isDestroyed(viewToken))
 
             EditorV2Registry.onHandleDestroyReservationAcquiredForTesting = null
             val retry = destroyEditorV2FromModule(adapter.editorId, destroy)
@@ -346,10 +332,6 @@ internal class NativeEditorModuleDestroyTest : NativeEditorModuleTestFixture() {
                 assertNull(EditorV2Registry.viewTokenForHandle(adapter.editorId))
                 assertNull(EditorV2Registry.adapterForViewToken(viewToken))
                 assertTrue(NativeEditorViewRegistry.isDestroyed(viewToken))
-                assertTrue(
-                    NativeEditorViewRegistry.prepareForCommandJSON(viewToken)
-                        .contains("\"ready\":false")
-                )
             }
         }
         val firstFfiEntered = java.util.concurrent.CountDownLatch(1)

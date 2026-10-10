@@ -49,12 +49,12 @@ fn test_text_selection_from_to_forward() {
     let sel = Selection::text(1, 4);
     assert_eq!(
         sel.from(&document),
-        1,
+        Some(1),
         "from() should be min(anchor=1, head=4) = 1"
     );
     assert_eq!(
         sel.to(&document),
-        4,
+        Some(4),
         "to() should be max(anchor=1, head=4) = 4"
     );
 }
@@ -67,12 +67,12 @@ fn test_text_selection_from_to_backward() {
     let sel = Selection::text(5, 2);
     assert_eq!(
         sel.from(&document),
-        2,
+        Some(2),
         "from() should be min(anchor=5, head=2) = 2"
     );
     assert_eq!(
         sel.to(&document),
-        5,
+        Some(5),
         "to() should be max(anchor=5, head=2) = 5"
     );
 }
@@ -115,12 +115,12 @@ fn test_cursor_from_to_equal() {
     let sel = Selection::cursor(3);
     assert_eq!(
         sel.from(&document),
-        3,
+        Some(3),
         "cursor from() should equal the cursor position"
     );
     assert_eq!(
         sel.to(&document),
-        3,
+        Some(3),
         "cursor to() should equal the cursor position"
     );
 }
@@ -177,8 +177,8 @@ fn test_node_selection_from_to() {
     ]));
 
     let sel = Selection::node(4);
-    assert_eq!(sel.from(&document), 4, "node selection from() == pos");
-    assert_eq!(sel.to(&document), 4, "node selection to() == pos");
+    assert_eq!(sel.from(&document), Some(4), "node selection from() == pos");
+    assert_eq!(sel.to(&document), Some(4), "node selection to() == pos");
 }
 
 #[test]
@@ -194,10 +194,14 @@ fn test_all_selection_resolves_to_full_content() {
         document.content_size(),
         "AllSelection head should be doc.content_size()"
     );
-    assert_eq!(sel.from(&document), 0, "AllSelection from() should be 0");
+    assert_eq!(
+        sel.from(&document),
+        Some(0),
+        "AllSelection from() should be 0"
+    );
     assert_eq!(
         sel.to(&document),
-        document.content_size(),
+        Some(document.content_size()),
         "AllSelection to() should be doc.content_size()"
     );
 }

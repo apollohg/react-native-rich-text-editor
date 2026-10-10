@@ -244,7 +244,7 @@ fn nested_text_and_attribute_preflight_reject_gc_replaced_parents_without_panick
         fragment.remove_range(&mut txn, 0, 1);
         let quote = fragment.insert(&mut txn, 0, XmlElementPrelim::empty("blockquote"));
         let heading = quote.insert(&mut txn, 0, XmlElementPrelim::empty("heading"));
-        heading.insert_attribute(&mut txn, "level", Any::BigInt(2));
+        heading.insert_attribute(&mut txn, "level", Any::from(2_i64));
         heading.insert_attribute(&mut txn, "id", Any::String("old".into()));
         heading.insert(&mut txn, 0, XmlTextPrelim::new("heading"));
     }

@@ -13,6 +13,7 @@ import {
     withAtomsSchema,
     withImagesSchema,
     withMentionsSchema,
+    withTablesSchema,
     type EditorAddons,
     createMentionsAddon,
     type EditorTheme,
@@ -34,20 +35,30 @@ import {
     INSERT_COUNTER_ACTION_KEY,
     MENTION_SUGGESTIONS,
     MENTION_TRIGGER,
+    TABLE_NAMING_PRESET,
     TOGGLE_TASK_LIST_ACTION_KEY,
 } from './content';
 import { TASK_LIST_NODE_NAME, withTaskListSchema } from './taskList';
-import { editorTheme, FONT_SIZE, LINE_HEIGHT, mentionTheme, PALETTE, RADIUS, SPACE } from './theme';
+import {
+    editorTheme,
+    FONT_SIZE,
+    LINE_HEIGHT,
+    mentionTheme,
+    PALETTE,
+    RADIUS,
+    SPACE,
+} from './theme';
 
 const PICKED_IMAGE_COMPRESSION = 0.8;
 const NEW_COUNTER_TITLE = 'New counter';
 
-const documentSchema = withAtomsSchema(
-    withTaskListSchema(withImagesSchema(withMentionsSchema(defaultSchema))),
-    [ counterCardAtom ]
+const contentSchema = withTaskListSchema(
+    withImagesSchema(withTablesSchema(defaultSchema, { preset: TABLE_NAMING_PRESET }))
 );
 
 const editorAtoms = [ counterCardAtom ];
+
+const documentSchema = withAtomsSchema(withMentionsSchema(contentSchema), editorAtoms);
 
 const codeHighlightingAddon = createCodeHighlightingAddon({ theme: 'InspiredGitHub' });
 
@@ -236,9 +247,10 @@ async function pickImageUri(): Promise<string | null> {
     const saved = await rendered.saveAsync({
         format: SaveFormat.JPEG,
         compress: PICKED_IMAGE_COMPRESSION,
+        base64: true,
     });
 
-    return saved.uri;
+    return saved.base64 == null ? null : `data:image/jpeg;base64,${saved.base64}`;
 }
 
 const styles = StyleSheet.create({

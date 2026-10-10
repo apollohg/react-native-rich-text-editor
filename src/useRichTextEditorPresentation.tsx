@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { type ComponentRef, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { serializeEditorTheme } from './EditorTheme';
 import { serializeNormalizedEditorAddons } from './addons';
 import { serializeEditorImageLoadingPolicy } from './ImageLoadingPolicy';
@@ -6,7 +6,14 @@ import { serializeEditorAtoms, type AtomAttrsUpdate } from './atoms';
 import { AtomUpdateAttrsError, DEFAULT_ATOM_CHIP_HEIGHT, type AtomInstance } from './atomInstances';
 import { type NativeEditorDocumentHandle } from './NativeEditorBridge';
 import { DefaultAtomChip } from './DefaultAtomChip';
-import { Platform, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import {
+    Platform,
+    StyleSheet,
+    View,
+    type LayoutChangeEvent,
+    type StyleProp,
+    type ViewStyle,
+} from 'react-native';
 import { ATOM_CONTENT_NATIVE_ID_PREFIX, ATOM_NATIVE_ID_PREFIX } from './atomConstants';
 import { AtomHost, atomIsVisible } from './AtomHost';
 import { IMAGE_NODE_NAME } from './schemas';
@@ -16,6 +23,16 @@ import {
     type EditorToolbarCommand,
     type EditorToolbarListType,
 } from './EditorToolbar';
+import { useRegisteredEditorToolbarFrame } from './EditorToolbarRegistry';
+import { TableToolbar } from './TableToolbar';
+import { tableToolbarSelectionKey, useTableToolbar } from './useTableToolbar';
+import {
+    isFiniteSize,
+    keyboardSafeViewport,
+    windowToHostRect,
+    type Rect,
+    type Size,
+} from './TableToolbarPlacement';
 import { type useRichTextEditorState } from './useRichTextEditorState';
 import { type useRichTextEditorMentions } from './useRichTextEditorMentions';
 import { type useRichTextEditorCommands } from './useRichTextEditorCommands';
@@ -26,6 +43,7 @@ import {
     mapToolbarItemsForNative,
     stringifyCachedJson,
     serializeToolbarFrames,
+    externalCompositionErrorPayload,
 } from './RichTextEditorSerialization';
 import { styles, NativeEditorView } from './RichTextEditorNativeView';
 
@@ -78,6 +96,9 @@ export function useRichTextEditorPresentation(
         | 'autoCorrect'
         | 'keyboardType'
         | 'allowImageResizing'
+        | 'tableDirection'
+        | 'tableToolbar'
+        | 'tableSelection'
         | 'toolbarFrameOwnerId'
         | 'onToolbarAction'
     > &
@@ -99,6 +120,7 @@ export function useRichTextEditorPresentation(
             | 'commandOutdentListItem'
             | 'openLinkRequest'
             | 'openImageRequest'
+            | 'editorHandleRef'
         > &
         Pick<
             ReturnType<typeof useRichTextEditorEvents>,
@@ -106,6 +128,7 @@ export function useRichTextEditorPresentation(
             | 'handleEditorError'
             | 'handleExternalTextCompositionEnd'
             | 'handleSelectionChange'
+            | 'handleTableSelectionGeometry'
             | 'handleFocusChange'
             | 'handleContentHeightChange'
             | 'handleAtomLayout'
@@ -163,10 +186,15 @@ export function useRichTextEditorPresentation(
         autoCorrect,
         keyboardType,
         allowImageResizing,
+        tableDirection,
+        tableToolbar,
+        tableSelection,
+        editorHandleRef,
         handleEditorUpdate,
         handleEditorError,
         handleExternalTextCompositionEnd,
         handleSelectionChange,
+        handleTableSelectionGeometry,
         handleFocusChange,
         handleContentHeightChange,
         handleAtomLayout,
@@ -394,6 +422,138 @@ export function useRichTextEditorPresentation(
             invokeAtomAction ]
     );
 
+    const tableToolbarHostRef = useRef<ComponentRef<typeof View> | null>(null);
+
+    const tableToolbarHostMeasurementRef = useRef(0);
+
+    const [ tableToolbarHostOrigin, setTableToolbarHostOrigin ] = useState<Pick<
+        Rect,
+        'x' | 'y'
+    > | null>(null);
+
+    const [ tableToolbarSize, setTableToolbarSize ] = useState<Size | null>(null);
+
+    const usesNativeTableEditMenu = Platform.OS === 'ios' || Platform.OS === 'android';
+    const nativeTableEditMenuEnabled = usesNativeTableEditMenu && tableToolbar === undefined && editable;
+    const tableToolbarEnabled = tableToolbar !== false && editable && isFocused &&
+        (!usesNativeTableEditMenu || typeof tableToolbar === 'function');
+
+    const measureTableToolbarHost = useCallback(() => {
+        const measurement = ++tableToolbarHostMeasurementRef.current;
+        const host = tableToolbarHostRef.current;
+
+        if (host == null) {
+            return;
+        }
+
+        host.measureInWindow((x, y) => {
+            if (
+                tableToolbarHostMeasurementRef.current !== measurement ||
+                !Number.isFinite(x) ||
+                !Number.isFinite(y)
+            ) {
+                return;
+            }
+
+            setTableToolbarHostOrigin(current =>
+                current?.x === x && current.y === y ? current : { x, y });
+        });
+    }, []);
+
+    useEffect(() => {
+        if (tableSelection == null) {
+            tableToolbarHostMeasurementRef.current += 1;
+            setTableToolbarHostOrigin(null);
+
+            return;
+        }
+
+        measureTableToolbarHost();
+    }, [ measureTableToolbarHost, tableSelection ]);
+
+    useEffect(
+        () => () => {
+            tableToolbarHostMeasurementRef.current += 1;
+        },
+        []
+    );
+
+    const tableToolbarSafeViewport = useMemo(
+        () =>
+            tableSelection == null
+                ? null
+                : keyboardSafeViewport(
+                    tableSelection.obstructions,
+                    tableSelection.geometry.rects,
+                    tableSelection.geometry.viewport
+                ),
+        [ tableSelection ]
+    );
+
+    const documentRevision = document.documentRevision;
+
+    const tableToolbarIdentity = useMemo(
+        () =>
+            tableSelection == null || documentRevision == null
+                ? null
+                : {
+                    editorId,
+                    ownerId: toolbarFrameOwnerId,
+                    documentRevision,
+                    layoutEpoch: tableSelection.geometry.layoutEpoch,
+                },
+        [ documentRevision, editorId, tableSelection, toolbarFrameOwnerId ]
+    );
+
+    const reportTableToolbarError = useCallback(
+        (error: unknown) => {
+            documentHandle.bridge._emitAutonomousError(externalCompositionErrorPayload(error));
+        },
+        [ documentHandle ]
+    );
+
+    const tableToolbarState = useTableToolbar({
+        editor: editorHandleRef,
+        geometry: tableSelection?.geometry ?? null,
+        identity: tableToolbarIdentity,
+        activeState,
+        safeViewport: tableToolbarSafeViewport,
+        size: tableToolbarSize,
+        enabled: tableToolbarEnabled && tableSelection?.editMenuVisible !== true,
+        onError: reportTableToolbarError,
+    });
+
+    const tableToolbarHostFrame =
+        tableToolbarState.frame != null && tableToolbarHostOrigin != null
+            ? windowToHostRect(tableToolbarState.frame, tableToolbarHostOrigin)
+            : null;
+
+    useRegisteredEditorToolbarFrame(
+        tableToolbarHostFrame == null ? null : tableToolbarState.frame,
+        toolbarFrameOwnerId
+    );
+
+    const tableToolbarCompact = tableToolbarState.compact;
+
+    const handleTableToolbarLayout = useCallback(
+        (event: LayoutChangeEvent) => {
+            if (tableToolbarCompact) {
+                return;
+            }
+
+            const { width, height } = event.nativeEvent.layout;
+            const size = { width, height };
+
+            if (!isFiniteSize(size)) {
+                return;
+            }
+
+            setTableToolbarSize(current =>
+                current?.width === width && current.height === height ? current : size);
+        },
+        [ tableToolbarCompact ]
+    );
+
     const isLinkActive = activeState.marks.link === true;
 
     const allowsLink = activeState.allowedMarks.includes('link');
@@ -510,6 +670,8 @@ export function useRichTextEditorPresentation(
                 toolbarItemsJson={toolbarItemsJson}
                 toolbarFrameJson={toolbarFrameJson}
                 remoteSelectionsJson={remoteSelectionsJson}
+                tableDirection={tableDirection}
+                {...(usesNativeTableEditMenu ? { tableEditMenuEnabled: nativeTableEditMenuEnabled } : {})}
                 editorUpdateJson={currentPushedUpdate?.json}
                 editorUpdateResetJson={currentPushedUpdate?.resetJson}
                 editorUpdateEditorId={currentPushedUpdate?.editorId}
@@ -521,6 +683,7 @@ export function useRichTextEditorPresentation(
                 onFocusChange={handleFocusChange}
                 onContentHeightChange={handleContentHeightChange}
                 onAtomLayout={handleAtomLayout}
+                onTableSelectionGeometry={handleTableSelectionGeometry}
                 onToolbarAction={handleToolbarAction}
                 onAddonEvent={handleAddonEvent}
             >
@@ -573,6 +736,43 @@ export function useRichTextEditorPresentation(
                             onRedo={document.redo}
                         />
                     </EditorToolbarFrameOwnerProvider>
+                </View>
+            ) : null}
+            {tableSelection != null && tableToolbarEnabled ? (
+                <View
+                    ref={tableToolbarHostRef}
+                    testID={'native-editor-table-toolbar-host'}
+                    pointerEvents={'box-none'}
+                    style={StyleSheet.absoluteFill}
+                    onLayout={measureTableToolbarHost}
+                >
+                    {tableToolbarHostFrame != null || tableToolbarSize == null ? (
+                        <View
+                            key={tableToolbarSelectionKey(tableSelection.geometry)}
+                            testID={'native-editor-table-toolbar'}
+                            pointerEvents={tableToolbarHostFrame == null ? 'none' : 'box-none'}
+                            onLayout={handleTableToolbarLayout}
+                            style={
+                                tableToolbarHostFrame == null
+                                    ? styles.measuringTableToolbar
+                                    : [
+                                        styles.placedTableToolbar,
+                                        {
+                                            left: tableToolbarHostFrame.x,
+                                            top: tableToolbarHostFrame.y,
+                                        },
+                                    ]
+                            }
+                        >
+                            <EditorToolbarFrameOwnerProvider ownerId={toolbarFrameOwnerId}>
+                                {tableToolbar === undefined ? (
+                                    <TableToolbar {...tableToolbarState} theme={theme?.toolbar} />
+                                ) : (
+                                    tableToolbar(tableToolbarState)
+                                )}
+                            </EditorToolbarFrameOwnerProvider>
+                        </View>
+                    ) : null}
                 </View>
             ) : null}
         </View>

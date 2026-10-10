@@ -98,7 +98,7 @@ internal fun EditorEditText.firstCharacterOffsetForTopLevelChildIndex(
                                 candidate + 1,
                                 Annotation::class.java
                             ).any {
-                                it.key == "nativeVoidNodeType" &&
+                                it.key == RenderBridge.NATIVE_VOID_NODE_TYPE_ANNOTATION &&
                                     EditorNodeTypes.isHardBreak(it.value) &&
                                     content.getSpanStart(it) <= candidate &&
                                     content.getSpanEnd(it) > candidate

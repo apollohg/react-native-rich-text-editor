@@ -3,6 +3,18 @@ import ImageIO
 import UIKit
 
 extension RenderBridge {
+    static func isListContinuationParagraph(_ paragraphStart: Int, in text: NSAttributedString) -> Bool {
+        guard paragraphStart > 0, paragraphStart <= text.length else { return false }
+        return text.attribute(RenderBridgeAttributes.blockBoundary, at: paragraphStart - 1, effectiveRange: nil) as? Bool != true
+    }
+
+    static func paragraphSpacing(nodeType: String, inBlockquote: Bool, inList: Bool, theme: EditorTheme?) -> CGFloat {
+        guard theme?.styleSheet == nil else { return 0 }
+        return theme?.effectiveTextStyle(for: nodeType, inBlockquote: inBlockquote).spacingAfter
+            ?? (inList ? theme?.list?.itemSpacing : nil)
+            ?? LayoutConstants.paragraphSpacing
+    }
+
     /// Create a paragraph style for a block context.
     ///
     /// Applies indentation based on depth and list context. List items get
@@ -67,10 +79,9 @@ extension RenderBridge {
             for: context.nodeType,
             inBlockquote: blockquoteDepth(in: blockStack) > 0
         )
-        let spacing = blockStyle?.spacingAfter
-            ?? (context.listContext != nil ? theme?.list?.itemSpacing : nil)
-            ?? LayoutConstants.paragraphSpacing
-        style.paragraphSpacing = spacing
+        style.paragraphSpacing = paragraphSpacing(nodeType: context.nodeType,
+            inBlockquote: blockquoteDepth(in: blockStack) > 0,
+            inList: context.listContext != nil, theme: theme)
 
         let indentPerDepth = theme?.list?.indent ?? LayoutConstants.indentPerDepth
         let markerWidth = listMarkerWidth(for: context, theme: theme, baseFont: baseFont)

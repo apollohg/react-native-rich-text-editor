@@ -22,7 +22,7 @@ fn preflight_attribute_action<T: ReadTxn>(
     txn: &T,
     validated_elements: &mut std::collections::HashSet<BranchID>,
     last_attribute_keys: &mut HashMap<BranchID, Arc<str>>,
-    path_children: &mut HashMap<BranchID, Vec<BranchID>>,
+    path_children: &mut PreflightPathChildren<'_>,
     indexed_work: &mut usize,
 ) -> OperationResult<()> {
     if validated_elements.insert(signature.target.clone()) {
@@ -68,7 +68,7 @@ fn validate_element_signature<T: ReadTxn>(
     target: &XmlElementRef,
     signature: &ElementSignature,
     txn: &T,
-    path_children: &mut HashMap<BranchID, Vec<BranchID>>,
+    path_children: &mut PreflightPathChildren<'_>,
 ) -> OperationResult<usize> {
     let path_matches = expected_path_matches(
         signature.target.clone(),
@@ -145,7 +145,7 @@ pub(super) fn any_preflight_work(root: &Any) -> Option<usize> {
                     stack.push(value);
                 }
             }
-            Any::Null | Any::Undefined | Any::Bool(_) | Any::Number(_) | Any::BigInt(_) => {}
+            Any::Null | Any::Undefined | Any::Bool(_) | Any::Number(_) => {}
         }
     }
     Some(work)
@@ -236,7 +236,7 @@ fn validate_structural_parent<'a, T: ReadTxn>(
     signature: &StructuralParentSignature,
     txn: &T,
     parents: &'a mut HashMap<BranchID, StructuralPreflightState>,
-    path_children: &mut HashMap<BranchID, Vec<BranchID>>,
+    path_children: &mut PreflightPathChildren<'_>,
     indexed_work: &mut usize,
 ) -> OperationResult<&'a mut StructuralPreflightState> {
     let PreflightActionContext {
@@ -301,7 +301,7 @@ fn validate_signature<T: ReadTxn>(
     target: &XmlTextRef,
     expected: &TargetSignature,
     txn: &T,
-    path_children: &mut std::collections::HashMap<BranchID, Vec<BranchID>>,
+    path_children: &mut PreflightPathChildren<'_>,
 ) -> OperationResult<usize> {
     let branch = <XmlTextRef as AsRef<Branch>>::as_ref(target);
     let path_matches =
@@ -346,7 +346,7 @@ fn validate_parent_identity<T: ReadTxn>(
     parent: &XmlElementRef,
     expected: &ParentSignature,
     txn: &T,
-    path_children: &mut std::collections::HashMap<BranchID, Vec<BranchID>>,
+    path_children: &mut PreflightPathChildren<'_>,
 ) -> OperationResult<()> {
     let branch = <XmlElementRef as AsRef<Branch>>::as_ref(parent);
     let path_matches =
@@ -366,6 +366,7 @@ fn validate_parent_identity<T: ReadTxn>(
         ));
     }
     path_children
+        .materialized
         .entry(branch.id())
         .or_insert_with(|| parent.children(txn).map(|child| child.id()).collect());
     Ok(())
@@ -414,9 +415,9 @@ fn expected_path_matches<T: ReadTxn>(
     mut child_id: BranchID,
     expected: &[(BranchID, u32)],
     txn: &T,
-    path_children: &mut std::collections::HashMap<BranchID, Vec<BranchID>>,
+    path_children: &mut PreflightPathChildren<'_>,
 ) -> bool {
-    for (expected_parent, expected_index) in expected {
+    for (path_index, (expected_parent, expected_index)) in expected.iter().enumerate() {
         let node = match expected_parent {
             // A decoded update may retain an undefined root type internally;
             // `get_xml_fragment` performs the same safe XML reinterpretation
@@ -427,14 +428,40 @@ fn expected_path_matches<T: ReadTxn>(
                 .and_then(|parent| XmlOut::try_from(parent).ok()),
         };
         let Some(node) = node else { return false };
+        if !path_children.materialized.contains_key(&node.id()) {
+            if let Some(width) = path_children.scope.and_then(|scope| {
+                scope.observed_child_width(
+                    txn,
+                    &node.id(),
+                    *expected_index,
+                    &child_id,
+                    expected.len() - path_index - 1,
+                )
+            }) {
+                path_children.observed_widths.insert(node.id(), width);
+                child_id = node.id();
+                continue;
+            }
+        }
         let children = path_children
+            .materialized
             .entry(node.id())
-            .or_insert_with(|| match &node {
-                XmlOut::Element(element) => element.children(txn).map(|child| child.id()).collect(),
-                XmlOut::Fragment(fragment) => {
-                    fragment.children(txn).map(|child| child.id()).collect()
-                }
-                XmlOut::Text(_) => Vec::new(),
+            .or_insert_with(|| {
+                let children: Vec<_> = match &node {
+                    XmlOut::Element(element) => {
+                        element.children(txn).map(|child| child.id()).collect()
+                    }
+                    XmlOut::Fragment(fragment) => {
+                        fragment.children(txn).map(|child| child.id()).collect()
+                    }
+                    XmlOut::Text(_) => Vec::new(),
+                };
+                #[cfg(test)]
+                crate::yrs_engine::observability::PREFLIGHT_CHILDREN_ENUMERATED.set(
+                    crate::yrs_engine::observability::PREFLIGHT_CHILDREN_ENUMERATED.get()
+                        + children.len(),
+                );
+                children
             });
         let expected_index = match usize::try_from(*expected_index) {
             Ok(index) => index,

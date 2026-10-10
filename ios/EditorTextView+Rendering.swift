@@ -1,7 +1,59 @@
 import os
 import UIKit
 
+private struct RootTablePositionMapping {
+    let extents: [String: TableScalarExtent]
+    let tableIDs: Set<String>
+}
+
 extension EditorTextView {
+    func reserveRootTableHeights(_ heights: [String: CGFloat]) {
+        guard !heights.isEmpty, textStorage.length > 0 else { return }
+        var changed = false
+        let fullRange = NSRange(location: 0, length: textStorage.length)
+        let wasApplyingRustState = isApplyingRustState
+        isApplyingRustState = true
+        defer { isApplyingRustState = wasApplyingRustState }
+        textStorage.beginEditing()
+        textStorage.enumerateAttribute(
+            RenderBridgeAttributes.rootTableMarker,
+            in: fullRange,
+            options: []
+        ) { value, range, _ in
+            guard let tableID = value as? String,
+                  let height = heights[tableID],
+                  height.isFinite,
+                  height > 0
+            else { return }
+            let paragraphRange = (textStorage.string as NSString).paragraphRange(for: range)
+            let current = textStorage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil)
+                as? NSParagraphStyle
+            let trailing = textStorage.attribute(.paragraphStyle, at: NSMaxRange(paragraphRange) - 1, effectiveRange: nil)
+                as? NSParagraphStyle
+            if let current,
+               let trailing,
+               abs(current.minimumLineHeight - height) < 0.5,
+               abs(current.maximumLineHeight - height) < 0.5,
+               abs(trailing.minimumLineHeight - height) < 0.5,
+               abs(trailing.maximumLineHeight - height) < 0.5 {
+                return
+            }
+            let paragraph = (current?.mutableCopy() as? NSMutableParagraphStyle) ?? NSMutableParagraphStyle()
+            paragraph.minimumLineHeight = height
+            paragraph.maximumLineHeight = height
+            paragraph.paragraphSpacing = 0
+            paragraph.paragraphSpacingBefore = 0
+            textStorage.addAttribute(.paragraphStyle, value: paragraph, range: paragraphRange)
+            changed = true
+        }
+        textStorage.endEditing()
+        guard changed else { return }
+        layoutManager.invalidateLayout(forCharacterRange: fullRange, actualCharacterRange: nil)
+        lastAuthorizedTextStorage.setString(textStorage.string)
+        lastAuthorizedAttributedTextStorage.setAttributedString(textStorage)
+        PositionBridge.invalidateCache(for: self)
+    }
+
     func withImageLoadOwner<T>(_ body: () -> T) -> T {
         guard let imageLoadOwner else { return body() }
         return imageLoadOwner.withCurrent(body)
@@ -110,6 +162,7 @@ extension EditorTextView {
         authorizedReplacementText: String? = nil,
         authorizedReplacementAttributedText: NSAttributedString? = nil
     ) -> ApplyRenderTrace {
+        if tableCellPositionMap != nil { inputRerendersForTesting += 1 }
         let totalStartedAt = DispatchTime.now().uptimeNanoseconds
         let replaceUtf16Length = replaceRange?.length ?? textStorage.length
         let replacementUtf16Length = attrStr.length
@@ -269,6 +322,9 @@ extension EditorTextView {
     /// - Parameter updateJSON: The JSON string from editor_insert_text, etc.
     @discardableResult
     func applyUpdateJSON(_ updateJSON: String, notifyDelegate: Bool = true) -> Bool {
+        if let onProjectedUpdate {
+            return onProjectedUpdate(updateJSON, notifyDelegate)
+        }
         ensureInternalTextViewDelegate()
         let totalStartedAt = DispatchTime.now().uptimeNanoseconds
         let parseStartedAt = totalStartedAt
@@ -279,6 +335,9 @@ extension EditorTextView {
         resetPendingNativeTextMutationState()
 
         let renderElements = update["renderElements"] as? [[String: Any]]
+        guard let rootTablePositionMapping = rootTablePositionMapping(from: update) else {
+            return false
+        }
         let selectionFromUpdate = (update["selection"] as? [String: Any])
             .map(self.selectionSummary(from:)) ?? "none"
         Self.updateLog.debug(
@@ -304,6 +363,14 @@ extension EditorTextView {
            resolvedRenderBlocks == nil {
             return recoverRenderPatchBaseMismatch(notifyDelegate: notifyDelegate)
         }
+        let incomingRootTableIDs = rootTableIDs(
+            renderBlocks: resolvedRenderBlocks,
+            renderElements: renderElements
+        )
+        guard incomingRootTableIDs.isSubset(of: rootTablePositionMapping.tableIDs) else {
+            return false
+        }
+        let currentHasRootTableMarkers = PositionBridge.hasRootTableScalarExtents(in: self)
 
         let derivedRenderPatch: DerivedRenderPatch? =
             if let currentRenderBlocks,
@@ -325,8 +392,47 @@ extension EditorTextView {
         } else {
             false
         }
+        let rootTableScalarExtents = rootTablePositionMapping.extents.filter { incomingRootTableIDs.contains($0.key) }
+        let prebuiltRootStartedAt = DispatchTime.now().uptimeNanoseconds
+        let prebuiltRootRender: NSAttributedString?
+        if !shouldSkipRender, !incomingRootTableIDs.isEmpty {
+            prebuiltRootRender = withImageLoadOwner {
+                if let resolvedRenderBlocks {
+                    return RenderBridge.renderBlocks(
+                        fromArray: resolvedRenderBlocks, baseFont: baseFont, textColor: baseTextColor,
+                        theme: theme, atomConfiguration: atomRenderConfiguration,
+                        rootTableIDs: Set(rootTableScalarExtents.keys)
+                    )
+                }
+                return RenderBridge.renderElements(
+                    fromArray: renderElements ?? [],
+                    baseFont: baseFont, textColor: baseTextColor, theme: theme,
+                    atomConfiguration: atomRenderConfiguration,
+                    rootTableIDs: Set(rootTableScalarExtents.keys)
+                )
+            }
+        } else {
+            prebuiltRootRender = nil
+        }
+        let prebuiltRootNanos = prebuiltRootRender == nil ? 0 : DispatchTime.now().uptimeNanoseconds - prebuiltRootStartedAt
+        let rootMapStartedAt = DispatchTime.now().uptimeNanoseconds
+        let nextRootMap: RootTablePositionMap?
+        if !incomingRootTableIDs.isEmpty {
+            guard let scalarLength = v2ExactUInt32(update["scalarLength"] as? NSNumber)
+                    ?? EditorV2Registry.adapter(forLegacyId: editorId)?.cachedScalarLength,
+                  let map = RootTablePositionMap.fromRendered(
+                    prebuiltRootRender ?? textStorage, extents: rootTableScalarExtents, scalarLength: scalarLength
+                  ) else { return false }
+            nextRootMap = map
+        } else {
+            nextRootMap = nil
+        }
+
+        let rootMapNanos = DispatchTime.now().uptimeNanoseconds - rootMapStartedAt
 
         let patchTrace: PatchApplyTrace? = if !shouldSkipRender
+            && rootTableScalarExtents.isEmpty
+            && !currentHasRootTableMarkers
             && textStorage.string == lastAuthorizedText
             && lastAppliedRenderAppearanceRevision == renderAppearanceRevision {
             renderPatch.map(applyRenderPatchIfPossible)
@@ -359,14 +465,22 @@ extension EditorTextView {
         } else if !appliedPatch {
             let buildStartedAt = DispatchTime.now().uptimeNanoseconds
             let attrStr: NSAttributedString
-            if let resolvedRenderBlocks {
+            if let prebuiltRootRender {
+                attrStr = prebuiltRootRender
+                if let resolvedRenderBlocks {
+                    retainCurrentRenderBlocks(resolvedRenderBlocks, documentVersion: updateDocumentVersion)
+                } else {
+                    invalidateCurrentRenderBlocks()
+                }
+            } else if let resolvedRenderBlocks {
                 attrStr = withImageLoadOwner {
                     RenderBridge.renderBlocks(
                         fromArray: resolvedRenderBlocks,
                         baseFont: baseFont,
                         textColor: baseTextColor,
                         theme: theme,
-                        atomConfiguration: atomRenderConfiguration
+                        atomConfiguration: atomRenderConfiguration,
+                        rootTableIDs: Set(rootTableScalarExtents.keys)
                     )
                 }
                 retainCurrentRenderBlocks(
@@ -380,14 +494,15 @@ extension EditorTextView {
                         baseFont: baseFont,
                         textColor: baseTextColor,
                         theme: theme,
-                        atomConfiguration: atomRenderConfiguration
+                        atomConfiguration: atomRenderConfiguration,
+                        rootTableIDs: Set(rootTableScalarExtents.keys)
                     )
                 }
                 invalidateCurrentRenderBlocks()
             } else {
                 return false
             }
-            buildRenderNanos = DispatchTime.now().uptimeNanoseconds - buildStartedAt
+            buildRenderNanos = prebuiltRootNanos + DispatchTime.now().uptimeNanoseconds - buildStartedAt
             let applyTrace = applyAttributedRender(
                 attrStr,
                 usedPatch: false,
@@ -426,6 +541,8 @@ extension EditorTextView {
             currentTopLevelChildMetadata = nil
         }
 
+        PositionBridge.setRootTablePositionMap(nextRootMap, in: self)
+
         // The core is the authority on empty state; adopt it before the
         // placeholder is reconsidered.
         coreReportedDocumentIsEmpty = update["documentIsEmpty"] as? Bool
@@ -436,7 +553,19 @@ extension EditorTextView {
 
         let selectionTrace: SelectionApplyTrace
         if let selection = update["selection"] as? [String: Any] {
-            selectionTrace = applySelectionFromJSON(selection)
+            setAuthoritativeCellSelectionActive(selection["type"] as? String == "cell")
+            let representable = rootSelectionIsRepresentable(selection)
+            setRootTableSelectionRepresentable(representable)
+            if representable {
+                selectionTrace = applySelectionFromJSON(selection)
+            } else {
+                selectionTrace = SelectionApplyTrace(
+                    totalNanos: 0,
+                    resolveNanos: 0,
+                    assignmentNanos: 0,
+                    chromeNanos: 0
+                )
+            }
         } else {
             selectionTrace = SelectionApplyTrace(
                 totalNanos: 0,
@@ -459,7 +588,7 @@ extension EditorTextView {
                 applyRenderReplaceUtf16Length: applyRenderReplaceUtf16Length,
                 applyRenderReplacementUtf16Length: applyRenderReplacementUtf16Length,
                 parseNanos: parseNanos,
-                resolveRenderBlocksNanos: resolveRenderBlocksNanos,
+                resolveRenderBlocksNanos: resolveRenderBlocksNanos + rootMapNanos,
                 patchEligibilityNanos: patchTrace?.eligibilityNanos ?? 0,
                 patchTrimNanos: patchTrace?.trimNanos ?? 0,
                 patchMetadataNanos: patchTrace?.metadataNanos ?? 0,
@@ -498,7 +627,70 @@ extension EditorTextView {
         if notifyDelegate {
             editorDelegate?.editorTextView(self, didReceiveUpdate: updateJSON)
         }
+        onAuthoritativeRenderApplied?(updateJSON)
         return true
+    }
+
+    private func rootTablePositionMapping(
+        from update: [String: Any]
+    ) -> RootTablePositionMapping? {
+        guard tableCellPositionMap == nil else {
+            return .init(extents: [:], tableIDs: [])
+        }
+        guard let adapter = EditorV2Registry.adapter(forLegacyId: editorId) else { return .init(extents: [:], tableIDs: []) }
+        guard EditorV2Adapter.uint64Field(update, "documentVersion") == adapter.installedFrameRevision else {
+            return adapter.tableIndex.tableKeys.isEmpty ? .init(extents: [:], tableIDs: []) : nil
+        }
+        let roots = adapter.tableIndex.rootExtents
+        let extents = roots.compactMapValues { extent -> TableScalarExtent? in
+            guard extent.scalarStart < extent.scalarEnd else { return nil }
+            return .init(scalarStart: extent.scalarStart, scalarEnd: extent.scalarEnd)
+        }
+        return .init(extents: extents, tableIDs: Set(roots.keys))
+    }
+
+    private func rootTableIDs(
+        renderBlocks: [[[String: Any]]]?,
+        renderElements: [[String: Any]]?
+    ) -> Set<String> {
+        let elements = renderBlocks?.flatMap { $0 } ?? renderElements ?? []
+        return Set(elements.compactMap { element in
+            element["type"] as? String == "table" ? element["tableId"] as? String : nil
+        })
+    }
+
+    private func rootSelectionIsRepresentable(_ selection: [String: Any]) -> Bool {
+        guard tableCellPositionMap == nil else { return true }
+        guard PositionBridge.hasRootTableScalarExtents(in: self) else { return true }
+        switch selection["type"] as? String {
+        case "text":
+            guard let anchor = v2ExactUInt32(selection["anchorScalar"] as? NSNumber),
+                  let head = v2ExactUInt32(selection["headScalar"] as? NSNumber)
+            else { return false }
+            if anchor == head {
+                return PositionBridge.isScalarPositionRepresentable(anchor, in: self)
+            }
+            return PositionBridge.isScalarRangeRepresentable(
+                from: min(anchor, head),
+                to: max(anchor, head),
+                in: self
+            )
+        case "node":
+            guard let scalar = v2ExactUInt32(selection["posScalar"] as? NSNumber),
+                  scalar < UInt32.max
+            else { return false }
+            return PositionBridge.isScalarRangeRepresentable(
+                from: scalar,
+                to: scalar + 1,
+                in: self
+            ) && PositionBridge.isRootTextInputRangeSafe(
+                from: scalar,
+                to: scalar + 1,
+                in: self
+            )
+        default:
+            return false
+        }
     }
 
     /// Apply a render JSON string (just render elements, no update wrapper).
@@ -521,6 +713,7 @@ extension EditorTextView {
             )
         }
         _ = applyAttributedRender(attrStr, usedPatch: false)
+        PositionBridge.setRootTablePositionMap(nil, in: self)
         invalidateCurrentRenderBlocks()
         refreshTopLevelChildMetadata(from: attrStr)
         lastAppliedRenderAppearanceRevision = renderAppearanceRevision

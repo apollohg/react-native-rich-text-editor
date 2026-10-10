@@ -24,11 +24,12 @@ internal fun NativeEditorExpoView.focusInternal(cancelPendingOutsideTapBlur: Boo
     }
     cancelPendingKeyboardDismiss()
     cancelPendingBlurRetry()
-    richTextView.editorEditText.requestFocus()
-    richTextView.editorEditText.post {
-        if (!canFocusCurrentEditor()) return@post
+    val input = richTextView.activeTextInput
+    input.requestFocus()
+    richTextView.post {
+        if (!canFocusCurrentEditor() || richTextView.activeTextInput !== input) return@post
         val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-        imm?.showSoftInput(richTextView.editorEditText, InputMethodManager.SHOW_IMPLICIT)
+        imm?.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
     }
 }
 
@@ -42,40 +43,42 @@ internal fun NativeEditorExpoView.blurImpl() {
 
 internal fun NativeEditorExpoView.performBlur(deferKeyboardDismiss: Boolean, allowRetry: Boolean) {
     if (handleDestroyedCurrentEditorIfNeeded()) return
-    if (!richTextView.editorEditText.prepareForExternalEditorUpdate()) {
+    val input = richTextView.activeTextInput
+    if (!input.prepareForExternalEditorUpdate()) {
         if (allowRetry && pendingBlurRetryAttempts < MAX_PENDING_UPDATE_RETRY_ATTEMPTS) {
             schedulePendingBlurRetry(deferKeyboardDismiss)
             return
         }
         if (handleDestroyedCurrentEditorIfNeeded()) return
-        richTextView.editorEditText.restoreAuthorizedTextIfNeeded()
+        input.restoreAuthorizedTextIfNeeded()
     }
     completeBlur(deferKeyboardDismiss)
 }
 
 internal fun NativeEditorExpoView.completeBlur(deferKeyboardDismiss: Boolean) {
     cancelPendingBlurRetry()
+    val input = richTextView.activeTextInput
     traceOutsideTap(
-        "complete blur deferKeyboardDismiss=$deferKeyboardDismiss focusedBefore=${richTextView.editorEditText.hasFocus()}"
+        "complete blur deferKeyboardDismiss=$deferKeyboardDismiss focusedBefore=${input.hasFocus()}"
     )
-    richTextView.editorEditText.clearFocus()
-    traceOutsideTap("complete blur focusedAfter=${richTextView.editorEditText.hasFocus()}")
+    input.clearFocus()
+    traceOutsideTap("complete blur focusedAfter=${input.hasFocus()}")
     if (deferKeyboardDismiss) {
         val dismiss = Runnable {
             pendingKeyboardDismiss = null
-            if (!richTextView.editorEditText.hasFocus()) {
+            if (!richTextView.activeTextInput.hasFocus()) {
                 val imm = context.getSystemService(
                     Context.INPUT_METHOD_SERVICE
                 ) as? InputMethodManager
-                imm?.hideSoftInputFromWindow(richTextView.editorEditText.windowToken, 0)
+                imm?.hideSoftInputFromWindow(input.windowToken, 0)
             }
         }
         pendingKeyboardDismiss = dismiss
-        richTextView.editorEditText.post(dismiss)
+        richTextView.post(dismiss)
         return
     }
     val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-    imm?.hideSoftInputFromWindow(richTextView.editorEditText.windowToken, 0)
+    imm?.hideSoftInputFromWindow(input.windowToken, 0)
 }
 
 internal fun NativeEditorExpoView.schedulePendingBlurRetry(deferKeyboardDismiss: Boolean) {
@@ -124,12 +127,12 @@ internal fun NativeEditorExpoView.scheduleToolbarRefocus() {
         focusInternal(cancelPendingOutsideTapBlur = false)
     }
     pendingToolbarRefocus = refocus
-    richTextView.editorEditText.post(refocus)
+    richTextView.post(refocus)
 }
 
 internal fun NativeEditorExpoView.cancelPendingToolbarRefocus() {
     pendingToolbarRefocus?.let {
-        richTextView.editorEditText.removeCallbacks(it)
+        richTextView.removeCallbacks(it)
         pendingToolbarRefocus = null
     }
     pendingToolbarRefocusEditorId = null
@@ -138,29 +141,29 @@ internal fun NativeEditorExpoView.cancelPendingToolbarRefocus() {
 
 internal fun NativeEditorExpoView.scheduleOutsideTapBlur() {
     cancelPendingOutsideTapBlur()
-    traceOutsideTap("schedule outside blur focused=${richTextView.editorEditText.hasFocus()}")
+    traceOutsideTap("schedule outside blur focused=${richTextView.activeTextInput.hasFocus()}")
     val blur = Runnable {
         pendingOutsideTapBlur = null
-        traceOutsideTap("run outside blur focused=${richTextView.editorEditText.hasFocus()}")
-        if (richTextView.editorEditText.hasFocus()) {
+        traceOutsideTap("run outside blur focused=${richTextView.activeTextInput.hasFocus()}")
+        if (richTextView.activeTextInput.hasFocus()) {
             blurWithDeferredKeyboardDismiss()
         }
     }
     pendingOutsideTapBlur = blur
-    richTextView.editorEditText.postDelayed(blur, OUTSIDE_TAP_BLUR_DELAY_MS)
+    richTextView.postDelayed(blur, OUTSIDE_TAP_BLUR_DELAY_MS)
 }
 
 internal fun NativeEditorExpoView.cancelPendingOutsideTapBlur() {
     pendingOutsideTapBlur?.let {
         traceOutsideTap("cancel outside blur")
-        richTextView.editorEditText.removeCallbacks(it)
+        richTextView.removeCallbacks(it)
         pendingOutsideTapBlur = null
     }
 }
 
 internal fun NativeEditorExpoView.cancelPendingKeyboardDismiss() {
     pendingKeyboardDismiss?.let {
-        richTextView.editorEditText.removeCallbacks(it)
+        richTextView.removeCallbacks(it)
         pendingKeyboardDismiss = null
     }
 }

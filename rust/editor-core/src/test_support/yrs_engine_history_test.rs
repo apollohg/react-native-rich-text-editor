@@ -19,7 +19,8 @@ const PLAIN_AB: &str =
 const PLAIN_ABC: &str =
     r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"abc"}]}]}"#;
 const BOLD_A: &str = r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"a","marks":[{"type":"bold"}]}]}]}"#;
-const PLAIN_HISTORY_SNAPSHOT_BYTES: usize = 512 + "prosemirror".len() + 2;
+const PLAIN_HISTORY_SNAPSHOT_BYTES: usize =
+    512 + std::mem::size_of::<[u8; 32]>() + "prosemirror".len() + 2;
 
 #[derive(Debug, Clone, PartialEq)]
 struct HistoryAudit {

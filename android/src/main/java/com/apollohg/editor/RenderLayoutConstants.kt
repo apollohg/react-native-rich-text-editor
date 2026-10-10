@@ -64,7 +64,9 @@ data class BlockContext(
     val topLevelChildIndex: Int? = null,
     var markerPending: Boolean = false,
     var renderStart: Int = 0,
-    val language: String? = null
+    val language: String? = null,
+    val sourceElementIndex: Int? = null,
+    var contentStart: Int = 0
 )
 
 data class AtomRenderConfiguration(

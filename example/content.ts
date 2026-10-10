@@ -1,9 +1,18 @@
-import type {
-    DocumentJSON,
-    EditorToolbarItem,
-    MentionSuggestion,
+import {
+    TABLE_NODE_NAMES,
+    type DocumentJSON,
+    type EditorToolbarItem,
+    type MentionSuggestion,
+    type TableNamingPreset,
 } from '@apollohg/react-native-rich-text-editor';
 
+import { BOLD, ITALIC, STRIKE, UNDERLINE, heading, link, listItem, paragraph, text } from './documentNodes';
+import {
+    table,
+    tableRow,
+    textCell,
+    type TableCellKind,
+} from './tableContent';
 import { TASK_ITEM_NODE_NAME, TASK_LIST_NODE_NAME } from './taskList';
 
 export const APP_TITLE = 'React Native Editor';
@@ -15,36 +24,27 @@ export const MENTION_TRIGGER = '@';
 /** Remote image used by the initial document. */
 export const SAMPLE_IMAGE_URL = 'https://picsum.photos/seed/native-editor/1200/800';
 
+export const TABLE_NAMING_PRESET: TableNamingPreset = 'prosemirror';
+export const TABLE_NAMES = TABLE_NODE_NAMES[TABLE_NAMING_PRESET];
+
 const REPOSITORY_URL = 'https://github.com/apollohg/react-native-rich-text-editor';
+const COUNTER_CARD_NODE_NAME = 'counterCard';
 
-type MarkJSON = { type: string; attrs?: Record<string, unknown> };
-
-const BOLD: MarkJSON = { type: 'bold' };
-const ITALIC: MarkJSON = { type: 'italic' };
-const UNDERLINE: MarkJSON = { type: 'underline' };
-const STRIKE: MarkJSON = { type: 'strike' };
-const REPOSITORY_LINK: MarkJSON = { type: 'link', attrs: { href: REPOSITORY_URL } };
-
-function text(value: string, ...marks: readonly MarkJSON[]): DocumentJSON {
-    return marks.length === 0
-        ? { type: 'text', text: value }
-        : { type: 'text', text: value, marks };
-}
-
-function paragraph(...content: readonly DocumentJSON[]): DocumentJSON {
-    return content.length === 0 ? { type: 'paragraph' } : { type: 'paragraph', content };
-}
-
-function heading(level: number, title: string): DocumentJSON {
-    return { type: 'heading', attrs: { level }, content: [ text(title) ] };
-}
-
-function listItem(...content: readonly DocumentJSON[]): DocumentJSON {
-    return { type: 'list_item', content };
-}
+const REPOSITORY_LINK = link(REPOSITORY_URL);
 
 function taskItem(checked: boolean, label: string): DocumentJSON {
     return { type: TASK_ITEM_NODE_NAME, attrs: { checked }, content: [ paragraph(text(label)) ] };
+}
+
+function counterCard(title: string, count: number): DocumentJSON {
+    return { type: COUNTER_CARD_NODE_NAME, attrs: { title, count } };
+}
+
+function showcaseCell(
+    kind: TableCellKind,
+    label: string | null
+): DocumentJSON {
+    return textCell(TABLE_NAMES, kind, label);
 }
 
 /**
@@ -67,6 +67,28 @@ export const INITIAL_DOCUMENT: DocumentJSON = {
             text(', and '),
             text('links', REPOSITORY_LINK),
             text('.')
+        ),
+        heading(2, 'Table'),
+        table(
+            TABLE_NAMES,
+            tableRow(
+                TABLE_NAMES,
+                showcaseCell('headerCell', 'Task'),
+                showcaseCell('headerCell', 'Owner'),
+                showcaseCell('headerCell', 'Status')
+            ),
+            tableRow(
+                TABLE_NAMES,
+                showcaseCell('cell', 'Outline'),
+                showcaseCell('cell', 'Alice'),
+                showcaseCell('cell', 'In progress')
+            ),
+            tableRow(
+                TABLE_NAMES,
+                showcaseCell('cell', 'Review'),
+                showcaseCell('cell', null),
+                showcaseCell('cell', 'Ready')
+            )
         ),
         {
             type: 'blockquote',
@@ -100,7 +122,7 @@ export const INITIAL_DOCUMENT: DocumentJSON = {
         { type: 'image', attrs: { src: SAMPLE_IMAGE_URL, alt: 'Sample' } },
         heading(2, 'Counters'),
         paragraph(text('Custom blocks are React components living inside the document.')),
-        { type: 'counterCard', attrs: { title: 'Cups of coffee', count: 2 } },
+        counterCard('Cups of coffee', 2),
         {
             type: 'ordered_list',
             content: [
