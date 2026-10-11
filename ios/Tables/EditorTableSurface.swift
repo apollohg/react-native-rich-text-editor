@@ -1070,6 +1070,10 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         _ gestureRecognizer: UIGestureRecognizer,
         shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer
     ) -> Bool {
+        if otherGestureRecognizer.isContentPopGesture(above: self) {
+            return gestureRecognizer === resizeGesture || gestureRecognizer === selectionGesture
+                || gestureRecognizer === textSelectionGesture
+        }
         guard gestureRecognizer === resizeGesture, otherGestureRecognizer !== resizeGesture,
               !(otherGestureRecognizer is UIScreenEdgePanGestureRecognizer)
         else { return false }
@@ -1085,7 +1089,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         _ gestureRecognizer: UIGestureRecognizer,
         shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer
     ) -> Bool {
-        gestureRecognizer === resizeGesture && otherGestureRecognizer is UIScreenEdgePanGestureRecognizer
+        gestureRecognizer === resizeGesture && otherGestureRecognizer.isEdgePopGesture(above: self)
     }
 
     @objc private func handleSelectionGesture(_ recognizer: TableSelectionHandleGestureRecognizer) {

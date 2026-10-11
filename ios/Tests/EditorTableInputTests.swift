@@ -2073,6 +2073,58 @@ final class EditorTableInputTests: XCTestCase {
         }
     }
 
+    func testTableGesturesTakePrecedenceOverTheContentPopButNotTheEdgePop() throws {
+        #if compiler(>=6.2)
+            guard #available(iOS 26.0, *) else { throw XCTSkip("interactiveContentPopGestureRecognizer requires iOS 26") }
+            try withMountedTable(document: try narrowColumnGridDocument(headerRow: false), cellSelection: nil) { fixture in
+                let window = try XCTUnwrap(fixture.view.window)
+                let navigation = UINavigationController(rootViewController: UIViewController())
+                let screen = UIViewController()
+                navigation.pushViewController(screen, animated: false)
+                window.rootViewController = navigation
+                navigation.view.layoutIfNeeded()
+                screen.view.addSubview(fixture.view)
+                defer { window.rootViewController = nil }
+                let contentPop = try XCTUnwrap(navigation.interactiveContentPopGestureRecognizer)
+                let edgePop = try XCTUnwrap(navigation.interactivePopGestureRecognizer)
+                let recognizers = fixture.view.gestureRecognizers ?? []
+                let tablePan = try XCTUnwrap(recognizers.first {
+                    $0 is UIPanGestureRecognizer && $0.delegate is TableInteractionController
+                }, "the table pan is installed on the editor view")
+                let surfaceGestures = recognizers.filter {
+                    $0.delegate === fixture.surface
+                        && ($0 is TableHorizontalPanGestureRecognizer
+                            || $0 is TableSelectionHandleGestureRecognizer
+                            || $0 is TableTextSelectionGestureRecognizer)
+                }
+                XCTAssertEqual(surfaceGestures.count, 3, "resize, selection handle and text selection: \(recognizers)")
+                for recognizer in [tablePan] + surfaceGestures {
+                    let name = "\(type(of: recognizer)) against \(type(of: contentPop))"
+                    let delegate = try XCTUnwrap(recognizer.delegate)
+                    XCTAssertNotEqual(
+                        delegate.gestureRecognizer?(recognizer, shouldRequireFailureOf: contentPop), true,
+                        "\(name): a table drag must not wait for the full-screen back swipe"
+                    )
+                    XCTAssertEqual(
+                        delegate.gestureRecognizer?(recognizer, shouldBeRequiredToFailBy: contentPop), true,
+                        "\(name): the full-screen back swipe must wait for the table drag to fail"
+                    )
+                    XCTAssertNotEqual(
+                        delegate.gestureRecognizer?(recognizer, shouldBeRequiredToFailBy: edgePop), true,
+                        "\(type(of: recognizer)): the screen-edge back swipe keeps precedence"
+                    )
+                }
+                let tableDelegate = try XCTUnwrap(tablePan.delegate)
+                XCTAssertEqual(
+                    tableDelegate.gestureRecognizer?(tablePan, shouldRequireFailureOf: edgePop), true,
+                    "the table pan waits for the screen-edge back swipe"
+                )
+            }
+        #else
+            throw XCTSkip("interactiveContentPopGestureRecognizer requires the iOS 26 SDK")
+        #endif
+    }
+
     func testTextInputGesturesWaitForTheColumnResizeHandle() throws {
         try withMountedTable(document: try narrowColumnGridDocument(headerRow: false), cellSelection: nil) { fixture in
             XCTAssertTrue(fixture.view.textView.becomeFirstResponder())

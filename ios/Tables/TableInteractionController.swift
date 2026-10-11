@@ -1,5 +1,27 @@
 import UIKit
 
+extension UIGestureRecognizer {
+    func isContentPopGesture(above view: UIView) -> Bool {
+        #if compiler(>=6.2)
+            if #available(iOS 26.0, *) {
+                var responder: UIResponder? = view
+                while let current = responder {
+                    if let navigation = current as? UINavigationController,
+                       navigation.interactiveContentPopGestureRecognizer === self {
+                        return true
+                    }
+                    responder = current.next
+                }
+            }
+        #endif
+        return false
+    }
+
+    func isEdgePopGesture(above view: UIView) -> Bool {
+        self is UIScreenEdgePanGestureRecognizer && !isContentPopGesture(above: view)
+    }
+}
+
 final class TableHorizontalPanGestureRecognizer: UIPanGestureRecognizer {
     private enum Constants {
         static let intentSlop: CGFloat = 8
@@ -178,7 +200,14 @@ final class TableInteractionController: UIScrollView, UIScrollViewDelegate, UIGe
         _ gestureRecognizer: UIGestureRecognizer,
         shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer
     ) -> Bool {
-        gestureRecognizer === panGestureRecognizer && otherGestureRecognizer is UIScreenEdgePanGestureRecognizer
+        gestureRecognizer === panGestureRecognizer && otherGestureRecognizer.isEdgePopGesture(above: self)
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        gestureRecognizer === panGestureRecognizer && otherGestureRecognizer.isContentPopGesture(above: self)
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
