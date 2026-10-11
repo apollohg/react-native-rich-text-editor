@@ -38,9 +38,14 @@ final class ViewerTableTests: XCTestCase {
         let translucentAlpha: CGFloat = 128
         let rasterPadding: CGFloat = 1
         func emptyCell(colspan: Int = 1, rowspan: Int = 1) -> [String: Any] {
-            ["type": "table_cell", "attrs": ["colspan": colspan, "rowspan": rowspan,
-                                             "colwidth": Array(repeating: columnWidth, count: colspan)],
-             "content": [["type": "paragraph"]]]
+            [
+                "type": "table_cell",
+                "attrs": [
+                    "colspan": colspan, "rowspan": rowspan,
+                    "colwidth": Array(repeating: columnWidth, count: colspan)
+                ],
+                "content": [["type": "paragraph"]]
+            ]
         }
         var nestedCell = emptyCell()
         nestedCell["content"] = [["type": "table", "content": [
@@ -59,13 +64,21 @@ final class ViewerTableTests: XCTestCase {
                 sourceKind: .json, source: source, configJson: Self.config, imagesEnabled: true, mentionPrefix: nil
             ))
             let document = try ViewerDocument(compiled: XCTUnwrap(compiled.value))
-            let cases: [(CGFloat, String, CGFloat)] = [
-                (configuredBorderWidth, "#000000", 0),
-                (configuredBorderWidth, "#000000", 0.25),
-                (configuredBorderWidth, "#00000080", 0.25),
-                (0, "#000000", 0)
+            struct BorderCase {
+                let width: CGFloat
+                let color: String
+                let translation: CGFloat
+            }
+            let cases = [
+                BorderCase(width: configuredBorderWidth, color: "#000000", translation: 0),
+                BorderCase(width: configuredBorderWidth, color: "#000000", translation: 0.25),
+                BorderCase(width: configuredBorderWidth, color: "#00000080", translation: 0.25),
+                BorderCase(width: 0, color: "#000000", translation: 0)
             ]
-            for (borderWidth, borderColor, translation) in cases {
+            for borderCase in cases {
+                let borderWidth = borderCase.width
+                let borderColor = borderCase.color
+                let translation = borderCase.translation
                 for direction in [TableLayoutDirection.leftToRight, .rightToLeft] {
                     let layout = try prepare(
                         document,
@@ -108,17 +121,23 @@ final class ViewerTableTests: XCTestCase {
                         for x in [frame.minX, frame.maxX] {
                             let exterior = x == translation || x == surface.bounds.width + translation
                             if translation != 0, exterior { continue }
-                            XCTAssertEqual(try thickness(x: x, y: sampleY, vertical: true), expectedThickness,
-                                           accuracy: 0.05, "\(message) vertical border at \(x)")
+                            XCTAssertEqual(
+                                try thickness(x: x, y: sampleY, vertical: true), expectedThickness,
+                                accuracy: 0.05, "\(message) vertical border at \(x)"
+                            )
                         }
                         for y in [frame.minY, frame.maxY] {
                             let exterior = y == translation || y == surface.bounds.height + translation
                             if translation != 0, exterior { continue }
-                            XCTAssertEqual(try thickness(x: sampleX, y: y, vertical: false), expectedThickness,
-                                           accuracy: 0.05, "\(message) horizontal border at \(y)")
+                            XCTAssertEqual(
+                                try thickness(x: sampleX, y: y, vertical: false), expectedThickness,
+                                accuracy: 0.05, "\(message) horizontal border at \(y)"
+                            )
                         }
-                        XCTAssertEqual(try rgba(image, CGPoint(x: Int(frame.midX * format.scale), y: Int(frame.midY * format.scale))),
-                                       [255, 255, 255, 255], "\(message) must have no border through its interior")
+                        XCTAssertEqual(
+                            try rgba(image, CGPoint(x: Int(frame.midX * format.scale), y: Int(frame.midY * format.scale))),
+                            [255, 255, 255, 255], "\(message) must have no border through its interior"
+                        )
                     }
                 }
             }

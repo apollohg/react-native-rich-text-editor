@@ -95,14 +95,26 @@ class ViewerTableTest {
         val scanRadius = configuredBorderWidth * 2
         fun emptyCell(colspan: Int = 1, rowspan: Int = 1) = JSONObject()
             .put("type", "table_cell")
-            .put("attrs", JSONObject().put("colspan", colspan).put("rowspan", rowspan)
-                .put("colwidth", JSONArray(List(colspan) { columnWidth })))
+            .put(
+                "attrs",
+                JSONObject().put("colspan", colspan).put("rowspan", rowspan)
+                    .put("colwidth", JSONArray(List(colspan) { columnWidth }))
+            )
             .put("content", JSONArray().put(JSONObject().put("type", "paragraph")))
-        val nestedCell = emptyCell().put("content", JSONArray().put(
-            JSONObject().put("type", "table").put("content", JSONArray().put(
-                JSONObject().put("type", "table_row").put("content", JSONArray().put(emptyCell()))
-            ))
-        ))
+        val nestedCell = emptyCell().put(
+            "content",
+            JSONArray().put(
+                JSONObject().put("type", "table").put(
+                    "content",
+                    JSONArray().put(
+                        JSONObject().put(
+                            "type",
+                            "table_row"
+                        ).put("content", JSONArray().put(emptyCell()))
+                    )
+                )
+            )
+        )
         val fixtures = listOf(
             "regular" to listOf(listOf(emptyCell(), emptyCell()), listOf(emptyCell(), emptyCell())),
             "nested" to listOf(listOf(nestedCell, emptyCell()), listOf(emptyCell(), emptyCell())),
@@ -113,11 +125,20 @@ class ViewerTableTest {
         )
         for ((name, rows) in fixtures) {
             val source = JSONObject().put("type", "doc").put(
-                "content", JSONArray().put(JSONObject().put("type", "table").put(
-                    "content", JSONArray(rows.map { cells ->
-                        JSONObject().put("type", "table_row").put("content", JSONArray(cells))
-                    })
-                ))
+                "content",
+                JSONArray().put(
+                    JSONObject().put("type", "table").put(
+                        "content",
+                        JSONArray(
+                            rows.map { cells ->
+                                JSONObject().put(
+                                    "type",
+                                    "table_row"
+                                ).put("content", JSONArray(cells))
+                            }
+                        )
+                    )
+                )
             ).toString()
             val cases = listOf(
                 Triple(configuredBorderWidth, "#000000", 0f),
@@ -135,15 +156,24 @@ class ViewerTableTest {
                     val table = layout.blocks.first { it.tableSurface != null }
                     val surface = table.tableSurface!!
                     assertEquals(borderWidth.toFloat(), surface.style.borderWidth, 0f)
-                    val alpha = if (borderColor == "#00000080") translucentAlpha else colorChannelMaximum.toInt()
+                    val alpha = if (borderColor ==
+                        "#00000080"
+                    ) {
+                        translucentAlpha
+                    } else {
+                        colorChannelMaximum.toInt()
+                    }
                     assertEquals(Color.argb(alpha, 0, 0, 0), surface.style.borderColor)
                     val opacity = alpha / colorChannelMaximum
                     val origin = table.tableBounds!!
                     val drawing = PreparedProseDrawingView(RuntimeEnvironment.getApplication())
                     drawing.install(layout)
                     drawing.layout(0, 0, layout.widthPx, layout.heightPx)
-                    val bitmap = Bitmap.createBitmap(layout.widthPx + rasterPadding, layout.heightPx + rasterPadding,
-                        Bitmap.Config.ARGB_8888)
+                    val bitmap = Bitmap.createBitmap(
+                        layout.widthPx + rasterPadding,
+                        layout.heightPx + rasterPadding,
+                        Bitmap.Config.ARGB_8888
+                    )
                     try {
                         val canvas = Canvas(bitmap)
                         canvas.drawColor(Color.WHITE)
@@ -153,9 +183,19 @@ class ViewerTableTest {
                             (-scanRadius until scanRadius).sumOf { offset ->
                                 val pixelX = x.toInt() + if (vertical) offset else 0
                                 val pixelY = y.toInt() + if (vertical) 0 else offset
-                                if (pixelX !in 0 until bitmap.width || pixelY !in 0 until bitmap.height) 0.0
-                                else ((colorChannelMaximum - Color.red(bitmap.getPixel(pixelX, pixelY))) /
-                                    colorChannelMaximum).toDouble()
+                                if (pixelX !in 0 until bitmap.width ||
+                                    pixelY !in 0 until bitmap.height
+                                ) {
+                                    0.0
+                                } else {
+                                    (
+                                        (
+                                            colorChannelMaximum -
+                                                Color.red(bitmap.getPixel(pixelX, pixelY))
+                                            ) /
+                                            colorChannelMaximum
+                                        ).toDouble()
+                                }
                             }.toFloat()
                         for (cell in surface.cells) {
                             val frame = surface.frameOfCell(cell)
@@ -165,23 +205,40 @@ class ViewerTableTest {
                             val bottom = top + frame.height
                             val sampleX = left + frame.width / (2f * cell.colspan)
                             val sampleY = top + frame.height / (2f * cell.rowspan)
-                            val message = "$name $direction border $borderWidth $borderColor offset $translation cell ${cell.sourceIndex}"
+                            val message =
+                                "$name $direction border $borderWidth $borderColor " +
+                                    "offset $translation " +
+                                    "cell ${cell.sourceIndex}"
                             for (x in listOf(left, right)) {
                                 val exterior = x == origin.left + translation ||
                                     x == origin.left + surface.bounds.width() + translation
                                 if (translation != 0f && exterior) continue
-                                assertEquals("$message vertical border at $x", borderWidth * opacity,
-                                    thickness(x, sampleY, true), 0.05f)
+                                assertEquals(
+                                    "$message vertical border at $x",
+                                    borderWidth * opacity,
+                                    thickness(x, sampleY, true),
+                                    0.05f
+                                )
                             }
                             for (y in listOf(top, bottom)) {
                                 val exterior = y == origin.top + translation ||
                                     y == origin.top + surface.bounds.height() + translation
                                 if (translation != 0f && exterior) continue
-                                assertEquals("$message horizontal border at $y", borderWidth * opacity,
-                                    thickness(sampleX, y, false), 0.05f)
+                                assertEquals(
+                                    "$message horizontal border at $y",
+                                    borderWidth * opacity,
+                                    thickness(sampleX, y, false),
+                                    0.05f
+                                )
                             }
-                            assertEquals("$message must have no border through its interior", Color.WHITE,
-                                bitmap.getPixel(((left + right) / 2f).toInt(), ((top + bottom) / 2f).toInt()))
+                            assertEquals(
+                                "$message must have no border through its interior",
+                                Color.WHITE,
+                                bitmap.getPixel(
+                                    ((left + right) / 2f).toInt(),
+                                    ((top + bottom) / 2f).toInt()
+                                )
+                            )
                         }
                     } finally {
                         bitmap.recycle()
