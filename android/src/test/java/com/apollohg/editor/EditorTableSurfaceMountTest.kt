@@ -1435,6 +1435,24 @@ internal class EditorTableSurfaceMountTest {
 
     @Test
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `hardware table nodes record the prepared scroll window`() =
+        withAttachedMountedView(gridDocument) { view, _ ->
+            val drawing = recordTableDrawing(view)
+            val visible = android.graphics.Rect()
+            assertTrue(drawing.getLocalVisibleRect(visible))
+            val window = requireNotNull(
+                com.apollohg.editor.tables.ViewerTablePresentationViewport.Known(visible).window
+            )
+            val node = requireNotNull(drawing.aboveNode)
+            val recorded = android.graphics.Rect(node.left, node.top, node.right, node.bottom)
+            assertTrue(
+                "recorded=$recorded must include prepared=$window so returning rows stay painted",
+                recorded.contains(window)
+            )
+        }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
     fun `unbound table window records one node and releases it on clear`() =
         withAttachedMountedView(gridDocument) {
                 view,

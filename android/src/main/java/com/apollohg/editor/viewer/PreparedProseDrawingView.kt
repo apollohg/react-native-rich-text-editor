@@ -983,7 +983,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
                 ) {
                     val window =
                         if (presentationViewport is ViewerTablePresentationViewport.Known) {
-                            presentationViewport.rect
+                            presentationViewport.window ?: Rect()
                         } else {
                             paintClip
                         }

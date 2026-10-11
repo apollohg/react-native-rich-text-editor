@@ -38,6 +38,41 @@ class NativeDeviceTableScrollTest {
     private data class Point(val x: Float, val y: Float)
 
     @Test
+    fun scrollingBackKeepsUnfocusedTableRowsRecorded() {
+        val intent = Intent(instrumentation.targetContext, NativeTableHostActivity::class.java)
+            .putExtra(NativeTableHostActivity.EXTRA_PLAIN_ROWS, TALL_TABLE_ROWS)
+            .putExtra(NativeTableHostActivity.EXTRA_PLAIN_COLUMNS, TALL_TABLE_COLUMNS)
+        ActivityScenario.launch<NativeTableHostActivity>(intent).use { scenario ->
+            awaitEditorTable(scenario)
+            lateinit var host: PreparedProseDrawingView
+            scenario.onActivity { host = editorTableHost(it) }
+            instrumentation.awaitStableTableViewport(host, LAYOUT_TIMEOUT_MS)
+            for (fraction in listOf(1f, 0.75f, 0.5f, 0.25f, 0f)) {
+                scenario.onActivity {
+                    val scroll = it.richTextView.editorScrollView
+                    scroll.scrollTo(0, (scroll.height * fraction).toInt())
+                }
+                instrumentation.awaitStableTableViewport(host, LAYOUT_TIMEOUT_MS)
+                scenario.onActivity { activity ->
+                    val visible = Rect()
+                    assertTrue(host.getLocalVisibleRect(visible))
+                    val node = requireNotNull(host.aboveNode)
+                    val recorded = Rect(node.left, node.top, node.right, node.bottom)
+                    assertTrue(
+                        "scroll=$fraction visible=$visible recorded=$recorded must cover returning rows",
+                        node.hasDisplayList() && recorded.contains(visible)
+                    )
+                    assertTrue(
+                        "scrolling must not require focus",
+                        !activity.richTextView.editorEditText.hasFocus()
+                    )
+                    assertUnchanged(activity)
+                }
+            }
+        }
+    }
+
+    @Test
     fun tallTableWithoutFollowingProseScrollsVertically() {
         val intent = Intent(instrumentation.targetContext, NativeTableHostActivity::class.java)
             .putExtra(NativeTableHostActivity.EXTRA_PLAIN_ROWS, TALL_TABLE_ROWS)
