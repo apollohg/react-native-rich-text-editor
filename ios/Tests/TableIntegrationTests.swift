@@ -55,6 +55,7 @@ final class TableIntegrationTests: XCTestCase {
         static let paragraphNode = "paragraph"
         static let textNode = "text"
         static let cellTextOffset: UInt32 = 2
+        static let taskListTextOffset: UInt32 = 2
         static let paragraphTextOffset: UInt32 = 1
         static let movedLastCell = 5
         static let trailingProse = "after"
@@ -171,6 +172,73 @@ final class TableIntegrationTests: XCTestCase {
                 drawing.drawInstalledLayersForTesting()
             }
             return try XCTUnwrap(image.cgImage)
+        }
+    }
+
+    func testLiveAwarenessCaretMatchesEachSendingCell() throws {
+        var config = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(TableInputTestSchema.tableConfig.utf8)) as? [String: Any])
+        var schema = try XCTUnwrap(config["schema"] as? [String: Any])
+        var nodes = try XCTUnwrap(schema["nodes"] as? [[String: Any]])
+        nodes.append(["name": "taskList", "content": "taskItem+", "group": "block", "role": "list"])
+        nodes.append(["name": "taskItem", "content": "paragraph block*", "role": "listItem", "attrs": ["checked": ["default": false]]])
+        schema["nodes"] = nodes
+        config["schema"] = schema
+        let taskParagraph = #"{"type":"taskList","content":[{"type":"taskItem","attrs":{"checked":false},"content":[{"type":"paragraph","content":[{"type":"text","text":"A"}]}]}]}"#
+        let document = Integration.shiftedGridDocument.replacingOccurrences(
+            of: #"{"type":"paragraph","content":[{"type":"text","text":"A"}]}"#, with: taskParagraph
+        )
+        let configJson = try XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: config), encoding: .utf8))
+        let room = try collaborationRoom(document: document, configJson: configJson)
+        try withTable(document, room: room) { sender in
+            try withTable(document, room: room) { receiver in
+                let relay = try TableCollaborationRelay(editorIds: [sender.adapter.editorId, receiver.adapter.editorId])
+                XCTAssertNil(editorV2CollaborationSetAwareness(
+                    editorId: sender.adapter.editorId, awarenessJson: #"{"state":{},"focused":true}"#
+                ).error)
+                try relay.exchangeUntilIdle()
+                let senderPositions = try sender.positions()
+                let receiverPositions = try receiver.positions()
+                XCTAssertEqual(senderPositions.count, Integration.gridLast + 1)
+                XCTAssertEqual(senderPositions.count, receiverPositions.count)
+                XCTAssertEqual(receiverPositions.count, Integration.gridLast + 1)
+                for index in senderPositions.indices {
+                    let receiverPosition = try XCTUnwrap(receiverPositions.indices.contains(index) ? receiverPositions[index] : nil)
+                    XCTAssertTrue(sender.view.bindTableCell(
+                        tableID: sender.tableID, cellIndex: UInt32(index), contentRect: .zero
+                    ))
+                    let input = sender.view.activeTextInput
+                    XCTAssertTrue(input.becomeFirstResponder())
+                    for offset in 0...input.textStorage.length {
+                        input.selectedRange = NSRange(location: offset, length: 0)
+                        input.syncSelectionImmediately()
+                        try relay.exchangeUntilIdle()
+                        let result = editorV2CollaborationPeers(editorId: receiver.adapter.editorId)
+                        XCTAssertNil(result.error)
+                        let json = try XCTUnwrap(result.value)
+                        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+                        let peers = try XCTUnwrap(object["peers"] as? [[String: Any]])
+                        let peer = try XCTUnwrap(peers.first { $0["isLocal"] as? Bool == false })
+                        let cursor = try XCTUnwrap(peer["cursor"] as? [String: Any])
+                        let anchor = try XCTUnwrap(EditorV2Adapter.uint32Field(cursor, "anchor"))
+                        let head = try XCTUnwrap(EditorV2Adapter.uint32Field(cursor, "head"))
+                        let taskOffset = index == Integration.gridFirst ? Integration.taskListTextOffset : 0
+                        let expected = receiverPosition + Integration.cellTextOffset + taskOffset + UInt32(offset)
+                        XCTAssertEqual(anchor, expected, "Live awareness anchor must preserve cell \(index), offset \(offset)")
+                        XCTAssertEqual(head, expected, "Live awareness must preserve cell \(index), offset \(offset): \(peer)")
+                        try receiver.setPeers([Peer(
+                            clientId: Integration.firstPeer, color: Integration.firstPeerColor,
+                            anchor: anchor, head: head, cellRectangle: nil,
+                            resolvedAt: peer["resolvedAt"] as? [String: String]
+                        )])
+                        let caret = try XCTUnwrap(receiver.view.remoteSelectionOverlaySubviewsForTesting().last)
+                        let cell = try receiver.presentedCell(receiverPosition)
+                        let frame = caret.convert(caret.bounds, to: receiver.drawing)
+                        XCTAssertTrue(cell.bounds.contains(frame), "Cell \(index), offset \(offset): caret \(frame), cell \(cell.bounds)")
+                        let local = input.caretRect(for: try XCTUnwrap(input.selectedTextRange).end)
+                        XCTAssertEqual(frame.minX - cell.contentBounds.minX, local.minX, accuracy: Integration.geometryAccuracy)
+                    }
+                }
+            }
         }
     }
 
@@ -971,12 +1039,7 @@ final class TableIntegrationTests: XCTestCase {
     }
 
     func testRemoteColumnInsertionPreservesTypingAndDeletedRowRejectsTheOldInput() throws {
-        var config = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(TableInputTestSchema.tableConfig.utf8)) as? [String: Any])
-        config["initialization"] = ["type": "localHtml", "html": "", "snapshotScope": [
-            "documentId": Integration.continuationDocumentID, "lineageId": Integration.continuationLineageID
-        ]]
-        let configJson = try XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: config), encoding: .utf8))
-        let room = try TableRoomSeed(localConfigJson: configJson, documentJson: Integration.gridDocument)
+        let room = try collaborationRoom(document: Integration.gridDocument)
         let remoteId = room.makeEditor()
         defer { destroyV2Editor(id: remoteId) }
         let remoteAdapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: remoteId))
@@ -1068,6 +1131,15 @@ final class TableIntegrationTests: XCTestCase {
                 label: "typing after remote row deletion")
             XCTAssertTrue(fixture.view.textView.textStorage.string.hasSuffix(Integration.compositionText + Integration.trailingProse), "the fallback typing must be visible")
         }
+    }
+
+    private func collaborationRoom(document: String, configJson: String = TableInputTestSchema.tableConfig) throws -> TableRoomSeed {
+        var config = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(configJson.utf8)) as? [String: Any])
+        config["initialization"] = ["type": "localHtml", "html": "", "snapshotScope": [
+            "documentId": Integration.continuationDocumentID, "lineageId": Integration.continuationLineageID
+        ]]
+        let configJson = try XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: config), encoding: .utf8))
+        return try TableRoomSeed(localConfigJson: configJson, documentJson: document)
     }
 
     private func withTable(

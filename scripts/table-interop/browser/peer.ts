@@ -36,7 +36,7 @@ import {
     redo as prosemirrorRedo,
     yXmlFragmentToProsemirrorJSON,
 } from 'y-prosemirror';
-import { Editor, Extension } from '@tiptap/core';
+import { Editor, Extension, Node as TiptapNode } from '@tiptap/core';
 import Document from '@tiptap/extension-document';
 import Paragraph from '@tiptap/extension-paragraph';
 import Text from '@tiptap/extension-text';
@@ -233,6 +233,21 @@ function mountProsemirror(
     };
 }
 
+const TaskList = TiptapNode.create({
+    name: 'taskList',
+    group: 'block',
+    content: 'taskItem+',
+    parseHTML: () => [{ tag: 'ul[data-type="taskList"]' }],
+    renderHTML: () => ['ul', { 'data-type': 'taskList' }, 0],
+});
+const TaskItem = TiptapNode.create({
+    name: 'taskItem',
+    content: 'paragraph block*',
+    addAttributes: () => ({ checked: { default: false } }),
+    parseHTML: () => [{ tag: 'li' }],
+    renderHTML: ({ HTMLAttributes }) => ['li', HTMLAttributes, 0],
+});
+
 function mountTiptap(
     sharedDocument: Y.Doc,
     fragmentName: string,
@@ -251,7 +266,7 @@ function mountTiptap(
             Document,
             Paragraph,
             Text,
-            ...(tables ? [Table, TableRow, TableHeader, TableCell] : []),
+            ...(tables ? [Table, TableRow, TableHeader, TableCell, TaskList, TaskItem] : []),
             Collaboration.configure({ document: sharedDocument, field: fragmentName }),
             instrumentation,
         ],

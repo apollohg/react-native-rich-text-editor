@@ -14,7 +14,7 @@ import {
 } from '../controller.js';
 import type { AwarenessPeerProjection } from '../controller.js';
 import type { Peer } from '../peer-protocol.js';
-import { CELL_NODE, PARAGRAPH_NODE, ROW_NODE, TABLE_NODE } from '../table-schema.js';
+import { CELL_NODE, PARAGRAPH_NODE, ROW_NODE, TABLE_NODE, TIPTAP_CELL_NODE, TIPTAP_ROW_NODE } from '../table-schema.js';
 
 const TEXT_NODE = 'text';
 const NODE_OPENING_TOKENS = 2;
@@ -230,6 +230,72 @@ test('TBL-14 a stock web text cursor reaches the engine with no rectangle', asyn
         assert.deepEqual(remote.cursor, { anchor, head });
         assert.equal(remote.cellRectangle, null);
     });
+});
+
+test('TBL-14 Tiptap cursors retain their cell and offset across task-list wrappers', async () => {
+    await withPeers(['tiptap', 'rust'] as const, async ([web, native]) => {
+        await seedFrom(web, [native]);
+        const taskTable = regularTable();
+        const rename = (node: Record<string, unknown>): Record<string, unknown> => ({
+            ...node,
+            type: node['type'] === ROW_NODE ? TIPTAP_ROW_NODE : node['type'] === CELL_NODE ? TIPTAP_CELL_NODE : node['type'],
+            ...(Array.isArray(node['content']) ? { content: node['content'].map(child => rename(child as Record<string, unknown>)) } : {}),
+        });
+        const renamed = rename(taskTable);
+        const rows = renamed['content'] as Record<string, unknown>[];
+        for (const row of rows) {
+            const cells = row['content'] as Record<string, unknown>[];
+            for (const cellNode of cells) {
+                cellNode['content'] = [{
+                    type: 'taskList',
+                    content: [{
+                        type: 'taskItem',
+                        attrs: { checked: true },
+                        content: cellNode['content'],
+                    }],
+                }];
+            }
+        }
+        await call(web, 'command', { type: 'insertNode', node: renamed });
+        await exchangeUntilIdle([web, native]);
+        const doc = (await snapshot(web)).documentJson;
+        assert.deepEqual(canonicalDocumentShape(doc), canonicalDocumentShape((await snapshot(native)).documentJson));
+        let taskItems = 0;
+        let position = 0;
+        const textPositions: number[] = [];
+        const visit = (node: Record<string, unknown>): void => {
+            if (node['type'] === 'taskItem') {
+                taskItems++;
+            }
+            if (node['type'] === TEXT_NODE) {
+                const length = String(node['text']).length;
+                for (let offset = 0; offset <= length; offset++) {
+                    textPositions.push(position + offset);
+                }
+                position += length;
+                return;
+            }
+            if (node['type'] !== DOC_NODE) {
+                position += VOID_NODE_SIZE;
+            }
+            for (const child of (node['content'] ?? []) as Record<string, unknown>[]) {
+                visit(child);
+            }
+            if (node['type'] !== DOC_NODE) {
+                position += VOID_NODE_SIZE;
+            }
+        };
+        assert.ok(doc);
+        visit(doc);
+        assert.equal(taskItems, CELL_TEXTS.length);
+        assert.ok(textPositions.length > CELL_TEXTS.length);
+        for (const head of textPositions) {
+            const [update] = await setAwareness(web, { state: {}, selection: { type: 'text', anchor: head, head } });
+            assert.ok(update);
+            await applyAwareness(native, update.bytesBase64);
+            assert.deepEqual(remotePeer(await awarenessPeers(native)).cursor, { anchor: head, head }, `cursor at ${head}`);
+        }
+    }, tableFixture('tiptap'));
 });
 
 test('TBL-14 a web-published rectangle reaches the engine as the same real cells', async () => {
