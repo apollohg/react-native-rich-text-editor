@@ -26,20 +26,7 @@ fn cross_parent_delete_at_cell_text_boundaries_preserves_neighbors_and_history()
                     {"type": "tableCell", "content": [paragraph("untouched")]}
                 ]}]
             }]});
-            let table_schema = crate::schema::presets::tiptap_table_schema();
-            let task_schema = attribute_schema();
-            let schema = Schema::new(
-                table_schema
-                    .all_nodes()
-                    .chain(
-                        task_schema
-                            .all_nodes()
-                            .filter(|node| node.name == "taskList" || node.name == "taskItem"),
-                    )
-                    .cloned()
-                    .collect(),
-                table_schema.all_marks().cloned().collect(),
-            );
+            let schema = crate::schema::presets::tiptap_table_schema();
             let from = rendered_scalar_offset(&source, &schema, LEFT) + left_cut;
             let to = rendered_scalar_offset(&source, &schema, RIGHT) + right_cut;
             let operations = vec![TypedOperation::DeleteRange {
