@@ -318,7 +318,8 @@ internal fun RenderBridge.appendVoidBlock(
     reusableImages: MutableList<BlockImageSpan> = mutableListOf(),
     ancestorBoxInset: EditorEdges = EditorEdges(),
     containerDepth: Int = 0,
-    ancestors: List<String> = emptyList()
+    ancestors: List<String> = emptyList(),
+    preparedImageSizes: Iterator<Pair<Int, Int>>? = null
 ) {
     if (docPos != null && atomConfiguration?.registeredNodeTypes?.contains(nodeType) == true) {
         val start = builder.length
@@ -438,7 +439,8 @@ internal fun RenderBridge.appendVoidBlock(
                         density,
                         preferredWidthDp,
                         preferredHeightDp,
-                        imageStyle
+                        imageStyle,
+                        preparedImageSizes?.next()
                     )
             span.ancestorWidthInset = ancestorBoxInset.left + ancestorBoxInset.right
             builder.setSpan(span, start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)

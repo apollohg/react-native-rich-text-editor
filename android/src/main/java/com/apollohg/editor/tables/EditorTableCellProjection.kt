@@ -37,7 +37,8 @@ internal object EditorTableCellProjection {
         theme: EditorTheme? = null,
         density: Float = 1f,
         atomConfiguration: AtomRenderConfiguration? = null,
-        taskMarkers: List<PreparedProseFragment> = emptyList()
+        taskMarkers: List<PreparedProseFragment> = emptyList(),
+        preparedImageSizes: List<Pair<Int, Int>>? = null
     ): Projection? {
         if (cellIndex < 0 || canonicalV2U64(documentRevision) == null ||
             canonicalV2U64(positionEpoch) == null
@@ -56,6 +57,15 @@ internal object EditorTableCellProjection {
                 index.absoluteDocPos(tableKey, cellIndex, relative)
             }
                 ?: return null
+        if (preparedImageSizes != null) {
+            val images = (0 until elements.length()).count { index ->
+                val element = elements.getJSONObject(index)
+                element.optString("type") == "voidBlock" &&
+                    element.optString("nodeType") == "image" &&
+                    !element.optJSONObject("attrs")?.optString("src").isNullOrEmpty()
+            }
+            if (images != preparedImageSizes.size) return null
+        }
         val binding = TableCellPositionMap.Binding(
             tableKey,
             cellIndex,
@@ -73,7 +83,8 @@ internal object EditorTableCellProjection {
                 if (ranges.put(index, start to end) != null) duplicate = true
             },
             synthesizeEmptyBlocks = true,
-            synthesizeTrailingHardBreakPlaceholders = false
+            synthesizeTrailingHardBreakPlaceholders = false,
+            preparedImageSizes = preparedImageSizes
         )
         if (taskMarkers.isNotEmpty() && !applyTaskMarkerGeometry(rendered, taskMarkers)) return null
         if (duplicate) return null

@@ -25,6 +25,7 @@ object RenderBridge {
         val pendingCodeBlockSpans: MutableList<PendingCodeBlockSpan> = mutableListOf(),
         val atomOccurrences: MutableMap<String, Int> = mutableMapOf(),
         val reusableImages: MutableList<BlockImageSpan> = mutableListOf(),
+        val preparedImageSizes: Iterator<Pair<Int, Int>>? = null,
         val blockRangeObserver: ((Int, Int, Int) -> Unit)? = null,
         val synthesizeEmptyBlocks: Boolean = false,
         val synthesizeTrailingHardBreakPlaceholders: Boolean = true,
@@ -87,10 +88,12 @@ object RenderBridge {
         blockRangeObserver: ((Int, Int, Int) -> Unit)? = null,
         synthesizeEmptyBlocks: Boolean = false,
         synthesizeTrailingHardBreakPlaceholders: Boolean = true,
-        rootTableIds: Set<String> = emptySet()
+        rootTableIds: Set<String> = emptySet(),
+        preparedImageSizes: List<Pair<Int, Int>>? = null
     ): SpannableStringBuilder {
         val state = RenderBuildState(
             reusableImages = reusableImages(hostView),
+            preparedImageSizes = preparedImageSizes?.iterator(),
             blockRangeObserver = blockRangeObserver,
             synthesizeEmptyBlocks = synthesizeEmptyBlocks,
             synthesizeTrailingHardBreakPlaceholders = synthesizeTrailingHardBreakPlaceholders,

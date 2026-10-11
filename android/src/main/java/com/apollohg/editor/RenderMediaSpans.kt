@@ -54,7 +54,8 @@ internal class BlockImageSpan(
     private val density: Float,
     private val preferredWidthDp: Float?,
     private val preferredHeightDp: Float?,
-    internal var imageStyle: EditorElementStyle? = null
+    internal var imageStyle: EditorElementStyle? = null,
+    private val preparedSizePx: Pair<Int, Int>? = null
 ) : ReplacementSpan() {
     internal var ancestorWidthInset: Float = 0f
     private val hostRef = WeakReference(hostView)
@@ -64,9 +65,11 @@ internal class BlockImageSpan(
     private val boundEditorId = (hostView as? EditorEditText)?.editorId
     private val boundDriver = WeakReference((hostView as? EditorEditText)?.v2Driver)
     private val hadBoundDriver = boundDriver.get() != null
-    private val ownerId = (hostView as? EditorEditText)?.decodedBitmapOwnerId
-        ?: DecodedBitmapBudget.nextOwnerId()
-    private val preparedSource = NativeImagePipeline.prepare(source, policy)
+    private val preparedSource = if (preparedSizePx == null) {
+        NativeImagePipeline.prepare(source, policy)
+    } else {
+        null
+    }
 
     private val retired = AtomicBoolean(false)
     private val bitmapLease = AtomicReference<DecodedBitmapLease?>()
@@ -78,6 +81,8 @@ internal class BlockImageSpan(
 
     init {
         if (preparedSource != null) {
+            val ownerId = (hostView as? EditorEditText)?.decodedBitmapOwnerId
+                ?: DecodedBitmapBudget.nextOwnerId()
             val handle = NativeImagePipeline.load(
                 preparedSource,
                 ownerId,
@@ -245,6 +250,7 @@ internal class BlockImageSpan(
     }
 
     internal fun currentSizePx(): Pair<Int, Int> {
+        preparedSizePx?.let { return it }
         temporarySizePx?.let { return it }
         val maxWidth = resolvedMaxWidth()
         val loadedBitmap = bitmapLease.get()?.bitmap

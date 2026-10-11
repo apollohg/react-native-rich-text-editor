@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.Rect
 import android.graphics.RectF
 import android.util.AttributeSet
 import android.util.TypedValue
@@ -226,6 +227,7 @@ class RemoteSelectionOverlayView @JvmOverloads constructor(
 
     fun refreshGeometry() {
         if (legacyFrame == null) legacyFrame = installedFrame()
+        if (editorView?.editorEditText?.rootTablePositionMap != null) invalidateGeometry()
         presentRemoteCellSelections()
         ensureGeometry()
         invalidate()
@@ -315,13 +317,23 @@ class RemoteSelectionOverlayView @JvmOverloads constructor(
             val endDoc = maxOf(selection.anchor, selection.head)
             val startScalar = docToScalarResolver(editorId, startDoc)
             val endScalar = docToScalarResolver(editorId, endDoc)
+            val tableGeometry = tableTextGeometry(selection, context)
+            if (tableGeometry != null) return@map tableGeometry
+            val rootMap = editorView?.editorEditText?.rootTablePositionMap
+            val localStart = if (rootMap != null) rootMap.localScalar(startScalar) else startScalar
+            val localEnd = if (rootMap != null) rootMap.localScalar(endScalar) else endScalar
             val startUtf16 = PositionBridge.scalarToUtf16(
-                startScalar,
+                localStart ?: 0,
                 text
             ).coerceIn(0, text.length)
-            val endUtf16 = PositionBridge.scalarToUtf16(endScalar, text).coerceIn(0, text.length)
+            val endUtf16 = PositionBridge.scalarToUtf16(
+                localEnd ?: 0,
+                text
+            ).coerceIn(0, text.length)
 
-            val selectionPath = if (startUtf16 != endUtf16) {
+            val selectionPath = if (localStart != null && localEnd != null &&
+                startUtf16 != endUtf16
+            ) {
                 Path().apply {
                     context.layout.getSelectionPath(startUtf16, endUtf16, this)
                     offset(context.snapshot.baseX.toFloat(), context.snapshot.baseY.toFloat())
@@ -341,7 +353,7 @@ class RemoteSelectionOverlayView @JvmOverloads constructor(
                     baseX = context.snapshot.baseX.toFloat(),
                     baseY = context.snapshot.baseY.toFloat(),
                     caretWidth = context.caretWidth,
-                    isFocused = selection.isFocused
+                    isFocused = selection.isFocused && localEnd != null
                 ),
                 caretColor = selection.color
             )
@@ -350,6 +362,64 @@ class RemoteSelectionOverlayView @JvmOverloads constructor(
         cachedSnapshot = context.snapshot
         cachedGeometry = geometry
         return geometry
+    }
+
+    private fun tableTextGeometry(
+        selection: RemoteSelectionDecoration,
+        context: GeometryContext
+    ): CachedSelectionGeometry? {
+        val view = editorView ?: return null
+        val adapter = EditorV2Registry.adapterForViewToken(context.snapshot.editorId) ?: return null
+        if (adapter.tableIndex.tableKeyContainingDoc(selection.head.toUInt()) == null) return null
+        val source = view.editorTableSurface.remoteTextLayout(selection.head)
+        val path = Path()
+        var caret: RectF? = null
+        if (source != null) {
+            val text = source.layout.text.toString()
+            fun offset(doc: Int): Int? = source.positions.localScalarForGlobalScalar(
+                docToScalarResolver(context.snapshot.editorId, doc)
+            )?.let { PositionBridge.scalarToUtf16(it, text) }
+            val anchor = offset(selection.anchor)
+            val head = offset(selection.head)
+            val origin = Rect()
+            view.offsetDescendantRectToMyCoords(view.editorTableSurface.drawingView, origin)
+            val x = origin.left + source.bounds.left
+            val y = origin.top + source.bounds.top
+            val clip = RectF(source.clip).apply {
+                offset(origin.left.toFloat(), origin.top.toFloat())
+            }
+            if (anchor != null && head != null && anchor != head) {
+                source.layout.getSelectionPath(minOf(anchor, head), maxOf(anchor, head), path)
+                path.offset(x, y)
+                val clippingPath = Path().apply { addRect(clip, Path.Direction.CW) }
+                path.op(clippingPath, Path.Op.INTERSECT)
+            }
+            if (head != null) {
+                val vertical = CaretGeometry.verticalBounds(
+                    source.layout,
+                    head,
+                    source.layout.paint
+                )
+                caret = caretRectForOffset(
+                    head,
+                    text.length,
+                    source.layout,
+                    x,
+                    y,
+                    context.caretWidth,
+                    selection.isFocused
+                )?.apply {
+                    bottom = y + vertical.bottom
+                }?.takeIf { it.intersect(clip) }
+            }
+        }
+        return CachedSelectionGeometry(
+            selection.clientId,
+            path.takeUnless { it.isEmpty },
+            withAlpha(selection.color, SELECTION_ALPHA),
+            caret,
+            selection.color
+        )
     }
 
     private fun buildGeometryContext(): GeometryContext? {

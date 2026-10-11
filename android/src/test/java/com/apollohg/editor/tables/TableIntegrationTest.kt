@@ -14,6 +14,7 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
+import android.view.ViewGroup
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
@@ -26,7 +27,9 @@ import com.apollohg.editor.EditorV2CallResult
 import com.apollohg.editor.EditorV2Registry
 import com.apollohg.editor.NativeEditorExpoView
 import com.apollohg.editor.NativeEditorExpoViewTestSupport
+import com.apollohg.editor.PositionBridge
 import com.apollohg.editor.RemoteSelectionOverlayView
+import com.apollohg.editor.RenderImageLoader
 import com.apollohg.editor.UniffiEditorV2Backend
 import com.apollohg.editor.canDispatchTableCellMutation
 import com.apollohg.editor.initialUpdateJson
@@ -34,6 +37,7 @@ import com.apollohg.editor.inputScalarSelection
 import com.apollohg.editor.tableRecordsForTesting
 import com.apollohg.editor.testExpoContext
 import com.apollohg.editor.viewer.PreparedProseDrawingView
+import com.apollohg.editor.viewer.PreparedProseFragmentKind
 import com.apollohg.editor.viewer.RemoteTableCellSelection
 import java.lang.ref.WeakReference
 import java.time.Duration
@@ -127,6 +131,9 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
             requireNotNull(drawing.tableCellRects(selection.tableId, selection.sourceIndices))
 
         fun activeCellPosition(): Long? = view.richTextView.activeTableCellPosition
+
+        fun remoteCaret(): RectF? =
+            view.richTextView.remoteSelectionDebugSnapshotsForTesting().single().caretRect
 
         fun relayout(viewport: Size = this.viewport) {
             view.measure(
@@ -248,6 +255,277 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
 
     private fun fallbackClients(fixture: Fixture): List<String> =
         fixture.view.richTextView.remoteSelectionDebugSnapshotsForTesting().map { it.clientId }
+
+    @Test
+    fun `remote text caret is inside its table cell without activating the cell`() =
+        withTable(GRID_DOCUMENT) { fixture ->
+            val cellPosition = fixture.positions()[GRID_FIRST]
+            val textPosition = cellPosition + TEXT_OFFSET_INSIDE_CELL
+            val cell = fixture.presentedCell(cellPosition)
+            fixture.setPeers(
+                listOf(Peer(FIRST_PEER, FIRST_PEER_COLOR, textPosition, textPosition, null))
+            )
+            val caret = requireNotNull(fixture.remoteCaret())
+            val origin = Rect()
+            fixture.view.richTextView.offsetDescendantRectToMyCoords(fixture.drawing, origin)
+            val content = RectF(cell.contentBounds).apply {
+                offset(origin.left.toFloat(), origin.top.toFloat())
+            }
+            assertTrue(
+                "remote caret=$caret must be inside cell content=$content",
+                content.contains(caret)
+            )
+            assertNull(
+                "remote presence must not activate a local cell",
+                fixture.activeCellPosition()
+            )
+        }
+
+    @Test
+    fun `remote table caret follows horizontal scrolling and hides outside the viewport`() =
+        withTable(WIDE_DOCUMENT, viewport = Size(NARROW_VIEW_WIDTH, VIEW_HEIGHT)) { fixture ->
+            val position = fixture.positions()[GRID_FIRST] + TEXT_OFFSET_INSIDE_CELL
+            fixture.setPeers(listOf(Peer(FIRST_PEER, FIRST_PEER_COLOR, position, position, null)))
+            val before = requireNotNull(fixture.remoteCaret())
+            val table = fixture.presentedCell(fixture.positions()[GRID_FIRST]).surface
+            fixture.drawing.setTableLogicalOffset(table.identity, HORIZONTAL_SCROLL)
+            assertEquals(
+                "the table actually scrolled",
+                HORIZONTAL_SCROLL,
+                fixture.drawing.tablePhysicalOffsetForTesting(table.identity),
+                GEOMETRY_TOLERANCE
+            )
+            assertNull(
+                "a caret scrolled outside its table clip must disappear",
+                fixture.remoteCaret()
+            )
+            fixture.drawing.setTableLogicalOffset(table.identity, 0f)
+            assertEquals(
+                "returning cell must restore peer caret without local focus",
+                before,
+                fixture.remoteCaret()
+            )
+        }
+
+    @Test
+    fun `remote caret matches local caret in an active table cell`() =
+        withTable(GRID_DOCUMENT) { fixture ->
+            val cellPosition = fixture.positions()[GRID_FIRST]
+            fixture.tapCell(cellPosition)
+            val input = fixture.view.richTextView.activeTextInput
+            input.setSelection(0)
+            val position = cellPosition + TEXT_OFFSET_INSIDE_CELL
+            fixture.setPeers(listOf(Peer(FIRST_PEER, FIRST_PEER_COLOR, position, position, null)))
+            val remote = requireNotNull(fixture.remoteCaret())
+            val local = requireNotNull(input.caretRect())
+            val origin = Rect()
+            fixture.view.richTextView.offsetDescendantRectToMyCoords(input, origin)
+            local.offset(origin.left.toFloat(), origin.top.toFloat())
+            assertEquals(
+                "peer and local caret horizontal position",
+                local.left,
+                remote.left,
+                GEOMETRY_TOLERANCE
+            )
+            assertEquals(
+                "peer and local caret vertical position",
+                local.top,
+                remote.top,
+                GEOMETRY_TOLERANCE
+            )
+            assertEquals(
+                "peer and local caret line height",
+                local.height(),
+                remote.height(),
+                GEOMETRY_TOLERANCE
+            )
+        }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = WINDOW_COVERING_THE_EDITOR)
+    fun `reversed remote text selection paints the cell and keeps its caret at the head`() =
+        withTable(GRID_DOCUMENT) { fixture ->
+            val head = fixture.positions()[GRID_LAST] + TEXT_OFFSET_INSIDE_CELL
+            fixture.setPeers(listOf(Peer(FIRST_PEER, FIRST_PEER_COLOR, head, head, null)))
+            val editor = fixture.view.richTextView
+            val expectedCaret =
+                requireNotNull(editor.remoteSelectionDebugSnapshotsForTesting().single().caretRect)
+            fixture.setPeers(
+                listOf(Peer(FIRST_PEER, FIRST_PEER_COLOR, head + GRID_LAST_TEXT.length, head, null))
+            )
+            assertEquals(
+                "a backward selection must keep the caret at its head",
+                expectedCaret,
+                editor.remoteSelectionDebugSnapshotsForTesting().single().caretRect
+            )
+            val viewport = editor.editorViewport
+            val overlay = (0 until viewport.childCount).map(viewport::getChildAt)
+                .filterIsInstance<ViewGroup>()
+                .flatMap { parent -> (0 until parent.childCount).map(parent::getChildAt) }
+                .filterIsInstance<RemoteSelectionOverlayView>().single()
+            val bitmap = Bitmap.createBitmap(overlay.width, overlay.height, Bitmap.Config.ARGB_8888)
+            try {
+                overlay.draw(Canvas(bitmap))
+                val origin = Rect()
+                editor.offsetDescendantRectToMyCoords(fixture.drawing, origin)
+                val content = RectF(
+                    fixture.presentedCell(fixture.positions()[GRID_LAST]).contentBounds
+                )
+                    .apply { offset(origin.left.toFloat(), origin.top.toFloat()) }
+                var selectedPixels = 0
+                for (y in 0 until bitmap.height) {
+                    for (x in 0 until bitmap.width) {
+                        val color = bitmap.getPixel(x, y)
+                        if (color == expectedPeerFill(FIRST_PEER_COLOR)) selectedPixels += 1
+                        if (Color.alpha(color) != 0) {
+                            assertTrue(
+                                "remote text paint at ($x, $y) escaped cell $content",
+                                content.contains(x.toFloat(), y.toFloat())
+                            )
+                        }
+                    }
+                }
+                assertTrue(
+                    "selected cell text must have a visible range highlight",
+                    selectedPixels > 0
+                )
+            } finally {
+                bitmap.recycle()
+            }
+        }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `remote caret at the right aligned text edge stays visible inside cell padding`() =
+        withTable(GRID_DOCUMENT, viewport = Size(NARROW_VIEW_WIDTH, VIEW_HEIGHT)) { fixture ->
+            fixture.view.setThemeJson(RIGHT_ALIGNED_PARAGRAPH_THEME)
+            fixture.relayout()
+            val cellPosition = fixture.positions()[GRID_FIRST]
+            val position = cellPosition + TEXT_OFFSET_INSIDE_CELL + GRID_LAST_TEXT.length
+            fixture.setPeers(listOf(Peer(FIRST_PEER, FIRST_PEER_COLOR, position, position, null)))
+            val caret = requireNotNull(fixture.remoteCaret()) {
+                "the caret at a right-aligned line end must not be clipped by the content edge"
+            }
+            val origin = Rect()
+            fixture.view.richTextView.offsetDescendantRectToMyCoords(fixture.drawing, origin)
+            val cell = fixture.presentedCell(cellPosition)
+            assertEquals(
+                "caret follows the right-aligned text end",
+                cell.contentBounds.right + origin.left,
+                caret.left,
+                GEOMETRY_TOLERANCE
+            )
+            assertTrue(
+                "caret remains clipped to its cell",
+                RectF(cell.bounds).apply { offset(origin.left.toFloat(), origin.top.toFloat()) }
+                    .contains(caret)
+            )
+        }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `remote caret after an image uses prepared image size without another image request`() {
+        withTable(
+            IMAGE_CELL_DOCUMENT,
+            viewport = Size(NARROW_VIEW_WIDTH, VIEW_HEIGHT),
+            config = ViewerTableTest.CONFIG
+        ) { fixture ->
+            fixture.view.setThemeJson(IMAGE_CELL_THEME)
+            fixture.relayout()
+            val input = fixture.view.richTextView.activeTextInput
+            input.setSelection(input.text.length)
+            input.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_DOWN))
+            fixture.relayout()
+            assertNull(
+                "arrowing into following prose must leave the image cell inactive",
+                fixture.activeCellPosition()
+            )
+            val cellPosition = fixture.positions()[GRID_FIRST]
+            val cell = fixture.presentedCell(cellPosition)
+            val paragraph = cell.cell.content.blocks.flatMap { it.fragments }
+                .single { it.kind == PreparedProseFragmentKind.TEXT }
+            val paragraphLayout = requireNotNull(paragraph.layout)
+            val position = cellPosition + TEXT_OFFSET_INSIDE_CELL + ATOM_NODE_SIZE
+            val imageRequests = RenderImageLoader.digestConstructionCountForTesting()
+            fixture.setPeers(listOf(Peer(FIRST_PEER, FIRST_PEER_COLOR, position, position, null)))
+            fixture.view.richTextView.refreshRemoteSelections()
+            assertEquals(
+                "remote geometry must not submit another image load",
+                imageRequests,
+                RenderImageLoader.digestConstructionCountForTesting()
+            )
+            val caret = requireNotNull(fixture.remoteCaret())
+            val origin = Rect()
+            fixture.view.richTextView.offsetDescendantRectToMyCoords(fixture.drawing, origin)
+            assertEquals(
+                "caret must align with the painted paragraph below the prepared image",
+                origin.top + cell.contentBounds.top + paragraph.layoutY +
+                    paragraphLayout.getLineTop(0),
+                caret.top,
+                GEOMETRY_TOLERANCE
+            )
+        }
+    }
+
+    @Test
+    fun `remote text caret waits for its resolved document revision`() =
+        withTable(GRID_DOCUMENT) { fixture ->
+            val position = fixture.positions()[GRID_FIRST] + TEXT_OFFSET_INSIDE_CELL
+            fun peer(revision: ULong) = Peer(
+                FIRST_PEER,
+                FIRST_PEER_COLOR,
+                position,
+                position,
+                null,
+                JSONObject().put("editorId", fixture.adapter.editorId)
+                    .put("documentRevision", revision.toString())
+            )
+            fixture.setPeers(listOf(peer(fixture.adapter.baseDocumentRevision + 1u)))
+            assertTrue(
+                "future presence must not use the currently presented cell",
+                fixture.view.richTextView.remoteSelectionDebugSnapshotsForTesting().isEmpty()
+            )
+            fixture.setPeers(listOf(peer(fixture.adapter.baseDocumentRevision)))
+            assertTrue(
+                "matching presence must appear without focusing the cell",
+                fixture.remoteCaret() != null
+            )
+            assertNull(fixture.activeCellPosition())
+        }
+
+    @Test
+    fun `remote caret after a table uses the root projection`() =
+        withTable(GRID_DOCUMENT) { fixture ->
+            val rootText = fixture.root.text.toString()
+            val offset = rootText.indexOf(TRAILING_PROSE)
+            val scalar = requireNotNull(
+                fixture.root.rootTablePositionMap
+            ).globalScalar(PositionBridge.utf16ToScalar(offset, rootText))!!
+            val position = requireNotNull(fixture.adapter.docPositionForScalar(scalar))
+            fixture.setPeers(listOf(Peer(FIRST_PEER, FIRST_PEER_COLOR, position, position, null)))
+            val caret = requireNotNull(fixture.remoteCaret())
+            val origin = Rect()
+            fixture.view.richTextView.offsetDescendantRectToMyCoords(fixture.root, origin)
+            assertEquals(
+                "peer caret is at the start of following prose",
+                origin.left + fixture.root.compoundPaddingLeft +
+                    fixture.root.layout.getPrimaryHorizontal(offset),
+                caret.left,
+                GEOMETRY_TOLERANCE
+            )
+            val line = fixture.root.layout.getLineForOffset(offset)
+            assertEquals(
+                "peer caret is on the line after the table",
+                (
+                    origin.top + fixture.root.compoundPaddingTop + fixture.root.layout.getLineTop(
+                        line
+                    )
+                    ).toFloat(),
+                caret.top,
+                GEOMETRY_TOLERANCE
+            )
+        }
 
     @Test
     fun `remote rectangle resolves by index and fills cells instead of the cursor fallback`() =
@@ -1529,12 +1807,13 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
         document: String,
         viewport: Size = Size(VIEW_WIDTH, VIEW_HEIGHT),
         room: TableRoomSeed? = null,
+        config: String = PlainTableFixture.CONFIG,
         block: (Fixture) -> Unit
     ) {
         val activity = Robolectric.buildActivity(Activity::class.java).setup()
         val adapter = room?.makeAdapter() ?: run {
             val created = UniffiEditorV2Backend.create(
-                PlainTableFixture.CONFIG,
+                config,
                 null
             ) as EditorV2CallResult.Ok
             requireNotNull(
@@ -1627,6 +1906,7 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
 
     private companion object {
         const val VIEW_WIDTH = 900
+        const val NARROW_VIEW_WIDTH = 240
         const val VIEW_HEIGHT = 500
         const val RELEASE_VIEWPORT_WIDTH = 390
         const val RELEASE_VIEWPORT_HEIGHT = 844
@@ -1643,6 +1923,16 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
         const val FIRST_PEER_COLOR = "#FF0000"
         const val SECOND_PEER_COLOR = "#0000FF"
         const val PEER_NAME = "Remote"
+        const val ATOM_NODE_SIZE = 1
+        const val IMAGE_CELL_DOCUMENT = """{"type":"doc","content":[{"type":"table",
+            "content":[{"type":"table_row","content":[{"type":"table_cell","content":[
+            {"type":"image","attrs":{"src":"invalid-presence-image","width":800,"height":400}},
+            {"type":"paragraph","content":[{"type":"text","text":"after image"}]}]}]}]},
+            {"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
+        const val IMAGE_CELL_THEME = """{"version":1,"styles":{
+            "paragraph":{"fontSize":16},"image":{"marginTop":5,"marginBottom":7}}}"""
+        const val RIGHT_ALIGNED_PARAGRAPH_THEME =
+            """{"version":1,"styles":{"paragraph":{"textAlign":"right"}}}"""
         const val COLOR_CHANNEL_MAX = 255f
         const val HORIZONTAL_SCROLL = 300f
         const val GEOMETRY_TOLERANCE = 0.5f

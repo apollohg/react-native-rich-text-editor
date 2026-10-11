@@ -20,6 +20,7 @@ import android.view.ViewGroup
 import android.view.inputmethod.InputMethodManager
 import android.widget.FrameLayout
 import com.apollohg.editor.EditorClipboard
+import com.apollohg.editor.EditorDocumentLayout
 import com.apollohg.editor.EditorEditText
 import com.apollohg.editor.EditorPasteMode
 import com.apollohg.editor.EditorTextStyle
@@ -108,6 +109,13 @@ internal class RootTableHeightSpan(val heightPx: Int) : ReplacementSpan() {
 }
 
 internal data class TableSelectionObstructions(val safeArea: RectF, val keyboard: RectF?)
+
+internal data class EditorTableTextLayout(
+    val layout: android.text.Layout,
+    val positions: TableCellPositionMap,
+    val bounds: RectF,
+    val clip: RectF
+)
 
 internal data class TableSelectionGeometry(
     val editorId: String,
@@ -273,6 +281,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) :
         onTableGeometryChanged = {
             positionActiveInput()
             selectionGeometryMayChange()
+            host.refreshRemoteSelections()
         }
         onTableTap = { downX, downY, upX, upY ->
             val target = hitCell(downX, downY)?.takeIf { it == hitCell(upX, upY) }
@@ -1809,10 +1818,83 @@ internal class EditorTableSurface(private val host: RichTextEditorView) :
         return true
     }
 
-    private fun projection(tableId: String, cellIndex: Int): EditorTableCellProjection.Projection? {
+    fun remoteTextLayout(docPosition: Int): EditorTableTextLayout? {
         val root = host.editorEditText
         val adapter = root.v2Driver as? EditorV2Adapter ?: return null
-        if (!root.isEditable || !root.hasAuthorizedNativeTableOwner(adapter) ||
+        val revision = adapter.baseDocumentRevision.toString()
+        val epoch = adapter.positionEpoch ?: return null
+        if (docPosition < 0 || presentedDocumentRevision != adapter.baseDocumentRevision ||
+            root.lastAppliedDocumentVersion != revision ||
+            adapter.cachedAtomicRenderDocumentRevision != adapter.baseDocumentRevision
+        ) {
+            return null
+        }
+        val tableId = adapter.tableIndex.tableKeyContainingDoc(docPosition.toUInt()) ?: return null
+        val cellIndex = adapter.tableIndex.cellIndexContainingDoc(tableId, docPosition.toUInt())
+            ?: return null
+        val presented =
+            drawingView.presentedTableCell(tableId) { it.cell(cellIndex) } ?: return null
+        val visible = RectF(presented.bounds)
+        val viewport = Rect()
+        if (!drawingView.getLocalVisibleRect(viewport) ||
+            !visible.intersect(presented.clip) || !visible.intersect(RectF(viewport))
+        ) {
+            return null
+        }
+        val active = activeInput?.takeIf {
+            activeCell == ActiveCell(tableId, cellIndex)
+        }
+        val projected = if (active == null) {
+            projection(
+                tableId,
+                cellIndex,
+                requireEditable = false,
+                preparedImageSizes = presented.cell.content.imageAttachments.map {
+                    it.bounds.width() to it.bounds.height()
+                }
+            )
+        } else {
+            null
+        }
+        val positions = active?.tableCellPositionMap ?: projected?.positionMap ?: return null
+        if (!positions.isCurrent(revision, epoch)) return null
+        val layout = if (active != null) {
+            active.layout ?: return null
+        } else {
+            EditorDocumentLayout(
+                requireNotNull(projected).text,
+                root.paint,
+                presented.cell.contentWidthPx,
+                root.includeFontPadding,
+                root.lineSpacingMultiplier,
+                root.lineSpacingExtra
+            )
+        }
+        val bounds = RectF(presented.contentBounds)
+        if (active != null) {
+            val inputOrigin = Rect()
+            val drawingOrigin = Rect()
+            host.offsetDescendantRectToMyCoords(active, inputOrigin)
+            host.offsetDescendantRectToMyCoords(drawingView, drawingOrigin)
+            bounds.offsetTo(
+                (inputOrigin.left - drawingOrigin.left).toFloat() +
+                    active.totalPaddingLeft - active.scrollX,
+                (inputOrigin.top - drawingOrigin.top).toFloat() +
+                    active.totalPaddingTop - active.scrollY
+            )
+        }
+        return EditorTableTextLayout(layout, positions, bounds, visible)
+    }
+
+    private fun projection(
+        tableId: String,
+        cellIndex: Int,
+        requireEditable: Boolean = true,
+        preparedImageSizes: List<Pair<Int, Int>>? = null
+    ): EditorTableCellProjection.Projection? {
+        val root = host.editorEditText
+        val adapter = root.v2Driver as? EditorV2Adapter ?: return null
+        if ((requireEditable && !root.isEditable) || !root.hasAuthorizedNativeTableOwner(adapter) ||
             adapter.cachedAtomicRenderDocumentRevision != adapter.baseDocumentRevision ||
             root.lastAppliedDocumentVersion != adapter.baseDocumentRevision.toString()
         ) {
@@ -1826,7 +1908,8 @@ internal class EditorTableSurface(private val host: RichTextEditorView) :
             root.baseTextColor,
             root.theme,
             root.resources.displayMetrics.density,
-            taskMarkers = entries[tableId]?.surface?.cell(cellIndex)?.taskMarkers().orEmpty()
+            taskMarkers = entries[tableId]?.surface?.cell(cellIndex)?.taskMarkers().orEmpty(),
+            preparedImageSizes = preparedImageSizes
         )
     }
 

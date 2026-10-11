@@ -161,7 +161,8 @@ internal fun RenderBridge.appendElements(
                                 )
                     },
                     state.blockStack.size,
-                    state.blockStack.map { it.nodeType }
+                    state.blockStack.map { it.nodeType },
+                    state.preparedImageSizes
                 )
                 if (observeSourceElements) {
                     state.blockRangeObserver?.invoke(
