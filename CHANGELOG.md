@@ -1,5 +1,26 @@
 # Changelog
 
+## [2.1.0]
+
+### Added
+
+- Added native collaborative tables to iOS and Android editors and viewers, with rich cell content, merged cells, column resizing, horizontal scrolling, remote cursors, and configurable styling and margins.
+- Added `withTablesSchema`, typed table commands, and `TableToolbar`, with row/column/header editing, merge/split, cell selection, clipboard and drag-and-drop support, keyboard navigation, and VoiceOver/TalkBack accessibility.
+- Added task lists to the Tiptap-compatible schema and exported `withTaskListSchema`, including HTML import/export that preserves checkbox state.
+- Added interactive swipe-to-dismiss keyboard support on iOS.
+
+### Changed
+
+- Reduced layout, editing, and collaboration overhead and memory usage for large documents.
+
+### Fixed
+
+- Fixed Backspace around custom atoms and empty lists, preserved multi-code-point characters during deletion, and kept cleared rich content editable.
+- Fixed Android heading and inline styles appearing incorrectly while typing or composing text, and stale styling after replacements.
+- Fixed iOS caret movement when stopping a scroll, unwanted focus from invalid taps, and caret overlap with keyboard accessories.
+- Fixed collaborative undo/redo to preserve peer content, selections, and formatting, and recover past obsolete history entries.
+- Preserved out-of-order collaboration updates and corrected ProseMirror-compatible formatting and numeric attribute serialization.
+
 ## [2.0.12] - 2026-09-28
 
 ### Changed
