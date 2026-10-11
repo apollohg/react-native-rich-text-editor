@@ -268,6 +268,9 @@ final class RemoteSelectionOverlayView: UIView {
         for selection: RemoteSelectionDecoration,
         in textView: EditorTextView
     ) -> (selectionRects: [CGRect], caretRect: CGRect?) {
+        if EditorV2Registry.adapter(forLegacyId: editorId)?.tableIndex.tableKey(containingDoc: selection.head) != nil {
+            return tableGeometry(for: selection)
+        }
         let startScalar = EditorV2Shadow.docToScalar(
             id: editorId,
             docPos: min(selection.anchor, selection.head)
@@ -298,6 +301,28 @@ final class RemoteSelectionOverlayView: UIView {
             .map { textView.convert($0, to: self) }
 
         return (selectionRects, caretRect)
+    }
+
+    private func tableGeometry(for selection: RemoteSelectionDecoration) -> (selectionRects: [CGRect], caretRect: CGRect?) {
+        guard let tableSurface, let source = tableSurface.remoteTextInput(at: selection.head) else { return ([], nil) }
+        let input = source.input
+        func position(_ doc: UInt32) -> UITextPosition? {
+            let global = EditorV2Shadow.docToScalar(id: editorId, docPos: doc)
+            guard let local = source.map.localScalar(forGlobalScalar: global) else { return nil }
+            return PositionBridge.scalarToTextView(local, in: input)
+        }
+        func convert(_ rect: CGRect) -> CGRect? {
+            let clipped = rect.offsetBy(dx: source.origin.x, dy: source.origin.y).intersection(source.clip)
+            return clipped.isEmpty ? nil : tableSurface.convert(clipped, to: self)
+        }
+        guard let head = position(selection.head) else { return ([], nil) }
+        let caret = convert(input.caretRect(for: head))
+        guard selection.anchor != selection.head, let anchor = position(selection.anchor),
+              let range = input.textRange(
+                  from: selection.anchor < selection.head ? anchor : head,
+                  to: selection.anchor < selection.head ? head : anchor
+              ) else { return ([], caret) }
+        return (input.selectionRects(for: range).compactMap { convert($0.rect) }, caret)
     }
 
     private func resolvedCaretRect(

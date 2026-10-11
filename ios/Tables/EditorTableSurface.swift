@@ -142,6 +142,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         }
     }
 
+    private lazy var remoteInputCoordinator = EditorTableInputCoordinator()
     let inputCoordinator: EditorTableInputCoordinator
     private let drawingView = PreparedProseDrawingView(frame: .zero)
     private let activeCellClipView = UIView(frame: .zero)
@@ -316,6 +317,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         drawingView.onTableGeometryChanged = { [weak self] in
             self?.refreshActiveInputFrame()
             self?.selectionGeometryMayChange()
+            self?.interactionHost?.refreshRemoteSelections()
         }
         drawingView.onImageIntrinsicMetadata = { [weak self] attachment, size in
             guard let self, let host = self.interactionHost, attachment.declaredSize == nil,
@@ -445,6 +447,47 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
 
     func presentRemoteCellSelections(_ selections: [RemoteTableCellSelection]) {
         drawingView.remoteTableCellSelections = selections
+    }
+
+    struct RemoteTextInput {
+        let input: EditorTextView
+        let map: TableCellPositionMap
+        let origin: CGPoint
+        let clip: CGRect
+    }
+
+    func remoteTextInput(at position: UInt32) -> RemoteTextInput? {
+        guard let host = interactionHost,
+              let adapter = EditorV2Registry.adapter(forLegacyId: host.textView.editorId),
+              presentedDocumentRevision == adapter.baseDocumentRevision,
+              let epoch = adapter.positionEpoch,
+              let tableID = adapter.tableIndex.tableKey(containingDoc: position),
+              let cellIndex = adapter.tableIndex.cellIndex(tableKey: tableID, containingDoc: position),
+              let presented = presentedCell(tableID: tableID, cellIndex: UInt32(cellIndex)) else { return nil }
+        let clip = drawingView.convert(presented.clip, to: self).intersection(bounds)
+        guard !clip.isEmpty else { return nil }
+        if activeCell?.tableID == tableID, activeCell?.cellIndex == UInt32(cellIndex),
+           let map = inputCoordinator.positionMap,
+           map.binding.documentRevision == adapter.baseDocumentRevision, map.binding.positionEpoch == epoch {
+            let input = inputCoordinator.cellInput
+            return RemoteTextInput(input: input, map: map, origin: input.convert(CGPoint.zero, to: self), clip: clip)
+        }
+        let root = host.textView
+        guard let projection = EditorTableInputCoordinator.projection(
+            cellIndex: UInt32(cellIndex), tableKey: tableID, index: adapter.tableIndex,
+            documentRevision: adapter.baseDocumentRevision, positionEpoch: epoch,
+            baseFont: root.baseFont, textColor: root.baseTextColor, theme: root.theme,
+            atomConfiguration: root.atomRenderConfiguration, imageLoadOwner: root.imageLoadOwner
+        ) else { return nil }
+        remoteInputCoordinator.copyInputTraits(from: root)
+        let input = remoteInputCoordinator.cellInput
+        if !input.textStorage.isEqual(to: projection.text) {
+            _ = input.applyAttributedRender(projection.text, usedPatch: false, positionCacheUpdate: .invalidate)
+        }
+        let content = cellInputFrame(presented)
+        input.frame = CGRect(origin: .zero, size: content.size)
+        configureInputLayout(input, presented: presented)
+        return RemoteTextInput(input: input, map: projection.positionMap, origin: content.origin, clip: clip)
     }
 
     func clearCellSelection() {
@@ -1730,10 +1773,27 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
             inputCoordinator.cellInput.frame = fallback
             return
         }
+        let input = inputCoordinator.cellInput
+        let clip = presented.clip.offsetBy(dx: -drawingOffset.x, dy: -drawingOffset.y)
+            .intersection(bounds)
+        activeCellClipView.frame = clip.isNull ? .zero : clip.integral
+        let content = cellInputFrame(presented)
+        input.frame = content.offsetBy(
+            dx: -activeCellClipView.frame.minX, dy: -activeCellClipView.frame.minY
+        )
+        configureInputLayout(input, presented: presented)
+    }
+
+    private func cellInputFrame(_ presented: ViewerTablePresentedCell) -> CGRect {
+        let inset = presented.surface.style.cellPadding + presented.surface.style.borderWidth
+        return presented.bounds.offsetBy(dx: -drawingOffset.x, dy: -drawingOffset.y)
+            .insetBy(dx: inset, dy: inset)
+    }
+
+    private func configureInputLayout(_ input: EditorTextView, presented: ViewerTablePresentedCell) {
         let imageSizes = Dictionary(uniqueKeysWithValues: presented.content.blocks.compactMap { block in
             block.imageAttachment.map { ($0.id, $0.bounds.size) }
         })
-        let input = inputCoordinator.cellInput
         input.textStorage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: input.textStorage.length)) { value, range, _ in
             guard let image = value as? BlockImageAttachment,
                   let position = v2ExactUInt32(input.textStorage.attribute(RenderBridgeAttributes.docPos, at: range.location, effectiveRange: nil) as? NSNumber),
@@ -1742,27 +1802,16 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
             input.layoutManager.invalidateLayout(forCharacterRange: range, actualCharacterRange: nil)
             input.layoutManager.invalidateDisplay(forCharacterRange: range)
         }
-        let clip = presented.clip.offsetBy(dx: -drawingOffset.x, dy: -drawingOffset.y)
-            .intersection(bounds)
-        activeCellClipView.frame = clip.isNull ? .zero : clip.integral
-        let inset = presented.surface.style.cellPadding + presented.surface.style.borderWidth
-        let content = presented.bounds.offsetBy(dx: -drawingOffset.x, dy: -drawingOffset.y)
-            .insetBy(dx: inset, dy: inset)
-        input.frame = content.offsetBy(
-            dx: -activeCellClipView.frame.minX, dy: -activeCellClipView.frame.minY
-        )
         if input.textStorage.length > 0,
            let context = input.textStorage.attribute(RenderBridgeAttributes.listMarkerContext, at: 0, effectiveRange: nil) as? [String: Any],
            context["kind"] as? String == "task",
            let text = presented.content.blocks.first?.fragments.first(where: { $0.kind == .text }) {
             input.layoutManager.ensureLayout(for: input.textContainer)
             if let baseline = input.baselineY(forCharacterAt: 0) {
-                let paintedBaseline = drawingView.convert(CGPoint(
-                    x: presented.contentBounds.minX + text.origin.x,
-                    y: presented.contentBounds.minY + text.origin.y
-                ), to: input)
+                let paintedBaseline = presented.contentBounds.minY - drawingOffset.y
+                    + text.origin.y - cellInputFrame(presented).minY
                 var insets = input.textContainerInset
-                insets.top = max(0, insets.top + paintedBaseline.y - baseline)
+                insets.top = max(0, insets.top + paintedBaseline - baseline)
                 if input.textContainerInset != insets { input.textContainerInset = insets }
             }
         }

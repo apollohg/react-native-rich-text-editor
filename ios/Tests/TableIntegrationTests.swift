@@ -174,6 +174,86 @@ final class TableIntegrationTests: XCTestCase {
         }
     }
 
+    func testRemoteTextCaretIsInsideInactiveTableCell() throws {
+        try withTable(Integration.gridDocument) { fixture in
+            let first = try fixture.positions()[Integration.gridFirst]
+            let position = first + Integration.cellTextOffset
+            try fixture.setPeers([Peer(
+                clientId: Integration.firstPeer, color: Integration.firstPeerColor,
+                anchor: position, head: position, cellRectangle: nil
+            )])
+            let caret = try XCTUnwrap(fixture.view.remoteSelectionOverlaySubviewsForTesting().first)
+            let cell = try fixture.presentedCell(first)
+            let frame = caret.convert(caret.bounds, to: fixture.drawing)
+            XCTAssertTrue(cell.bounds.contains(frame), "Remote caret \(frame) must be inside cell \(cell.bounds)")
+            XCTAssertEqual(frame.minX, cell.contentBounds.minX, accuracy: Integration.geometryAccuracy)
+            XCTAssertNil(fixture.activeCellPosition(), "Presence must not activate a local table input")
+            XCTAssertFalse(fixture.view.activeTextInput.isFirstResponder)
+        }
+    }
+
+    func testRemoteTableCaretTracksHorizontalScrollAndClipping() throws {
+        try withTable(Integration.wideDocument, size: Integration.narrowEditorSize) { fixture in
+            let first = try fixture.positions()[Integration.gridFirst]
+            let position = first + Integration.cellTextOffset
+            try fixture.setPeers([Peer(
+                clientId: Integration.firstPeer, color: Integration.firstPeerColor,
+                anchor: position, head: position, cellRectangle: nil
+            )])
+            let initial = try XCTUnwrap(fixture.view.remoteSelectionOverlaySubviewsForTesting().first).frame
+            fixture.drawing.setTableLogicalOffset(-Integration.horizontalScroll, sourceIdentity: fixture.tableID)
+            XCTAssertTrue(
+                fixture.view.remoteSelectionOverlaySubviewsForTesting().isEmpty,
+                "A remote caret scrolled outside the table viewport must disappear"
+            )
+            fixture.drawing.setTableLogicalOffset(0, sourceIdentity: fixture.tableID)
+            let restored = try XCTUnwrap(fixture.view.remoteSelectionOverlaySubviewsForTesting().first).frame
+            XCTAssertEqual(restored, initial, "Scrolling back must restore presence without another peer update")
+        }
+    }
+
+    func testRemoteTableCaretMatchesActiveInputAndBackwardSelectionHead() throws {
+        try withTable(Integration.gridDocument) { fixture in
+            let position = try fixture.positions()[Integration.gridFirst] + Integration.cellTextOffset
+            XCTAssertTrue(fixture.view.bindTableCell(
+                tableID: fixture.tableID, cellIndex: UInt32(Integration.gridFirst), contentRect: .zero
+            ))
+            let input = fixture.view.activeTextInput
+            input.selectedRange = Integration.cellStartCaret
+            try fixture.setPeers([Peer(
+                clientId: Integration.firstPeer, color: Integration.firstPeerColor,
+                anchor: position + Integration.paragraphTextOffset, head: position, cellRectangle: nil
+            )])
+            let decorations = fixture.view.remoteSelectionOverlaySubviewsForTesting()
+            let caret = try XCTUnwrap(decorations.last)
+            let frame = caret.convert(caret.bounds, to: input)
+            let local = input.caretRect(for: input.beginningOfDocument)
+            XCTAssertEqual(frame.minX, local.minX, accuracy: Integration.geometryAccuracy)
+            XCTAssertEqual(frame.minY, local.minY, accuracy: Integration.geometryAccuracy)
+            XCTAssertEqual(frame.height, local.height, accuracy: Integration.geometryAccuracy)
+            XCTAssertGreaterThan(decorations.count, 1, "The selected cell text must also be highlighted")
+        }
+    }
+
+    func testRemoteCaretAfterTableUsesRootProjection() throws {
+        try withTable(Integration.gridDocument) { fixture in
+            let input = fixture.view.textView
+            let offset = (input.textStorage.string as NSString).range(of: Integration.trailingProse).location
+            XCTAssertNotEqual(offset, NSNotFound)
+            let scalar = PositionBridge.utf16OffsetToScalar(offset, in: input)
+            let doc = EditorV2Shadow.scalarToDoc(id: fixture.editorId, scalar: scalar)
+            try fixture.setPeers([Peer(
+                clientId: Integration.firstPeer, color: Integration.firstPeerColor,
+                anchor: doc, head: doc, cellRectangle: nil
+            )])
+            let caret = try XCTUnwrap(fixture.view.remoteSelectionOverlaySubviewsForTesting().first)
+            let frame = caret.convert(caret.bounds, to: input)
+            let local = input.caretRect(for: PositionBridge.scalarToTextView(scalar, in: input))
+            XCTAssertEqual(frame.minX, local.minX, accuracy: Integration.geometryAccuracy)
+            XCTAssertEqual(frame.minY, local.minY, accuracy: Integration.geometryAccuracy)
+        }
+    }
+
     func testRemoteRectangleResolvesByIndex() throws {
         try withTable(Integration.gridDocument) { fixture in
             let positions = try fixture.positions()
@@ -210,8 +290,8 @@ final class TableIntegrationTests: XCTestCase {
             try fixture.setPeers([Peer(
                 clientId: Integration.firstPeer,
                 color: Integration.firstPeerColor,
-                anchor: first,
-                head: second,
+                anchor: first + Integration.cellTextOffset,
+                head: second + Integration.cellTextOffset,
                 cellRectangle: nil
             )])
 
