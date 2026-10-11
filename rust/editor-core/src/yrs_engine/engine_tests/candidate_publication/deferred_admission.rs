@@ -149,7 +149,7 @@ fn imported_commands_plan_not_applicable_and_stored_marks_before_hydration() {
         LookupSeedHydrationFailpoint::InitialReservation,
     ));
     let result = not_applicable
-        .apply_command(65_130, TypedCommand::ToggleTaskItemChecked)
+        .apply_command(65_130, TypedCommand::ToggleTaskItemChecked { at: None })
         .unwrap();
     set_lookup_seed_hydration_failpoint_for_test(None);
     assert!(result.is_none());

@@ -183,14 +183,13 @@ extension EditorTextView {
         applyUpdateJSON(updateJSON)
     }
 
-    func toggleTaskItemCheckedAtSelectionScalarInRust(anchor: UInt32, head: UInt32) {
+    func toggleTaskItemCheckedAtScalarInRust(_ scalar: UInt32) {
         Self.inputLog.debug(
-            "[rust.toggleTaskItemCheckedAtSelectionScalar] scalar=\(anchor)-\(head) selection=\(self.selectionSummary(), privacy: .public)"
+            "[rust.toggleTaskItemCheckedAtScalar] scalar=\(scalar) selection=\(self.selectionSummary(), privacy: .public)"
         )
-        let updateJSON = EditorV2Shadow.toggleTaskItemCheckedAtSelectionScalar(
+        let updateJSON = EditorV2Shadow.toggleTaskItemCheckedAtScalar(
             id: editorId,
-            scalarAnchor: anchor,
-            scalarHead: head
+            scalar: scalar
         )
         applyUpdateJSON(updateJSON)
     }

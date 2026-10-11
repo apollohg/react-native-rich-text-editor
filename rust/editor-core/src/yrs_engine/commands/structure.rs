@@ -89,11 +89,15 @@ pub(super) fn plan(
             &selection,
             context.resource_limits,
         ),
-        TypedCommand::ToggleTaskItemChecked => {
+        TypedCommand::ToggleTaskItemChecked { at } => {
+            let position = at
+                .map(|position| explicit_doc_position(&context, position, "at"))
+                .transpose()?;
             crate::command_planner::plan_toggle_task_item_checked(
                 context.document,
                 context.schema,
                 &selection,
+                position,
                 context.resource_limits,
             )
         }

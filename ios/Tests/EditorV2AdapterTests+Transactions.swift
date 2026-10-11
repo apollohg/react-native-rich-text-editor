@@ -370,7 +370,7 @@ extension EditorV2AdapterTests {
             ("unwrapFromList", { adapter.unwrapFromList(anchor: 1, head: 1) }),
             ("indentListItem", { adapter.indentListItem(anchor: 1, head: 1) }),
             ("outdentListItem", { adapter.outdentListItem(anchor: 1, head: 1) }),
-            ("toggleTaskItemChecked", { adapter.toggleTaskItemChecked(anchor: 1, head: 1) }),
+            ("toggleTaskItemChecked", { adapter.toggleTaskItemChecked(at: 1) }),
             ("resizeImage", { adapter.resizeImage(atDocPos: 0, width: 10, height: 10) }),
             ("undo", { adapter.undo() }),
             ("redo", { adapter.redo() })

@@ -436,15 +436,13 @@ final class TaskListMarkerTapOverlayView: UIView {
 
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
         guard let editorView else { return false }
-        let pointInTextView = convert(point, to: editorView.textView)
-        return editorView.textView.hasTaskListMarker(at: pointInTextView)
+        return editorView.hasTaskListMarker(at: convert(point, to: editorView))
     }
 
     @objc
     private func handleTap(_ recognizer: UITapGestureRecognizer) {
         guard recognizer.state == .ended, let editorView else { return }
-        let pointInTextView = convert(recognizer.location(in: self), to: editorView.textView)
-        _ = editorView.textView.toggleTaskListMarker(at: pointInTextView)
+        _ = editorView.toggleTaskListMarker(at: convert(recognizer.location(in: self), to: editorView))
     }
 
     func interceptsPointForTesting(_ point: CGPoint) -> Bool {
@@ -454,8 +452,7 @@ final class TaskListMarkerTapOverlayView: UIView {
     @discardableResult
     func handleTapForTesting(_ point: CGPoint) -> Bool {
         guard let editorView else { return false }
-        let pointInTextView = convert(point, to: editorView.textView)
-        return editorView.textView.toggleTaskListMarker(at: pointInTextView)
+        return editorView.toggleTaskListMarker(at: convert(point, to: editorView))
     }
 }
 

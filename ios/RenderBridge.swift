@@ -78,6 +78,7 @@ enum LayoutConstants {
 
     /// Gap between the list marker and the text that follows (points).
     static let listMarkerTextGap: CGFloat = 8.0
+    static let taskMarkerHitSlop = CGSize(width: 10, height: 8)
 
     /// Height of the horizontal rule separator line (points).
     static let horizontalRuleHeight: CGFloat = 1.0

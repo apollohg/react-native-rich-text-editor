@@ -1,11 +1,22 @@
 package com.apollohg.editor.tables
 
+import android.graphics.Paint
+import android.text.Annotation
 import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.style.AbsoluteSizeSpan
+import android.text.style.LeadingMarginSpan
 import com.apollohg.editor.AtomRenderConfiguration
+import com.apollohg.editor.EditorBlockBoxSpan
+import com.apollohg.editor.EditorCheckboxSpan
+import com.apollohg.editor.EditorResolvedTextSpan
 import com.apollohg.editor.EditorTheme
+import com.apollohg.editor.MarkerGapSpan
 import com.apollohg.editor.PositionBridge
 import com.apollohg.editor.RenderBridge
 import com.apollohg.editor.canonicalV2U64
+import com.apollohg.editor.defaultParagraphEnd
+import com.apollohg.editor.viewer.PreparedProseFragment
 import uniffi.editor_core.FfiCellInputBlock
 
 internal object EditorTableCellProjection {
@@ -25,7 +36,8 @@ internal object EditorTableCellProjection {
         textColor: Int,
         theme: EditorTheme? = null,
         density: Float = 1f,
-        atomConfiguration: AtomRenderConfiguration? = null
+        atomConfiguration: AtomRenderConfiguration? = null,
+        taskMarkers: List<PreparedProseFragment> = emptyList()
     ): Projection? {
         if (cellIndex < 0 || canonicalV2U64(documentRevision) == null ||
             canonicalV2U64(positionEpoch) == null
@@ -63,6 +75,7 @@ internal object EditorTableCellProjection {
             synthesizeEmptyBlocks = true,
             synthesizeTrailingHardBreakPlaceholders = false
         )
+        if (taskMarkers.isNotEmpty() && !applyTaskMarkerGeometry(rendered, taskMarkers)) return null
         if (duplicate) return null
         if (ranges.keys != cell.inputBlocks.map { it.elementIndex.toInt() }.toSet()) return null
         val text = rendered.toString()
@@ -115,5 +128,77 @@ internal object EditorTableCellProjection {
         }
         if (covered != totalScalars.toLong() + 1L) return null
         return Projection(target, rendered, positionMap)
+    }
+
+    private fun applyTaskMarkerGeometry(
+        text: SpannableStringBuilder,
+        markers: List<PreparedProseFragment>
+    ): Boolean {
+        val annotations = text.getSpans(0, text.length, Annotation::class.java)
+            .filter { it.key == RenderBridge.NATIVE_TASK_LIST_MARKER_ANNOTATION }
+            .sortedBy(text::getSpanStart)
+        if (annotations.size != markers.size) return false
+        for ((index, annotation) in annotations.withIndex()) {
+            val start = text.getSpanStart(annotation)
+            val end = text.getSpanEnd(annotation)
+            val bodyEnd = (end + 1).coerceAtMost(text.length)
+            val bodyStyle = text.getSpans(end, bodyEnd, EditorResolvedTextSpan::class.java)
+                .lastOrNull { text.getSpanStart(it) >= end }
+            val bodySize = text.getSpans(end, bodyEnd, AbsoluteSizeSpan::class.java)
+                .lastOrNull { text.getSpanStart(it) >= end }
+            text.getSpans(start, end, Any::class.java).filter {
+                (
+                    it is AbsoluteSizeSpan ||
+                        it is EditorResolvedTextSpan ||
+                        it is EditorCheckboxSpan
+                    ) &&
+                    text.getSpanStart(it) >= start && text.getSpanEnd(it) <= end
+            }.forEach(text::removeSpan)
+            val metrics = bodyStyle?.let { EditorResolvedTextSpan(it.style, it.density) }
+                ?: bodySize?.let { AbsoluteSizeSpan(it.size, it.dip) }
+            if (metrics != null) text.setSpan(metrics, start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            val marker = markers[index]
+            text.setSpan(
+                EditorCheckboxSpan(
+                    marker.bounds.height(),
+                    marker.box,
+                    marker.checked,
+                    marker.borderColor,
+                    marker.color,
+                    reserveLineHeight = false
+                ),
+                start,
+                end - 1,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+            val paragraphEnd = RenderBridge.defaultParagraphEnd(text.toString(), text.length, start)
+            val margins = text.getSpans(start, paragraphEnd, LeadingMarginSpan::class.java)
+            val boxes = margins.filterIsInstance<EditorBlockBoxSpan>()
+                .sumOf { it.box.outerInset.left.toDouble() }.toInt()
+            val preservedMargins = margins.filter {
+                it !is EditorBlockBoxSpan && it !is LeadingMarginSpan.Standard
+            }
+            margins.filterIsInstance<LeadingMarginSpan.Standard>().forEach(text::removeSpan)
+            val gap = text.getSpans(end - 1, end, MarkerGapSpan::class.java).singleOrNull()
+                ?.getSize(Paint(), text, end - 1, end, null) ?: 0
+            text.setSpan(
+                LeadingMarginSpan.Standard(
+                    (
+                        marker.bounds.left - boxes -
+                            preservedMargins.sumOf { it.getLeadingMargin(true) }
+                        )
+                        .coerceAtLeast(0),
+                    (
+                        marker.bounds.right + gap - boxes -
+                            preservedMargins.sumOf { it.getLeadingMargin(false) }
+                        )
+                        .coerceAtLeast(0)
+                ),
+                start,
+                paragraphEnd,
+                Spanned.SPAN_PARAGRAPH
+            )
+        }
+        return true
     }
 }

@@ -107,10 +107,11 @@ extension EditorV2Adapter {
         return commandAtSelection(["type": "outdentListItem"], anchor: anchor, head: head)
     }
 
-    func toggleTaskItemChecked(anchor: UInt32, head: UInt32) -> String? {
-        guard beginRuntimeOperation() else { return nil }
-        defer { endRuntimeOperation() }
-        return commandAtSelection(["type": "toggleTaskItemChecked"], anchor: anchor, head: head)
+    func toggleTaskItemChecked(at scalar: UInt32) -> String? {
+        applyCommand([
+            "type": "toggleTaskItemChecked",
+            "at": EditorV2PositionBridge.positionEnvelope(scalar: scalar)
+        ])
     }
 
     func moveSelection(anchor: UInt32, head: UInt32, to destination: UInt32) -> String? {

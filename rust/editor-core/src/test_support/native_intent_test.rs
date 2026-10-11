@@ -10,7 +10,7 @@ use crate::tables::commands_tests::{
     PROSE_PREFIX_TABLE_POSITION, PROSE_PREFIX_TEXT, TABLE_POSITION,
 };
 use crate::tables::tests::{
-    list_block, tabled_schema_with_lists, BULLET_LIST_NODE, LIST_ITEM_NODE,
+    list_block, tabled_schema_json, tabled_schema_with_lists, BULLET_LIST_NODE, LIST_ITEM_NODE,
     PROSEMIRROR_TABLE_NAMES, TASK_ITEM_NODE, TASK_LIST_NODE,
 };
 use crate::yrs_engine::{
@@ -1344,6 +1344,290 @@ fn list_table_session(rows: Vec<Vec<serde_json::Value>>) -> EditorSession {
 
 fn composing_list(list: &str, item: &str) -> serde_json::Value {
     list_block(list, item, &[FIRST_LIST_ITEM_TEXT, SECOND_LIST_ITEM_TEXT])
+}
+
+fn task_table_session() -> EditorSession {
+    let mut schema_json = tabled_schema_json(PROSEMIRROR_TABLE_NAMES);
+    let nodes = schema_json["nodes"].as_array_mut().unwrap();
+    nodes.push(serde_json::json!({
+        "name": TASK_LIST_NODE, "content": format!("{TASK_ITEM_NODE}+"),
+        "group": "block", "role": "list"
+    }));
+    nodes.push(serde_json::json!({
+        "name": TASK_ITEM_NODE, "content": "paragraph block*", "role": "listItem",
+        "attrs": {"checked": {"default": false}}
+    }));
+    let document = serde_json::json!({
+        "type": "doc", "content": [paragraph(PROSE_PREFIX_TEXT), {
+            "type": "table", "content": [{"type": "table_row", "content": [
+                {"type": "table_cell", "content": [composing_list(TASK_LIST_NODE, TASK_ITEM_NODE)]},
+                {"type": "table_cell", "content": [paragraph(SECOND_LIST_ITEM_TEXT)]}
+            ]}]
+        }]
+    });
+    table_session_with_schema(
+        &document.to_string(),
+        crate::schema::Schema::from_json(&schema_json).unwrap(),
+    )
+}
+
+fn first_task_scalar(session: &EditorSession) -> u32 {
+    const TASK_TEXT_INTERIOR_OFFSET: u32 = 4;
+    let document = session.engine.document().unwrap();
+    let index = crate::tables::admission::TableProjectionIndex::derive_or_fallback(
+        document,
+        &session.engine.schema(),
+        &ResourceLimits::default(),
+    );
+    let cell = &index.table_at(PROSE_PREFIX_TABLE_POSITION).unwrap().cells[0];
+    session
+        .engine
+        .position_map()
+        .unwrap()
+        .doc_to_scalar(cell.source_pos + TASK_TEXT_INTERIOR_OFFSET, document)
+}
+
+#[test]
+fn targeted_task_checkbox_in_a_table_preserves_the_other_cells_selection() {
+    const SELECTION_START_OFFSET: u32 = 1;
+    const SELECTION_END_OFFSET: u32 = 3;
+    const SELECT_REQUEST_ID: u64 = 80_100;
+    const TOGGLE_REQUEST_ID: u64 = SELECT_REQUEST_ID + 1;
+    let mut session = task_table_session();
+    let target = first_task_scalar(&session);
+    let neighbour = cell_text_scalar_in(&session, PROSE_PREFIX_TABLE_POSITION, 1);
+    let request = native_intent_request(
+        &mut session,
+        CELL_OWNER_ID,
+        SELECT_REQUEST_ID,
+        serde_json::json!({"type": "setSelection", "anchor": neighbour + SELECTION_START_OFFSET,
+            "head": neighbour + SELECTION_END_OFFSET}),
+    );
+    NativeTransactionBridge::new(&mut session)
+        .submit_native_intent(&request)
+        .unwrap();
+    for (offset, checked) in [true, false].into_iter().enumerate() {
+        let before = session_audit(&session);
+        let selection = session.engine.resolved_selection().unwrap();
+        let ResolvedSelection::Text { anchor, head } = selection else {
+            panic!("text selection required")
+        };
+        let anchor = anchor.scalar;
+        let head = head.scalar;
+        let request = native_intent_request(
+            &mut session,
+            CELL_OWNER_ID,
+            TOGGLE_REQUEST_ID + offset as u64,
+            serde_json::json!({"type": "command", "anchor": anchor, "head": head,
+                "command": {"type": "toggleTaskItemChecked", "at": {"offset": target, "kind": "scalar"}}}),
+        );
+        let result = NativeTransactionBridge::new(&mut session).submit_native_intent(&request);
+        assert!(
+            result.is_ok(),
+            "explicit task target must be accepted: {result:?}"
+        );
+        let outcome: serde_json::Value = serde_json::from_str(&result.unwrap()).unwrap();
+        assert_eq!(outcome["documentChanged"], true, "{outcome}");
+        let after = session_audit(&session);
+        let cells = &after.document_json["content"][1]["content"][0]["content"];
+        assert_eq!(
+            cells[0]["content"][0]["content"][0]["attrs"]["checked"]
+                .as_bool()
+                .unwrap_or(false),
+            checked
+        );
+        assert_eq!(
+            cells[0]["content"][0]["content"][1]["attrs"]["checked"]
+                .as_bool()
+                .unwrap_or(false),
+            false
+        );
+        assert_eq!(
+            cells[1],
+            before.document_json["content"][1]["content"][0]["content"][1]
+        );
+        assert_eq!(
+            after.selection, before.selection,
+            "targeting a checkbox must preserve the existing range"
+        );
+        assert_eq!(after.document_revision, before.document_revision + 1);
+        assert_eq!(
+            after.outbox_pending_updates,
+            before.outbox_pending_updates + 1
+        );
+        assert!(after.can_undo, "checkbox toggles must remain undoable");
+    }
+}
+
+#[test]
+fn targeted_task_checkbox_rebases_its_published_target_after_a_remote_edit() {
+    const REQUEST_ID: u64 = 80_110;
+    const INSERTED_TEXT: &str = " longer first task after remote editing ";
+    let mut session = task_table_session();
+    let first = first_task_scalar(&session);
+    let second = first + FIRST_LIST_ITEM_TEXT.chars().count() as u32 + PARAGRAPH_BREAK_SCALARS;
+    let neighbour = cell_text_scalar_in(&session, PROSE_PREFIX_TABLE_POSITION, 1);
+    let request = native_intent_request(
+        &mut session,
+        CELL_OWNER_ID,
+        REQUEST_ID,
+        serde_json::json!({"type": "command", "anchor": neighbour, "head": neighbour,
+            "command": {"type": "toggleTaskItemChecked", "at": {"kind": "scalar", "offset": second}}}),
+    );
+    apply_remote_peer_edit(&mut session, |replica| {
+        remote_command_at(
+            replica,
+            first,
+            first,
+            TypedCommand::InsertText {
+                text: INSERTED_TEXT.into(),
+            },
+        );
+    });
+    let before = session_audit(&session);
+    let expected_selection = session
+        .resolve_epoch_range(
+            CELL_OWNER_ID,
+            serde_json::from_str::<serde_json::Value>(&request).unwrap()["positionEpoch"]
+                .as_str()
+                .unwrap()
+                .parse()
+                .unwrap(),
+            neighbour,
+            neighbour,
+        )
+        .unwrap();
+    let outcome = NativeTransactionBridge::new(&mut session)
+        .submit_native_intent(&request)
+        .unwrap();
+    let outcome: serde_json::Value = serde_json::from_str(&outcome).unwrap();
+    assert_eq!(outcome["documentChanged"], true, "{outcome}");
+    let after = session_audit(&session);
+    let tasks =
+        &after.document_json["content"][1]["content"][0]["content"][0]["content"][0]["content"];
+    assert_eq!(
+        tasks[0]["attrs"]["checked"].as_bool().unwrap_or(false),
+        false,
+        "a remote insertion must not redirect the second checkbox into the first task: {tasks}"
+    );
+    assert_eq!(
+        tasks[1]["attrs"]["checked"], true,
+        "the published second checkbox remains the target: {tasks}"
+    );
+    let ResolvedSelection::Text { anchor, head } = session.engine.resolved_selection().unwrap()
+    else {
+        panic!("checkbox toggle must retain a text selection");
+    };
+    assert_eq!(
+        (anchor.scalar, head.scalar),
+        (expected_selection.anchor, expected_selection.head)
+    );
+    assert_eq!(after.document_revision, before.document_revision + 1);
+    assert_eq!(
+        after.outbox_pending_updates,
+        before.outbox_pending_updates + 1
+    );
+}
+
+#[test]
+fn native_task_checkbox_rejects_non_scalar_published_targets_without_mutation() {
+    const REQUEST_ID: u64 = 80_120;
+    let mut session = task_table_session();
+    let target = first_task_scalar(&session);
+    let neighbour = cell_text_scalar_in(&session, PROSE_PREFIX_TABLE_POSITION, 1);
+    let request = native_intent_request(
+        &mut session,
+        CELL_OWNER_ID,
+        REQUEST_ID,
+        serde_json::json!({"type": "command", "anchor": neighbour, "head": neighbour,
+            "command": {"type": "toggleTaskItemChecked", "at": {"kind": "utf16", "offset": target}}}),
+    );
+    let before = session_audit(&session);
+    let error = NativeTransactionBridge::new(&mut session)
+        .submit_native_intent(&request)
+        .unwrap_err();
+    assert_eq!(error.code, "CONFIG_INVALID");
+    assert_eq!(error.request_id, Some(REQUEST_ID));
+    assert_eq!(
+        session_audit(&session),
+        before,
+        "invalid native target must preserve document, selection, history and outbox"
+    );
+}
+
+#[test]
+fn targeted_task_checkbox_rejects_a_removed_cell_without_changing_neighbouring_prose() {
+    const REQUEST_ID: u64 = 80_130;
+    const PROSE_CARET: u32 = 0;
+    let mut session = task_table_session();
+    let target = first_task_scalar(&session);
+    let request = native_intent_request(
+        &mut session,
+        CELL_OWNER_ID,
+        REQUEST_ID,
+        serde_json::json!({"type": "command", "anchor": PROSE_CARET, "head": PROSE_CARET,
+            "command": {"type": "toggleTaskItemChecked", "at": {"kind": "scalar", "offset": target}}}),
+    );
+    apply_remote_peer_edit(&mut session, |replica| {
+        remote_command_at(
+            replica,
+            PROSE_CARET,
+            PROSE_CARET,
+            TypedCommand::Table(TableCommand::DeleteTable {
+                table_pos: Some(PROSE_PREFIX_TABLE_POSITION),
+            }),
+        );
+    });
+    let before = session_audit(&session);
+    let error = NativeTransactionBridge::new(&mut session)
+        .submit_native_intent(&request)
+        .unwrap_err();
+    assert_eq!(error.code, CELL_REMOVED_CODE);
+    assert_eq!(
+        session_audit(&session),
+        before,
+        "a removed target must preserve prose, selection, history and outbox"
+    );
+}
+
+#[test]
+fn targeted_task_checkbox_does_not_toggle_a_sibling_after_its_item_is_joined_away() {
+    const REQUEST_ID: u64 = 80_140;
+    let mut session = task_table_session();
+    let first = first_task_scalar(&session);
+    let second = first + FIRST_LIST_ITEM_TEXT.chars().count() as u32 + PARAGRAPH_BREAK_SCALARS;
+    let neighbour = cell_text_scalar_in(&session, PROSE_PREFIX_TABLE_POSITION, 1);
+    let request = native_intent_request(
+        &mut session,
+        CELL_OWNER_ID,
+        REQUEST_ID,
+        serde_json::json!({"type": "command", "anchor": neighbour, "head": neighbour,
+            "command": {"type": "toggleTaskItemChecked", "at": {"kind": "scalar", "offset": second}}}),
+    );
+    apply_remote_peer_edit(&mut session, |replica| {
+        remote_command_at(replica, second, second, TypedCommand::DeleteBackward);
+    });
+    let before = session_audit(&session);
+    let tasks =
+        &before.document_json["content"][1]["content"][0]["content"][0]["content"][0]["content"];
+    assert_eq!(
+        tasks.as_array().unwrap().len(),
+        1,
+        "remote backspace must join away the targeted item: {tasks}"
+    );
+    let error = NativeTransactionBridge::new(&mut session)
+        .submit_native_intent(&request)
+        .unwrap_err();
+    assert_eq!(
+        error.code, "POSITION_INVALID",
+        "a removed task target must not toggle its surviving sibling"
+    );
+    assert_eq!(error.request_id, Some(REQUEST_ID));
+    assert_eq!(
+        session_audit(&session),
+        before,
+        "stale item target must not change selection, history or outbox"
+    );
 }
 
 fn assert_list_cell_keeps_its_composition_after_a_header_toggle(

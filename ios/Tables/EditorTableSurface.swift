@@ -925,6 +925,24 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         )
     }
 
+    func taskListMarkerHit(at point: CGPoint) -> (cell: RootTableCellHit, markerIndex: Int)? {
+        guard let hit = cellHit(at: point),
+              let presented = presentedCell(tableID: hit.tableID, cellIndex: hit.cellIndex) else { return nil }
+        let drawingPoint = convert(point, to: drawingView)
+        guard presented.clip.contains(drawingPoint) else { return nil }
+        let markers = presented.content.blocks.flatMap(\.fragments).filter {
+            $0.kind == .marker && $0.label?.isEmpty == true
+        }
+        let slop = LayoutConstants.taskMarkerHitSlop
+        let candidates = markers.enumerated().compactMap { index, marker -> (index: Int, distance: CGFloat)? in
+            let rect = marker.bounds.offsetBy(dx: presented.contentBounds.minX, dy: presented.contentBounds.minY)
+            guard rect.insetBy(dx: -slop.width, dy: -slop.height).contains(drawingPoint) else { return nil }
+            return (index, abs(rect.midY - drawingPoint.y))
+        }
+        guard let markerIndex = candidates.min(by: { $0.distance < $1.distance })?.index else { return nil }
+        return (hit, markerIndex)
+    }
+
     private func interactionViewport() -> CGRect? {
         guard let host = interactionHost,
               let visible = drawingView.tableSelectionViewport()
@@ -1726,9 +1744,24 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         let inset = presented.surface.style.cellPadding + presented.surface.style.borderWidth
         let content = presented.bounds.offsetBy(dx: -drawingOffset.x, dy: -drawingOffset.y)
             .insetBy(dx: inset, dy: inset)
-        inputCoordinator.cellInput.frame = content.offsetBy(
+        input.frame = content.offsetBy(
             dx: -activeCellClipView.frame.minX, dy: -activeCellClipView.frame.minY
         )
+        if input.textStorage.length > 0,
+           let context = input.textStorage.attribute(RenderBridgeAttributes.listMarkerContext, at: 0, effectiveRange: nil) as? [String: Any],
+           context["kind"] as? String == "task",
+           let text = presented.content.blocks.first?.fragments.first(where: { $0.kind == .text }) {
+            input.layoutManager.ensureLayout(for: input.textContainer)
+            if let baseline = input.baselineY(forCharacterAt: 0) {
+                let paintedBaseline = drawingView.convert(CGPoint(
+                    x: presented.contentBounds.minX + text.origin.x,
+                    y: presented.contentBounds.minY + text.origin.y
+                ), to: input)
+                var insets = input.textContainerInset
+                insets.top = max(0, insets.top + paintedBaseline.y - baseline)
+                if input.textContainerInset != insets { input.textContainerInset = insets }
+            }
+        }
     }
 
     private func refreshActiveInputFrame() {

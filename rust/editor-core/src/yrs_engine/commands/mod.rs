@@ -77,7 +77,9 @@ pub enum TypedCommand {
     UnwrapFromList,
     IndentListItem,
     OutdentListItem,
-    ToggleTaskItemChecked,
+    ToggleTaskItemChecked {
+        at: Option<RevisionedPosition>,
+    },
     InsertNode {
         node_type: String,
     },
@@ -187,7 +189,7 @@ pub(crate) fn plan(
         | TypedCommand::UnwrapFromList
         | TypedCommand::IndentListItem
         | TypedCommand::OutdentListItem
-        | TypedCommand::ToggleTaskItemChecked
+        | TypedCommand::ToggleTaskItemChecked { .. }
         | TypedCommand::InsertNode { .. }
         | TypedCommand::UpdateNodeAttrs { .. }
         | TypedCommand::ResizeImage { .. }

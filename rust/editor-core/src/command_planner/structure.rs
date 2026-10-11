@@ -414,9 +414,11 @@ pub(crate) fn plan_toggle_task_item_checked(
     document: &Document,
     schema: &Schema,
     selection: &Selection,
+    position: Option<u32>,
     limits: &ResourceLimits,
 ) -> Option<SemanticCommandPlan> {
-    let path = containing_role_path(document, schema, selection.from(document)?, |role| {
+    let position = position.or_else(|| selection.from(document))?;
+    let path = containing_role_path(document, schema, position, |role| {
         matches!(role, NodeRole::ListItem)
     })?;
     let item = document.node_at(&path)?;

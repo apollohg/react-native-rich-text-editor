@@ -1220,6 +1220,60 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         imageTapOverlayView.interceptsPointForTesting(convert(point, to: imageTapOverlayView))
     }
 
+    func hasTaskListMarker(at point: CGPoint) -> Bool {
+        if let hit = tableSurface.cellHit(at: convert(point, to: tableSurface)) {
+            let input = activeTextInput
+            if input !== textView, tableInputCoordinator.activeTableID == hit.tableID,
+               tableInputCoordinator.activeCellIndex == hit.cellIndex {
+                return input.hasTaskListMarker(at: convert(point, to: input))
+            }
+            return tableSurface.taskListMarkerHit(at: convert(point, to: tableSurface)) != nil
+        }
+        return textView.hasTaskListMarker(at: convert(point, to: textView))
+    }
+
+    @discardableResult
+    func toggleTaskListMarker(at point: CGPoint) -> Bool {
+        guard textView.isEditable else { return false }
+        guard let hit = tableSurface.cellHit(at: convert(point, to: tableSurface)) else {
+            return textView.toggleTaskListMarker(at: convert(point, to: textView))
+        }
+        let input = activeTextInput
+        if input !== textView, tableInputCoordinator.activeTableID == hit.tableID,
+           tableInputCoordinator.activeCellIndex == hit.cellIndex {
+            return input.toggleTaskListMarker(at: convert(point, to: input))
+        }
+        guard input.finishExternalTextCompositionBeforeInteractionIfNeeded(),
+              input.prepareForExternalEditorUpdate(),
+              let markerHit = tableSurface.taskListMarkerHit(at: convert(point, to: tableSurface)),
+              let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
+              hasTableCellBindingAuthority(adapter), let epoch = adapter.positionEpoch,
+              let projection = EditorTableInputCoordinator.projection(
+                  cellIndex: markerHit.cell.cellIndex, tableKey: markerHit.cell.tableID, index: adapter.tableIndex,
+                  documentRevision: adapter.baseDocumentRevision, positionEpoch: epoch,
+                  baseFont: textView.baseFont, textColor: textView.baseTextColor,
+                  theme: textView.theme, atomConfiguration: textView.atomRenderConfiguration
+              ) else { return false }
+        let text = projection.text.string as NSString
+        var paragraphStart = 0
+        var markerIndex = 0
+        while paragraphStart < text.length {
+            if let context = projection.text.attribute(RenderBridgeAttributes.listMarkerContext, at: paragraphStart, effectiveRange: nil) as? [String: Any],
+               context["kind"] as? String == "task",
+               !RenderBridge.isListContinuationParagraph(paragraphStart, in: projection.text) {
+                if markerIndex == markerHit.markerIndex {
+                    let localScalar = PositionBridge.utf16OffsetToScalar(paragraphStart, in: projection.text)
+                    guard let scalar = projection.positionMap.globalScalar(forLocalScalar: localScalar),
+                          let update = adapter.toggleTaskItemChecked(at: scalar) else { return false }
+                    return textView.applyUpdateJSON(update)
+                }
+                markerIndex += 1
+            }
+            paragraphStart = NSMaxRange(text.paragraphRange(for: NSRange(location: paragraphStart, length: 0)))
+        }
+        return false
+    }
+
     func taskListMarkerTapOverlayInterceptsPointForTesting(_ point: CGPoint) -> Bool {
         taskListMarkerTapOverlayView.interceptsPointForTesting(
             convert(point, to: taskListMarkerTapOverlayView)
@@ -1383,6 +1437,7 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
               touch.tapCount == 1,
               tableSurface.cellHit(at: point) != nil
         else { return false }
+        guard !hasTaskListMarker(at: touch.location(in: self)) else { return false }
         tableCellTapTimestamp = touch.timestamp
         return true
     }
@@ -1424,6 +1479,11 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
     }
 
     func tapTableCell(at point: CGPoint, touchedAt timestamp: TimeInterval) {
+        let hostPoint = tableSurface.convert(point, to: self)
+        if hasTaskListMarker(at: hostPoint) {
+            _ = toggleTaskListMarker(at: hostPoint)
+            return
+        }
         if !tableEditMenuEnabled,
            tableSurface.toggleCellEditMenu(at: point, touchedAt: timestamp) { return }
         tableSurface.dismissCellEditMenu()

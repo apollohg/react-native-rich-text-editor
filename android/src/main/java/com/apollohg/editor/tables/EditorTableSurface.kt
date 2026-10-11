@@ -60,6 +60,7 @@ import com.apollohg.editor.updateSelection
 import com.apollohg.editor.viewer.PreparedCellShapeCatalog
 import com.apollohg.editor.viewer.PreparedProseBlock
 import com.apollohg.editor.viewer.PreparedProseDrawingView
+import com.apollohg.editor.viewer.PreparedProseFragmentKind
 import com.apollohg.editor.viewer.PreparedProseInstrumentation
 import com.apollohg.editor.viewer.PreparedProseLayout
 import com.apollohg.editor.viewer.PreparedProseTheme
@@ -275,7 +276,9 @@ internal class EditorTableSurface(private val host: RichTextEditorView) :
         }
         onTableTap = { downX, downY, upX, upY ->
             val target = hitCell(downX, downY)?.takeIf { it == hitCell(upX, upY) }
-            cellDragLifted || cellMenuLongPressed || tapCellSelection(target, upX, upY) ||
+            cellDragLifted || cellMenuLongPressed ||
+                (target != null && toggleTaskMarker(target, downX, downY, upX, upY)) ||
+                tapCellSelection(target, upX, upY) ||
                 (target != null && activateCell(target.first, target.second, upX, upY))
         }
     }
@@ -1754,6 +1757,58 @@ internal class EditorTableSurface(private val host: RichTextEditorView) :
         return tableId to presented.cell.sourceIndex
     }
 
+    private fun PreparedViewerTableCell.taskMarkers() = content.blocks.flatMap { it.fragments }
+        .filter { it.kind == PreparedProseFragmentKind.MARKER && it.layout == null }
+
+    private fun taskMarkerScalarAt(target: Pair<String, Int>, x: Float, y: Float): Int? {
+        val presented = rootCellAt(x, y)?.takeIf {
+            it.first == target.first && it.second.cell.sourceIndex == target.second
+        }?.second ?: return null
+        val markers = presented.cell.taskMarkers()
+        val localX = x - presented.contentBounds.left
+        val localY = y - presented.contentBounds.top
+        val markerIndex = markers.indices
+            .filter { RectF(markers[it].bounds).contains(localX, localY) }
+            .minByOrNull {
+                val bounds = markers[it].bounds
+                val horizontalDistance = localX - bounds.exactCenterX()
+                val verticalDistance = localY - bounds.exactCenterY()
+                horizontalDistance * horizontalDistance + verticalDistance * verticalDistance
+            } ?: return null
+        val projected = projection(target.first, target.second) ?: return null
+        val annotations = projected.text.getSpans(0, projected.text.length, Annotation::class.java)
+            .filter { it.key == RenderBridge.NATIVE_TASK_LIST_MARKER_ANNOTATION }
+            .sortedBy(projected.text::getSpanStart)
+        val marker = annotations.getOrNull(markerIndex) ?: return null
+        return projected.positionMap.globalScalarForLocalUtf16(
+            projected.text.getSpanStart(marker),
+            projected.text.toString()
+        )
+    }
+
+    private fun toggleTaskMarker(
+        target: Pair<String, Int>,
+        downX: Float,
+        downY: Float,
+        upX: Float,
+        upY: Float
+    ): Boolean {
+        val scalar = taskMarkerScalarAt(target, downX, downY) ?: return false
+        if (taskMarkerScalarAt(target, upX, upY) != scalar) return false
+        if (!(activeInput ?: host.editorEditText).prepareForExternalInteractionMutation()) {
+            return true
+        }
+        val authoritativeScalar = taskMarkerScalarAt(target, upX, upY) ?: return true
+        val root = host.editorEditText
+        if (!root.isEnabled || !root.isEditable) return true
+        val adapter = root.v2Driver as? EditorV2Adapter ?: return true
+        val command = JSONObject().put("type", "toggleTaskItemChecked")
+            .put("at", JSONObject().put("kind", "scalar").put("offset", authoritativeScalar))
+        adapter.applyTableCommandAtSelection(command, adapter.tableMutationAdmission(target.first))
+            ?.let(::applyTableMutationUpdate)
+        return true
+    }
+
     private fun projection(tableId: String, cellIndex: Int): EditorTableCellProjection.Projection? {
         val root = host.editorEditText
         val adapter = root.v2Driver as? EditorV2Adapter ?: return null
@@ -1767,7 +1822,11 @@ internal class EditorTableSurface(private val host: RichTextEditorView) :
         return EditorTableCellProjection.project(
             cellIndex, tableId, adapter.tableIndex,
             adapter.baseDocumentRevision.toString(), adapter.positionEpoch ?: return null,
-            root.baseFontSize, root.baseTextColor, root.theme, root.resources.displayMetrics.density
+            root.baseFontSize,
+            root.baseTextColor,
+            root.theme,
+            root.resources.displayMetrics.density,
+            taskMarkers = entries[tableId]?.surface?.cell(cellIndex)?.taskMarkers().orEmpty()
         )
     }
 

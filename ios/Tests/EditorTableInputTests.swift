@@ -231,6 +231,188 @@ final class EditorTableInputTests: XCTestCase {
         ))
     }
 
+    private static let taskItemText = "Task text wraps over several lines inside the table cell"
+    private static let taskNeighbourText = "untouched"
+    private static let secondTaskText = "Second task"
+    private let taskToggleThemes: [EditorTheme?] = [nil, EditorTheme(dictionary: ["version": 1, "styles": [
+        "text": ["fontSize": 8], "paragraph": ["marginBottom": 0],
+        "taskItem": ["marginBottom": 0], "listItem": ["marginBottom": 0], "taskList": ["marginBottom": 0]
+    ]])]
+
+    private func withMountedTaskTable(
+        itemNodeType: String = "listItem", theme: EditorTheme? = nil,
+        taskText: String = EditorTableInputTests.taskItemText, checked: Bool = false,
+        _ body: (MountedTableFixture) throws -> Void
+    ) throws {
+        var config = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(tableConfig.utf8)) as? [String: Any])
+        var schema = try XCTUnwrap(config["schema"] as? [String: Any])
+        var nodes = try XCTUnwrap(schema["nodes"] as? [[String: Any]])
+        nodes.append(["name": "taskList", "content": "\(itemNodeType)+", "group": "block", "role": "list"])
+        nodes.append(["name": itemNodeType, "content": "paragraph block*", "role": "listItem", "attrs": ["checked": ["default": false]]])
+        schema["nodes"] = nodes
+        config["schema"] = schema
+        let document = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"taskList","content":[{"type":"\#(itemNodeType)","attrs":{"checked":\#(checked)},"content":[{"type":"paragraph","content":[{"type":"text","text":"\#(taskText)"}]}]},{"type":"\#(itemNodeType)","attrs":{"checked":false},"content":[{"type":"paragraph","content":[{"type":"text","text":"\#(Self.secondTaskText)"}]}]}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"\#(Self.taskNeighbourText)"}]}]}]}]}]}"#
+        let configJSON = try XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: config), encoding: .utf8))
+        try withMountedTable(document: document, configJSON: configJSON, theme: theme, cellSelection: nil, body)
+    }
+
+    private func taskMarkerHostPoint(_ fixture: MountedTableFixture, markerIndex: Int = 0) throws -> CGPoint {
+        let cell = try fixture.presentedCell(0)
+        let markers = cell.content.blocks.flatMap(\.fragments).filter { $0.kind == .marker && $0.label?.isEmpty == true }
+        let marker = try XCTUnwrap(markers.indices.contains(markerIndex) ? markers[markerIndex] : nil)
+        return fixture.drawing.convert(CGPoint(
+            x: cell.contentBounds.minX + marker.bounds.midX,
+            y: cell.contentBounds.minY + marker.bounds.midY
+        ), to: fixture.view)
+    }
+
+    private func taskTableCells(_ fixture: MountedTableFixture) throws -> [[String: Any]] {
+        let document = try fixture.documentObject()
+        let content = try XCTUnwrap(document["content"] as? [[String: Any]])
+        let table = try XCTUnwrap(content.first { $0["type"] as? String == "table" })
+        let rows = try XCTUnwrap(table["content"] as? [[String: Any]])
+        return try XCTUnwrap(rows.first?["content"] as? [[String: Any]])
+    }
+
+    private func assertTaskTableToggle(
+        itemNodeType: String, focusedCell: Int?, taskText: String, theme: EditorTheme?
+    ) throws {
+        try withMountedTaskTable(itemNodeType: itemNodeType, theme: theme, taskText: taskText) { fixture in
+            if let focusedCell {
+                XCTAssertTrue(fixture.view.activateTableCell(at: try fixture.hostPoint(inCell: focusedCell)))
+                fixture.view.activeTextInput.selectedRange = NSRange(location: 2, length: 0)
+                fixture.view.activeTextInput.syncSelectionImmediately()
+            }
+            let inputBefore = fixture.view.activeTextInput
+            let focusedBefore = inputBefore.isFirstResponder
+            let caretBefore = inputBefore.selectedRange
+            let selectionBefore = try fixture.textSelectionScalars()
+            let rootCaretBefore = fixture.view.textView.selectedRange
+            let boundCellBefore = inputBefore.tableCellPositionMap?.binding.cellIndex
+            let neighbourBefore = try taskTableCells(fixture)[1] as NSDictionary
+            for targetTaskIndex in [0, 1] {
+                for checked in [true, false] {
+                    fixture.view.layoutIfNeeded()
+                    let point = try taskMarkerHostPoint(fixture, markerIndex: targetTaskIndex)
+                    XCTAssertTrue(fixture.view.taskListMarkerTapOverlayInterceptsPointForTesting(point),
+                        "\(itemNodeType) focusedCell=\(String(describing: focusedCell)) checkbox must intercept the mounted tap")
+                    XCTAssertTrue(fixture.view.hitTest(point, with: nil) is TaskListMarkerTapOverlayView,
+                        "checkbox must win hit testing before the cell caret input")
+                    XCTAssertTrue(fixture.view.tapTaskListMarkerOverlayForTesting(at: point))
+                    flushMainQueue()
+                    fixture.view.layoutIfNeeded()
+                    let cells = try taskTableCells(fixture)
+                    let content = try XCTUnwrap(cells[0]["content"] as? [[String: Any]])
+                    let items = try XCTUnwrap(content.first?["content"] as? [[String: Any]])
+                    for index in items.indices {
+                        XCTAssertEqual((items[index]["attrs"] as? [String: Any])?["checked"] as? Bool ?? false,
+                            index == targetTaskIndex ? checked : false,
+                            "\(itemNodeType) checkbox \(targetTaskIndex) must toggle only its task; inspected item \(index)")
+                    }
+                    XCTAssertEqual(cells[1] as NSDictionary, neighbourBefore)
+                    XCTAssertTrue(fixture.view.activeTextInput === inputBefore, "checkbox must not bind a different cell")
+                    XCTAssertEqual(inputBefore.tableCellPositionMap?.binding.cellIndex, boundCellBefore,
+                        "checkbox must preserve the bound cell")
+                    XCTAssertEqual(inputBefore.isFirstResponder, focusedBefore, "checkbox must preserve keyboard focus")
+                    XCTAssertEqual(inputBefore.selectedRange, caretBefore, "checkbox must preserve native caret")
+                    XCTAssertEqual(fixture.view.textView.selectedRange, rootCaretBefore, "checkbox must preserve root caret")
+                    XCTAssertEqual(try fixture.textSelectionScalars().0, selectionBefore.0, "checkbox must preserve engine anchor")
+                    XCTAssertEqual(try fixture.textSelectionScalars().1, selectionBefore.1, "checkbox must preserve engine head")
+                }
+            }
+        }
+    }
+
+    func testMountedUnboundTaskCheckboxTogglesWithoutFocusingCell() throws {
+        for itemNodeType in ["listItem", "taskItem"] {
+            for taskText in [Self.taskItemText, ""] {
+                for theme in taskToggleThemes {
+                    try assertTaskTableToggle(itemNodeType: itemNodeType, focusedCell: nil, taskText: taskText, theme: theme)
+                }
+            }
+        }
+    }
+
+    func testMountedBoundTaskCheckboxTogglesWithoutMovingCaret() throws {
+        for itemNodeType in ["listItem", "taskItem"] {
+            for taskText in [Self.taskItemText, ""] {
+                for theme in taskToggleThemes {
+                    try assertTaskTableToggle(itemNodeType: itemNodeType, focusedCell: 0, taskText: taskText, theme: theme)
+                }
+            }
+        }
+    }
+
+    func testMountedTaskCheckboxPreservesOtherCellFocus() throws {
+        for itemNodeType in ["listItem", "taskItem"] {
+            for taskText in [Self.taskItemText, ""] {
+                for theme in taskToggleThemes {
+                    try assertTaskTableToggle(itemNodeType: itemNodeType, focusedCell: 1, taskText: taskText, theme: theme)
+                }
+            }
+        }
+    }
+
+    func testReadOnlyTaskCheckboxDoesNotMutateOrChangeFocus() throws {
+        for itemNodeType in ["listItem", "taskItem"] {
+            for focusedCell in [nil, Optional(0), Optional(1)] {
+                try withMountedTaskTable(itemNodeType: itemNodeType) { fixture in
+                    if let focusedCell {
+                        XCTAssertTrue(fixture.view.activateTableCell(at: try fixture.hostPoint(inCell: focusedCell)))
+                        fixture.view.activeTextInput.syncSelectionImmediately()
+                    }
+                    fixture.view.textView.isEditable = false
+                    let input = fixture.view.activeTextInput
+                    let focused = input.isFirstResponder
+                    let caret = input.selectedRange
+                    let selection = try fixture.textSelectionScalars()
+                    let document = try fixture.documentObject()
+                    let point = try taskMarkerHostPoint(fixture)
+                    XCTAssertTrue(fixture.view.hitTest(point, with: nil) is TaskListMarkerTapOverlayView,
+                        "read-only checkbox taps must stay out of caret placement")
+                    XCTAssertFalse(fixture.view.tapTaskListMarkerOverlayForTesting(at: point))
+                    fixture.view.tapTableCell(at: fixture.view.convert(point, to: fixture.surface), touchedAt: 0)
+                    flushMainQueue()
+                    XCTAssertEqual(try fixture.documentObject(), document)
+                    XCTAssertTrue(fixture.view.activeTextInput === input)
+                    XCTAssertEqual(input.isFirstResponder, focused)
+                    XCTAssertEqual(input.selectedRange, caret)
+                    XCTAssertEqual(try fixture.textSelectionScalars().0, selection.0)
+                    XCTAssertEqual(try fixture.textSelectionScalars().1, selection.1)
+                }
+            }
+        }
+    }
+
+    func testFocusingTaskCellPreservesWrappedTextBaselines() throws {
+        let themes: [EditorTheme?] = [nil, EditorTheme(dictionary: ["version": 1, "styles": [
+            "text": ["fontSize": 17], "paragraph": ["lineHeight": 27, "marginBottom": 12],
+            "taskCheckbox": ["size": 18, "gap": 8, "borderWidth": 1.5],
+            "taskList": ["indent": 20, "baseIndentMultiplier": 1, "marginBottom": 0],
+            "taskItem": ["marginBottom": 0], "table": ["minColumnWidth": 96, "cellPadding": 12]
+        ]]), EditorTheme(dictionary: ["version": 1, "styles": [
+            "text": ["fontSize": 17],
+            "paragraph": ["lineHeight": 27], "taskCheckbox": ["size": 48]
+        ]]), EditorTheme(dictionary: ["version": 1, "styles": ["text": ["fontSize": 17]]])]
+        for itemNodeType in ["listItem", "taskItem"] {
+            for theme in themes {
+                for taskText in [Self.taskItemText, "Short task", ""] {
+                    for checked in [false, true] {
+                        try withMountedTaskTable(itemNodeType: itemNodeType, theme: theme, taskText: taskText, checked: checked) { fixture in
+                            for _ in 0..<3 {
+                                try assertFocusPreservesCellAppearance(fixture)
+                                fixture.view.setNeedsLayout()
+                                fixture.view.layoutIfNeeded()
+                            }
+                            XCTAssertEqual(fixture.view.activeTextInput.textStorage.string.replacingOccurrences(of: "\u{200B}", with: ""), taskText + "\n" + Self.secondTaskText,
+                                "CoreText block offsets must address the actual task text in the mounted input")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     func testFocusingHeaderPreservesTextAppearanceAndBaseline() throws {
         let theme = EditorTheme(dictionary: ["version": 1, "styles": [
             "content": ["backgroundColor": "#ffffff", "paddingTop": 28, "paddingHorizontal": 20],
@@ -276,30 +458,46 @@ final class EditorTableInputTests: XCTestCase {
             }.pngData()
         }
         let backgroundBeforeFocus = try XCTUnwrap(backgroundPixel())
-        XCTAssertTrue(fixture.view.activateTableCell(at: try fixture.hostPoint(inCell: 0)))
+        let firstText = try XCTUnwrap(cell.content.blocks.flatMap(\.fragments).first { $0.kind == .text && $0.bounds.width > 0 })
+        let textPoint = fixture.drawing.convert(CGPoint(
+            x: cell.contentBounds.minX + firstText.bounds.midX,
+            y: cell.contentBounds.minY + firstText.bounds.midY
+        ), to: fixture.view)
+        XCTAssertTrue(fixture.view.activateTableCell(at: textPoint))
+        fixture.view.layoutIfNeeded()
+        flushMainQueue()
         fixture.view.layoutIfNeeded()
         let input = fixture.view.activeTextInput
         XCTAssertTrue(input.isFirstResponder)
         input.layoutManager.ensureLayout(for: input.textContainer)
         XCTAssertEqual(try XCTUnwrap(backgroundPixel()), backgroundBeforeFocus,
             "the editing overlay must preserve the painted cell background")
-        for fragment in cell.content.blocks.flatMap(\.fragments).filter({ $0.kind == .text }) {
-            let line = try XCTUnwrap(fragment.line)
-            let characterIndex = CTLineGetStringRange(line).location
-            let run = try XCTUnwrap((CTLineGetGlyphRuns(line) as? [CTRun])?.first)
-            let attributes = try XCTUnwrap(CTRunGetAttributes(run) as? [NSAttributedString.Key: Any])
-            let preparedColor = try unwrapCoreTextAttribute(
-                XCTUnwrap(attributes[kCTForegroundColorAttributeName as NSAttributedString.Key]), as: CGColor.self
-            )
-            let preparedBaseline = fixture.drawing.convert(CGPoint(
-                x: cell.contentBounds.minX + fragment.origin.x,
-                y: cell.contentBounds.minY + fragment.origin.y
-            ), to: fixture.view)
-            let inputColor = try XCTUnwrap(input.textStorage.attribute(.foregroundColor, at: characterIndex, effectiveRange: nil) as? UIColor)
-            XCTAssertEqual(inputColor.resolvedColor(with: input.traitCollection), UIColor(cgColor: preparedColor))
-            let editingBaseline = input.convert(CGPoint(x: 0, y: try XCTUnwrap(input.baselineY(forCharacterAt: characterIndex))), to: fixture.view)
-            XCTAssertEqual(editingBaseline.y, preparedBaseline.y, accuracy: 0.5 / input.traitCollection.displayScale,
-                "focusing must preserve the painted glyph baseline at character \(characterIndex)")
+        var blockCharacterOffset = 0
+        for block in cell.content.blocks {
+            let textFragments = block.fragments.filter { $0.kind == .text }
+            var blockCharacterLength = 0
+            for fragment in textFragments {
+                let line = try XCTUnwrap(fragment.line)
+                let lineRange = CTLineGetStringRange(line)
+                let characterIndex = blockCharacterOffset + lineRange.location
+                blockCharacterLength = max(blockCharacterLength, lineRange.location + lineRange.length)
+                guard fragment.bounds.width > 0 else { continue }
+                let run = try XCTUnwrap((CTLineGetGlyphRuns(line) as? [CTRun])?.first)
+                let attributes = try XCTUnwrap(CTRunGetAttributes(run) as? [NSAttributedString.Key: Any])
+                let preparedColor = try unwrapCoreTextAttribute(
+                    XCTUnwrap(attributes[kCTForegroundColorAttributeName as NSAttributedString.Key]), as: CGColor.self
+                )
+                let preparedBaseline = fixture.drawing.convert(CGPoint(
+                    x: cell.contentBounds.minX + fragment.origin.x,
+                    y: cell.contentBounds.minY + fragment.origin.y
+                ), to: fixture.view)
+                let inputColor = try XCTUnwrap(input.textStorage.attribute(.foregroundColor, at: characterIndex, effectiveRange: nil) as? UIColor)
+                XCTAssertEqual(inputColor.resolvedColor(with: input.traitCollection), UIColor(cgColor: preparedColor))
+                let editingBaseline = input.convert(CGPoint(x: 0, y: try XCTUnwrap(input.baselineY(forCharacterAt: characterIndex))), to: fixture.view)
+                XCTAssertEqual(editingBaseline.y, preparedBaseline.y, accuracy: 0.5 / input.traitCollection.displayScale,
+                    "focusing must preserve the painted glyph baseline at character \(characterIndex)")
+            }
+            blockCharacterOffset += blockCharacterLength + 1
         }
     }
 

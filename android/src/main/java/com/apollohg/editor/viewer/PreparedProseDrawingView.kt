@@ -1351,7 +1351,9 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
                     if (width <= 0f) continue
                     val half = width / 2f
                     val startsColumn = cell.cell.column == 0
-                    val endsColumn = cell.cell.column + cell.cell.colspan == cell.surface.layout.columnWidths.size
+                    val endsColumn =
+                        cell.cell.column + cell.cell.colspan ==
+                            cell.surface.layout.columnWidths.size
                     val rtl = cell.surface.isRightToLeft
                     val leftEdge = if (rtl) endsColumn else startsColumn
                     val rightEdge = if (rtl) startsColumn else endsColumn
@@ -1359,12 +1361,44 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
                     val left = minOf(bounds.width(), if (leftEdge) width else half)
                     val right = minOf(bounds.width(), if (rightEdge) width else half)
                     val top = minOf(bounds.height(), if (cell.cell.row == 0) width else half)
-                    val bottom = minOf(bounds.height(),
-                        if (cell.cell.row + cell.cell.rowspan == cell.surface.layout.rowOffsets.lastIndex) width else half)
-                    path.addRect(bounds.left, bounds.top, bounds.left + left, bounds.bottom, Path.Direction.CW)
-                    path.addRect(bounds.right - right, bounds.top, bounds.right, bounds.bottom, Path.Direction.CW)
-                    path.addRect(bounds.left, bounds.top, bounds.right, bounds.top + top, Path.Direction.CW)
-                    path.addRect(bounds.left, bounds.bottom - bottom, bounds.right, bounds.bottom, Path.Direction.CW)
+                    val bottom = minOf(
+                        bounds.height(),
+                        if (cell.cell.row + cell.cell.rowspan ==
+                            cell.surface.layout.rowOffsets.lastIndex
+                        ) {
+                            width
+                        } else {
+                            half
+                        }
+                    )
+                    path.addRect(
+                        bounds.left,
+                        bounds.top,
+                        bounds.left + left,
+                        bounds.bottom,
+                        Path.Direction.CW
+                    )
+                    path.addRect(
+                        bounds.right - right,
+                        bounds.top,
+                        bounds.right,
+                        bounds.bottom,
+                        Path.Direction.CW
+                    )
+                    path.addRect(
+                        bounds.left,
+                        bounds.top,
+                        bounds.right,
+                        bounds.top + top,
+                        Path.Direction.CW
+                    )
+                    path.addRect(
+                        bounds.left,
+                        bounds.bottom - bottom,
+                        bounds.right,
+                        bounds.bottom,
+                        Path.Direction.CW
+                    )
                 } while (index < surfaceCells.size && surfaceCells[index].clip == first.clip)
                 if (path.isEmpty) continue
                 val saved = canvas.save()
@@ -1510,36 +1544,14 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     }
 
     private fun drawTaskMarker(canvas: Canvas, fragment: PreparedProseFragment) {
-        val bounds = RectF(fragment.bounds)
-        fragment.box?.let {
-            com.apollohg.editor.drawCheckbox(
-                canvas,
-                bounds,
-                it,
-                fragment.checked,
-                fragment.borderColor ?: fragment.color ?: android.graphics.Color.BLACK
-            )
-            return
-        }
-        val inset = maxOf(1f, bounds.height() * 0.2f)
-        val box = RectF(bounds).apply { inset(inset, inset) }
-        paint.style = Paint.Style.STROKE
-        paint.strokeWidth = maxOf(1f, box.width() * 0.1f)
-        paint.color = fragment.color ?: return
-        canvas.drawRoundRect(box, box.width() * 0.2f, box.width() * 0.2f, paint)
-        if (!fragment.checked) return
-        paint.style = Paint.Style.STROKE
-        paint.strokeWidth = maxOf(1.4f, box.width() * 0.12f)
-        paint.strokeCap = Paint.Cap.ROUND
-        paint.strokeJoin = Paint.Join.ROUND
-        val path = android.graphics.Path().apply {
-            moveTo(box.left + box.width() * 0.2f, box.centerY())
-            lineTo(box.left + box.width() * 0.43f, box.bottom - box.height() * 0.2f)
-            lineTo(box.right - box.width() * 0.16f, box.top + box.height() * 0.2f)
-        }
-        canvas.drawPath(path, paint)
-        paint.strokeCap = Paint.Cap.BUTT
-        paint.strokeJoin = Paint.Join.MITER
+        com.apollohg.editor.drawTaskCheckbox(
+            canvas,
+            RectF(fragment.bounds),
+            fragment.box,
+            fragment.checked,
+            fragment.color ?: android.graphics.Color.BLACK,
+            fragment.borderColor ?: fragment.color ?: android.graphics.Color.BLACK
+        )
     }
 
     override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {

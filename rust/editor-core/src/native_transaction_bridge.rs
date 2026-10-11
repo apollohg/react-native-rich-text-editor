@@ -185,7 +185,37 @@ impl<'session> NativeTransactionBridge<'session> {
                             .map_err(operation_error)?;
                         typed_outcome(request_id, result)?
                     }
-                    Some(intent) => {
+                    Some(mut intent) => {
+                        if let NativeIntentEnvelope::Command {
+                            command: CommandEnvelope::ToggleTaskItemChecked { at: Some(at) },
+                            ..
+                        } = &mut intent
+                        {
+                            if !matches!(at.kind, OffsetKindEnvelope::Scalar) {
+                                return Err(config_invalid(
+                                    request_id,
+                                    "native task checkbox targets require scalar offsets",
+                                ));
+                            }
+                            let target = self.session.resolve_epoch_range(
+                                envelope.owner_id,
+                                envelope.position_epoch,
+                                at.offset,
+                                at.offset,
+                            )?;
+                            if target.left_table_cell {
+                                return Err(crate::position_epoch::table_cell_removed(request_id));
+                            }
+                            if target.fallback {
+                                return Err(operation_error(OperationError::position_invalid(
+                                    request_id,
+                                    0,
+                                    "at",
+                                    "the published task checkbox target no longer resolves",
+                                )));
+                            }
+                            at.offset = target.anchor;
+                        }
                         let mut command = lower_native_intent(
                             intent,
                             resolved.anchor,

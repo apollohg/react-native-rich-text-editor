@@ -176,8 +176,8 @@ enum EditorV2Shadow {
         adapter(for: id)?.insertNode(nodeType, anchor: scalarAnchor, head: scalarHead) ?? "{}"
     }
 
-    static func toggleTaskItemCheckedAtSelectionScalar(id: UInt64, scalarAnchor: UInt32, scalarHead: UInt32) -> String {
-        adapter(for: id)?.toggleTaskItemChecked(anchor: scalarAnchor, head: scalarHead) ?? "{}"
+    static func toggleTaskItemCheckedAtScalar(id: UInt64, scalar: UInt32) -> String {
+        adapter(for: id)?.toggleTaskItemChecked(at: scalar) ?? "{}"
     }
 
     static func toggleMarkAtSelectionScalar(id: UInt64, scalarAnchor: UInt32, scalarHead: UInt32, markName: String) -> String {

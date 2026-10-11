@@ -388,7 +388,7 @@ final class EditorLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             origin: textContainerOrigin,
             markerGap: markerGap,
             explicitSize: (attrs[editorTaskCheckboxAttribute] as? EditorMentionRenderedBox)?.box.number("size", fallback: 24)
-        ).insetBy(dx: -10, dy: -8)
+        ).insetBy(dx: -LayoutConstants.taskMarkerHitSlop.width, dy: -LayoutConstants.taskMarkerHitSlop.height)
 
         return markerRect.contains(tapPoint) ? paragraphStart : nil
     }

@@ -250,7 +250,10 @@ enum CommandEnvelope {
     UnwrapFromList,
     IndentListItem,
     OutdentListItem,
-    ToggleTaskItemChecked,
+    ToggleTaskItemChecked {
+        #[serde(default)]
+        at: Option<PositionEnvelope>,
+    },
     InsertNode {
         #[serde(rename = "nodeType")]
         node_type: String,
@@ -532,7 +535,9 @@ impl From<CommandEnvelope> for TypedCommand {
             CommandEnvelope::UnwrapFromList => Self::UnwrapFromList,
             CommandEnvelope::IndentListItem => Self::IndentListItem,
             CommandEnvelope::OutdentListItem => Self::OutdentListItem,
-            CommandEnvelope::ToggleTaskItemChecked => Self::ToggleTaskItemChecked,
+            CommandEnvelope::ToggleTaskItemChecked { at } => Self::ToggleTaskItemChecked {
+                at: at.map(Into::into),
+            },
             CommandEnvelope::InsertNode { node_type } => Self::InsertNode { node_type },
             CommandEnvelope::UpdateNodeAttrs { doc_pos, attrs } => {
                 Self::UpdateNodeAttrs { doc_pos, attrs }

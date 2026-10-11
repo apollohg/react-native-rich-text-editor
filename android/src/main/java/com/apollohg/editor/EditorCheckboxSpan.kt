@@ -50,12 +50,52 @@ internal fun drawCheckbox(
     canvas.drawPath(path, paint)
 }
 
+internal fun drawTaskCheckbox(
+    canvas: Canvas,
+    bounds: RectF,
+    boxStyle: EditorBoxStyle?,
+    checked: Boolean,
+    color: Int,
+    checkColor: Int = color
+) {
+    if (boxStyle != null) {
+        drawCheckbox(canvas, bounds, boxStyle, checked, checkColor)
+        return
+    }
+    val inset = maxOf(1f, bounds.height() * 0.2f)
+    val box = RectF(bounds).apply { inset(inset, inset) }
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = maxOf(1f, box.width() * 0.1f)
+        this.color = color
+    }
+    canvas.drawRoundRect(box, box.width() * 0.2f, box.width() * 0.2f, paint)
+    if (!checked) return
+    paint.strokeWidth = maxOf(1.4f, box.width() * 0.12f)
+    paint.strokeCap = Paint.Cap.ROUND
+    paint.strokeJoin = Paint.Join.ROUND
+    val path = Path().apply {
+        moveTo(box.left + box.width() * 0.2f, box.centerY())
+        lineTo(box.left + box.width() * 0.43f, box.bottom - box.height() * 0.2f)
+        lineTo(box.right - box.width() * 0.16f, box.top + box.height() * 0.2f)
+    }
+    canvas.drawPath(path, paint)
+}
+
 internal class EditorCheckboxSpan(
-    private val style: EditorElementStyle,
+    private val size: Int,
+    private val box: EditorBoxStyle?,
     private val checked: Boolean,
-    private val density: Float
+    private val checkColor: Int?,
+    private val markerColor: Int? = null,
+    private val reserveLineHeight: Boolean = true
 ) : ReplacementSpan() {
-    private val size = ((style.size ?: 18f) * density).toInt()
+    constructor(style: EditorElementStyle, checked: Boolean, density: Float) : this(
+        ((style.size ?: 18f) * density).toInt(),
+        style.box.scaled(density),
+        checked,
+        style.checkColor
+    )
     override fun getSize(
         paint: Paint,
         text: CharSequence,
@@ -63,7 +103,7 @@ internal class EditorCheckboxSpan(
         end: Int,
         fm: Paint.FontMetricsInt?
     ): Int {
-        fm?.let {
+        fm?.takeIf { reserveLineHeight }?.let {
             it.ascent = minOf(it.ascent, -size)
             it.top = it.ascent
         }
@@ -81,12 +121,13 @@ internal class EditorCheckboxSpan(
         paint: Paint
     ) {
         val center = y + (paint.fontMetrics.ascent + paint.fontMetrics.descent) / 2f
-        drawCheckbox(
+        drawTaskCheckbox(
             canvas,
             RectF(x, center - size / 2f, x + size, center + size / 2f),
-            style.box.scaled(density),
+            box,
             checked,
-            style.checkColor ?: paint.color
+            markerColor ?: paint.color,
+            checkColor ?: markerColor ?: paint.color
         )
     }
 }

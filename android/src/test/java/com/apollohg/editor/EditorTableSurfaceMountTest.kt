@@ -2,8 +2,12 @@ package com.apollohg.editor
 
 import android.app.Activity
 import android.content.ClipData
+import android.content.Context
 import android.content.pm.ApplicationInfo
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.RectF
 import android.graphics.drawable.ColorDrawable
 import android.text.Annotation
 import android.text.Spanned
@@ -18,10 +22,12 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
+import android.view.inputmethod.InputMethodManager
 import android.widget.FrameLayout
 import com.apollohg.editor.tables.PlainTableFixture
 import com.apollohg.editor.tables.RootTableHeightSpan
 import com.apollohg.editor.viewer.PreparedProseDrawingView
+import com.apollohg.editor.viewer.PreparedProseFragmentKind
 import java.util.concurrent.TimeUnit
 import kotlin.math.floor
 import kotlin.math.hypot
@@ -40,6 +46,7 @@ import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.robolectric.shadows.ShadowLooper
@@ -103,6 +110,27 @@ internal class EditorTableSurfaceMountTest {
         const val OUTSIDE_TAP_JITTER_FRACTION = 0.85f
         const val SUB_PIXEL_JITTER = 0.9f
         const val LONG_PRESS_HOLD_FACTOR = 2L
+        private const val TASK_TEXT = "Task item"
+        private const val TASK_ITEM_TYPE = "taskItem"
+        private const val LEGACY_TASK_ITEM_TYPE = "listItem"
+        private const val TASK_TAP_DURATION_MS = 16L
+        private const val TASK_GEOMETRY_HOST_WIDTH = 240
+        private const val WRAPPED_TASK_TEXT =
+            "Task item wraps across several lines before the next checkbox"
+        private const val SECOND_TASK_TEXT = "Second task item"
+        private const val SIBLING_TASK_TEXT = "Sibling cell text"
+        private const val TASK_CELL_THEME = """{"version":1,"styles":{
+            "text":{"fontSize":17},"paragraph":{"lineHeight":27,"marginBottom":12},
+            "taskList":{"indent":20,"baseIndentMultiplier":1,"marginBottom":0},
+            "taskItem":{"marginBottom":0},"listItem":{"marginBottom":0},
+            "taskCheckbox":{"size":18,"gap":8,"borderWidth":1.5}
+        },"table":{"minColumnWidth":96}}"""
+        private const val TINY_TASK_CELL_THEME = """{"version":1,"styles":{
+            "text":{"fontSize":6},"paragraph":{"lineHeight":8,"marginBottom":0},
+            "taskList":{"indent":20,"baseIndentMultiplier":1,"marginBottom":0},
+            "taskItem":{"marginBottom":0},"listItem":{"marginBottom":0},
+            "taskCheckbox":{"size":18,"gap":8}
+        },"table":{"minColumnWidth":96}}"""
         val nestedTableDocument = """{"type":"doc","content":[{"type":"paragraph",""" +
             """"content":[{"type":"text","text":"before"}]},""" +
             """{"type":"table","content":[{"type":"table_row",""" +
@@ -2831,6 +2859,488 @@ internal class EditorTableSurfaceMountTest {
             assertTrue(heightSpan(view).heightPx > view.editorEditText.lineHeight)
         }
     }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `task checkbox in an unbound cell toggles without moving focus selection or keyboard`() =
+        assertUnboundTaskCheckboxToggle(TASK_ITEM_TYPE)
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `legacy task checkbox tap preserves focus selection and keyboard`() =
+        assertUnboundTaskCheckboxToggle(LEGACY_TASK_ITEM_TYPE)
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `unfocused task cell checkbox toggles without entering text editing`() =
+        assertUnboundTaskCheckboxToggle(TASK_ITEM_TYPE, focused = false)
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `second task checkbox in a cell toggles only its own item`() =
+        assertUnboundTaskCheckboxToggle(TASK_ITEM_TYPE, markerIndex = 1)
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `overlapping task checkbox centers toggle the second item without moving root focus`() =
+        assertUnboundTaskCheckboxToggle(
+            TASK_ITEM_TYPE,
+            markerIndex = 1,
+            themeJSON = TINY_TASK_CELL_THEME
+        )
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `overlapping task checkbox centers preserve the sibling cell caret and focus`() =
+        assertUnboundTaskCheckboxToggle(
+            TASK_ITEM_TYPE,
+            markerIndex = 1,
+            themeJSON = TINY_TASK_CELL_THEME,
+            siblingBound = true
+        )
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `empty task checkbox in an unbound cell toggles without entering text editing`() =
+        assertUnboundTaskCheckboxToggle(
+            TASK_ITEM_TYPE,
+            focused = false,
+            taskTexts = listOf("", SECOND_TASK_TEXT)
+        )
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `empty legacy task checkbox in an unbound cell toggles without entering text editing`() =
+        assertUnboundTaskCheckboxToggle(
+            LEGACY_TASK_ITEM_TYPE,
+            focused = false,
+            taskTexts = listOf("", SECOND_TASK_TEXT)
+        )
+
+    private fun withTaskCell(
+        itemType: String = TASK_ITEM_TYPE,
+        taskTexts: List<String> = listOf(TASK_TEXT),
+        siblingText: String? = null,
+        block: (RichTextEditorView, EditorV2Adapter, String) -> Unit
+    ) {
+        val schema = JSONObject(config)
+        schema.getJSONObject("schema").getJSONArray("nodes")
+            .put(
+                JSONObject().put("name", "taskList").put("content", "$itemType+")
+                    .put("group", "block").put("role", "list")
+            )
+            .put(
+                JSONObject().put("name", itemType).put("content", "paragraph block*")
+                    .put("role", "listItem").put(
+                        "attrs",
+                        JSONObject()
+                            .put("checked", JSONObject().put("default", false))
+                    )
+            )
+        val document = JSONObject(tableDocument)
+        val cells = document.getJSONArray("content").getJSONObject(0)
+            .getJSONArray("content").getJSONObject(0).getJSONArray("content")
+        val cell = cells.getJSONObject(0)
+        if (siblingText != null) {
+            val sibling = JSONObject(cell.toString())
+            sibling.getJSONArray("content").getJSONObject(0)
+                .getJSONArray("content").getJSONObject(0).put("text", siblingText)
+            cells.put(sibling)
+        }
+        val items = org.json.JSONArray()
+        for (text in taskTexts) {
+            val paragraph = JSONObject(cell.getJSONArray("content").getJSONObject(0).toString())
+            paragraph.getJSONArray("content").getJSONObject(0).put("text", text)
+            items.put(
+                JSONObject().put("type", itemType)
+                    .put("attrs", JSONObject().put("checked", false))
+                    .put("content", org.json.JSONArray().put(paragraph))
+            )
+        }
+        val list = JSONObject().put("type", "taskList")
+            .put("content", items)
+        cell.put("content", org.json.JSONArray().put(list))
+        withMountedEditorView(
+            document.toString(),
+            schema.toString(),
+            windowed = true,
+            block = block
+        )
+    }
+
+    private fun taskChecked(adapter: EditorV2Adapter, itemIndex: Int = 0): Boolean =
+        JSONObject(requireNotNull(adapter.documentJson())).getJSONArray("content").getJSONObject(0)
+            .getJSONArray("content").getJSONObject(0).getJSONArray("content").getJSONObject(0)
+            .getJSONArray(
+                "content"
+            ).getJSONObject(0).getJSONArray("content").getJSONObject(itemIndex)
+            .optJSONObject("attrs")?.optBoolean("checked", false) == true
+
+    private fun tapTaskCellPoint(view: RichTextEditorView, x: Float, y: Float) {
+        for ((action, time) in listOf(
+            MotionEvent.ACTION_DOWN to 0L,
+            MotionEvent.ACTION_UP to TASK_TAP_DURATION_MS
+        )) {
+            val event = MotionEvent.obtain(0, time, action, x, y, 0)
+            event.source = InputDevice.SOURCE_TOUCHSCREEN
+            try {
+                assertTrue(
+                    "host task tap action=$action at ($x,$y)",
+                    view.dispatchTouchEvent(event)
+                )
+            } finally {
+                event.recycle()
+            }
+        }
+    }
+
+    private fun assertUnboundTaskCheckboxToggle(
+        itemType: String,
+        focused: Boolean = true,
+        markerIndex: Int = 0,
+        taskTexts: List<String> = listOf(TASK_TEXT, SECOND_TASK_TEXT),
+        themeJSON: String? = null,
+        siblingBound: Boolean = false
+    ) = withTaskCell(
+        itemType,
+        taskTexts = taskTexts,
+        siblingText = if (siblingBound) SIBLING_TASK_TEXT else null
+    ) { view, adapter, _ ->
+        if (themeJSON != null) {
+            view.applyTheme(EditorTheme.fromJson(themeJSON))
+            measure(view, TABLE_HOST_WIDTH)
+        }
+        val root = view.editorEditText
+        root.showSoftInputOnFocus = false
+        if (focused) {
+            root.requestFocus()
+        } else {
+            view.isFocusableInTouchMode = true
+            view.descendantFocusability = android.view.ViewGroup.FOCUS_BEFORE_DESCENDANTS
+            view.requestFocus()
+            assertFalse("fixture requires an unfocused input", root.hasFocus())
+        }
+        root.setSelection(root.text.length)
+        if (siblingBound) {
+            tapFirstCell(view, 1)
+            assertNotSame("fixture must bind the sibling cell", root, view.activeTextInput)
+            view.activeTextInput.setSelection(view.activeTextInput.text.length)
+            ShadowLooper.idleMainLooper()
+        }
+        val input = view.activeTextInput
+        val caret = input.selectionStart to input.selectionEnd
+        val focus = view.findFocus()
+        val selection = JSONObject(requireNotNull(adapter.currentStateJson()))
+            .getJSONObject("selection").toString()
+        val manager = view.context.getSystemService(
+            Context.INPUT_METHOD_SERVICE
+        ) as InputMethodManager
+        manager.hideSoftInputFromWindow(root.windowToken, 0)
+        val canvas = requireNotNull(drawing(view))
+        val block = requireNotNull(canvas.preparedLayout).blocks.single()
+        val surface = requireNotNull(block.tableSurface)
+        val cell = surface.cells.first()
+        val markers = cell.content.blocks.flatMap { it.fragments }
+            .filter { it.kind == PreparedProseFragmentKind.MARKER }
+        val marker = markers[markerIndex]
+        if (themeJSON == TINY_TASK_CELL_THEME) {
+            assertTrue(
+                "fixture must overlap checkbox hit bounds at the second painted center: " +
+                    markers.map { it.bounds },
+                markers.count {
+                    RectF(it.bounds).contains(
+                        marker.bounds.exactCenterX(),
+                        marker.bounds.exactCenterY()
+                    )
+                } > 1
+            )
+        }
+        val frame = surface.frameOfCell(cell)
+        val bounds = requireNotNull(block.tableBounds)
+        val x = bounds.left + frame.left + cell.contentOrigin.first + marker.bounds.exactCenterX()
+        val y = bounds.top + frame.top + cell.contentOrigin.second + marker.bounds.exactCenterY()
+
+        tapTaskCellPoint(view, x, y)
+        ShadowLooper.idleMainLooper()
+
+        assertTrue(
+            "$itemType checkbox tap must update the document: ${adapter.documentJson()}",
+            taskChecked(adapter, markerIndex)
+        )
+        assertFalse(
+            "checkbox must leave the other task unchanged",
+            taskChecked(
+                adapter,
+                1 - markerIndex
+            )
+        )
+        assertSame("$itemType checkbox must keep the active input", input, view.activeTextInput)
+        assertEquals(
+            "$itemType checkbox must preserve the native caret",
+            caret,
+            input.selectionStart to input.selectionEnd
+        )
+        assertSame("$itemType checkbox must preserve focus", focus, view.findFocus())
+        assertEquals(
+            "$itemType checkbox must preserve the engine selection",
+            selection,
+            JSONObject(
+                requireNotNull(adapter.currentStateJson())
+            ).getJSONObject("selection").toString()
+        )
+        assertFalse(
+            "$itemType checkbox must not open the keyboard",
+            shadowOf(manager).isSoftInputVisible
+        )
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `task checkbox in a bound cell toggles while preserving its caret`() =
+        assertBoundTaskCheckboxToggle(TASK_ITEM_TYPE)
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `legacy task checkbox in a bound cell toggles while preserving its caret`() =
+        assertBoundTaskCheckboxToggle(LEGACY_TASK_ITEM_TYPE)
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `checked task marker keeps its tick color when cell text has a different color`() =
+        withTaskCell {
+                view,
+                adapter,
+                _
+            ->
+            val theme = JSONObject(TASK_CELL_THEME)
+            val styles = theme.getJSONObject("styles")
+            styles.getJSONObject("text").put("color", "#00ff00ff")
+            styles.put("listMarker", JSONObject().put("color", "#ff0000ff"))
+            view.applyTheme(EditorTheme.fromJson(theme.toString()))
+            measure(view, TABLE_HOST_WIDTH)
+            val canvas = requireNotNull(drawing(view))
+            val block = requireNotNull(canvas.preparedLayout).blocks.single()
+            val surface = requireNotNull(block.tableSurface)
+            val cell = surface.cells.single()
+            val frame = surface.frameOfCell(cell)
+            val tableBounds = requireNotNull(block.tableBounds)
+            val originX = tableBounds.left + frame.left + cell.contentOrigin.first
+            val originY = tableBounds.top + frame.top + cell.contentOrigin.second
+            val marker = cell.content.blocks.flatMap { it.fragments }
+                .single { it.kind == PreparedProseFragmentKind.MARKER }
+            tapTaskCellPoint(
+                view,
+                originX + marker.bounds.exactCenterX(),
+                originY + marker.bounds.exactCenterY()
+            )
+            assertTrue(taskChecked(adapter))
+            val checkedCell = requireNotNull(
+                canvas.preparedLayout
+            ).blocks.single().tableSurface!!.cells.single()
+            val checkedMarker = checkedCell.content.blocks.flatMap { it.fragments }
+                .single { it.kind == PreparedProseFragmentKind.MARKER }
+            fun colors(target: View, left: Int, top: Int): Set<Int> {
+                val pixels = Bitmap.createBitmap(
+                    target.width,
+                    target.height,
+                    Bitmap.Config.ARGB_8888
+                )
+                return try {
+                    target.draw(Canvas(pixels))
+                    buildSet {
+                        for (y in top until top + checkedMarker.bounds.height()) {
+                            for (x in left until left + checkedMarker.bounds.width()) {
+                                add(pixels.getPixel(x, y))
+                            }
+                        }
+                    }
+                } finally {
+                    pixels.recycle()
+                }
+            }
+            val preparedColors = colors(
+                canvas,
+                (originX + checkedMarker.bounds.left).toInt(),
+                (originY + checkedMarker.bounds.top).toInt()
+            )
+            assertTrue("fixture must paint a red viewer tick", Color.RED in preparedColors)
+            val text = checkedCell.content.blocks.flatMap { it.fragments }
+                .single { it.kind == PreparedProseFragmentKind.TEXT }
+            tapTaskCellPoint(
+                view,
+                originX + text.bounds.exactCenterX(),
+                originY + text.bounds.exactCenterY()
+            )
+            val input = view.activeTextInput
+            assertNotSame(view.editorEditText, input)
+            input.setSelection(input.text.length)
+            val focusedColors = colors(input, checkedMarker.bounds.left, checkedMarker.bounds.top)
+            assertTrue(
+                "focused checkbox must keep the red tick: $focusedColors",
+                Color.RED in focusedColors
+            )
+            assertFalse(
+                "body color must not recolor the checkbox tick",
+                Color.GREEN in focusedColors
+            )
+        }
+
+    private fun assertBoundTaskCheckboxToggle(itemType: String) = withTaskCell(itemType) {
+            view,
+            adapter,
+            _
+        ->
+        val canvas = requireNotNull(drawing(view))
+        val block = requireNotNull(canvas.preparedLayout).blocks.single()
+        val surface = requireNotNull(block.tableSurface)
+        val cell = surface.cells.single()
+        val text = cell.content.blocks.flatMap { it.fragments }
+            .single { it.kind == PreparedProseFragmentKind.TEXT }
+        val marker = cell.content.blocks.flatMap { it.fragments }
+            .single { it.kind == PreparedProseFragmentKind.MARKER }
+        val frame = surface.frameOfCell(cell)
+        val bounds = requireNotNull(block.tableBounds)
+        val originX = bounds.left + frame.left + cell.contentOrigin.first
+        val originY = bounds.top + frame.top + cell.contentOrigin.second
+        tapTaskCellPoint(
+            view,
+            originX + text.bounds.exactCenterX(),
+            originY + text.bounds.exactCenterY()
+        )
+        val input = view.activeTextInput
+        assertNotSame("task text tap must bind cell", view.editorEditText, input)
+        input.setSelection(input.text.length)
+        val caret = input.selectionStart
+        val markerX = originX + marker.bounds.exactCenterX()
+        val markerY = originY + marker.bounds.exactCenterY()
+        val markerStartAfter = input.left + input.totalPaddingLeft - input.scrollX +
+            requireNotNull(input.layout).getPrimaryHorizontal(0)
+        assertEquals(
+            "focused checkbox must retain its painted horizontal position",
+            originX + marker.bounds.left,
+            markerStartAfter,
+            OFFSET_ROUNDING_TOLERANCE_PX
+        )
+
+        tapTaskCellPoint(view, markerX, markerY)
+
+        assertTrue(
+            "bound task checkbox must update the document: ${adapter.documentJson()} " +
+                "notes=${adapter.debugNotes} " +
+                "selection=${input.selectionStart} scalarHit=${input.taskListMarkerScalarHitAt(
+                    markerX - input.left,
+                    markerY - input.top
+                )}",
+            taskChecked(adapter)
+        )
+        assertSame(input, view.activeTextInput)
+        assertTrue(input.hasFocus())
+        assertEquals("checkbox must preserve cell caret", caret, input.selectionStart)
+        assertEquals("checkbox must preserve cell caret end", caret, input.selectionEnd)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `focusing task text in a cell preserves its painted baseline and text bounds`() =
+        assertTaskCellGeometry(listOf(TASK_TEXT))
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `focusing wrapped tasks preserves every baseline and following item with example theme`() =
+        assertTaskCellGeometry(listOf(WRAPPED_TASK_TEXT, SECOND_TASK_TEXT), TASK_CELL_THEME)
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `focusing an empty task preserves its line and following item with example theme`() =
+        assertTaskCellGeometry(listOf("", SECOND_TASK_TEXT), TASK_CELL_THEME)
+
+    private fun assertTaskCellGeometry(taskTexts: List<String>, themeJSON: String? = null) =
+        withTaskCell(taskTexts = taskTexts) { view, _, _ ->
+            if (themeJSON != null) view.applyTheme(EditorTheme.fromJson(themeJSON))
+            measure(view, TASK_GEOMETRY_HOST_WIDTH)
+            val block = requireNotNull(drawing(view)?.preparedLayout).blocks.single()
+            val surface = requireNotNull(block.tableSurface)
+            val cell = surface.cells.single()
+            val fragments = cell.content.blocks.flatMap { it.fragments }
+                .filter { it.kind == PreparedProseFragmentKind.TEXT }
+            assertEquals("one viewer text fragment per task", taskTexts.size, fragments.size)
+            val frame = surface.frameOfCell(cell)
+            val bounds = requireNotNull(block.tableBounds)
+            val originX = bounds.left + frame.left + cell.contentOrigin.first
+            val originY = bounds.top + frame.top + cell.contentOrigin.second
+            val fragment = fragments.first()
+            if (taskTexts.first() == WRAPPED_TASK_TEXT) {
+                assertTrue(
+                    "fixture requires actual wrapping",
+                    requireNotNull(fragment.layout).lineCount > 1
+                )
+            }
+
+            tapTaskCellPoint(
+                view,
+                originX + fragment.bounds.exactCenterX(),
+                originY + fragment.bounds.exactCenterY()
+            )
+            measure(view, TASK_GEOMETRY_HOST_WIDTH)
+
+            val input = view.activeTextInput
+            assertNotSame("task text tap must mount an editable cell", view.editorEditText, input)
+            assertTrue(input.hasFocus())
+            val inputLayout = requireNotNull(input.layout)
+            val originAfter = input.top + input.totalPaddingTop - input.scrollY
+            for ((item, painted) in fragments.withIndex()) {
+                val viewerLayout = requireNotNull(painted.layout)
+                val textStart = if (taskTexts[item].isEmpty()) {
+                    input.text.toString().indexOf(LayoutConstants.SYNTHETIC_PLACEHOLDER_CHARACTER)
+                } else {
+                    input.text.toString().indexOf(taskTexts[item])
+                }
+                assertTrue("input must retain task $item text", textStart >= 0)
+                val firstLine = inputLayout.getLineForOffset(textStart)
+                val lastLine = inputLayout.getLineForOffset(
+                    textStart + maxOf(1, taskTexts[item].length) - 1
+                )
+                assertEquals(
+                    "task $item must retain its wrapped line count",
+                    viewerLayout.lineCount,
+                    lastLine - firstLine + 1
+                )
+                for (viewerLine in 0 until viewerLayout.lineCount) {
+                    val line = firstLine + viewerLine
+                    val baselineBefore =
+                        originY + painted.layoutY + viewerLayout.getLineBaseline(viewerLine)
+                    val topBefore = originY + painted.layoutY + viewerLayout.getLineTop(viewerLine)
+                    val bottomBefore =
+                        originY + painted.layoutY + viewerLayout.getLineBottom(viewerLine)
+                    val diagnostic = "item=$item line=$viewerLine theme=$themeJSON " +
+                        "viewer baseline=$baselineBefore bounds=[$topBefore,$bottomBefore] " +
+                        "input top=${input.top} padding=${input.totalPaddingTop} " +
+                        "scroll=${input.scrollY} " +
+                        "baseline=${inputLayout.getLineBaseline(line)} " +
+                        "bounds=[${inputLayout.editorTextLineTop(
+                            line
+                        )},${inputLayout.editorTextLineBottom(line)}]"
+                    assertEquals(
+                        "task text must retain its baseline: $diagnostic",
+                        baselineBefore,
+                        (originAfter + inputLayout.getLineBaseline(line)).toFloat(),
+                        OFFSET_ROUNDING_TOLERANCE_PX
+                    )
+                    assertEquals(
+                        "task text must retain its top: $diagnostic",
+                        topBefore,
+                        (originAfter + inputLayout.editorTextLineTop(line)).toFloat(),
+                        OFFSET_ROUNDING_TOLERANCE_PX
+                    )
+                    assertEquals(
+                        "task text must retain its bottom: $diagnostic",
+                        bottomBefore,
+                        (originAfter + inputLayout.editorTextLineBottom(line)).toFloat(),
+                        OFFSET_ROUNDING_TOLERANCE_PX
+                    )
+                }
+            }
+        }
 
     @Test
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
