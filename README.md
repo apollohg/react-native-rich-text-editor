@@ -24,7 +24,7 @@ Below is a list of features that are planned or in progress. If you have a featu
 
 - [x] External text composition
 - [x] Custom atoms via React Native components
-- [ ] Tables *(in progress)*
+- [x] Tables
 - [ ] Output as Markdown/GitHub Flavored Markdown (GFM)
 - [ ] Extension framework
 - [ ] Inline node extensions
