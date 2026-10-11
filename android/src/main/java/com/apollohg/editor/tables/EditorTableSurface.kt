@@ -2632,6 +2632,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) :
         if (apply(authorized)) input.lastAuthorizedRenderedText = authorized
         if (apply(input.text)) {
             input.invalidateTextLayout()
+            host.requestTableContentLayout()
         }
     }
 }

@@ -400,6 +400,19 @@ class RichTextEditorView @JvmOverloads constructor(
 
     internal fun layoutEditorContentChild(child: View) = contentFrame.layoutChildInPlace(child)
 
+    private var tableContentLayoutPosted = false
+    private val tableContentLayoutRequest = Runnable {
+        tableContentLayoutPosted = false
+        requestLayout()
+    }
+
+    internal fun requestTableContentLayout() {
+        if (!isAttachedToWindow || tableContentLayoutPosted) return
+        tableContentLayoutPosted = true
+        // Expo can consume a child's request while finishing its current layout pass.
+        post(tableContentLayoutRequest)
+    }
+
     internal fun invalidateActiveTableCellInput() {
         editorTableSurface.invalidateCell()
     }
@@ -1110,6 +1123,8 @@ class RichTextEditorView @JvmOverloads constructor(
         }
         removeCallbacks(scrollObservers)
         scrollObserversPosted = false
+        removeCallbacks(tableContentLayoutRequest)
+        tableContentLayoutPosted = false
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {

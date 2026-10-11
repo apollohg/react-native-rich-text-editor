@@ -38,6 +38,51 @@ class NativeDeviceTableScrollTest {
     private data class Point(val x: Float, val y: Float)
 
     @Test
+    fun tallTableWithoutFollowingProseScrollsVertically() {
+        val intent = Intent(instrumentation.targetContext, NativeTableHostActivity::class.java)
+            .putExtra(NativeTableHostActivity.EXTRA_PLAIN_ROWS, TALL_TABLE_ROWS)
+            .putExtra(NativeTableHostActivity.EXTRA_PLAIN_COLUMNS, TALL_TABLE_COLUMNS)
+        ActivityScenario.launch<NativeTableHostActivity>(intent).use { scenario ->
+            awaitEditorTable(scenario)
+            lateinit var host: PreparedProseDrawingView
+            scenario.onActivity { host = editorTableHost(it) }
+            instrumentation.awaitStableTableViewport(host, LAYOUT_TIMEOUT_MS)
+            scenario.onActivity { activity ->
+                val editor = activity.richTextView
+                val bottom = requireNotNull(
+                    host.preparedLayout
+                ).blocks.single().tableBounds!!.bottom
+                assertTrue(
+                    "table bottom=$bottom must exceed viewport=${editor.editorScrollView.height}",
+                    bottom > editor.editorScrollView.height
+                )
+                assertTrue(
+                    "content=${editor.editorContentFrame.height} must contain table bottom=$bottom",
+                    editor.editorContentFrame.height >= bottom
+                )
+                assertTrue(
+                    "table must supply vertical scroll range",
+                    editor.editorScrollView.canScrollVertically(1)
+                )
+            }
+            val start = editorTableBodyPoint(scenario)
+            var distance = 0f
+            scenario.onActivity {
+                distance =
+                    verticalDragDistance(start, it.richTextView.editorScrollView)
+            }
+            drag(start, 0f, -distance)
+            scenario.onActivity { activity ->
+                assertTrue(
+                    "vertical table drag must scroll the editor",
+                    activity.richTextView.editorScrollView.scrollY > 0
+                )
+                assertUnchanged(activity)
+            }
+        }
+    }
+
+    @Test
     fun editorHorizontalDragMovesTableWithoutChangingDocumentOrVerticalScroll() =
         withEditor { scenario ->
             val start = editorTableBodyPoint(scenario)
@@ -727,6 +772,8 @@ class NativeDeviceTableScrollTest {
     }
 
     private companion object {
+        const val TALL_TABLE_ROWS = 40
+        const val TALL_TABLE_COLUMNS = 2
         const val LAYOUT_TIMEOUT_MS = 15_000L
         const val FRAME_WAIT_MS = 16L
         const val TAP_DURATION_MS = 40L
