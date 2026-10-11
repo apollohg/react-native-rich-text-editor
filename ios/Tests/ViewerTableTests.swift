@@ -31,6 +31,100 @@ private final class TablePanLifecycleProbe: NSObject {
 }
 
 final class ViewerTableTests: XCTestCase {
+    func testSharedTableBordersKeepConfiguredThicknessIncludingMergedAndRTLCells() throws {
+        let configuredBorderWidth: CGFloat = 4
+        let columnWidth = 80
+        let colorChannelMaximum: CGFloat = 255
+        let translucentAlpha: CGFloat = 128
+        let rasterPadding: CGFloat = 1
+        func emptyCell(colspan: Int = 1, rowspan: Int = 1) -> [String: Any] {
+            ["type": "table_cell", "attrs": ["colspan": colspan, "rowspan": rowspan,
+                                             "colwidth": Array(repeating: columnWidth, count: colspan)],
+             "content": [["type": "paragraph"]]]
+        }
+        var nestedCell = emptyCell()
+        nestedCell["content"] = [["type": "table", "content": [
+            ["type": "table_row", "content": [emptyCell()]]
+        ]]]
+        let fixtures = [
+            ("regular", [[emptyCell(), emptyCell()], [emptyCell(), emptyCell()]]),
+            ("nested", [[nestedCell, emptyCell()], [emptyCell(), emptyCell()]]),
+            ("merged", [[emptyCell(rowspan: 2), emptyCell(colspan: 2)], [emptyCell(), emptyCell()]])
+        ]
+        for (name, rows) in fixtures {
+            let source = try jsonSource(["type": "doc", "content": [["type": "table", "content": rows.map {
+                ["type": "table_row", "content": $0]
+            }]]])
+            let compiled = viewerCompile(request: FfiViewerCompileRequest(
+                sourceKind: .json, source: source, configJson: Self.config, imagesEnabled: true, mentionPrefix: nil
+            ))
+            let document = try ViewerDocument(compiled: XCTUnwrap(compiled.value))
+            let cases: [(CGFloat, String, CGFloat)] = [
+                (configuredBorderWidth, "#000000", 0),
+                (configuredBorderWidth, "#000000", 0.25),
+                (configuredBorderWidth, "#00000080", 0.25),
+                (0, "#000000", 0)
+            ]
+            for (borderWidth, borderColor, translation) in cases {
+                for direction in [TableLayoutDirection.leftToRight, .rightToLeft] {
+                    let layout = try prepare(
+                        document,
+                        themeJSON: ##"{"table":{"borderWidth":\##(borderWidth),"borderColor":"\##(borderColor)"}}"##,
+                        tableDirection: direction
+                    )
+                    let table = try XCTUnwrap(layout.blocks.first { $0.tableSurface != nil })
+                    let surface = try XCTUnwrap(table.tableSurface)
+                    XCTAssertEqual(surface.style.borderWidth, borderWidth)
+                    let opacity = borderColor == "#00000080" ? translucentAlpha / colorChannelMaximum : 1
+                    XCTAssertEqual(surface.style.borderColor.cgColor.components, [0, 0, 0, opacity])
+                    let drawing = PreparedProseDrawingView(frame: CGRect(origin: .zero, size: layout.size))
+                    drawing.install(layout: layout)
+                    let format = UIGraphicsImageRendererFormat()
+                    format.scale = CGFloat(Double(bitPattern: layout.key.displayScaleBits))
+                    let imageSize = CGSize(width: layout.size.width + rasterPadding, height: layout.size.height + rasterPadding)
+                    let image = try XCTUnwrap(UIGraphicsImageRenderer(size: imageSize, format: format).image { context in
+                        UIColor.white.setFill()
+                        context.fill(CGRect(origin: .zero, size: imageSize))
+                        context.cgContext.translateBy(x: translation, y: translation)
+                        drawing.draw(drawing.bounds)
+                    }.cgImage)
+                    let expectedThickness = borderWidth * format.scale * opacity
+                    let scanRadius = Int(configuredBorderWidth * format.scale * 2)
+                    let presentation = try XCTUnwrap(drawing.mountedTablePresentation())
+                    func thickness(x: CGFloat, y: CGFloat, vertical: Bool) throws -> CGFloat {
+                        try (-scanRadius..<scanRadius).reduce(CGFloat.zero) { total, offset in
+                            let pixelX = Int(x * format.scale) + (vertical ? offset : 0)
+                            let pixelY = Int(y * format.scale) + (vertical ? 0 : offset)
+                            guard (0..<image.width).contains(pixelX), (0..<image.height).contains(pixelY) else { return total }
+                            let pixel = try rgba(image, CGPoint(x: pixelX, y: pixelY))
+                            return total + (colorChannelMaximum - CGFloat(pixel[0])) / colorChannelMaximum
+                        }
+                    }
+                    for cell in surface.cells {
+                        let frame = try XCTUnwrap(presentation.mountedCells.first { $0.sourceIndex == cell.sourceIndex }).bounds.offsetBy(dx: translation, dy: translation)
+                        let sampleX = frame.minX + frame.width / CGFloat(2 * cell.colspan)
+                        let sampleY = frame.minY + frame.height / CGFloat(2 * cell.rowspan)
+                        let message = "\(name) \(direction) border \(borderWidth) \(borderColor) offset \(translation) cell \(cell.sourceIndex)"
+                        for x in [frame.minX, frame.maxX] {
+                            let exterior = x == translation || x == surface.bounds.width + translation
+                            if translation != 0, exterior { continue }
+                            XCTAssertEqual(try thickness(x: x, y: sampleY, vertical: true), expectedThickness,
+                                           accuracy: 0.05, "\(message) vertical border at \(x)")
+                        }
+                        for y in [frame.minY, frame.maxY] {
+                            let exterior = y == translation || y == surface.bounds.height + translation
+                            if translation != 0, exterior { continue }
+                            XCTAssertEqual(try thickness(x: sampleX, y: y, vertical: false), expectedThickness,
+                                           accuracy: 0.05, "\(message) horizontal border at \(y)")
+                        }
+                        XCTAssertEqual(try rgba(image, CGPoint(x: Int(frame.midX * format.scale), y: Int(frame.midY * format.scale))),
+                                       [255, 255, 255, 255], "\(message) must have no border through its interior")
+                    }
+                }
+            }
+        }
+    }
+
     private final class WeakTemplate {
         weak var value: NSAttributedString?
         init(_ value: NSAttributedString) { self.value = value }

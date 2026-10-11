@@ -5,6 +5,7 @@ import android.content.res.Configuration
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.RenderNode
@@ -1043,7 +1044,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
                     isRealTableCell(it, setOf(target.sourceIndex))
             }.forEach { fillTableCell(canvas, it, it.surface.style.selectionColor) }
         }
-        cells.forEach { drawTableChromeBorder(canvas, it) }
+        drawTableChromeBorders(canvas, cells)
         visible.forEach { drawPresented(canvas, it, snapshot) { drawBorderOrRule(canvas, it) } }
         visible.filter {
             it.block.tableSurface?.layout?.failure != null
@@ -1337,16 +1338,44 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         snapshot.layouts.firstOrNull()?.let(::drawLayout)
     }
 
-    private fun drawTableChromeBorder(canvas: Canvas, cell: ViewerTablePresentedCell) {
-        onTableChromeDrawnForTesting?.invoke(cell.sourceIndex)
-        val saved = canvas.save()
-        canvas.clipRect(cell.clip)
-        paint.style = Paint.Style.STROKE
-        paint.strokeWidth = cell.surface.style.borderWidth
-        paint.color = cell.surface.style.borderColor
-        val inset = paint.strokeWidth / 2f
-        canvas.drawRect(RectF(cell.bounds).apply { inset(inset, inset) }, paint)
-        canvas.restoreToCount(saved)
+    private fun drawTableChromeBorders(canvas: Canvas, cells: List<ViewerTablePresentedCell>) {
+        cells.forEach { onTableChromeDrawnForTesting?.invoke(it.sourceIndex) }
+        for (surfaceCells in cells.groupBy { it.surface }.values) {
+            var index = 0
+            while (index < surfaceCells.size) {
+                val first = surfaceCells[index]
+                val path = Path()
+                do {
+                    val cell = surfaceCells[index++]
+                    val width = cell.surface.style.borderWidth
+                    if (width <= 0f) continue
+                    val half = width / 2f
+                    val startsColumn = cell.cell.column == 0
+                    val endsColumn = cell.cell.column + cell.cell.colspan == cell.surface.layout.columnWidths.size
+                    val rtl = cell.surface.isRightToLeft
+                    val leftEdge = if (rtl) endsColumn else startsColumn
+                    val rightEdge = if (rtl) startsColumn else endsColumn
+                    val bounds = cell.bounds
+                    val left = minOf(bounds.width(), if (leftEdge) width else half)
+                    val right = minOf(bounds.width(), if (rightEdge) width else half)
+                    val top = minOf(bounds.height(), if (cell.cell.row == 0) width else half)
+                    val bottom = minOf(bounds.height(),
+                        if (cell.cell.row + cell.cell.rowspan == cell.surface.layout.rowOffsets.lastIndex) width else half)
+                    path.addRect(bounds.left, bounds.top, bounds.left + left, bounds.bottom, Path.Direction.CW)
+                    path.addRect(bounds.right - right, bounds.top, bounds.right, bounds.bottom, Path.Direction.CW)
+                    path.addRect(bounds.left, bounds.top, bounds.right, bounds.top + top, Path.Direction.CW)
+                    path.addRect(bounds.left, bounds.bottom - bottom, bounds.right, bounds.bottom, Path.Direction.CW)
+                } while (index < surfaceCells.size && surfaceCells[index].clip == first.clip)
+                if (path.isEmpty) continue
+                val saved = canvas.save()
+                canvas.clipRect(first.clip)
+                paint.style = Paint.Style.FILL
+                paint.color = first.surface.style.borderColor
+                // One fill keeps shared fractional edges and translucent junctions continuous.
+                canvas.drawPath(path, paint)
+                canvas.restoreToCount(saved)
+            }
+        }
     }
 
     private inline fun drawPresented(

@@ -1386,9 +1386,7 @@ public final class PreparedProseDrawingView: UIView {
         for presented in visibleBlocks {
             drawPresented(presented, context: context) { fragment in drawBackground(fragment, in: context) }
         }
-        for cell in visibleCells {
-            drawTableChromeBorder(cell, context: context)
-        }
+        drawTableChromeBorders(visibleCells, context: context)
         for presented in visibleBlocks {
             drawPresented(presented, context: context) { fragment in drawBorderOrRule(fragment, in: context, scale: scale) }
         }
@@ -1734,16 +1732,52 @@ public final class PreparedProseDrawingView: UIView {
         drawLayout(root)
     }
 
-    private func drawTableChromeBorder(_ cell: ViewerTablePresentedCell, context: CGContext) {
-        guard !cell.clip.isNull, !cell.clip.isEmpty else { return }
-        onTableChromeDrawnForTesting?(cell.sourceIndex)
-        context.saveGState()
-        context.clip(to: flipped(cell.clip))
-        let rect = flipped(cell.bounds).insetBy(dx: cell.surface.style.borderWidth / 2, dy: cell.surface.style.borderWidth / 2)
-        context.setStrokeColor(cell.surface.style.borderColor.cgColor)
-        context.setLineWidth(cell.surface.style.borderWidth)
-        context.stroke(rect)
-        context.restoreGState()
+    private func drawTableChromeBorders(_ cells: [ViewerTablePresentedCell], context: CGContext) {
+        for cell in cells where !cell.clip.isNull && !cell.clip.isEmpty {
+            onTableChromeDrawnForTesting?(cell.sourceIndex)
+        }
+        let groups = Dictionary(grouping: cells, by: { ObjectIdentifier($0.surface) })
+        var paintedSurfaces = Set<ObjectIdentifier>()
+        for cell in cells {
+            let identity = ObjectIdentifier(cell.surface)
+            guard let surfaceCells = groups[identity], paintedSurfaces.insert(identity).inserted else { continue }
+            var index = 0
+            while index < surfaceCells.count {
+                let first = surfaceCells[index]
+                let path = CGMutablePath()
+                repeat {
+                    let cell = surfaceCells[index]
+                    index += 1
+                    guard !cell.clip.isNull, !cell.clip.isEmpty else { continue }
+                    let width = cell.surface.style.borderWidth
+                    guard width > 0 else { continue }
+                    let half = width / 2
+                    let startsColumn = cell.cell.column == 0
+                    let endsColumn = cell.cell.column + cell.cell.colspan == cell.surface.layout.columnWidths.count
+                    let rtl = cell.surface.direction == .rightToLeft
+                    let bounds = cell.bounds
+                    let left = min(bounds.width, (rtl ? endsColumn : startsColumn) ? width : half)
+                    let right = min(bounds.width, (rtl ? startsColumn : endsColumn) ? width : half)
+                    let top = min(bounds.height, cell.cell.row == 0 ? width : half)
+                    let bottom = min(bounds.height,
+                        cell.cell.row + cell.cell.rowspan == cell.surface.layout.rowOffsets.count - 1 ? width : half)
+                    path.addRects([
+                        flipped(CGRect(x: bounds.minX, y: bounds.minY, width: left, height: bounds.height)),
+                        flipped(CGRect(x: bounds.maxX - right, y: bounds.minY, width: right, height: bounds.height)),
+                        flipped(CGRect(x: bounds.minX, y: bounds.minY, width: bounds.width, height: top)),
+                        flipped(CGRect(x: bounds.minX, y: bounds.maxY - bottom, width: bounds.width, height: bottom))
+                    ])
+                } while index < surfaceCells.count && surfaceCells[index].clip == first.clip
+                guard !path.isEmpty else { continue }
+                context.saveGState()
+                context.clip(to: flipped(first.clip))
+                context.setFillColor(first.surface.style.borderColor.cgColor)
+                context.addPath(path)
+                // One fill keeps shared fractional edges and translucent junctions continuous.
+                context.fillPath()
+                context.restoreGState()
+            }
+        }
     }
 
     private func flipped(_ rect: CGRect) -> CGRect {
