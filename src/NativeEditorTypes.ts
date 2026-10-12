@@ -413,3 +413,10 @@ export interface NativeEditorResolvedSelectionFrame {
     editorId: string;
     documentRevision: string;
 }
+
+export type MarkdownFlavor = 'commonmark' | 'gfm';
+
+export interface MarkdownExportOptions {
+    /** Defaults to vanilla CommonMark. */
+    flavor?: MarkdownFlavor;
+}

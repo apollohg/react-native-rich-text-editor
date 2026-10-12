@@ -13,7 +13,7 @@ See the [documentation](https://github.com/apollohg/react-native-rich-text-edito
 **⭐ React Native components inside documents**  
 **⭐ External text composition**  
 **⭐ Dedicated Fabric viewer**  
-**⭐ Configurable document schemas** with HTML and ProseMirror JSON import/export  
+**⭐ Configurable document schemas** with HTML and ProseMirror JSON import/export, plus Markdown export<br>
 **⭐ Nested bullet and numbered lists**  
 **⭐ Optional native code syntax highlighting**  
 **⭐ Rich copy and paste**  
@@ -25,7 +25,7 @@ Below is a list of features that are planned or in progress. If you have a featu
 - [x] External text composition
 - [x] Custom atoms via React Native components
 - [x] Tables
-- [ ] Output as Markdown/GitHub Flavored Markdown (GFM)
+- [x] Output as Markdown/GitHub Flavored Markdown (GFM)
 - [ ] Extension framework
 - [ ] Inline node extensions
 

@@ -388,6 +388,12 @@ export function normalizeNativeEditorV2HtmlValue(
     return parsed.html;
 }
 
+export function normalizeNativeEditorV2MarkdownValue(value: unknown): string | null {
+    const parsed = parseNativeEditorV2JsonValue(value);
+
+    return isPlainRecord(parsed) && typeof parsed.markdown === 'string' ? parsed.markdown : null;
+}
+
 export const RENDER_ELEMENT_TYPES = new Set<RenderElement['type']>([
     'table',
     'textRun',

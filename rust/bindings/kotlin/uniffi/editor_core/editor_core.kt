@@ -806,6 +806,8 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
 // For large crates we prevent `MethodTooLargeException` (see #2340)
 // N.B. the name of the extension is very misleading, since it is
 // rather `InterfaceTooLargeException`, caused by too many methods
@@ -868,6 +870,8 @@ fun uniffi_editor_core_checksum_func_editor_v2_get_content_snapshot(
 fun uniffi_editor_core_checksum_func_editor_v2_get_document_html(
 ): Short
 fun uniffi_editor_core_checksum_func_editor_v2_get_document_json(
+): Short
+fun uniffi_editor_core_checksum_func_editor_v2_get_document_markdown(
 ): Short
 fun uniffi_editor_core_checksum_func_editor_v2_get_state(
 ): Short
@@ -1031,6 +1035,8 @@ fun uniffi_editor_core_fn_func_editor_v2_get_content_snapshot(`editorId`: RustBu
 fun uniffi_editor_core_fn_func_editor_v2_get_document_html(`editorId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
 fun uniffi_editor_core_fn_func_editor_v2_get_document_json(`editorId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+fun uniffi_editor_core_fn_func_editor_v2_get_document_markdown(`editorId`: RustBuffer.ByValue,`flavor`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
 fun uniffi_editor_core_fn_func_editor_v2_get_state(`editorId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
@@ -1258,6 +1264,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_editor_core_checksum_func_editor_v2_get_document_json() != 25683.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_editor_core_checksum_func_editor_v2_get_document_markdown() != 51295.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_editor_core_checksum_func_editor_v2_get_state() != 43856.toShort()) {
@@ -4596,6 +4605,15 @@ public object FfiConverterMapStringString: FfiConverterRustBuffer<Map<kotlin.Str
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_editor_core_fn_func_editor_v2_get_document_json(
         FfiConverterString.lower(`editorId`),_status)
+}
+    )
+    }
+
+ fun `editorV2GetDocumentMarkdown`(`editorId`: kotlin.String, `flavor`: kotlin.String?): FfiJsonResult {
+            return FfiConverterTypeFfiJsonResult.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_editor_core_fn_func_editor_v2_get_document_markdown(
+        FfiConverterString.lower(`editorId`),FfiConverterOptionalString.lower(`flavor`),_status)
 }
     )
     }

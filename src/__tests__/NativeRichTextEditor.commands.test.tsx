@@ -483,3 +483,18 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         handle.destroy();
     });
 });
+
+describe('RichTextEditor Markdown export', () => {
+    it('delegates default and GFM reads to the current native document', () => {
+        const handle = createV2LocalHandle(V2_INITIAL_DOC);
+        const ref = createRef<NativeRichTextEditorRef>();
+        mockNativeModule.editorV2GetDocumentMarkdown = jest.fn(() => ({ value: JSON.stringify({ markdown: 'current' }), error: null }));
+        const editor = render(<NativeRichTextEditor ref={ref} documentHandle={handle} />);
+        expect(ref.current!.getContentMarkdown()).toBe('current');
+        expect(mockNativeModule.editorV2GetDocumentMarkdown).toHaveBeenLastCalledWith(handle.editorId, 'commonmark');
+        expect(ref.current!.getContentMarkdown({ flavor: 'gfm' })).toBe('current');
+        expect(mockNativeModule.editorV2GetDocumentMarkdown).toHaveBeenLastCalledWith(handle.editorId, 'gfm');
+        editor.unmount();
+        handle.destroy();
+    });
+});

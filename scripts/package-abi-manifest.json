@@ -49,6 +49,7 @@
     { "name": "editor_v2_get_content_snapshot", "checksum": 21323 },
     { "name": "editor_v2_get_document_html", "checksum": 60959 },
     { "name": "editor_v2_get_document_json", "checksum": 25683 },
+    { "name": "editor_v2_get_document_markdown", "checksum": 51295 },
     { "name": "editor_v2_get_state", "checksum": 43856 },
     { "name": "editor_v2_pin_position_epoch", "checksum": 42714 },
     { "name": "editor_v2_redo", "checksum": 48065 },

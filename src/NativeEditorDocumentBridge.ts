@@ -1,3 +1,4 @@
+import { requireMarkdownFlavor } from './MarkdownExportOptions';
 import {
     type NativeEditorErrorBase,
     NativeEditorNonRetryableError,
@@ -24,6 +25,7 @@ import {
     type NativeEditorState,
     normalizeNativeEditorV2StateValue,
     normalizeNativeEditorV2HtmlValue,
+    normalizeNativeEditorV2MarkdownValue,
     requireNativeEditorV2U32,
     type NativeEditorCommitInfo,
     normalizeNativeEditorV2CommitValue,
@@ -39,6 +41,7 @@ import {
 } from './NativeEditorNativeModule';
 import {
     type DocumentJSON,
+    type MarkdownExportOptions,
     type ContentSnapshot,
     type NativeEditorAtomicRenderSnapshot,
     type NativeEditorReplaceDocumentRequest,
@@ -235,6 +238,16 @@ export class NativeEditorDocumentBridge {
         return this.callV2(
             () => invokeNativeEditorV2('editorV2GetDocumentHtml', this._editorId),
             normalizeNativeEditorV2HtmlValue
+        );
+    }
+
+    getDocumentMarkdown(options?: MarkdownExportOptions): string {
+        this.assertAlive();
+        const flavor = requireMarkdownFlavor(options);
+
+        return this.callV2(
+            () => invokeNativeEditorV2('editorV2GetDocumentMarkdown', this._editorId, flavor),
+            normalizeNativeEditorV2MarkdownValue
         );
     }
 

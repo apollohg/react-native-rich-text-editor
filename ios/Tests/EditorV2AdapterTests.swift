@@ -277,3 +277,22 @@ final class EditorV2AdapterTests: XCTestCase {
     }
 
 }
+
+extension EditorV2AdapterTests {
+    func testMarkdownExportDefaultGfmAndCurrentDocument() throws {
+        let adapter = makeAdapter(configJson: #"{"initialization":{"type":"localHtml","html":"<h2>Title</h2><p><s>Gone</s></p>"}}"#)
+        XCTAssertNotNil(adapter.initialUpdateJSON())
+        let revision = adapter.baseDocumentRevision
+        let vanilla = editorV2GetDocumentMarkdown(editorId: adapter.editorId, flavor: nil)
+        XCTAssertNil(vanilla.error)
+        XCTAssertEqual(parseObject(try XCTUnwrap(vanilla.value))["markdown"] as? String, "## Title\n\n<s>Gone</s>")
+        let gfm = editorV2GetDocumentMarkdown(editorId: adapter.editorId, flavor: "gfm")
+        XCTAssertNil(gfm.error)
+        XCTAssertEqual(parseObject(try XCTUnwrap(gfm.value))["markdown"] as? String, "## Title\n\n~~Gone~~")
+        XCTAssertEqual(adapter.baseDocumentRevision, revision)
+        XCTAssertEqual(renderedText(adapter.setContentHtml("<p>Changed</p>")), "Changed")
+        let current = editorV2GetDocumentMarkdown(editorId: adapter.editorId, flavor: nil)
+        XCTAssertNil(current.error)
+        XCTAssertEqual(parseObject(try XCTUnwrap(current.value))["markdown"] as? String, "Changed")
+    }
+}

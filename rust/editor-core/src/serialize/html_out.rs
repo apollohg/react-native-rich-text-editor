@@ -8,20 +8,69 @@ pub(crate) const TABLE_COLWIDTH_HTML_ATTR: &str = "data-colwidth";
 pub(crate) const TABLE_COLWIDTH_SEPARATOR: char = ',';
 const FIRST_WIDTH_SLICE: usize = 0;
 
+#[derive(Clone, Copy)]
+pub(super) enum HtmlOutput {
+    Html,
+    MarkdownBlock,
+    MarkdownInline,
+}
+
+impl HtmlOutput {
+    fn escape_text(self, text: &str, buf: &mut String) {
+        match self {
+            Self::Html => escape_html(text, buf),
+            Self::MarkdownBlock => escape_block_html_text(text, buf),
+            Self::MarkdownInline => escape_inline_html_text(text, buf),
+        }
+    }
+
+    fn escape_attribute(self, value: &str, buf: &mut String) {
+        match self {
+            Self::Html => escape_html(value, buf),
+            Self::MarkdownBlock | Self::MarkdownInline => escape_block_html_text(value, buf),
+        }
+    }
+}
+
 /// Serialize a document to an HTML string using the given schema for tag mappings.
 ///
 /// The root "doc" node is not emitted — only its children are serialized.
 pub fn to_html(doc: &Document, schema: &Schema) -> String {
+    serialize_nodes(
+        doc.root()
+            .content()
+            .into_iter()
+            .flat_map(|content| content.iter()),
+        schema,
+        HtmlOutput::Html,
+    )
+}
+
+pub(super) fn node_to_html(node: &Node, schema: &Schema) -> String {
+    serialize_nodes(std::iter::once(node), schema, HtmlOutput::Html)
+}
+
+pub(super) fn node_to_inline_html(node: &Node, schema: &Schema) -> String {
+    serialize_nodes(std::iter::once(node), schema, HtmlOutput::MarkdownInline)
+}
+
+pub(super) fn node_to_block_html(node: &Node, schema: &Schema) -> String {
+    serialize_nodes(std::iter::once(node), schema, HtmlOutput::MarkdownBlock)
+}
+
+fn serialize_nodes<'a>(
+    nodes: impl Iterator<Item = &'a Node>,
+    schema: &Schema,
+    output: HtmlOutput,
+) -> String {
     enum Frame<'a> {
         Node(&'a Node),
         Close(&'a str),
     }
 
     let mut buf = String::new();
-    let mut frames = Vec::new();
-    if let Some(content) = doc.root().content() {
-        frames.extend(content.iter().rev().map(Frame::Node));
-    }
+    let mut frames = nodes.map(Frame::Node).collect::<Vec<_>>();
+    frames.reverse();
     while let Some(frame) = frames.pop() {
         match frame {
             Frame::Close(tag) => {
@@ -32,14 +81,11 @@ pub fn to_html(doc: &Document, schema: &Schema) -> String {
             Frame::Node(node) if node.is_text() => {
                 let text = node.text_str().unwrap_or("");
                 for mark in node.marks() {
-                    serialize_mark_open(mark, schema, &mut buf);
+                    serialize_mark_open(mark, schema, &mut buf, output);
                 }
-                escape_html(text, &mut buf);
+                output.escape_text(text, &mut buf);
                 for mark in node.marks().iter().rev() {
-                    let tag = mark_tag(mark, schema);
-                    buf.push_str("</");
-                    buf.push_str(tag.as_str());
-                    buf.push('>');
+                    serialize_mark_close(mark, schema, &mut buf);
                 }
             }
             Frame::Node(node) => {
@@ -52,11 +98,11 @@ pub fn to_html(doc: &Document, schema: &Schema) -> String {
                 });
                 if node.is_void() {
                     if node.node_type() == "mention" {
-                        serialize_mention_node(node, &mut buf);
+                        serialize_mention_node(node, &mut buf, output);
                     } else if node.node_type() == "__opaque" {
-                        serialize_opaque_node(node, &mut buf);
+                        serialize_opaque_node(node, &mut buf, output);
                     } else if let Some(spec) = spec.filter(|spec| spec.html_rules.is_some()) {
-                        serialize_html_rules_node_open(node, spec, &mut buf);
+                        serialize_html_rules_node_open(node, spec, &mut buf, output);
                         buf.push_str("</");
                         buf.push_str(html_tag.expect("HTML rules have a tag"));
                         buf.push('>');
@@ -64,7 +110,7 @@ pub fn to_html(doc: &Document, schema: &Schema) -> String {
                         buf.push('<');
                         buf.push_str(tag);
                         if let Some(spec) = spec {
-                            serialize_node_attrs(node, spec, &mut buf);
+                            serialize_node_attrs(node, spec, &mut buf, output);
                         }
                         buf.push('>');
                     }
@@ -72,12 +118,12 @@ pub fn to_html(doc: &Document, schema: &Schema) -> String {
                 }
                 if let Some(tag) = html_tag {
                     if let Some(spec) = spec.filter(|spec| spec.html_rules.is_some()) {
-                        serialize_html_rules_node_open(node, spec, &mut buf);
+                        serialize_html_rules_node_open(node, spec, &mut buf, output);
                     } else {
                         buf.push('<');
                         buf.push_str(tag);
                         if let Some(spec) = spec {
-                            serialize_node_attrs(node, spec, &mut buf);
+                            serialize_node_attrs(node, spec, &mut buf, output);
                         }
                         buf.push('>');
                     }
@@ -127,7 +173,12 @@ fn scalar_attribute(value: &serde_json::Value) -> Option<String> {
     }
 }
 
-fn serialize_html_rules_node_open(node: &Node, spec: &crate::schema::NodeSpec, buf: &mut String) {
+fn serialize_html_rules_node_open(
+    node: &Node,
+    spec: &crate::schema::NodeSpec,
+    buf: &mut String,
+    output: HtmlOutput,
+) {
     let rules = spec.html_rules.as_ref().expect("HTML rules node");
     buf.push('<');
     buf.push_str(&rules.tag);
@@ -157,13 +208,18 @@ fn serialize_html_rules_node_open(node: &Node, spec: &crate::schema::NodeSpec, b
         buf.push(' ');
         buf.push_str(name);
         buf.push_str("=\"");
-        escape_html(&rendered, buf);
+        output.escape_attribute(&rendered, buf);
         buf.push('"');
     }
     buf.push('>');
 }
 
-fn serialize_node_attrs(node: &Node, spec: &crate::schema::NodeSpec, buf: &mut String) {
+fn serialize_node_attrs(
+    node: &Node,
+    spec: &crate::schema::NodeSpec,
+    buf: &mut String,
+    output: HtmlOutput,
+) {
     let mut keys = spec.attrs.keys().collect::<Vec<_>>();
     keys.sort_unstable();
     for key in keys {
@@ -185,7 +241,7 @@ fn serialize_node_attrs(node: &Node, spec: &crate::schema::NodeSpec, buf: &mut S
                 buf.push(' ');
                 buf.push_str(TABLE_COLWIDTH_HTML_ATTR);
                 buf.push_str("=\"");
-                escape_html(&widths, buf);
+                output.escape_attribute(&widths, buf);
                 buf.push('"');
             }
             continue;
@@ -198,7 +254,7 @@ fn serialize_node_attrs(node: &Node, spec: &crate::schema::NodeSpec, buf: &mut S
         buf.push(' ');
         buf.push_str(key);
         buf.push_str("=\"");
-        escape_html(&rendered, buf);
+        output.escape_attribute(&rendered, buf);
         buf.push('"');
     }
 }
@@ -234,13 +290,18 @@ fn render_colwidth(value: &serde_json::Value) -> Option<String> {
     carries_a_width.then_some(rendered)
 }
 
-fn serialize_mark_open(mark: &crate::model::Mark, schema: &Schema, buf: &mut String) {
+pub(super) fn serialize_mark_open(
+    mark: &crate::model::Mark,
+    schema: &Schema,
+    buf: &mut String,
+    output: HtmlOutput,
+) {
     let tag = mark_tag(mark, schema);
     buf.push('<');
     buf.push_str(tag.as_str());
     if matches!(tag, MarkTag::DataSpan) {
         buf.push_str(" data-native-editor-mark=\"");
-        escape_html(mark.mark_type(), buf);
+        output.escape_attribute(mark.mark_type(), buf);
         buf.push('"');
     }
     if let Some(spec) = schema.mark(mark.mark_type()) {
@@ -255,7 +316,7 @@ fn serialize_mark_open(mark: &crate::model::Mark, schema: &Schema, buf: &mut Str
                 buf.push(' ');
                 buf.push_str(name);
                 buf.push_str("=\"");
-                escape_html(&rendered, buf);
+                output.escape_attribute(&rendered, buf);
                 buf.push('"');
             }
         }
@@ -263,7 +324,7 @@ fn serialize_mark_open(mark: &crate::model::Mark, schema: &Schema, buf: &mut Str
     buf.push('>');
 }
 
-fn serialize_mention_node(node: &Node, buf: &mut String) {
+fn serialize_mention_node(node: &Node, buf: &mut String, output: HtmlOutput) {
     let attrs = node.attrs();
     let label = attrs
         .get("label")
@@ -274,9 +335,9 @@ fn serialize_mention_node(node: &Node, buf: &mut String) {
     let attrs_json = json_object_string(attrs);
 
     buf.push_str("<span data-native-editor-mention=\"true\" data-native-editor-mention-attrs=\"");
-    escape_html(&attrs_json, buf);
+    output.escape_attribute(&attrs_json, buf);
     buf.push_str("\">");
-    escape_html(&visible_label, buf);
+    output.escape_text(&visible_label, buf);
     buf.push_str("</span>");
 }
 
@@ -301,7 +362,7 @@ fn json_object_string(attrs: &std::collections::HashMap<String, serde_json::Valu
 }
 
 /// Serialize an opaque node (unknown tag preserved from parsing) back to HTML.
-fn serialize_opaque_node(node: &Node, buf: &mut String) {
+fn serialize_opaque_node(node: &Node, buf: &mut String, output: HtmlOutput) {
     let attrs = node.attrs();
     let tag = attrs
         .get("html_tag")
@@ -318,18 +379,14 @@ fn serialize_opaque_node(node: &Node, buf: &mut String) {
                     buf.push(' ');
                     buf.push_str(key);
                     buf.push_str("=\"");
-                    escape_html(val_str, buf);
+                    output.escape_attribute(val_str, buf);
                     buf.push('"');
                 }
             }
         }
     }
 
-    const VOID_HTML_ELEMENTS: &[&str] = &[
-        "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param",
-        "source", "track", "wbr",
-    ];
-    if VOID_HTML_ELEMENTS.contains(&tag) {
+    if super::html_in::is_void_html_element(tag) {
         buf.push('>');
         return;
     }
@@ -337,14 +394,96 @@ fn serialize_opaque_node(node: &Node, buf: &mut String) {
     buf.push('>');
 
     if let Some(inner_html) = attrs.get("inner_html").and_then(|v| v.as_str()) {
-        buf.push_str(inner_html);
+        if matches!(output, HtmlOutput::Html) {
+            buf.push_str(inner_html);
+        } else {
+            let fragment = parse_opaque_inner_html(node, tag, inner_html);
+            buf.push_str(&html_fragment_contents_to_html(
+                *fragment.root_element(),
+                output,
+            ));
+        }
     } else if let Some(text) = attrs.get("text_content").and_then(|v| v.as_str()) {
-        escape_html(text, buf);
+        output.escape_text(text, buf);
     }
 
     buf.push_str("</");
     buf.push_str(tag);
     buf.push('>');
+}
+
+fn parse_opaque_inner_html(node: &Node, tag: &str, inner_html: &str) -> scraper::Html {
+    use html5ever::tendril::TendrilSink;
+    use html5ever::{namespace_url, ns, Attribute, LocalName, Namespace, QualName};
+
+    let namespace = match tag {
+        "svg" => ns!(svg),
+        "math" => ns!(mathml),
+        _ => ns!(html),
+    };
+    let attrs = node
+        .attrs()
+        .get("html_attrs")
+        .and_then(serde_json::Value::as_object)
+        .into_iter()
+        .flat_map(|attrs| attrs.iter())
+        .filter_map(|(name, value)| {
+            value.as_str().map(|value| Attribute {
+                name: QualName::new(None, Namespace::from(""), LocalName::from(name.as_str())),
+                value: value.into(),
+            })
+        })
+        .collect();
+    html5ever::parse_fragment(
+        scraper::HtmlTreeSink::new(scraper::Html::new_fragment()),
+        Default::default(),
+        QualName::new(None, namespace, LocalName::from(tag)),
+        attrs,
+    )
+    .one(inner_html)
+}
+
+pub(super) fn html_fragment_contents_to_html(
+    node: ego_tree::NodeRef<'_, scraper::Node>,
+    output: HtmlOutput,
+) -> String {
+    enum Frame<'a> {
+        Node(ego_tree::NodeRef<'a, scraper::Node>),
+        Close(&'a str),
+    }
+    let mut buf = String::new();
+    let mut frames = node.children().rev().map(Frame::Node).collect::<Vec<_>>();
+    while let Some(frame) = frames.pop() {
+        match frame {
+            Frame::Close(tag) => {
+                buf.push_str("</");
+                buf.push_str(tag);
+                buf.push('>');
+            }
+            Frame::Node(node) => {
+                if let Some(text) = node.value().as_text() {
+                    output.escape_text(text, &mut buf);
+                } else if let Some(element) = node.value().as_element() {
+                    let tag = element.name();
+                    buf.push('<');
+                    buf.push_str(tag);
+                    for (key, value) in element.attrs() {
+                        buf.push(' ');
+                        buf.push_str(key);
+                        buf.push_str("=\"");
+                        output.escape_attribute(value, &mut buf);
+                        buf.push('"');
+                    }
+                    buf.push('>');
+                    if !super::html_in::is_void_html_element(tag) {
+                        frames.push(Frame::Close(tag));
+                        frames.extend(node.children().rev().map(Frame::Node));
+                    }
+                }
+            }
+        }
+    }
+    buf
 }
 
 enum MarkTag<'a> {
@@ -361,6 +500,12 @@ impl MarkTag<'_> {
     }
 }
 
+pub(super) fn serialize_mark_close(mark: &crate::model::Mark, schema: &Schema, buf: &mut String) {
+    buf.push_str("</");
+    buf.push_str(mark_tag(mark, schema).as_str());
+    buf.push('>');
+}
+
 fn mark_tag<'a>(mark: &'a crate::model::Mark, schema: &'a Schema) -> MarkTag<'a> {
     schema
         .mark(mark.mark_type())
@@ -370,7 +515,7 @@ fn mark_tag<'a>(mark: &'a crate::model::Mark, schema: &'a Schema) -> MarkTag<'a>
 }
 
 /// HTML-escape text content: `&`, `<`, `>`, `"`.
-fn escape_html(text: &str, buf: &mut String) {
+pub(super) fn escape_html(text: &str, buf: &mut String) {
     for ch in text.chars() {
         match ch {
             '&' => buf.push_str("&amp;"),
@@ -380,6 +525,30 @@ fn escape_html(text: &str, buf: &mut String) {
             _ => buf.push(ch),
         }
     }
+}
+
+pub(super) fn escape_inline_html_text(text: &str, buf: &mut String) {
+    use std::fmt::Write;
+    for ch in text.chars() {
+        if ch.is_ascii_punctuation() || ch.is_ascii_whitespace() {
+            write!(buf, "&#{};", u32::from(ch)).expect("writing to a String cannot fail");
+        } else {
+            buf.push(ch);
+        }
+    }
+}
+
+fn escape_block_html_text(text: &str, buf: &mut String) {
+    let mut start = 0;
+    for (index, ch) in text
+        .char_indices()
+        .filter(|(_, ch)| matches!(ch, '\n' | '\r'))
+    {
+        escape_html(&text[start..index], buf);
+        buf.push_str(if ch == '\n' { "&#10;" } else { "&#13;" });
+        start = index + ch.len_utf8();
+    }
+    escape_html(&text[start..], buf);
 }
 
 #[cfg(test)]

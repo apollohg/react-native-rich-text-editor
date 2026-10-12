@@ -1,6 +1,6 @@
 [package]
 name = "editor-core"
-version = "2.1.0"
+version = "2.1.1"
 edition = "2021"
 rust-version = "1.95"
 
@@ -16,6 +16,7 @@ serde_stacker = "0.1"
 stacker = "0.1"
 smallvec = "1.13"
 scraper = "0.21"
+html5ever = "0.29.1"
 ego-tree = "0.9"
 regex = "1"
 memchr = "2"
@@ -24,6 +25,7 @@ yrs = { version = "=0.28.0", features = ["sync"] }
 base64 = "0.22"
 
 [dev-dependencies]
+pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
 proptest = "1"
 
 [build-dependencies]

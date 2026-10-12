@@ -14,6 +14,8 @@ export {
     type EditorUpdate,
     type ContentSnapshot,
     type DocumentJSON,
+    type MarkdownFlavor,
+    type MarkdownExportOptions,
     type CollaborationPeer,
     type CommandBlockedReason,
     type CommandBlockedInfo,

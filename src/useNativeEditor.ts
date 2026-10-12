@@ -4,6 +4,7 @@ import {
     _assertNativeEditorDocumentHandle,
     _getNativeEditorDocumentHandleDescriptor,
     type DocumentJSON,
+    type MarkdownExportOptions,
     type HistoryState,
     type NativeEditorDocumentHandle,
     type NativeEditorDocumentOrigin,
@@ -54,6 +55,8 @@ export interface UseNativeEditorDocumentReturn {
     getContent(): string;
     /** Current document as ProseMirror JSON. Empty until the document is ready. */
     getContentJson(): DocumentJSON;
+    /** Export current content as vanilla CommonMark, or explicit GFM. */
+    getContentMarkdown(options?: MarkdownExportOptions): string;
     /** The engine's own answer for whether the document holds no content. */
     getIsEmpty(): boolean;
     /** Current document as plain text, with markup stripped. */
@@ -494,6 +497,18 @@ export function useNativeEditorDocument(
         return handle.bridge.getDocumentJson();
     }, [ handle ]);
 
+    const getContentMarkdown = useCallback((options?: MarkdownExportOptions): string => {
+        if (
+            handle.isDestroyed ||
+            readyRef.current.editorId !== handle.editorId ||
+            !readyRef.current.ready
+        ) {
+            return '';
+        }
+
+        return handle.bridge.getDocumentMarkdown(options);
+    }, [ handle ]);
+
     const getIsEmpty = useCallback((): boolean => {
         if (
             handle.isDestroyed ||
@@ -581,6 +596,7 @@ export function useNativeEditorDocument(
         refresh: refreshFromEngine,
         getContent,
         getContentJson,
+        getContentMarkdown,
         getIsEmpty,
         getTextContent,
         setContent,

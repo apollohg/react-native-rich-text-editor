@@ -187,11 +187,18 @@ extension EditorTextView {
         Self.inputLog.debug(
             "[rust.toggleTaskItemCheckedAtScalar] scalar=\(scalar) selection=\(self.selectionSummary(), privacy: .public)"
         )
+        let previousOffset = contentOffset
         let updateJSON = EditorV2Shadow.toggleTaskItemCheckedAtScalar(
             id: editorId,
             scalar: scalar
         )
         applyUpdateJSON(updateJSON)
+        if heightBehavior == .fixed {
+            layoutManager.ensureLayout(for: textContainer)
+            // Publish the final text extent before clamping the scroll offset.
+            _ = layoutManager.usedRect(for: textContainer)
+            preserveScrollOffset(previousOffset)
+        }
     }
 
     /// Delete a document-position range via the Rust editor.

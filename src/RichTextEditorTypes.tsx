@@ -1,6 +1,7 @@
 import { type NativeEditorResolvedSelectionFrame } from './NativeEditorTypes';
 import {
     type DocumentJSON,
+    type MarkdownExportOptions,
     type HistoryState,
     type NativeEditorDocumentHandle,
     type ReadonlyActiveState,
@@ -284,6 +285,8 @@ export interface RichTextEditorRef {
     getContent(): string;
     /** Get the current content as ProseMirror JSON. */
     getContentJson(): DocumentJSON;
+    /** Export current content as vanilla CommonMark, or explicit GFM. */
+    getContentMarkdown(options?: MarkdownExportOptions): string;
     /** Ask the Rust editor core whether the current document is empty. */
     getIsEmpty(): boolean;
     /** Get the plain text content (no markup). */

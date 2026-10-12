@@ -545,6 +545,7 @@ export function useRichTextEditorCommands(
             clearContent: document.clearContent,
             getContent: document.getContent,
             getContentJson: document.getContentJson,
+            getContentMarkdown: document.getContentMarkdown,
             getIsEmpty: document.getIsEmpty,
             getTextContent: document.getTextContent,
             async getCaretRect(): Promise<RichTextEditorCaretRect | null> {
@@ -582,6 +583,7 @@ export function useRichTextEditorCommands(
             document.clearContent,
             document.getContent,
             document.getContentJson,
+            document.getContentMarkdown,
             document.getIsEmpty,
             document.getTextContent,
             document.undo,
