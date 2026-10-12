@@ -18,9 +18,9 @@ import uniffi.editor_core.editorV2CollaborationSetAwareness
 import uniffi.editor_core.editorV2Create
 import uniffi.editor_core.editorV2Destroy
 import uniffi.editor_core.editorV2GetContentSnapshot
-import uniffi.editor_core.editorV2GetDocumentMarkdown
 import uniffi.editor_core.editorV2GetDocumentHtml
 import uniffi.editor_core.editorV2GetDocumentJson
+import uniffi.editor_core.editorV2GetDocumentMarkdown
 import uniffi.editor_core.editorV2GetState
 import uniffi.editor_core.editorV2Redo
 import uniffi.editor_core.editorV2RenderUpdate

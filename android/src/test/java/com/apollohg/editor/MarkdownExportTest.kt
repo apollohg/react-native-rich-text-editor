@@ -29,10 +29,16 @@ internal class MarkdownExportTest {
             assertNull(before.error)
             val vanilla = editorV2GetDocumentMarkdown(editorId, null)
             assertNull(vanilla.error)
-            assertEquals("## Title\n\n<s>Gone</s>", JSONObject(requireNotNull(vanilla.value)).getString("markdown"))
+            assertEquals(
+                "## Title\n\n<s>Gone</s>",
+                JSONObject(requireNotNull(vanilla.value)).getString("markdown")
+            )
             val gfm = editorV2GetDocumentMarkdown(editorId, "gfm")
             assertNull(gfm.error)
-            assertEquals("## Title\n\n~~Gone~~", JSONObject(requireNotNull(gfm.value)).getString("markdown"))
+            assertEquals(
+                "## Title\n\n~~Gone~~",
+                JSONObject(requireNotNull(gfm.value)).getString("markdown")
+            )
             assertEquals(before.value, editorV2GetState(editorId).value)
 
             val replaced = editorV2ReplaceDocument(
