@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.1.1] - 2026-10-12
+
+### Added
+
+- Added Markdown export through the editor ref, document hook, and bridge on iOS and Android. CommonMark is the default and optional GitHub Flavored Markdown (GFM).
+
 ## [2.1.0]
 
 ### Added
@@ -734,6 +740,7 @@ This is a hard cutover to shared native document, collaboration, and viewer boun
 - Controlled and uncontrolled content modes (HTML and JSON).
 - Undo/redo history.
 
+[2.1.1]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.1.0...2.1.1
 [2.1.0]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.12...2.1.0
 [2.0.12]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.11...2.0.12
 [2.0.11]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.10...2.0.11
