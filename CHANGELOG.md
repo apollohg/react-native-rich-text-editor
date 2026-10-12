@@ -6,6 +6,10 @@
 
 - Added Markdown export through the editor ref, document hook, and bridge on iOS and Android. CommonMark is the default and optional GitHub Flavored Markdown (GFM).
 
+### Fixed
+
+- Fixed task-checkbox toggles resetting the iOS editor's scroll position.
+
 ## [2.1.0]
 
 ### Added

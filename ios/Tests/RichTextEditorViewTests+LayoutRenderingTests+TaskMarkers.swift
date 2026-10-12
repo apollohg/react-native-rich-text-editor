@@ -54,6 +54,10 @@ extension RichTextEditorViewTests {
         try assertTaskMarkerToggles(afterScrolling: false, initiallyFocused: true)
     }
 
+    func testTaskMarkerTap_preservesExistingFocusAfterScrolling() throws {
+        try assertTaskMarkerToggles(afterScrolling: true, initiallyFocused: true)
+    }
+
     private func assertTaskMarkerToggles(afterScrolling: Bool, initiallyFocused: Bool = false) throws {
         let editorId = makeV2Editor(configJson: #"{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"taskList","content":"listItem+","group":"block","role":"list"},{"name":"listItem","content":"paragraph block*","role":"listItem","attrs":{"checked":{"default":false}}},{"name":"text","group":"inline","role":"text"}],"marks":[]},"initialization":{"type":"localEmpty"}}"#)
         defer { destroyV2Editor(id: editorId) }
@@ -101,7 +105,12 @@ extension RichTextEditorViewTests {
                 "checked=\(checked) point=\(point) marker=\(marker) bounds=\(view.bounds) offset=\(textView.contentOffset) inset=\(textView.adjustedContentInset)")
             XCTAssertFalse(textView.canPlaceCaret(at: view.convert(point, to: textView)))
             XCTAssertTrue(view.taskListMarkerTapOverlayInterceptsPointForTesting(point))
+            let previousOffset = textView.contentOffset
             XCTAssertTrue(view.tapTaskListMarkerOverlayForTesting(at: point))
+            if afterScrolling {
+                XCTAssertEqual(textView.contentOffset, previousOffset,
+                    "Toggling checked=\(checked) must preserve the scrolled viewport")
+            }
             XCTAssertEqual(textView.isFirstResponder, initiallyFocused)
             let data = try XCTUnwrap(EditorV2Shadow.getJson(id: editorId).data(using: .utf8))
             let document = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
@@ -112,6 +121,10 @@ extension RichTextEditorViewTests {
             let attrs = item["attrs"] as? [String: Any]
             XCTAssertEqual(attrs?["checked"] as? Bool ?? false, checked)
             flushMainQueue()
+            if afterScrolling {
+                XCTAssertEqual(textView.contentOffset, previousOffset,
+                    "Deferred layout after toggling checked=\(checked) must preserve the scrolled viewport")
+            }
             XCTAssertEqual(textView.isFirstResponder, initiallyFocused)
         }
     }
