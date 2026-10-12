@@ -120,3 +120,50 @@ describe('useNativeEditorDocument', () => {
         handleB.destroy();
     });
 });
+
+describe('useNativeEditorDocument Markdown reads', () => {
+    beforeEach(() => {
+        _resetNativeModuleCache();
+        Object.assign(mockNativeModule, createFakeNativeEditorV2Runtime().module);
+        mockNativeModule.editorV2GetDocumentMarkdown = jest.fn(() => ({ value: JSON.stringify({ markdown: 'initial' }), error: null }));
+    });
+
+    it('reads the current engine content with default/explicit flavor and stops after destruction', () => {
+        const handle = createNativeEditorDocumentHandle({ initialization: { type: 'localJson', json: fakeDocForText('initial') } });
+        let document: ReturnType<typeof useNativeEditorDocument>;
+
+        function Observer() {
+            document = useNativeEditorDocument({ handle });
+
+            return null;
+        }
+
+        const observer = render(<Observer />);
+        expect(document!.getContentMarkdown()).toBe('initial');
+        expect(mockNativeModule.editorV2GetDocumentMarkdown).toHaveBeenLastCalledWith(handle.editorId, 'commonmark');
+        mockNativeModule.editorV2GetDocumentMarkdown.mockReturnValue({ value: JSON.stringify({ markdown: 'current **content**' }), error: null });
+        expect(document!.getContentMarkdown({ flavor: 'gfm' })).toBe('current **content**');
+        expect(mockNativeModule.editorV2GetDocumentMarkdown).toHaveBeenLastCalledWith(handle.editorId, 'gfm');
+        handle.destroy();
+        expect(document!.getContentMarkdown()).toBe('');
+        expect(mockNativeModule.editorV2GetDocumentMarkdown).toHaveBeenCalledTimes(2);
+        observer.unmount();
+    });
+
+    it('does not request content while awaiting a room document', () => {
+        const handle = createNativeEditorDocumentHandle({ initialization: { type: 'room', documentId: 'markdown-room', lineageId: 'markdown-lineage' } });
+        let document: ReturnType<typeof useNativeEditorDocument>;
+
+        function Observer() {
+            document = useNativeEditorDocument({ handle });
+
+            return null;
+        }
+
+        const observer = render(<Observer />);
+        expect(document!.getContentMarkdown({ flavor: 'gfm' })).toBe('');
+        expect(mockNativeModule.editorV2GetDocumentMarkdown).not.toHaveBeenCalled();
+        observer.unmount();
+        handle.destroy();
+    });
+});

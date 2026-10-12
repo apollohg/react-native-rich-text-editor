@@ -18,6 +18,7 @@ import uniffi.editor_core.editorV2CollaborationSetAwareness
 import uniffi.editor_core.editorV2Create
 import uniffi.editor_core.editorV2Destroy
 import uniffi.editor_core.editorV2GetContentSnapshot
+import uniffi.editor_core.editorV2GetDocumentMarkdown
 import uniffi.editor_core.editorV2GetDocumentHtml
 import uniffi.editor_core.editorV2GetDocumentJson
 import uniffi.editor_core.editorV2GetState
@@ -386,6 +387,9 @@ class NativeEditorModule : Module() {
         }
         Function("editorV2GetDocumentHtml") { editorId: String ->
             editorV2GetDocumentHtml(editorId).toJSMap()
+        }
+        Function("editorV2GetDocumentMarkdown") { editorId: String, flavor: String? ->
+            editorV2GetDocumentMarkdown(editorId, flavor).toJSMap()
         }
         Function("editorV2GetContentSnapshot") { editorId: String ->
             editorV2GetContentSnapshot(editorId).toJSMap()

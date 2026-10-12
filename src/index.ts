@@ -253,6 +253,8 @@ export type {
     RenderBlocksPatch,
     NativeEditorAtomicRenderSnapshot,
     DocumentJSON,
+    MarkdownFlavor,
+    MarkdownExportOptions,
     CollaborationPeer,
 } from './NativeEditorBridge';
 

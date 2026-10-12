@@ -13,7 +13,7 @@ See the [documentation](https://github.com/apollohg/react-native-rich-text-edito
 **⭐ React Native components inside documents**  
 **⭐ External text composition**  
 **⭐ Dedicated Fabric viewer**  
-**⭐ Configurable document schemas** with HTML and ProseMirror JSON import/export  
+**⭐ Configurable document schemas** with HTML and ProseMirror JSON import/export, plus Markdown export<br>
 **⭐ Nested bullet and numbered lists**  
 **⭐ Optional native code syntax highlighting**  
 **⭐ Rich copy and paste**  
@@ -25,7 +25,7 @@ Below is a list of features that are planned or in progress. If you have a featu
 - [x] External text composition
 - [x] Custom atoms via React Native components
 - [x] Tables
-- [ ] Output as Markdown/GitHub Flavored Markdown (GFM)
+- [x] Output as Markdown/GitHub Flavored Markdown (GFM)
 - [ ] Extension framework
 - [ ] Inline node extensions
 
@@ -102,6 +102,20 @@ export function EditorScreen() {
 ```
 
 See [Getting Started](https://github.com/apollohg/react-native-rich-text-editor/wiki/Getting-Started) and the [RichTextEditor reference](https://github.com/apollohg/react-native-rich-text-editor/wiki/RichTextEditor-Reference) for the complete API.
+
+## Markdown export
+
+Export the current document through the editor ref, `useNativeEditorDocument`, or the document bridge:
+
+```ts
+const markdown = editorRef.current?.getContentMarkdown();
+const gfm = editorRef.current?.getContentMarkdown({ flavor: 'gfm' });
+const documentMarkdown = documentHandle.bridge.getDocumentMarkdown();
+```
+
+The default flavor is vanilla Markdown (`'commonmark'`). GFM adds pipe tables, task lists, and strikethrough. Both flavors use HTML where Markdown would lose content or attributes, including custom atoms, underline, merged tables, and code blocks whose line endings cannot be preserved by fences. Export reads the current Rust document without changing it. The editor ref and document hook return an empty string until the document is ready.
+
+Rebuild the native app after upgrading to use the new export API.
 
 ## Copy and paste
 

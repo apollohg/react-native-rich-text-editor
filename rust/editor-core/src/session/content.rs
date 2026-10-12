@@ -13,6 +13,19 @@ impl EditorSession {
         self.engine.document_html().ok_or_else(engine_not_ready)
     }
 
+    pub(crate) fn get_markdown(
+        &self,
+        flavor: crate::serialize::MarkdownFlavor,
+    ) -> Result<String, SessionError> {
+        let document = self.engine.document().ok_or_else(engine_not_ready)?;
+        let markdown = crate::serialize::to_markdown(document, self.engine.schema(), flavor);
+        let limit = self.engine.editing_limits().max_derived_output_bytes;
+        if markdown.len() > limit {
+            return Err(BoundaryError::limit("DOCUMENT_LIMIT_EXCEEDED", limit, markdown.len()).into());
+        }
+        Ok(markdown)
+    }
+
     pub(crate) fn replace_document_json(
         &mut self,
         request_id: u64,

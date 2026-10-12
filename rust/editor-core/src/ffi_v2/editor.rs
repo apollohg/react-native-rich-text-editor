@@ -480,6 +480,32 @@ pub fn editor_v2_get_document_html(editor_id: String) -> FfiJsonResult {
 }
 
 #[uniffi::export]
+pub fn editor_v2_get_document_markdown(editor_id: String, flavor: Option<String>) -> FfiJsonResult {
+    json_result(with_editor(&editor_id, |session| {
+        let flavor = match flavor.as_deref() {
+            None | Some("commonmark") => crate::serialize::MarkdownFlavor::Commonmark,
+            Some("gfm") => crate::serialize::MarkdownFlavor::Gfm,
+            _ => {
+                return Err(BoundaryError::new(
+                    "CONFIG_INVALID",
+                    "Markdown flavor must be commonmark or gfm",
+                )
+                .into())
+            }
+        };
+        let markdown = session.get_markdown(flavor)?;
+        let result = serde_json::json!({ "markdown": markdown }).to_string();
+        let limit = session.engine.editing_limits().max_derived_output_bytes;
+        if result.len() > limit {
+            return Err(
+                BoundaryError::limit("DOCUMENT_LIMIT_EXCEEDED", limit, result.len()).into(),
+            );
+        }
+        Ok(result)
+    }))
+}
+
+#[uniffi::export]
 pub fn editor_v2_get_content_snapshot(editor_id: String) -> FfiJsonResult {
     json_result(with_editor(&editor_id, |session| {
         let html = session.get_html()?;

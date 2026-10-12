@@ -94,7 +94,7 @@ const VOID_HTML_ELEMENTS: &[&str] = &[
     "track", "wbr",
 ];
 
-fn is_void_html_element(tag: &str) -> bool {
+pub(super) fn is_void_html_element(tag: &str) -> bool {
     VOID_HTML_ELEMENTS.contains(&tag)
 }
 
@@ -1152,32 +1152,7 @@ fn collect_text_content(node_ref: SNodeRef<'_>) -> String {
 
 /// Collect inner HTML (serialized) from a scraper node for faithful round-trip.
 fn collect_inner_html(node_ref: SNodeRef<'_>) -> String {
-    let mut buf = String::new();
-    for child in node_ref.children() {
-        let val: &scraper::Node = child.value();
-        if let Some(text_data) = val.as_text() {
-            escape_html_to(text_data, &mut buf);
-        } else if let Some(elem) = val.as_element() {
-            let tag = elem.name();
-            buf.push('<');
-            buf.push_str(tag);
-            for (key, val) in elem.attrs() {
-                buf.push(' ');
-                buf.push_str(key);
-                buf.push_str("=\"");
-                escape_html_to(val, &mut buf);
-                buf.push('"');
-            }
-            buf.push('>');
-            if !is_void_html_element(tag) {
-                buf.push_str(&collect_inner_html(child));
-                buf.push_str("</");
-                buf.push_str(tag);
-                buf.push('>');
-            }
-        }
-    }
-    buf
+    super::html_out::html_fragment_contents_to_html(node_ref, super::html_out::HtmlOutput::Html)
 }
 
 /// Escape text for safe HTML embedding.
