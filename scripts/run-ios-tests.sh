@@ -138,7 +138,10 @@ resolve_destination() {
     return 0
   fi
 
-  destinations_output="$(xcodebuild -showdestinations -workspace "$workspace" -scheme "$scheme" 2>/dev/null)"
+  if ! destinations_output="$(xcodebuild -showdestinations -workspace "$workspace" -scheme "$scheme" 2>&1)"; then
+    printf '%s\n' "$destinations_output" >&2
+    return 1
+  fi
   matched_id="$(
     printf '%s\n' "$destinations_output" \
       | sed -nE 's/^[[:space:]]+\{ platform:iOS Simulator,.* id:([^,]+),.* name:([^}]+) \}$/\2|\1/p' \
@@ -179,6 +182,7 @@ resolve_destination() {
     return 0
   fi
 
+  printf '%s\n' "$destinations_output" >&2
   echo "No available iOS simulator destination was found for scheme '$scheme'." >&2
   exit 1
 }
@@ -193,6 +197,10 @@ if [[ "$destination" =~ ^id= ]]; then
   simulator_id="${destination#id=}"
   xcrun simctl boot "$simulator_id" >/dev/null 2>&1 || true
   xcrun simctl bootstatus "$simulator_id" -b
+fi
+
+if [[ -n "${GITHUB_ENV:-}" ]]; then
+  printf 'IOS_DESTINATION=%s\n' "$destination" >> "$GITHUB_ENV"
 fi
 
 echo "Running iOS tests with destination: $destination"
