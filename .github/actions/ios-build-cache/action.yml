@@ -14,6 +14,7 @@ runs:
               if ! command -v ccache >/dev/null; then brew install ccache; fi
               echo "xcode=$(xcodebuild -version | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
               echo 'USE_CCACHE=1' >> "$GITHUB_ENV"
+              echo "CCACHE_BINARY=$(command -v ccache)" >> "$GITHUB_ENV"
               echo "CCACHE_DIR=$HOME/.cache/native-editor-ccache" >> "$GITHUB_ENV"
               echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
               echo 'CCACHE_MAXSIZE=1G' >> "$GITHUB_ENV"
