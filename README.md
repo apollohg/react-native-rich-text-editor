@@ -103,20 +103,6 @@ export function EditorScreen() {
 
 See [Getting Started](https://github.com/apollohg/react-native-rich-text-editor/wiki/Getting-Started) and the [RichTextEditor reference](https://github.com/apollohg/react-native-rich-text-editor/wiki/RichTextEditor-Reference) for the complete API.
 
-## Markdown export
-
-Export the current document through the editor ref, `useNativeEditorDocument`, or the document bridge:
-
-```ts
-const markdown = editorRef.current?.getContentMarkdown();
-const gfm = editorRef.current?.getContentMarkdown({ flavor: 'gfm' });
-const documentMarkdown = documentHandle.bridge.getDocumentMarkdown();
-```
-
-The default flavor is vanilla Markdown (`'commonmark'`). GFM adds pipe tables, task lists, and strikethrough. Both flavors use HTML where Markdown would lose content or attributes, including custom atoms, underline, merged tables, and code blocks whose line endings cannot be preserved by fences. Export reads the current Rust document without changing it. The editor ref and document hook return an empty string until the document is ready.
-
-Rebuild the native app after upgrading to use the new export API.
-
 ## Copy and paste
 
 Copy and cut publish an editor fragment, HTML, and plain text. Pasting between compatible editor schemas preserves selected marks, nodes, and atom attributes. External rich text imports supported HTML formatting and structure, with RTF conversion on iOS.
