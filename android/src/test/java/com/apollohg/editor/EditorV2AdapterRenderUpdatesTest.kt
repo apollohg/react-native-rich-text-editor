@@ -238,7 +238,11 @@ internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
             assertEquals(before.cells.drop(1), after.cells.drop(1))
             val snapshot =
                 requireNotNull(adapter.atomicRenderJson(adapter.baseDocumentRevision.toString()))
-            assertEquals(backend.frames.single().snapshotJson, snapshot)
+            val frame =
+                JSONObject(backend.frames.single().snapshotJson).apply { remove("positionEpoch") }
+            val published = JSONObject(snapshot)
+            assertEquals(frame.toString(), published.toString())
+            assertEquals(ATOMIC_RENDER_SNAPSHOT_KEYS, published.keys().asSequence().toSet())
             for (legacyKey in listOf("tableAttributes", "tableRecords", "tableInputMappings")) {
                 assertFalse(legacyKey, JSONObject(snapshot).has(legacyKey))
             }

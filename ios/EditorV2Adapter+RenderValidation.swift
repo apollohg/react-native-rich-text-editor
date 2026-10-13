@@ -23,6 +23,8 @@ extension EditorV2Adapter {
 
     struct AtomicRenderSnapshot {
         let renderObject: [String: Any]
+        /// The JS commit contract: exactly `atomicRenderSnapshotKeys`, never `positionEpoch`.
+        let atomicRenderJSON: String
         let viewUpdateJSON: String
         let documentRevision: UInt64
         let stateRevision: UInt64
@@ -442,6 +444,17 @@ extension EditorV2Adapter {
             positionEpoch = nil
         }
         object.removeValue(forKey: "positionEpoch")
+        let atomicRenderJSON: String
+        if positionEpoch == nil {
+            atomicRenderJSON = json
+        } else {
+            guard let atomicData = try? JSONSerialization.data(withJSONObject: object),
+                  let serialized = String(data: atomicData, encoding: .utf8)
+            else {
+                return nil
+            }
+            atomicRenderJSON = serialized
+        }
         object.removeValue(forKey: "scalarLength")
         guard let viewData = try? JSONSerialization.data(withJSONObject: object),
               let viewUpdateJSON = String(data: viewData, encoding: .utf8)
@@ -450,6 +463,7 @@ extension EditorV2Adapter {
         }
         return AtomicRenderSnapshot(
             renderObject: object,
+            atomicRenderJSON: atomicRenderJSON,
             viewUpdateJSON: viewUpdateJSON,
             documentRevision: documentRevision,
             stateRevision: stateRevision,

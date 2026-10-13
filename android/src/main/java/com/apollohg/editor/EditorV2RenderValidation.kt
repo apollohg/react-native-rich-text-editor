@@ -349,8 +349,22 @@ private fun validSelection(value: Any?): Boolean {
     }
 }
 
+internal val ATOMIC_RENDER_SNAPSHOT_KEYS =
+    setOf(
+        "renderBlocks",
+        "renderPatch",
+        "selection",
+        "activeState",
+        "historyState",
+        "documentVersion",
+        "stateRevision",
+        "scalarLength",
+        "documentIsEmpty"
+    )
+
 internal data class AtomicRenderSnapshot(
     val renderObject: JSONObject,
+    /** The JS commit contract: exactly [ATOMIC_RENDER_SNAPSHOT_KEYS], never `positionEpoch`. */
     val atomicRenderJson: String,
     val viewUpdateJson: String,
     val documentRevision: ULong,
@@ -375,18 +389,6 @@ internal fun parseSharedStringJsonObject(json: String): JSONObject {
 internal fun parseAtomicRenderSnapshot(json: String): AtomicRenderSnapshot? {
     return try {
         val jsonObject = parseSharedStringJsonObject(json)
-        val requiredKeys =
-            setOf(
-                "renderBlocks",
-                "renderPatch",
-                "selection",
-                "activeState",
-                "historyState",
-                "documentVersion",
-                "stateRevision",
-                "scalarLength",
-                "documentIsEmpty"
-            )
         val renderBlocks = jsonObject.opt("renderBlocks")
         val renderPatch = jsonObject.opt("renderPatch")
         val validRenderPayload =
@@ -395,8 +397,8 @@ internal fun parseAtomicRenderSnapshot(json: String): AtomicRenderSnapshot? {
                     renderBlocks === JSONObject.NULL && renderPatch is JSONObject &&
                         validRenderPatch(renderPatch)
                     )
-        if (!onlyKeys(jsonObject, requiredKeys + setOf("positionEpoch")) ||
-            requiredKeys.any { !jsonObject.has(it) } ||
+        if (!onlyKeys(jsonObject, ATOMIC_RENDER_SNAPSHOT_KEYS + setOf("positionEpoch")) ||
+            ATOMIC_RENDER_SNAPSHOT_KEYS.any { !jsonObject.has(it) } ||
             !validRenderPayload ||
             !validSelection(jsonObject.opt("selection")) ||
             !validActiveState(jsonObject.opt("activeState")) ||
@@ -421,7 +423,7 @@ internal fun parseAtomicRenderSnapshot(json: String): AtomicRenderSnapshot? {
             null
         }
         jsonObject.remove("positionEpoch")
-        val atomicRenderJson = json
+        val atomicRenderJson = if (positionEpoch == null) json else jsonObject.toString()
         jsonObject.remove("scalarLength")
         AtomicRenderSnapshot(
             jsonObject,

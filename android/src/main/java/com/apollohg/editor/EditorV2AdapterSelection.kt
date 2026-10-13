@@ -192,6 +192,7 @@ internal fun EditorV2Adapter.invalidateCachedAtomicState(selection: IntArray?) {
     cachedViewUpdateJson = null
     cachedViewUpdateObject = null
     cachedAtomicRenderJson = null
+    cachedCommitSnapshotJson = null
     cachedAtomicRenderSelectionObject = null
     cachedAtomicRenderDocumentRevision = null
 }
@@ -239,6 +240,7 @@ internal fun EditorV2Adapter.ensureSelection(anchor: Int, head: Int): SelectionS
             cachedViewUpdateJson = null
             cachedViewUpdateObject = null
             cachedAtomicRenderJson = null
+            cachedCommitSnapshotJson = null
             cachedAtomicRenderSelectionObject = null
             cachedAtomicRenderDocumentRevision = null
             SelectionSyncOutcome.Ok

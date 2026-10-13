@@ -46,6 +46,7 @@ internal class EditorV2Adapter private constructor(
     internal var cachedViewUpdateJson: String? = null
     internal var cachedViewUpdateObject: JSONObject? = null
     internal var cachedAtomicRenderJson: String? = null
+    internal var cachedCommitSnapshotJson: String? = null
     internal var cachedAtomicRenderSelectionObject: JSONObject? = null
     internal var cachedSemanticRenderBlocks: List<List<Any?>>? = null
     internal var cachedSemanticRenderBlocksRevision: ULong? = null
@@ -299,7 +300,7 @@ internal class EditorV2Adapter private constructor(
     internal fun atomicRenderJson(matchingDocumentRevision: String): String? {
         val revision = matchingDocumentRevision.toULongOrNull() ?: return null
         if (cachedAtomicRenderDocumentRevision != revision) return null
-        return cachedAtomicRenderJson
+        return cachedCommitSnapshotJson
     }
 
     @Volatile

@@ -814,9 +814,13 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
                 payload["documentRevision"]?.toString()
             )
             assertEquals(
-                "the action carries the exact settled native snapshot: $payload",
-                adapter.cachedAtomicRenderJson,
+                "the action carries the exact settled commit snapshot: $payload",
+                adapter.cachedCommitSnapshotJson,
                 payload["updateJson"]
+            )
+            assertEquals(
+                ATOMIC_RENDER_SNAPSHOT_KEYS,
+                JSONObject(payload["updateJson"] as String).keys().asSequence().toSet()
             )
         }
 
@@ -1615,7 +1619,7 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
     }
 
     @Test
-    fun `cell typing publishes the exact table free native snapshot`() = withActiveCell {
+    fun `cell typing publishes a table free snapshot without the epoch`() = withActiveCell {
             view,
             input,
             adapter
@@ -1632,15 +1636,10 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
         }
         assertEquals(adapter.editorId, event["editorId"])
         assertEquals(adapter.baseDocumentRevision.toString(), event["documentRevision"])
-        assertEquals(snapshot, event["updateJson"])
         val payload = JSONObject(event["updateJson"] as String)
-        for (key in listOf(
-            "tableRecords",
-            "tableAttributes",
-            "tableInputMappings"
-        )) {
-            assertFalse(key, payload.has(key))
-        }
+        val frame = JSONObject(requireNotNull(snapshot)).apply { remove("positionEpoch") }
+        assertEquals(frame.toString(), payload.toString())
+        assertEquals(ATOMIC_RENDER_SNAPSHOT_KEYS, payload.keys().asSequence().toSet())
     }
 
     @Test

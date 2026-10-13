@@ -82,6 +82,7 @@ extension EditorV2Adapter {
         cachedHistoryState = snapshot.historyState
         cachedViewUpdateJSON = updateJSON
         cachedAtomicRenderJSON = frame.snapshotJson
+        cachedCommitSnapshotJSON = snapshot.atomicRenderJSON
         cachedAtomicRenderSelectionObject = snapshot.renderObject["selection"] as? [String: Any]
         cachedAtomicRenderDocumentRevision = snapshot.documentRevision
         cachedSemanticRenderBlocks = candidate
@@ -97,7 +98,7 @@ extension EditorV2Adapter {
         guard beginRuntimeOperation() else { return nil }
         defer { endRuntimeOperation() }
         guard cachedAtomicRenderDocumentRevision == documentRevision else { return nil }
-        return cachedAtomicRenderJSON
+        return cachedCommitSnapshotJSON
     }
 
     private func parseExternalReset(_ resetJSON: String) -> (payload: [String: Any], revision: UInt64)? {

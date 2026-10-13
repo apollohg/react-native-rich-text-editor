@@ -93,6 +93,7 @@ private fun EditorV2Adapter.adopt(
         cachedViewUpdateJson = updateJson
         cachedViewUpdateObject = updateObject
         cachedAtomicRenderJson = frame.snapshotJson
+        cachedCommitSnapshotJson = snapshot.atomicRenderJson
         cachedAtomicRenderSelectionObject = selection
         cachedAtomicRenderDocumentRevision = snapshot.documentRevision
         cachedSemanticRenderBlocks = candidate
