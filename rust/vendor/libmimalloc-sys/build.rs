@@ -16,6 +16,7 @@ fn main() {
         .join("c_src")
         .join("mimalloc")
         .join(version);
+    println!("cargo:rerun-if-changed={}", include_root.display());
     let include_dir = include_root
         .join("include")
         .to_str()
