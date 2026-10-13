@@ -59,7 +59,7 @@ jobs:
                       ios/Generated_editor_core.swift
                       ios/editor_coreFFI
                       ios/EditorCore.xcframework
-                  key: native-build-v1-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-ndk-4.1.2-android-27.1.12297006-${{ steps.native-toolchain.outputs.xcode }}-${{ hashFiles('rust/editor-core/src/**', 'rust/editor-core/*.toml', 'rust/editor-core/Cargo.lock', 'rust/editor-core/build.rs', 'rust/editor-core/.cargo/**', 'rust/vendor/yrs/**', 'rust/vendor/sha2/**', 'rust/*.sh', 'rust/optimize-swift-bindings.py', 'rust/optimize-kotlin-bindings.py', '.cargo/**', 'rust/.cargo/**') }}
+                  key: native-build-v1-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-ndk-4.1.2-android-27.1.12297006-${{ steps.native-toolchain.outputs.xcode }}-${{ hashFiles('rust/editor-core/src/**', 'rust/editor-core/*.toml', 'rust/editor-core/Cargo.lock', 'rust/editor-core/build.rs', 'rust/editor-core/.cargo/**', 'rust/vendor/yrs/**', 'rust/vendor/sha2/**', 'rust/vendor/libmimalloc-sys/**', 'rust/*.sh', 'rust/optimize-swift-bindings.py', 'rust/optimize-kotlin-bindings.py', '.cargo/**', 'rust/.cargo/**') }}
 
             - name: Setup Node
               uses: actions/setup-node@v6

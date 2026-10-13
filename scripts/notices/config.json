@@ -19,6 +19,10 @@
         }
     ],
     "localSources": {
+        "libmimalloc-sys@0.1.49": {
+            "directory": "rust/vendor/libmimalloc-sys",
+            "source": "https://github.com/apollohg/react-native-rich-text-editor/tree/main/rust/vendor/libmimalloc-sys"
+        },
         "sha2@0.10.9": {
             "directory": "rust/vendor/sha2",
             "source": "https://github.com/apollohg/react-native-rich-text-editor/tree/main/rust/vendor/sha2"

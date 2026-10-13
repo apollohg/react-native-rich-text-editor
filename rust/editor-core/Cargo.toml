@@ -52,10 +52,18 @@ required-features = ["table-interop"]
 name = "perf_suite"
 harness = false
 
+[[test]]
+name = "android_allocator_thread_exit"
+harness = false
+
 [patch.crates-io]
 yrs = { path = "../vendor/yrs" }
 sha2 = { path = "../vendor/sha2" }
+libmimalloc-sys = { path = "../vendor/libmimalloc-sys" }
 
 [target.'cfg(target_os = "android")'.dependencies]
 mimalloc = { version = "=0.1.52", features = ["secure"] }
 libmimalloc-sys = "=0.1.49"
+
+[target.'cfg(target_os = "android")'.dev-dependencies]
+libmimalloc-sys = { version = "=0.1.49", features = ["extended"] }

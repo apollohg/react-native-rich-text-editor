@@ -1,0 +1,33 @@
+--- a/c_src/mimalloc/v3/src/init.c
++++ b/c_src/mimalloc/v3/src/init.c
+@@ -162,6 +162,8 @@
+ };
+ 
+ // Heap for the main thread
++
++#define MI_THREADID_INVALID ((mi_threadid_t)(~0))
+ 
+ extern mi_decl_hidden mi_decl_cache_align mi_theap_t theap_main;
+ extern mi_decl_hidden mi_decl_cache_align mi_heap_t  heap_main;
+@@ -379,17 +381,11 @@
+ #define MI_TLD_INVALID  ((mi_tld_t*)1)
+ 
+ mi_decl_noinline static void mi_tld_free(mi_tld_t* tld) {
++  if (tld==NULL || tld==MI_TLD_INVALID) return;
++  mi_atomic_decrement_relaxed(&tld->subproc->thread_count);
++  tld->thread_id = MI_THREADID_INVALID;
+   mi_lock_done(&tld->theaps_lock);
+-  if (tld != NULL && tld != MI_TLD_INVALID) {
+-    mi_atomic_decrement_relaxed(&tld->subproc->thread_count);
+-    _mi_meta_free(tld, sizeof(mi_tld_t), tld->memid);
+-  }
+-  #if 0
+-  // do not read/write to `thread_tld` on older macOS <= 14 as that will re-initialize the thread local storage
+-  // (since we are calling this during pthread shutdown)
+-  // (and this could happen on other systems as well, so let's never do it)
+-  thread_tld = MI_TLD_INVALID;
+-  #endif
++  _mi_meta_free(tld, sizeof(mi_tld_t), tld->memid);
+ }
+ 
+ // return the thread local heap ensuring it is initialized (and not `NULL` or `&_mi_theap_empty`);
