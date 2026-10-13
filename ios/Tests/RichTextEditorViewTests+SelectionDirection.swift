@@ -24,6 +24,31 @@ extension RichTextEditorViewTests {
         XCTAssertEqual(emittedUpdate["documentVersion"] as? String, update["documentVersion"] as? String)
     }
 
+    func testNativeCommitEventPayloadOmitsThePositionEpochOfABoundEditor() throws {
+        let editorId = makeV2Editor()
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let expoHost = NativeEditorExpoView()
+        defer { expoHost.setEditorId(0) }
+        expoHost.setEditorId(editorId)
+        XCTAssertTrue(expoHost.ownsNativeBinding(editorId: editorId))
+
+        let viewUpdateJSON = EditorV2Shadow.insertTextScalar(id: editorId, scalarPos: 0, text: "abc")
+        let rawFrame = parseJSONObject(try XCTUnwrap(adapter.cachedAtomicRenderJSON))
+        XCTAssertNotNil(rawFrame["positionEpoch"], "raw frame: \(rawFrame)")
+
+        let event = try XCTUnwrap(
+            NativeEditorExpoView.nativeCommitEventPayload(
+                originatingEditorId: String(editorId),
+                updateJSON: viewUpdateJSON
+            )
+        )
+        let emittedUpdate = parseJSONObject(try XCTUnwrap(event["updateJson"] as? String))
+
+        XCTAssertEqual(Set(emittedUpdate.keys), EditorV2Adapter.atomicRenderSnapshotKeys, "emitted: \(emittedUpdate)")
+        XCTAssertEqual(emittedUpdate["documentIsEmpty"] as? Bool, false)
+    }
+
     func testNativeCommitEventPayloadPublishesTheCompleteAtomicSnapshot() throws {
         let editorId = makeV2Editor()
         defer { destroyV2Editor(id: editorId) }

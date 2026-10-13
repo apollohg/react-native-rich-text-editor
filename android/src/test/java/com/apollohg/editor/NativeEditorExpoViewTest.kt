@@ -3,8 +3,10 @@ import android.os.Looper
 import android.view.inputmethod.EditorInfo
 import java.time.Duration
 import java.util.concurrent.atomic.AtomicBoolean
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -301,5 +303,44 @@ internal class NativeEditorExpoViewTest : NativeEditorExpoViewTestFixture() {
         assertEquals(0, view.pendingDetachPreflightRetryAttemptsForTesting())
         assertEquals(0L, view.richTextView.editorId)
         assertEquals(0L, editText.editorId)
+    }
+
+    @Test
+    fun `typing in a natively bound editor publishes commits without the position epoch`() {
+        val expoContext = testExpoContext(RuntimeEnvironment.getApplication())
+        val view = NativeEditorExpoView(expoContext.context, expoContext.appContext)
+        val adapter = attachAdapterForViewTest(FakeEditorV2Backend())
+        val viewToken = EditorV2Registry.register(adapter)
+        val updates = mutableListOf<Map<String, Any>>()
+        try {
+            view.onAddonEventForTesting = {}
+            view.onEditorReadyForTesting = {}
+            view.onSelectionChangeForTesting = {}
+            view.onEditorUpdateForTesting = updates::add
+            view.setAttachedToNativeWindowForTesting(true)
+            view.setEditorId(viewToken)
+            val editText = view.richTextView.editorEditText
+            editText.setSelection(0)
+            val inputConnection = editText.onCreateInputConnection(EditorInfo())
+            assertNotNull(inputConnection)
+            assertTrue(inputConnection!!.commitText("abc", 1))
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(200))
+
+            val rawFrame = JSONObject(requireNotNull(adapter.cachedAtomicRenderJson))
+            assertTrue("raw frame: $rawFrame", rawFrame.has("positionEpoch"))
+            val commit = updates.lastOrNull { it.containsKey("updateJson") }
+            assertNotNull("updates: $updates", commit)
+            val published = JSONObject(commit!!["updateJson"] as String)
+            assertEquals(
+                "published: $published",
+                ATOMIC_RENDER_SNAPSHOT_KEYS,
+                published.keys().asSequence().toSet()
+            )
+            assertEquals(published.getString("documentVersion"), commit["documentRevision"])
+            assertFalse(published.getBoolean("documentIsEmpty"))
+        } finally {
+            EditorV2Registry.remove(adapter.editorId)
+            NativeEditorViewRegistry.unregister(viewToken, view)
+        }
     }
 }
