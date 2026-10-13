@@ -2,6 +2,148 @@ import ExpoModulesCore
 import XCTest
 
 extension RichTextEditorViewTests {
+    func testRepeatedEmptyMentionSuggestionsKeepMountedToolbarLayoutIdle() throws {
+        let fixtureWidth: CGFloat = 320
+        let fixtureHeight: CGFloat = 480
+        let repeatedUpdates = 20
+        let boldIndex = 0
+        let undoIndex = 1
+        let boldMark = "bold"
+        let boldKey = "mounted-bold"
+        let undoKey = "mounted-undo"
+        let initialRowHeight: CGFloat = 64
+        let updatedRowHeight: CGFloat = 72
+        let keyboardOffset: CGFloat = 10
+        let verticalPadding: CGFloat = 12
+        let mentionRowHeight: CGFloat = 52
+        let initialIconSize: CGFloat = 18
+        let updatedIconSize: CGFloat = 24
+        let initialActiveColor = "#123456"
+        let updatedActiveColor = "#345678"
+        let updatedIdleColor = "#456789"
+        let updatedActiveBackground = "#56789a"
+        let toolbar = EditorAccessoryToolbarView(frame: .zero)
+        let host = Self.attachToFixedWidthHost(toolbar, width: fixtureWidth)
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: fixtureWidth, height: fixtureHeight))
+        let controller = UIViewController()
+        window.rootViewController = controller
+        controller.view.addSubview(host)
+        window.makeKeyAndVisible()
+        defer {
+            toolbar.onKeyboardGeometryMayChange = nil
+            toolbar.onPressItem = nil
+            toolbar.onSelectMentionSuggestion = nil
+            host.removeFromSuperview()
+            window.isHidden = true
+        }
+        toolbar.setItems([
+            NativeToolbarItem(type: .mark, key: boldKey, label: "Bold", icon: .glyph("B"), mark: boldMark),
+            NativeToolbarItem(type: .command, key: undoKey, label: "Undo", icon: .glyph("U"), command: .undo)
+        ])
+        toolbar.apply(theme: EditorToolbarTheme(dictionary: [
+            "appearance": "native", "height": initialRowHeight, "keyboardOffset": keyboardOffset,
+            "buttonIconSize": initialIconSize, "buttonActiveColor": initialActiveColor
+        ]))
+        toolbar.applyBoldStateForTesting(active: true, enabled: true)
+        window.layoutIfNeeded()
+        flushMainQueue()
+        window.layoutIfNeeded()
+        toolbar.layoutIfNeeded()
+        XCTAssertTrue(toolbar.window === window, "the no-op check must exercise a mounted native toolbar")
+        XCTAssertEqual(toolbar.bounds.height, initialRowHeight + verticalPadding + keyboardOffset,
+            accuracy: NativeEditorExpoView.layoutEpsilon)
+        XCTAssertGreaterThan(toolbar.bodyStackView.bounds.width, 0)
+        let boldButton = try XCTUnwrap(toolbar.buttonBindings.first { $0.item.key == boldKey }?.button)
+        let undoButton = try XCTUnwrap(toolbar.buttonBindings.first { $0.item.key == undoKey }?.button)
+        let buttons = [boldButton, undoButton]
+        let initialFrames = buttons.map(\.frame)
+        let initialBounds = toolbar.bounds
+        let initialForegrounds = buttons.indices.map(toolbar.buttonPaintedForegroundColorForTesting)
+        let initialBackgrounds = buttons.indices.map(toolbar.buttonBackgroundColorForTesting)
+        let initialEnabled = buttons.map(\.isEnabled)
+        let initialSelected = buttons.map(\.isSelected)
+        let initialTraits = buttons.map(\.accessibilityTraits)
+        var layoutPasses = 0
+        var pressedKeys: [String?] = []
+        var selectedMentionKeys: [String] = []
+        toolbar.onKeyboardGeometryMayChange = { layoutPasses += 1 }
+        toolbar.onPressItem = { pressedKeys.append($0.key) }
+        toolbar.onSelectMentionSuggestion = { selectedMentionKeys.append($0.key) }
+        var redundantLayoutPasses: [Int] = []
+        func verifyRepeatedEmptyUpdates(_ phase: String) {
+            for update in 0..<repeatedUpdates {
+                let before = layoutPasses
+                XCTAssertFalse(toolbar.setMentionSuggestions([]), "\(phase) update \(update) must keep ordinary toolbar mode")
+                toolbar.layoutIfNeeded()
+                redundantLayoutPasses.append(layoutPasses - before)
+            }
+        }
+        verifyRepeatedEmptyUpdates("initially empty")
+        XCTAssertEqual(toolbar.bounds, initialBounds)
+        XCTAssertEqual(buttons.map(\.frame), initialFrames)
+        XCTAssertEqual(buttons.indices.map(toolbar.buttonPaintedForegroundColorForTesting), initialForegrounds)
+        XCTAssertEqual(buttons.indices.map(toolbar.buttonBackgroundColorForTesting), initialBackgrounds)
+        XCTAssertEqual(buttons.map(\.isEnabled), initialEnabled)
+        XCTAssertEqual(buttons.map(\.isSelected), initialSelected)
+        XCTAssertEqual(buttons.map(\.accessibilityTraits), initialTraits)
+        XCTAssertFalse(toolbar.isShowingMentionSuggestions)
+        XCTAssertFalse(toolbar.scrollView.isHidden)
+        XCTAssertTrue(pressedKeys.isEmpty)
+        XCTAssertTrue(selectedMentionKeys.isEmpty)
+
+        let suggestion = try XCTUnwrap(NativeMentionSuggestion(dictionary: [
+            "key": "alice", "title": "Alice", "label": "alice", "attrs": ["id": "alice"]
+        ]))
+        let beforeMentionLayout = layoutPasses
+        XCTAssertTrue(toolbar.setMentionSuggestions([suggestion], trigger: "@"))
+        host.layoutIfNeeded()
+        toolbar.layoutIfNeeded()
+        XCTAssertGreaterThan(layoutPasses, beforeMentionLayout, "a genuine mode change must reach the same layout observer")
+        XCTAssertTrue(toolbar.isShowingMentionSuggestions)
+        XCTAssertTrue(toolbar.scrollView.isHidden)
+        XCTAssertEqual(toolbar.bounds.height, mentionRowHeight + verticalPadding + keyboardOffset,
+            accuracy: NativeEditorExpoView.layoutEpsilon)
+        let mentionButton = try XCTUnwrap(toolbar.mentionButtonAtForTesting(0))
+        XCTAssertEqual(mentionButton.titleTextForTesting(), "@alice")
+        mentionButton.sendActions(for: .touchUpInside)
+        XCTAssertEqual(selectedMentionKeys, [suggestion.key])
+        XCTAssertTrue(toolbar.setMentionSuggestions([]))
+        host.layoutIfNeeded()
+        toolbar.layoutIfNeeded()
+        XCTAssertFalse(toolbar.isShowingMentionSuggestions)
+        XCTAssertFalse(toolbar.scrollView.isHidden)
+        XCTAssertNil(toolbar.mentionButtonAtForTesting(0))
+        XCTAssertEqual(toolbar.bounds, initialBounds)
+        verifyRepeatedEmptyUpdates("cleared mention row")
+        XCTAssertEqual(redundantLayoutPasses.reduce(0, +), 0,
+            "empty→empty updates must not lay out unchanged chrome: per-update passes=\(redundantLayoutPasses)")
+
+        toolbar.apply(theme: EditorToolbarTheme(dictionary: [
+            "appearance": "native", "height": updatedRowHeight, "keyboardOffset": keyboardOffset,
+            "buttonIconSize": updatedIconSize, "buttonActiveColor": updatedActiveColor,
+            "buttonColor": updatedIdleColor, "buttonActiveBackgroundColor": updatedActiveBackground
+        ]))
+        host.layoutIfNeeded()
+        toolbar.layoutIfNeeded()
+        XCTAssertEqual(toolbar.bounds.height, updatedRowHeight + verticalPadding + keyboardOffset,
+            accuracy: NativeEditorExpoView.layoutEpsilon)
+        XCTAssertEqual(toolbar.buttonPaintedForegroundColorForTesting(boldIndex), EditorTheme.color(from: updatedActiveColor))
+        XCTAssertEqual(toolbar.buttonBackgroundColorForTesting(boldIndex), EditorTheme.color(from: updatedActiveBackground))
+        XCTAssertEqual(toolbar.buttonFontSizeForTesting(boldIndex), updatedIconSize)
+        XCTAssertTrue(boldButton.isSelected)
+        XCTAssertFalse(undoButton.isEnabled)
+        toolbar.apply(state: NativeToolbarState(marks: [boldMark: false], nodes: [:], commands: [:],
+            allowedMarks: [boldMark], insertableNodes: [], canUndo: true, canRedo: false))
+        XCTAssertFalse(boldButton.isSelected)
+        XCTAssertEqual(boldButton.accessibilityTraits, .button)
+        XCTAssertTrue(undoButton.isEnabled)
+        XCTAssertEqual(toolbar.buttonPaintedForegroundColorForTesting(boldIndex), EditorTheme.color(from: updatedIdleColor))
+        boldButton.sendActions(for: .touchUpInside)
+        undoButton.sendActions(for: .touchUpInside)
+        XCTAssertEqual(pressedKeys, [boldKey, undoKey])
+        XCTAssertEqual(selectedMentionKeys, [suggestion.key], "empty clears must not replay a removed suggestion callback")
+    }
+
     func testAccessoryToolbarIntrinsicHeightMatchesLayoutFitting() throws {
         let fixtureWidth: CGFloat = 320
         let toolbar = EditorAccessoryToolbarView(frame: .zero)

@@ -325,6 +325,7 @@ final class EditorAccessoryToolbarView: UIView {
         _ suggestions: [NativeMentionSuggestion],
         trigger: String = "@"
     ) -> Bool {
+        guard !suggestions.isEmpty || !mentionButtons.isEmpty else { return false }
         let hadSuggestions = !mentionButtons.isEmpty
         var existingButtonsByKey: [String: MentionSuggestionChipButton] = [:]
         for button in mentionButtons where existingButtonsByKey[button.suggestion.key] == nil {
