@@ -163,8 +163,10 @@ class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegat
     /// The plain text from the last Rust render, used by the reconciliation
     /// fallback to detect unauthorized text storage mutations.
     var inputRerendersForTesting = 0
-    var lastAuthorizedTextStorage = NSMutableString()
     var lastAuthorizedAttributedTextStorage = NSMutableAttributedString()
+    var lastAuthorizedTextStorage: NSString {
+        CFAttributedStringGetString(lastAuthorizedAttributedTextStorage) as NSString
+    }
     var lastAuthorizedText: String {
         lastAuthorizedTextStorage as String
     }
@@ -172,7 +174,7 @@ class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegat
     var onApplyingRustTextForTesting: (() -> Void)?
     var captureApplyUpdateTraceForTesting = false
     var lastApplyUpdateTraceForTesting: ApplyUpdateTrace?
-    var currentRenderBlocks: [[[String: Any]]]?
+    var currentRenderBlocks: [[NSDictionary]]?
     var currentRenderBlocksDocumentVersion: UInt64?
     var recoveringRenderPatchBaseMismatch = false
     var currentTopLevelChildMetadata: [TopLevelChildMetadata]?
@@ -847,7 +849,7 @@ class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegat
         ) else { return }
         let replacementStartUtf16 = replacementUtf16Range.location
         let replacementEndUtf16 = NSMaxRange(replacementUtf16Range)
-        let preservesAcceptedSpace = textStorage.string == lastAuthorizedText
+        let preservesAcceptedSpace = textStorageMatchesAuthorizedText()
             && shouldPreserveAcceptedAutocorrectSpace(
                 authorizedText: lastAuthorizedText as NSString,
                 replacementStartUtf16: replacementStartUtf16,

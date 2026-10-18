@@ -44,6 +44,7 @@ final class EditorAccessoryToolbarView: UIView {
     private var accessoryHeightUpdateScheduled = false
     var buttonBindings: [ButtonBinding] = []
     var separators: [UIView] = []
+    var needsButtonRebuild = false
     var mentionButtons: [MentionSuggestionChipButton] = []
     var items: [NativeToolbarItem] = NativeToolbarItem.defaults
     var expandedGroupKey: String?
@@ -101,7 +102,7 @@ final class EditorAccessoryToolbarView: UIView {
         scrollView.contentOffset.x
     }
     var selectedButtonCountForTesting: Int {
-        buttonBindings.filter(\.button.isSelected).count
+        constructedButtonBindings.filter(\.button.isSelected).count
     }
     var editMenuPresentationRequestCountForTesting: Int {
         guard #available(iOS 16.0, *) else { return 0 }
@@ -130,6 +131,7 @@ final class EditorAccessoryToolbarView: UIView {
     }
 
     override func layoutSubviews() {
+        rebuildButtonsIfNeeded()
         super.layoutSubviews()
         onKeyboardGeometryMayChange?()
     }
@@ -154,7 +156,7 @@ final class EditorAccessoryToolbarView: UIView {
             editMenuPresenter = presenter
             addInteraction(presenter.interaction)
         }
-        rebuildButtons()
+        setNeedsButtonRebuild()
     }
 
     required init?(coder: NSCoder) {
@@ -169,6 +171,16 @@ final class EditorAccessoryToolbarView: UIView {
            }) {
             self.expandedGroupKey = nil
         }
+        setNeedsButtonRebuild()
+    }
+
+    func setNeedsButtonRebuild() {
+        needsButtonRebuild = true
+        setNeedsLayout()
+    }
+
+    func rebuildButtonsIfNeeded() {
+        guard needsButtonRebuild else { return }
         rebuildButtons()
     }
     func setItemsJSONForTesting(_ json: String) {
@@ -386,13 +398,13 @@ final class EditorAccessoryToolbarView: UIView {
     }
 
     var firstButtonAlphaForTesting: CGFloat {
-        buttonBindings.first?.button.alpha ?? 0
+        constructedButtonBindings.first?.button.alpha ?? 0
     }
     var firstButtonTintColorForTesting: UIColor? {
-        buttonBindings.first?.button.tintColor
+        constructedButtonBindings.first?.button.tintColor
     }
     var firstButtonTintAdjustmentModeForTesting: UIView.TintAdjustmentMode {
-        buttonBindings.first?.button.tintAdjustmentMode ?? .automatic
+        constructedButtonBindings.first?.button.tintAdjustmentMode ?? .automatic
     }
 
     private func setupView() {

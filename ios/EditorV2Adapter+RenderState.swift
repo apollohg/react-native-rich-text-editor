@@ -3,17 +3,51 @@ import Foundation
 extension EditorV2Adapter {
     private static func viewUpdate(
         from snapshot: AtomicRenderSnapshot,
+        renderBlocks: [[NSDictionary]],
+        patchBlocks: [[NSDictionary]]?,
         strippingViewSelection: Bool
-    ) -> String? {
-        guard strippingViewSelection,
-              let data = snapshot.viewUpdateJSON.data(using: .utf8),
-              var update = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else {
-            return strippingViewSelection ? nil : snapshot.viewUpdateJSON
+    ) -> EditorV2DerivedUpdate? {
+        var update = snapshot.renderObject
+        if !(update["renderBlocks"] is NSNull) {
+            update["renderBlocks"] = renderBlocks
+        } else if let patchBlocks, var patch = update["renderPatch"] as? [String: Any] {
+            patch["renderBlocks"] = patchBlocks
+            update["renderPatch"] = patch
+        }
+        guard strippingViewSelection else {
+            return EditorV2DerivedUpdate(
+                updateJSON: snapshot.viewUpdateJSON, update: update, scalarLength: snapshot.scalarLength
+            )
         }
         update.removeValue(forKey: "selection")
-        guard let strippedData = try? JSONSerialization.data(withJSONObject: update) else { return nil }
-        return String(data: strippedData, encoding: .utf8)
+        guard let strippedData = try? JSONSerialization.data(withJSONObject: update),
+              let strippedJSON = String(data: strippedData, encoding: .utf8)
+        else { return nil }
+        return EditorV2DerivedUpdate(
+            updateJSON: strippedJSON,
+            update: update,
+            scalarLength: snapshot.scalarLength
+        )
+    }
+
+    private static func sharesStorage(_ lhs: String, _ rhs: String) -> Bool {
+        lhs.utf8.withContiguousStorageIfAvailable { left in
+            rhs.utf8.withContiguousStorageIfAvailable { right in
+                left.count == right.count && left.baseAddress == right.baseAddress
+            } ?? false
+        } ?? false
+    }
+
+    private func adoptedViewUpdate(sharing updateJSON: String) -> [String: Any]? {
+        runtimeLock.lock()
+        defer { runtimeLock.unlock() }
+        guard let cachedViewUpdate, Self.sharesStorage(cachedViewUpdate.updateJSON, updateJSON) else { return nil }
+        return cachedViewUpdate.update
+    }
+
+    static func viewUpdateObject(_ updateJSON: String, adoptedBy adapter: EditorV2Adapter?) -> [String: Any]? {
+        adapter?.adoptedViewUpdate(sharing: updateJSON)
+            ?? updateJSON.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
     }
 
     private func fetchNativeFrame(mirrorScalarSelection: (anchor: UInt32, head: UInt32)?) -> FfiNativeRenderFrame? {
@@ -40,28 +74,44 @@ extension EditorV2Adapter {
         let stageStarted = PreparedProseInstrumentation.now()
         defer { PreparedProseInstrumentation.recordTableStage(.adapterAdoption, start: stageStarted) }
         guard let snapshot = Self.parseAtomicRenderSnapshot(frame.snapshotJson) else { return nil }
+        let framePositionEpoch = frame.positionEpoch.flatMap { UInt64($0) }
+        guard framePositionEpoch.map(String.init) == frame.positionEpoch else { return nil }
         let nextIndex = tableIndex.copy()
         guard case let .success(changes) = nextIndex.adopt(
             frame.tables, installedRevision: installedFrameRevision, frameRevision: snapshot.documentRevision
         ), nextIndex.rootExtents.values.allSatisfy({ $0.scalarEnd <= snapshot.scalarLength }) else { return nil }
-        var candidate = snapshot.renderObject["renderBlocks"] as? [[[String: Any]]]
+        var canReuseRetainedSemanticAdmission = false
+        var candidate = snapshot.renderObject["renderBlocks"] as? [[NSDictionary]]
+        var patchBlocks: [[NSDictionary]]?
         if candidate == nil, let patch = snapshot.renderObject["renderPatch"] as? [String: Any] {
             if let retained = cachedSemanticRenderBlocks,
                let base = patch["baseDocumentVersion"] as? String, UInt64(base) == cachedAtomicRenderDocumentRevision,
                let start = Self.uint32Field(patch, "startIndex"), let delete = Self.uint32Field(patch, "deleteCount"),
-               let inserted = patch["renderBlocks"] as? [[[String: Any]]],
+               let inserted = patch["renderBlocks"] as? [[NSDictionary]],
                UInt64(start) + UInt64(delete) <= UInt64(retained.count) {
                 candidate = retained
+                patchBlocks = inserted
                 candidate!.replaceSubrange(Int(start)..<(Int(start) + Int(delete)), with: inserted)
+                canReuseRetainedSemanticAdmission = frame.tables.kind == .delta
+                    && installedFrameRevision == cachedAtomicRenderDocumentRevision
+                    && tableIndex.tableKeys.isEmpty
+                    && tableIndex.rootExtents.isEmpty
+                    && nextIndex.tableKeys.isEmpty
+                    && nextIndex.rootExtents.isEmpty
             } else { return nil }
         }
-        guard let candidate, Self.validSemanticRenderElements(candidate.joined().map { $0 as Any }, tableIndex: nextIndex) else { return nil }
-        let rootKeys = Set(candidate.joined().compactMap { $0["type"] as? String == "table" ? $0["tableId"] as? String : nil })
+        guard let candidate else { return nil }
+        let rootKeys = Set(candidate.joined().compactMap(RenderBridge.rootTableID(of:)))
+        guard (canReuseRetainedSemanticAdmission && rootKeys.isEmpty)
+            || Self.validSemanticRenderElements(candidate.joined().map { $0 as Any }, tableIndex: nextIndex)
+        else { return nil }
         guard rootKeys == Set(nextIndex.rootExtents.keys) else { return nil }
         if let selection = snapshot.renderObject["selection"] as? [String: Any], selection["type"] as? String == "cell",
            EditorCellSelection.resolve(selection, index: nextIndex) == nil { return nil }
-        guard let updateJSON = Self.viewUpdate(
+        guard let derived = Self.viewUpdate(
             from: snapshot,
+            renderBlocks: candidate,
+            patchBlocks: patchBlocks,
             strippingViewSelection: strippingViewSelection
         ) else {
             return nil
@@ -69,36 +119,96 @@ extension EditorV2Adapter {
         let tablePresentation = EditorTablePresentationSnapshot(
             documentRevision: snapshot.documentRevision,
             baseDocumentRevision: changes.fullReset ? nil : installedFrameRevision,
-            positionEpoch: snapshot.positionEpoch,
+            positionEpoch: framePositionEpoch,
             index: nextIndex, changes: changes
         )
         tableIndex = nextIndex
         installedFrameRevision = snapshot.documentRevision
         if changes.fullReset { fullFrameAdoptionCountForTesting += 1 } else { deltaFrameAdoptionCountForTesting += 1 }
         baseDocumentRevision = snapshot.documentRevision
+        cachedAtomicRenderDocumentRevision = snapshot.documentRevision
+        cachedSemanticRenderBlocks = candidate
+        if let epoch = framePositionEpoch {
+            positionEpoch = epoch
+        }
+        installRenderState(
+            snapshot,
+            derived: derived,
+            atomicRenderJSON: frame.snapshotJson,
+            tablePresentation: tablePresentation
+        )
+        return derived
+    }
+
+    private func installRenderState(
+        _ snapshot: AtomicRenderSnapshot,
+        derived: EditorV2DerivedUpdate,
+        atomicRenderJSON: String,
+        tablePresentation: EditorTablePresentationSnapshot
+    ) {
         stateRevision = snapshot.stateRevision
         cachedScalarLength = snapshot.scalarLength
         cachedActiveState = snapshot.activeState
         cachedHistoryState = snapshot.historyState
-        cachedViewUpdateJSON = updateJSON
-        cachedAtomicRenderJSON = frame.snapshotJson
-        cachedCommitSnapshotJSON = snapshot.atomicRenderJSON
+        cachedViewUpdate = derived
+        cachedAtomicRenderJSON = atomicRenderJSON
         cachedAtomicRenderSelectionObject = snapshot.renderObject["selection"] as? [String: Any]
-        cachedAtomicRenderDocumentRevision = snapshot.documentRevision
-        cachedSemanticRenderBlocks = candidate
         cachedTablePresentation = tablePresentation
-        if let epoch = snapshot.positionEpoch {
-            positionEpoch = epoch
-        }
         cachedAuthoritativeScalarSelection = snapshot.selection
-        return EditorV2DerivedUpdate(updateJSON: updateJSON, scalarLength: snapshot.scalarLength)
+    }
+
+    func adoptSelectionState(_ selectionState: [String: Any]) -> EditorV2DerivedUpdate? {
+        let stageStarted = PreparedProseInstrumentation.now()
+        defer { PreparedProseInstrumentation.recordTableStage(.adapterAdoption, start: stageStarted) }
+        guard Set(selectionState.keys) == Self.renderStateKeys,
+              let documentRevision = Self.uint64Field(selectionState, "documentVersion"),
+              documentRevision == baseDocumentRevision,
+              documentRevision == installedFrameRevision,
+              documentRevision == cachedAtomicRenderDocumentRevision,
+              let retained = cachedSemanticRenderBlocks
+        else { return nil }
+        var renderObject = selectionState
+        renderObject["renderBlocks"] = NSNull()
+        renderObject["renderPatch"] = [
+            "baseDocumentVersion": String(documentRevision),
+            "startIndex": retained.count,
+            "deleteCount": 0,
+            "renderBlocks": [Any]()
+        ] as [String: Any]
+        guard let snapshot = Self.atomicRenderSnapshot(validatingStateOf: renderObject),
+              snapshot.scalarLength == cachedScalarLength
+        else { return nil }
+        if let selection = renderObject["selection"] as? [String: Any], selection["type"] as? String == "cell",
+           EditorCellSelection.resolve(selection, index: tableIndex) == nil { return nil }
+        guard let atomicData = try? JSONSerialization.data(withJSONObject: renderObject),
+              let atomicRenderJSON = String(data: atomicData, encoding: .utf8),
+              let derived = Self.viewUpdate(
+                  from: snapshot,
+                  renderBlocks: retained,
+                  patchBlocks: [],
+                  strippingViewSelection: false
+              )
+        else { return nil }
+        installRenderState(
+            snapshot,
+            derived: derived,
+            atomicRenderJSON: atomicRenderJSON,
+            tablePresentation: EditorTablePresentationSnapshot(
+                documentRevision: documentRevision,
+                baseDocumentRevision: documentRevision,
+                positionEpoch: positionEpoch,
+                index: tableIndex,
+                changes: TableFrameChanges(fullReset: false, replacedTables: [], removedTables: [], changedCells: [:])
+            )
+        )
+        return derived
     }
 
     func atomicRenderJSON(matchingDocumentRevision documentRevision: UInt64) -> String? {
         guard beginRuntimeOperation() else { return nil }
         defer { endRuntimeOperation() }
         guard cachedAtomicRenderDocumentRevision == documentRevision else { return nil }
-        return cachedCommitSnapshotJSON
+        return cachedAtomicRenderJSON
     }
 
     private func parseExternalReset(_ resetJSON: String) -> (payload: [String: Any], revision: UInt64)? {
@@ -119,13 +229,17 @@ extension EditorV2Adapter {
         parseExternalReset(resetJSON) != nil
     }
 
-    func adoptExternalReset(_ renderJSON: String, resetJSON: String) -> String? {
+    func adoptExternalReset(resetJSON: String) -> String? {
         guard beginRuntimeOperation() else { return nil }
         defer { endRuntimeOperation() }
         guard let intent = parseExternalReset(resetJSON) else { return nil }
         var reset = intent.payload
         let resetRevision = intent.revision
-        guard validateExternalRender(renderJSON), let current = refreshInternal(mirrorSelection: nil) else { return nil }
+        guard !destroyed else {
+            rejectExternalRenderEnvelope("external editor update notice is malformed")
+            return nil
+        }
+        guard let current = refreshInternal(mirrorSelection: nil) else { return nil }
         if baseDocumentRevision == resetRevision {
             tableResetGeneration &+= 1
             return current.updateJSON
@@ -177,29 +291,33 @@ extension EditorV2Adapter {
         }
     }
 
-    func adoptExternalRender(_ renderJSON: String) -> String? {
+    struct ExternalRenderNotice {
+        let documentRevision: UInt64
+        let stateRevision: UInt64?
+    }
+
+    func adoptExternalRender() -> String? {
         guard beginRuntimeOperation() else { return nil }
         defer { endRuntimeOperation() }
         guard !destroyed else {
             rejectExternalRenderEnvelope("external editor update adapter is destroyed")
             return nil
         }
-        guard validateExternalRender(renderJSON) else { return nil }
         guard let update = refreshInternal(mirrorSelection: nil)?.updateJSON else { return nil }
         publishCollaborationCellsIfChanged()
         return update
     }
 
-    func validateExternalRender(_ renderJSON: String) -> Bool {
-        guard beginRuntimeOperation() else { return false }
+    func externalRenderNotice(_ renderJSON: String) -> ExternalRenderNotice? {
+        guard beginRuntimeOperation() else { return nil }
         defer { endRuntimeOperation() }
         guard !destroyed, let data = renderJSON.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              Self.uint64Field(object, "documentVersion") != nil else {
+              let documentRevision = Self.uint64Field(object, "documentVersion") else {
             rejectExternalRenderEnvelope("external editor update notice is malformed")
-            return false
+            return nil
         }
-        return true
+        return ExternalRenderNotice(documentRevision: documentRevision, stateRevision: Self.uint64Field(object, "stateRevision"))
     }
 
     func pinCurrentPositionEpoch(_ documentRevision: UInt64) -> Bool {
@@ -292,21 +410,21 @@ extension EditorV2Adapter {
         return refreshInternal(mirrorSelection: lastSyncedScalarSelection)?.updateJSON
     }
 
-    func currentSelectionStateJSON() -> String? {
+    func currentSelectionState() -> EditorSelectionState? {
         guard hasCurrentSelectionState || currentStateJSON() != nil,
               hasCurrentSelectionState,
               let documentRevision = cachedAtomicRenderDocumentRevision,
               let selection = cachedAtomicRenderSelectionObject,
               let activeState = cachedActiveState,
-              let history = cachedHistoryState,
-              let data = try? JSONSerialization.data(withJSONObject: [
-                  "documentVersion": String(documentRevision),
-                  "selection": selection,
-                  "activeState": activeState,
-                  "historyState": ["canUndo": history.canUndo, "canRedo": history.canRedo]
-              ])
+              let history = cachedHistoryState
         else { return nil }
-        return String(data: data, encoding: .utf8)
+        return EditorSelectionState(
+            documentVersion: String(documentRevision),
+            stateRevision: String(stateRevision),
+            selection: selection,
+            activeState: activeState,
+            historyState: ["canUndo": history.canUndo, "canRedo": history.canRedo]
+        )
     }
 
     private var hasCurrentSelectionState: Bool {
@@ -323,10 +441,8 @@ extension EditorV2Adapter {
     func initialUpdateJSON() -> String? {
         guard beginRuntimeOperation() else { return nil }
         defer { endRuntimeOperation() }
-        guard let update = refreshInternal(mirrorSelection: nil)?.updateJSON,
-              let blocks = cachedSemanticRenderBlocks,
-              let data = update.data(using: .utf8),
-              var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        guard var object = refreshInternal(mirrorSelection: nil)?.update,
+              let blocks = cachedSemanticRenderBlocks else { return nil }
         object["renderBlocks"] = blocks
         object["renderPatch"] = NSNull()
         guard let complete = try? JSONSerialization.data(withJSONObject: object) else { return nil }
@@ -387,10 +503,7 @@ extension EditorV2Adapter {
     func selectionJSON() -> String? {
         guard beginRuntimeOperation() else { return nil }
         defer { endRuntimeOperation() }
-        guard let derived = refreshInternal(mirrorSelection: lastSyncedScalarSelection),
-              let updateData = derived.updateJSON.data(using: .utf8),
-              let update = try? JSONSerialization.jsonObject(with: updateData) as? [String: Any],
-              let selection = update["selection"],
+        guard let selection = refreshInternal(mirrorSelection: lastSyncedScalarSelection)?.update["selection"],
               let data = try? JSONSerialization.data(withJSONObject: selection)
         else {
             return nil
@@ -398,4 +511,52 @@ extension EditorV2Adapter {
         return String(data: data, encoding: .utf8)
     }
 
+}
+
+struct EditorSelectionState {
+    static let activeStateKey = "activeState"
+    static let activeStateRevisionKey = "activeStateRevision"
+
+    let documentVersion: String
+    let stateRevision: String
+    let selection: [String: Any]
+    let activeState: [String: Any]
+    let historyState: [String: Any]
+
+    var update: [String: Any] {
+        update(activeStateKey: Self.activeStateKey, activeStateValue: activeState)
+    }
+
+    func update(activeStateKey: String, activeStateValue: Any) -> [String: Any] {
+        [
+            "documentVersion": documentVersion,
+            "stateRevision": stateRevision,
+            "selection": selection,
+            activeStateKey: activeStateValue,
+            "historyState": historyState
+        ]
+    }
+}
+
+final class SelectionEventActiveStateChannel {
+    private var emittedActiveState: NSDictionary?
+    private var emittedStateRevision: String?
+
+    func update(for state: EditorSelectionState) -> [String: Any] {
+        let activeState = state.activeState as NSDictionary
+        if let emittedStateRevision, emittedActiveState == activeState {
+            return state.update(
+                activeStateKey: EditorSelectionState.activeStateRevisionKey,
+                activeStateValue: emittedStateRevision
+            )
+        }
+        emittedActiveState = activeState
+        emittedStateRevision = state.stateRevision
+        return state.update
+    }
+
+    func reset() {
+        emittedActiveState = nil
+        emittedStateRevision = nil
+    }
 }

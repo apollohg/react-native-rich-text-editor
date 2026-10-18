@@ -421,6 +421,7 @@ extension RichTextEditorViewTests {
         scroll.contentSize = CGSize(width: viewport.width, height: documentHeight)
         let content = UIView(frame: CGRect(origin: .zero, size: scroll.contentSize))
         let background = EditorStyleBoxView()
+        background.box = EditorStyleBox(["backgroundColor": "#fafafaff"])
         content.addSubview(background)
         background.documentBounds = content.bounds
         XCTAssertEqual(background.bounds.size, .zero, "Detached content must have no backing")
@@ -464,5 +465,42 @@ extension RichTextEditorViewTests {
         XCTAssertEqual(background.bounds.height, scroll.bounds.height, "Reattachment restores observations")
         scroll.contentOffset = .zero
         XCTAssertEqual(background.frame.origin, .zero)
+    }
+
+    func testUndecoratedContentStyleAllocatesNoViewportBacking() throws {
+        let editorId = makeV2Editor()
+        defer { destroyV2Editor(id: editorId) }
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 220))
+        let view = RichTextEditorView(frame: window.bounds)
+        view.editorId = editorId
+        window.addSubview(view)
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        view.setContent(html: "<p>Hello</p>")
+        let padded = try XCTUnwrap(EditorTheme.from(json: """
+        {"version":1,"styles":{"content":{"padding":12,"borderRadius":8}}}
+        """))
+        let filled = try XCTUnwrap(EditorTheme.from(json: """
+        {"version":1,"styles":{"content":{"padding":12,"backgroundColor":"#fafafaff"}}}
+        """))
+        let background = view.textView.styleContentView
+
+        func settle() {
+            view.layoutIfNeeded()
+            background.layer.displayIfNeeded()
+        }
+
+        XCTAssertTrue(view.applyTheme(padded))
+        settle()
+        XCTAssertEqual(background.frame, .zero, "A content box that paints nothing must not cover the viewport")
+        XCTAssertNil(background.layer.contents, "An undecorated content box must not allocate a bitmap")
+        XCTAssertTrue(view.applyTheme(filled))
+        settle()
+        XCTAssertEqual(background.frame, view.textView.bounds, "A painted content box covers the visible viewport")
+        XCTAssertNotNil(background.layer.contents)
+        XCTAssertTrue(view.applyTheme(padded))
+        settle()
+        XCTAssertEqual(background.frame, .zero)
+        XCTAssertNil(background.layer.contents, "Dropping the decoration must release the previous bitmap")
     }
 }

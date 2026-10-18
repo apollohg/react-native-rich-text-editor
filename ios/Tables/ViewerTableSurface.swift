@@ -685,6 +685,7 @@ final class ViewerTableSurface {
     func parentImageAttachments(offset: Int, tableOrigin: CGPoint) -> [ViewerImageAttachment] {
         var nextOrdinal = offset
         var attachments: [ViewerImageAttachment] = []
+        var pendingSteps: [() -> Void] = []
         func append(_ layout: PreparedProseLayout, at origin: CGPoint) {
             var attachmentsByID: [String: Int] = [:]
             for (index, attachment) in layout.imageAttachments.enumerated() {
@@ -703,26 +704,38 @@ final class ViewerTableSurface {
                 ))
                 nextOrdinal += 1
             }
-            for block in layout.blocks {
-                if let attachment = block.imageAttachment, let index = attachmentsByID.removeValue(forKey: attachment.id) {
-                    appendAttachment(index)
+            func appendBlocks(from firstBlockIndex: Int) {
+                for blockIndex in firstBlockIndex..<layout.blocks.count {
+                    let block = layout.blocks[blockIndex]
+                    if let attachment = block.imageAttachment, let index = attachmentsByID.removeValue(forKey: attachment.id) {
+                        appendAttachment(index)
+                    }
+                    guard let nested = block.tableSurface else { continue }
+                    let tableBounds = block.tableBounds ?? block.bounds
+                    let nestedOrigin = CGPoint(x: origin.x + tableBounds.minX, y: origin.y + tableBounds.minY)
+                    let imageCells = nested.cells.filter(\.hasImages)
+                    guard !imageCells.isEmpty else { continue }
+                    pendingSteps.append { appendBlocks(from: blockIndex + 1) }
+                    appendCells(imageCells, of: nested, at: nestedOrigin)
+                    return
                 }
-                guard let nested = block.tableSurface else { continue }
-                let tableBounds = block.tableBounds ?? block.bounds
-                append(nested, at: CGPoint(x: origin.x + tableBounds.minX, y: origin.y + tableBounds.minY))
+                for index in layout.imageAttachments.indices { appendAttachment(index) }
             }
-            for index in layout.imageAttachments.indices { appendAttachment(index) }
+            appendBlocks(from: 0)
         }
-        func append(_ surface: ViewerTableSurface, at origin: CGPoint) {
-            for cell in surface.cells where cell.hasImages {
+        func appendCells(_ imageCells: [PreparedViewerTableCell], of surface: ViewerTableSurface, at origin: CGPoint) {
+            for cell in imageCells.reversed() {
                 let frame = surface.frame(ofCell: cell)
-                append(cell.content, at: CGPoint(
-                    x: origin.x + frame.minX + cell.contentOrigin.x,
-                    y: origin.y + frame.minY + cell.contentOrigin.y
-                ))
+                pendingSteps.append {
+                    append(cell.content, at: CGPoint(
+                        x: origin.x + frame.minX + cell.contentOrigin.x,
+                        y: origin.y + frame.minY + cell.contentOrigin.y
+                    ))
+                }
             }
         }
-        append(self, at: tableOrigin)
+        appendCells(cells.filter(\.hasImages), of: self, at: tableOrigin)
+        while let step = pendingSteps.popLast() { step() }
         return attachments
     }
 
@@ -1074,13 +1087,11 @@ enum ViewerTablePresentation {
 
     static func surfaces(in root: PreparedProseLayout) -> [ViewerTableSurface] {
         var surfaces: [ViewerTableSurface] = []
-        func visit(_ layout: PreparedProseLayout) {
-            for surface in layout.blocks.compactMap(\.tableSurface) {
-                surfaces.append(surface)
-                surface.nestedTableCells.forEach { visit($0.content) }
-            }
+        var pending = Array(root.blocks.compactMap(\.tableSurface).reversed())
+        while let surface = pending.popLast() {
+            surfaces.append(surface)
+            pending.append(contentsOf: surface.nestedTableCells.flatMap { $0.content.blocks.compactMap(\.tableSurface) }.reversed())
         }
-        visit(root)
         return surfaces
     }
 
@@ -1169,6 +1180,7 @@ enum ViewerTablePresentation {
         var accessibilityNodes: [ViewerTablePresentedAccessibilityNode] = []
         let canonicalAttachments = Dictionary(uniqueKeysWithValues: root.imageAttachments.map { ($0.id, $0) })
         var emittedImages = Set<String>()
+        var pendingSteps: [() -> Void] = []
 
         func transformed(_ rect: CGRect, by origin: CGPoint) -> CGRect {
             rect.offsetBy(dx: origin.x, dy: origin.y)
@@ -1215,70 +1227,80 @@ enum ViewerTablePresentation {
                 ))
             }
 
-            for (blockIndex, block) in layout.blocks.enumerated() {
-                blocks.append(ViewerTablePresentedBlock(layout: layout, block: block, origin: origin, clip: clip))
-                if let attachment = block.imageAttachment, emittedImages.insert(attachment.id).inserted {
+            func appendBlocks(from firstBlockIndex: Int) {
+                for blockIndex in firstBlockIndex..<layout.blocks.count {
+                    let block = layout.blocks[blockIndex]
+                    blocks.append(ViewerTablePresentedBlock(layout: layout, block: block, origin: origin, clip: clip))
+                    if let attachment = block.imageAttachment, emittedImages.insert(attachment.id).inserted {
+                        images.append(ViewerTablePresentedImage(
+                            attachment: canonicalAttachments[attachment.id] ?? attachment,
+                            sourceIdentity: "\(layout.key.semanticKey):image:\(attachment.id)",
+                            bounds: transformed(attachment.bounds, by: origin),
+                            clip: clip,
+                            layout: layout,
+                            block: block
+                        ))
+                    }
+                    if let atom = block.atomSlot {
+                        atoms.append(ViewerTablePresentedAtom(
+                            atom: atom,
+                            sourceIdentity: "\(layout.key.semanticKey):atom:\(atom.nodeType):\(atom.docPos)",
+                            bounds: transformed(atom.bounds, by: origin),
+                            clip: clip,
+                            layout: layout,
+                            block: block
+                        ))
+                    }
+                    for (_, index) in interactionsByBlock[blockIndex] ?? [] { appendInteraction(index) }
+                    for (_, index) in accessibilityByBlock[blockIndex] ?? [] { appendAccessibility(index) }
+                    guard let surface = block.tableSurface, let tableBounds = block.tableBounds else { continue }
+                    let table = presentTable(
+                        surface,
+                        tableBounds: tableBounds,
+                        origin: origin,
+                        clip: clip,
+                        parentScrollIdentity: parentScrollIdentity
+                    )
+                    tables.append(table)
+                    let hostClip = table.clip
+                    let contentOrigin = CGPoint(x: table.bounds.minX - owner.physicalOffset(for: surface), y: table.bounds.minY)
+                    let windowCells = window.map {
+                        surface.presentationCells(intersecting: $0.offsetBy(dx: -contentOrigin.x, dy: -contentOrigin.y))
+                    } ?? surface.cells
+                    guard !windowCells.isEmpty else { continue }
+                    pendingSteps.append { appendBlocks(from: blockIndex + 1) }
+                    for cell in windowCells.reversed() {
+                        pendingSteps.append {
+                            let presented = present(cell, of: surface, contentOrigin: contentOrigin, clip: hostClip)
+                            cells.append(presented)
+                            appendLayout(
+                                presented.content,
+                                origin: presented.contentBounds.origin,
+                                clip: hostClip.intersection(presented.contentBounds),
+                                parentScrollIdentity: surface.scrollIdentity
+                            )
+                        }
+                    }
+                    return
+                }
+                for attachment in layout.imageAttachments where emittedImages.insert(attachment.id).inserted {
                     images.append(ViewerTablePresentedImage(
                         attachment: canonicalAttachments[attachment.id] ?? attachment,
                         sourceIdentity: "\(layout.key.semanticKey):image:\(attachment.id)",
                         bounds: transformed(attachment.bounds, by: origin),
                         clip: clip,
                         layout: layout,
-                        block: block
+                        block: nil
                     ))
                 }
-                if let atom = block.atomSlot {
-                    atoms.append(ViewerTablePresentedAtom(
-                        atom: atom,
-                        sourceIdentity: "\(layout.key.semanticKey):atom:\(atom.nodeType):\(atom.docPos)",
-                        bounds: transformed(atom.bounds, by: origin),
-                        clip: clip,
-                        layout: layout,
-                        block: block
-                    ))
-                }
-                for (_, index) in interactionsByBlock[blockIndex] ?? [] { appendInteraction(index) }
-                for (_, index) in accessibilityByBlock[blockIndex] ?? [] { appendAccessibility(index) }
-                guard let surface = block.tableSurface, let tableBounds = block.tableBounds else { continue }
-                let table = presentTable(
-                    surface,
-                    tableBounds: tableBounds,
-                    origin: origin,
-                    clip: clip,
-                    parentScrollIdentity: parentScrollIdentity
-                )
-                tables.append(table)
-                let hostClip = table.clip
-                let contentOrigin = CGPoint(x: table.bounds.minX - owner.physicalOffset(for: surface), y: table.bounds.minY)
-                let windowCells = window.map {
-                    surface.presentationCells(intersecting: $0.offsetBy(dx: -contentOrigin.x, dy: -contentOrigin.y))
-                } ?? surface.cells
-                for cell in windowCells {
-                    let presented = present(cell, of: surface, contentOrigin: contentOrigin, clip: hostClip)
-                    cells.append(presented)
-                    appendLayout(
-                        presented.content,
-                        origin: presented.contentBounds.origin,
-                        clip: hostClip.intersection(presented.contentBounds),
-                        parentScrollIdentity: surface.scrollIdentity
-                    )
-                }
+                for index in layout.interactions.indices { appendInteraction(index) }
+                for index in layout.accessibilityNodes.indices { appendAccessibility(index) }
             }
-            for attachment in layout.imageAttachments where emittedImages.insert(attachment.id).inserted {
-                images.append(ViewerTablePresentedImage(
-                    attachment: canonicalAttachments[attachment.id] ?? attachment,
-                    sourceIdentity: "\(layout.key.semanticKey):image:\(attachment.id)",
-                    bounds: transformed(attachment.bounds, by: origin),
-                    clip: clip,
-                    layout: layout,
-                    block: nil
-                ))
-            }
-            for index in layout.interactions.indices { appendInteraction(index) }
-            for index in layout.accessibilityNodes.indices { appendAccessibility(index) }
+            appendBlocks(from: 0)
         }
 
         appendLayout(root, origin: rootOrigin, clip: rootClip, parentScrollIdentity: rootParent)
+        while let step = pendingSteps.popLast() { step() }
         let mountedCells = window.map { window in cells.filter { $0.bounds.intersects(window) } } ?? cells
         return ViewerTablePresentationSnapshot(
             layouts: layouts,

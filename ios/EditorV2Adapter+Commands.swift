@@ -133,7 +133,7 @@ extension EditorV2Adapter {
 
     func commandAtSelection(_ command: [String: Any], anchor: UInt32, head: UInt32) -> String? {
         if nativeOwnerId != nil {
-            var intent = nativeIntent("command", anchor: anchor, head: head)
+            var intent = nativeIntent(Self.commandIntentType, anchor: anchor, head: head)
             intent["command"] = command
             return performNativeIntent(intent)?.updateJSON
         }

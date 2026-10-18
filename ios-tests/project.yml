@@ -78,6 +78,10 @@ targets:
         buildPhase: resources
       - path: ../scripts/tests/prepared-prose-harness-static-fixtures.json
         buildPhase: resources
+      - path: ../scripts/tests/editor-public-theme-fixtures.json
+        buildPhase: resources
+      - path: ../scripts/tests/editor-command-sequences.json
+        buildPhase: resources
     settings:
       base:
         PRODUCT_NAME: NativeEditorTests
@@ -88,6 +92,7 @@ targets:
         BUNDLE_LOADER: $(TEST_HOST)
         INFOPLIST_KEY_CFBundleDisplayName: NativeEditorTests
         SWIFT_OBJC_INTERFACE_HEADER_NAME: ReactNativeProseEditor-Swift.h
+        SWIFT_OBJC_BRIDGING_HEADER: $(SRCROOT)/NativeEditorTests-Bridging-Header.h
         GCC_PREFIX_HEADER: $(SRCROOT)/NativeEditorTests-Prefix.pch
         CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES: YES
         LD_RUNPATH_SEARCH_PATHS:

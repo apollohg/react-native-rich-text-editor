@@ -290,7 +290,7 @@ extension NativePerformanceTests {
         XCTAssertEqual(shortWindowEvidence.filter { $0.phase == "warm" }.count, 1)
         XCTAssertEqual(shortWindowEvidence.filter { $0.phase == "imagesDisabled" }.count, 2)
 
-        let source = try String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("NativePerformanceTests+CollectionHarness.swift"), encoding: .utf8)
+        let source = try repositorySourceText("ios/Tests/NativePerformanceTests+CollectionHarness.swift")
         let start = try XCTUnwrap(source.range(of: "final class PreparedProseCollectionHarness"))
         let end = try XCTUnwrap(source.range(of: "enum PreparedProsePerformanceGates"))
         let harnessSource = String(source[start.lowerBound..<end.lowerBound])

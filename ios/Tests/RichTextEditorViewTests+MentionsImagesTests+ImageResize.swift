@@ -468,7 +468,13 @@ extension RichTextEditorViewTests {
             html: "<p>A longer preceding paragraph</p><img src=\"https://example.com/image.png\"><p>After</p>"
         )
         var patchUpdate = parseJSONObject(update)
-        let blocks = try XCTUnwrap((patchUpdate["renderPatch"] as? [String: Any])?["renderBlocks"] as? [[[String: Any]]])
+        let enginePatch = try XCTUnwrap(patchUpdate["renderPatch"] as? [String: Any])
+        let patchBlocks = try XCTUnwrap(enginePatch["renderBlocks"] as? [[[String: Any]]])
+        let patchStart = try XCTUnwrap(enginePatch["startIndex"] as? Int)
+        let patchDeleteCount = try XCTUnwrap(enginePatch["deleteCount"] as? Int)
+        let previousBlocks = try XCTUnwrap(view.textView.currentRenderBlocks as? [[[String: Any]]])
+        let blocks = Array(previousBlocks[..<patchStart]) + patchBlocks
+            + Array(previousBlocks[(patchStart + patchDeleteCount)...])
         patchUpdate["renderBlocks"] = blocks
         patchUpdate["renderPatch"] = ["startIndex": 0, "deleteCount": 1, "renderBlocks": [blocks[0]]]
         let patchData = try JSONSerialization.data(withJSONObject: patchUpdate)

@@ -38,10 +38,45 @@ private final class PreparedCellShapeReference {
     init(_ shape: PreparedCellShape) { self.shape = shape }
 }
 
+struct PreparedCellGeometryDigest {
+    fileprivate(set) var atoms: [String] = []
+    fileprivate(set) var images: [String] = []
+
+    fileprivate mutating func append(_ block: ViewerBlock, theme: PreparedProseTheme) {
+        for inline in block.inlines {
+            guard case let .atom(nodeType, docPos, attrsJSON, _) = inline else { continue }
+            if theme.viewerAtoms?.nodeTypes.contains(nodeType) == true {
+                let measurement = theme.viewerAtoms?.measurements[String(docPos)]
+                let measuredWidth = measurement?["width"] ?? -1
+                let measuredHeight = measurement?["height"] ?? theme.viewerAtoms?.estimatedHeights[nodeType] ?? 0
+                atoms.append("\(nodeType):\(measuredWidth.bitPattern):\(measuredHeight.bitPattern)")
+            }
+            if let image = ViewerImageAttachment.sourceAndDeclaredSize(nodeType: nodeType, docPos: docPos, attrsJSON: attrsJSON) {
+                let resolved = image.declaredSize ?? ViewerImageIntrinsicStore.shared.size(for: image.id, source: image.source)
+                images.append("\(Double(resolved?.width ?? 0).bitPattern):\(Double(resolved?.height ?? 0).bitPattern)")
+            }
+        }
+    }
+}
+
+private struct PreparedCellGeometryDigestKey: Hashable {
+    let semanticKey: String
+    let atomGeneration: String?
+    let atomRevision: String?
+
+    init(_ document: ViewerDocument, theme: PreparedProseTheme) {
+        semanticKey = document.semanticKey
+        atomGeneration = theme.viewerAtoms?.generation
+        atomRevision = theme.viewerAtoms?.revision
+    }
+}
+
 final class PreparedCellShapeBuildContext {
     private let catalog: PreparedCellShapeCatalog
     private var resolved: [PreparedCellShapeKey: PreparedCellShapeReference] = [:]
     private var pins: [ObjectIdentifier: PreparedCellShapeReference] = [:]
+    private var geometryDigests: [PreparedCellGeometryDigestKey: PreparedCellGeometryDigest] = [:]
+    private(set) var geometryBlockVisitsForTesting = 0
     private var closed = false
 
     fileprivate init(
@@ -103,6 +138,25 @@ final class PreparedCellShapeBuildContext {
         catalog.releaseBuildPins(pins.values.compactMap(\.shape))
         pins.removeAll()
         resolved.removeAll()
+        geometryDigests.removeAll()
+    }
+
+    func geometryDigest(of document: ViewerDocument, theme: PreparedProseTheme) -> PreparedCellGeometryDigest {
+        if let digest = geometryDigests[PreparedCellGeometryDigestKey(document, theme: theme)] { return digest }
+        var collected = PreparedCellGeometryDigest()
+        var starts: [String: (atoms: Int, images: Int)] = [:]
+        document.forEachBlockInSourceOrder({ current, index, block in
+            if index == 0 { starts[current.semanticKey] = (collected.atoms.count, collected.images.count) }
+            geometryBlockVisitsForTesting += 1
+            collected.append(block, theme: theme)
+        }, finishing: { current in
+            let start = starts[current.semanticKey] ?? (collected.atoms.count, collected.images.count)
+            geometryDigests[PreparedCellGeometryDigestKey(current, theme: theme)] = PreparedCellGeometryDigest(
+                atoms: Array(collected.atoms[start.atoms...]),
+                images: Array(collected.images[start.images...])
+            )
+        })
+        return collected
     }
 
     fileprivate func rememberPinned(_ shape: PreparedCellShape) {
@@ -317,7 +371,7 @@ private extension PreparedProseLayout {
             imageAttachments: imageAttachments.map {
                 ViewerImageAttachment(ordinal: $0.ordinal, id: "", source: "", bounds: $0.bounds, declaredSize: $0.declaredSize)
             },
-            retainedBytes: retainedBytes,
+            retainedBytes: ownRetainedBytes + neutralBlocks.reduce(0) { $0 + ($1.tableSurface?.retainedBytes ?? 0) },
             decorations: decorations,
             highlightingRequest: nil,
             highlightingResolved: false
@@ -358,38 +412,16 @@ func preparedCellShapeKey(
     document: ViewerDocument,
     widthPixels: Int,
     theme: PreparedProseTheme,
-    key: ProseLayoutKey
+    key: ProseLayoutKey,
+    context: PreparedCellShapeBuildContext
 ) -> PreparedCellShapeKey {
-    var atoms: [String] = []
-    var images: [String] = []
-    func append(_ current: ViewerDocument) {
-        for block in current.blocks {
-            for inline in block.inlines {
-                guard case let .atom(nodeType, docPos, attrsJSON, _) = inline else { continue }
-                if theme.viewerAtoms?.nodeTypes.contains(nodeType) == true {
-                    let measurement = theme.viewerAtoms?.measurements[String(docPos)]
-                    let measuredWidth = measurement?["width"] ?? -1
-                    let measuredHeight = measurement?["height"] ?? theme.viewerAtoms?.estimatedHeights[nodeType] ?? 0
-                    atoms.append("\(nodeType):\(measuredWidth.bitPattern):\(measuredHeight.bitPattern)")
-                }
-                if let image = ViewerImageAttachment.sourceAndDeclaredSize(nodeType: nodeType, docPos: docPos, attrsJSON: attrsJSON) {
-                    let resolved = image.declaredSize ?? ViewerImageIntrinsicStore.shared.size(for: image.id, source: image.source)
-                    images.append("\(Double(resolved?.width ?? 0).bitPattern):\(Double(resolved?.height ?? 0).bitPattern)")
-                }
-            }
-            guard let table = block.tableSurfaceSource, let tableKey = block.tableKey else { continue }
-            for cell in table.cells {
-                if let child = try? current.cellDocument(for: cell, in: tableKey) { append(child) }
-            }
-        }
-    }
-    append(document)
+    let geometry = context.geometryDigest(of: document, theme: theme)
     return PreparedCellShapeKey(
         contentKey: contentKey,
         widthPixels: widthPixels,
         scaleBits: key.displayScaleBits,
         styleDigest: "\(theme.cellShapeStyleDigest):\(key.nativeFontRevision):\(key.fontEnvironmentRevision):\(Double(theme.fontScale).bitPattern):\(theme.tableDirection?.rawValue ?? "")",
-        atomGeometryDigest: atoms.joined(separator: "|"),
-        imageGeometryDigest: images.joined(separator: "|")
+        atomGeometryDigest: geometry.atoms.joined(separator: "|"),
+        imageGeometryDigest: geometry.images.joined(separator: "|")
     )
 }

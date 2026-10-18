@@ -14,6 +14,7 @@ extension EditorV2Adapter {
     /// positions the way the legacy engine did).
     struct EditorV2DerivedUpdate {
         let updateJSON: String
+        let update: [String: Any]
         let scalarLength: UInt32
     }
 
@@ -23,8 +24,6 @@ extension EditorV2Adapter {
 
     struct AtomicRenderSnapshot {
         let renderObject: [String: Any]
-        /// The JS commit contract: exactly `atomicRenderSnapshotKeys`, never `positionEpoch`.
-        let atomicRenderJSON: String
         let viewUpdateJSON: String
         let documentRevision: UInt64
         let stateRevision: UInt64
@@ -33,7 +32,6 @@ extension EditorV2Adapter {
         let activeState: [String: Any]
         let historyState: (canUndo: Bool, canRedo: Bool)
         let documentIsEmpty: Bool
-        let positionEpoch: UInt64?
     }
 
     static func exactBool(_ value: Any?) -> Bool? {
@@ -408,14 +406,21 @@ extension EditorV2Adapter {
 
     static func parseAtomicRenderSnapshot(_ json: String) -> AtomicRenderSnapshot? {
         guard let data = json.data(using: .utf8),
-              var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              Set(object.keys).isSubset(of: atomicRenderSnapshotKeys.union(["positionEpoch"])),
-              atomicRenderSnapshotKeys.isSubset(of: Set(object.keys)),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              Set(object.keys) == atomicRenderSnapshotKeys,
               let renderBlocks = object["renderBlocks"],
               let renderPatch = object["renderPatch"],
               (isValidRenderBlocks(renderBlocks) && renderPatch is NSNull)
-                || (renderBlocks is NSNull && !(renderPatch is NSNull) && isValidRenderPatch(renderPatch)),
-              let selectionValue = object["selection"],
+                || (renderBlocks is NSNull && !(renderPatch is NSNull) && isValidRenderPatch(renderPatch))
+        else {
+            return nil
+        }
+        return atomicRenderSnapshot(validatingStateOf: object)
+    }
+
+    static func atomicRenderSnapshot(validatingStateOf renderObject: [String: Any]) -> AtomicRenderSnapshot? {
+        var object = renderObject
+        guard let selectionValue = object["selection"],
               isValidSelection(selectionValue),
               let activeState = object["activeState"] as? [String: Any],
               isValidActiveState(activeState),
@@ -432,29 +437,6 @@ extension EditorV2Adapter {
         }
 
         let selection = scalarSelection(from: selectionValue)
-        let positionEpoch: UInt64?
-        if object.keys.contains("positionEpoch") {
-            guard let value = object["positionEpoch"] as? String,
-                  let parsed = UInt64(value), String(parsed) == value
-            else {
-                return nil
-            }
-            positionEpoch = parsed
-        } else {
-            positionEpoch = nil
-        }
-        object.removeValue(forKey: "positionEpoch")
-        let atomicRenderJSON: String
-        if positionEpoch == nil {
-            atomicRenderJSON = json
-        } else {
-            guard let atomicData = try? JSONSerialization.data(withJSONObject: object),
-                  let serialized = String(data: atomicData, encoding: .utf8)
-            else {
-                return nil
-            }
-            atomicRenderJSON = serialized
-        }
         object.removeValue(forKey: "scalarLength")
         guard let viewData = try? JSONSerialization.data(withJSONObject: object),
               let viewUpdateJSON = String(data: viewData, encoding: .utf8)
@@ -463,7 +445,6 @@ extension EditorV2Adapter {
         }
         return AtomicRenderSnapshot(
             renderObject: object,
-            atomicRenderJSON: atomicRenderJSON,
             viewUpdateJSON: viewUpdateJSON,
             documentRevision: documentRevision,
             stateRevision: stateRevision,
@@ -471,8 +452,7 @@ extension EditorV2Adapter {
             selection: selection,
             activeState: activeState,
             historyState: (canUndo, canRedo),
-            documentIsEmpty: documentIsEmpty,
-            positionEpoch: positionEpoch
+            documentIsEmpty: documentIsEmpty
         )
     }
 

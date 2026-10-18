@@ -155,6 +155,21 @@ struct AtomRenderConfiguration: Equatable {
 /// ```
 final class RenderBridge {
     static let rootTableAnchor = "\u{200B}"
+    static let styledParagraphNodeType = "paragraph"
+    static let renderElementTypeKey: NSString = "type"
+    private static let rootTableElementType: NSString = "table"
+    private static let rootTableIDKey: NSString = "tableId"
+
+    static func rootTableID(of element: NSDictionary) -> String? {
+        guard rootTableElementType.isEqual(element.object(forKey: renderElementTypeKey)) else { return nil }
+        return element.object(forKey: rootTableIDKey) as? String
+    }
+
+    private struct ResolvedBlockTextStyle {
+        let style: EditorTextStyle
+        let font: UIFont
+        let color: UIColor
+    }
 
     // MARK: - Public API
 
@@ -241,20 +256,22 @@ final class RenderBridge {
     ///   - baseFont: The default font for unstyled text.
     ///   - textColor: The default text color.
     /// - Returns: The rendered attributed string.
-    static func renderElements(
-        fromArray elements: [[String: Any]],
+    static func renderElements<Elements: RandomAccessCollection>(
+        fromArray elements: Elements,
         baseFont: UIFont,
         textColor: UIColor,
         theme: EditorTheme? = nil,
         atomConfiguration: AtomRenderConfiguration? = nil,
         rootTableIDs: Set<String> = [],
         blockRangeObserver: ((Int, NSRange) -> Void)? = nil
-    ) -> NSAttributedString {
+    ) -> NSAttributedString where Elements.Element == [String: Any], Elements.Index == Int {
         let result = NSMutableAttributedString()
         var blockStack: [BlockContext] = []
         var isFirstBlock = true
         var pendingTrailingParagraphSpacing: CGFloat?
         var atomOccurrences: [String: Int] = [:]
+        var resolvedBlockTextStyles: [[String]: ResolvedBlockTextStyle] = [:]
+        var fontEnvironmentRevision = ViewerFontEnvironment.shared.revision
 
         for (elementIndex, element) in elements.enumerated() {
             guard let type = element["type"] as? String else { continue }
@@ -297,16 +314,36 @@ final class RenderBridge {
                 let text = element["text"] as? String ?? ""
                 let marks = element["marks"] as? [Any] ?? []
                 let isCodeBlock = blockStack.last?.nodeType == "codeBlock"
-                let blockFont = resolvedFont(
-                    for: blockStack,
-                    baseFont: baseFont,
-                    theme: theme
-                )
-                let blockColor = resolvedTextColor(
-                    for: blockStack,
-                    textColor: textColor,
-                    theme: theme
-                )
+                let blockFont: UIFont
+                let blockColor: UIColor
+                let blockTextStyle: EditorTextStyle?
+                if let sheet = theme?.styleSheet {
+                    let currentFontRevision = ViewerFontEnvironment.shared.revision
+                    if currentFontRevision != fontEnvironmentRevision {
+                        resolvedBlockTextStyles.removeAll(keepingCapacity: true)
+                        fontEnvironmentRevision = currentFontRevision
+                    }
+                    let ancestry = blockStack.map(\.nodeType)
+                    let resolved: ResolvedBlockTextStyle
+                    if let cached = resolvedBlockTextStyles[ancestry] {
+                        resolved = cached
+                    } else {
+                        let style = sheet.textStyle(blockStack.last?.nodeType ?? "paragraph",
+                            ancestors: blockStack.dropLast().map(\.nodeType))
+                        resolved = ResolvedBlockTextStyle(style: style,
+                            font: resolvedFont(for: blockStack, baseFont: baseFont,
+                                theme: theme, blockTextStyle: style),
+                            color: style.color ?? textColor)
+                        resolvedBlockTextStyles[ancestry] = resolved
+                    }
+                    blockFont = resolved.font
+                    blockColor = resolved.color
+                    blockTextStyle = resolved.style
+                } else {
+                    blockFont = resolvedFont(for: blockStack, baseFont: baseFont, theme: theme)
+                    blockColor = resolvedTextColor(for: blockStack, textColor: textColor, theme: theme)
+                    blockTextStyle = nil
+                }
                 var baseAttrs = attributesForMarks(
                     marks,
                     baseFont: blockFont,
@@ -338,7 +375,8 @@ final class RenderBridge {
                     to: baseAttrs,
                     blockStack: blockStack,
                     theme: theme,
-                    blockBaseFont: blockFont
+                    blockBaseFont: blockFont,
+                    blockTextStyle: blockTextStyle
                 )
                 let attributedText = NSAttributedString(string: text, attributes: attrs)
                 result.append(
@@ -646,7 +684,7 @@ final class RenderBridge {
     }
 
     static func renderBlocks(
-        fromArray blocks: [[[String: Any]]],
+        fromArray blocks: [[NSDictionary]],
         startIndex: Int = 0,
         includeLeadingInterBlockSeparator: Bool = false,
         includeTrailingInterBlockSeparator: Bool = false,
@@ -656,20 +694,21 @@ final class RenderBridge {
         atomConfiguration: AtomRenderConfiguration? = nil,
         rootTableIDs: Set<String> = []
     ) -> NSAttributedString {
-        var flattened: [[String: Any]] = []
-        flattened.reserveCapacity(blocks.reduce(0) { $0 + $1.count })
-
+        var located: [(element: NSDictionary, topLevelChildIndex: Int)] = []
+        located.reserveCapacity(blocks.reduce(0) { $0 + $1.count })
         for (offset, block) in blocks.enumerated() {
-            let topLevelChildIndex = startIndex + offset
             for element in block {
-                var tagged = element
-                tagged["topLevelChildIndex"] = topLevelChildIndex
-                flattened.append(tagged)
+                located.append((element, startIndex + offset))
             }
+        }
+        let tagged = located.lazy.map { entry -> [String: Any] in
+            var element = entry.element as? [String: Any] ?? [:]
+            element["topLevelChildIndex"] = entry.topLevelChildIndex
+            return element
         }
 
         let renderedBlocks = renderElements(
-            fromArray: flattened,
+            fromArray: tagged,
             baseFont: baseFont,
             textColor: textColor,
             theme: theme,
@@ -685,11 +724,21 @@ final class RenderBridge {
 
         let result = NSMutableAttributedString()
         if needsLeadingInterBlockSeparator {
+            let leadingBlockStack: [BlockContext]
+            if theme?.styleSheet != nil, let first = blocks.first?.first,
+               first["type"] as? String == "blockStart",
+               first["nodeType"] as? String == styledParagraphNodeType {
+                leadingBlockStack = [BlockContext(nodeType: styledParagraphNodeType,
+                    depth: jsonUInt8(first["depth"]), listContext: first["listContext"] as? [String: Any],
+                    topLevelChildIndex: startIndex)]
+            } else {
+                leadingBlockStack = []
+            }
             result.append(
                 interBlockNewline(
                     baseFont: baseFont,
                     textColor: textColor,
-                    blockStack: [],
+                    blockStack: leadingBlockStack,
                     theme: theme,
                     topLevelChildIndex: startIndex
                 )

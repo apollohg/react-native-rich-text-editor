@@ -871,6 +871,9 @@ final class TablePerformanceTests: XCTestCase {
         defer { clock.close(); clock = nil }
         let host = try EditorHost(viewport: sceneViewport())
         defer { host.close() }
+        XCTAssertTrue(host.view.applyTheme(try XCTUnwrap(EditorTheme.from(json: """
+        {"version":1,"styles":{"content":{"backgroundColor":"#fafafaff"}}}
+        """))))
         try host.load(Fixture(rows: 1_000, columns: 20, rich: true).source())
         let background = host.view.textView.styleContentView
         XCTAssertFalse(background.isOpaque, "A transparent or rounded background must clear its backing")

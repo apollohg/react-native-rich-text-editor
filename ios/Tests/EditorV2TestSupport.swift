@@ -45,3 +45,23 @@ func makeV2Editor(
 func destroyV2Editor(id: UInt64) {
     EditorV2Registry.destroyPair(forLegacyId: id)
 }
+
+private let repositoryRootDepthFromTestSupport = 3
+
+func repositorySourceText(_ relativePath: String) throws -> String {
+    let root = (0..<repositoryRootDepthFromTestSupport).reduce(URL(fileURLWithPath: #filePath)) { url, _ in
+        url.deletingLastPathComponent()
+    }
+    guard FileManager.default.fileExists(atPath: root.path) else {
+        throw XCTSkip("Repository sources at \(root.path) are unreachable from this test host; source contracts run on the simulator only.")
+    }
+    return try String(contentsOf: root.appendingPathComponent(relativePath), encoding: .utf8)
+}
+
+func nestedTablesDocumentSource(depth: Int, leafSource: String, columnWidth: Int? = nil) -> String {
+    let cellAttributes = columnWidth.map { #""attrs":{"colwidth":[\#($0)]},"# } ?? ""
+    let tablePrefix = #"{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell",\#(cellAttributes)"content":["#
+    let tableSuffix = "]}]}]}"
+    return #"{"type":"doc","content":["# + String(repeating: tablePrefix, count: depth)
+        + leafSource + String(repeating: tableSuffix, count: depth) + "]}"
+}

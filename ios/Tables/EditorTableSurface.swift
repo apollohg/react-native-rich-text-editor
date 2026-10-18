@@ -1537,6 +1537,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         displayScale: CGFloat,
         textView: EditorTextView
     ) -> [String: Entry] {
+        guard !tableIDs.isEmpty else { return [:] }
         let layoutStarted = PreparedProseInstrumentation.now()
         defer { PreparedProseInstrumentation.laidOut(layoutStarted, generation: "editor-table-\(presentation.documentRevision)") }
         let appearanceDigest = "editor-table-\(appearanceRevision)-\(textView.renderAppearanceRevision)"
@@ -1677,7 +1678,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         textView.traitCollection.performAsCurrent {
             entries = prepareEntries(
                 presentation,
-                tableIDs: anchorTableIDs(in: textView),
+                tableIDs: anchorTableIDs(in: textView, presentation: presentation),
                 width: width,
                 displayScale: displayScale(for: textView),
                 textView: textView
@@ -1748,8 +1749,11 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         return anchors
     }
 
-    private func anchorTableIDs(in textView: EditorTextView) -> Set<String> {
-        guard textView.textStorage.length > 0 else { return [] }
+    private func anchorTableIDs(
+        in textView: EditorTextView,
+        presentation: EditorV2Adapter.EditorTablePresentationSnapshot
+    ) -> Set<String> {
+        guard !presentation.index.rootExtents.isEmpty, textView.textStorage.length > 0 else { return [] }
         var tableIDs = Set<String>()
         textView.textStorage.enumerateAttribute(
             RenderBridgeAttributes.rootTableMarker,

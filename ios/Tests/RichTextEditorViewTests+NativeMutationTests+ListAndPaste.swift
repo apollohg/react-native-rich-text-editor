@@ -26,8 +26,8 @@ extension RichTextEditorViewTests {
         )
     }
 
-    func testBackspaceAtListItemStartAfterNestedListUnwrapsIntoParagraph() {
-        for tag in ["ul", "ol"] {
+    func testBackspaceAtListItemStartAfterNestedListUnwrapsIntoParagraph() throws {
+        for (tag, lastText) in [("ul", "Last"), ("ol", "Last"), ("ul", "😀Last"), ("ol", "😀Last")] {
             let editorId = makeV2Editor()
             defer { destroyV2Editor(id: editorId) }
             let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
@@ -37,19 +37,33 @@ extension RichTextEditorViewTests {
                 window.isHidden = true
             }
             view.editorId = editorId
-            view.setContent(html: "<\(tag)><li><p>Parent</p><\(tag)><li><p>Nested</p></li></\(tag)></li><li><p>Last</p></li></\(tag)>")
-            let lastRange = (view.textView.textStorage.string as NSString).range(of: "Last")
+            view.setContent(html: "<\(tag)><li><p>Parent</p><\(tag)><li><p>Nested</p></li></\(tag)></li><li><p>\(lastText)</p></li></\(tag)>")
+            let lastRange = (view.textView.textStorage.string as NSString).range(of: lastText)
             XCTAssertNotEqual(lastRange.location, NSNotFound)
+            let marker = try XCTUnwrap(PositionBridge.virtualListMarker(
+                atUtf16Offset: lastRange.location, in: view.textView))
+            XCTAssertEqual(marker.paragraphStartUtf16, lastRange.location)
+            XCTAssertEqual(marker.scalarLength, tag == "ol" ? 3 : 2)
             setCollapsedSelection(in: view.textView, utf16Offset: lastRange.location)
             flushMainQueue()
             view.textView.deleteBackward()
 
-            XCTAssertEqual(
-                EditorV2Shadow.getHtml(id: editorId),
-                "<\(tag)><li><p>Parent</p><\(tag)><li><p>Nested</p></li></\(tag)></li></\(tag)><p>Last</p>"
-            )
+            let unwrapped = "<\(tag)><li><p>Parent</p><\(tag)><li><p>Nested</p></li></\(tag)></li></\(tag)><p>\(lastText)</p>"
+            XCTAssertEqual(EditorV2Shadow.getHtml(id: editorId), unwrapped)
+            XCTAssertEqual(view.textView.textStorage.string, "Parent\nNested\n\(lastText)")
+            let paragraphStart = (view.textView.textStorage.string as NSString).range(of: lastText).location
+            assertSelectedUtf16Range(in: view.textView, NSRange(location: paragraphStart, length: 0))
+            XCTAssertNil(PositionBridge.virtualListMarker(atUtf16Offset: paragraphStart, in: view.textView),
+                "The unwrapped paragraph must no longer have a virtual list marker")
+
             view.textView.insertText("!")
-            XCTAssertTrue(EditorV2Shadow.getHtml(id: editorId).contains("<p>!Last</p>"))
+            XCTAssertEqual(EditorV2Shadow.getHtml(id: editorId),
+                "<\(tag)><li><p>Parent</p><\(tag)><li><p>Nested</p></li></\(tag)></li></\(tag)><p>!\(lastText)</p>")
+            assertSelectedUtf16Range(in: view.textView, NSRange(location: paragraphStart + 1, length: 0))
+            view.textView.deleteBackward()
+            XCTAssertEqual(EditorV2Shadow.getHtml(id: editorId), unwrapped,
+                "Interior backspace must delete the typed character without changing the list or Unicode text")
+            assertSelectedUtf16Range(in: view.textView, NSRange(location: paragraphStart, length: 0))
         }
     }
 

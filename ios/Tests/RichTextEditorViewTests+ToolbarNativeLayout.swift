@@ -597,4 +597,204 @@ extension RichTextEditorViewTests {
         )
     }
 
+    private enum ToolbarConfigurationUpdateFixture {
+        static let initialHTML = "<p>base</p>"
+        static let baseText = "base"
+        static let boldMark = "bold"
+        static let symbolKey = "configuration-symbol"
+        static let glyphKey = "configuration-glyph"
+        static let typedText = "X"
+        static let markedText = "Y"
+        static let idleColor = "#123456"
+        static let activeColor = "#456789"
+        static let activeBackground = "#56789a"
+        static let updatedFontSize: CGFloat = 24
+        static let contentInsets = NSDirectionalEdgeInsets(top: 3, leading: 5, bottom: 7, trailing: 11)
+        static let handlerInsets = NSDirectionalEdgeInsets(top: 13, leading: 17, bottom: 19, trailing: 23)
+        static let imagePadding: CGFloat = 9
+        static let itemsJSON = """
+        [
+            {"type":"mark","key":"configuration-symbol","mark":"bold","label":"Symbol","icon":{"type":"platform","ios":{"type":"sfSymbol","name":"bold"}}},
+            {"type":"mark","key":"configuration-glyph","mark":"bold","label":"Glyph","icon":{"type":"glyph","text":"B"}}
+        ]
+        """
+        static let updatedThemeJSON = """
+        {"toolbar":{"appearance":"native","buttonColor":"#123456","buttonActiveColor":"#456789","buttonActiveBackgroundColor":"#56789a","buttonIconSize":24}}
+        """
+    }
+
+    private func withMountedToolbarConfiguration(
+        _ body: (NativeEditorExpoView, EditorV2Adapter) throws -> Void
+    ) throws {
+        let editorId = makeV2Editor()
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let view = NativeEditorExpoView()
+        let window = hostNativeEditorExpoView(view)
+        view.frame = window.bounds
+        defer {
+            if #available(iOS 15.0, *) {
+                for binding in view.accessoryToolbar.buttonBindings {
+                    binding.button.configurationUpdateHandler = nil
+                }
+            }
+            _ = view.richTextView.textView.resignFirstResponder()
+            view.setEditorId(0)
+            view.removeFromSuperview()
+            window.isHidden = true
+        }
+        view.setEditorId(editorId)
+        view.setToolbarButtonsJson(ToolbarConfigurationUpdateFixture.itemsJSON)
+        view.richTextView.setContent(html: ToolbarConfigurationUpdateFixture.initialHTML)
+        view.layoutIfNeeded()
+        let input = view.richTextView.textView
+        input.inputView = UIView(frame: .zero)
+        input.autocorrectionType = .no
+        input.spellCheckingType = .no
+        input.autocapitalizationType = .none
+        XCTAssertTrue(input.becomeFirstResponder())
+        setCollapsedSelection(in: input, utf16Offset: ToolbarConfigurationUpdateFixture.baseText.utf16.count)
+        let accessoryMounted = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            input.isFirstResponder && view.accessoryToolbar.window != nil
+        }, object: view.accessoryToolbar)
+        wait(for: [accessoryMounted], timeout: MountedEditorTestFixture.releaseTimeout)
+        view.layoutIfNeeded()
+        XCTAssertTrue(input.inputAccessoryView === view.accessoryToolbar)
+        XCTAssertNotNil(view.accessoryToolbar.window, "The configuration checks must exercise the mounted accessory")
+        try body(view, adapter)
+    }
+
+    func testMountedToolbarPreservesConfigurationFieldsDuringHighlightedNativeInput() throws {
+        guard #available(iOS 15.0, *) else { return }
+        try withMountedToolbarConfiguration { view, adapter in
+            let toolbar = view.accessoryToolbar
+            let input = view.richTextView.textView
+            let symbolIndex = try XCTUnwrap(toolbar.buttonBindings.firstIndex { $0.item.key == ToolbarConfigurationUpdateFixture.symbolKey })
+            let glyphIndex = try XCTUnwrap(toolbar.buttonBindings.firstIndex { $0.item.key == ToolbarConfigurationUpdateFixture.glyphKey })
+            let symbol = toolbar.buttonBindings[symbolIndex].button
+            let glyph = toolbar.buttonBindings[glyphIndex].button
+            for button in [symbol, glyph] {
+                XCTAssertNil(button.configurationUpdateHandler)
+                var configuration = try XCTUnwrap(button.configuration)
+                configuration.contentInsets = ToolbarConfigurationUpdateFixture.contentInsets
+                configuration.imagePadding = ToolbarConfigurationUpdateFixture.imagePadding
+                button.configuration = configuration
+            }
+            symbol.isHighlighted = true
+            defer { symbol.isHighlighted = false }
+            symbol.setNeedsUpdateConfiguration()
+            flushMainQueue()
+            input.insertText(ToolbarConfigurationUpdateFixture.typedText)
+            XCTAssertEqual(adapter.documentHtml(), "<p>baseX</p>")
+            XCTAssertTrue(view.toolbarState.canUndo, "The mounted input must deliver genuine toolbar state updates")
+            symbol.sendActions(for: .touchUpInside)
+            XCTAssertEqual(view.toolbarState.marks[ToolbarConfigurationUpdateFixture.boldMark], true)
+            view.setThemeJson(ToolbarConfigurationUpdateFixture.updatedThemeJSON)
+            symbol.setNeedsUpdateConfiguration()
+            flushMainQueue()
+            input.insertText(ToolbarConfigurationUpdateFixture.markedText)
+            XCTAssertEqual(adapter.documentHtml(), "<p>baseX<strong>Y</strong></p>")
+            input.deleteBackward()
+            XCTAssertEqual(adapter.documentHtml(), "<p>baseX</p>")
+            XCTAssertEqual(input.selectedRange, NSRange(location: (ToolbarConfigurationUpdateFixture.baseText + ToolbarConfigurationUpdateFixture.typedText).utf16.count, length: 0))
+            for button in [symbol, glyph] {
+                let configuration = try XCTUnwrap(button.configuration)
+                let insets = ToolbarConfigurationUpdateFixture.contentInsets
+                XCTAssertEqual(configuration.contentInsets.top, insets.top)
+                XCTAssertEqual(configuration.contentInsets.leading, insets.leading)
+                XCTAssertEqual(configuration.contentInsets.bottom, insets.bottom)
+                XCTAssertEqual(configuration.contentInsets.trailing, insets.trailing)
+                XCTAssertEqual(configuration.imagePadding, ToolbarConfigurationUpdateFixture.imagePadding)
+                XCTAssertEqual(button.isSelected, view.toolbarState.marks[ToolbarConfigurationUpdateFixture.boldMark] == true)
+                XCTAssertEqual(button.accessibilityTraits.contains(.selected), button.isSelected)
+            }
+            let active = view.toolbarState.marks[ToolbarConfigurationUpdateFixture.boldMark] == true
+            let expectedForeground = EditorTheme.color(from: active ? ToolbarConfigurationUpdateFixture.activeColor : ToolbarConfigurationUpdateFixture.idleColor)
+            XCTAssertEqual(toolbar.buttonPaintedForegroundColorForTesting(symbolIndex), expectedForeground)
+            XCTAssertEqual(toolbar.buttonPaintedForegroundColorForTesting(glyphIndex), expectedForeground)
+            XCTAssertEqual(toolbar.buttonFontSizeForTesting(glyphIndex), ToolbarConfigurationUpdateFixture.updatedFontSize)
+            XCTAssertNotNil(symbol.image(for: .normal))
+            XCTAssertEqual(glyph.title(for: .normal), "B")
+            XCTAssertTrue(input.isFirstResponder)
+        }
+    }
+
+    func testMountedToolbarPreservesHandlerChangesAndUnconfiguredLegacyButton() throws {
+        guard #available(iOS 15.0, *) else { return }
+        try withMountedToolbarConfiguration { view, adapter in
+            let toolbar = view.accessoryToolbar
+            let input = view.richTextView.textView
+            let symbolIndex = try XCTUnwrap(toolbar.buttonBindings.firstIndex { $0.item.key == ToolbarConfigurationUpdateFixture.symbolKey })
+            let glyphIndex = try XCTUnwrap(toolbar.buttonBindings.firstIndex { $0.item.key == ToolbarConfigurationUpdateFixture.glyphKey })
+            let symbol = toolbar.buttonBindings[symbolIndex].button
+            let glyph = toolbar.buttonBindings[glyphIndex].button
+            let handlerSeededConfiguration = expectation(description: "The mounted button executes its configuration handler")
+            var didSeedHandlerConfiguration = false
+            symbol.configurationUpdateHandler = { button in
+                guard var configuration = button.configuration else {
+                    XCTFail("The handler's symbol button must remain configured")
+                    return
+                }
+                if didSeedHandlerConfiguration {
+                    XCTAssertEqual(configuration.contentInsets.leading, ToolbarConfigurationUpdateFixture.handlerInsets.leading,
+                        "Later callbacks must see the handler-owned field, rather than repair a stale configuration copy")
+                    XCTAssertEqual(configuration.imagePadding, ToolbarConfigurationUpdateFixture.imagePadding)
+                } else {
+                    didSeedHandlerConfiguration = true
+                    configuration.contentInsets = ToolbarConfigurationUpdateFixture.handlerInsets
+                    configuration.imagePadding = ToolbarConfigurationUpdateFixture.imagePadding
+                    button.configuration = configuration
+                    handlerSeededConfiguration.fulfill()
+                }
+            }
+            glyph.configuration = nil
+            symbol.setNeedsUpdateConfiguration()
+            wait(for: [handlerSeededConfiguration], timeout: MountedEditorTestFixture.releaseTimeout)
+            view.setThemeJson(ToolbarConfigurationUpdateFixture.updatedThemeJSON)
+            symbol.sendActions(for: .touchUpInside)
+            input.insertText(ToolbarConfigurationUpdateFixture.markedText)
+            XCTAssertEqual(adapter.documentHtml(), "<p>base<strong>Y</strong></p>")
+            let configuration = try XCTUnwrap(symbol.configuration)
+            let insets = ToolbarConfigurationUpdateFixture.handlerInsets
+            XCTAssertEqual(configuration.contentInsets.top, insets.top)
+            XCTAssertEqual(configuration.contentInsets.leading, insets.leading)
+            XCTAssertEqual(configuration.contentInsets.bottom, insets.bottom)
+            XCTAssertEqual(configuration.contentInsets.trailing, insets.trailing)
+            XCTAssertEqual(configuration.imagePadding, ToolbarConfigurationUpdateFixture.imagePadding)
+            XCTAssertNil(glyph.configuration, "An unconfigured button must retain the original legacy styling path")
+            XCTAssertEqual(glyph.titleColor(for: .normal), EditorTheme.color(from: ToolbarConfigurationUpdateFixture.activeColor))
+            XCTAssertEqual(glyph.backgroundColor, EditorTheme.color(from: ToolbarConfigurationUpdateFixture.activeBackground))
+            XCTAssertEqual(glyph.titleLabel?.font.pointSize, ToolbarConfigurationUpdateFixture.updatedFontSize)
+            let handlerRemovedDuringThemeUpdate = expectation(description: "The configuration handler removes itself during a genuine theme update")
+            var stateWhenHandlerRemoved: UIControl.State?
+            XCTAssertTrue(symbol.isEnabled)
+            XCTAssertTrue(symbol.isSelected)
+            symbol.configurationUpdateHandler = { button in
+                guard var configuration = button.configuration else {
+                    XCTFail("The self-removing handler must receive its live configuration")
+                    return
+                }
+                configuration.contentInsets = ToolbarConfigurationUpdateFixture.contentInsets
+                button.configurationUpdateHandler = nil
+                button.configuration = configuration
+                if stateWhenHandlerRemoved == nil {
+                    stateWhenHandlerRemoved = button.state
+                    handlerRemovedDuringThemeUpdate.fulfill()
+                }
+            }
+            view.setThemeJson(nil)
+            wait(for: [handlerRemovedDuringThemeUpdate], timeout: MountedEditorTestFixture.releaseTimeout)
+            XCTAssertNil(symbol.configurationUpdateHandler)
+            XCTAssertEqual(stateWhenHandlerRemoved?.contains(.disabled), false)
+            XCTAssertEqual(stateWhenHandlerRemoved?.contains(.selected), true)
+            input.deleteBackward()
+            XCTAssertEqual(adapter.documentHtml(), ToolbarConfigurationUpdateFixture.initialHTML)
+            let afterRemoval = try XCTUnwrap(symbol.configuration)
+            XCTAssertEqual(afterRemoval.contentInsets.leading, ToolbarConfigurationUpdateFixture.contentInsets.leading,
+                "A handler's final configuration must survive later native input after it removes itself")
+            XCTAssertNil(glyph.configuration)
+            XCTAssertTrue(input.isFirstResponder)
+        }
+    }
+
 }

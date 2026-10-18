@@ -155,23 +155,22 @@ extension NativeEditorExpoView {
         onAddonEvent(event)
     }
 
-    func isSupersededEditorUpdate(_ updateJSON: String) -> Bool {
-        guard let rendered = renderedRevision,
-              let incoming = renderRevision(fromUpdateJSON: updateJSON)
-        else {
+    func isSupersededEditorUpdate(_ notice: EditorV2Adapter.ExternalRenderNotice) -> Bool {
+        guard let rendered = renderedRevision, let incomingState = notice.stateRevision else {
             return false
         }
-        if incoming.document != rendered.document {
-            return incoming.document < rendered.document
+        if notice.documentRevision != rendered.document {
+            return notice.documentRevision < rendered.document
         }
-        return incoming.state < rendered.state
+        return incomingState < rendered.state
     }
 
     func renderRevision(
         fromUpdateJSON updateJSON: String
     ) -> (document: UInt64, state: UInt64)? {
-        guard let data = updateJSON.data(using: .utf8),
-              let raw = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        guard let raw = EditorV2Adapter.viewUpdateObject(
+                  updateJSON, adoptedBy: EditorV2Registry.adapter(forLegacyId: richTextView.editorId)
+              ),
               let document = (raw["documentVersion"] as? String)
               .flatMap(v2CanonicalUInt64String)
               .flatMap(UInt64.init),

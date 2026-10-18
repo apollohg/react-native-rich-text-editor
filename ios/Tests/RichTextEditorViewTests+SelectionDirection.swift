@@ -33,9 +33,18 @@ extension RichTextEditorViewTests {
         expoHost.setEditorId(editorId)
         XCTAssertTrue(expoHost.ownsNativeBinding(editorId: editorId))
 
+        var frames: [FfiNativeRenderFrame] = []
+        adapter.transformNativeFrameForTesting = { frame in
+            frames.append(frame)
+            return frame
+        }
+        defer { adapter.transformNativeFrameForTesting = nil }
+
         let viewUpdateJSON = EditorV2Shadow.insertTextScalar(id: editorId, scalarPos: 0, text: "abc")
-        let rawFrame = parseJSONObject(try XCTUnwrap(adapter.cachedAtomicRenderJSON))
-        XCTAssertNotNil(rawFrame["positionEpoch"], "raw frame: \(rawFrame)")
+        let frame = try XCTUnwrap(frames.last)
+        XCTAssertNotNil(frame.positionEpoch, "frame: \(frame.snapshotJson)")
+        XCTAssertEqual(frame.positionEpoch, adapter.positionEpoch.map(String.init))
+        XCTAssertEqual(adapter.cachedAtomicRenderJSON, frame.snapshotJson)
 
         let event = try XCTUnwrap(
             NativeEditorExpoView.nativeCommitEventPayload(

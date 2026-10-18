@@ -180,6 +180,8 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
     private var lastAtomContentWidth: CGFloat = 0
     private var lastAtomPositions: [[String: AnyHashable]] = []
     private var lastAtomViewport = CGRect.zero
+    private var cachedAtomAttachmentEntries: [String: (AtomBlockAttachment, NSRange)]?
+    private var atomAttachmentEditGeneration: UInt64 = 0
     private(set) var atomLayoutInvalidationCountForTesting = 0
     private var remoteSelections: [RemoteSelectionDecoration] = []
     private var initialUpdateJSONForNextEditorBind: String?
@@ -752,6 +754,9 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
     }
 
     private func setupView() {
+        // Rust renders temporarily remove the storage delegate.
+        NotificationCenter.default.addObserver(self, selector: #selector(atomTextStorageDidProcessEditing(_:)),
+            name: NSTextStorage.didProcessEditingNotification, object: textView.textStorage)
         // Add the text view as a subview. These views always track the host bounds,
         // so manual layout is cheaper than driving them through Auto Layout.
         textView.imageLoadOwner = defaultImageLoadOwner
@@ -1095,8 +1100,14 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         return match
     }
 
-    private func atomAttachmentEntries() -> [String: (AtomBlockAttachment, NSRange)] {
+    func atomAttachmentEntries() -> [String: (AtomBlockAttachment, NSRange)] {
         guard textView.textStorage.length > 0 else { return [:] }
+        if textView.textStorage.editedMask.isEmpty, let cachedAtomAttachmentEntries {
+            return cachedAtomAttachmentEntries
+        }
+        let generation = atomAttachmentEditGeneration
+        let startedAt = PreparedProseInstrumentation.now()
+        defer { PreparedProseInstrumentation.recordTableStage(.atomAttachmentEnumeration, start: startedAt) }
         var entries: [String: (AtomBlockAttachment, NSRange)] = [:]
         textView.textStorage.enumerateAttribute(
             .attachment,
@@ -1106,7 +1117,15 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
             guard let attachment = value as? AtomBlockAttachment else { return }
             entries[attachment.atomKey] = (attachment, range)
         }
+        if textView.textStorage.editedMask.isEmpty, generation == atomAttachmentEditGeneration {
+            cachedAtomAttachmentEntries = entries
+        }
         return entries
+    }
+
+    @objc private func atomTextStorageDidProcessEditing(_: Notification) {
+        atomAttachmentEditGeneration &+= 1
+        cachedAtomAttachmentEntries = nil
     }
 
     private func atomContentWidth() -> CGFloat {
@@ -1636,6 +1655,8 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
     // MARK: - Cleanup
 
     deinit {
+        NotificationCenter.default.removeObserver(self, name: NSTextStorage.didProcessEditingNotification,
+            object: textView.textStorage)
         textView.imageLoadOwner?.cancelAll()
         if editorId != 0 {
             textView.unbindEditor()

@@ -2,11 +2,15 @@ import os
 import UIKit
 
 extension EditorTextView {
+    private static let textKitOriginalFontAttribute = NSAttributedString.Key("NSOriginalFont")
+
     func shouldUseSmallPatchTextMutation(
         for attributedString: NSAttributedString,
-        replaceRange: NSRange?
+        replaceRange: NSRange?,
+        allowsEmptyNativeTextReplacement: Bool = false
     ) -> Bool {
-        attributedString.length > 0
+        (attributedString.length > 0
+            || (allowsEmptyNativeTextReplacement && (replaceRange?.length ?? 0) > 0))
             && attributedString.length <= 512
             && (replaceRange?.length ?? 0) <= 512
             && !attributedStringContainsAttachment(attributedString)
@@ -14,45 +18,77 @@ extension EditorTextView {
 
     private func attributesEqualForPatchTrimming(
         _ lhs: [NSAttributedString.Key: Any],
-        _ rhs: [NSAttributedString.Key: Any]
+        _ rhs: [NSAttributedString.Key: Any],
+        allowingExistingFontFallback: Bool = false
     ) -> Bool {
-        // `docPos` and `topLevelChildIndex` are positional metadata consumed
-        // by atom actions and future patch-range resolution. Trimming across
-        // either change would preserve stale attributed metadata.
-        NSDictionary(dictionary: lhs).isEqual(to: rhs)
+        if NSDictionary(dictionary: lhs).isEqual(to: rhs) { return true }
+        // Only unchanged prefix/suffix characters may retain UIKit's optional fallback font.
+        guard allowingExistingFontFallback,
+              let originalFont = lhs[Self.textKitOriginalFontAttribute] as? UIFont,
+              let nativeFont = lhs[.font] as? UIFont,
+              let renderedFont = rhs[.font] as? UIFont,
+              !nativeFont.isEqual(originalFont), originalFont.isEqual(renderedFont),
+              rhs[Self.textKitOriginalFontAttribute] == nil else { return false }
+        var originalAttributes = lhs
+        originalAttributes[.font] = originalFont
+        originalAttributes.removeValue(forKey: Self.textKitOriginalFontAttribute)
+        // Every style and structural key, including docPos/child index, still matches exactly.
+        return NSDictionary(dictionary: originalAttributes).isEqual(to: rhs)
+    }
+
+    func applyNativeTextReplacementIfPossible(
+        replacing replaceRange: NSRange,
+        with attributedString: NSAttributedString
+    ) -> Bool {
+        guard isApplyingRustState, isFirstResponder, isEditable, isInterceptingInput,
+              !isComposing, markedTextRange == nil, externalTextComposition == nil,
+              tableCellPositionMap == nil,
+              !textStorageRangeContainsAttachment(replaceRange),
+              !textStorageRangeContainsPositionAdjustments(replaceRange),
+              !attributedStringContainsPositionAdjustments(attributedString),
+              let change = plainTextReplacement(
+                  from: (textStorage.string as NSString).substring(with: replaceRange),
+                  to: attributedString.string
+              )
+        else { return false }
+
+        let nativeRange = NSRange(
+            location: replaceRange.location + change.range.location,
+            length: change.range.length
+        )
+        let replacesSelection = selectedRange == nativeRange
+        let deletesBeforeCaret = change.text.isEmpty && selectedRange.length == 0
+            && selectedRange.location == NSMaxRange(nativeRange)
+        guard replacesSelection || deletesBeforeCaret,
+              let start = position(from: beginningOfDocument, offset: nativeRange.location),
+              let end = position(from: start, offset: nativeRange.length),
+              let range = textRange(from: start, to: end)
+        else { return false }
+
+        // UIKit advances the accepted caret without a second keyboard selection notification.
+        replace(range, withText: change.text)
+        return true
     }
 
     func applyAttributes(from attributedString: NSAttributedString, to destinationRange: NSRange) {
         guard attributedString.length == destinationRange.length else { return }
-        if let uniformAttributes = uniformAttributes(in: attributedString) {
-            textStorage.setAttributes(uniformAttributes, range: destinationRange)
-            return
-        }
+        var changedRuns: [(attributes: [NSAttributedString.Key: Any], range: NSRange)] = []
         let sourceRange = NSRange(location: 0, length: attributedString.length)
         attributedString.enumerateAttributes(
             in: sourceRange,
             options: [.longestEffectiveRangeNotRequired]
         ) { attrs, range, _ in
             let targetRange = NSRange(location: destinationRange.location + range.location, length: range.length)
-            textStorage.setAttributes(attrs, range: targetRange)
-        }
-    }
-
-    private func uniformAttributes(in attributedString: NSAttributedString) -> [NSAttributedString.Key: Any]? {
-        guard attributedString.length > 0 else { return [:] }
-        let firstAttributes = attributedString.attributes(at: 0, effectiveRange: nil)
-        var isUniform = true
-        attributedString.enumerateAttributes(
-            in: NSRange(location: 0, length: attributedString.length),
-            options: [.longestEffectiveRangeNotRequired]
-        ) { attrs, _, stop in
-            guard (attrs as NSDictionary).isEqual(firstAttributes) else {
-                isUniform = false
-                stop.pointee = true
-                return
+            var currentRange = NSRange()
+            let current = textStorage.attributes(at: targetRange.location, effectiveRange: &currentRange)
+            if NSMaxRange(currentRange) < NSMaxRange(targetRange)
+                || !attributesEqualForPatchTrimming(current, attrs) {
+                changedRuns.append((attrs, targetRange))
             }
         }
-        return isUniform ? firstAttributes : nil
+        for run in changedRuns {
+            textStorage.setAttributes(run.attributes, range: run.range)
+        }
     }
 
     func attributedStringContainsAttachment(_ attributedString: NSAttributedString) -> Bool {
@@ -201,7 +237,8 @@ extension EditorTextView {
 
     func trimmedAttributedPatch(
         replacing fullReplaceRange: NSRange,
-        with replacement: NSAttributedString
+        with replacement: NSAttributedString,
+        allowingExistingFontFallback: Bool = false
     ) -> (replaceRange: NSRange, replacement: NSAttributedString) {
         guard fullReplaceRange.length > 0 else {
             return (fullReplaceRange, replacement)
@@ -228,7 +265,8 @@ extension EditorTextView {
                 longestEffectiveRange: &replacementRange,
                 in: NSRange(location: prefix, length: sharedLength - prefix)
             )
-            guard attributesEqualForPatchTrimming(existingAttrs, replacementAttrs) else { break }
+            guard attributesEqualForPatchTrimming(existingAttrs, replacementAttrs,
+                allowingExistingFontFallback: allowingExistingFontFallback) else { break }
             let runEnd = min(NSMaxRange(existingRange), NSMaxRange(replacementRange), sharedLength)
             while prefix < runEnd,
                   existingString.character(at: prefix) == replacementString.character(at: prefix) {
@@ -255,7 +293,8 @@ extension EditorTextView {
                 longestEffectiveRange: &replacementRange,
                 in: NSRange(location: prefix, length: replacementIndex - prefix + 1)
             )
-            guard attributesEqualForPatchTrimming(existingAttrs, replacementAttrs) else { break }
+            guard attributesEqualForPatchTrimming(existingAttrs, replacementAttrs,
+                allowingExistingFontFallback: allowingExistingFontFallback) else { break }
             let maxComparableLength = min(
                 existingIndex - max(existingRange.location, prefix) + 1,
                 replacementIndex - max(replacementRange.location, prefix) + 1,

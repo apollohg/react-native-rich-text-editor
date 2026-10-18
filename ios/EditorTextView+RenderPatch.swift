@@ -2,6 +2,11 @@ import os
 import UIKit
 
 extension EditorTextView {
+    private static let positionalAtomElementTypes: Set<NSString> = [
+        "voidInline", "voidBlock", "opaqueInlineAtom", "opaqueBlockAtom"
+    ]
+    private static let positionalRenderElementKeys = ["docPos", "topLevelChildIndex"]
+
     struct TopLevelChildMetadata {
         var startOffset: Int
         var containsAttachment: Bool
@@ -13,11 +18,23 @@ extension EditorTextView {
         let entries: [TopLevelChildMetadata]
     }
 
+    private struct RetainedMetadataChange {
+        let attribute: NSAttributedString.Key
+        let value: NSNumber
+        let range: NSRange
+    }
+
+    private struct RetainedAtomMetadata {
+        let type: String
+        let documentPosition: UInt32
+        var range: NSRange
+    }
+
     struct ParsedRenderPatch {
         let baseDocumentVersion: UInt64?
         let startIndex: Int
         let deleteCount: Int
-        let renderBlocks: [[[String: Any]]]
+        let renderBlocks: [[NSDictionary]]
     }
 
     enum DerivedRenderPatch {
@@ -25,8 +42,8 @@ extension EditorTextView {
         case patch(ParsedRenderPatch)
     }
 
-    func parseRenderBlocks(_ value: Any?) -> [[[String: Any]]]? {
-        value as? [[[String: Any]]]
+    func parseRenderBlocks(_ value: Any?) -> [[NSDictionary]]? {
+        value as? [[NSDictionary]]
     }
 
     func parseRenderPatch(_ value: Any?) -> ParsedRenderPatch? {
@@ -73,7 +90,7 @@ extension EditorTextView {
     }
 
     func retainCurrentRenderBlocks(
-        _ blocks: [[[String: Any]]]?,
+        _ blocks: [[NSDictionary]]?,
         documentVersion: UInt64?
     ) {
         currentRenderBlocks = blocks
@@ -99,8 +116,8 @@ extension EditorTextView {
 
     func mergeRenderBlocks(
         applying patch: ParsedRenderPatch,
-        to current: [[[String: Any]]]
-    ) -> [[[String: Any]]]? {
+        to current: [[NSDictionary]]
+    ) -> [[NSDictionary]]? {
         guard patch.startIndex >= 0,
               patch.deleteCount >= 0,
               patch.startIndex <= current.count,
@@ -118,8 +135,8 @@ extension EditorTextView {
     }
 
     private func renderBlockEquals(
-        _ lhs: [[String: Any]],
-        _ rhs: [[String: Any]]
+        _ lhs: [NSDictionary],
+        _ rhs: [NSDictionary]
     ) -> Bool {
         guard lhs.count == rhs.count else { return false }
         for (lhsElement, rhsElement) in zip(lhs, rhs) {
@@ -128,10 +145,10 @@ extension EditorTextView {
         return true
     }
 
-    private func voidNodeMetadata(in renderBlock: [[String: Any]]) -> [(type: String, docPos: NSNumber)]? {
+    private func positionalAtomMetadata(in renderBlock: [NSDictionary]) -> [(type: String, docPos: NSNumber)]? {
         let nodes = renderBlock.compactMap { element -> (type: String, docPos: NSNumber)? in
-            guard let elementType = element["type"] as? String,
-                  elementType == "voidInline" || elementType == "voidBlock",
+            guard let elementType = element.object(forKey: RenderBridge.renderElementTypeKey) as? NSString,
+                  Self.positionalAtomElementTypes.contains(elementType),
                   let nodeType = element["nodeType"] as? String,
                   let docPos = RenderBridge.jsonUInt32(element["docPos"])
             else {
@@ -144,16 +161,18 @@ extension EditorTextView {
 
     func refreshRetainedPositionalMetadata(
         startingAt retainedStart: Int,
-        updatedRenderBlocks: [[[String: Any]]]
+        updatedRenderBlocks: [[NSDictionary]]
     ) -> Bool {
         guard let currentTopLevelChildMetadata,
               currentTopLevelChildMetadata.count == updatedRenderBlocks.count,
               retainedStart >= 0,
-              retainedStart <= currentTopLevelChildMetadata.count
+              retainedStart <= currentTopLevelChildMetadata.count,
+              lastAuthorizedAttributedTextStorage.length == textStorage.length
         else {
             return false
         }
 
+        var changes: [RetainedMetadataChange] = []
         for index in retainedStart..<currentTopLevelChildMetadata.count {
             let start = currentTopLevelChildMetadata[index].startOffset
             let end = index + 1 < currentTopLevelChildMetadata.count
@@ -161,55 +180,95 @@ extension EditorTextView {
                 : textStorage.length
             guard start >= 0, end >= start, end <= textStorage.length else { return false }
             let range = NSRange(location: start, length: end - start)
-            textStorage.addAttribute(
+            var childIndexChanged = false
+            textStorage.enumerateAttribute(
                 RenderBridgeAttributes.topLevelChildIndex,
-                value: NSNumber(value: index),
-                range: range
-            )
+                in: range,
+                options: [.longestEffectiveRangeNotRequired]
+            ) { value, _, stop in
+                if let currentIndex = self.topLevelChildIndex(from: value), currentIndex != index {
+                    childIndexChanged = true
+                    stop.pointee = true
+                }
+            }
+            if childIndexChanged {
+                changes.append(RetainedMetadataChange(
+                    attribute: RenderBridgeAttributes.topLevelChildIndex,
+                    value: NSNumber(value: index),
+                    range: range
+                ))
+            }
 
-            guard let expectedVoidNodes = voidNodeMetadata(in: updatedRenderBlocks[index]) else {
+            guard let expectedAtoms = positionalAtomMetadata(in: updatedRenderBlocks[index]) else {
                 return false
             }
-            var actualVoidNodes: [(type: String, range: NSRange)] = []
+            var actualAtoms: [RetainedAtomMetadata] = []
+            var atomPositionsAreValid = true
             textStorage.enumerateAttribute(
                 RenderBridgeAttributes.voidNodeType,
                 in: range,
                 options: [.longestEffectiveRangeNotRequired]
-            ) { value, nodeRange, _ in
-                if let type = value as? String {
-                    actualVoidNodes.append((type, nodeRange))
+            ) { value, typeRange, typeStop in
+                guard value is String else { return }
+                self.textStorage.enumerateAttributes(
+                    in: typeRange,
+                    options: [.longestEffectiveRangeNotRequired]
+                ) { attributes, nodeRange, stop in
+                    guard let type = attributes[RenderBridgeAttributes.voidNodeType] as? String else { return }
+                    guard let position = RenderBridge.jsonUInt32(attributes[RenderBridgeAttributes.docPos]) else {
+                        atomPositionsAreValid = false
+                        stop.pointee = true
+                        typeStop.pointee = true
+                        return
+                    }
+                    if let previous = actualAtoms.last,
+                       previous.type == type,
+                       previous.documentPosition == position,
+                       NSMaxRange(previous.range) == nodeRange.location {
+                        actualAtoms[actualAtoms.count - 1].range.length += nodeRange.length
+                    } else {
+                        actualAtoms.append(RetainedAtomMetadata(type: type, documentPosition: position, range: nodeRange))
+                    }
                 }
             }
-            guard actualVoidNodes.count == expectedVoidNodes.count,
-                  zip(actualVoidNodes, expectedVoidNodes).allSatisfy({ $0.type == $1.type })
+            guard atomPositionsAreValid,
+                  actualAtoms.count == expectedAtoms.count,
+                  zip(actualAtoms, expectedAtoms).allSatisfy({ $0.type == $1.type })
             else {
                 return false
             }
-            for (actual, expected) in zip(actualVoidNodes, expectedVoidNodes) {
-                textStorage.addAttribute(
-                    RenderBridgeAttributes.docPos,
+            for (actual, expected) in zip(actualAtoms, expectedAtoms)
+                where actual.documentPosition != expected.docPos.uint32Value {
+                changes.append(RetainedMetadataChange(
+                    attribute: RenderBridgeAttributes.docPos,
                     value: expected.docPos,
                     range: actual.range
-                )
+                ))
             }
         }
+        guard !changes.isEmpty else { return true }
+        textStorage.beginEditing()
+        for change in changes {
+            textStorage.addAttribute(change.attribute, value: change.value, range: change.range)
+            lastAuthorizedAttributedTextStorage.addAttribute(change.attribute, value: change.value, range: change.range)
+        }
+        textStorage.endEditing()
         return true
     }
 
-    private func renderElementEquals(_ lhs: [String: Any], _ rhs: [String: Any]) -> Bool {
-        if (lhs as NSDictionary).isEqual(to: rhs) { return true }
-        var comparableLhs = lhs
-        var comparableRhs = rhs
-        comparableLhs.removeValue(forKey: "docPos")
-        comparableRhs.removeValue(forKey: "docPos")
-        comparableLhs.removeValue(forKey: "topLevelChildIndex")
-        comparableRhs.removeValue(forKey: "topLevelChildIndex")
-        return (comparableLhs as NSDictionary).isEqual(to: comparableRhs)
+    private func renderElementEquals(_ lhs: NSDictionary, _ rhs: NSDictionary) -> Bool {
+        if lhs.isEqual(rhs) { return true }
+        guard let comparableLhs = lhs.mutableCopy() as? NSMutableDictionary,
+              let comparableRhs = rhs.mutableCopy() as? NSMutableDictionary
+        else { return false }
+        comparableLhs.removeObjects(forKeys: Self.positionalRenderElementKeys)
+        comparableRhs.removeObjects(forKeys: Self.positionalRenderElementKeys)
+        return comparableLhs.isEqual(comparableRhs)
     }
 
     func deriveRenderPatch(
-        from current: [[[String: Any]]],
-        to updated: [[[String: Any]]]
+        from current: [[NSDictionary]],
+        to updated: [[NSDictionary]]
     ) -> DerivedRenderPatch {
         let sharedCount = min(current.count, updated.count)
 
@@ -418,6 +477,60 @@ extension EditorTextView {
         return NSRange(location: startLocation, length: endLocation - startLocation)
     }
 
+    private func singleParagraphBoxStack(
+        in attributedString: NSAttributedString, childIndex: Int
+    ) -> EditorRenderedBoxStack? {
+        var retained: EditorRenderedBoxStack?
+        var valid = true
+        attributedString.enumerateAttributes(in: NSRange(location: 0, length: attributedString.length)) { attrs, _, stop in
+            if let value = attrs[RenderBridgeAttributes.topLevelChildIndex],
+               self.topLevelChildIndex(from: value) != childIndex { valid = false }
+            if attrs[RenderBridgeAttributes.blockBoundary] != nil { return }
+            guard attrs[RenderBridgeAttributes.blockNodeType] as? String == RenderBridge.styledParagraphNodeType,
+                  attrs[RenderBridgeAttributes.voidNodeType] == nil,
+                  let stack = attrs[editorStyleBoxesAttribute] as? EditorRenderedBoxStack,
+                  let boxes = renderedStyleBoxes(from: stack), boxes.count == 1,
+                  boxes.first?.depth == 0 else {
+                valid = false
+                stop.pointee = true
+                return
+            }
+            if let retained, !retained.isEqual(stack) {
+                valid = false
+                stop.pointee = true
+            } else {
+                retained = stack
+            }
+        }
+        return valid ? retained : nil
+    }
+
+    private func reusingStyledParagraphBox(
+        for patch: ParsedRenderPatch, replacing range: NSRange, with replacement: NSAttributedString
+    ) -> NSAttributedString? {
+        guard theme?.styleSheet != nil, isFirstResponder, isEditable, isInterceptingInput,
+              !isComposing, markedTextRange == nil, externalTextComposition == nil,
+              tableCellPositionMap == nil,
+              patch.deleteCount == 1, patch.renderBlocks.count == 1,
+              let currentRenderBlocks, currentRenderBlocks.indices.contains(patch.startIndex),
+              currentRenderBlocks[patch.startIndex].first?["nodeType"] as? String == RenderBridge.styledParagraphNodeType,
+              patch.renderBlocks.first?.first?["nodeType"] as? String == RenderBridge.styledParagraphNodeType,
+              shouldUseSmallPatchTextMutation(for: replacement, replaceRange: range),
+              let oldStack = singleParagraphBoxStack(in: textStorage.attributedSubstring(from: range), childIndex: patch.startIndex),
+              let newStack = singleParagraphBoxStack(in: replacement, childIndex: patch.startIndex),
+              let oldBox = renderedStyleBoxes(from: oldStack)?.first,
+              let newBox = renderedStyleBoxes(from: newStack)?.first,
+              NSDictionary(dictionary: oldBox.box.values).isEqual(to: newBox.box.values),
+              oldBox.depth == newBox.depth, oldBox.leading == newBox.leading,
+              oldBox.trailing == newBox.trailing, oldBox.topInset == newBox.topInset,
+              oldBox.bottomInset == newBox.bottomInset else { return nil }
+        let result = NSMutableAttributedString(attributedString: replacement)
+        result.enumerateAttribute(editorStyleBoxesAttribute, in: NSRange(location: 0, length: result.length)) { value, range, _ in
+            if value != nil { result.addAttribute(editorStyleBoxesAttribute, value: oldStack, range: range) }
+        }
+        return result
+    }
+
     func applyRenderPatchIfPossible(_ patch: ParsedRenderPatch) -> PatchApplyTrace {
         let eligibilityStartedAt = DispatchTime.now().uptimeNanoseconds
         guard hasTopLevelChildMetadata(),
@@ -541,7 +654,10 @@ extension EditorTextView {
                 .plainText
             }
         let trimStartedAt = DispatchTime.now().uptimeNanoseconds
-        let patchToApply = trimmedAttributedPatch(replacing: fullReplaceRange, with: attrStr)
+        let reusedParagraph = reusingStyledParagraphBox(for: patch, replacing: fullReplaceRange, with: attrStr)
+        let patchRender = reusedParagraph ?? attrStr
+        let patchToApply = trimmedAttributedPatch(replacing: fullReplaceRange, with: patchRender,
+            allowingExistingFontFallback: reusedParagraph != nil)
         let trimNanos = DispatchTime.now().uptimeNanoseconds - trimStartedAt
         let applyTrace = applyAttributedRender(
             patchToApply.replacement,
@@ -549,12 +665,14 @@ extension EditorTextView {
             usedPatch: true,
             positionCacheUpdate: positionCacheUpdate,
             authorizedReplaceRange: fullReplaceRange,
-            authorizedReplacementText: attrStr.string,
-            authorizedReplacementAttributedText: attrStr
+            authorizedReplacementAttributedText: patchRender,
+            allowsEmptyNativeTextReplacement: reusedParagraph != nil
         )
         if theme?.styleSheet != nil {
             textStorage.beginEditing()
-            RenderBridge.collapseStyledSiblingMargins(in: textStorage)
+            RenderBridge.collapseStyledSiblingMargins(in: textStorage) { value, range in
+                self.lastAuthorizedAttributedTextStorage.addAttribute(.paragraphStyle, value: value, range: range)
+            }
             textStorage.endEditing()
         }
         let metadataStartedAt = DispatchTime.now().uptimeNanoseconds

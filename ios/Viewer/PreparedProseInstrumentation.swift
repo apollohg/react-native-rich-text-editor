@@ -77,7 +77,10 @@ enum PreparedProseInstrumentation {
     static let singleTickToleranceNanos: UInt64 = 1_000_000
     static var tableWorkObserverForTesting: ((ViewerWorkSpan) -> Void)?
     enum TableStage: String, CaseIterable {
-        case replacementAndFFI, nativeInputAndFFI, nativeFrameAndFFI, adapterAdoption
+        case replacementAndFFI, nativeInputAndFFI, nativeFrameAndFFI, adapterAdoption, collaborationSelectionPublication
+        case authorizedTextCanonicalComparison
+        case atomAttachmentEnumeration
+        case editorBlockFontResolution, editorStyledBoxGrouping
         case viewerCompileAndLift, tablePreparationAndGeometry, drawingAndLayerRecording
     }
     static var tableStageObserverForTesting: ((TableStage, UInt64, UInt64) -> Void)?

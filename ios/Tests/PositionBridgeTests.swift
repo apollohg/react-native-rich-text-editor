@@ -1170,4 +1170,84 @@ final class PositionBridgeTests: XCTestCase {
             )
         }
     }
+
+    func testInteriorPlainPatchesMatchRebuildAcrossSurrogatesListMarkersAndPlaceholders() {
+        func render(_ json: String) -> NSAttributedString {
+            RenderBridge.renderElements(fromJSON: json, baseFont: .systemFont(ofSize: 16), textColor: .label)
+        }
+        func listItem(_ text: String, index: Int, trailingBreak: Bool) -> String {
+            let breakElement = trailingBreak ? #"{"type": "voidInline", "nodeType": "hardBreak", "docPos": 2},"# : ""
+            return """
+            {"type": "blockStart", "nodeType": "listItem", "depth": 1,
+            "listContext": {"ordered": true, "index": \(index), "total": 3, "start": 1, "isFirst": \(index == 1), "isLast": \(index == 3)}},
+            {"type": "blockStart", "nodeType": "paragraph", "depth": 2},
+            {"type": "textRun", "text": "\(text)", "marks": []},
+            \(breakElement)
+            {"type": "blockEnd"},
+            {"type": "blockEnd"}
+            """
+        }
+        let document = render("""
+        [
+            {"type": "blockStart", "nodeType": "paragraph", "depth": 0},
+            {"type": "textRun", "text": "Intro 😀 text", "marks": []},
+            {"type": "blockEnd"},
+            \(listItem("one 👍🏽 two", index: 1, trailingBreak: false)),
+            \(listItem("three four", index: 2, trailingBreak: true)),
+            \(listItem("five 🎉 six", index: 3, trailingBreak: false)),
+            {"type": "blockStart", "nodeType": "paragraph", "depth": 0},
+            {"type": "textRun", "text": "End 😀", "marks": []},
+            {"type": "voidInline", "nodeType": "hardBreak", "docPos": 9},
+            {"type": "blockEnd"}
+        ]
+        """)
+        let patched = makeTextView(with: document)
+
+        func applyPlainEdit(
+            replacing target: String, occurrence: String? = nil, with replacement: String, line: UInt = #line
+        ) {
+            let text = patched.textStorage.string as NSString
+            let anchor = text.range(of: occurrence ?? target)
+            XCTAssertNotEqual(anchor.location, NSNotFound, "Missing edit anchor \(occurrence ?? target)")
+            let local = (text.substring(with: anchor) as NSString).range(of: target)
+            let range = NSRange(location: anchor.location + local.location, length: local.length)
+            _ = PositionBridge.utf16OffsetToScalar(patched.textStorage.length, in: patched)
+            patched.textStorage.replaceCharacters(in: range, with: replacement)
+            XCTAssertTrue(
+                PositionBridge.applyPlainTextPatchIfPossible(for: patched, replaceRange: range, replacementText: replacement),
+                "Plain patch replacing \(target) at \(range) must reuse the cached map"
+            )
+            assertConversionsMatch(
+                patched, makeTextView(with: NSAttributedString(attributedString: patched.textStorage)), line: line
+            )
+        }
+
+        applyPlainEdit(replacing: "👍🏽", with: "x")
+        applyPlainEdit(replacing: "ee", occurrence: "three", with: "e🎉🎉e")
+        applyPlainEdit(replacing: "😀 ", occurrence: "Intro 😀 ", with: "")
+        applyPlainEdit(replacing: "End", with: "E\nn👍🏽d")
+        applyPlainEdit(replacing: "🎉 s", occurrence: "five 🎉 six", with: "😀😀")
+    }
+
+    func testStringConversionsCountWholeScalarsAndNeverSplitSurrogatePairs() {
+        let text = "a😀\u{00E9}👩🏽‍💻z\u{1F600}"
+        var scalarStarts: [Int] = []
+        var utf16Position = 0
+        for scalar in text.unicodeScalars {
+            scalarStarts.append(utf16Position)
+            utf16Position += scalar.utf16.count
+        }
+        for offset in 0...utf16Position {
+            let expected = UInt32(scalarStarts.filter { $0 < offset }.count)
+            XCTAssertEqual(PositionBridge.utf16OffsetToScalar(offset, in: text), expected,
+                "UTF-16 offset \(offset) counts every scalar that starts before it")
+        }
+        let scalarEnds = scalarStarts.dropFirst().map { $0 } + [utf16Position]
+        for (index, end) in scalarEnds.enumerated() {
+            XCTAssertEqual(PositionBridge.scalarToUtf16Offset(UInt32(index + 1), in: text), end,
+                "Scalar \(index + 1) maps to the end of its UTF-16 encoding")
+        }
+        XCTAssertEqual(PositionBridge.scalarToUtf16Offset(0, in: text), 0)
+        XCTAssertEqual(PositionBridge.scalarToUtf16Offset(UInt32(scalarEnds.count + 5), in: text), utf16Position)
+    }
 }

@@ -2,6 +2,7 @@ import UIKit
 
 extension EditorAccessoryToolbarView {
     func rebuildButtons() {
+        needsButtonRebuild = false
         if #available(iOS 16.0, *) {
             (editMenuPresenter as? ToolbarEditMenuPresenter)?.dismiss()
         }

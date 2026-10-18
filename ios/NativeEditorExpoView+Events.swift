@@ -148,7 +148,10 @@ extension NativeEditorExpoView {
             originatingEditorId: String(textView.editorId),
             updateJSON: updateJSON
         )
-        if let state = NativeToolbarState(updateJSON: updateJSON) {
+        if let update = EditorV2Adapter.viewUpdateObject(
+            updateJSON, adoptedBy: EditorV2Registry.adapter(forLegacyId: textView.editorId)
+        ) {
+            let state = NativeToolbarState(update: update)
             toolbarState = state
             accessoryToolbar.apply(state: state)
             refreshSystemAssistantToolbarIfNeeded()
@@ -170,13 +173,12 @@ extension NativeEditorExpoView {
         guard let editorId = v2CanonicalUInt64String(originatingEditorId),
               editorId != "0",
               let nativeEditorId = UInt64(editorId),
-              let data = updateJSON.data(using: .utf8),
-              let update = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let adapter = EditorV2Registry.adapter(forLegacyId: nativeEditorId),
+              let update = EditorV2Adapter.viewUpdateObject(updateJSON, adoptedBy: adapter),
               let rawRevision = update["documentVersion"] as? String,
               let documentRevision = v2CanonicalUInt64String(rawRevision),
               let revision = UInt64(documentRevision),
-              let atomicUpdateJSON = EditorV2Registry.adapter(forLegacyId: nativeEditorId)?
-              .atomicRenderJSON(matchingDocumentRevision: revision)
+              let atomicUpdateJSON = adapter.atomicRenderJSON(matchingDocumentRevision: revision)
         else {
             return nil
         }
@@ -206,11 +208,13 @@ extension NativeEditorExpoView {
     @discardableResult
     private func refreshToolbarStateFromEditorSelection() -> String? {
         guard richTextView.editorId != 0 else { return nil }
-        let stateJSON = EditorV2Shadow.getSelectionState(id: richTextView.editorId)
-        guard let state = NativeToolbarState(updateJSON: stateJSON) else { return nil }
+        let selectionState = EditorV2Shadow.getSelectionState(id: richTextView.editorId)
+        let state = NativeToolbarState(update: selectionState?.update ?? [:])
         toolbarState = state
         accessoryToolbar.apply(state: state)
-        return stateJSON
+        let eventState = selectionState.map(selectionEventActiveState.update(for:)) ?? [:]
+        guard let data = try? JSONSerialization.data(withJSONObject: eventState) else { return nil }
+        return String(data: data, encoding: .utf8)
     }
 
     func configureAccessoryToolbar() {
@@ -223,7 +227,6 @@ extension NativeEditorExpoView {
         accessoryToolbar.onSelectMentionSuggestion = { [weak self] suggestion in
             self?.insertMentionSuggestion(suggestion)
         }
-        accessoryToolbar.setItems(toolbarItems)
         accessoryToolbar.apply(state: toolbarState)
         updateAccessoryToolbarVisibility()
     }

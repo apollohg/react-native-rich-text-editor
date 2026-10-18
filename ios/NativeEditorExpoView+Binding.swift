@@ -69,6 +69,7 @@ extension NativeEditorExpoView {
             clearPendingAtomsRetry()
             clearPendingAccessoryRetry()
             clearPendingMentionSuggestionRetry()
+            selectionEventActiveState.reset()
         }
         var initialBindUpdateJSON: String?
         if id != 0 {

@@ -43,9 +43,12 @@ struct NativeToolbarState {
         else {
             return nil
         }
+        self.init(update: raw)
+    }
 
-        let activeState = raw["activeState"] as? [String: Any] ?? [:]
-        let historyState = raw["historyState"] as? [String: Any] ?? [:]
+    init(update: [String: Any]) {
+        let activeState = update["activeState"] as? [String: Any] ?? [:]
+        let historyState = update["historyState"] as? [String: Any] ?? [:]
 
         self.init(
             marks: NativeToolbarState.boolMap(from: activeState["marks"]),

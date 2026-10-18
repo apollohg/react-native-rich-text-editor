@@ -694,4 +694,126 @@ extension RichTextEditorViewTests {
         assertNoPendingEditorUpdate(in: view)
     }
 
+    private func jsRenderNotice(editorId: UInt64) throws -> String {
+        let render = parseJSONObject(try XCTUnwrap(editorV2RenderUpdate(
+            editorId: String(editorId), mirrorScalarAnchor: nil, mirrorScalarHead: nil
+        ).value))
+        return try encodedJSONObject([
+            "documentVersion": try XCTUnwrap(render["documentVersion"]),
+            "stateRevision": try XCTUnwrap(render["stateRevision"])
+        ])
+    }
+
+    func testPendingRenderNoticeAdoptsTheEngineRenderAndSurvivesSkippedPropRedelivery() throws {
+        let editorId = makeV2Editor()
+        defer { destroyV2Editor(id: editorId) }
+        _ = EditorV2Shadow.setHtml(id: editorId, html: "<p>first</p>")
+        let errors = AutonomousErrorEventSink()
+        let view = NativeEditorExpoView()
+        view.onEditorErrorForTesting = errors.record
+        view.frame = CGRect(x: 0, y: 0, width: 320, height: 160)
+        let window = hostNativeEditorExpoView(view)
+        defer {
+            view.removeFromSuperview()
+            window.isHidden = true
+        }
+        view.setEditorId(editorId)
+
+        _ = EditorV2Shadow.replaceHtml(id: editorId, html: "<p>notice body</p>")
+        _ = EditorV2Shadow.setSelectionScalar(id: editorId, scalarAnchor: 2, scalarHead: 2)
+        let notice = try jsRenderNotice(editorId: editorId)
+        view.setPendingEditorUpdateJson(notice)
+        view.setPendingEditorUpdateEditorId(String(editorId))
+        view.setPendingEditorUpdateRevision(1)
+        view.applyPendingEditorUpdateIfNeeded()
+
+        XCTAssertEqual(view.richTextView.textView.textStorage.string, "notice body")
+        XCTAssertEqual(PositionBridge.cursorScalarOffset(in: view.richTextView.textView), 2)
+        assertNoPendingEditorUpdate(in: view)
+
+        _ = EditorV2Shadow.replaceHtml(id: editorId, html: "<p>second</p>")
+        let secondNotice = try jsRenderNotice(editorId: editorId)
+        view.setPendingEditorUpdateJson(secondNotice)
+        view.setPendingEditorUpdateRevision(2)
+        view.applyPendingEditorUpdateIfNeeded()
+        XCTAssertEqual(view.richTextView.textView.textStorage.string, "second")
+
+        view.setPendingEditorUpdateRevision(3)
+        XCTAssertEqual(view.pendingEditorUpdateJSON, secondNotice)
+        view.applyPendingEditorUpdateIfNeeded()
+        flushMainQueue()
+
+        XCTAssertEqual(view.richTextView.textView.textStorage.string, "second")
+        XCTAssertTrue(errors.errors.isEmpty, "\(errors.errors)")
+        assertNoPendingEditorUpdate(in: view)
+    }
+
+    func testPendingRenderNoticeWithOlderStateRevisionDoesNotReadoptNewerEngineSelection() throws {
+        let editorId = makeV2Editor()
+        defer { destroyV2Editor(id: editorId) }
+        _ = EditorV2Shadow.setHtml(id: editorId, html: "<p>abcdef</p>")
+        let view = NativeEditorExpoView()
+        view.frame = CGRect(x: 0, y: 0, width: 320, height: 160)
+        let window = hostNativeEditorExpoView(view)
+        defer {
+            view.removeFromSuperview()
+            window.isHidden = true
+        }
+        view.setEditorId(editorId)
+
+        _ = EditorV2Shadow.setSelectionScalar(id: editorId, scalarAnchor: 1, scalarHead: 1)
+        let olderNotice = try jsRenderNotice(editorId: editorId)
+        _ = EditorV2Shadow.setSelectionScalar(id: editorId, scalarAnchor: 4, scalarHead: 4)
+        let newerNotice = try jsRenderNotice(editorId: editorId)
+        view.setPendingEditorUpdateJson(newerNotice)
+        view.setPendingEditorUpdateEditorId(String(editorId))
+        view.setPendingEditorUpdateRevision(1)
+        view.applyPendingEditorUpdateIfNeeded()
+        XCTAssertEqual(PositionBridge.cursorScalarOffset(in: view.richTextView.textView), 4)
+
+        _ = EditorV2Shadow.setSelectionScalar(id: editorId, scalarAnchor: 2, scalarHead: 2)
+        view.setPendingEditorUpdateJson(olderNotice)
+        view.setPendingEditorUpdateRevision(2)
+        view.applyPendingEditorUpdateIfNeeded()
+
+        XCTAssertEqual(
+            PositionBridge.cursorScalarOffset(in: view.richTextView.textView),
+            4,
+            "an equal-document notice with an older stateRevision is superseded, not re-adopted"
+        )
+        assertNoPendingEditorUpdate(in: view)
+    }
+
+    func testPendingResetWithRenderNoticeAppliesTheResetDocument() throws {
+        let editorId = makeV2Editor()
+        defer { destroyV2Editor(id: editorId) }
+        _ = EditorV2Shadow.setHtml(id: editorId, html: "<p>before</p>")
+        let errors = AutonomousErrorEventSink()
+        let view = NativeEditorExpoView()
+        view.onEditorErrorForTesting = errors.record
+        view.frame = CGRect(x: 0, y: 0, width: 320, height: 160)
+        let window = hostNativeEditorExpoView(view)
+        defer {
+            view.removeFromSuperview()
+            window.isHidden = true
+        }
+        view.setEditorId(editorId)
+        XCTAssertEqual(view.richTextView.textView.textStorage.string, "before")
+
+        _ = EditorV2Shadow.setHtml(id: editorId, html: "<p>after reset</p>")
+        let notice = try jsRenderNotice(editorId: editorId)
+        view.setPendingEditorUpdateJson(notice)
+        view.pendingEditorUpdateResetJSON = try encodedJSONObject([
+            "setHtml": "<p>after reset</p>", "history": "resetAndClear",
+            "documentRevision": try XCTUnwrap(parseJSONObject(notice)["documentVersion"])
+        ])
+        view.setPendingEditorUpdateEditorId(String(editorId))
+        view.setPendingEditorUpdateRevision(1)
+        view.applyPendingEditorUpdateIfNeeded()
+        flushMainQueue()
+
+        XCTAssertEqual(view.richTextView.textView.textStorage.string, "after reset")
+        XCTAssertTrue(errors.errors.isEmpty, "\(errors.errors)")
+        assertNoPendingEditorUpdate(in: view)
+    }
 }

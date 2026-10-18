@@ -2,6 +2,7 @@ import Foundation
 
 extension EditorV2Adapter {
     static let stalePositionEpochCodes: Set<String> = ["POSITION_EPOCH_INVALID", "POSITION_EPOCH_CELL_REMOVED"]
+    static let commandIntentType = "command"
 
     enum MutationKind {
         case transaction(changed: Bool, revision: UInt64)
@@ -58,6 +59,8 @@ extension EditorV2Adapter {
     struct NativeIntentOutcome {
         let changed: Bool
         let documentChanged: Bool
+        let selectionState: [String: Any]?
+        let unappliedSelection: (anchor: UInt32, head: UInt32)?
     }
 
     enum NativeIntentSubmission {
@@ -71,6 +74,20 @@ extension EditorV2Adapter {
             "anchor": Int(clampScalar(anchor)),
             "head": Int(clampScalar(head))
         ]
+    }
+
+    private static func retainsSubmittedSelection(_ intent: [String: Any], outcome: MutationKind, changed: Bool) -> Bool {
+        switch outcome {
+        case .notApplicable:
+            return true
+        case .transaction, .replacement:
+            return !changed && intent["type"] as? String != commandIntentType
+        }
+    }
+
+    private static func intentSelection(_ intent: [String: Any]) -> (anchor: UInt32, head: UInt32)? {
+        guard let anchor = uint32Field(intent, "anchor"), let head = uint32Field(intent, "head") else { return nil }
+        return (anchor, head)
     }
 
     func submitNativeIntent(
@@ -146,9 +163,11 @@ extension EditorV2Adapter {
                 baseDocumentRevision = revision
             }
             let documentChanged: Bool
+            let selectionState: [String: Any]?
             switch outcome.kind {
             case .notApplicable:
                 documentChanged = false
+                selectionState = nil
             case .transaction, .replacement:
                 guard let data = value.data(using: .utf8),
                       let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -158,10 +177,15 @@ extension EditorV2Adapter {
                     return nil
                 }
                 documentChanged = didChangeDocument
+                selectionState = object["selectionState"] as? [String: Any]
             }
             return .applied(NativeIntentOutcome(
                 changed: changed,
-                documentChanged: documentChanged
+                documentChanged: documentChanged,
+                selectionState: selectionState,
+                unappliedSelection: Self.retainsSubmittedSelection(intent, outcome: outcome.kind, changed: changed)
+                    ? Self.intentSelection(intent)
+                    : nil
             ))
         }
     }
@@ -170,10 +194,10 @@ extension EditorV2Adapter {
         _ outcome: NativeIntentOutcome,
         publishMutation: Bool = true
     ) -> NativeMutationRender? {
-        guard let update = refreshInternal(
-            mirrorSelection: nil,
+        guard let update = (outcome.selectionState.flatMap { adoptSelectionState($0) } ?? refreshInternal(
+            mirrorSelection: outcome.unappliedSelection,
             strippingViewSelection: false
-        )?.updateJSON else {
+        ))?.updateJSON else {
             return nil
         }
         lastSyncedScalarSelection = cachedAuthoritativeScalarSelection
@@ -360,7 +384,7 @@ extension EditorV2Adapter {
               extent > 0,
               let data = updateJSON.data(using: .utf8),
               let update = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let blocks = update["renderBlocks"] as? [[[String: Any]]],
+              let blocks = update["renderBlocks"] as? [[NSDictionary]],
               blocks.count >= 2,
               Self.isEmptyPlaceholderParagraph(blocks[blocks.count - 1]),
               blocks[blocks.count - 2].contains(where: { ($0["type"] as? String) == "voidBlock" })
@@ -375,7 +399,7 @@ extension EditorV2Adapter {
     /// The trailing caret paragraph after a block-void insert renders as a
     /// single zero-width-space text run (the synthetic empty-paragraph
     /// placeholder).
-    private static func isEmptyPlaceholderParagraph(_ block: [[String: Any]]) -> Bool {
+    private static func isEmptyPlaceholderParagraph(_ block: [NSDictionary]) -> Bool {
         let types = block.compactMap { $0["type"] as? String }
         guard types.contains("blockStart"), types.contains("blockEnd") else { return false }
         let texts = block.filter { ($0["type"] as? String) == "textRun" }

@@ -318,10 +318,11 @@ public final class PreparedProseLayout: NSObject {
     let imageAttachments: [ViewerImageAttachment]
     let retainedBytes: Int
     private let tableRetainedBytesAtPreparation: Int
+    var ownRetainedBytes: Int { retainedBytes - tableRetainedBytesAtPreparation }
     var currentRetainedBytes: Int {
         var bytes = 0
         forEachRetainedLayout(
-            visit: { bytes += $0.retainedBytes - $0.tableRetainedBytesAtPreparation },
+            visit: { bytes += $0.ownRetainedBytes },
             storeBytes: { bytes += $0 },
             table: { bytes += $0.metadataRetainedBytes }
         )
@@ -340,24 +341,33 @@ public final class PreparedProseLayout: NSObject {
         storeBytes: (Int) -> Void = { _ in },
         table: (ViewerTableSurface) -> Void = { _ in }
     ) {
+        enum RetainedStep {
+            case layout(PreparedProseLayout)
+            case surface(ViewerTableSurface)
+            case store(TableCellLayoutStore)
+        }
         var layouts = Set<ObjectIdentifier>()
         var stores = Set<ObjectIdentifier>()
         var surfaces = Set<ObjectIdentifier>()
-        func walk(_ layout: PreparedProseLayout) {
-            guard layouts.insert(ObjectIdentifier(layout)).inserted else { return }
-            visit(layout)
-            for block in layout.blocks {
-                guard let surface = block.tableSurface else { continue }
+        var pending: [RetainedStep] = [.layout(self)]
+        while let step = pending.popLast() {
+            switch step {
+            case let .layout(layout):
+                guard layouts.insert(ObjectIdentifier(layout)).inserted else { continue }
+                visit(layout)
+                pending.append(contentsOf: layout.blocks.compactMap(\.tableSurface).reversed().map(RetainedStep.surface))
+            case let .surface(surface):
                 if surfaces.insert(ObjectIdentifier(surface)).inserted { table(surface) }
-                surface.forEachLayoutStore { store in
-                    guard stores.insert(ObjectIdentifier(store)).inserted else { return }
-                    let snapshot = store.residentSnapshot
-                    storeBytes(snapshot.keyBytes)
-                    snapshot.layouts.forEach(walk)
-                }
+                var surfaceStores: [RetainedStep] = []
+                surface.forEachLayoutStore { surfaceStores.append(.store($0)) }
+                pending.append(contentsOf: surfaceStores.reversed())
+            case let .store(store):
+                guard stores.insert(ObjectIdentifier(store)).inserted else { continue }
+                let snapshot = store.residentSnapshot
+                storeBytes(snapshot.keyBytes)
+                pending.append(contentsOf: snapshot.layouts.reversed().map(RetainedStep.layout))
             }
         }
-        walk(self)
     }
     let error: ProseViewerError?
     let cellShape: PreparedCellShape?

@@ -194,7 +194,8 @@ extension EditorTextView {
     func measuredAutoGrowHeight(forWidth width: CGFloat) -> CGFloat {
         guard width > 0 else { return 0 }
 
-        if abs(bounds.width - width) <= 0.5 {
+        // Height-tracking containers clip their used rect during the initial host layout.
+        if abs(bounds.width - width) <= 0.5 && !textContainer.heightTracksTextView {
             let currentHeight = ceil(bounds.height)
             let ensureLayoutStartedAt = DispatchTime.now().uptimeNanoseconds
             editorLayoutManager.ensureLayout(for: textContainer)

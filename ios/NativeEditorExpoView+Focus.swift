@@ -37,6 +37,7 @@ extension NativeEditorExpoView {
 
     @objc func textViewDidBeginEditing(_ notification: Notification) {
         guard notification.object as? EditorTextView === richTextView.activeTextInput else { return }
+        buildAccessoryToolbarButtonsIfPresented()
         installOutsideTapRecognizerIfNeeded()
         richTextView.textView.refreshSelectionVisualState()
         refreshMentionQuery()

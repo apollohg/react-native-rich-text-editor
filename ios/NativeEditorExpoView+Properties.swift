@@ -269,6 +269,7 @@ extension NativeEditorExpoView {
         lastToolbarItemsJSON = toolbarButtonsJson
         toolbarItems = NativeToolbarItem.from(json: toolbarButtonsJson)
         accessoryToolbar.setItems(toolbarItems)
+        buildAccessoryToolbarButtonsIfPresented()
         refreshSystemAssistantToolbarIfNeeded()
     }
 

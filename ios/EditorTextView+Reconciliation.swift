@@ -37,7 +37,7 @@ extension EditorTextView: NSTextStorageDelegate {
         PositionBridge.invalidateCache(for: self)
 
         let currentText = textStorage.string
-        guard currentText != lastAuthorizedText else { return }
+        guard !textStorageMatchesAuthorizedText() else { return }
         currentTopLevelChildMetadata = nil
 
         let allowAfterBlur = canAdoptNativeTextMutationAfterBlur()
@@ -85,7 +85,7 @@ extension EditorTextView: NSTextStorageDelegate {
 
             guard !self.isApplyingRustState, !self.isInterceptingInput, !self.isComposing else { return }
             guard self.editorId != 0 else { return }
-            guard self.textStorage.string != self.lastAuthorizedText else { return }
+            guard !self.textStorageMatchesAuthorizedText() else { return }
 
             // Reconcile by pulling the current editor state without rebuilding
             // the Rust backend or clearing history. This must run after the

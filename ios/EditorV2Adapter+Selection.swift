@@ -442,6 +442,9 @@ extension EditorV2Adapter {
     }
 
     func publishCachedCollaborationSelection() {
+        guard roomBound else { return }
+        let stageStarted = PreparedProseInstrumentation.now()
+        defer { PreparedProseInstrumentation.recordTableStage(.collaborationSelectionPublication, start: stageStarted) }
         if let cells = cachedCollaborationCells() {
             publishAwarenessSelection(
                 ["type": "cell", "anchorCell": Int(cells.anchor), "headCell": Int(cells.head)],
