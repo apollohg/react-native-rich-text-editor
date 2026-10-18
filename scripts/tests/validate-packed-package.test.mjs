@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -172,15 +172,16 @@ function runTablePackageFixtures() {
     const result = spawnSync(process.execPath, [tableValidator, fixture], { cwd: repoRoot, encoding: "utf8" });
     return { status: result.status, output: `${result.stdout}\n${result.stderr}` };
   };
-  const mutate = (name, path, update, expected) => {
+  const withMutation = (path, update, verify) => {
     const target = join(fixture, path);
     const original = existsSync(target) ? readFileSync(target) : null;
     mkdirSync(dirname(target), { recursive: true });
     try {
       const next = update(original);
+      assert.ok(next === null || original === null || !original.equals(Buffer.from(next)), `fixture setup did not change ${path}`);
       if (next === null) rmSync(target);
       else writeFileSync(target, next);
-      expectFailure(name, check(), expected);
+      verify(check());
     } finally {
       if (original === null) {
         rmSync(target, { force: true });
@@ -190,6 +191,8 @@ function runTablePackageFixtures() {
       } else writeFileSync(target, original);
     }
   };
+  const mutate = (name, path, update, expected) => withMutation(path, update, (result) => expectFailure(name, result, expected));
+  const accept = (name, path, update) => withMutation(path, update, (result) => expectPass(name, result));
   expectPass("table package baseline", check());
   mutate("table declaration export missing", "dist/index.d.ts",
     (value) => value.toString().replace(/\bTableCommand,?\s*/g, ""), /TableCommand/);
@@ -206,6 +209,16 @@ function runTablePackageFixtures() {
     (value) => value.toString().replace("public var sourceRow: UInt32", "public var sourceRow: UInt64"), /FfiTableCellRecord/);
   mutate("Kotlin table field drift", "rust/bindings/kotlin/uniffi/editor_core/editor_core.kt",
     (value) => value.toString().replace("var `sourceRow`: kotlin.UInt", "var `sourceRow`: kotlin.ULong"), /FfiTableCellRecord/);
+  accept("Kotlin table field default", "rust/bindings/kotlin/uniffi/editor_core/editor_core.kt",
+    (value) => value.toString().replace("var `sourceRow`: kotlin.UInt,", "var `sourceRow`: kotlin.UInt = 0u,"));
+  accept("Swift table field default", "ios/Generated_editor_core.swift",
+    (value) => value.toString().replace("public var sourceRow: UInt32\n", "public var sourceRow: UInt32 = 0\n"));
+  mutate("Kotlin defaulted table field type drift", "rust/bindings/kotlin/uniffi/editor_core/editor_core.kt",
+    (value) => value.toString().replace("var `sourceRow`: kotlin.UInt,", "var `sourceRow`: kotlin.ULong = 0uL,"), /FfiTableCellRecord/);
+  mutate("Kotlin defaulted table field name drift", "rust/bindings/kotlin/uniffi/editor_core/editor_core.kt",
+    (value) => value.toString().replace("var `sourceRow`: kotlin.UInt,", "var `sourceRowIndex`: kotlin.UInt = 0u,"), /FfiTableCellRecord/);
+  mutate("Swift defaulted table field type drift", "ios/Generated_editor_core.swift",
+    (value) => value.toString().replace("public var sourceRow: UInt32\n", "public var sourceRow: UInt64 = 0\n"), /FfiTableCellRecord/);
   mutate("table record missing", "ios/Generated_editor_core.swift",
     (value) => value.toString().replace("public struct FfiTableFrame {", "public struct RemovedTableFrame {"), /FfiTableFrame/);
   for (const [section, dependency] of [

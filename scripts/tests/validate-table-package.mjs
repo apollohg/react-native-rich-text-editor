@@ -75,8 +75,8 @@ for (const name of tableRecords) {
     const swiftBody = swift.match(new RegExp(`public struct ${name} \\{([\\s\\S]*?)\\n\\}`))?.[1];
     const kotlinBody = kotlin.match(new RegExp(`data class ${name} \\(([\\s\\S]*?)\\n\\)`))?.[1];
     assert.ok(swiftBody && kotlinBody, `missing generated table record: ${name}`);
-    const swiftFields = [...swiftBody.matchAll(/public var (\w+): ([^\n]+)/g)].map((match) => [match[1], match[2].trim()]);
-    const kotlinFields = [...kotlinBody.matchAll(/var `(\w+)`: ([^,\n]+)/g)].map((match) => [match[1], normalizeKotlin(match[2])]);
+    const swiftFields = [...swiftBody.matchAll(/public var (\w+): ([^=\n]+)/g)].map((match) => [match[1], match[2].trim()]);
+    const kotlinFields = [...kotlinBody.matchAll(/var `(\w+)`: ([^,=\n]+)/g)].map((match) => [match[1], normalizeKotlin(match[2])]);
     assert.ok(swiftFields.length > 0, `empty generated table record: ${name}`);
     assert.deepEqual(kotlinFields, swiftFields, `generated table fields disagree: ${name}`);
 }

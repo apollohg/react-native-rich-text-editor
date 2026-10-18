@@ -27,6 +27,13 @@ assert_package_entries_rejected() {
   fi
 }
 
+install_nm_shim() {
+  local shim_dir="$fixture_root/$1"
+  mkdir -p "$shim_dir"
+  cat > "$shim_dir/nm"
+  chmod +x "$shim_dir/nm"
+}
+
 package_fixture="$fixture_root/package entries"
 mkdir -p \
   "$package_fixture/dist" \
@@ -73,6 +80,25 @@ printf 'module.exports = { requestTimeoutMs: 60000 };' > "$package_fixture/dist/
 assert_package_entries_rejected "$package_fixture" "a declaration symbol present only in JavaScript"
 
 "$validator" --validate-xcframework "$repo_root/ios/EditorCore.xcframework"
+
+REAL_NM="$(command -v nm)"
+export REAL_NM
+install_nm_shim "interleaved nm" <<'NM'
+#!/usr/bin/env bash
+set -o pipefail
+"$REAL_NM" "$@" | perl -ne 'BEGIN { $| = 1 } if (/uniffi_editor_core_/) { my $half = int(length($_) / 2); print substr($_, 0, $half); print STDERR "interleaved.o: no symbols\n"; print substr($_, $half) } else { print }'
+NM
+PATH="$fixture_root/interleaved nm:$PATH" "$validator" --validate-xcframework "$repo_root/ios/EditorCore.xcframework"
+
+install_nm_shim "failing nm" <<'NM'
+#!/usr/bin/env bash
+"$REAL_NM" "$@"
+echo "nm: error: unreadable fixture member" >&2
+exit 1
+NM
+PATH="$fixture_root/failing nm:$PATH" assert_rejected \
+  "$repo_root/ios/EditorCore.xcframework" \
+  "an archive whose symbol table read fails with an unexpected nm error"
 
 reordered_fixture="$fixture_root/reordered valid metadata.xcframework"
 cp -R "$repo_root/ios/EditorCore.xcframework" "$reordered_fixture"

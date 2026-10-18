@@ -41,4 +41,4 @@ fi
 bash ./scripts/run-ios-tests.sh \
   --device-id "$IOS_DEVICE_ID" \
   --team-id "$IOS_DEVELOPMENT_TEAM" \
-  "${forwarded[@]}"
+  ${forwarded[@]+"${forwarded[@]}"}
