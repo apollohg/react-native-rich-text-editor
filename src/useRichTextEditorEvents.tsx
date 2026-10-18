@@ -29,6 +29,7 @@ import {
     isRecord,
     externalCompositionErrorPayload,
     parseSelectionFromUpdate,
+    publicSelection,
     LINK_TOOLBAR_ACTION_KEY,
     IMAGE_TOOLBAR_ACTION_KEY,
 } from './RichTextEditorSerialization';
@@ -67,6 +68,7 @@ export function useRichTextEditorEvents(
             | 'refreshAtomsFromUpdate'
             | 'applyTypedUpdateState'
             | 'applyUpdateState'
+            | 'applySelectionEventState'
             | 'updateAtomSelection'
         > &
         Pick<ReturnType<typeof useRichTextEditorCommands>, 'openLinkRequest' | 'openImageRequest'>
@@ -85,6 +87,7 @@ export function useRichTextEditorEvents(
         externalCompositionManager,
         scalarSelectionRef,
         applyUpdateState,
+        applySelectionEventState,
         selectionRef,
         updateAtomSelection,
         onSelectionChangeRef,
@@ -104,48 +107,6 @@ export function useRichTextEditorEvents(
         openImageRequest,
         onToolbarActionRef,
     } = context;
-
-    const isForThisEditor = useCallback(
-        (payload: { editorId: string }) => payload.editorId === editorId,
-        [ editorId ]
-    );
-
-    const handleEditorUpdate = useCallback(
-        (event: NativeSyntheticEvent<NativeUpdateEvent>) => {
-            if (documentHandle.isDestroyed) {
-                return;
-            }
-
-            const accepted = acceptNativeCommitPayload(
-                event.nativeEvent,
-                documentHandle.editorId,
-                lastAcceptedNativeCommitRevisionRef.current
-            );
-
-            if (accepted == null) {
-                return;
-            }
-
-            // Record both native-scoped revisions before any observable
-            // state/callback/refresh work. This makes duplicate delivery and
-            // the handle's same-revision signal deterministic.
-            lastAcceptedNativeCommitRevisionRef.current = accepted.documentRevision;
-            lastNativeDrivenRevisionRef.current = accepted.documentRevision;
-            refreshAtomsFromUpdate(accepted.snapshot);
-            applyTypedUpdateState(accepted.snapshot);
-            // The adapter already committed; re-read for content callbacks.
-            document.refresh();
-            onLocalCommitRef.current?.();
-        },
-        [ applyTypedUpdateState,
-            document,
-            documentHandle.editorId,
-            documentHandle.isDestroyed,
-            lastAcceptedNativeCommitRevisionRef,
-            lastNativeDrivenRevisionRef,
-            onLocalCommitRef,
-            refreshAtomsFromUpdate ]
-    );
 
     const admitNativeBindingEvent = useCallback(
         (payload: unknown): NativeEditorErrorBinding | null => {
@@ -179,6 +140,49 @@ export function useRichTextEditorEvents(
             return currentBinding;
         },
         [ nativeErrorBinding, nativeErrorBindingRef ]
+    );
+
+    const isForThisEditor = useCallback(
+        (payload: { editorId: string }) => payload.editorId === editorId,
+        [ editorId ]
+    );
+
+    const handleEditorUpdate = useCallback(
+        (event: NativeSyntheticEvent<NativeUpdateEvent>) => {
+            if (admitNativeBindingEvent(event.nativeEvent) == null) {
+                return;
+            }
+
+            const accepted = acceptNativeCommitPayload(
+                event.nativeEvent,
+                documentHandle.editorId,
+                lastAcceptedNativeCommitRevisionRef.current
+            );
+
+            if (accepted == null) {
+                return;
+            }
+
+            const onLocalCommit = onLocalCommitRef.current;
+            // Record both native-scoped revisions before any observable
+            // state/callback/refresh work. This makes duplicate delivery and
+            // the handle's same-revision signal deterministic.
+            lastAcceptedNativeCommitRevisionRef.current = accepted.documentRevision;
+            lastNativeDrivenRevisionRef.current = accepted.documentRevision;
+            refreshAtomsFromUpdate(accepted.snapshot);
+            applyTypedUpdateState(accepted.snapshot);
+            // The adapter already committed; re-read for content callbacks.
+            document.refresh();
+            onLocalCommit?.();
+        },
+        [ admitNativeBindingEvent,
+            applyTypedUpdateState,
+            document,
+            documentHandle.editorId,
+            lastAcceptedNativeCommitRevisionRef,
+            lastNativeDrivenRevisionRef,
+            onLocalCommitRef,
+            refreshAtomsFromUpdate ]
     );
 
     const handleEditorError = useCallback(
@@ -219,27 +223,35 @@ export function useRichTextEditorEvents(
 
     const handleSelectionChange = useCallback(
         (event: NativeSyntheticEvent<NativeSelectionEvent>) => {
-            if (documentHandle.isDestroyed || !isForThisEditor(event.nativeEvent)) {
+            if (admitNativeBindingEvent(event.nativeEvent) == null) {
                 return;
             }
 
             const { anchor, head, stateJson } = event.nativeEvent;
-            scalarSelectionRef.current = { anchor, head };
             let selection: Selection = { type: 'text', anchor, head };
-            const parsed = applyUpdateState(stateJson);
+            const parsed = applySelectionEventState(stateJson);
+
+            if (typeof stateJson === 'string' && stateJson.length > 0 && parsed == null) {
+                return;
+            }
+
             const parsedSelection = parseSelectionFromUpdate(parsed?.selection);
 
             if (parsedSelection) {
                 selection = parsedSelection;
             }
 
+            scalarSelectionRef.current = selection.type === 'text' &&
+                selection.anchorScalar != null && selection.headScalar != null
+                ? { anchor: selection.anchorScalar, head: selection.headScalar }
+                : { anchor, head };
+
             selectionRef.current = selection;
             updateAtomSelection(selection);
-            onSelectionChangeRef.current?.(selection);
+            onSelectionChangeRef.current?.(publicSelection(selection));
         },
-        [ applyUpdateState,
-            documentHandle.isDestroyed,
-            isForThisEditor,
+        [ admitNativeBindingEvent,
+            applySelectionEventState,
             onSelectionChangeRef,
             scalarSelectionRef,
             selectionRef,
@@ -297,10 +309,12 @@ export function useRichTextEditorEvents(
                 ...payload.geometry,
                 ownerId: toolbarFrameOwnerId,
             };
+
             const delivered = deliveredTableSelectionGeometryRef.current;
             const unchanged = delivered != null && isSameTableSelectionGeometry(delivered, received);
             const geometry = unchanged ? delivered : received;
             deliveredTableSelectionGeometryRef.current = geometry;
+
             setTableSelection({
                 geometry,
                 obstructions: payload.obstructions,

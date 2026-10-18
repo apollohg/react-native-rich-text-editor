@@ -1,0 +1,142 @@
+{
+    "renderBlocks": null,
+    "renderPatch": {
+        "baseDocumentVersion": "1",
+        "startIndex": 4,
+        "deleteCount": 1,
+        "renderBlocks": [
+            [
+                {
+                    "depth": 0,
+                    "nodeType": "paragraph",
+                    "type": "blockStart"
+                },
+                {
+                    "marks": [],
+                    "text": "Paragraph 0003: Native editing preserves each word, its formatting, and the caret while the document grows. ",
+                    "type": "textRun"
+                },
+                {
+                    "marks": [
+                        "bold"
+                    ],
+                    "text": "bold e!mphasis",
+                    "type": "textRun"
+                },
+                {
+                    "marks": [],
+                    "text": ", ",
+                    "type": "textRun"
+                },
+                {
+                    "marks": [
+                        "italic"
+                    ],
+                    "text": "italic detail",
+                    "type": "textRun"
+                },
+                {
+                    "marks": [],
+                    "text": ", ",
+                    "type": "textRun"
+                },
+                {
+                    "marks": [
+                        {
+                            "href": "https://example.com/editor-performance/3",
+                            "type": "link"
+                        }
+                    ],
+                    "text": "linked reference",
+                    "type": "textRun"
+                },
+                {
+                    "marks": [],
+                    "text": ". Unicode: café, é, 東京, 😀. Escapes: <tag> & \"quote\".",
+                    "type": "textRun"
+                },
+                {
+                    "type": "blockEnd"
+                }
+            ]
+        ]
+    },
+    "selection": {
+        "anchor": 770,
+        "anchorScalar": 765,
+        "head": 770,
+        "headScalar": 765,
+        "type": "text"
+    },
+    "activeState": {
+        "allowedMarks": [
+            "bold",
+            "italic",
+            "underline",
+            "strike",
+            "code",
+            "link"
+        ],
+        "commands": {
+            "addTableColumnAfter": false,
+            "addTableColumnBefore": false,
+            "addTableRowAfter": false,
+            "addTableRowBefore": false,
+            "clearTableCells": false,
+            "deleteTable": false,
+            "deleteTableColumns": false,
+            "deleteTableRows": false,
+            "indentList": false,
+            "insertTable": false,
+            "mergeTableCells": false,
+            "moveToNextTableCell": false,
+            "moveToPreviousTableCell": false,
+            "outdentList": false,
+            "selectTableColumns": false,
+            "selectTableRows": false,
+            "splitTableCell": false,
+            "toggleBlockquote": true,
+            "toggleCodeBlock": true,
+            "toggleHeading1": true,
+            "toggleHeading2": true,
+            "toggleHeading3": true,
+            "toggleHeading4": true,
+            "toggleHeading5": true,
+            "toggleHeading6": true,
+            "toggleTableHeaderCell": false,
+            "toggleTableHeaderColumn": false,
+            "toggleTableHeaderRow": false,
+            "toggleTaskItem": false,
+            "wrapBulletList": true,
+            "wrapOrderedList": true,
+            "wrapTaskList": false
+        },
+        "insertableNodes": [
+            "horizontal_rule",
+            "image",
+            "hard_break"
+        ],
+        "markAttrs": {},
+        "marks": {
+            "bold": true,
+            "code": false,
+            "italic": false,
+            "link": false,
+            "strike": false,
+            "underline": false
+        },
+        "nodes": {
+            "doc": true,
+            "paragraph": true
+        }
+    },
+    "historyState": {
+        "canRedo": false,
+        "canUndo": true
+    },
+    "documentVersion": "2",
+    "stateRevision": "3",
+    "scalarLength": 1274,
+    "documentIsEmpty": false,
+    "positionEpoch": "5"
+}

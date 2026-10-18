@@ -150,7 +150,7 @@ export function useRichTextEditorMentions(
                 return;
             }
 
-            const snapshot = bridge.renderUpdate({
+            const snapshot = bridge.renderState({
                 anchor: request.range.anchor,
                 head: request.range.head,
             });

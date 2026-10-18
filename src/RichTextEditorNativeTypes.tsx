@@ -93,6 +93,11 @@ export interface NativeSelectionEvent {
     documentVersion?: string;
 }
 
+export interface SelectionEventActiveState {
+    stateRevision: unknown;
+    activeState: unknown;
+}
+
 export interface NativeFocusEvent {
     isFocused: boolean;
     editorId: string;

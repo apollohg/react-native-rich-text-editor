@@ -295,7 +295,7 @@ describe('RichTextEditorRef.runTableCommand', () => {
         render(<NativeRichTextEditor ref={ref} documentHandle={handle} onLocalCommit={onLocalCommit} />);
         installTableEngine(handle, new Map());
         const base = currentRevision(handle);
-        mockNativeModule.editorV2RenderUpdate.mockClear();
+        mockNativeModule.editorV2RenderState.mockClear();
 
         const thrown = await runTableCommand(ref, {
             type: 'selectTableCells',
@@ -314,7 +314,7 @@ describe('RichTextEditorRef.runTableCommand', () => {
             headCell: { offset: ANCHOR_CELL, kind: 'document' },
         });
         expect(onLocalCommit).not.toHaveBeenCalled();
-        expect(mockNativeModule.editorV2RenderUpdate).toHaveBeenCalled();
+        expect(mockNativeModule.editorV2RenderState).toHaveBeenCalled();
         handle.destroy();
     });
 

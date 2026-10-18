@@ -11,6 +11,7 @@ export {
     type HistoryState,
     type ReadonlyActiveState,
     type NativeEditorAtomicRenderSnapshot,
+    type NativeEditorAtomicRenderState,
     type EditorUpdate,
     type ContentSnapshot,
     type DocumentJSON,

@@ -48,6 +48,15 @@ interface AtomRenderElement {
 
 const EMPTY_ATOM_ATTRS: Readonly<Record<string, unknown>> = Object.freeze({});
 
+const VOID_BLOCK_ELEMENT_TYPE = 'voidBlock';
+
+export function retainVoidBlockElements<Element extends { readonly type: string }>(
+    renderBlocks: ReadonlyArray<ReadonlyArray<Element>>
+): Array<ReadonlyArray<Element>> {
+    return renderBlocks.map(block =>
+        block.filter(element => element.type === VOID_BLOCK_ELEMENT_TYPE));
+}
+
 export function collectAtomInstanceBlocks(
     renderBlocks: ReadonlyArray<ReadonlyArray<AtomRenderElement>>,
     registeredTypes: ReadonlySet<string>
@@ -62,7 +71,7 @@ export function collectAtomInstanceBlocks(
 
         for (const element of block) {
             if (
-                element.type !== 'voidBlock' ||
+                element.type !== VOID_BLOCK_ELEMENT_TYPE ||
                 typeof element.nodeType !== 'string' ||
                 typeof element.docPos !== 'number'
             ) {

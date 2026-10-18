@@ -1,4 +1,3 @@
-import type { StyleProp, ViewStyle } from 'react-native';
 import {
     DEFAULT_EDITOR_TOOLBAR_ITEMS,
     setActiveEditorToolbarFrameOwnerForEditor,
@@ -38,6 +37,7 @@ import {
     type NativeEditorErrorBinding,
     type NativeAtomPosition,
     type TableToolbarSelection,
+    type SelectionEventActiveState,
 } from './RichTextEditorNativeTypes';
 
 export function useRichTextEditorState(
@@ -432,11 +432,13 @@ export function useRichTextEditorState(
 
     const warnedUnknownAtomTypesRef = useRef(new Set<string>());
 
-    const atomSeedEditorIdRef = useRef<string | null>(null);
+    const renderSeedEditorIdRef = useRef<string | null>(null);
 
     const activeStateRef = useRef<ReadonlyActiveState>(EMPTY_ACTIVE_STATE);
 
     const activeStateKeyRef = useRef<string | null>(null);
+
+    const selectionEventActiveStateRef = useRef<SelectionEventActiveState | null>(null);
 
     const selectionRef = useRef<Selection>({ type: 'text', anchor: 0, head: 0 });
 
@@ -472,6 +474,7 @@ export function useRichTextEditorState(
     const lastNativeDrivenRevisionRef = useRef<string | null>(null);
 
     const lastAcceptedNativeCommitRevisionRef = useRef<string | null>(null);
+    const latestPresentedStateRevisionRef = useRef<string | null>(null);
 
     const didObserveInitialRevisionRef = useRef(false);
 
@@ -518,6 +521,7 @@ export function useRichTextEditorState(
         selectionRef.current = { type: 'text', anchor: 0, head: 0 };
         activeStateRef.current = EMPTY_ACTIVE_STATE;
         activeStateKeyRef.current = null;
+        selectionEventActiveStateRef.current = null;
         toolbarItemsSerializationCacheRef.current = null;
         setActiveState(EMPTY_ACTIVE_STATE);
         setTableSelection(null);
@@ -533,7 +537,7 @@ export function useRichTextEditorState(
         };
 
         atomStateRef.current = emptyAtomState;
-        atomSeedEditorIdRef.current = null;
+        renderSeedEditorIdRef.current = null;
         setAtomState(emptyAtomState);
         setSelectedKeys(new Set());
         setAtomContentWidth(null);
@@ -542,6 +546,7 @@ export function useRichTextEditorState(
         lastPushedEngineRevisionRef.current = null;
         lastNativeDrivenRevisionRef.current = null;
         lastAcceptedNativeCommitRevisionRef.current = null;
+        latestPresentedStateRevisionRef.current = null;
         didObserveInitialRevisionRef.current = false;
     } else if (latestRevisionScopeEditorIdRef.current === editorId) {
         latestRevisionRef.current = document.documentRevision;
@@ -582,12 +587,13 @@ export function useRichTextEditorState(
         selectionRef,
         document,
         documentHandle,
-        atomSeedEditorIdRef,
+        renderSeedEditorIdRef,
         editorId,
         scalarSelectionRef,
         activeStateRef,
         setActiveState,
         activeStateKeyRef,
+        selectionEventActiveStateRef,
         onActiveStateChangeRef,
         pushedUpdateBindingGenerationRef,
         currentPushedUpdateEditorIdRef,
@@ -610,6 +616,7 @@ export function useRichTextEditorState(
         ref,
         externalCompositionManager,
         lastAcceptedNativeCommitRevisionRef,
+        latestPresentedStateRevisionRef,
         nativeErrorBindingRef,
         nativeErrorBinding,
         onSelectionChangeRef,
@@ -650,8 +657,8 @@ export function useRichTextEditorState(
         toolbarItems,
         toolbarPlacement,
         showToolbar,
-        containerStyle: containerStyle as StyleProp<ViewStyle>,
-        style: style as StyleProp<ViewStyle>,
+        containerStyle,
+        style,
         autoGrowHeight,
         pushedUpdate,
         registeredToolbarFrames,

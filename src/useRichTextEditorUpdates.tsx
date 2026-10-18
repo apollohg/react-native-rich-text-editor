@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect } from 'react';
 import {
     type NativeEditorAtomicRenderSnapshot,
+    type NativeEditorAtomicRenderState,
     type NativeEditorPositionAffinity,
     type Selection,
 } from './NativeEditorBridge';
-import { applyRenderPatch, collectAtomInstanceBlocks } from './atomInstances';
+import { applyRenderPatch, collectAtomInstanceBlocks, retainVoidBlockElements } from './atomInstances';
 import { allocateEditorUpdateRevision } from './EditorUpdateRevision';
+import { normalizeNativeEditorV2U64 } from './NativeEditorV2Decimal';
 import { setActiveEditorToolbarFrameOwnerForEditor } from './EditorToolbar';
 import { type useRichTextEditorState } from './useRichTextEditorState';
 import {
@@ -13,6 +15,7 @@ import {
     equalStringSets,
     equalAtomInstances,
     stringifyCachedJson,
+    serializeRenderNotice,
     isRecord,
     parseSelectionFromUpdate,
     parseActiveStateFromUpdate,
@@ -30,12 +33,13 @@ export function useRichTextEditorUpdates(
         | 'selectionRef'
         | 'document'
         | 'documentHandle'
-        | 'atomSeedEditorIdRef'
+        | 'renderSeedEditorIdRef'
         | 'editorId'
         | 'scalarSelectionRef'
         | 'activeStateRef'
         | 'setActiveState'
         | 'activeStateKeyRef'
+        | 'selectionEventActiveStateRef'
         | 'onActiveStateChangeRef'
         | 'pushedUpdateBindingGenerationRef'
         | 'currentPushedUpdateEditorIdRef'
@@ -48,6 +52,7 @@ export function useRichTextEditorUpdates(
         | 'didRebindRevisionScope'
         | 'didObserveInitialRevisionRef'
         | 'lastNativeDrivenRevisionRef'
+        | 'latestPresentedStateRevisionRef'
         | 'onLocalCommitRef'
     >
 ) {
@@ -60,12 +65,13 @@ export function useRichTextEditorUpdates(
         selectionRef,
         document,
         documentHandle,
-        atomSeedEditorIdRef,
+        renderSeedEditorIdRef,
         editorId,
         scalarSelectionRef,
         activeStateRef,
         setActiveState,
         activeStateKeyRef,
+        selectionEventActiveStateRef,
         onActiveStateChangeRef,
         pushedUpdateBindingGenerationRef,
         currentPushedUpdateEditorIdRef,
@@ -78,8 +84,17 @@ export function useRichTextEditorUpdates(
         didRebindRevisionScope,
         didObserveInitialRevisionRef,
         lastNativeDrivenRevisionRef,
+        latestPresentedStateRevisionRef,
         onLocalCommitRef,
     } = context;
+
+    const stateBindingGeneration = pushedUpdateBindingGenerationRef.current;
+
+    const isCurrentStateBinding = useCallback(
+        () => currentPushedUpdateEditorIdRef.current === editorId &&
+            pushedUpdateBindingGenerationRef.current === stateBindingGeneration,
+        [ currentPushedUpdateEditorIdRef, editorId, pushedUpdateBindingGenerationRef, stateBindingGeneration ]
+    );
 
     const updateAtomSelection = useCallback(
         (selection: Selection, instances = atomStateRef.current.instances) => {
@@ -90,45 +105,48 @@ export function useRichTextEditorUpdates(
     );
 
     const refreshAtomsFromUpdate = useCallback(
-        (update: NativeEditorAtomicRenderSnapshot) => {
-            const previous = atomStateRef.current;
-
-            const source =
-                update.renderPatch != null &&
-                update.renderPatch.baseDocumentVersion !== previous.documentVersion
-                    ? bridge.renderUpdate()
-                    : update;
-
-            if (
-                source.renderPatch != null &&
-                source.renderPatch.baseDocumentVersion !== previous.documentVersion
-            ) {
+        (update: NativeEditorAtomicRenderSnapshot | NativeEditorAtomicRenderState) => {
+            if (!isCurrentStateBinding()) {
                 return;
             }
 
+            const previous = atomStateRef.current;
+
+            const source =
+                'renderPatch' in update &&
+                update.renderPatch != null &&
+                update.renderPatch.baseDocumentVersion !== previous.documentVersion
+                    ? bridge.renderState()
+                    : update;
+
+            if (!isCurrentStateBinding()) {
+                return;
+            }
+
+            const renderPatch = 'renderPatch' in source ? source.renderPatch : null;
+
             const blocks =
-                source.renderBlocks != null
-                    ? source.renderBlocks
-                    : applyRenderPatch(previous.blocks, {
-                        startIndex: source.renderPatch.startIndex,
-                        deleteCount: source.renderPatch.deleteCount,
-                        renderBlocks: source.renderPatch.renderBlocks,
-                    });
+                'voidBlocks' in source
+                    ? source.voidBlocks
+                    : source.renderBlocks != null
+                        ? retainVoidBlockElements(source.renderBlocks)
+                        : applyRenderPatch(previous.blocks, {
+                            startIndex: source.renderPatch.startIndex,
+                            deleteCount: source.renderPatch.deleteCount,
+                            renderBlocks: retainVoidBlockElements(source.renderPatch.renderBlocks),
+                        });
 
             const patchedCollection =
-                source.renderPatch != null && previous.hasOnlyStableAtomKeys
-                    ? collectAtomInstanceBlocks(
-                        source.renderPatch.renderBlocks,
-                        registeredAtomTypes
-                    )
+                renderPatch != null && previous.hasOnlyStableAtomKeys
+                    ? collectAtomInstanceBlocks(renderPatch.renderBlocks, registeredAtomTypes)
                     : null;
 
             const collection =
-                source.renderPatch != null && patchedCollection?.hasOnlyStableKeys
+                renderPatch != null && patchedCollection?.hasOnlyStableKeys
                     ? {
                         instanceBlocks: applyRenderPatch(previous.instanceBlocks, {
-                            startIndex: source.renderPatch.startIndex,
-                            deleteCount: source.renderPatch.deleteCount,
+                            startIndex: renderPatch.startIndex,
+                            deleteCount: renderPatch.deleteCount,
                             renderBlocks: patchedCollection.instanceBlocks,
                         }),
                         hasOnlyStableKeys: true,
@@ -151,10 +169,13 @@ export function useRichTextEditorUpdates(
                 setAtomState(next);
             }
 
-            updateAtomSelection(selectionRef.current, next.instances);
+            if (isCurrentStateBinding()) {
+                updateAtomSelection(selectionRef.current, next.instances);
+            }
         },
         [ atomStateRef,
             bridge,
+            isCurrentStateBinding,
             registeredAtomTypes,
             selectionRef,
             setAtomState,
@@ -187,35 +208,53 @@ export function useRichTextEditorUpdates(
         setAtomState,
         updateAtomSelection ]);
 
-    useLayoutEffect(() => {
-        if (
-            !document.isReady ||
-            documentHandle.isDestroyed ||
-            atomSeedEditorIdRef.current === editorId
-        ) {
-            return;
-        }
-
-        atomSeedEditorIdRef.current = editorId;
-        refreshAtomsFromUpdate(bridge.renderUpdate());
-    }, [ atomSeedEditorIdRef,
-        bridge,
-        document.isReady,
-        documentHandle,
-        editorId,
-        refreshAtomsFromUpdate ]);
-
-    const applyTypedUpdateState = useCallback(
-        (
-            update: Pick<NativeEditorAtomicRenderSnapshot, 'selection' | 'activeState'>,
-            isCurrent: () => boolean = () => true
-        ) => {
-            if (!isCurrent()) {
+    const admitStateRevision = useCallback(
+        (value: unknown) => {
+            if (!isCurrentStateBinding()) {
                 return false;
             }
 
+            if (value === undefined) {
+                return true;
+            }
+
+            const revision = normalizeNativeEditorV2U64(value);
+            const latest = latestPresentedStateRevisionRef.current;
+
+            if (revision == null || (latest != null && BigInt(revision) < BigInt(latest))) {
+                return false;
+            }
+
+            latestPresentedStateRevisionRef.current = revision;
+
+            return true;
+        },
+        [ isCurrentStateBinding, latestPresentedStateRevisionRef ]
+    );
+
+    const isCurrentStateRevision = useCallback(
+        (value: string | null) => isCurrentStateBinding() && value === latestPresentedStateRevisionRef.current,
+        [ isCurrentStateBinding, latestPresentedStateRevisionRef ]
+    );
+
+    const applyTypedUpdateState = useCallback(
+        (
+            update: Pick<NativeEditorAtomicRenderSnapshot, 'selection' | 'activeState'> & { stateRevision?: unknown },
+            isCurrent: () => boolean = () => true
+        ) => {
+            if (!isCurrent() || !admitStateRevision(update.stateRevision)) {
+                return false;
+            }
+
+            const admittedRevision = latestPresentedStateRevisionRef.current;
+            const isCurrentState = () => isCurrent() && isCurrentStateRevision(admittedRevision);
+
             selectionRef.current = update.selection;
             updateAtomSelection(update.selection);
+
+            if (!isCurrentState()) {
+                return false;
+            }
 
             if (
                 update.selection.type === 'text' &&
@@ -228,43 +267,38 @@ export function useRichTextEditorUpdates(
                 };
             }
 
-            if (!isCurrent()) {
-                return false;
-            }
-
             const nextActiveState = update.activeState;
             activeStateRef.current = nextActiveState;
 
-            if (!isCurrent()) {
-                return false;
-            }
-
-            setActiveState(nextActiveState);
-
-            if (!isCurrent()) {
+            if (!isCurrentState()) {
                 return false;
             }
 
             const key = stringifyCachedJson(nextActiveState);
 
             if (key !== activeStateKeyRef.current) {
-                if (!isCurrent()) {
+                setActiveState(nextActiveState);
+
+                if (!isCurrentState()) {
                     return false;
                 }
 
                 activeStateKeyRef.current = key;
 
-                if (!isCurrent()) {
+                if (!isCurrentState()) {
                     return false;
                 }
 
                 onActiveStateChangeRef.current?.(nextActiveState);
             }
 
-            return isCurrent();
+            return isCurrentState();
         },
         [ activeStateKeyRef,
             activeStateRef,
+            admitStateRevision,
+            isCurrentStateRevision,
+            latestPresentedStateRevisionRef,
             onActiveStateChangeRef,
             scalarSelectionRef,
             selectionRef,
@@ -272,55 +306,115 @@ export function useRichTextEditorUpdates(
             updateAtomSelection ]
     );
 
-    const applyUpdateState = useCallback(
-        (updateJson: string | null | undefined) => {
-            if (typeof updateJson !== 'string' || updateJson.length === 0) {
-                return null;
-            }
+    useLayoutEffect(() => {
+        if (
+            !document.isReady ||
+            documentHandle.isDestroyed ||
+            renderSeedEditorIdRef.current === editorId
+        ) {
+            return;
+        }
 
-            let parsed: Record<string, unknown>;
+        renderSeedEditorIdRef.current = editorId;
+        const snapshot = bridge.renderState();
+        refreshAtomsFromUpdate(snapshot);
+        applyTypedUpdateState(snapshot);
+    }, [ renderSeedEditorIdRef,
+        applyTypedUpdateState,
+        bridge,
+        document.isReady,
+        documentHandle,
+        editorId,
+        refreshAtomsFromUpdate ]);
 
-            try {
-                const candidate = JSON.parse(updateJson) as unknown;
-
-                if (!isRecord(candidate)) {
-                    return null;
-                }
-
-                parsed = candidate;
-            } catch {
-                return null;
-            }
-
+    const applyParsedUpdateState = useCallback(
+        (parsed: Record<string, unknown>) => {
             const nextSelection = parseSelectionFromUpdate(parsed.selection);
             const nextActiveState = parseActiveStateFromUpdate(parsed.activeState);
 
+            if ((parsed.stateRevision !== undefined && !nextSelection && !nextActiveState) ||
+                !admitStateRevision(parsed.stateRevision)) {
+                return null;
+            }
+
+            const admittedRevision = latestPresentedStateRevisionRef.current;
+
             if (nextSelection && nextActiveState) {
-                applyTypedUpdateState({
+                if (!applyTypedUpdateState({
                     selection: nextSelection,
                     activeState: nextActiveState,
-                });
-            } else if (nextSelection) {
-                selectionRef.current = nextSelection;
-            } else if (nextActiveState) {
-                activeStateRef.current = nextActiveState;
-                setActiveState(nextActiveState);
-                const key = stringifyCachedJson(nextActiveState);
+                    stateRevision: parsed.stateRevision,
+                })) {
+                    return null;
+                }
+            } else {
+                if (nextSelection) {
+                    selectionRef.current = nextSelection;
+                } else if (nextActiveState) {
+                    activeStateRef.current = nextActiveState;
+                    const key = stringifyCachedJson(nextActiveState);
 
-                if (key !== activeStateKeyRef.current) {
-                    activeStateKeyRef.current = key;
-                    onActiveStateChangeRef.current?.(nextActiveState);
+                    if (key !== activeStateKeyRef.current) {
+                        setActiveState(nextActiveState);
+
+                        if (!isCurrentStateRevision(admittedRevision)) {
+                            return null;
+                        }
+
+                        activeStateKeyRef.current = key;
+                        onActiveStateChangeRef.current?.(nextActiveState);
+                    }
                 }
             }
 
-            return parsed;
+            return isCurrentStateRevision(admittedRevision) ? parsed : null;
         },
         [ activeStateKeyRef,
             activeStateRef,
+            admitStateRevision,
             applyTypedUpdateState,
+            isCurrentStateRevision,
+            latestPresentedStateRevisionRef,
             onActiveStateChangeRef,
             selectionRef,
             setActiveState ]
+    );
+
+    const applyUpdateState = useCallback(
+        (updateJson: string | null | undefined) => {
+            const parsed = parseUpdateStateJson(updateJson);
+
+            return parsed == null ? null : applyParsedUpdateState(parsed);
+        },
+        [ applyParsedUpdateState ]
+    );
+
+    const applySelectionEventState = useCallback(
+        (stateJson: string | null | undefined) => {
+            const parsed = parseUpdateStateJson(stateJson);
+
+            if (parsed == null) {
+                return null;
+            }
+
+            const { activeStateRevision, ...state } = parsed;
+
+            if (state.activeState !== undefined) {
+                selectionEventActiveStateRef.current = {
+                    stateRevision: state.stateRevision,
+                    activeState: state.activeState,
+                };
+            } else if (typeof activeStateRevision === 'string') {
+                const emitted = selectionEventActiveStateRef.current;
+
+                state.activeState = emitted?.stateRevision === activeStateRevision
+                    ? emitted.activeState
+                    : bridge.renderState().activeState;
+            }
+
+            return applyParsedUpdateState(state);
+        },
+        [ applyParsedUpdateState, bridge, selectionEventActiveStateRef ]
     );
 
     const pushEngineUpdateToView = useCallback(() => {
@@ -348,9 +442,10 @@ export function useRichTextEditorUpdates(
         }
 
         const reset = bridge._pendingViewReset;
-        const snapshot = bridge.renderUpdate();
+        selectionEventActiveStateRef.current = null;
+        const snapshot = bridge.renderState();
 
-        // renderUpdate can synchronously re-enter React and bind this
+        // renderState can synchronously re-enter React and bind this
         // component to another handle. Do not let any side effect from A
         // reach B once that happens.
         if (!isCurrentSource()) {
@@ -363,7 +458,7 @@ export function useRichTextEditorUpdates(
             return;
         }
 
-        const updateJson = JSON.stringify(snapshot);
+        const updateJson = serializeRenderNotice(snapshot);
 
         if (!isCurrentSource()) {
             return;
@@ -408,6 +503,7 @@ export function useRichTextEditorUpdates(
         pushRevisionRef,
         pushedUpdateBindingGenerationRef,
         refreshAtomsFromUpdate,
+        selectionEventActiveStateRef,
         setPushedUpdate ]);
 
     useLayoutEffect(() => {
@@ -419,7 +515,7 @@ export function useRichTextEditorUpdates(
 
         pendingFocusedRebindRef.current = null;
 
-        const snapshot = bridge.renderUpdate();
+        const snapshot = bridge.renderState();
         const anchor = Math.min(pending.anchor, snapshot.scalarLength);
         const head = Math.min(pending.head, snapshot.scalarLength);
         const collapsed = anchor === head;
@@ -514,7 +610,7 @@ export function useRichTextEditorUpdates(
                 document.documentOrigin === 'remoteCollaboration')
         ) {
             if (document.documentOrigin === 'remoteCollaboration' && !documentHandle.isDestroyed) {
-                refreshAtomsFromUpdate(bridge.renderUpdate());
+                refreshAtomsFromUpdate(bridge.renderState());
             }
 
             lastPushedEngineRevisionRef.current = revision;
@@ -549,6 +645,21 @@ export function useRichTextEditorUpdates(
         pushEngineUpdateToView,
         applyTypedUpdateState,
         applyUpdateState,
+        applySelectionEventState,
         updateAtomSelection,
     };
+}
+
+function parseUpdateStateJson(updateJson: string | null | undefined): Record<string, unknown> | null {
+    if (typeof updateJson !== 'string' || updateJson.length === 0) {
+        return null;
+    }
+
+    try {
+        const candidate = JSON.parse(updateJson) as unknown;
+
+        return isRecord(candidate) ? candidate : null;
+    } catch {
+        return null;
+    }
 }

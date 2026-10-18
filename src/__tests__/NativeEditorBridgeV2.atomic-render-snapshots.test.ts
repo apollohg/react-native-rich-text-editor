@@ -2,12 +2,14 @@ import './helpers/NativeEditorBridgeV2Fixture';
 import {
     HUGE_U64_DECIMAL,
     MOCK_ATOMIC_RENDER_SNAPSHOT,
+    MOCK_ATOMIC_RENDER_STATE,
     okRecord,
     mockNativeModule,
     createHandle,
     compileTypeScriptContractFixture,
     expectNonRetryable,
     catchRejectedNativeRecord,
+    catchThrown,
 } from './helpers/NativeEditorBridgeV2Fixture';
 
 describe('NativeEditorBridge v2', () => {
@@ -88,6 +90,62 @@ describe('NativeEditorBridge v2', () => {
                 const prose: RenderElement = { type: 'textRun', text: 'text', marks: [] };
             `),
             ).toBe('');
+        });
+
+        it('returns one deeply frozen render state carrying only void blocks beside the snapshot state', () => {
+            const handle = createHandle();
+            const state = handle.bridge.renderState();
+
+            expect(state).toEqual(MOCK_ATOMIC_RENDER_STATE);
+            expect(state).not.toHaveProperty('renderBlocks');
+            expect(state).not.toHaveProperty('renderPatch');
+            expect(Object.isFrozen(state)).toBe(true);
+            expect(Object.isFrozen(state.voidBlocks[1][0])).toBe(true);
+            expect(Object.isFrozen(state.activeState.marks)).toBe(true);
+        });
+
+        it('rejects a render state whose void blocks carry other render elements or render payload keys', () => {
+            const handle = createHandle();
+            const invalidStates = [
+                { ...MOCK_ATOMIC_RENDER_STATE, voidBlocks: MOCK_ATOMIC_RENDER_SNAPSHOT.renderBlocks },
+                { ...MOCK_ATOMIC_RENDER_STATE, renderBlocks: MOCK_ATOMIC_RENDER_SNAPSHOT.renderBlocks },
+                { ...MOCK_ATOMIC_RENDER_STATE, renderPatch: null },
+                { ...MOCK_ATOMIC_RENDER_STATE, voidBlocks: null },
+                { ...MOCK_ATOMIC_RENDER_STATE, stateRevision: undefined },
+            ];
+
+            for (const invalid of invalidStates) {
+                mockNativeModule.editorV2RenderState.mockReturnValueOnce(
+                    okRecord(JSON.stringify(invalid))
+                );
+
+                expectNonRetryable(
+                    catchRejectedNativeRecord(() => handle.bridge.renderState()),
+                    'FFI_RESULT_INVALID'
+                );
+            }
+        });
+
+        it('validates and forwards the render state mirror exactly like the render update', () => {
+            const handle = createHandle();
+            handle.bridge.renderState({ anchor: 2, head: 5 });
+
+            expect(mockNativeModule.editorV2RenderState).toHaveBeenLastCalledWith(
+                handle.editorId,
+                2,
+                5
+            );
+
+            const halfMirror = { anchor: 2 } as unknown as { anchor: number; head: number };
+            const stateError = catchThrown(() => handle.bridge.renderState(halfMirror)) as Error;
+            const updateError = catchThrown(() => handle.bridge.renderUpdate(halfMirror)) as Error;
+
+            expect(stateError).toBeInstanceOf(Error);
+            expect({ name: stateError.name, message: stateError.message }).toEqual({
+                name: updateError.name,
+                message: updateError.message,
+            });
+            expect(mockNativeModule.editorV2RenderState).toHaveBeenCalledTimes(1);
         });
 
         it('passes an exact optional mirror while retaining the atomic result shape', () => {

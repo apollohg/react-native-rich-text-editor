@@ -92,14 +92,53 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         expect(JSON.parse(props.editorUpdateJson).documentVersion).not.toBe(resetRevision!);
     });
 
+    it('hands native only the revision notice of a JS-driven render, never the render itself', () => {
+        const handle = createV2LocalHandle({
+            type: 'doc',
+            content: [ { type: 'paragraph', content: [ { type: 'text', text: 'notice body' } ] } ],
+        });
+        const ref = createRef<NativeRichTextEditorRef>();
+        const renderUpdate = jest.spyOn(handle.bridge, 'renderUpdate');
+        const renderState = jest.spyOn(handle.bridge, 'renderState');
+        const stringify = jest.spyOn(JSON, 'stringify');
+        const { getByTestId } = render(<NativeRichTextEditor ref={ref} documentHandle={handle} />);
+
+        act(() => {
+            ref.current!.toggleMark('bold');
+        });
+
+        const fetchedStates = new Set<unknown>(renderState.mock.results.map(result => result.value));
+        const stringifiedStates = stringify.mock.calls.filter(([ value ]) => fetchedStates.has(value));
+        const renderUpdateCalls = renderUpdate.mock.calls.length;
+        stringify.mockRestore();
+        renderUpdate.mockRestore();
+        renderState.mockRestore();
+        const engine = handle.bridge.renderState();
+        const pushedJson = getByTestId('native-editor-view').props.editorUpdateJson as string;
+
+        expect({
+            pushed: JSON.parse(pushedJson),
+            containsDocumentText: pushedJson.includes('notice body'),
+            stringifiedStates: stringifiedStates.length,
+            fetchedStates: fetchedStates.size > 0,
+            renderUpdateCalls,
+        }).toEqual({
+            pushed: { documentVersion: engine.documentVersion, stateRevision: engine.stateRevision },
+            containsDocumentText: false,
+            stringifiedStates: 0,
+            fetchedStates: true,
+            renderUpdateCalls: 0,
+        });
+        handle.destroy();
+    });
+
     it('applies a JS-driven render snapshot locally without parsing its native handoff JSON', () => {
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
         const ref = createRef<NativeRichTextEditorRef>();
         const onActiveStateChange = jest.fn();
 
         const snapshot = Object.freeze({
-            renderBlocks: Object.freeze([]),
-            renderPatch: null,
+            voidBlocks: Object.freeze([]),
             selection: Object.freeze({ type: 'text' as const, anchor: 1, head: 1 }),
             activeState: Object.freeze({
                 marks: Object.freeze({ bold: true }),
@@ -114,10 +153,10 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
             stateRevision: '7',
             scalarLength: 5,
             documentIsEmpty: false,
-        }) as ReturnType<typeof handle.bridge.renderUpdate>;
+        }) as ReturnType<typeof handle.bridge.renderState>;
 
-        const snapshotJson = JSON.stringify(snapshot);
-        const renderUpdate = jest.spyOn(handle.bridge, 'renderUpdate').mockReturnValue(snapshot);
+        const noticeJson = JSON.stringify({ documentVersion: '42', stateRevision: '7' });
+        const renderState = jest.spyOn(handle.bridge, 'renderState').mockReturnValue(snapshot);
         const parse = jest.spyOn(JSON, 'parse');
 
         const { getByTestId } = render(
@@ -132,11 +171,11 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
             ref.current!.toggleMark('bold');
         });
 
-        expect(getByTestId('native-editor-view').props.editorUpdateJson).toBe(snapshotJson);
+        expect(getByTestId('native-editor-view').props.editorUpdateJson).toBe(noticeJson);
         expect(onActiveStateChange.mock.calls.at(-1)![0]).toBe(snapshot.activeState);
-        expect(parse).not.toHaveBeenCalledWith(snapshotJson);
+        expect(parse).not.toHaveBeenCalledWith(noticeJson);
         parse.mockRestore();
-        renderUpdate.mockRestore();
+        renderState.mockRestore();
         handle.destroy();
     });
 
@@ -343,7 +382,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                     ? { revision: 0xffff_ffff }
                     : originalAllocateEditorUpdateRevision(currentRevision));
 
-        const renderUpdate = jest.spyOn(handle.bridge, 'renderUpdate');
+        const renderState = jest.spyOn(handle.bridge, 'renderState');
         handle.addErrorListener(error => errors.push(error));
 
         const { getByTestId } = render(
@@ -363,14 +402,14 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         const pushedUpdateRevision = view.props.editorUpdateRevision;
         expect(pushedUpdateRevision).toBe(0xffff_ffff);
 
-        renderUpdate.mockClear();
+        renderState.mockClear();
         onActiveStateChange.mockClear();
 
         act(() => {
             ref.current!.toggleMark('bold');
         });
 
-        expect(renderUpdate).not.toHaveBeenCalled();
+        expect(renderState).not.toHaveBeenCalled();
         expect(getByTestId('native-editor-view').props.editorUpdateJson).toBe(pushedUpdateJson);
 
         expect(getByTestId('native-editor-view').props.editorUpdateRevision).toBe(

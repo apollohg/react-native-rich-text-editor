@@ -487,6 +487,37 @@ export function createFakeEditingModule(
                 })
         ),
 
+        editorV2RenderState: jest.fn(
+            (editorId: string, mirrorAnchor: unknown, mirrorHead: unknown) => {
+                const rendered = module1.editorV2RenderUpdate(editorId, mirrorAnchor, mirrorHead) as {
+                    value: string | null;
+                    error: unknown;
+                };
+
+                if (rendered.error != null || rendered.value == null) {
+                    return rendered;
+                }
+
+                const update = JSON.parse(rendered.value) as Record<string, unknown> & {
+                    renderBlocks: Array<Array<{ type: string }>> | null;
+                };
+
+                if (update.renderBlocks == null) {
+                    throw new Error('a fake render state cannot derive void blocks from a render patch');
+                }
+
+                const state = Object.fromEntries(
+                    Object.entries(update).filter(([ key ]) => key !== 'renderBlocks' && key !== 'renderPatch')
+                );
+
+                return okRecord(JSON.stringify({
+                    voidBlocks: update.renderBlocks.map(block =>
+                        block.filter(element => element.type === 'voidBlock')),
+                    ...state,
+                }));
+            }
+        ),
+
         editorV2ApplyLocalApi: jest.fn((editorId: string, requestJson: string) =>
             withSession(editorId, session => {
                 const injected = pendingFor(session.editorId).applyLocalApiErrors.shift();
