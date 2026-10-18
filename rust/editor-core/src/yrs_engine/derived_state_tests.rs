@@ -87,7 +87,7 @@ fn document_and_yrs_from_json(
 }
 
 #[test]
-fn precomputed_document_history_charge_matches_legacy_helper_and_checks_overflow() {
+fn precomputed_document_history_charge_matches_the_snapshot_input_charge_and_checks_overflow() {
     let schema = tiptap_schema();
     let state = initialize_test_document(
         &schema,
@@ -104,18 +104,18 @@ fn precomputed_document_history_charge_matches_legacy_helper_and_checks_overflow
         .canonical_artifact
         .history_snapshot_retained_charge()
         .unwrap();
-    let legacy = history_document_snapshot_retained_bytes_with_canonical_charge(
-        &state.document,
-        charge.canonical_retained_bytes,
-        &state.position_map,
-        &state.rendered_text,
-        &state.render_blocks,
-        &state.schema_fingerprint,
-        "prosemirror",
-        None,
-    );
+    let input = history_document_snapshot_retained_bytes(HistoryDocumentSnapshotRetainedInput {
+        document: &state.document,
+        canonical_artifact: &state.canonical_artifact,
+        position_map: &state.position_map,
+        rendered_text: &state.rendered_text,
+        render_blocks: &state.render_blocks,
+        schema_fingerprint: &state.schema_fingerprint,
+        fragment_name: "prosemirror",
+        scope: None,
+    });
     let precomputed = history_document_snapshot_retained_bytes_with_precomputed_document_charge(
-        charge.source_document_retained_bytes,
+        0,
         charge.canonical_retained_bytes,
         state.validation_certificate.depth_counts.len(),
         &state.position_map,
@@ -126,7 +126,7 @@ fn precomputed_document_history_charge_matches_legacy_helper_and_checks_overflow
         None,
     );
 
-    assert_eq!(precomputed, legacy);
+    assert_eq!(precomputed, input);
     assert_eq!(
         history_document_snapshot_retained_bytes_with_precomputed_document_charge(
             usize::MAX,
@@ -140,6 +140,54 @@ fn precomputed_document_history_charge_matches_legacy_helper_and_checks_overflow
             None,
         ),
         None
+    );
+}
+
+#[test]
+fn history_snapshot_shares_the_live_rendered_text_allocation() {
+    let schema = tiptap_schema();
+    let state = initialize_test_document(
+        &schema,
+        json!({
+            "type": "doc",
+            "content": [{
+                "type": "paragraph",
+                "content": [{"type": "text", "text": "shared rendered text"}]
+            }]
+        }),
+    )
+    .unwrap();
+    let resource_limits = ResourceLimits::default();
+    let editing_limits = crate::yrs_engine::EditingLimits::default();
+    let retained_bytes =
+        history_document_snapshot_retained_bytes(HistoryDocumentSnapshotRetainedInput {
+            document: &state.document,
+            canonical_artifact: &state.canonical_artifact,
+            position_map: &state.position_map,
+            rendered_text: &state.rendered_text,
+            render_blocks: &state.render_blocks,
+            schema_fingerprint: &state.schema_fingerprint,
+            fragment_name: "prosemirror",
+            scope: None,
+        })
+        .unwrap();
+
+    let snapshot = state.capture_history_document_snapshot(
+        &resource_limits,
+        &editing_limits,
+        None,
+        "prosemirror",
+        None,
+        retained_bytes,
+    );
+
+    assert_eq!(&*snapshot.rendered_text, &*state.rendered_text);
+    assert!(
+        std::ptr::eq(
+            snapshot.rendered_text.as_ptr(),
+            state.rendered_text.as_ptr()
+        ),
+        "a history snapshot must share the live rendered text instead of copying it"
     );
 }
 
@@ -183,7 +231,7 @@ fn compiled_test_derivations(
         identity_seal: Arc::new(()),
         position_map: crate::position::build::build_position_map(document, schema),
         rendered_scalars: u32::try_from(rendered_text.chars().count()).unwrap(),
-        rendered_text,
+        rendered_text: rendered_text.into(),
         document_text_bytes: canonical_artifact.text_utf8_bytes(),
         document_node_count: crate::editor_state::document_node_count(document.root()),
     }
@@ -287,7 +335,7 @@ fn validated_document_evidence_rejects_every_seal_and_mixed_report_tamper() {
                 &fragment,
                 &mut write,
                 &json!({ "type": "doc", "content": [] }),
-                artifact.value(),
+                artifact.projected_value().as_value(),
             )
             .unwrap();
     }
@@ -406,3 +454,5 @@ fn initialize_seals_revision_bound_render_blocks() {
 include!("derived_state_tests/text_index.rs");
 
 include!("derived_state_tests/evidence_limits.rs");
+
+include!("derived_state_tests/root_window_certificate.rs");

@@ -562,8 +562,43 @@ impl MutationLookupSeed {
     }
 
     #[cfg(test)]
-    pub(crate) fn replacement_target_for_test(&self) -> Option<BranchID> {
-        self.ready_payload()?.target_materialization_work.replacement.as_ref().map(|(target, _)| target.clone())
+    pub(crate) fn assert_payload_matches_fresh_build_for_test<T: ReadTxn>(
+        &self,
+        txn: &T,
+        fragment: &XmlFragmentRef,
+        schema: &Schema,
+        case: &str,
+    ) {
+        let retained = self
+            .ready_payload()
+            .unwrap_or_else(|| panic!("{case}: lookup seed is ready"));
+        let fresh = build_lookup_seed_payload(0, txn, fragment, schema, None).unwrap();
+        assert_eq!(retained.target_count, fresh.target_count, "{case}: target count");
+        assert_eq!(
+            retained.pending_traversal_work, fresh.pending_traversal_work,
+            "{case}: pending traversal work"
+        );
+        assert_eq!(
+            retained.path_parent_widths, fresh.path_parent_widths,
+            "{case}: structural parent widths"
+        );
+        assert_eq!(
+            retained.target_materialization_work, fresh.target_materialization_work,
+            "{case}: text materialization work"
+        );
+    }
+
+    #[cfg(test)]
+    pub(crate) fn overridden_targets_for_test(&self) -> Vec<BranchID> {
+        self.ready_payload().map_or_else(Vec::new, |payload| {
+            payload
+                .target_materialization_work
+                .overrides
+                .iter()
+                .filter(|(_, value)| value.is_some())
+                .map(|(target, _)| target.clone())
+                .collect()
+        })
     }
 
     #[cfg(test)]
@@ -582,6 +617,17 @@ impl MutationLookupSeed {
             (Some(left), Some(right)) => Arc::ptr_eq(
                 &left.target_materialization_work.base,
                 &right.target_materialization_work.base,
+            ),
+            _ => false,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn shares_path_parent_width_base_for_test(&self, other: &Self) -> bool {
+        match (self.ready_payload(), other.ready_payload()) {
+            (Some(left), Some(right)) => Arc::ptr_eq(
+                &left.path_parent_widths.base,
+                &right.path_parent_widths.base,
             ),
             _ => false,
         }
@@ -782,26 +828,15 @@ impl MutationLookupSeed {
             .checked_sub(before.pending_traversal_work)
             .and_then(|work| work.checked_add(after.pending_traversal_work))
             .ok_or_else(mismatch)?;
-        let path_parent_widths = replace_lookup_entries(
+        let path_parent_widths = payload.path_parent_widths.replaced(
             request_id,
-            &payload.path_parent_widths,
             &before.path_parent_widths,
             &after.path_parent_widths,
         )?;
-        let target_materialization_work = replace_lookup_entries(
+        let target_materialization_work = payload.target_materialization_work.replaced(
             request_id,
-            payload
-                .target_materialization_work
-                .effective_map(request_id)?
-                .as_ref(),
-            before
-                .target_materialization_work
-                .effective_map(request_id)?
-                .as_ref(),
-            after
-                .target_materialization_work
-                .effective_map(request_id)?
-                .as_ref(),
+            &before.target_materialization_work,
+            &after.target_materialization_work,
         )?;
         probe_lookup_seed_publication(
             request_id,
@@ -813,10 +848,125 @@ impl MutationLookupSeed {
             state: MutationLookupSeedState::Ready(MutationLookupPayload {
                 target_count,
                 pending_traversal_work,
-                path_parent_widths: Arc::new(path_parent_widths),
-                target_materialization_work: TargetMaterializationWork::new(
-                    target_materialization_work,
-                ),
+                path_parent_widths,
+                target_materialization_work,
+            }),
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn with_root_window_replaced<C: ReadTxn, N: ReadTxn>(
+        &self,
+        request_id: u64,
+        current_txn: &C,
+        current_fragment: &XmlFragmentRef,
+        next_txn: &N,
+        next_fragment: &XmlFragmentRef,
+        window: &crate::yrs_engine::derived_state::RootChildWindow,
+        schema: &Schema,
+        branch_index: &mut Option<crate::yrs_engine::block_branch_index::BlockBranchIndexCapture>,
+        source_document: &Document,
+        resource_limits: &ResourceLimits,
+        editing_limits: &EditingLimits,
+        max_length: Option<u32>,
+        schema_fingerprint: &str,
+        yrs_state_epoch: u64,
+        document_revision: u64,
+    ) -> OperationResult<Self> {
+        let mismatch = || {
+            OperationError::engine_invariant_failed(
+                request_id,
+                None,
+                "root-window lookup splice does not match its retained payload",
+            )
+        };
+        let payload = self.ready_payload().ok_or_else(mismatch)?;
+        let root_id = AsRef::<Branch>::as_ref(current_fragment).id();
+        let old_width = current_fragment.len(current_txn) as usize;
+        let new_width = next_fragment.len(next_txn) as usize;
+        let replaced = window.old_to().checked_sub(window.from()).ok_or_else(mismatch)?;
+        let inserted = window.new_to().checked_sub(window.from()).ok_or_else(mismatch)?;
+        if self.binding.store_token != current_txn.store() as *const _ as usize
+            || self.binding.fragment_id != root_id
+            || AsRef::<Branch>::as_ref(next_fragment).id() != root_id
+            || old_width.checked_sub(replaced) != new_width.checked_sub(inserted)
+        {
+            return Err(mismatch());
+        }
+        let before = root_window_lookup_payload(
+            request_id,
+            current_txn,
+            current_fragment,
+            window.from(),
+            replaced,
+            schema,
+            &mut None,
+        )?;
+        let after = root_window_lookup_payload(
+            request_id,
+            next_txn,
+            next_fragment,
+            window.from(),
+            inserted,
+            schema,
+            branch_index,
+        )?;
+        let with_root_width = |widths: &LookupEntries, width: usize| {
+            let mut widths = widths
+                .materialize()
+                .map_err(|_| lookup_seed_allocation_error(request_id, "mapGrowth"))?;
+            widths
+                .try_reserve(1)
+                .map_err(|_| lookup_seed_allocation_error(request_id, "mapGrowth"))?;
+            widths.insert(root_id.clone(), width);
+            Ok::<_, OperationError>(LookupEntries::new(widths))
+        };
+        let target_count = payload
+            .target_count
+            .checked_sub(before.target_count)
+            .and_then(|count| count.checked_add(after.target_count))
+            .ok_or_else(mismatch)?;
+        let pending_traversal_work = payload
+            .pending_traversal_work
+            .checked_sub(before.pending_traversal_work)
+            .and_then(|work| work.checked_sub(old_width))
+            .and_then(|work| work.checked_add(after.pending_traversal_work))
+            .and_then(|work| work.checked_add(new_width))
+            .ok_or_else(mismatch)?;
+        let path_parent_widths = payload.path_parent_widths.replaced(
+            request_id,
+            &with_root_width(&before.path_parent_widths, old_width)?,
+            &with_root_width(&after.path_parent_widths, new_width)?,
+        )?;
+        let target_materialization_work = payload.target_materialization_work.replaced(
+            request_id,
+            &before.target_materialization_work,
+            &after.target_materialization_work,
+        )?;
+        probe_lookup_seed_publication(
+            request_id,
+            "bindingPublication",
+            std::mem::size_of::<MutationLookupBinding>(),
+        )?;
+        Ok(Self {
+            binding: MutationLookupBinding {
+                source_document: source_document.clone(),
+                canonical_artifact: None,
+                resource_limits: resource_limits.clone(),
+                editing_limits: editing_limits.clone(),
+                max_length,
+                store_token: next_txn.store() as *const _ as usize,
+                fragment_id: root_id,
+                schema_fingerprint: Arc::from(schema_fingerprint),
+                yrs_state_epoch,
+                document_revision,
+                history_store_snapshot: None,
+            },
+            state: MutationLookupSeedState::Ready(MutationLookupPayload {
+                target_count,
+                pending_traversal_work,
+                path_parent_widths,
+                target_materialization_work,
             }),
         })
     }
@@ -967,49 +1117,3 @@ fn textblock_lookup_payload<T: ReadTxn>(
     collector.finish_payload()
 }
 
-fn replace_lookup_entries(
-    request_id: u64,
-    original: &HashMap<BranchID, usize>,
-    before: &HashMap<BranchID, usize>,
-    after: &HashMap<BranchID, usize>,
-) -> OperationResult<HashMap<BranchID, usize>> {
-    let mismatch = || {
-        OperationError::engine_invariant_failed(
-            request_id,
-            None,
-            "localized lookup subtree entries disagree with the retained payload",
-        )
-    };
-    let capacity = original
-        .len()
-        .checked_sub(before.len())
-        .and_then(|len| len.checked_add(after.len()))
-        .ok_or_else(mismatch)?;
-    let mut replaced = HashMap::new();
-    replaced
-        .try_reserve(capacity)
-        .map_err(|_| lookup_seed_allocation_error(request_id, "mapGrowth"))?;
-    for (key, value) in original {
-        if let Some(expected) = before.get(key) {
-            if expected != value {
-                return Err(mismatch());
-            }
-        } else {
-            replaced.insert(key.clone(), *value);
-        }
-    }
-    if before.keys().any(|key| !original.contains_key(key)) {
-        return Err(mismatch());
-    }
-    for (key, value) in after {
-        if replaced.insert(key.clone(), *value).is_some() {
-            return Err(mismatch());
-        }
-    }
-    probe_lookup_seed_publication(
-        request_id,
-        "mapPublication",
-        std::mem::size_of::<HashMap<BranchID, usize>>(),
-    )?;
-    Ok(replaced)
-}

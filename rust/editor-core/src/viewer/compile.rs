@@ -277,7 +277,7 @@ pub(crate) fn viewer_leaf_element(
             attrs,
             mention_theme: _,
         } => FfiViewerElement::InlineAtom {
-            label: prefixed_mention_label(&node_type, label, mention_prefix),
+            label: prefixed_mention_label(&node_type, label.into_string(), mention_prefix),
             node_type,
             doc_pos: origin + doc_pos,
             attrs_json: canonical_attrs_json(&attrs),
@@ -288,7 +288,7 @@ pub(crate) fn viewer_leaf_element(
             label,
             attrs,
         } => FfiViewerElement::BlockAtom {
-            label: prefixed_mention_label(&node_type, label, mention_prefix),
+            label: prefixed_mention_label(&node_type, label.into_string(), mention_prefix),
             node_type,
             doc_pos: origin + doc_pos,
             attrs_json: canonical_attrs_json(&attrs),
@@ -302,7 +302,7 @@ pub(crate) fn viewer_leaf_element(
             node_type,
             language,
             depth,
-            list_context_json: list_context.as_ref().map(canonical_list_context_json),
+            list_context_json: list_context.as_deref().map(canonical_list_context_json),
         },
         RenderElement::BlockEnd => FfiViewerElement::BlockEnd,
     }

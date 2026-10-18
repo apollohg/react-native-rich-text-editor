@@ -7,13 +7,14 @@ use yrs::types::text::Text;
 use yrs::types::xml::XmlTextPrelim;
 use yrs::types::xml::{Xml, XmlElementRef, XmlFragment, XmlFragmentRef, XmlOut, XmlTextRef};
 use yrs::types::Attrs;
+use yrs::OffsetKind;
 use yrs::ReadTxn;
 use yrs::Snapshot;
 use yrs::StateVector;
 use yrs::StickyIndex;
 use yrs::TransactionMut;
 
-use super::super::codec::insert_prepared_node;
+use super::super::codec::insert_prepared_nodes;
 use super::super::codec::{PreparedXmlChild, PreparedXmlNode};
 use super::super::{OperationError, OperationResult};
 
@@ -25,9 +26,13 @@ pub(crate) enum XmlParentRef {
 
 impl XmlParentRef {
     pub(super) fn id(&self) -> BranchID {
+        self.branch().id()
+    }
+
+    fn branch(&self) -> &Branch {
         match self {
-            Self::Fragment(parent) => AsRef::<Branch>::as_ref(parent).id(),
-            Self::Element(parent) => AsRef::<Branch>::as_ref(parent).id(),
+            Self::Fragment(parent) => parent.as_ref(),
+            Self::Element(parent) => parent.as_ref(),
         }
     }
 
@@ -65,10 +70,10 @@ impl XmlParentRef {
         }
     }
 
-    fn insert_prepared(&self, txn: &mut TransactionMut<'_>, index: u32, node: PreparedXmlNode) {
+    fn insert_prepared(&self, txn: &mut TransactionMut<'_>, nodes: Vec<PreparedXmlChild>) {
         match self {
-            Self::Fragment(parent) => insert_prepared_node(parent, txn, index, node),
-            Self::Element(parent) => insert_prepared_node(parent, txn, index, node),
+            Self::Fragment(parent) => insert_prepared_nodes(parent, txn, nodes),
+            Self::Element(parent) => insert_prepared_nodes(parent, txn, nodes),
         }
     }
 }
@@ -187,33 +192,23 @@ pub(crate) struct CrdtEnvelope {
 }
 
 impl YrsMutationPlan {
-    pub(crate) fn is_empty(&self) -> bool {
-        self.actions.is_empty()
+    pub(crate) fn edits_only_root_children(&self) -> bool {
+        self.actions.iter().all(|action| {
+            matches!(
+                action,
+                YrsMutationAction::DeleteXmlChildren {
+                    parent: XmlParentRef::Fragment(_),
+                    ..
+                } | YrsMutationAction::InsertXmlChildren {
+                    parent: XmlParentRef::Fragment(_),
+                    ..
+                }
+            )
+        })
     }
 
-    pub(crate) fn matches_sealed_import_state<T: ReadTxn>(
-        &self,
-        state_vector: &StateVector,
-        txn: &T,
-        scope: Option<crate::yrs_engine::compiler::CompilationReadScope<'_>>,
-    ) -> bool {
-        self.document_guard.as_ref().is_some_and(|guard| {
-            if guard.evidence.state() != state_vector {
-                return false;
-            }
-            match &guard.evidence {
-                DocumentGuardEvidence::Snapshot(snapshot) => snapshot.delete_set.is_empty(),
-                DocumentGuardEvidence::Held { .. } => {
-                    if guard.store_token != txn.store() as *const _ as usize
-                        || !guard.evidence.authenticates_scope(scope, guard.store_token)
-                    {
-                        return false;
-                    }
-                    let snapshot = txn.snapshot();
-                    snapshot.state_map == *state_vector && snapshot.delete_set.is_empty()
-                }
-            }
-        })
+    pub(crate) fn is_empty(&self) -> bool {
+        self.actions.is_empty()
     }
 
     pub(crate) fn requires_crdt_envelope(&self) -> bool {
@@ -423,8 +418,38 @@ fn branch_is_deleted_or_descendant<T: ReadTxn>(
 
 #[cfg(test)]
 impl YrsMutationPlan {
+
     pub(crate) fn compilation_work_for_test(&self) -> usize {
         self.compilation_work
+    }
+
+    pub(crate) fn assert_same_lowering_for_test(&self, other: &Self, context: &str) {
+        assert_eq!(
+            self.actions.len(),
+            other.actions.len(),
+            "{context}: plans must hold as many actions: {:?} versus {:?}",
+            self.actions,
+            other.actions
+        );
+        for (index, (action, other_action)) in self.actions.iter().zip(&other.actions).enumerate() {
+            assert!(
+                action.same_lowering_as_for_test(other_action),
+                "{context}: action {index} differs: {action:?} versus {other_action:?}"
+            );
+        }
+        assert_eq!(
+            (
+                self.compilation_work,
+                self.expected_preflight_work,
+                self.scan_work
+            ),
+            (
+                other.compilation_work,
+                other.expected_preflight_work,
+                other.scan_work
+            ),
+            "{context}: plans must charge equal compilation, preflight and scan work"
+        );
     }
 
     pub(crate) fn expected_preflight_work_for_test(&self) -> usize {
@@ -521,6 +546,7 @@ pub(crate) enum YrsMutationAction {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(test, derive(PartialEq))]
 pub(crate) enum CreatedTextAction {
     Insert {
         index_utf16: u32,
@@ -559,6 +585,224 @@ impl CreatedTextAction {
 }
 
 impl YrsMutationAction {
+    #[cfg(test)]
+    pub(crate) fn same_lowering_as_for_test(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::DeleteXmlChildren {
+                    child_index,
+                    child_count,
+                    signature,
+                    operation_index,
+                    ..
+                },
+                Self::DeleteXmlChildren {
+                    child_index: other_child_index,
+                    child_count: other_child_count,
+                    signature: other_signature,
+                    operation_index: other_operation_index,
+                    ..
+                },
+            ) => {
+                (child_index, child_count, signature, operation_index)
+                    == (
+                        other_child_index,
+                        other_child_count,
+                        other_signature,
+                        other_operation_index,
+                    )
+            }
+            (
+                Self::InsertXmlChildren {
+                    child_index,
+                    nodes,
+                    signature,
+                    operation_index,
+                    ..
+                },
+                Self::InsertXmlChildren {
+                    child_index: other_child_index,
+                    nodes: other_nodes,
+                    signature: other_signature,
+                    operation_index: other_operation_index,
+                    ..
+                },
+            ) => {
+                (child_index, nodes, signature, operation_index)
+                    == (
+                        other_child_index,
+                        other_nodes,
+                        other_signature,
+                        other_operation_index,
+                    )
+            }
+            (
+                Self::SetXmlAttribute {
+                    key,
+                    value,
+                    signature,
+                    operation_index,
+                    ..
+                },
+                Self::SetXmlAttribute {
+                    key: other_key,
+                    value: other_value,
+                    signature: other_signature,
+                    operation_index: other_operation_index,
+                    ..
+                },
+            ) => {
+                (key, value, signature, operation_index)
+                    == (
+                        other_key,
+                        other_value,
+                        other_signature,
+                        other_operation_index,
+                    )
+            }
+            (
+                Self::RemoveXmlAttribute {
+                    key,
+                    signature,
+                    operation_index,
+                    ..
+                },
+                Self::RemoveXmlAttribute {
+                    key: other_key,
+                    signature: other_signature,
+                    operation_index: other_operation_index,
+                    ..
+                },
+            ) => {
+                (key, signature, operation_index)
+                    == (other_key, other_signature, other_operation_index)
+            }
+            (
+                Self::CreateText {
+                    child_index,
+                    text,
+                    scalar_len,
+                    len_utf16,
+                    attrs,
+                    follow_up,
+                    signature,
+                    operation_index,
+                    ..
+                },
+                Self::CreateText {
+                    child_index: other_child_index,
+                    text: other_text,
+                    scalar_len: other_scalar_len,
+                    len_utf16: other_len_utf16,
+                    attrs: other_attrs,
+                    follow_up: other_follow_up,
+                    signature: other_signature,
+                    operation_index: other_operation_index,
+                    ..
+                },
+            ) => {
+                (child_index, text, scalar_len, len_utf16, attrs, follow_up)
+                    == (
+                        other_child_index,
+                        other_text,
+                        other_scalar_len,
+                        other_len_utf16,
+                        other_attrs,
+                        other_follow_up,
+                    )
+                    && (signature, operation_index) == (other_signature, other_operation_index)
+            }
+            (
+                Self::InsertText {
+                    index_utf16,
+                    text,
+                    len_utf16,
+                    attrs,
+                    signature,
+                    operation_index,
+                    ..
+                },
+                Self::InsertText {
+                    index_utf16: other_index_utf16,
+                    text: other_text,
+                    len_utf16: other_len_utf16,
+                    attrs: other_attrs,
+                    signature: other_signature,
+                    operation_index: other_operation_index,
+                    ..
+                },
+            ) => {
+                (
+                    index_utf16,
+                    text,
+                    len_utf16,
+                    attrs,
+                    signature,
+                    operation_index,
+                ) == (
+                    other_index_utf16,
+                    other_text,
+                    other_len_utf16,
+                    other_attrs,
+                    other_signature,
+                    other_operation_index,
+                )
+            }
+            (
+                Self::DeleteText {
+                    index_utf16,
+                    len_utf16,
+                    signature,
+                    operation_index,
+                    ..
+                },
+                Self::DeleteText {
+                    index_utf16: other_index_utf16,
+                    len_utf16: other_len_utf16,
+                    signature: other_signature,
+                    operation_index: other_operation_index,
+                    ..
+                },
+            ) => {
+                (index_utf16, len_utf16, signature, operation_index)
+                    == (
+                        other_index_utf16,
+                        other_len_utf16,
+                        other_signature,
+                        other_operation_index,
+                    )
+            }
+            (
+                Self::FormatText {
+                    index_utf16,
+                    len_utf16,
+                    attrs,
+                    signature,
+                    operation_index,
+                    ..
+                },
+                Self::FormatText {
+                    index_utf16: other_index_utf16,
+                    len_utf16: other_len_utf16,
+                    attrs: other_attrs,
+                    signature: other_signature,
+                    operation_index: other_operation_index,
+                    ..
+                },
+            ) => {
+                (index_utf16, len_utf16, attrs, signature, operation_index)
+                    == (
+                        other_index_utf16,
+                        other_len_utf16,
+                        other_attrs,
+                        other_signature,
+                        other_operation_index,
+                    )
+            }
+            _ => false,
+        }
+    }
+
     fn target(&self) -> &XmlTextRef {
         match self {
             Self::CreateText { .. }
@@ -615,6 +859,19 @@ impl YrsMutationAction {
             | Self::FormatText {
                 operation_index, ..
             } => *operation_index,
+        }
+    }
+
+    pub(super) fn signature_path(&self) -> &[(BranchID, u32)] {
+        match self {
+            Self::DeleteXmlChildren { signature, .. }
+            | Self::InsertXmlChildren { signature, .. } => &signature.path,
+            Self::SetXmlAttribute { signature, .. }
+            | Self::RemoveXmlAttribute { signature, .. } => &signature.path,
+            Self::CreateText { signature, .. } => &signature.path,
+            Self::InsertText { signature, .. }
+            | Self::DeleteText { signature, .. }
+            | Self::FormatText { signature, .. } => &signature.path,
         }
     }
 }

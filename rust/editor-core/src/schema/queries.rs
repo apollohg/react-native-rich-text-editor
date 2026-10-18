@@ -313,6 +313,12 @@ impl Schema {
         budget: &WorkBudget,
     ) -> Result<Vec<String>, ()> {
         let mut result = Vec::new();
+        let symbols = parent_spec.content.insertion_symbols_with_budget(
+            prefix_child_types,
+            suffix_child_types,
+            |child_type, symbol| self.node_matches_symbol(child_type, symbol),
+            budget,
+        )?;
 
         let excluded_roles = |role: &NodeRole| -> bool {
             matches!(
@@ -333,18 +339,14 @@ impl Schema {
             if excluded_roles(&node_spec.role) {
                 continue;
             }
-            let candidate_types = prefix_child_types
-                .iter()
-                .copied()
-                .chain(std::iter::once(node_spec.name.as_str()))
-                .chain(suffix_child_types.iter().copied())
-                .collect::<Vec<_>>();
-            if parent_spec.content.matches_with_budget(
-                &candidate_types,
-                |child_type, symbol| self.node_matches_symbol(child_type, symbol),
-                budget,
-            )? {
-                result.push(node_spec.name.clone());
+            for symbol in &symbols {
+                if !budget.consume() {
+                    return Err(());
+                }
+                if self.node_matches_symbol(&node_spec.name, symbol) {
+                    result.push(node_spec.name.clone());
+                    break;
+                }
             }
         }
 

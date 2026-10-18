@@ -8,18 +8,19 @@ use yrs::{Assoc, ReadTxn, StickyIndex};
 use super::{
     boundary_anchors_at, boundary_chunks_at_doc_positions, is_table_cell_element, scalar_len,
     scalar_offset_to_utf16, sticky_at, xml_out_pm_size, xml_text_plain_string,
-    BOUNDARY_SORT_TARGETS, BOUNDARY_WALK_NODE_VISITS,
+    BOUNDARY_SORT_TARGETS, BOUNDARY_WALK_NODE_VISITS, DENSE_BOUNDARY_STAGING_ALLOCATIONS,
 };
 use crate::model::Node;
-use crate::position_epoch::BoundaryAnchors;
+use crate::position_epoch::{BoundaryAnchors, EpochSnapshot};
 use crate::schema::content_rule::ContentRule;
 use crate::schema::presets::prosemirror_table_schema;
 use crate::schema::{AttrSpec, NodeRole, NodeSpec, Schema};
 use crate::tables::commands::{TableCommand, NODE_OPENING_TOKENS};
 use crate::tables::commands_tests::engine_with;
 use crate::yrs_engine::{
-    Affinity, EditorOffsetKind, HistoryPolicy, RevisionedPosition, SelectionInput, SelectionIntent,
-    TransactionOrigin, TypedCommand, TypedTransaction, YrsDocumentEngine,
+    Affinity, EditingLimits, EditorOffsetKind, HistoryPolicy, InitializationMode,
+    RevisionedPosition, SelectionInput, SelectionIntent, TransactionOrigin, TypedCommand,
+    TypedTransaction, YrsDocumentEngine, YrsEngineConfig,
 };
 
 const MENTION_NODE: &str = "mention";
@@ -34,22 +35,68 @@ const LONG_PROSE_WORDS: usize = 12;
 const TYPED_TEXT: &str = "q😀z";
 const FIRST_EDIT_REQUEST: u64 = 1;
 const INSIDE_WORD: u32 = 1;
+const REPLICA_FRAGMENT: &str = "prosemirror";
+const REPLICA_SYNC_REQUEST: u64 = 900;
+const REMOTE_MARK: &str = "bold";
+const REMOTE_MARKED_SCALARS: u32 = 2;
+const REMOTE_DELETION_START: u32 = 1;
+const REMOTE_DELETED_SCALARS: u32 = 1;
+const REMOTE_EDIT_REQUESTS: u64 = 6;
+const RUN_COMPACTED_MIN_BOUNDARIES: usize = 64;
+const RUN_COMPACTION_RATIO: usize = 8;
+const UNIFORM_PROSE_PARAGRAPHS: usize = 48;
+const SHARED_STAGING_ALLOCATIONS: usize = 1;
 
 #[test]
-fn compact_text_epochs_preserve_every_dense_anchor_pin_and_retained_charge() {
+fn epoch_pin_stages_every_paragraph_through_one_shared_dense_buffer() {
+    let content = (0..UNIFORM_PROSE_PARAGRAPHS)
+        .map(|_| {
+            paragraph(vec![
+                text("uniform plain "),
+                marked("bold words", "bold"),
+                text(" café 😀 tail"),
+            ])
+        })
+        .collect::<Vec<_>>();
+    let engine = engine_with(corpus_schema(), content);
+    let dense = dense_epoch_snapshot(&engine);
+    DENSE_BOUNDARY_STAGING_ALLOCATIONS.set(0);
+
+    let compact = engine.build_position_epoch_snapshot().unwrap();
+
+    assert_eq!(
+        DENSE_BOUNDARY_STAGING_ALLOCATIONS.replace(0),
+        SHARED_STAGING_ALLOCATIONS,
+        "{UNIFORM_PROSE_PARAGRAPHS} equally sized paragraphs must reuse one staging buffer"
+    );
+    assert_eq!(compact.chunks.len(), UNIFORM_PROSE_PARAGRAPHS);
+    assert_eq!(dense.boundary_count(), compact.boundary_count());
+    for scalar in 0..dense.boundary_count() as u32 {
+        assert_eq!(
+            dense.boundary(scalar).unwrap().anchors,
+            compact.boundary(scalar).unwrap().anchors,
+            "boundary {scalar}"
+        );
+    }
+}
+
+fn dense_epoch_snapshot(engine: &YrsDocumentEngine) -> EpochSnapshot {
     struct DenseConstruction;
     impl Drop for DenseConstruction {
         fn drop(&mut self) {
             super::BOUNDARY_COMPACTION_DISABLED.set(false);
         }
     }
+    super::BOUNDARY_COMPACTION_DISABLED.set(true);
+    let _reset = DenseConstruction;
+    engine.build_position_epoch_snapshot().unwrap()
+}
+
+#[test]
+fn compact_text_epochs_preserve_every_dense_anchor_pin_and_retained_charge() {
     let mut saved_anchors = 0;
     for (label, engine) in corpus() {
-        let dense = {
-            super::BOUNDARY_COMPACTION_DISABLED.set(true);
-            let _reset = DenseConstruction;
-            engine.build_position_epoch_snapshot().unwrap()
-        };
+        let dense = dense_epoch_snapshot(&engine);
         let compact = engine.build_position_epoch_snapshot().unwrap();
         assert_eq!(
             dense.boundary_count(),
@@ -84,6 +131,78 @@ fn compact_text_epochs_preserve_every_dense_anchor_pin_and_retained_charge() {
         saved_anchors > 0,
         "Certified plain text must avoid constructing per-character anchor objects"
     );
+}
+
+#[test]
+fn multi_item_paragraph_epochs_derive_every_dense_anchor_from_item_runs() {
+    for (label, engine) in [
+        ("long prose", engine_with(corpus_schema(), long_prose())),
+        (
+            "locally edited long prose",
+            edited(long_prose(), &["w0_3", "w17_5", "w39_11"]),
+        ),
+        (
+            "remotely edited long prose",
+            remotely_edited(long_prose(), &["w0_3", "w17_5", "w39_11"]),
+        ),
+        (
+            "remotely edited rich prose",
+            remotely_edited(rich_prose(), &["emphasis", "quoted", "nested"]),
+        ),
+        (
+            "remotely edited tables",
+            remotely_edited(tables(), &["wide", "outer", "עולם"]),
+        ),
+    ] {
+        let dense = dense_epoch_snapshot(&engine);
+        let compact = engine.build_position_epoch_snapshot().unwrap();
+        assert_eq!(
+            dense.retained_bytes, compact.retained_bytes,
+            "{label}: admission charge"
+        );
+        assert_eq!(dense.chunks.len(), compact.chunks.len(), "{label}: chunks");
+        let mut compacted_chunks = 0;
+        for (index, (dense_chunk, compact_chunk)) in
+            dense.chunks.iter().zip(compact.chunks.iter()).enumerate()
+        {
+            let boundaries = dense_chunk.anchors.len();
+            assert_eq!(
+                boundaries,
+                compact_chunk.anchors.len(),
+                "{label}: chunk {index} boundaries"
+            );
+            for (offset, (expected, actual)) in dense_chunk
+                .anchors
+                .iter()
+                .zip(compact_chunk.anchors.iter())
+                .enumerate()
+            {
+                assert_eq!(
+                    expected, actual,
+                    "{label}: chunk {index} boundary {offset} of {boundaries}"
+                );
+            }
+            if boundaries >= RUN_COMPACTED_MIN_BOUNDARIES {
+                assert!(
+                    compact_chunk.stored_anchor_count() * RUN_COMPACTION_RATIO <= boundaries,
+                    "{label}: chunk {index} stores {} anchors for {boundaries} boundaries",
+                    compact_chunk.stored_anchor_count()
+                );
+                compacted_chunks += 1;
+            }
+        }
+        for scalar in 0..dense.boundary_count() as u32 {
+            assert_eq!(
+                dense.boundary(scalar).unwrap().anchors,
+                compact.boundary(scalar).unwrap().anchors,
+                "{label}: snapshot boundary {scalar}"
+            );
+        }
+        println!(
+            "{label}: {} boundaries, {compacted_chunks} run-compacted chunks",
+            dense.boundary_count()
+        );
+    }
 }
 
 #[test]
@@ -153,6 +272,40 @@ fn scalar_to_utf16_preserves_mixed_text_boundaries() {
         assert_eq!(scalar_offset_to_utf16(&text, end), Some(expected_utf16));
         assert_eq!(scalar_offset_to_utf16(&text, end + 1), None);
         assert_eq!(scalar_offset_to_utf16(&text, u32::MAX), None);
+    }
+}
+
+fn reference_scalar_offset_to_utf16(text: &str, scalar_offset: u32) -> Option<u32> {
+    let mut characters = text.chars();
+    let mut utf16 = 0u32;
+    for _ in 0..scalar_offset {
+        utf16 += characters.next()?.len_utf16() as u32;
+    }
+    Some(utf16)
+}
+
+const MIXED_WIDTH_CHARACTERS: [char; 9] = ['a', 'Z', ' ', '\n', 'é', '\u{301}', '東', '京', '😀'];
+const MAX_MIXED_WIDTH_CHARACTERS: usize = 96;
+const OFFSETS_PAST_THE_END: u32 = 2;
+
+proptest::proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(512))]
+
+    #[test]
+    fn scalar_to_utf16_matches_a_character_walk_across_word_boundaries(
+        characters in proptest::collection::vec(proptest::sample::select(MIXED_WIDTH_CHARACTERS.to_vec()), 0..MAX_MIXED_WIDTH_CHARACTERS),
+    ) {
+        let text: String = characters.into_iter().collect();
+        let scalars = text.chars().count() as u32;
+        for scalar in 0..=scalars + OFFSETS_PAST_THE_END {
+            proptest::prop_assert_eq!(
+                scalar_offset_to_utf16(&text, scalar),
+                reference_scalar_offset_to_utf16(&text, scalar),
+                "scalar {} of {:?}",
+                scalar,
+                text
+            );
+        }
     }
 }
 
@@ -403,7 +556,11 @@ fn long_prose() -> Vec<Value> {
 }
 
 fn place_caret(engine: &mut YrsDocumentEngine, request_id: u64, offset: u32) {
-    let point = RevisionedPosition {
+    select_scalars(engine, request_id, offset, offset);
+}
+
+fn select_scalars(engine: &mut YrsDocumentEngine, request_id: u64, anchor: u32, head: u32) {
+    let point = |offset| RevisionedPosition {
         offset,
         kind: EditorOffsetKind::Scalar,
         affinity: Affinity::After,
@@ -415,12 +572,12 @@ fn place_caret(engine: &mut YrsDocumentEngine, request_id: u64, offset: u32) {
             origin: TransactionOrigin::LocalApi,
             operations: vec![],
             selection_intent: SelectionIntent::Set(SelectionInput::Text {
-                anchor: point,
-                head: point,
+                anchor: point(anchor),
+                head: point(head),
             }),
             history_policy: HistoryPolicy::Skip,
         })
-        .unwrap_or_else(|error| panic!("placing the caret at {offset} must apply: {error:?}"));
+        .unwrap_or_else(|error| panic!("selecting {anchor}..{head} must apply: {error:?}"));
 }
 
 fn apply(engine: &mut YrsDocumentEngine, request_id: u64, command: TypedCommand) {
@@ -479,6 +636,60 @@ fn edited(content: Vec<Value>, words: &[&str]) -> YrsDocumentEngine {
         }
         request_id += 1;
     }
+    engine
+}
+
+fn remotely_edited(content: Vec<Value>, words: &[&str]) -> YrsDocumentEngine {
+    let mut engine = engine_with(corpus_schema(), content);
+    let mut replica = YrsDocumentEngine::new(YrsEngineConfig {
+        schema: corpus_schema(),
+        fragment_name: REPLICA_FRAGMENT.into(),
+        initialization_mode: InitializationMode::AwaitRemote,
+        resource_limits: crate::tables::normalize_tests::limits(),
+        editing_limits: EditingLimits::default(),
+        max_length: None,
+        scope: None,
+    })
+    .expect("the replica initializes");
+    replica
+        .apply_remote_update_v1(REPLICA_SYNC_REQUEST, &engine.encoded_state().unwrap())
+        .expect("the replica receives the seeded document");
+    let mut request_id = FIRST_EDIT_REQUEST;
+    for word in words {
+        let caret = caret_inside_word(&replica, word);
+        place_caret(&mut replica, request_id, caret);
+        apply(
+            &mut replica,
+            request_id + 1,
+            TypedCommand::InsertText {
+                text: TYPED_TEXT.into(),
+            },
+        );
+        select_scalars(
+            &mut replica,
+            request_id + 2,
+            caret + REMOTE_DELETION_START,
+            caret + REMOTE_DELETION_START + REMOTE_DELETED_SCALARS,
+        );
+        apply(&mut replica, request_id + 3, TypedCommand::DeleteBackward);
+        select_scalars(
+            &mut replica,
+            request_id + 4,
+            caret - INSIDE_WORD,
+            caret + REMOTE_MARKED_SCALARS,
+        );
+        apply(
+            &mut replica,
+            request_id + 5,
+            TypedCommand::ToggleMark {
+                mark_type: REMOTE_MARK.into(),
+            },
+        );
+        request_id += REMOTE_EDIT_REQUESTS;
+    }
+    engine
+        .apply_remote_update_v1(REPLICA_SYNC_REQUEST, &replica.encoded_state().unwrap())
+        .expect("the seeded engine receives the remote edits");
     engine
 }
 

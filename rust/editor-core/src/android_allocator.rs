@@ -1,16 +1,36 @@
 use std::alloc::{GlobalAlloc, Layout};
+use std::cell::Cell;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Once;
 
 struct AndroidAllocator;
 #[global_allocator]
 static ALLOCATOR: AndroidAllocator = AndroidAllocator;
 static INITIALIZE: Once = Once::new();
+static RELEASE_GENERATION: AtomicU64 = AtomicU64::new(0);
+thread_local! {
+    static COLLECTED_GENERATION: Cell<u64> = const { Cell::new(0) };
+}
 unsafe extern "C" {
     fn editor_allocator_configure();
+    fn mi_collect(force: bool);
 }
 fn initialize() {
     // The C setter writes only allocator options and must not allocate.
     INITIALIZE.call_once(|| unsafe { editor_allocator_configure() });
+}
+pub(crate) fn release_document_memory() {
+    collect_thread(RELEASE_GENERATION.fetch_add(1, Ordering::Relaxed) + 1);
+}
+pub(crate) fn release_pending_thread_memory() {
+    let generation = RELEASE_GENERATION.load(Ordering::Relaxed);
+    if COLLECTED_GENERATION.get() != generation {
+        collect_thread(generation);
+    }
+}
+fn collect_thread(generation: u64) {
+    COLLECTED_GENERATION.set(generation);
+    unsafe { mi_collect(true) };
 }
 // MiMalloc guarantees word alignment even for smaller allocations.
 // Every pointer stays with MiMalloc, including frees on another thread.
@@ -105,9 +125,8 @@ mod tests {
                         0,
                         "resized: {layout:?} -> {size}"
                     );
-                    let preserved = unsafe {
-                        std::slice::from_raw_parts(resized, layout.size().min(size))
-                    };
+                    let preserved =
+                        unsafe { std::slice::from_raw_parts(resized, layout.size().min(size)) };
                     for (index, byte) in preserved.iter().enumerate() {
                         assert_eq!(
                             *byte, index as u8,

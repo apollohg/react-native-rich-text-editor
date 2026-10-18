@@ -171,6 +171,9 @@ fn semantic_transaction_impl(
             )
         })?,
     };
+    if simulated.document == *context.document {
+        return Ok(unchanged_document_selection_plan(context));
+    }
     if let Some(preparation) = context
         .preparation
         .filter(|_| is_single_compile_prepared_plan(&plan))
@@ -183,7 +186,23 @@ fn semantic_transaction_impl(
                     | crate::command_planner::SemanticOperation::WrapInList { .. }
             )
         });
-        let candidate_seed = prepares_candidate_validation
+        let localized_marks = match plan.operations.as_slice() {
+            [crate::command_planner::SemanticOperation::AddMark { from, to, .. }
+            | crate::command_planner::SemanticOperation::RemoveMark { from, to, .. }] => {
+                context.derived_state.and_then(|state| {
+                    state.localized_mark_candidate(
+                        &simulated.document,
+                        *from,
+                        *to,
+                        context.schema,
+                        context.canonical_schema,
+                        context.resource_limits,
+                    )
+                })
+            }
+            _ => None,
+        };
+        let candidate_seed = (prepares_candidate_validation && localized_marks.is_none())
             .then(|| {
                 crate::yrs_engine::compiler::PreparedCandidateSeed::mint(
                     context.request_id,
@@ -223,7 +242,9 @@ fn semantic_transaction_impl(
                     context.document,
                     plan.operations.as_slice(),
                 );
-            let eager_known_serialized_len = (!context.allow_deferred_admission)
+            let allow_deferred_admission =
+                deferred_shape.is_some() && (context.allow_deferred_admission)();
+            let eager_known_serialized_len = (!allow_deferred_admission)
                 .then(|| {
                     deferred_shape.as_ref().and_then(|shape| {
                         context
@@ -234,7 +255,7 @@ fn semantic_transaction_impl(
                 })
                 .flatten();
             let execution_admission = match (
-                context.allow_deferred_admission,
+                allow_deferred_admission,
                 deferred_shape,
                 context
                     .canonical_artifact
@@ -266,6 +287,7 @@ fn semantic_transaction_impl(
                         &transaction,
                         &simulated,
                         candidate_seed,
+                        localized_marks,
                         eager_known_serialized_len,
                     )?;
                     admission.pre_admit_seed_independent(
@@ -286,14 +308,24 @@ fn semantic_transaction_impl(
             return Ok(CommandPlan::Transaction(transaction));
         }
     }
-    crate::transform::DocumentValidator::validate(
-        &simulated.document,
-        context.schema,
-        context.resource_limits,
-    )
-    .map_err(|error| {
-        OperationError::document_invalid(context.request_id, None, "command", error.to_string())
-    })?;
+    let certified = context.validation_certificate().is_some_and(|certificate| {
+        certificate.certifies_root_window(
+            context.document,
+            &simulated.document,
+            context.schema,
+            context.resource_limits,
+        )
+    });
+    if !certified {
+        crate::transform::DocumentValidator::validate(
+            &simulated.document,
+            context.schema,
+            context.resource_limits,
+        )
+        .map_err(|error| {
+            OperationError::document_invalid(context.request_id, None, "command", error.to_string())
+        })?;
+    }
     if let Some(limit) = context.max_length {
         let actual = simulated.document.root().text_content().chars().count();
         if actual > limit as usize {
@@ -328,6 +360,17 @@ fn semantic_transaction_impl(
         &simulated.selection,
     )?;
     Ok(CommandPlan::Transaction(transaction))
+}
+
+fn unchanged_document_selection_plan(context: &PlanningContext<'_>) -> CommandPlan {
+    CommandPlan::SelectionOnly(TypedTransaction {
+        request_id: context.request_id,
+        base_document_revision: context.revision,
+        origin: context.origin,
+        operations: Vec::new(),
+        selection_intent: SelectionIntent::Preserve,
+        history_policy: HistoryPolicy::Skip,
+    })
 }
 
 fn textblock_local_or_semantic_transaction(
@@ -415,7 +458,7 @@ fn sealed_batch_transaction(
         selection_intent: SelectionIntent::UseOperationResult,
         history_policy: semantic_history_policy(plan.history),
     };
-    let compiled = crate::yrs_engine::compiler::compile_transaction(
+    let compiled = crate::yrs_engine::compiler::compile_transaction_with_view(
         crate::yrs_engine::compiler::CompilationContext {
             document: context.document,
             selection: Some(selection),
@@ -424,8 +467,10 @@ fn sealed_batch_transaction(
             editing_limits: context.editing_limits,
             document_revision: context.revision,
             max_length: context.max_length,
+            validation_certificate: context.validation_certificate(),
         },
         transaction.clone(),
+        context.compilation_view,
     )?;
     let compiled_selection = match compiled.selection_plan {
         crate::yrs_engine::compiler::SelectionPlan::Preserve => selection.clone(),
@@ -471,31 +516,41 @@ fn prepare_eager_semantic_admission(
     transaction: &TypedTransaction,
     simulated: &crate::command_planner::SimulatedCommandPlan,
     candidate_seed: Option<crate::yrs_engine::compiler::PreparedCandidateSeed>,
+    localized_marks: Option<crate::yrs_engine::derived_state::LocalizedMarkCandidate>,
     known_canonical_serialized_len: Option<usize>,
 ) -> OperationResult<crate::yrs_engine::compiler::PreparedSemanticAdmission> {
-    let (undo_units, command_contract_kind) = if simulated.document == *context.document {
-        (
-            0,
+    let (undo_units, command_contract_kind) = match &plan.operations[0] {
+        crate::command_planner::SemanticOperation::InsertText { text, .. } => (
+            text.chars().count() as u64,
             crate::yrs_engine::compiler::PreparedCommandContractKind::None,
-        )
-    } else {
-        match &plan.operations[0] {
-            crate::command_planner::SemanticOperation::InsertText { text, .. } => (
-                text.chars().count() as u64,
-                crate::yrs_engine::compiler::PreparedCommandContractKind::None,
-            ),
-            crate::command_planner::SemanticOperation::AddMark { from, to, .. }
-            | crate::command_planner::SemanticOperation::RemoveMark { from, to, .. } => (
-                u64::from(to.saturating_sub(*from)),
-                crate::yrs_engine::compiler::PreparedCommandContractKind::None,
-            ),
-            crate::command_planner::SemanticOperation::WrapInList { .. } => (
-                0,
-                crate::yrs_engine::compiler::PreparedCommandContractKind::RootWrap,
-            ),
-            _ => unreachable!("prepared eligibility admits only one direct operation"),
-        }
+        ),
+        crate::command_planner::SemanticOperation::AddMark { from, to, .. }
+        | crate::command_planner::SemanticOperation::RemoveMark { from, to, .. } => (
+            u64::from(to.saturating_sub(*from)),
+            crate::yrs_engine::compiler::PreparedCommandContractKind::None,
+        ),
+        crate::command_planner::SemanticOperation::WrapInList { .. } => (
+            0,
+            crate::yrs_engine::compiler::PreparedCommandContractKind::RootWrap,
+        ),
+        _ => unreachable!("prepared eligibility admits only one direct operation"),
     };
+    if let Some(candidate) = localized_marks {
+        return crate::yrs_engine::compiler::PreparedSemanticAdmission::prepare_localized_marks(
+            context.request_id,
+            context.revision,
+            context.state_revision,
+            context.yrs_state_epoch,
+            context.canonical_schema,
+            context.resource_limits,
+            context.editing_limits,
+            context.max_length,
+            transaction,
+            &simulated.document,
+            candidate,
+            undo_units,
+        );
+    }
     crate::yrs_engine::compiler::PreparedSemanticAdmission::prepare_single_operation(
         context.request_id,
         context.revision,
@@ -584,10 +639,31 @@ fn direct_typed_operations(
     context: &PlanningContext<'_>,
     operations: &[crate::command_planner::SemanticOperation],
 ) -> Option<Vec<TypedOperation>> {
+    if !positions_are_base_relative(operations) {
+        return None;
+    }
     operations
         .iter()
         .map(|operation| direct_typed_operation(context, operation))
         .collect()
+}
+
+fn positions_are_base_relative(operations: &[crate::command_planner::SemanticOperation]) -> bool {
+    operations.iter().enumerate().all(|(index, operation)| {
+        let (_, last) = operation.position_span();
+        operations[..index]
+            .iter()
+            .filter(|earlier| !earlier.preserves_positions())
+            .all(|earlier| {
+                let (start, _) = earlier.position_span();
+                last < start
+                    || (last == start
+                        && matches!(
+                            earlier,
+                            crate::command_planner::SemanticOperation::DeleteRange { .. }
+                        ))
+            })
+    })
 }
 
 fn direct_transaction(
@@ -597,6 +673,9 @@ fn direct_transaction(
     simulated_document: &crate::model::Document,
     simulated_selection: &crate::selection::Selection,
 ) -> OperationResult<Option<TypedTransaction>> {
+    if context.structural_representation_only {
+        return Ok(None);
+    }
     let Some(operations) = direct_typed_operations(context, &plan.operations) else {
         return Ok(None);
     };
@@ -608,7 +687,7 @@ fn direct_transaction(
     let compile = |selection_intent| {
         let transaction =
             transaction_with_selection(context, operations.clone(), selection_intent, plan.history);
-        let compiled = crate::yrs_engine::compiler::compile_transaction(
+        let compiled = crate::yrs_engine::compiler::compile_transaction_with_view(
             crate::yrs_engine::compiler::CompilationContext {
                 document: context.document,
                 selection: Some(selection),
@@ -617,8 +696,10 @@ fn direct_transaction(
                 editing_limits: context.editing_limits,
                 document_revision: context.revision,
                 max_length: context.max_length,
+                validation_certificate: context.validation_certificate(),
             },
             transaction.clone(),
+            context.compilation_view,
         )?;
         let compiled_selection = match compiled.selection_plan {
             crate::yrs_engine::compiler::SelectionPlan::Preserve => selection.clone(),
@@ -718,6 +799,29 @@ fn direct_selection_input(
     })
 }
 
+fn lowers_as_a_direct_range(context: &PlanningContext<'_>, from: u32, to: u32) -> bool {
+    endpoints_share_a_direct_parent(context.document, from, to)
+        && crate::transform::apply::delete_range_joins_leaf_blocks(
+            context.document,
+            context.schema,
+            from,
+            to,
+        )
+}
+
+fn endpoints_share_a_direct_parent(document: &crate::model::Document, from: u32, to: u32) -> bool {
+    let (Ok(start), Ok(end)) = (document.resolve(from), document.resolve(to)) else {
+        return false;
+    };
+    let shared = start
+        .node_path
+        .iter()
+        .zip(end.node_path.iter())
+        .take_while(|(left, right)| left == right)
+        .count();
+    start.node_path.len() == end.node_path.len() && start.node_path.len() <= shared + 1
+}
+
 fn direct_typed_operation(
     context: &PlanningContext<'_>,
     operation: &crate::command_planner::SemanticOperation,
@@ -738,6 +842,9 @@ fn direct_typed_operation(
             }
         }
         crate::command_planner::SemanticOperation::DeleteRange { from, to } => {
+            if !lowers_as_a_direct_range(context, *from, *to) {
+                return None;
+            }
             TypedOperation::DeleteRange {
                 range: RevisionedRange {
                     from: encoded(*from)?,
@@ -777,7 +884,9 @@ fn direct_typed_operation(
         crate::command_planner::SemanticOperation::ReplaceRange { from, to, content } => {
             // The concrete Yrs ReplaceRange lowering writes into existing XML text
             // targets. Block fragments need the structural lowering below instead.
-            if content.iter().any(|node| node.text_str().is_none()) {
+            if content.iter().any(|node| node.text_str().is_none())
+                || !lowers_as_a_direct_range(context, *from, *to)
+            {
                 return None;
             }
             TypedOperation::ReplaceRange {
@@ -876,7 +985,7 @@ pub(super) fn plan(
                         context.schema,
                     ))
                 },
-                |state| std::borrow::Cow::Borrowed(state.rendered_text.as_str()),
+                |state| std::borrow::Cow::Borrowed(&*state.rendered_text),
             );
             let resolve = |position: RevisionedPosition, field| {
                 let scalar = crate::yrs_engine::position::editor_offset_to_scalar(
@@ -907,6 +1016,7 @@ pub(super) fn plan(
                 context.schema,
                 from,
                 to,
+                context.resource_limits,
             )
             .map_err(|()| {
                 OperationError::operation_invalid(
@@ -944,6 +1054,7 @@ pub(super) fn plan(
                 context.schema,
                 at.scalar,
                 end,
+                context.resource_limits,
             )
             .map_err(|()| {
                 OperationError::operation_invalid(
@@ -986,25 +1097,14 @@ pub(super) fn plan(
                 context.resource_limits,
                 context.editing_limits.max_operations_per_transaction,
             )
-            .map_err(|error| match error {
-                crate::command_planner::TextReplacementPlanError::OperationLimit {
-                    limit,
-                    actual,
-                } => OperationError::operation_limit_exceeded(
+            .map_err(|exceeded| {
+                OperationError::operation_limit_exceeded(
                     context.request_id,
                     None,
                     "maxOperationsPerTransaction",
-                    limit as u64,
-                    actual as u64,
-                ),
-                crate::command_planner::TextReplacementPlanError::Planning => {
-                    OperationError::operation_invalid(
-                        context.request_id,
-                        0,
-                        "command",
-                        "plain text replacement planning failed",
-                    )
-                }
+                    exceeded.limit as u64,
+                    exceeded.actual as u64,
+                )
             })?
             else {
                 return Ok(CommandPlan::NotApplicable);
@@ -1123,27 +1223,16 @@ pub(super) fn plan(
                 return Ok(CommandPlan::NotApplicable);
             }
             let selection = crate::yrs_engine::derived_state::resolved_to_legacy(context.selection);
-            let Some(replacement) = crate::editor_state::plan_content_insertion(
+            let Some(plan) = crate::command_planner::plan_insert_content(
                 context.document,
                 context.schema,
                 &selection,
                 &content,
+                context.resource_limits,
             ) else {
                 return Ok(CommandPlan::NotApplicable);
             };
-            semantic_transaction(
-                &context,
-                &selection,
-                crate::command_planner::SemanticCommandPlan {
-                    operations: vec![crate::command_planner::SemanticOperation::ReplaceRange {
-                        from: replacement.from,
-                        to: replacement.to,
-                        content: replacement.content,
-                    }],
-                    selection_after: Some(replacement.selection_after),
-                    history: crate::command_planner::SemanticCommandHistory::InputBoundary,
-                },
-            )
+            semantic_transaction(&context, &selection, plan)
         }
         _ => unreachable!("text planner received non-text command"),
     }

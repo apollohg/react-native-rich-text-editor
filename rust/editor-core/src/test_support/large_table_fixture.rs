@@ -133,10 +133,29 @@ pub(crate) fn session_with_document_and_editing_limits(
     document: &Value,
     editing_limits: EditingLimits,
 ) -> EditorSession {
+    fixture_session(
+        crate::schema::presets::prosemirror_table_schema(),
+        document,
+        editing_limits,
+    )
+}
+
+pub(crate) fn session_with_schema_and_document(
+    schema: crate::schema::Schema,
+    document: &Value,
+) -> EditorSession {
+    fixture_session(schema, document, EditingLimits::default())
+}
+
+fn fixture_session(
+    schema: crate::schema::Schema,
+    document: &Value,
+    editing_limits: EditingLimits,
+) -> EditorSession {
     let config = EditorSessionConfig::local_for_test();
     let mut session = EditorSession::new(
         YrsDocumentEngine::new(YrsEngineConfig {
-            schema: crate::schema::presets::prosemirror_table_schema(),
+            schema,
             fragment_name: FRAGMENT_NAME.into(),
             initialization_mode: InitializationMode::LocalEmpty,
             resource_limits: ResourceLimits::default(),

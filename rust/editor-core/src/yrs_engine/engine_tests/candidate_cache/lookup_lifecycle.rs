@@ -1,5 +1,5 @@
 #[test]
-fn imported_candidate_cache_supplies_first_staged_lookup_without_live_rebuild() {
+fn imported_lookup_seed_supplies_the_first_lookup_without_live_rebuild() {
     use crate::yrs_engine::mutation::{
         reset_localized_lookup_counts_for_test, take_localized_lookup_counts_for_test,
     };
@@ -11,12 +11,7 @@ fn imported_candidate_cache_supplies_first_staged_lookup_without_live_rebuild() 
             TransactionOrigin::DocumentImport,
         )
         .unwrap();
-    assert!(engine
-        .derived_state
-        .as_ref()
-        .unwrap()
-        .mutation_lookup_seed
-        .is_unavailable_for_test());
+    assert_imported_lookup_seed_is_ready_without_replica(&engine, "json import");
     reset_localized_lookup_counts_for_test();
 
     engine
@@ -48,11 +43,7 @@ fn validated_import_materializes_ready_lookup_without_a_second_tree_scan() {
         (0, 0, 0),
         "validated codec traversal must carry the exact ready lookup payload"
     );
-    assert!(engine
-        .prepared_candidate_cache
-        .as_ref()
-        .and_then(|cache| cache.staged_lookup_seed.as_ref())
-        .is_some());
+    assert_imported_lookup_seed_is_ready_without_replica(&engine, "json import");
 }
 
 #[test]
@@ -70,11 +61,7 @@ fn validated_import_lookup_materialization_matches_the_ordinary_builder() {
         engine
             .import_json(input, TransactionOrigin::DocumentImport)
             .unwrap();
-        let staged = engine
-            .prepared_candidate_cache
-            .as_ref()
-            .and_then(|cache| cache.staged_lookup_seed.as_ref())
-            .unwrap_or_else(|| panic!("validated import carries the fused ready seed: {input}"));
+        assert_imported_lookup_seed_is_ready_without_replica(&engine, input);
         let txn = engine.doc.transact();
         let fragment = txn.get_xml_fragment(engine.fragment_name.as_str()).unwrap();
         let state = engine.derived_state.as_ref().unwrap();
@@ -100,7 +87,12 @@ fn validated_import_lookup_materialization_matches_the_ordinary_builder() {
             engine.revision,
         )
         .unwrap();
-        assert!(staged.has_same_ready_payload_for_test(&ordinary), "{input}");
+        assert!(
+            state
+                .mutation_lookup_seed
+                .has_same_ready_payload_for_test(&ordinary),
+            "{input}"
+        );
     }
 }
 
@@ -366,14 +358,20 @@ fn localized_root_invalidation_localizes_created_text_then_rebuilds_ready_once()
 fn canonical_artifact_derives_once_per_changed_intermediate_and_never_for_cached_noops() {
     use crate::yrs_engine::canonical::{
         reset_canonical_artifact_counts_for_test, take_canonical_artifact_counts_for_test,
+        take_root_window_derivation_count_for_test,
+    };
+    let derivations = || {
+        let (full, serialized) = take_canonical_artifact_counts_for_test();
+        (full, serialized, take_root_window_derivation_count_for_test())
     };
 
     let mut engine = transaction_engine();
     reset_canonical_artifact_counts_for_test();
+    take_root_window_derivation_count_for_test();
     engine
         .apply_typed_transaction(insert_transaction(&engine, 70_114))
         .unwrap();
-    assert_eq!(take_canonical_artifact_counts_for_test(), (1, 2));
+    assert_eq!(derivations(), (0, 0, 1));
 
     let revision = engine.revision();
     reset_canonical_artifact_counts_for_test();
@@ -406,7 +404,7 @@ fn canonical_artifact_derives_once_per_changed_intermediate_and_never_for_cached
             history_policy: HistoryPolicy::Skip,
         })
         .unwrap();
-    assert_eq!(take_canonical_artifact_counts_for_test(), (2, 3));
+    assert_eq!(derivations(), (0, 0, 2));
 
     reset_canonical_artifact_counts_for_test();
     let commit = engine
@@ -433,7 +431,7 @@ fn canonical_artifact_derives_once_per_changed_intermediate_and_never_for_cached
         })
         .unwrap();
     assert!(!commit.changed);
-    assert_eq!(take_canonical_artifact_counts_for_test(), (0, 0));
+    assert_eq!(derivations(), (0, 0, 0));
 }
 
 #[test]

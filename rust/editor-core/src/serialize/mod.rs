@@ -30,6 +30,24 @@ fn is_tiptap_task_item(spec: &crate::schema::NodeSpec) -> bool {
         })
 }
 
+fn reset_unset_attr(
+    attrs: &mut std::collections::HashMap<String, serde_json::Value>,
+    spec: &crate::schema::NodeSpec,
+    name: &str,
+) {
+    match spec.attrs.get(name).and_then(|attr| attr.default.as_ref()) {
+        Some(default) => {
+            attrs.insert(
+                name.to_string(),
+                crate::boundary::clone_json_value_stack_safe(default),
+            );
+        }
+        None => {
+            attrs.remove(name);
+        }
+    }
+}
+
 fn default_node_attrs(
     spec: &crate::schema::NodeSpec,
 ) -> std::collections::HashMap<String, serde_json::Value> {

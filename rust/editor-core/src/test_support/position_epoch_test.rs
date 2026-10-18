@@ -697,6 +697,148 @@ fn assert_epoch_matches_fresh(session: &mut EditorSession, label: &str) {
 }
 
 #[test]
+fn native_formatting_rebuilds_only_its_paragraph_and_preserves_stale_anchors() {
+    use crate::yrs_engine::observability::{
+        reset_full_pass_counts_for_test, take_full_pass_counts_for_test,
+    };
+    use std::sync::Arc;
+    const PARAGRAPH_COUNT: usize = 32;
+    const TARGET_BLOCK: usize = 17;
+    const PREFIX: &str = "café ";
+    const MARKED_TEXT: &str = "e\u{301} 😀";
+    const SUFFIX: &str = " retained anchors";
+    const REMOTE_REQUEST: u64 = 9001;
+    const STALE_OWNER: u64 = INCREMENTAL_EPOCH_OWNER + 1;
+    const UNDO_REQUEST: u64 = INCREMENTAL_EPOCH_REQUEST + 2;
+    const REDO_REQUEST: u64 = UNDO_REQUEST + 1;
+    const STALE_REPLACEMENT_REQUEST: u64 = REDO_REQUEST + 1;
+    const REPLACEMENT: &str = "Ω";
+    let text = format!("{PREFIX}{MARKED_TEXT}{SUFFIX}");
+    let source = serde_json::json!({"type":"doc", "content":
+        (0..PARAGRAPH_COUNT).map(|_| serde_json::json!({"type":"paragraph", "content":[
+            {"type":"text", "text":text}
+        ]})).collect::<Vec<_>>()
+    });
+    let mut session = session_with_document(&source);
+    let start = session
+        .engine
+        .position_map()
+        .unwrap()
+        .effective_scalar_start(TARGET_BLOCK)
+        + u32::try_from(PREFIX.chars().count()).unwrap();
+    let end = start + u32::try_from(MARKED_TEXT.chars().count()).unwrap();
+    let original = session.engine.document_json().unwrap();
+    let mut formatted = original.clone();
+    formatted["content"][TARGET_BLOCK]["content"] = serde_json::json!([
+        {"type":"text", "text":PREFIX},
+        {"type":"text", "text":MARKED_TEXT, "marks":[{"type":"bold"}]},
+        {"type":"text", "text":SUFFIX}
+    ]);
+
+    for (step, expected) in [&formatted, &original].into_iter().enumerate() {
+        let stale_epoch = session
+            .pin_position_epoch(STALE_OWNER, session.engine.revision())
+            .unwrap();
+        let epoch = session
+            .pin_position_epoch(INCREMENTAL_EPOCH_OWNER, session.engine.revision())
+            .unwrap();
+        let previous = session.latest_epoch_snapshot_for_test().unwrap();
+        let revision = session.engine.revision();
+        let outcome = crate::native_transaction_bridge::NativeTransactionBridge::new(&mut session)
+            .submit_native_intent(
+                &serde_json::json!({
+                    "version":crate::native_transaction_bridge::NATIVE_BRIDGE_ENVELOPE_VERSION,
+                    "ownerId":INCREMENTAL_EPOCH_OWNER.to_string(),
+                    "requestId":(INCREMENTAL_EPOCH_REQUEST + step as u64).to_string(),
+                    "positionEpoch":epoch.to_string(), "intent":{
+                        "type":"command", "anchor":start, "head":end,
+                        "command":{"type":"toggleMark", "markType":"bold"}
+                    }
+                })
+                .to_string(),
+            )
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&outcome).unwrap()["documentChanged"],
+            true
+        );
+        assert_eq!(session.engine.document_json().as_ref(), Some(expected));
+        assert_eq!(session.engine.revision(), revision + 1);
+        assert_eq!(
+            session.engine.document_scope_revision(),
+            revision + 1,
+            "formatting must still invalidate document-wide availability certificates"
+        );
+        reset_full_pass_counts_for_test();
+        session
+            .pin_position_epoch(INCREMENTAL_EPOCH_OWNER, session.engine.revision())
+            .unwrap();
+        let counts = take_full_pass_counts_for_test();
+        assert_eq!(
+            counts.epoch_block_rebuilds, 1,
+            "format step {step}: {counts:#?}"
+        );
+        assert_eq!(
+            counts.yrs_tree_walks, 0,
+            "formatting must not traverse retained paragraphs"
+        );
+        let current = session.latest_epoch_snapshot_for_test().unwrap();
+        for index in 0..PARAGRAPH_COUNT {
+            assert_eq!(
+                Arc::ptr_eq(&previous.chunks[index], &current.chunks[index]),
+                index != TARGET_BLOCK,
+                "format step {step}, paragraph {index}: only the affected chunk changes"
+            );
+        }
+        assert_epoch_matches_fresh(&mut session, &format!("format step {step}"));
+        let stale = session
+            .resolve_epoch_range(STALE_OWNER, stale_epoch, start, end)
+            .unwrap();
+        assert_eq!(
+            (stale.anchor, stale.head, stale.fallback),
+            (start, end, false)
+        );
+    }
+
+    session.engine.undo(UNDO_REQUEST).unwrap();
+    assert_eq!(session.engine.document_json().as_ref(), Some(&formatted));
+    assert_epoch_matches_fresh(&mut session, "undo formatting");
+    session.engine.redo(REDO_REQUEST).unwrap();
+    assert_eq!(session.engine.document_json().as_ref(), Some(&original));
+    assert_epoch_matches_fresh(&mut session, "redo formatting");
+    let epoch = session
+        .pin_position_epoch(STALE_OWNER, session.engine.revision())
+        .unwrap();
+    let mut peer = replica_of(&session);
+    insert_at(&mut peer, REMOTE_REQUEST, 0, "r");
+    apply_replica(&mut session, &peer, REMOTE_REQUEST);
+    let stale = session
+        .resolve_epoch_range(STALE_OWNER, epoch, start, end)
+        .unwrap();
+    assert_eq!(
+        (stale.anchor, stale.head, stale.fallback),
+        (start + 1, end + 1, false)
+    );
+    crate::native_transaction_bridge::NativeTransactionBridge::new(&mut session)
+        .submit_native_intent(&serde_json::json!({
+            "version":crate::native_transaction_bridge::NATIVE_BRIDGE_ENVELOPE_VERSION,
+            "ownerId":STALE_OWNER.to_string(), "requestId":STALE_REPLACEMENT_REQUEST.to_string(),
+            "positionEpoch":epoch.to_string(), "intent":{
+                "type":"replaceSelectionText", "anchor":start, "head":end, "text":REPLACEMENT
+            }
+        }).to_string()).unwrap();
+    let mut replaced = original;
+    replaced["content"][0]["content"][0]["text"] = serde_json::json!(format!("r{text}"));
+    replaced["content"][TARGET_BLOCK]["content"][0]["text"] =
+        serde_json::json!(format!("{PREFIX}{REPLACEMENT}{SUFFIX}"));
+    assert_eq!(session.engine.document_json(), Some(replaced));
+    assert_epoch_matches_fresh(
+        &mut session,
+        "stale native replacement after remote insertion",
+    );
+}
+
+#[test]
 fn incremental_epochs_equal_full_rebuilds_structurally() {
     use crate::tables::commands::{TableCommand, TableEdge};
     const EPOCH_SEEDED_STEPS: usize = 500;
@@ -1027,4 +1169,301 @@ fn a_cell_with_a_block_atom_rebuilds_without_losing_its_ancestor_chain() {
     assert_eq!(counts.epoch_block_rebuilds, CELL_BLOCKS, "{counts:#?}");
     assert_eq!(counts.yrs_tree_walks, 0, "{counts:#?}");
     assert_epoch_matches_fresh(&mut session, "cell with block atom");
+}
+
+const STRUCTURAL_EPOCH_REQUEST: u64 = 7_100;
+const UNIFORM_EPOCH_PARAGRAPHS: usize = 64;
+const SPLIT_EPOCH_BLOCK: usize = 30;
+const SPLIT_REBUILT_BLOCKS: usize = 4;
+const SPLIT_INSERTED_BLOCKS: usize = 1;
+const ROOT_WINDOW_NEIGHBORS: usize = 1;
+
+fn block_text_start(session: &EditorSession, block_index: usize) -> u32 {
+    let map = session.engine.position_map().unwrap();
+    map.effective_scalar_start(block_index) + map.block(block_index).unwrap().scalar_prefix_len
+}
+
+fn block_text_len(session: &EditorSession, block_index: usize) -> u32 {
+    let block = session
+        .engine
+        .position_map()
+        .unwrap()
+        .block(block_index)
+        .unwrap()
+        .into_owned();
+    block.scalar_len - block.scalar_prefix_len
+}
+
+fn native_epoch_intent(
+    session: &mut EditorSession,
+    request: u64,
+    anchor: u32,
+    head: u32,
+    mut intent: serde_json::Value,
+) {
+    let epoch = session
+        .pin_position_epoch(INCREMENTAL_EPOCH_OWNER, session.engine.revision())
+        .unwrap();
+    intent["anchor"] = serde_json::json!(anchor);
+    intent["head"] = serde_json::json!(head);
+    crate::native_transaction_bridge::NativeTransactionBridge::new(session)
+        .submit_native_intent(
+            &serde_json::json!({
+                "version": 1, "ownerId": INCREMENTAL_EPOCH_OWNER.to_string(),
+                "requestId": request.to_string(), "positionEpoch": epoch.to_string(),
+                "intent": intent
+            })
+            .to_string(),
+        )
+        .unwrap_or_else(|error| panic!("request {request} {intent}: {error:?}"));
+}
+
+fn assert_structural_pin_avoids_tree_walks(session: &mut EditorSession, label: &str) {
+    use crate::yrs_engine::observability::{
+        reset_full_pass_counts_for_test, take_full_pass_counts_for_test,
+    };
+    reset_full_pass_counts_for_test();
+    session
+        .pin_position_epoch(INCREMENTAL_EPOCH_OWNER, session.engine.revision())
+        .unwrap();
+    assert_eq!(
+        take_full_pass_counts_for_test().yrs_tree_walks,
+        0,
+        "{label}: a root-window edit must splice the previous epoch"
+    );
+}
+
+fn structural_epoch_document(with_table: bool) -> serde_json::Value {
+    let mut content = vec![
+        serde_json::json!({"type":"paragraph","content":[
+            {"type":"text","text":"alpha "},
+            {"type":"text","text":"bold café","marks":[{"type":"bold"}]},
+            {"type":"text","text":" 🦀 tail"}
+        ]}),
+        serde_json::json!({"type":"paragraph","content":[{"type":"text","text":"beta paragraph text"}]}),
+        serde_json::json!({"type":"bullet_list","content":[
+            {"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"first item"}]}]},
+            {"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"second item"}]}]}
+        ]}),
+        serde_json::json!({"type":"blockquote","content":[
+            {"type":"paragraph","content":[{"type":"text","text":"quoted words here"}]}
+        ]}),
+        serde_json::json!({"type":"paragraph","content":[{"type":"text","text":"gamma closing text"}]}),
+        serde_json::json!({"type":"paragraph","content":[{"type":"text","text":"delta final words"}]}),
+    ];
+    if with_table {
+        let table = plain_table_document(2, 2);
+        content.push(table["content"][0].clone());
+        content.push(serde_json::json!({"type":"paragraph","content":[{"type":"text","text":"after table"}]}));
+    }
+    serde_json::json!({"type":"doc","content":content})
+}
+
+#[test]
+fn root_window_epochs_equal_full_rebuilds_across_structural_edits() {
+    for (label, with_table) in [("prose", false), ("prose with table", true)] {
+        let _clients = super::deterministic_clients::DeterministicClients::new();
+        let mut session = session_with_document(&structural_epoch_document(with_table));
+        assert_epoch_matches_fresh(&mut session, label);
+        let mut request = STRUCTURAL_EPOCH_REQUEST;
+        let mut next_request = || {
+            request += 2;
+            request
+        };
+
+        let split_at = block_text_start(&session, 1) + 4;
+        native_epoch_intent(
+            &mut session,
+            next_request(),
+            split_at,
+            split_at,
+            serde_json::json!({"type":"splitBlock"}),
+        );
+        if !with_table {
+            assert_structural_pin_avoids_tree_walks(&mut session, &format!("{label}: split"));
+        }
+        assert_epoch_matches_fresh(&mut session, &format!("{label}: split"));
+
+        let merge_at = block_text_start(&session, 2);
+        native_epoch_intent(
+            &mut session,
+            next_request(),
+            merge_at,
+            merge_at,
+            serde_json::json!({"type":"deleteBackward"}),
+        );
+        if !with_table {
+            assert_structural_pin_avoids_tree_walks(&mut session, &format!("{label}: merge"));
+        }
+        assert_epoch_matches_fresh(&mut session, &format!("{label}: merge"));
+
+        let paste_at = block_text_start(&session, 0) + 3;
+        native_epoch_intent(
+            &mut session,
+            next_request(),
+            paste_at,
+            paste_at,
+            serde_json::json!({"type":"command","command":{"type":"paste","html":"<p>one</p><ul><li><p>two</p></li></ul><p>three</p>"}}),
+        );
+        if !with_table {
+            assert_structural_pin_avoids_tree_walks(
+                &mut session,
+                &format!("{label}: multi-block paste"),
+            );
+        }
+        assert_epoch_matches_fresh(&mut session, &format!("{label}: multi-block paste"));
+
+        let map = session.engine.position_map().unwrap();
+        let first_root_pair = (0..map.block_count() - 1)
+            .find(|index| {
+                map.block_path(*index).unwrap().len() == 1
+                    && map.block_path(index + 1).unwrap().len() == 1
+            })
+            .expect("the fixture has adjacent root paragraphs");
+        let delete_from = block_text_start(&session, first_root_pair) + 1;
+        let delete_to = block_text_start(&session, first_root_pair + 1) + 2;
+        native_epoch_intent(
+            &mut session,
+            next_request(),
+            delete_from,
+            delete_to,
+            serde_json::json!({"type":"replaceSelectionText","text":""}),
+        );
+        if !with_table {
+            assert_structural_pin_avoids_tree_walks(
+                &mut session,
+                &format!("{label}: delete across blocks"),
+            );
+        }
+        assert_epoch_matches_fresh(&mut session, &format!("{label}: delete across blocks"));
+
+        let map = session.engine.position_map().unwrap();
+        let last_root_paragraph = (0..map.block_count())
+            .rev()
+            .find(|index| map.block_path(*index).unwrap().len() == 1)
+            .expect("the fixture ends with a root paragraph");
+        let wrap_at = block_text_start(&session, last_root_paragraph) + 1;
+        native_epoch_intent(
+            &mut session,
+            next_request(),
+            wrap_at,
+            wrap_at,
+            serde_json::json!({"type":"command","command":{"type":"wrapInList","listType":"bullet_list","itemType":"list_item"}}),
+        );
+        if !with_table {
+            assert_structural_pin_avoids_tree_walks(
+                &mut session,
+                &format!("{label}: wrap in list"),
+            );
+        }
+        assert_epoch_matches_fresh(&mut session, &format!("{label}: wrap in list"));
+        native_epoch_intent(
+            &mut session,
+            next_request(),
+            wrap_at,
+            wrap_at,
+            serde_json::json!({"type":"command","command":{"type":"unwrapFromList"}}),
+        );
+        if !with_table {
+            assert_structural_pin_avoids_tree_walks(
+                &mut session,
+                &format!("{label}: unwrap from list"),
+            );
+        }
+        assert_epoch_matches_fresh(&mut session, &format!("{label}: unwrap from list"));
+
+        if with_table {
+            let map = session.engine.position_map().unwrap();
+            let cell_block = (0..map.block_count())
+                .find(|index| map.block_path(*index).unwrap().len() > 2)
+                .expect("the table fixture has a cell paragraph");
+            let cell_at = block_text_start(&session, cell_block) + 1;
+            native_epoch_intent(
+                &mut session,
+                next_request(),
+                cell_at,
+                cell_at,
+                serde_json::json!({"type":"insertText","text":"cell"}),
+            );
+            assert_epoch_matches_fresh(&mut session, &format!("{label}: table cell edit"));
+        }
+
+        for (step, undo) in [true, true, false, true, false, false]
+            .into_iter()
+            .enumerate()
+        {
+            let request = next_request();
+            if undo {
+                session.engine.undo(request).unwrap();
+            } else {
+                session.engine.redo(request).unwrap();
+            }
+            assert_epoch_matches_fresh(&mut session, &format!("{label}: history step {step}"));
+        }
+    }
+}
+
+#[test]
+fn a_split_rebuilds_only_its_root_window_and_shares_every_other_chunk() {
+    use crate::yrs_engine::observability::{
+        reset_full_pass_counts_for_test, take_full_pass_counts_for_test,
+    };
+    use std::sync::Arc;
+    let document = serde_json::json!({"type":"doc","content":
+        (0..UNIFORM_EPOCH_PARAGRAPHS)
+            .map(|_| serde_json::json!({"type":"paragraph","content":[
+                {"type":"text","text":"uniform words "},
+                {"type":"text","text":"marked","marks":[{"type":"bold"}]},
+                {"type":"text","text":" tail café"}
+            ]}))
+            .collect::<Vec<_>>()
+    });
+    let mut session = session_with_document(&document);
+    session
+        .pin_position_epoch(INCREMENTAL_EPOCH_OWNER, session.engine.revision())
+        .unwrap();
+    let before = session.latest_epoch_snapshot_for_test().unwrap();
+    let split_at = block_text_start(&session, SPLIT_EPOCH_BLOCK)
+        + block_text_len(&session, SPLIT_EPOCH_BLOCK) / 2;
+    native_epoch_intent(
+        &mut session,
+        STRUCTURAL_EPOCH_REQUEST,
+        split_at,
+        split_at,
+        serde_json::json!({"type":"splitBlock"}),
+    );
+
+    reset_full_pass_counts_for_test();
+    session
+        .pin_position_epoch(INCREMENTAL_EPOCH_OWNER, session.engine.revision())
+        .unwrap();
+    let counts = take_full_pass_counts_for_test();
+    let after = session.latest_epoch_snapshot_for_test().unwrap();
+
+    assert_eq!(
+        (counts.yrs_tree_walks, counts.epoch_block_rebuilds),
+        (0, SPLIT_REBUILT_BLOCKS),
+        "a split rebuilds its window and one neighbour on each side: {counts:#?}"
+    );
+    assert_eq!(
+        after.chunks.len(),
+        before.chunks.len() + SPLIT_INSERTED_BLOCKS
+    );
+    let window_start = SPLIT_EPOCH_BLOCK - ROOT_WINDOW_NEIGHBORS;
+    let window_end = window_start + SPLIT_REBUILT_BLOCKS;
+    for index in 0..after.chunks.len() {
+        let shared = if index < window_start {
+            Some(&before.chunks[index])
+        } else if index >= window_end {
+            Some(&before.chunks[index - SPLIT_INSERTED_BLOCKS])
+        } else {
+            None
+        };
+        assert_eq!(
+            shared.is_some_and(|chunk| Arc::ptr_eq(chunk, &after.chunks[index])),
+            shared.is_some(),
+            "block {index} outside the window must keep its chunk"
+        );
+    }
+    assert_epoch_matches_fresh(&mut session, "uniform split");
 }

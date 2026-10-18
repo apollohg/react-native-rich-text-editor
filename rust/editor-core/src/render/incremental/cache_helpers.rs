@@ -148,6 +148,17 @@ fn checked_top_level_starts(
     Ok(starts)
 }
 
+const BLOCK_BOUNDARY_RENDER_ELEMENTS: usize = 2;
+const SINGLE_RENDER_ELEMENT: usize = 1;
+
+fn render_element_capacity(node: &Node) -> usize {
+    if node.is_void() {
+        SINGLE_RENDER_ELEMENT
+    } else {
+        BLOCK_BOUNDARY_RENDER_ELEMENTS.saturating_add(node.child_count().max(SINGLE_RENDER_ELEMENT))
+    }
+}
+
 fn render_cached_block(
     node: &Node,
     schema: &Schema,
@@ -160,7 +171,7 @@ fn render_cached_block(
         .ok_or(CachedRenderError::PositionOverflow)?;
     let mut elements = Vec::new();
     elements
-        .try_reserve(3)
+        .try_reserve_exact(render_element_capacity(node))
         .map_err(|_| CachedRenderError::AllocationFailed)?;
     let mut rendered_end = start_pos;
     generate_block(
@@ -205,6 +216,7 @@ fn render_cached_block(
         element_count,
         position_element_indices: Arc::new(position_element_indices),
         cell_output_bytes: std::sync::OnceLock::new(),
+        history_snapshot_retained_bytes: std::sync::OnceLock::new(),
     })
 }
 
@@ -319,6 +331,7 @@ fn render_localized_table_block(
         element_count,
         position_element_indices: Arc::clone(&old.position_element_indices),
         cell_output_bytes,
+        history_snapshot_retained_bytes: std::sync::OnceLock::new(),
     }))
 }
 
@@ -371,7 +384,8 @@ fn rebase_cached_block(
         return None;
     }
     let delta = i64::from(new_start) - i64::from(old_block.start_pos);
-    let elements = if delta == 0 || old_block.position_element_indices.is_empty() {
+    let shares_elements = delta == 0 || old_block.position_element_indices.is_empty();
+    let elements = if shares_elements {
         Arc::clone(&old_block.elements)
     } else {
         let mut rebased = old_block.elements.as_ref().clone();
@@ -393,6 +407,11 @@ fn rebase_cached_block(
         element_count: old_block.element_count,
         position_element_indices: Arc::clone(&old_block.position_element_indices),
         cell_output_bytes: old_block.cell_output_bytes.clone(),
+        history_snapshot_retained_bytes: if shares_elements {
+            old_block.history_snapshot_retained_bytes.clone()
+        } else {
+            std::sync::OnceLock::new()
+        },
     })
 }
 
@@ -412,7 +431,7 @@ fn classify_cached_transition(
     let mut prefix = 0usize;
     while prefix < old_len
         && prefix < new_len
-        && old_cache.blocks[prefix].elements == new_cache.blocks[prefix].elements
+        && same_cached_elements(&old_cache.blocks[prefix], &new_cache.blocks[prefix])
     {
         prefix += 1;
     }
@@ -420,7 +439,7 @@ fn classify_cached_transition(
     let mut new_end = new_len;
     while old_end > prefix
         && new_end > prefix
-        && old_cache.blocks[old_end - 1].elements == new_cache.blocks[new_end - 1].elements
+        && same_cached_elements(&old_cache.blocks[old_end - 1], &new_cache.blocks[new_end - 1])
     {
         old_end -= 1;
         new_end -= 1;
@@ -474,7 +493,7 @@ fn cached_patch_reconstructs(
     if old_cache.blocks[..start]
         .iter()
         .zip(&new_cache.blocks[..start])
-        .any(|(old, new)| old.elements != new.elements)
+        .any(|(old, new)| !same_cached_elements(old, new))
     {
         return false;
     }
@@ -484,7 +503,11 @@ fn cached_patch_reconstructs(
         && old_suffix
             .iter()
             .zip(new_suffix)
-            .all(|(old, new)| old.elements == new.elements)
+            .all(|(old, new)| same_cached_elements(old, new))
+}
+
+fn same_cached_elements(old: &CachedRenderBlock, new: &CachedRenderBlock) -> bool {
+    Arc::ptr_eq(&old.elements, &new.elements) || old.elements == new.elements
 }
 
 fn subtree_contains_table(root: &Node, schema: &Schema) -> bool {

@@ -39,6 +39,7 @@ impl OperationCompiler<'_> {
             localized_insert,
             localized_format,
             mut localized_root_window,
+            mut localized_split,
             mut prelowered_plan,
             mut prelowered_lookup_transition,
             request_id,
@@ -107,23 +108,9 @@ impl OperationCompiler<'_> {
                         context,
                         canonical_schema,
                     );
-                if lowering.is_some() && !candidate_matches {
+                if (lowering.is_some() || localized_root_window.is_some()) && !candidate_matches {
                     validate_preview(request_id, Some(operation_index), &next, context)?;
                 }
-                let canonical_content =
-                    if candidate_matches && from == 0 && to == preview.content_size() {
-                        prepared_semantics.and_then(|prepared| {
-                            prepared
-                                .admission
-                                .canonical_artifact()
-                                .materialized_content_for(
-                                    prepared.expected_preview,
-                                    replacement.content(),
-                                )
-                        })
-                    } else {
-                        None
-                    };
                 operation_changed = next != *preview;
                 if operation_changed {
                     if let Some(lowering) = &mut lowering {
@@ -147,7 +134,6 @@ impl OperationCompiler<'_> {
                                 to,
                                 boundaries: &boundaries,
                                 content: replacement.content(),
-                                canonical_content,
                             },
                         )?;
                     } else if localized_root_window.is_some() {
@@ -176,12 +162,12 @@ impl OperationCompiler<'_> {
                                     to,
                                     boundaries: &boundaries,
                                     content: replacement.content(),
-                                    canonical_content,
                                 },
                             )?;
                         prelowered_plan = Some(plan);
-                        prelowered_lookup_transition =
-                            Some(MutationLookupTransition::Invalidate { request_id });
+                        prelowered_lookup_transition = prepared_semantics
+                            .is_some()
+                            .then_some(MutationLookupTransition::Invalidate { request_id });
                     }
                 }
                 operation_result = Some(replacement.selection_after().clone());
@@ -312,7 +298,7 @@ impl OperationCompiler<'_> {
                         .map_err(|error| {
                         map_transform_error(request_id, operation_index, "at", error)
                     })?;
-                if lowering.is_some() {
+                if lowering.is_some() || localized_split.is_some() {
                     validate_preview(request_id, Some(operation_index), &next, context)?;
                 }
                 if let Some(lowering) = &mut lowering {
@@ -324,6 +310,15 @@ impl OperationCompiler<'_> {
                         context.schema,
                         context.resource_limits,
                     )?;
+                } else if let Some(localized) = localized_split.take() {
+                    prelowered_plan = Some(localized.split_block(
+                        operation_index,
+                        &preview,
+                        &next,
+                        pos,
+                        context.schema,
+                        context.resource_limits,
+                    )?);
                 }
                 stored_marks_input = Some((pos, pos));
                 operation_result = Some(Selection::cursor(step_map.map_pos(pos)));
@@ -366,10 +361,13 @@ impl OperationCompiler<'_> {
                 if let Some(lowering) = &mut lowering {
                     lowering.join_blocks(
                         operation_index,
-                        &preview,
+                        MutationDocumentContext {
+                            before: &preview,
+                            after: &next,
+                            schema: context.schema,
+                            limits: context.resource_limits,
+                        },
                         pos,
-                        context.schema,
-                        context.resource_limits,
                     )?;
                 }
                 operation_result = Some(Selection::cursor(step_map.map_pos(pos)));
@@ -634,6 +632,7 @@ impl OperationCompiler<'_> {
                 localized_insert,
                 localized_format,
                 localized_root_window,
+                localized_split,
                 prelowered_plan,
                 prelowered_lookup_transition,
                 request_id,

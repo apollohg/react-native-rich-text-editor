@@ -12,11 +12,7 @@ pub(crate) fn execute_mutation_plan(plan: YrsMutationPlan, txn: &mut Transaction
                 child_index: _,
                 nodes,
                 ..
-            } => {
-                for child in nodes {
-                    parent.insert_prepared(txn, child.index, child.node);
-                }
-            }
+            } => parent.insert_prepared(txn, nodes),
             YrsMutationAction::SetXmlAttribute {
                 target, key, value, ..
             } => {

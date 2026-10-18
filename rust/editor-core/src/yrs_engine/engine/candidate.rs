@@ -1,6 +1,6 @@
 use super::candidate_cache::{
-    encode_candidate_state_bounded, encode_state_bounded, fresh_utf16_doc_excluding,
-    prepare_import_candidate_cache, utf16_doc, ImportEncodedStateReceipt,
+    encode_candidate_state_bounded, encode_state_bounded, fresh_utf16_doc_excluding, utf16_doc,
+    ImportEncodedStateReceipt,
 };
 use super::imports::{RootBoundValidationReport, ValidatedImportDocument};
 use super::{EngineCommit, YrsDocumentEngine};
@@ -67,10 +67,11 @@ impl YrsDocumentEngine {
             "content": [],
         });
         let codec = YrsDocumentCodec::new(&self.schema, &self.resource_limits);
+        let canonical_json = canonical_artifact.projected_value();
         let import_delete_set_is_empty = {
             let mut txn = doc.transact_mut_with(origin.as_yrs_origin());
             let fragment = txn.get_or_insert_xml_fragment(self.fragment_name.as_str());
-            codec.apply_json(&fragment, &mut txn, &empty_json, canonical_artifact.value())?;
+            codec.apply_json(&fragment, &mut txn, &empty_json, canonical_json.as_value())?;
             txn.delete_set().is_empty()
         };
 
@@ -82,10 +83,11 @@ impl YrsDocumentEngine {
             let (matches, lookup_materialization) = codec.matches_validated_json_with_lookup(
                 &fragment,
                 &txn,
-                canonical_artifact.value(),
+                canonical_json.as_value(),
             );
             (matches?, lookup_materialization)
         };
+        drop(canonical_json);
         if !matches_canonical_projection {
             return Err(candidate_invariant_parse_error(
                 "derived JSON does not match the admitted canonical artifact",
@@ -98,7 +100,7 @@ impl YrsDocumentEngine {
         // exact codec traversal found a localized mutation target. If fused
         // collection failed, stay conservative and preserve the ordinary
         // receipt/fallback path; a zero-target payload is positive evidence
-        // that a private replica cannot accelerate the first mutation.
+        // that a lookup seed cannot accelerate the first mutation.
         let encoded_state_bytes = encoded_state.len();
         let import_acceleration_eligible = carry_import_encoded_state_receipt
             && lookup_materialization
@@ -198,7 +200,7 @@ impl YrsDocumentEngine {
                 .ok_or_else(candidate_invariant_error)
             })
             .transpose()?;
-        let next_derived_state = build_derived_state_for_candidate(
+        let mut next_derived_state = build_derived_state_for_candidate(
             &candidate,
             &self.schema,
             &self.resource_limits,
@@ -213,14 +215,8 @@ impl YrsDocumentEngine {
             next_state_revision,
             next_yrs_state_epoch,
         )?;
-        // A validated import deliberately installs an unavailable lookup seed
-        // in authoritative derived state. Build the ready form while the
-        // already-admitted candidate is still borrowed, then carry it only as
-        // private, revision-sealed acceleration alongside the exact candidate
-        // replica. Failure is opportunistic: the import remains successful and
-        // the first mutation uses the ordinary staged hydration path.
         let mut import_encoded_state_receipt = candidate.import_encoded_state_receipt;
-        let staged_lookup_seed = if candidate.import_acceleration_eligible {
+        let import_lookup_seed = if candidate.import_acceleration_eligible {
             next_derived_state.as_ref().and_then(|state| {
                 let txn = candidate.doc.transact();
                 let fragment = txn.get_xml_fragment(self.fragment_name.as_str())?;
@@ -279,23 +275,9 @@ impl YrsDocumentEngine {
         } else {
             None
         };
-        // max_encoded_state_bytes remains the configurable hard ceiling for
-        // eligible replica and retained-receipt work. Ineligible imports
-        // install the same authoritative candidate and derived state, leaving
-        // ordinary hydration/bootstrap to the first actual mutation.
-        let prepared_candidate_cache = if candidate.import_acceleration_eligible {
-            prepare_import_candidate_cache(
-                &candidate.doc,
-                &self.fragment_name,
-                &self.resource_limits,
-                import_encoded_state_receipt,
-                staged_lookup_seed,
-                next_revision,
-                next_yrs_state_epoch,
-            )
-        } else {
-            None
-        };
+        if let Some((state, seed)) = next_derived_state.as_mut().zip(import_lookup_seed) {
+            state.mutation_lookup_seed = seed;
+        }
         self.doc = candidate.doc;
         // Import swaps the store under a fresh client identity (the
         // ResetAndClear-style swap): rebind exactly like a snapshot restore.
@@ -324,7 +306,7 @@ impl YrsDocumentEngine {
         self.yrs_state_epoch = next_yrs_state_epoch;
         self.last_committed_origin = Some(origin);
         self.document_origin = origin.into();
-        self.prepared_candidate_cache = prepared_candidate_cache;
+        self.prepared_candidate_cache = None;
         Ok(EngineCommit {
             changed: true,
             revision: self.revision,

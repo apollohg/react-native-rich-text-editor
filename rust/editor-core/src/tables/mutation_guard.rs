@@ -121,6 +121,129 @@ pub(crate) fn admit_textblock_ancestry(
     Ok(())
 }
 
+pub(crate) fn range_crosses_cell_boundary(
+    document: &Document,
+    schema: &Schema,
+    from: u32,
+    to: u32,
+) -> bool {
+    let Ok(Some(roles)) = TableRoles::resolve(schema) else {
+        return false;
+    };
+    innermost_cell_content(document, &roles, from) != innermost_cell_content(document, &roles, to)
+}
+
+pub(crate) fn position_is_inside_cell(document: &Document, schema: &Schema, position: u32) -> bool {
+    let Ok(Some(roles)) = TableRoles::resolve(schema) else {
+        return false;
+    };
+    innermost_cell_content(document, &roles, position).is_some()
+}
+
+pub(crate) fn tables_flattened_into_blocks(nodes: &[Node], schema: &Schema) -> Vec<Node> {
+    let Ok(Some(roles)) = TableRoles::resolve(schema) else {
+        return nodes.to_vec();
+    };
+    flatten_tables(nodes, &roles)
+}
+
+fn flatten_tables(nodes: &[Node], roles: &TableRoles) -> Vec<Node> {
+    let mut flattened = Vec::with_capacity(nodes.len());
+    for node in nodes {
+        let Some(content) = node.content() else {
+            flattened.push(node.clone());
+            continue;
+        };
+        if node.node_type() == roles.table {
+            for row in content.iter() {
+                for cell in row.content().into_iter().flat_map(|cells| cells.iter()) {
+                    let blocks = cell.content().map(|blocks| blocks.children().to_vec());
+                    flattened.extend(flatten_tables(&blocks.unwrap_or_default(), roles));
+                }
+            }
+        } else {
+            flattened.push(crate::transform::steps::rebuild_element(
+                node,
+                flatten_tables(content.children(), roles),
+            ));
+        }
+    }
+    flattened
+}
+
+pub(crate) fn cell_region_pieces(
+    document: &Document,
+    schema: &Schema,
+    from: u32,
+    to: u32,
+) -> Vec<(u32, u32)> {
+    let Ok(Some(roles)) = TableRoles::resolve(schema) else {
+        return vec![(from, to)];
+    };
+    let mut cuts = vec![from, to];
+    let mut pending = vec![(document.root(), DOCUMENT_CONTENT_START)];
+    while let Some((node, content_start)) = pending.pop() {
+        let Some(content) = node.content() else {
+            continue;
+        };
+        let mut child_start = content_start;
+        for child in content.iter() {
+            let child_end = child_start + child.node_size();
+            if child_start < to && child_end > from {
+                if child.node_type() == roles.table {
+                    cuts.extend([child_start, child_end]);
+                }
+                if child.node_type() == roles.cell || child.node_type() == roles.header_cell {
+                    cuts.extend([
+                        child_start + NODE_OPENING_TOKENS,
+                        child_end - NODE_CLOSING_TOKENS,
+                    ]);
+                }
+                pending.push((child, child_start + NODE_OPENING_TOKENS));
+            }
+            child_start = child_end;
+        }
+    }
+    cuts.retain(|cut| from <= *cut && *cut <= to);
+    cuts.sort_unstable();
+    cuts.dedup();
+    cuts.windows(2)
+        .map(|piece| (piece[0], piece[1]))
+        .filter(|&(start, end)| {
+            innermost_cell_content(document, &roles, start)
+                == innermost_cell_content(document, &roles, end)
+        })
+        .collect()
+}
+
+fn innermost_cell_content(
+    document: &Document,
+    roles: &TableRoles,
+    position: u32,
+) -> Option<(u32, u32)> {
+    let mut cell = None;
+    let mut node = document.root();
+    let mut content_start = DOCUMENT_CONTENT_START;
+    'descend: while let Some(content) = node.content() {
+        let mut child_start = content_start;
+        for child in content.iter() {
+            let child_end = child_start + child.node_size();
+            if child_start < position && position < child_end {
+                let child_content_start = child_start + NODE_OPENING_TOKENS;
+                if child.node_type() == roles.cell || child.node_type() == roles.header_cell {
+                    cell = Some((child_content_start, child_end - NODE_CLOSING_TOKENS));
+                }
+                node = child;
+                content_start = child_content_start;
+                continue 'descend;
+            }
+            child_start = child_end;
+        }
+        break;
+    }
+    cell
+}
+
 #[derive(Default)]
 struct TableGeography {
     nested_tables: Vec<(u32, u32)>,

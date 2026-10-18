@@ -279,9 +279,7 @@ fn prepared_builder_matches_codec_for_heading_void_and_nested_any() {
         let mut txn = prepared_doc.transact_mut();
         let fragment = txn.get_or_insert_xml_fragment("prosemirror");
         let batch = prepare_xml_nodes(input["content"].as_array().unwrap(), &limits, 2).unwrap();
-        for child in batch.nodes {
-            insert_prepared_node(&fragment, &mut txn, child.index, child.node);
-        }
+        insert_prepared_nodes(&fragment, &mut txn, batch.nodes);
     }
     let actual = {
         let txn = prepared_doc.transact();

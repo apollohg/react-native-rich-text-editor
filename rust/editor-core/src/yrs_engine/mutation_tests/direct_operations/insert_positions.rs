@@ -59,6 +59,7 @@ fn wide_block_insert_resolver_admits_exact_work_and_rejects_one_under_atomically
                 editing_limits: &editing_limits,
                 document_revision: 0,
                 max_length: None,
+                validation_certificate: None,
             },
             TypedTransaction {
                 request_id: 116,
@@ -317,6 +318,7 @@ fn custom_inline_roles_preserve_every_offset_mapping_for_direct_insert_node() {
                 editing_limits: &editing_limits,
                 document_revision: 0,
                 max_length: None,
+                validation_certificate: None,
             },
             TypedTransaction {
                 request_id: 117,

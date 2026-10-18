@@ -130,6 +130,8 @@ fn main() {
 
     let mut results = Vec::new();
 
+    push_native_publication_cases(&mut results, &options, profile);
+
     push_case!(
         &mut results,
         &options,

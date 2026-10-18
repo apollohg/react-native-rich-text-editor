@@ -56,14 +56,25 @@ harness = false
 name = "android_allocator_thread_exit"
 harness = false
 
+[[test]]
+name = "android_allocator_document_release"
+harness = false
+
+[[example]]
+name = "perf_release"
+path = "benches/perf_suite.rs"
+
 [patch.crates-io]
 yrs = { path = "../vendor/yrs" }
 sha2 = { path = "../vendor/sha2" }
 libmimalloc-sys = { path = "../vendor/libmimalloc-sys" }
 
+[target.'cfg(not(target_os = "ios"))'.dependencies]
+jni-sys = "0.3"
+
 [target.'cfg(target_os = "android")'.dependencies]
-mimalloc = { version = "=0.1.52", features = ["secure"] }
-libmimalloc-sys = "=0.1.49"
+mimalloc = "=0.1.52"
+libmimalloc-sys = { version = "=0.1.49", features = ["secure_guards"] }
 
 [target.'cfg(target_os = "android")'.dev-dependencies]
 libmimalloc-sys = { version = "=0.1.49", features = ["extended"] }

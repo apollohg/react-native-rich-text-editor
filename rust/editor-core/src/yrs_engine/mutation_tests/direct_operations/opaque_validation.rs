@@ -31,6 +31,7 @@ fn opaque_block_insert_inside_text_rejects_without_mutating_yrs() {
             editing_limits: &editing_limits,
             document_revision: 0,
             max_length: None,
+            validation_certificate: None,
         },
         TypedTransaction {
             request_id: 171,

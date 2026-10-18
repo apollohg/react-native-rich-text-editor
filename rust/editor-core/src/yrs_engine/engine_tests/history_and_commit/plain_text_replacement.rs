@@ -119,7 +119,7 @@ fn plain_multiline_replacement_in_code_keeps_literal_newlines_and_language() {
 #[test]
 fn plain_multiline_replacement_rejects_operation_budget_before_mutation() {
     let mut engine = transaction_engine_with_editing_limits(crate::yrs_engine::EditingLimits {
-        max_operations_per_transaction: 3,
+        max_operations_per_transaction: 1,
         ..crate::yrs_engine::EditingLimits::default()
     });
     engine.import_json(r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"keep"}]}]}"#, TransactionOrigin::DocumentImport).unwrap();
@@ -134,6 +134,8 @@ fn plain_multiline_replacement_rejects_operation_budget_before_mutation() {
         )
         .unwrap_err();
     assert_eq!(error.code, "OPERATION_LIMIT_EXCEEDED");
+    assert_eq!(error.limit, Some(1));
+    assert_eq!(error.actual, Some(2));
     assert_eq!(engine.revision(), revision);
     assert_eq!(
         replacement_blocks(&engine),

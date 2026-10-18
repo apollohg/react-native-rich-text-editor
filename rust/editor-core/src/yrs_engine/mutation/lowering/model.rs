@@ -43,6 +43,8 @@ struct PendingPreparedInsert {
     first_semantic_index: u32,
 }
 
+const REPLACED_PREPARED_NODES: u32 = 1;
+
 #[derive(Debug, Clone)]
 enum ActionSlot {
     Concrete(Box<YrsMutationAction>),
@@ -103,7 +105,6 @@ pub(crate) struct ReplacementInput<'a> {
     pub(crate) to: u32,
     pub(crate) boundaries: &'a [u32],
     pub(crate) content: &'a Fragment,
-    pub(crate) canonical_content: Option<&'a [serde_json::Value]>,
 }
 
 #[derive(Debug, Clone)]
@@ -208,9 +209,25 @@ pub(crate) struct LocalizedFormatLocator<'a> {
     seed: &'a MutationLookupSeed,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct LocalizedSplitLocator<'a> {
+    pub(crate) document: &'a Document,
+    pub(crate) position: u32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct StructuralWindowComplement {
+    root_child: usize,
+    root_children: usize,
+    parent_count: usize,
+    target_count: usize,
+    parent_layout_work: usize,
+    content_position_work: usize,
+}
+
 pub(crate) struct LocalizedRootWindowLocator<'a> {
     document: &'a Document,
-    expected_preview: &'a Document,
+    expected_preview: Option<&'a Document>,
     from_child: u32,
     to_child: u32,
     expected_content: Fragment,
@@ -230,6 +247,7 @@ pub(crate) struct MutationCompiler {
     pending_traversal_work: usize,
     localized_position_target_count: Option<usize>,
     explicit_path_parent_widths: Option<HashMap<BranchID, usize>>,
+    structural_window_complement: Option<StructuralWindowComplement>,
     action_limit: usize,
     scan_work: usize,
     scan_limit: usize,
@@ -286,61 +304,167 @@ enum MutationLookupSeedState {
 struct MutationLookupPayload {
     target_count: usize,
     pending_traversal_work: usize,
-    path_parent_widths: Arc<HashMap<BranchID, usize>>,
-    target_materialization_work: TargetMaterializationWork,
+    path_parent_widths: LookupEntries,
+    target_materialization_work: LookupEntries,
 }
 
 #[derive(Debug, Clone)]
-struct TargetMaterializationWork {
+struct LookupEntries {
     base: Arc<HashMap<BranchID, usize>>,
-    replacement: Option<(BranchID, usize)>,
+    overrides: Arc<HashMap<BranchID, Option<usize>>>,
+    len: usize,
 }
 
-impl TargetMaterializationWork {
+const LOOKUP_OVERRIDE_COMPACTION_FLOOR: usize = 64;
+
+impl LookupEntries {
     fn new(entries: HashMap<BranchID, usize>) -> Self {
         Self {
+            len: entries.len(),
             base: Arc::new(entries),
-            replacement: None,
+            overrides: Arc::new(HashMap::new()),
         }
     }
 
     fn get(&self, key: &BranchID) -> Option<&usize> {
-        if let Some((target, work)) = &self.replacement {
-            if target == key {
-                return Some(work);
-            }
+        match self.overrides.get(key) {
+            Some(value) => value.as_ref(),
+            None => self.base.get(key),
         }
-        self.base.get(key)
+    }
+
+    fn len(&self) -> usize {
+        self.len
     }
 
     fn iter(&self) -> impl Iterator<Item = (&BranchID, &usize)> {
-        self.base.iter().map(|(key, value)| {
-            let value = match &self.replacement {
-                Some((target, work)) if target == key => work,
-                _ => value,
-            };
-            (key, value)
-        })
+        self.base
+            .iter()
+            .filter(|(key, _)| !self.overrides.contains_key(*key))
+            .chain(
+                self.overrides
+                    .iter()
+                    .filter_map(|(key, value)| value.as_ref().map(|value| (key, value))),
+            )
+    }
+
+    fn values(&self) -> impl Iterator<Item = &usize> {
+        self.iter().map(|(_, value)| value)
     }
 
     fn materialize(&self) -> Result<HashMap<BranchID, usize>, std::collections::TryReserveError> {
         let mut entries = HashMap::new();
-        entries.try_reserve(self.base.len())?;
+        entries.try_reserve(self.len)?;
         entries.extend(self.iter().map(|(key, value)| (key.clone(), *value)));
         Ok(entries)
     }
 
-    fn effective_map(
+    fn compaction_limit(&self) -> usize {
+        self.base
+            .len()
+            .isqrt()
+            .max(LOOKUP_OVERRIDE_COMPACTION_FLOOR)
+    }
+
+    fn with_overrides(
         &self,
         request_id: u64,
-    ) -> OperationResult<std::borrow::Cow<'_, HashMap<BranchID, usize>>> {
-        if self.replacement.is_none() {
-            Ok(std::borrow::Cow::Borrowed(&self.base))
-        } else {
-            self.materialize()
-                .map(std::borrow::Cow::Owned)
-                .map_err(|_| lookup_seed_allocation_error(request_id, "mapGrowth"))
+        overrides: HashMap<BranchID, Option<usize>>,
+        len: usize,
+        compaction_stage: &'static str,
+    ) -> OperationResult<Self> {
+        let next = Self {
+            base: Arc::clone(&self.base),
+            overrides: Arc::new(overrides),
+            len,
+        };
+        if next.overrides.len() <= self.compaction_limit() {
+            return Ok(next);
         }
+        if lookup_seed_hydration_should_fail(compaction_stage) {
+            return Err(lookup_seed_allocation_error(request_id, compaction_stage));
+        }
+        next.materialize()
+            .map(Self::new)
+            .map_err(|_| lookup_seed_allocation_error(request_id, compaction_stage))
+    }
+
+    fn override_entries(
+        &self,
+        request_id: u64,
+        additional: usize,
+    ) -> OperationResult<HashMap<BranchID, Option<usize>>> {
+        let capacity = self
+            .overrides
+            .len()
+            .checked_add(additional)
+            .ok_or_else(|| lookup_seed_allocation_error(request_id, "mapGrowth"))?;
+        let mut overrides = HashMap::new();
+        overrides
+            .try_reserve(capacity)
+            .map_err(|_| lookup_seed_allocation_error(request_id, "mapGrowth"))?;
+        overrides.extend(
+            self.overrides
+                .iter()
+                .map(|(key, value)| (key.clone(), *value)),
+        );
+        Ok(overrides)
+    }
+
+    fn set_override(
+        &self,
+        overrides: &mut HashMap<BranchID, Option<usize>>,
+        key: BranchID,
+        value: Option<usize>,
+    ) {
+        if self.base.get(&key).copied() == value {
+            overrides.remove(&key);
+        } else {
+            overrides.insert(key, value);
+        }
+    }
+
+    fn replaced(
+        &self,
+        request_id: u64,
+        before: &LookupEntries,
+        after: &LookupEntries,
+    ) -> OperationResult<Self> {
+        let mismatch = || {
+            OperationError::engine_invariant_failed(
+                request_id,
+                None,
+                "localized lookup subtree entries disagree with the retained payload",
+            )
+        };
+        if before
+            .iter()
+            .any(|(key, value)| self.get(key) != Some(value))
+            || after
+                .iter()
+                .any(|(key, _)| before.get(key).is_none() && self.get(key).is_some())
+        {
+            return Err(mismatch());
+        }
+        let len = self
+            .len
+            .checked_sub(before.len())
+            .and_then(|len| len.checked_add(after.len()))
+            .ok_or_else(mismatch)?;
+        let additional = before.len().checked_add(after.len()).ok_or_else(mismatch)?;
+        let mut overrides = self.override_entries(request_id, additional)?;
+        for (key, _) in before.iter().filter(|(key, _)| after.get(key).is_none()) {
+            self.set_override(&mut overrides, key.clone(), None);
+        }
+        for (key, value) in after.iter() {
+            self.set_override(&mut overrides, key.clone(), Some(*value));
+        }
+        probe_lookup_seed_publication(
+            request_id,
+            "mapPublication",
+            std::mem::size_of::<HashMap<BranchID, usize>>(),
+        )?;
+        self.with_overrides(request_id, overrides, len, "mapGrowth")
     }
 
     fn promoted(&self, promotion: &MutationLookupPromotion) -> OperationResult<Self> {
@@ -351,49 +475,32 @@ impl TargetMaterializationWork {
                 "localized mutation lookup promotion does not match its seed",
             )
         };
-        if promotion.source == MutationLookupPromotionSource::ExistingInsert {
-            if let [(target, old_work, new_work)] =
-                promotion.materialization_work_updates.as_slice()
-            {
-                if self.get(target) != Some(old_work) {
-                    return Err(mismatch());
-                }
-                if self
-                    .replacement
-                    .as_ref()
-                    .is_none_or(|(previous, _)| previous == target)
-                {
-                    return Ok(Self {
-                        base: Arc::clone(&self.base),
-                        replacement: Some((target.clone(), *new_work)),
-                    });
-                }
-            }
-        }
-        let allocation_error = || {
-            OperationError::engine_invariant_failed(
-                promotion.request_id,
-                None,
-                "localized mutation lookup promotion allocation failed",
-            )
-        };
-        if lookup_seed_hydration_should_fail("promotionMapReservation") {
-            return Err(allocation_error());
-        }
-        let mut entries = self.materialize().map_err(|_| allocation_error())?;
+        let mut overrides = self.override_entries(
+            promotion.request_id,
+            promotion.materialization_work_updates.len(),
+        )?;
         for (target, old_work, new_work) in &promotion.materialization_work_updates {
-            if entries.get(target) != Some(old_work) {
+            let current = match overrides.get(target) {
+                Some(value) => *value,
+                None => self.base.get(target).copied(),
+            };
+            if current != Some(*old_work) {
                 return Err(mismatch());
             }
-            entries.insert(target.clone(), *new_work);
+            self.set_override(&mut overrides, target.clone(), Some(*new_work));
         }
-        Ok(Self::new(entries))
+        self.with_overrides(
+            promotion.request_id,
+            overrides,
+            self.len,
+            "promotionMapReservation",
+        )
     }
 }
 
-impl PartialEq for TargetMaterializationWork {
+impl PartialEq for LookupEntries {
     fn eq(&self, other: &Self) -> bool {
-        self.base.len() == other.base.len()
+        self.len == other.len
             && self
                 .iter()
                 .all(|(key, value)| other.get(key) == Some(value))
@@ -409,10 +516,10 @@ impl ImportLookupMaterialization {
         Self(payload)
     }
 
-    /// Whether retaining an exact import replica can accelerate at least one
+    /// Whether installing the import lookup seed can accelerate at least one
     /// localized mutation target. Zero-target payloads still prove a valid
     /// traversal, but a later mutation would have to take the ordinary
-    /// structural path regardless of whether the replica was retained.
+    /// structural path regardless of whether the seed was installed.
     pub(crate) fn accelerates_localized_mutation(&self) -> bool {
         self.0.target_count != 0
     }
@@ -430,7 +537,7 @@ pub(crate) struct LocalizedInsertCompiler {
 pub(crate) struct LocalizedFormatCompiler {
     compiler: MutationCompiler,
     seed_pending_traversal_work: usize,
-    seed_materialization_work: TargetMaterializationWork,
+    seed_materialization_work: LookupEntries,
 }
 
 /// A capability for replacing exactly one complete child window of the
@@ -439,10 +546,17 @@ pub(crate) struct LocalizedFormatCompiler {
 pub(crate) struct LocalizedRootWindowCompiler {
     compiler: MutationCompiler,
     document: Document,
-    expected_preview: Document,
+    expected_preview: Option<Document>,
     from_child: u32,
     to_child: u32,
     expected_content: Fragment,
+}
+
+#[derive(Debug)]
+pub(crate) struct LocalizedSplitCompiler {
+    compiler: MutationCompiler,
+    document: Document,
+    position: u32,
 }
 
 #[derive(Debug, Clone)]

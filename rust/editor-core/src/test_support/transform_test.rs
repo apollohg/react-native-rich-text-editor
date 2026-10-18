@@ -4,6 +4,7 @@ use crate::model::{Document, Fragment, Mark, Node};
 use crate::schema::presets::tiptap_schema;
 use crate::schema::{AttrSpec, Schema};
 use crate::transform::{Step, Transaction};
+use proptest::prelude::*;
 
 #[test]
 fn document_stats_remains_constructible_with_the_original_public_fields() {
@@ -658,3 +659,5 @@ include!("transform_test/split_and_join.rs");
 include!("transform_test/lists.rs");
 
 include!("transform_test/node_and_range.rs");
+
+include!("transform_test/cross_depth_delete.rs");

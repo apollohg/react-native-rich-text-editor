@@ -1,6 +1,6 @@
 use super::history_state::{
-    history_document_snapshots_fit, history_document_snapshots_fit_with_precomputed_after_charge,
-    history_local_state, history_snapshot_template, history_snapshot_template_from_identity,
+    history_document_snapshots_fit, history_local_state, history_snapshot_template,
+    history_snapshot_template_from_identity,
 };
 use super::outbound::OutboundUpdateSink;
 use super::YrsDocumentEngine;
@@ -42,6 +42,7 @@ impl YrsDocumentEngine {
             None,
             yrs_engine::TransactionOrigin::LocalCommand,
             false,
+            false,
         )
     }
 
@@ -57,6 +58,7 @@ impl YrsDocumentEngine {
         initial_selection: Option<&'a yrs_engine::SelectionInput>,
         origin: yrs_engine::TransactionOrigin,
         admits_textblock_local_intents: bool,
+        structural_representation_only: bool,
     ) -> yrs_engine::OperationResult<yrs_engine::CommandPlan> {
         let state = self
             .derived_state
@@ -70,7 +72,7 @@ impl YrsDocumentEngine {
             &state.document,
             &self.schema,
         );
-        let allow_deferred_admission =
+        let allow_deferred_admission = || {
             preparation.is_some() && state.mutation_lookup_seed.is_unavailable() && {
                 let canonical_fingerprint = state.canonical_artifact.sha256();
                 let canonical_serialized_len = state.canonical_artifact.serialized_len();
@@ -84,7 +86,8 @@ impl YrsDocumentEngine {
                     self.state_revision,
                     self.yrs_state_epoch,
                 )
-            };
+            }
+        };
         yrs_engine::commands::plan(
             yrs_engine::commands::PlanningContext {
                 request_id,
@@ -104,9 +107,12 @@ impl YrsDocumentEngine {
                 yrs_state_epoch: self.yrs_state_epoch,
                 canonical_schema: &self.canonical_schema,
                 canonical_artifact: &state.canonical_artifact,
-                allow_deferred_admission,
+                allow_deferred_admission: &allow_deferred_admission,
                 preparation,
                 localized_textblock_state: admits_textblock_local_intents.then_some(state),
+                compilation_view: Some(state.compilation_view()),
+                derived_state: Some(state),
+                structural_representation_only,
             },
             command,
         )
@@ -147,6 +153,7 @@ impl YrsDocumentEngine {
         let resolved = self.resolve_selection_input_for_planning(request_id, &selection)?;
         let preparation = std::cell::RefCell::new(None);
         let mut outbound = OutboundUpdateSink::from_optional_outbox(outbox);
+        let structural_command = command.clone();
         let (_, result) = match self.plan_command_internal_at_selection(
             request_id,
             command,
@@ -155,6 +162,7 @@ impl YrsDocumentEngine {
             Some(&selection),
             origin,
             true,
+            false,
         )? {
             yrs_engine::CommandPlan::NotApplicable => return Ok(None),
             yrs_engine::CommandPlan::SelectionOnly(transaction) => {
@@ -162,21 +170,32 @@ impl YrsDocumentEngine {
                 self.apply_compiled_transaction_with_history(compiled, true, None, &mut outbound)?
             }
             yrs_engine::CommandPlan::Transaction(transaction) => {
-                if let Some(proof) = preparation.into_inner() {
+                let applied = if let Some(proof) = preparation.into_inner() {
                     self.apply_prepared_command_transaction(
                         transaction,
                         proof,
                         Some((&selection, &resolved)),
                         true,
                         &mut outbound,
-                    )?
+                    )
                 } else {
                     self.apply_typed_transaction_with_staged_context(
                         transaction,
                         Some((&selection, &resolved)),
                         true,
                         &mut outbound,
-                    )?
+                    )
+                };
+                match applied {
+                    Err(refusal) if refusal.lowering_refusal.is_some() => self
+                        .apply_structural_command_representation(
+                            structural_command,
+                            refusal,
+                            Some((&selection, &resolved)),
+                            origin,
+                            &mut outbound,
+                        )?,
+                    applied => applied?,
                 }
             }
         };
@@ -312,6 +331,7 @@ impl YrsDocumentEngine {
         outbound: &mut OutboundUpdateSink<'_>,
     ) -> yrs_engine::OperationResult<Option<yrs_engine::TypedTransactionResult>> {
         let preparation = std::cell::RefCell::new(None);
+        let structural_command = command.clone();
         let (_, result) =
             match self.plan_command_internal(request_id, command, Some(&preparation))? {
                 yrs_engine::CommandPlan::NotApplicable => return Ok(None),
@@ -320,21 +340,32 @@ impl YrsDocumentEngine {
                     self.apply_compiled_transaction_with_history(compiled, true, None, outbound)?
                 }
                 yrs_engine::CommandPlan::Transaction(transaction) => {
-                    if let Some(proof) = preparation.into_inner() {
+                    let applied = if let Some(proof) = preparation.into_inner() {
                         self.apply_prepared_command_transaction(
                             transaction,
                             proof,
                             None,
                             true,
                             outbound,
-                        )?
+                        )
                     } else {
                         self.apply_typed_transaction_with_staged_context(
                             transaction,
                             None,
                             true,
                             outbound,
-                        )?
+                        )
+                    };
+                    match applied {
+                        Err(refusal) if refusal.lowering_refusal.is_some() => self
+                            .apply_structural_command_representation(
+                                structural_command,
+                                refusal,
+                                None,
+                                yrs_engine::TransactionOrigin::LocalCommand,
+                                outbound,
+                            )?,
+                        applied => applied?,
                     }
                 }
             };
@@ -345,6 +376,37 @@ impl YrsDocumentEngine {
                 "rich prepared command produced no result envelope",
             )
         })
+    }
+
+    fn apply_structural_command_representation(
+        &mut self,
+        command: yrs_engine::TypedCommand,
+        refusal: yrs_engine::OperationError,
+        anchored: Option<(&yrs_engine::SelectionInput, &yrs_engine::ResolvedSelection)>,
+        origin: yrs_engine::TransactionOrigin,
+        outbound: &mut OutboundUpdateSink<'_>,
+    ) -> yrs_engine::OperationResult<(
+        yrs_engine::TransactionCommit,
+        Option<yrs_engine::TypedTransactionResult>,
+    )> {
+        match self.plan_command_internal_at_selection(
+            refusal.request_id,
+            command,
+            None,
+            anchored.map(|(_, resolved)| resolved),
+            anchored.map(|(selection, _)| selection),
+            origin,
+            false,
+            true,
+        )? {
+            yrs_engine::CommandPlan::Transaction(structural) => self
+                .apply_typed_transaction_with_staged_context(structural, anchored, true, outbound),
+            yrs_engine::CommandPlan::SelectionOnly(selection_only) => {
+                let compiled = self.compile_typed_transaction(selection_only)?;
+                self.apply_compiled_transaction_with_history(compiled, true, None, outbound)
+            }
+            yrs_engine::CommandPlan::NotApplicable => Err(refusal),
+        }
     }
 
     fn prepare_command_history_admission(
@@ -427,7 +489,7 @@ impl YrsDocumentEngine {
             yrs_engine::compiler::CompiledDocumentDerivations {
                 identity_seal: Arc::new(()),
                 position_map,
-                rendered_text,
+                rendered_text: rendered_text.into(),
                 rendered_scalars,
                 document_text_bytes,
                 document_node_count: crate::editor_state::document_node_count(
@@ -451,19 +513,28 @@ impl YrsDocumentEngine {
                     format!("prepared history render transition failed: {error:?}"),
                 )
             })?;
+        let group_before = self.history.latest_undo_group_before_document_snapshot();
         let retained = history_document_snapshots_fit(
             state,
-            expected_document,
-            candidate_artifact,
-            None,
-            &candidate_derivations,
-            &candidate_render.cache,
+            &yrs_engine::derived_state::HistorySnapshotParts {
+                document: expected_document,
+                canonical_artifact: Some(candidate_artifact),
+                artifact_document: candidate_artifact.source_document(),
+                position_map: &candidate_derivations.position_map,
+                rendered_text: &candidate_derivations.rendered_text,
+                render_blocks: &candidate_render.cache,
+                validation_depth_slots:
+                    yrs_engine::derived_state::DocumentValidationCertificate::subtree_depth_counts(
+                        expected_document.root(),
+                        crate::transform::DOCUMENT_ROOT_DEPTH,
+                    )
+                    .len(),
+            },
             state.stored_marks.as_deref(),
-            &self.schema_fingerprint,
-            &self.fragment_name,
-            self.scope.as_ref(),
-            self.editing_limits.max_derived_output_bytes,
-        );
+            group_before.as_deref(),
+            &self.history_snapshot_admission(),
+        )
+        .retained;
         let before = history_local_state(
             state,
             &self.fragment_name,
@@ -486,7 +557,7 @@ impl YrsDocumentEngine {
             transaction.history_policy,
             class,
             semantic.undo_units(),
-            before.metadata_bytes,
+            &before,
             after.metadata_bytes,
         )?;
         Ok(Some(
@@ -599,23 +670,28 @@ impl YrsDocumentEngine {
                 format!("prepared history render transition failed: {error:?}"),
             )
         })?;
-        let retained = history_document_snapshots_fit_with_precomputed_after_charge(
+        let group_before = self.history.latest_undo_group_before_document_snapshot();
+        let retained = history_document_snapshots_fit(
             state,
-            evidence.canonical_retained_bytes,
-            evidence.source_document_retained_bytes,
-            yrs_engine::derived_state::DocumentValidationCertificate::subtree_depth_counts(
-                expected_document.root(),
-                crate::transform::DOCUMENT_ROOT_DEPTH,
-            )
-            .len(),
-            &evidence.candidate_derivations,
-            &candidate_render.cache,
+            &yrs_engine::derived_state::HistorySnapshotParts {
+                document: expected_document,
+                canonical_artifact: None,
+                artifact_document: expected_document,
+                position_map: &evidence.candidate_derivations.position_map,
+                rendered_text: &evidence.candidate_derivations.rendered_text,
+                render_blocks: &candidate_render.cache,
+                validation_depth_slots:
+                    yrs_engine::derived_state::DocumentValidationCertificate::subtree_depth_counts(
+                        expected_document.root(),
+                        crate::transform::DOCUMENT_ROOT_DEPTH,
+                    )
+                    .len(),
+            },
             state.stored_marks.as_deref(),
-            &self.schema_fingerprint,
-            &self.fragment_name,
-            self.scope.as_ref(),
-            self.editing_limits.max_derived_output_bytes,
-        );
+            group_before.as_deref(),
+            &self.history_snapshot_admission(),
+        )
+        .retained;
         let before = history_local_state(
             state,
             &self.fragment_name,
@@ -643,7 +719,7 @@ impl YrsDocumentEngine {
             transaction.history_policy,
             class,
             deferred.undo_units(),
-            before.metadata_bytes,
+            &before,
             after.metadata_bytes,
         )?;
         Ok(Some(

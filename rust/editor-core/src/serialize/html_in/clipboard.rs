@@ -19,7 +19,7 @@ pub fn from_clipboard_html_with_limits(
             actual: html.len(),
         });
     }
-    let parsed = Html::parse_fragment(html);
+    let parsed = super::parse_html_fragment(html);
     let root = parsed.root_element();
     let mut depth = 0usize;
     let mut work = 0usize;

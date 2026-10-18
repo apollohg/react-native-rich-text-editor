@@ -1110,12 +1110,14 @@ public func FfiConverterTypeFfiJsonResult_lower(_ value: FfiJsonResult) -> RustB
 public struct FfiNativeRenderFrame {
     public var snapshotJson: String
     public var tables: FfiTableFrame
+    public var positionEpoch: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(snapshotJson: String, tables: FfiTableFrame) {
+    public init(snapshotJson: String, tables: FfiTableFrame, positionEpoch: String? = nil) {
         self.snapshotJson = snapshotJson
         self.tables = tables
+        self.positionEpoch = positionEpoch
     }
 }
 
@@ -1132,12 +1134,16 @@ extension FfiNativeRenderFrame: Equatable, Hashable {
         if lhs.tables != rhs.tables {
             return false
         }
+        if lhs.positionEpoch != rhs.positionEpoch {
+            return false
+        }
         return true
     }
 
     public func hash(into hasher: inout Hasher) {
         hasher.combine(snapshotJson)
         hasher.combine(tables)
+        hasher.combine(positionEpoch)
     }
 }
 
@@ -1151,13 +1157,15 @@ public struct FfiConverterTypeFfiNativeRenderFrame: FfiConverterRustBuffer {
         return
             try FfiNativeRenderFrame(
                 snapshotJson: FfiConverterString.read(from: &buf),
-                tables: FfiConverterTypeFfiTableFrame.read(from: &buf)
+                tables: FfiConverterTypeFfiTableFrame.read(from: &buf),
+                positionEpoch: FfiConverterOptionString.read(from: &buf)
         )
     }
 
     public static func write(_ value: FfiNativeRenderFrame, into buf: inout [UInt8]) {
         FfiConverterString.write(value.snapshotJson, into: &buf)
         FfiConverterTypeFfiTableFrame.write(value.tables, into: &buf)
+        FfiConverterOptionString.write(value.positionEpoch, into: &buf)
     }
 }
 
@@ -4648,6 +4656,15 @@ public func editorV2RenderNativeFrame(editorId: String, ownerId: String?, mirror
     )
 })
 }
+public func editorV2RenderState(editorId: String, mirrorScalarAnchor: UInt32?, mirrorScalarHead: UInt32?) -> FfiJsonResult  {
+    return try!  FfiConverterTypeFfiJsonResult_lift(try! rustCall() {
+    uniffi_editor_core_fn_func_editor_v2_render_state(
+        FfiConverterString.lower(editorId),
+        FfiConverterOptionUInt32.lower(mirrorScalarAnchor),
+        FfiConverterOptionUInt32.lower(mirrorScalarHead),$0
+    )
+})
+}
 public func editorV2RenderUpdate(editorId: String, mirrorScalarAnchor: UInt32?, mirrorScalarHead: UInt32?) -> FfiJsonResult  {
     return try!  FfiConverterTypeFfiJsonResult_lift(try! rustCall() {
     uniffi_editor_core_fn_func_editor_v2_render_update(
@@ -4834,6 +4851,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_editor_core_checksum_func_editor_v2_render_native_frame() != 615) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_editor_core_checksum_func_editor_v2_render_state() != 57358) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_editor_core_checksum_func_editor_v2_render_update() != 13282) {

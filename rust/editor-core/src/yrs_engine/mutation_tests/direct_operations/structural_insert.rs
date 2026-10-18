@@ -57,6 +57,7 @@ fn duplicate_equal_atom_deletes_preserve_the_identity_selected_by_operation_inte
                     editing_limits: &editing_limits,
                     document_revision: 0,
                     max_length: None,
+                    validation_certificate: None,
                 },
                 TypedTransaction {
                     request_id: 108,
@@ -129,6 +130,7 @@ fn duplicate_equal_atom_inserts_preserve_existing_identities_before_and_after() 
                     editing_limits: &editing_limits,
                     document_revision: 0,
                     max_length: None,
+                    validation_certificate: None,
                 },
                 TypedTransaction {
                     request_id: 109,
@@ -197,6 +199,7 @@ fn structural_insert_inside_text_retains_left_storage_and_creates_atom_and_suffi
                 editing_limits: &editing_limits,
                 document_revision: 0,
                 max_length: None,
+                validation_certificate: None,
             },
             TypedTransaction {
                 request_id: 112,

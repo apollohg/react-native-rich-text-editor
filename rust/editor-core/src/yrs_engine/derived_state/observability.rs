@@ -3,6 +3,9 @@ std::thread_local! {
     pub(super) static PREVIEW_POSITION_MAP_DERIVATION_COUNT: std::cell::Cell<usize> = const {
         std::cell::Cell::new(0)
     };
+    pub(super) static ROOT_WINDOW_CERTIFICATION_COUNT: std::cell::Cell<usize> = const {
+        std::cell::Cell::new(0)
+    };
     pub(super) static PREVIEW_RENDERED_TEXT_DERIVATION_COUNT: std::cell::Cell<usize> = const {
         std::cell::Cell::new(0)
     };
@@ -141,6 +144,11 @@ pub(crate) fn take_preview_derivation_counts_for_test() -> (usize, usize) {
         PREVIEW_POSITION_MAP_DERIVATION_COUNT.replace(0),
         PREVIEW_RENDERED_TEXT_DERIVATION_COUNT.replace(0),
     )
+}
+
+#[cfg(test)]
+pub(crate) fn take_root_window_certifications_for_test() -> usize {
+    ROOT_WINDOW_CERTIFICATION_COUNT.replace(0)
 }
 
 #[cfg(test)]

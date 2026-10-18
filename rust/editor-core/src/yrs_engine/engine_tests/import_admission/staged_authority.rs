@@ -113,7 +113,7 @@ fn staged_authority_supplies_every_unavailable_seed_consumer_without_installed_r
     let root_locator = crate::yrs_engine::mutation::LocalizedRootWindowLocator::mint(
         transaction.request_id,
         &state.document,
-        &state.document,
+        Some(&state.document),
         &root_replacement,
         authority.lookup_seed().as_ref(),
         &txn,
@@ -152,6 +152,7 @@ fn staged_authority_supplies_every_unavailable_seed_consumer_without_installed_r
                 editing_limits: &engine.editing_limits,
                 document_revision: engine.revision,
                 max_length: engine.max_length,
+                validation_certificate: None,
             },
             transaction.clone(),
             &crate::yrs_engine::compiler::CompilationReadView::new(

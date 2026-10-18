@@ -305,6 +305,18 @@ impl TableRenderRecord {
         self.retained_bytes_with_cell_bytes(element_bytes, None)
     }
 
+    pub(crate) fn retained_bytes_beyond(
+        &self,
+        base: &Self,
+        element_bytes: impl Fn(&RenderElement) -> usize,
+    ) -> usize {
+        let window = crate::model::unshared_window(&self.cells, &base.cells, Arc::ptr_eq);
+        let cell_bytes = self.cells[window].iter().fold(0usize, |total, cell| {
+            total.saturating_add(cell.retained_bytes(&element_bytes))
+        });
+        self.retained_bytes_with_cell_bytes(element_bytes, Some(cell_bytes))
+    }
+
     pub(crate) fn retained_bytes_with_cell_bytes(
         &self,
         element_bytes: impl Fn(&RenderElement) -> usize,
@@ -996,10 +1008,10 @@ mod output_meter_tests {
             },
             OpaqueInlineAtom {
                 node_type: String,
-                label: String,
+                label: Box<str>,
                 doc_pos: u32,
-                attrs: std::collections::HashMap<String, serde_json::Value>,
-                mention_theme: Option<std::collections::HashMap<String, serde_json::Value>>,
+                attrs: Box<std::collections::HashMap<String, serde_json::Value>>,
+                mention_theme: Option<Box<std::collections::HashMap<String, serde_json::Value>>>,
             },
         }
         const _: () = {
@@ -1008,7 +1020,10 @@ mod output_meter_tests {
                     == std::mem::size_of::<PreviousRecord>()
                         + std::mem::size_of::<TableRenderStructure>()
             );
-            assert!(std::mem::size_of::<RenderElement>() == std::mem::size_of::<PreviousElementLayout>());
+            assert!(
+                std::mem::size_of::<RenderElement>()
+                    == std::mem::size_of::<PreviousElementLayout>()
+            );
         };
         let allocation = crate::model::arc_allocation_retained_bytes;
         assert_eq!(

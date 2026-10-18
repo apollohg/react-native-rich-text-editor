@@ -59,7 +59,7 @@ fn edit(
         .schema_context()
         .derive(&preview)
         .unwrap();
-    let next = initialize_test_document(&schema, artifact.value().clone()).unwrap();
+    let next = initialize_test_document(&schema, artifact.to_json_value()).unwrap();
     (admission, path.to_vec(), next)
 }
 

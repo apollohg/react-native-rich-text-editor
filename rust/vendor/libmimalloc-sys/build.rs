@@ -2,6 +2,8 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+const SECURE_GUARDS_LEVEL: &str = "1";
+
 fn main() {
     let mut build = cc::Build::new();
 
@@ -81,6 +83,8 @@ fn main() {
 
     if env::var_os("CARGO_FEATURE_SECURE").is_some() {
         build.define("MI_SECURE", "4");
+    } else if env::var_os("CARGO_FEATURE_SECURE_GUARDS").is_some() {
+        build.define("MI_SECURE", SECURE_GUARDS_LEVEL);
     }
 
     if target_os == "windows" && env::var_os("CARGO_FEATURE_WIN_DIRECT_TLS").is_some() {

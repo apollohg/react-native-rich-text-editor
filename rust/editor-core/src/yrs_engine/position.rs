@@ -12,6 +12,7 @@ use crate::selection::Selection;
 use crate::tables::commands::{NODE_CLOSING_TOKENS, NODE_OPENING_TOKENS};
 use std::sync::Arc;
 
+use super::block_branch_index::BlockBranchIndex;
 use super::{Affinity, EditorOffsetKind, RevisionedPosition};
 
 pub(super) const VOID_NODE_SIZE: u32 = 1;
@@ -20,11 +21,13 @@ pub(super) const VOID_NODE_SIZE: u32 = 1;
 std::thread_local! {
     static RELATIVE_FULL_SIZE_PREPASSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static RELATIVE_FORWARD_TRAVERSALS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static RELATIVE_BLOCK_TRAVERSALS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static RELATIVE_REVERSE_TRAVERSALS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static BOUNDARY_WALK_NODE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static BOUNDARY_TEXT_SCALAR_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static BOUNDARY_SORT_TARGETS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(crate) static BOUNDARY_COMPACTION_DISABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    pub(super) static DENSE_BOUNDARY_STAGING_ALLOCATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static PLAIN_TEXT_DIFF_FALLBACKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static XML_SIZE_NODE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
@@ -34,6 +37,11 @@ pub(crate) fn reset_relative_position_traversal_counts_for_test() {
     RELATIVE_FULL_SIZE_PREPASSES.set(0);
     RELATIVE_FORWARD_TRAVERSALS.set(0);
     RELATIVE_REVERSE_TRAVERSALS.set(0);
+}
+
+#[cfg(test)]
+pub(crate) fn take_relative_block_traversals_for_test() -> usize {
+    RELATIVE_BLOCK_TRAVERSALS.replace(0)
 }
 
 #[cfg(test)]
@@ -88,11 +96,30 @@ pub(crate) fn admitted_doc_pos_to_relative_point<T: ReadTxn>(
     doc_pos: u32,
     affinity: Affinity,
     schema: &Schema,
+    indexed_view: Option<(&BlockBranchIndex, &PositionMap, &Document)>,
 ) -> Option<RelativePoint> {
     let assoc = affinity.into();
-    let sticky = forward_doc_pos_to_sticky_index(txn, fragment, doc_pos, assoc, schema)?;
+    let sticky = indexed_view
+        .and_then(|(index, position_map, document)| {
+            let sticky = index.sticky_at_doc_pos(txn, doc_pos, assoc, position_map, document)?;
+            #[cfg(test)]
+            RELATIVE_BLOCK_TRAVERSALS.set(RELATIVE_BLOCK_TRAVERSALS.get().saturating_add(1));
+            Some(sticky)
+        })
+        .or_else(|| forward_doc_pos_to_sticky_index(txn, fragment, doc_pos, assoc, schema))?;
     sticky.get_offset(txn)?;
     (sticky.assoc == assoc).then_some(RelativePoint { sticky, affinity })
+}
+
+#[cfg(test)]
+pub(crate) fn forward_doc_pos_to_sticky_index_for_test<T: ReadTxn>(
+    txn: &T,
+    fragment: &XmlFragmentRef,
+    doc_pos: u32,
+    assoc: Assoc,
+    schema: &Schema,
+) -> Option<StickyIndex> {
+    forward_doc_pos_to_sticky_index(txn, fragment, doc_pos, assoc, schema)
 }
 
 pub fn relative_point_to_doc_pos<T: ReadTxn>(
@@ -152,6 +179,7 @@ pub(crate) fn relative_selection_with_resolver(
     Some(selection.normalized(document, position_map))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn revisioned_position_to_relative_point<T: ReadTxn>(
     txn: &T,
     fragment: &XmlFragmentRef,
@@ -160,6 +188,7 @@ pub fn revisioned_position_to_relative_point<T: ReadTxn>(
     position_map: &PositionMap,
     document: &Document,
     schema: &Schema,
+    block_branch_index: Option<&BlockBranchIndex>,
 ) -> Option<RelativePoint> {
     let doc_pos = editor_offset_to_doc_pos(
         position.offset,
@@ -168,7 +197,15 @@ pub fn revisioned_position_to_relative_point<T: ReadTxn>(
         position_map,
         document,
     )?;
-    doc_pos_to_relative_point(txn, fragment, doc_pos, position.affinity, schema)
+    let assoc = position.affinity.into();
+    block_branch_index
+        .and_then(|index| index.sticky_at_doc_pos(txn, doc_pos, assoc, position_map, document))
+        .filter(|sticky| sticky.get_offset(txn).is_some() && sticky.assoc == assoc)
+        .map(|sticky| RelativePoint {
+            sticky,
+            affinity: position.affinity,
+        })
+        .or_else(|| doc_pos_to_relative_point(txn, fragment, doc_pos, position.affinity, schema))
 }
 
 pub(crate) fn editor_offset_to_doc_pos(
@@ -444,7 +481,41 @@ pub(crate) fn boundary_chunks_at_doc_positions<T: ReadTxn>(
         txn,
         fragment.children(txn),
         BranchPtr::from(<XmlFragmentRef as AsRef<Branch>>::as_ref(fragment)),
+        SequenceStart::FIRST_CHILD,
         0,
+        doc_positions,
+        schema,
+        None,
+    )
+}
+
+pub(crate) fn boundary_chunks_in_root_window<T: ReadTxn>(
+    txn: &T,
+    fragment: &XmlFragmentRef,
+    children: std::ops::Range<u32>,
+    start: u32,
+    doc_positions: &[Vec<u32>],
+    schema: &Schema,
+) -> Option<Vec<Arc<EpochBlockChunk>>> {
+    let mut siblings = fragment.children(txn);
+    let previous_id = match children.start.checked_sub(1) {
+        Some(previous) => Some(integrated_xml_child_id(
+            &siblings.by_ref().nth(usize::try_from(previous).ok()?)?,
+        )?),
+        None => None,
+    };
+    let lookahead = usize::try_from(children.end - children.start)
+        .ok()?
+        .checked_add(1)?;
+    boundary_chunks_in_sequence(
+        txn,
+        siblings.take(lookahead),
+        BranchPtr::from(<XmlFragmentRef as AsRef<Branch>>::as_ref(fragment)),
+        SequenceStart {
+            index: children.start,
+            previous_id,
+        },
+        start,
         doc_positions,
         schema,
         None,
@@ -463,6 +534,7 @@ pub(crate) fn boundary_chunk_for_block<T: ReadTxn>(
         txn,
         element.children(txn),
         BranchPtr::from(<XmlElementRef as AsRef<Branch>>::as_ref(element)),
+        SequenceStart::FIRST_CHILD,
         doc_start,
         &[positions],
         schema,
@@ -549,37 +621,86 @@ impl<'positions> BoundaryTargets<'positions> {
 
 enum PendingBoundaryChunk {
     Empty(usize),
-    Dense(Vec<Option<BoundaryAnchors>>),
+    Dense {
+        anchors: Vec<Option<BoundaryAnchors>>,
+        unresolved: usize,
+    },
     Ready(EpochBlockChunk),
 }
 
+#[derive(Default)]
+struct BoundaryStaging {
+    pending: Vec<Option<BoundaryAnchors>>,
+    resolved: Vec<BoundaryAnchors>,
+}
+
 impl PendingBoundaryChunk {
-    fn insert(&mut self, offset: usize, anchors: BoundaryAnchors) {
+    fn insert(
+        &mut self,
+        offset: usize,
+        boundary: BoundaryAnchors,
+        staging: &mut BoundaryStaging,
+    ) -> Option<()> {
         if let Self::Empty(length) = self {
-            *self = Self::Dense(vec![None; *length]);
+            let mut anchors = std::mem::take(&mut staging.pending);
+            #[cfg(test)]
+            if anchors.capacity() < *length {
+                DENSE_BOUNDARY_STAGING_ALLOCATIONS
+                    .set(DENSE_BOUNDARY_STAGING_ALLOCATIONS.get().saturating_add(1));
+            }
+            anchors.resize(*length, None);
+            *self = Self::Dense {
+                anchors,
+                unresolved: *length,
+            };
         }
-        let Self::Dense(positions) = self else {
+        let Self::Dense {
+            anchors,
+            unresolved,
+        } = self
+        else {
             unreachable!("completed chunk has no pending targets")
         };
-        positions[offset] = Some(anchors);
+        if anchors.get_mut(offset)?.replace(boundary).is_none() {
+            *unresolved -= 1;
+        }
+        if *unresolved == 0 {
+            let mut pending = std::mem::take(anchors);
+            staging.resolved.clear();
+            for anchor in pending.drain(..) {
+                staging.resolved.push(anchor?);
+            }
+            *self = Self::Ready(completed_boundary_chunk(&staging.resolved)?);
+            staging.resolved.clear();
+            if pending.capacity() > staging.pending.capacity() {
+                staging.pending = pending;
+            }
+        }
+        Some(())
     }
 
     fn finish(self) -> Option<EpochBlockChunk> {
         match self {
             Self::Empty(0) => EpochBlockChunk::new(Vec::new()),
-            Self::Empty(_) => None,
-            Self::Dense(anchors) => {
-                EpochBlockChunk::new(anchors.into_iter().collect::<Option<Vec<_>>>()?)
-            }
+            Self::Empty(_) | Self::Dense { .. } => None,
             Self::Ready(chunk) => Some(chunk),
         }
     }
+}
+
+fn completed_boundary_chunk(anchors: &[BoundaryAnchors]) -> Option<EpochBlockChunk> {
+    #[cfg(test)]
+    if BOUNDARY_COMPACTION_DISABLED.get() {
+        return EpochBlockChunk::new(anchors.to_vec());
+    }
+    EpochBlockChunk::compacted(anchors)
 }
 
 fn boundary_chunks_in_sequence<T: ReadTxn>(
     txn: &T,
     children: impl Iterator<Item = XmlOut>,
     branch: BranchPtr,
+    sequence_start: SequenceStart,
     start: u32,
     doc_positions: &[Vec<u32>],
     schema: &Schema,
@@ -593,9 +714,10 @@ fn boundary_chunks_in_sequence<T: ReadTxn>(
             .iter()
             .map(|positions| PendingBoundaryChunk::Empty(positions.len()))
             .collect(),
+        staging: BoundaryStaging::default(),
         open: ancestor.into_iter().collect(),
     };
-    walk.walk_sequence(children, branch, start, None)?;
+    walk.walk_sequence(children, branch, sequence_start, start, None)?;
     if walk.targets.peek().is_some() {
         return None;
     }
@@ -605,11 +727,25 @@ fn boundary_chunks_in_sequence<T: ReadTxn>(
         .collect()
 }
 
+#[derive(Clone, Copy)]
+struct SequenceStart {
+    index: u32,
+    previous_id: Option<yrs::ID>,
+}
+
+impl SequenceStart {
+    const FIRST_CHILD: Self = Self {
+        index: 0,
+        previous_id: None,
+    };
+}
+
 struct BoundaryAnchorWalk<'walk, T> {
     txn: &'walk T,
     schema: &'walk Schema,
     targets: BoundaryTargets<'walk>,
     chunks: Vec<PendingBoundaryChunk>,
+    staging: BoundaryStaging,
     open: Vec<Arc<AncestorNode>>,
 }
 
@@ -621,7 +757,7 @@ impl<T: ReadTxn> BoundaryAnchorWalk<'_, T> {
             .filter(|target| sequence_end.is_none_or(|end| *target < end))
     }
 
-    fn resolve(&mut self, mut leaf: BoundaryAnchors) {
+    fn resolve(&mut self, mut leaf: BoundaryAnchors) -> Option<()> {
         leaf.ancestor = self.open.last().cloned();
         let position = self.targets.peek().expect("pending boundary target").0;
         loop {
@@ -632,10 +768,9 @@ impl<T: ReadTxn> BoundaryAnchorWalk<'_, T> {
                 .peek()
                 .is_some_and(|target| target.0 == position)
             {
-                self.chunks[block].insert(offset, leaf.clone());
+                self.chunks[block].insert(offset, leaf.clone(), &mut self.staging)?;
             } else {
-                self.chunks[block].insert(offset, leaf);
-                break;
+                return self.chunks[block].insert(offset, leaf, &mut self.staging);
             }
         }
     }
@@ -648,7 +783,7 @@ impl<T: ReadTxn> BoundaryAnchorWalk<'_, T> {
         sequence_end: Option<u32>,
     ) -> Option<()> {
         if self.pending(sequence_end) == Some(position) {
-            self.resolve(boundary_anchors_at(self.txn, branch, index)?);
+            self.resolve(boundary_anchors_at(self.txn, branch, index)?)?;
         }
         Some(())
     }
@@ -682,13 +817,14 @@ impl<T: ReadTxn> BoundaryAnchorWalk<'_, T> {
         &mut self,
         children: impl Iterator<Item = XmlOut>,
         branch: BranchPtr,
+        sequence_start: SequenceStart,
         start: u32,
         sequence_end: Option<u32>,
     ) -> Option<u32> {
-        let mut index = 0u32;
+        let mut index = sequence_start.index;
         let mut position = start;
         let mut children = children.peekable();
-        let mut previous_id = None;
+        let mut previous_id = sequence_start.previous_id;
         while let Some(child) = children.next() {
             let current_id = integrated_xml_child_id(&child);
             let before = if index == 0 {
@@ -737,6 +873,7 @@ impl<T: ReadTxn> BoundaryAnchorWalk<'_, T> {
                         let content_end = self.walk_sequence(
                             element.children(self.txn),
                             BranchPtr::from(<XmlElementRef as AsRef<Branch>>::as_ref(element)),
+                            SequenceStart::FIRST_CHILD,
                             position.checked_add(NODE_OPENING_TOKENS)?,
                             None,
                         )?;
@@ -752,6 +889,7 @@ impl<T: ReadTxn> BoundaryAnchorWalk<'_, T> {
                     self.walk_sequence(
                         nested.children(self.txn),
                         BranchPtr::from(<XmlFragmentRef as AsRef<Branch>>::as_ref(nested)),
+                        SequenceStart::FIRST_CHILD,
                         position,
                         Some(fragment_end),
                     )?;
@@ -764,94 +902,6 @@ impl<T: ReadTxn> BoundaryAnchorWalk<'_, T> {
         }
         self.resolve_at_child(branch, index, position, sequence_end)?;
         Some(position)
-    }
-
-    fn compact_text_chunk(
-        &mut self,
-        item: yrs::ID,
-        value: &str,
-        start: u32,
-        end: u32,
-        sequence_end: Option<u32>,
-        text_branch: BranchPtr,
-        branch: BranchPtr,
-        index: u32,
-    ) -> bool {
-        #[cfg(test)]
-        if BOUNDARY_COMPACTION_DISABLED.get() {
-            return false;
-        }
-        let BoundaryTargets::Ordered {
-            positions,
-            block,
-            offset: 0,
-        } = &self.targets
-        else {
-            return false;
-        };
-        let block = *block;
-        let positions = &positions[block];
-        if !matches!(self.chunks[block], PendingBoundaryChunk::Empty(_))
-            || positions.first().is_none_or(|position| *position != start)
-            || positions.last().is_none_or(|position| {
-                *position != end || sequence_end.is_some_and(|end| *position >= end)
-            })
-        {
-            return false;
-        }
-        let Some(utf16_length) = u32::try_from(value.encode_utf16().count()).ok() else {
-            return false;
-        };
-        let Some(mut first) = text_boundary_anchors(
-            self.txn,
-            text_branch,
-            branch,
-            index,
-            0,
-            utf16_length == 0,
-            Some(item),
-        ) else {
-            return false;
-        };
-        let Some(mut last) = text_boundary_anchors(
-            self.txn,
-            text_branch,
-            branch,
-            index,
-            utf16_length,
-            true,
-            Some(item),
-        ) else {
-            return false;
-        };
-        first.ancestor = self.open.last().cloned();
-        last.ancestor = first.ancestor.clone();
-        let mut offsets = Vec::with_capacity(positions.len());
-        let mut characters = value.chars();
-        let mut scalar = start;
-        let mut utf16 = 0;
-        for position in positions {
-            while scalar < *position {
-                let Some(character) = characters.next() else {
-                    return false;
-                };
-                #[cfg(test)]
-                BOUNDARY_TEXT_SCALAR_VISITS
-                    .set(BOUNDARY_TEXT_SCALAR_VISITS.get().saturating_add(1));
-                utf16 += character.len_utf16() as u32;
-                scalar += 1;
-            }
-            offsets.push(utf16);
-        }
-        let Some(chunk) = EpochBlockChunk::plain_text(item, offsets, utf16_length, first, last)
-        else {
-            return false;
-        };
-        self.chunks[block] = PendingBoundaryChunk::Ready(chunk);
-        while self.targets.peek().is_some_and(|target| target.1 == block) {
-            self.targets.advance();
-        }
-        true
     }
 
     fn walk_text(
@@ -876,20 +926,6 @@ impl<T: ReadTxn> BoundaryAnchorWalk<'_, T> {
             .pending(sequence_end)
             .filter(|target| *target <= text_end)
         {
-            if let Some(item) = single_item {
-                if self.compact_text_chunk(
-                    item,
-                    &value,
-                    start,
-                    text_end,
-                    sequence_end,
-                    text_branch,
-                    branch,
-                    index,
-                ) {
-                    continue;
-                }
-            }
             let target_offset = target.checked_sub(start)?;
             while scalar_offset < target_offset {
                 let width = u32::try_from(characters.next()?.len_utf16()).ok()?;
@@ -909,7 +945,7 @@ impl<T: ReadTxn> BoundaryAnchorWalk<'_, T> {
                 single_item,
             );
             match anchors {
-                Some(anchors) => self.resolve(anchors),
+                Some(anchors) => self.resolve(anchors)?,
                 None if target == text_end && followed_by_text => break,
                 None => return None,
             }
@@ -1168,24 +1204,63 @@ fn scalar_len(value: &str) -> u32 {
     value.chars().count() as u32
 }
 
-pub fn scalar_offset_to_utf16(value: &str, scalar_offset: u32) -> Option<u32> {
-    if value
-        .as_bytes()
-        .get(..scalar_offset as usize)
-        .is_some_and(<[u8]>::is_ascii)
-    {
-        return Some(scalar_offset);
-    }
-    let mut scalar_count = 0u32;
-    let mut utf16_count = 0u32;
-    for character in value.chars() {
-        scalar_count += 1;
-        utf16_count += character.len_utf16() as u32;
-        if scalar_count == scalar_offset {
-            return Some(utf16_count);
+const UTF8_WORD_BYTES: usize = std::mem::size_of::<u64>();
+const UTF8_WORD_HIGH_BITS: u64 = 0x8080_8080_8080_8080;
+const UTF8_FOUR_BYTE_LEAD: u8 = 0xF0;
+const UTF8_CONTINUATION_MASK: u8 = 0xC0;
+const UTF8_CONTINUATION_TAG: u8 = 0x80;
+
+fn utf8_word_scalars_and_four_byte_leads(word: u64) -> (u32, u32) {
+    let continuations = (word & !(word << 1) & UTF8_WORD_HIGH_BITS).count_ones();
+    let four_byte_leads =
+        (word & (word << 1) & (word << 2) & (word << 3) & UTF8_WORD_HIGH_BITS).count_ones();
+    (UTF8_WORD_BYTES as u32 - continuations, four_byte_leads)
+}
+
+fn scalar_prefix(value: &str, scalar_offset: u32) -> Option<(usize, u32)> {
+    let bytes = value.as_bytes();
+    let mut scalars = 0u32;
+    let mut surrogate_pairs = 0u32;
+    let mut consumed = 0usize;
+    for chunk in bytes.chunks_exact(UTF8_WORD_BYTES) {
+        let word = u64::from_le_bytes(chunk.try_into().expect("exact UTF-8 word chunk"));
+        let (word_scalars, word_pairs) = utf8_word_scalars_and_four_byte_leads(word);
+        if scalars + word_scalars > scalar_offset {
+            break;
         }
+        scalars += word_scalars;
+        surrogate_pairs += word_pairs;
+        consumed += UTF8_WORD_BYTES;
     }
-    None
+    let mut byte_offset = bytes.len();
+    for (index, byte) in bytes[consumed..].iter().enumerate() {
+        if byte & UTF8_CONTINUATION_MASK == UTF8_CONTINUATION_TAG {
+            continue;
+        }
+        if scalars == scalar_offset {
+            byte_offset = consumed + index;
+            break;
+        }
+        scalars += 1;
+        surrogate_pairs += u32::from(*byte >= UTF8_FOUR_BYTE_LEAD);
+    }
+    (scalars == scalar_offset).then_some((byte_offset, surrogate_pairs))
+}
+
+pub fn scalar_offset_to_utf16(value: &str, scalar_offset: u32) -> Option<u32> {
+    scalar_prefix(value, scalar_offset).map(|(_, surrogate_pairs)| scalar_offset + surrogate_pairs)
+}
+
+pub(crate) fn scalar_offset_to_byte(value: &str, scalar_offset: u32) -> Option<usize> {
+    scalar_prefix(value, scalar_offset).map(|(byte_offset, _)| byte_offset)
+}
+
+pub(crate) fn scalar_offset_to_byte_and_utf16(
+    value: &str,
+    scalar_offset: u32,
+) -> Option<(usize, u32)> {
+    scalar_prefix(value, scalar_offset)
+        .map(|(byte_offset, surrogate_pairs)| (byte_offset, scalar_offset + surrogate_pairs))
 }
 
 pub fn utf16_offset_to_scalar(value: &str, utf16_offset: u32) -> Option<u32> {

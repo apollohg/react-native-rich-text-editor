@@ -1223,3 +1223,44 @@ fn a_copied_column_is_plain_lines_and_pastes_as_paragraphs() {
     );
     assert_eq!(row_texts(&table, 1), vec!["b0", "b1"]);
 }
+
+#[test]
+fn pasted_cells_holding_a_clipped_list_item_regain_its_leading_paragraph() {
+    let schema = crate::schema::presets::tiptap_table_schema();
+    let cell_with_content = |content: Value| {
+        json!({ "type": "doc", "content": [{ "type": "table", "content": [{ "type": "tableRow", "content": [
+            { "type": "tableCell", "content": content }
+        ] }] }] })
+    };
+    let heading = json!({ "type": "heading", "attrs": { "level": 1 }, "content": [{ "type": "text", "text": "x" }] });
+    let source = crate::serialize::from_prosemirror_json(
+        &cell_with_content(json!([{ "type": "bulletList", "content": [
+            { "type": "listItem", "content": [heading.clone()] }
+        ] }])),
+        &schema,
+        crate::serialize::UnknownTypeMode::Error,
+    )
+    .unwrap();
+    let roles = TableRoles::resolve(&schema).unwrap().unwrap();
+    let matrix = matrix_from_slice(
+        source.root().content().unwrap(),
+        0,
+        0,
+        &roles,
+        &schema,
+        &limits(),
+    )
+    .unwrap()
+    .unwrap();
+    let pasted = crate::model::Document::new(crate::model::Node::element(
+        "doc".into(),
+        Default::default(),
+        Fragment::from(vec![matrix.rows[0][0].node.clone()]),
+    ));
+    assert_eq!(
+        crate::serialize::to_prosemirror_json(&pasted, &schema)["content"][0]["content"],
+        json!([{ "type": "bulletList", "content": [
+            { "type": "listItem", "content": [{ "type": "paragraph" }, heading] }
+        ] }])
+    );
+}

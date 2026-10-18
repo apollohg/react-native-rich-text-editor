@@ -169,18 +169,25 @@ pub(crate) fn matrix_from_slice(
             if !cells.iter().all(is_cell) {
                 return Ok(None);
             }
-            rows.push(cells.children().to_vec());
+            rows.push(repaired_cells(cells.children(), schema));
         }
         rows
     } else if is_cell(first) {
         if !content.iter().all(is_cell) {
             return Ok(None);
         }
-        vec![content.children().to_vec()]
+        vec![repaired_cells(content.children(), schema)]
     } else {
         return Ok(None);
     };
     matrix_from_rows(rows, roles, schema, limits)
+}
+
+fn repaired_cells(cells: &[Node], schema: &Schema) -> Vec<Node> {
+    cells
+        .iter()
+        .map(|cell| crate::transform::apply::with_required_leading_text_blocks(cell, schema))
+        .collect()
 }
 
 pub(crate) fn matrix_from_rows(

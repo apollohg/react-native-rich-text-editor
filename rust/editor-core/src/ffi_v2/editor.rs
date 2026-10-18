@@ -352,9 +352,12 @@ where
 
 #[uniffi::export]
 pub fn editor_v2_create(config_json: String, snapshot_state: Option<Vec<u8>>) -> FfiJsonResult {
-    json_result(crate::boundary::with_document_stack(|| {
+    let result = json_result(crate::boundary::with_document_stack(|| {
         create_impl(&config_json, snapshot_state)
-    }))
+    }));
+    #[cfg(target_os = "android")]
+    crate::android_allocator::release_document_memory();
+    result
 }
 
 fn create_impl(config_json: &str, snapshot_state: Option<Vec<u8>>) -> Result<String, FfiError> {
@@ -417,14 +420,17 @@ include!("editor/initialization.rs");
 
 #[uniffi::export]
 pub fn editor_v2_destroy(editor_id: String) -> FfiUnitResult {
-    unit_result((|| {
+    let result = unit_result((|| {
         let id = parse_editor_id(&editor_id)?;
         if registry::get_session(id).is_none() {
             return Err(unknown_editor_error());
         }
         registry::destroy_session(id);
         Ok(())
-    })())
+    })());
+    #[cfg(target_os = "android")]
+    crate::android_allocator::release_document_memory();
+    result
 }
 
 #[uniffi::export]
@@ -524,7 +530,7 @@ pub fn editor_v2_get_content_snapshot(editor_id: String) -> FfiJsonResult {
 
 #[uniffi::export]
 pub fn editor_v2_replace_document(editor_id: String, request_json: String) -> FfiJsonResult {
-    json_result(with_editor_request_envelope(&editor_id, |session| {
+    let result = json_result(with_editor_request_envelope(&editor_id, |session| {
         let envelope: ReplaceDocumentEnvelope<'_> = parse_request_envelope(session, &request_json)?;
         admit_version(envelope.version, envelope.request_id)?;
         let request_id = envelope.request_id;
@@ -544,7 +550,10 @@ pub fn editor_v2_replace_document(editor_id: String, request_json: String) -> Ff
             "documentRevision": decimal_u64(commit.document_revision),
         })
         .to_string())
-    }))
+    }));
+    #[cfg(target_os = "android")]
+    crate::android_allocator::release_document_memory();
+    result
 }
 
 #[uniffi::export]

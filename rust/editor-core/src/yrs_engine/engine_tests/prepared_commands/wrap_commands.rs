@@ -30,14 +30,14 @@ fn prepared_toggle_and_wrap_commands_each_simulate_and_compile_once() {
     assert_eq!(take_semantic_compilation_count_for_test(), 1);
     let toggle_passes = take_full_pass_counts_for_test();
     assert_eq!(toggle_passes.planner_simulations, 1);
-    assert_eq!(toggle_passes.document_validations, 1);
-    assert_eq!(toggle_passes.canonical_mark_tree_scans, 1);
-    assert_eq!(toggle_passes.canonical_projections, 1);
-    assert_eq!(toggle_passes.canonical_serializations, 2);
-    assert_eq!(toggle_passes.canonical_hashes, 1);
+    assert_eq!(toggle_passes.document_validations, 0);
+    assert_eq!(toggle_passes.canonical_mark_tree_scans, 0);
+    assert_eq!(toggle_passes.canonical_projections, 0);
+    assert_eq!(toggle_passes.canonical_serializations, 0);
+    assert_eq!(toggle_passes.canonical_hashes, 0);
     assert_eq!(toggle_passes.position_map_clones, 0);
     assert_eq!(toggle_passes.position_map_compactions, 0);
-    assert_eq!(toggle_passes.rendered_text_derivations, 1);
+    assert_eq!(toggle_passes.rendered_text_derivations, 0);
 
     let mut wrap = transaction_engine();
     hydrate_import_for_compile_test(&mut wrap);
@@ -57,7 +57,7 @@ fn prepared_toggle_and_wrap_commands_each_simulate_and_compile_once() {
     assert_eq!(wrap_passes.planner_simulations, 1);
     assert_eq!(wrap_passes.document_validations, 1);
     assert_eq!(wrap_passes.canonical_mark_tree_scans, 1);
-    assert_eq!(wrap_passes.canonical_projections, 1);
+    assert_eq!(wrap_passes.canonical_projections, 0);
     assert_eq!(wrap_passes.canonical_serializations, 2);
     assert_eq!(wrap_passes.canonical_hashes, 1);
     assert_eq!(wrap_passes.position_map_clones, 0);
@@ -342,13 +342,19 @@ fn prepared_insert_without_candidate_certificate_runs_live_preview_validation() 
     let proof = preparation.into_inner().unwrap();
 
     reset_full_pass_counts_for_test();
+    crate::yrs_engine::derived_state::take_root_window_certifications_for_test();
     force_localized_semantic_allocation_failure_for_test(true);
     let compiled = engine.compile_prepared_typed_transaction(transaction, proof);
     force_localized_semantic_allocation_failure_for_test(false);
 
     compiled.unwrap();
     let counts = take_full_pass_counts_for_test();
-    assert!(counts.document_validations >= 1);
+    assert!(
+        counts.document_validations
+            + crate::yrs_engine::derived_state::take_root_window_certifications_for_test()
+            >= 1,
+        "live preview validation must run as a full pass or a certified root window: {counts:?}"
+    );
     assert!(counts.canonical_mark_tree_scans >= 1);
 }
 

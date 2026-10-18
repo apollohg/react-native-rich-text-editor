@@ -371,7 +371,9 @@ impl CellPinning<'_> {
                 PINNED_CELL_SERIALIZATIONS.set(PINNED_CELL_SERIALIZATIONS.get() + 1);
                 crate::serialize::json_out::write_node_json(&mut fingerprint, child, self.schema)
                     .expect("cell fingerprint writes are infallible");
-                fingerprint.0.write_u8(crate::tables::render::CELL_FINGERPRINT_CHILD_TERMINATOR);
+                fingerprint
+                    .0
+                    .write_u8(crate::tables::render::CELL_FINGERPRINT_CHILD_TERMINATOR);
             }
             fingerprint.0.finish()
         });

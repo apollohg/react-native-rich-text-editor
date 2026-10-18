@@ -78,18 +78,29 @@ pub(crate) struct EpochBlockChunk {
 #[derive(Debug)]
 pub(crate) enum EpochAnchorStorage {
     Dense(Vec<BoundaryAnchors>),
-    Plain(Box<PlainTextAnchors>),
+    Runs(Box<CharacterRunAnchors>),
 }
 
 #[derive(Debug)]
-pub(crate) struct PlainTextAnchors {
-    item: ID,
-    offsets: Vec<u32>,
-    utf16_length: u32,
-    start: BoundaryAnchors,
-    end: BoundaryAnchors,
+pub(crate) struct CharacterRunAnchors {
+    boundary_count: u32,
+    runs: Vec<CharacterRun>,
+    explicit: Vec<(u32, BoundaryAnchors)>,
+    ancestor: Option<Arc<AncestorNode>>,
     pins: Vec<Option<CellTextPosition>>,
 }
+
+#[derive(Debug, Clone, Copy)]
+struct CharacterRun {
+    first_boundary: u32,
+    extent: u32,
+    following: ID,
+}
+
+const TRAILING_EDGE_FLAG: u32 = 1 << (u32::BITS - 1);
+const RUN_BOUNDARY_COUNT_MASK: u32 = !TRAILING_EDGE_FLAG;
+
+const _: () = assert!(std::mem::size_of::<CharacterRun>() == std::mem::size_of::<(u32, u32, ID)>());
 
 const _: () = assert!(
     std::mem::size_of::<EpochBlockChunk>()
@@ -98,29 +109,182 @@ const _: () = assert!(
             + std::mem::size_of::<usize>()
 );
 
-impl PlainTextAnchors {
-    fn boundary(&self, index: usize) -> Option<BoundaryAnchors> {
-        let offset = *self.offsets.get(index)?;
-        let mut anchors = if offset == 0 {
-            self.start.clone()
-        } else if offset == self.utf16_length {
-            self.end.clone()
-        } else {
-            BoundaryAnchors {
-                before: StickyIndex::from_id(
-                    ID::new(self.item.client, self.item.clock + offset - 1),
-                    Assoc::Before,
-                ),
-                after: StickyIndex::from_id(
-                    ID::new(self.item.client, self.item.clock + offset),
-                    Assoc::After,
-                ),
-                ancestor: self.start.ancestor.clone(),
+impl CharacterRun {
+    fn following_character(boundary: &BoundaryAnchors) -> Option<ID> {
+        let following = *boundary.after.id()?;
+        let preceding = ID::new(following.client, following.clock.checked_sub(1)?);
+        (boundary.after.assoc == Assoc::After
+            && boundary.before == StickyIndex::from_id(preceding, Assoc::Before))
+        .then_some(following)
+    }
+
+    fn starting_at(first_boundary: u32, following: ID) -> Self {
+        Self {
+            first_boundary,
+            extent: 1,
+            following,
+        }
+    }
+
+    fn boundary_count(&self) -> u32 {
+        self.extent & RUN_BOUNDARY_COUNT_MASK
+    }
+
+    fn has_trailing_edge(&self) -> bool {
+        self.extent & TRAILING_EDGE_FLAG != 0
+    }
+
+    fn extend(&mut self) {
+        self.extent += 1;
+    }
+
+    fn close_with_trailing_edge(&mut self) {
+        self.extent |= TRAILING_EDGE_FLAG;
+    }
+
+    fn next_boundary(&self) -> Option<u32> {
+        self.first_boundary.checked_add(self.boundary_count())
+    }
+
+    fn last_character(&self) -> ID {
+        ID::new(
+            self.following.client,
+            self.following.clock + self.boundary_count() - 1,
+        )
+    }
+
+    fn boundary_span(&self) -> u32 {
+        self.boundary_count() + u32::from(self.has_trailing_edge())
+    }
+
+    fn extends(&self, boundary: u32, following: ID) -> bool {
+        !self.has_trailing_edge()
+            && self.following.client == following.client
+            && self.next_boundary() == Some(boundary)
+            && self.following.clock.checked_add(self.boundary_count()) == Some(following.clock)
+    }
+
+    fn closes_with(&self, boundary: u32, anchors: &BoundaryAnchors) -> bool {
+        let edge = StickyIndex::from_id(self.last_character(), Assoc::Before);
+        !self.has_trailing_edge()
+            && self.next_boundary() == Some(boundary)
+            && anchors.before == edge
+            && anchors.after == edge
+    }
+
+    fn anchors(&self, offset: u32, ancestor: Option<Arc<AncestorNode>>) -> BoundaryAnchors {
+        if offset == self.boundary_count() {
+            let edge = StickyIndex::from_id(self.last_character(), Assoc::Before);
+            return BoundaryAnchors {
+                before: edge.clone(),
+                after: edge,
+                ancestor,
                 pinned_cell: None,
+            };
+        }
+        let clock = self.following.clock + offset;
+        BoundaryAnchors {
+            before: StickyIndex::from_id(ID::new(self.following.client, clock - 1), Assoc::Before),
+            after: StickyIndex::from_id(ID::new(self.following.client, clock), Assoc::After),
+            ancestor,
+            pinned_cell: None,
+        }
+    }
+}
+
+impl CharacterRunAnchors {
+    fn compress(anchors: &[BoundaryAnchors], dense_bytes: usize) -> Option<Self> {
+        if u32::try_from(anchors.len()).ok()? > RUN_BOUNDARY_COUNT_MASK {
+            return None;
+        }
+        let ancestor = anchors.first()?.ancestor.clone();
+        let mut runs: Vec<CharacterRun> = Vec::new();
+        let mut explicit = Vec::new();
+        for (index, boundary) in (0u32..).zip(anchors) {
+            if boundary.pinned_cell.is_some() {
+                return None;
+            }
+            let shares_ancestor = same_ancestor(&boundary.ancestor, &ancestor);
+            let following = shares_ancestor
+                .then(|| CharacterRun::following_character(boundary))
+                .flatten();
+            match (following, runs.last_mut()) {
+                (Some(following), Some(run)) if run.extends(index, following) => run.extend(),
+                (Some(following), _) => runs.push(CharacterRun::starting_at(index, following)),
+                (None, Some(run)) if shares_ancestor && run.closes_with(index, boundary) => {
+                    run.close_with_trailing_edge()
+                }
+                (None, _) => explicit.push((index, boundary.clone())),
+            }
+        }
+        runs.shrink_to_fit();
+        explicit.shrink_to_fit();
+        let compact = Self {
+            boundary_count: u32::try_from(anchors.len()).ok()?,
+            runs,
+            explicit,
+            ancestor,
+            pins: Vec::new(),
+        };
+        (compact.physical_bytes()? <= dense_bytes).then_some(compact)
+    }
+
+    fn physical_bytes(&self) -> Option<usize> {
+        self.explicit.iter().try_fold(
+            std::mem::size_of::<Self>()
+                .checked_add(
+                    self.runs
+                        .capacity()
+                        .checked_mul(std::mem::size_of::<CharacterRun>())?,
+                )?
+                .checked_add(
+                    self.explicit
+                        .capacity()
+                        .checked_mul(std::mem::size_of::<(u32, BoundaryAnchors)>())?,
+                )?
+                .checked_add(
+                    usize::try_from(self.boundary_count)
+                        .ok()?
+                        .checked_mul(std::mem::size_of::<Option<CellTextPosition>>())?,
+                )?,
+            |total, (_, boundary)| {
+                total
+                    .checked_add(sticky_heap_bytes(&boundary.before))?
+                    .checked_add(sticky_heap_bytes(&boundary.after))
+            },
+        )
+    }
+
+    fn boundary(&self, index: usize) -> Option<BoundaryAnchors> {
+        let index = u32::try_from(index)
+            .ok()
+            .filter(|index| *index < self.boundary_count)?;
+        let run = self
+            .runs
+            .partition_point(|run| run.first_boundary <= index)
+            .checked_sub(1)
+            .map(|position| &self.runs[position])
+            .filter(|run| index - run.first_boundary < run.boundary_span());
+        let mut anchors = match run {
+            Some(run) => run.anchors(index - run.first_boundary, self.ancestor.clone()),
+            None => {
+                let position = self
+                    .explicit
+                    .binary_search_by_key(&index, |(boundary, _)| *boundary)
+                    .ok()?;
+                self.explicit[position].1.clone()
             }
         };
-        anchors.pinned_cell = self.pins.get(index).copied().flatten();
+        anchors.pinned_cell = self.pins.get(index as usize).copied().flatten();
         Some(anchors)
+    }
+}
+
+fn same_ancestor(left: &Option<Arc<AncestorNode>>, right: &Option<Arc<AncestorNode>>) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => Arc::ptr_eq(left, right),
+        (None, None) => true,
+        _ => false,
     }
 }
 
@@ -128,7 +292,7 @@ impl EpochAnchorStorage {
     pub(crate) fn len(&self) -> usize {
         match self {
             Self::Dense(anchors) => anchors.len(),
-            Self::Plain(run) => run.offsets.len(),
+            Self::Runs(runs) => runs.boundary_count as usize,
         }
     }
 
@@ -136,14 +300,14 @@ impl EpochAnchorStorage {
     pub(crate) fn capacity(&self) -> usize {
         match self {
             Self::Dense(anchors) => anchors.capacity(),
-            Self::Plain(run) => run.offsets.len(),
+            Self::Runs(runs) => runs.boundary_count as usize,
         }
     }
 
     pub(crate) fn get(&self, index: usize) -> Option<Cow<'_, BoundaryAnchors>> {
         match self {
             Self::Dense(anchors) => anchors.get(index).map(Cow::Borrowed),
-            Self::Plain(run) => run.boundary(index).map(Cow::Owned),
+            Self::Runs(runs) => runs.boundary(index).map(Cow::Owned),
         }
     }
 
@@ -164,21 +328,25 @@ impl EpochAnchorStorage {
                     visit(boundary.ancestor.as_deref());
                 }
             }
-            Self::Plain(run) => visit(run.start.ancestor.as_deref()),
+            Self::Runs(runs) => {
+                visit(runs.ancestor.as_deref());
+                for (_, boundary) in &runs.explicit {
+                    visit(boundary.ancestor.as_deref());
+                }
+            }
         }
     }
 
     fn attach_cell(&mut self, offset: usize, position: CellTextPosition) -> Option<()> {
         match self {
-            Self::Plain(run) => {
-                run.offsets.get(offset)?;
-                if !run.start.inside_table_cell() {
+            Self::Runs(runs) => {
+                if !runs.boundary(offset)?.inside_table_cell() {
                     return Some(());
                 }
-                if run.pins.is_empty() {
-                    run.pins = vec![None; run.offsets.len()];
+                if runs.pins.is_empty() {
+                    runs.pins = vec![None; runs.boundary_count as usize];
                 }
-                *run.pins.get_mut(offset)? = Some(position);
+                *runs.pins.get_mut(offset)? = Some(position);
             }
             Self::Dense(anchors) => {
                 let boundary = anchors.get_mut(offset)?;
@@ -229,7 +397,7 @@ impl EpochBlockChunk {
     pub(crate) fn stored_anchor_count(&self) -> usize {
         match &self.anchors {
             EpochAnchorStorage::Dense(anchors) => anchors.len(),
-            EpochAnchorStorage::Plain(_) => 2,
+            EpochAnchorStorage::Runs(runs) => runs.runs.len() + runs.explicit.len(),
         }
     }
 
@@ -237,81 +405,22 @@ impl EpochBlockChunk {
         self.ancestor.clone()
     }
 
-    pub(crate) fn plain_text(
-        item: ID,
-        offsets: Vec<u32>,
-        utf16_length: u32,
-        start: BoundaryAnchors,
-        end: BoundaryAnchors,
-    ) -> Option<Self> {
-        if offsets.is_empty()
-            || !offsets.is_sorted()
-            || *offsets.last()? > utf16_length
-            || item.clock.checked_add(utf16_length).is_none()
-            || start.pinned_cell.is_some()
-            || end.pinned_cell.is_some()
-        {
-            return None;
-        }
-        match (&start.ancestor, &end.ancestor) {
-            (Some(a), Some(b)) if Arc::ptr_eq(a, b) => {}
-            (None, None) => {}
-            _ => return None,
-        }
-        let start_heap =
-            sticky_heap_bytes(&start.before).checked_add(sticky_heap_bytes(&start.after))?;
-        let end_heap = sticky_heap_bytes(&end.before).checked_add(sticky_heap_bytes(&end.after))?;
-        let retained_bytes = offsets.iter().try_fold(
-            offsets
-                .len()
-                .checked_mul(std::mem::size_of::<BoundaryAnchors>())?,
-            |total, offset| {
-                total.checked_add(if *offset == 0 {
-                    start_heap
-                } else if *offset == utf16_length {
-                    end_heap
-                } else {
-                    0
-                })
-            },
-        )?;
-        let physical_bytes = std::mem::size_of::<PlainTextAnchors>()
-            .checked_add(offsets.capacity().checked_mul(std::mem::size_of::<u32>())?)?
-            .checked_add(
-                offsets
-                    .len()
-                    .checked_mul(std::mem::size_of::<Option<CellTextPosition>>())?,
-            )?
-            .checked_add(start_heap)?
-            .checked_add(end_heap)?;
-        if physical_bytes > retained_bytes {
-            return None;
-        }
+    pub(crate) fn compacted(anchors: &[BoundaryAnchors]) -> Option<Self> {
+        let retained_bytes = dense_retained_bytes(anchors, anchors.len())?;
+        let Some(runs) = CharacterRunAnchors::compress(anchors, retained_bytes) else {
+            return Self::new(anchors.to_vec());
+        };
         Some(Self {
-            ancestor: start.ancestor.clone(),
-            anchors: EpochAnchorStorage::Plain(Box::new(PlainTextAnchors {
-                item,
-                offsets,
-                utf16_length,
-                start,
-                end,
-                pins: Vec::new(),
-            })),
+            ancestor: anchors
+                .first()
+                .and_then(|boundary| boundary.ancestor.clone()),
+            anchors: EpochAnchorStorage::Runs(Box::new(runs)),
             retained_bytes,
         })
     }
 
     pub(crate) fn new(anchors: Vec<BoundaryAnchors>) -> Option<Self> {
-        let retained_bytes = anchors.iter().try_fold(
-            anchors
-                .capacity()
-                .checked_mul(std::mem::size_of::<BoundaryAnchors>())?,
-            |total, boundary| {
-                total
-                    .checked_add(sticky_heap_bytes(&boundary.before))?
-                    .checked_add(sticky_heap_bytes(&boundary.after))
-            },
-        )?;
+        let retained_bytes = dense_retained_bytes(&anchors, anchors.capacity())?;
         Some(Self {
             ancestor: anchors
                 .first()
@@ -887,6 +996,17 @@ impl PositionEpochStore {
         self.owner_pins.clear();
         self.retained_bytes = 0;
     }
+}
+
+fn dense_retained_bytes(anchors: &[BoundaryAnchors], capacity: usize) -> Option<usize> {
+    anchors.iter().try_fold(
+        capacity.checked_mul(std::mem::size_of::<BoundaryAnchors>())?,
+        |total, boundary| {
+            total
+                .checked_add(sticky_heap_bytes(&boundary.before))?
+                .checked_add(sticky_heap_bytes(&boundary.after))
+        },
+    )
 }
 
 fn sticky_heap_bytes(sticky: &StickyIndex) -> usize {

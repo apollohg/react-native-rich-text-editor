@@ -81,35 +81,35 @@ pub enum RenderElement {
     VoidInline {
         node_type: String,
         doc_pos: u32,
-        attrs: std::collections::HashMap<String, serde_json::Value>,
+        attrs: Box<std::collections::HashMap<String, serde_json::Value>>,
     },
     /// A block-level void node (e.g. horizontalRule).
     VoidBlock {
         node_type: String,
         doc_pos: u32,
-        attrs: std::collections::HashMap<String, serde_json::Value>,
+        attrs: Box<std::collections::HashMap<String, serde_json::Value>>,
     },
     /// An opaque inline atom (unrecognised inline void).
     OpaqueInlineAtom {
         node_type: String,
-        label: String,
+        label: Box<str>,
         doc_pos: u32,
-        attrs: std::collections::HashMap<String, serde_json::Value>,
-        mention_theme: Option<std::collections::HashMap<String, serde_json::Value>>,
+        attrs: Box<std::collections::HashMap<String, serde_json::Value>>,
+        mention_theme: Option<Box<std::collections::HashMap<String, serde_json::Value>>>,
     },
     /// An opaque block atom (unrecognised block void).
     OpaqueBlockAtom {
         node_type: String,
-        label: String,
+        label: Box<str>,
         doc_pos: u32,
-        attrs: std::collections::HashMap<String, serde_json::Value>,
+        attrs: Box<std::collections::HashMap<String, serde_json::Value>>,
     },
     /// Start of a block-level container (paragraph, listItem, etc.).
     BlockStart {
         node_type: String,
         language: Option<String>,
         depth: u16,
-        list_context: Option<ListContext>,
+        list_context: Option<Box<ListContext>>,
     },
     /// End of a block-level container.
     BlockEnd,
@@ -133,7 +133,7 @@ impl Clone for RenderElement {
             } => Self::VoidInline {
                 node_type: node_type.clone(),
                 doc_pos: *doc_pos,
-                attrs: crate::boundary::clone_json_object_stack_safe(attrs),
+                attrs: Box::new(crate::boundary::clone_json_object_stack_safe(attrs)),
             },
             Self::VoidBlock {
                 node_type,
@@ -142,7 +142,7 @@ impl Clone for RenderElement {
             } => Self::VoidBlock {
                 node_type: node_type.clone(),
                 doc_pos: *doc_pos,
-                attrs: crate::boundary::clone_json_object_stack_safe(attrs),
+                attrs: Box::new(crate::boundary::clone_json_object_stack_safe(attrs)),
             },
             Self::OpaqueInlineAtom {
                 node_type,
@@ -154,10 +154,10 @@ impl Clone for RenderElement {
                 node_type: node_type.clone(),
                 label: label.clone(),
                 doc_pos: *doc_pos,
-                attrs: crate::boundary::clone_json_object_stack_safe(attrs),
+                attrs: Box::new(crate::boundary::clone_json_object_stack_safe(attrs)),
                 mention_theme: mention_theme
                     .as_ref()
-                    .map(crate::boundary::clone_json_object_stack_safe),
+                    .map(|theme| Box::new(crate::boundary::clone_json_object_stack_safe(theme))),
             },
             Self::OpaqueBlockAtom {
                 node_type,
@@ -168,7 +168,7 @@ impl Clone for RenderElement {
                 node_type: node_type.clone(),
                 label: label.clone(),
                 doc_pos: *doc_pos,
-                attrs: crate::boundary::clone_json_object_stack_safe(attrs),
+                attrs: Box::new(crate::boundary::clone_json_object_stack_safe(attrs)),
             },
             Self::BlockStart {
                 node_type,
@@ -219,13 +219,37 @@ pub(crate) fn rendered_text(document: &Document, schema: &Schema) -> String {
     #[cfg(test)]
     crate::yrs_engine::observability::record_rendered_text_derivation();
     let blocks = incremental::render_blocks(document, schema);
-    let elements = incremental::flatten_render_blocks(&blocks);
+    rendered_text_builder(&blocks, schema).finish()
+}
+
+pub(crate) fn rendered_root_children_text(
+    document: &Document,
+    schema: &Schema,
+    root_children: std::ops::Range<usize>,
+) -> Option<Option<String>> {
+    let indices = root_children.collect::<Vec<_>>();
+    let blocks = incremental::try_incremental(document, schema, &indices)
+        .ok()?
+        .into_iter()
+        .map(|(_, elements)| elements)
+        .collect::<Vec<_>>();
+    let builder = rendered_text_builder(&blocks, schema);
+    builder
+        .pending_prefix
+        .is_empty()
+        .then(|| builder.started_block.then(|| builder.finish()))
+}
+
+fn rendered_text_builder(blocks: &[Vec<RenderElement>], schema: &Schema) -> RenderedTextBuilder {
+    let elements = incremental::flatten_render_blocks(blocks);
     let mut text = RenderedTextBuilder::default();
     for element in crate::tables::render::source_elements(&elements) {
         text.push(element, schema);
     }
-    text.finish()
+    text
 }
+
+pub(crate) const RENDERED_BLOCK_SEPARATOR: char = '\n';
 
 #[derive(Default)]
 pub(crate) struct RenderedTextBuilder {
@@ -237,7 +261,7 @@ pub(crate) struct RenderedTextBuilder {
 impl RenderedTextBuilder {
     fn begin_block(&mut self) {
         if self.started_block {
-            self.text.push('\n');
+            self.text.push(RENDERED_BLOCK_SEPARATOR);
         }
         self.started_block = true;
     }

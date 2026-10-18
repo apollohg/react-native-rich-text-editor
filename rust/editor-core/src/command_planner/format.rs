@@ -63,22 +63,38 @@ pub(crate) fn plan_toggle_mark(
             stored_marks_after: Some(stored),
         });
     }
-    let operation = if crate::editor_state::range_has_mark(document, from, to, mark_type) {
-        SemanticOperation::RemoveMark {
-            from,
-            to,
-            mark_type: mark_type.to_string(),
-        }
-    } else {
-        SemanticOperation::AddMark {
-            from,
-            to,
-            mark: Mark::new(mark_type.to_string(), Default::default()),
-        }
-    };
+    let ranges = textblock_text_ranges(document, schema, from, to);
+    let coverage = ranges
+        .iter()
+        .filter_map(|&(from, to)| {
+            crate::editor_state::range_mark_coverage(document, from, to, mark_type)
+        })
+        .collect::<Vec<_>>();
+    let active = !coverage.is_empty() && coverage.iter().all(|marked| *marked);
+    let operations = ranges
+        .into_iter()
+        .map(|(from, to)| {
+            if active {
+                SemanticOperation::RemoveMark {
+                    from,
+                    to,
+                    mark_type: mark_type.to_string(),
+                }
+            } else {
+                SemanticOperation::AddMark {
+                    from,
+                    to,
+                    mark: Mark::new(mark_type.to_string(), Default::default()),
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+    if operations.is_empty() {
+        return None;
+    }
     Some(MarkCommandPlan {
         semantic: SemanticCommandPlan {
-            operations: vec![operation],
+            operations,
             selection_after: Some(selection.clone()),
             history: SemanticCommandHistory::FormatBoundary,
         },
@@ -136,16 +152,29 @@ pub(crate) fn plan_set_mark(
             stored_marks_after: Some(stored),
         });
     }
-    Some(MarkCommandPlan {
-        semantic: SemanticCommandPlan {
-            operations: vec![
+    let operations = textblock_text_ranges(document, schema, from, to)
+        .into_iter()
+        .flat_map(|(from, to)| {
+            [
                 SemanticOperation::RemoveMark {
                     from,
                     to,
-                    mark_type,
+                    mark_type: mark_type.clone(),
                 },
-                SemanticOperation::AddMark { from, to, mark },
-            ],
+                SemanticOperation::AddMark {
+                    from,
+                    to,
+                    mark: mark.clone(),
+                },
+            ]
+        })
+        .collect::<Vec<_>>();
+    if operations.is_empty() {
+        return None;
+    }
+    Some(MarkCommandPlan {
+        semantic: SemanticCommandPlan {
+            operations,
             selection_after: Some(selection.clone()),
             history: SemanticCommandHistory::FormatBoundary,
         },
@@ -197,18 +226,61 @@ pub(crate) fn plan_unset_mark(
             stored_marks_after: Some(stored),
         });
     }
+    let operations = textblock_text_ranges(document, schema, from, to)
+        .into_iter()
+        .map(|(from, to)| SemanticOperation::RemoveMark {
+            from,
+            to,
+            mark_type: mark_type.to_string(),
+        })
+        .collect::<Vec<_>>();
+    if operations.is_empty() {
+        return None;
+    }
     Some(MarkCommandPlan {
         semantic: SemanticCommandPlan {
-            operations: vec![SemanticOperation::RemoveMark {
-                from,
-                to,
-                mark_type: mark_type.to_string(),
-            }],
+            operations,
             selection_after: Some(selection.clone()),
             history: SemanticCommandHistory::FormatBoundary,
         },
         stored_marks_after: None,
     })
+}
+
+fn textblock_text_ranges(
+    document: &Document,
+    schema: &Schema,
+    from: u32,
+    to: u32,
+) -> Vec<(u32, u32)> {
+    let mut ranges: Vec<(u32, u32)> = Vec::new();
+    let mut pending = vec![(document.root(), 0u32)];
+    while let Some((node, content_start)) = pending.pop() {
+        let Some(content) = node.content() else {
+            continue;
+        };
+        let in_textblock = schema.is_text_block(node.node_type());
+        let mut textblock_range: Option<(u32, u32)> = None;
+        let mut position = content_start;
+        for child in content.iter() {
+            let end = position + child.node_size();
+            if position < to && end > from {
+                if !in_textblock {
+                    pending.push((child, position + 1));
+                } else if child.is_text() {
+                    let run_end = to.min(end);
+                    textblock_range = Some(match textblock_range {
+                        Some((start, _)) => (start, run_end),
+                        None => (from.max(position), run_end),
+                    });
+                }
+            }
+            position = end;
+        }
+        ranges.extend(textblock_range);
+    }
+    ranges.sort_unstable();
+    ranges
 }
 
 /// A semantic document-range replacement produced by a shared command planner.
@@ -336,7 +408,7 @@ fn replacement_for_text_blocks(
             Some(Node::element(
                 target_type.to_string(),
                 HashMap::new(),
-                block.content().cloned().unwrap_or_else(Fragment::empty),
+                crate::editor_state::converted_text_block_content(schema, target_type, block)?,
             ))
         })
         .collect::<Option<Vec<_>>>()?;

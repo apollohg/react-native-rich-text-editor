@@ -210,3 +210,39 @@ fn staged_cell_points_only_attach_to_rebuilt_exclusive_chunks() {
         "An exclusive rebuilt chunk accepts its cell points"
     );
 }
+
+#[test]
+fn marked_text_items_close_their_runs_without_explicit_edge_anchors() {
+    const TEXT_ITEMS: usize = 6;
+    const PARAGRAPH_START_ANCHORS: usize = 1;
+    let session = session_with_document(&serde_json::json!({
+        "type": "doc", "content": [{"type": "paragraph", "content": (0..TEXT_ITEMS)
+            .map(|item| if item % 2 == 0 {
+                serde_json::json!({"type": "text", "text": "plain café "})
+            } else {
+                serde_json::json!({"type": "text", "text": "bold naïve ", "marks": [{"type": "bold"}]})
+            })
+            .collect::<Vec<_>>()}]
+    }));
+    let snapshot = session.engine.build_position_epoch_snapshot().unwrap();
+    let chunk = &snapshot.chunks[0];
+    let dense = chunk.anchors.to_dense();
+    let EpochAnchorStorage::Runs(runs) = &chunk.anchors else {
+        panic!(
+            "a marked paragraph must be run-compacted, got {:?}",
+            chunk.anchors
+        );
+    };
+    assert_eq!(
+        (runs.runs.len(), runs.explicit.len()),
+        (TEXT_ITEMS, PARAGRAPH_START_ANCHORS),
+        "every text item's closing edge must be derived from its run: {runs:#?}"
+    );
+    assert_eq!(
+        EpochBlockChunk::compacted(&dense)
+            .unwrap()
+            .anchors
+            .to_dense(),
+        dense
+    );
+}

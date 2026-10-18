@@ -164,84 +164,6 @@ fn projected_attrs<'a>(
         )
 }
 
-pub(crate) fn projected_node_retained_bytes(root: &Node, schema: &Schema) -> Option<usize> {
-    use crate::model::{cloned_json_value_retained_bytes, json_object_retained_bytes};
-    let mut total = 0usize;
-    let mut pending = vec![root];
-    while let Some(node) = pending.pop() {
-        if node.node_type() == "__opaque_json" {
-            if let Some(value) = node.attrs().get("original_json") {
-                total = total.checked_add(cloned_json_value_retained_bytes(value)?)?;
-            }
-            continue;
-        }
-        let spec = schema.node(node.node_type());
-        let mut fields = 1usize;
-        total = total
-            .checked_add("type".len())?
-            .checked_add(projected_node_type(node, spec).len())?;
-        if node.is_text() {
-            fields = fields.checked_add(1)?;
-            total = total
-                .checked_add("text".len())?
-                .checked_add(node.text_str().unwrap_or("").len())?;
-            if !node.marks().is_empty() {
-                fields = fields.checked_add(1)?;
-                total = total.checked_add("marks".len())?.checked_add(
-                    node.marks()
-                        .len()
-                        .checked_mul(std::mem::size_of::<Value>())?,
-                )?;
-                for mark in node.marks() {
-                    let mut mark_fields = 1usize;
-                    total = total
-                        .checked_add("type".len())?
-                        .checked_add(mark.mark_type().len())?;
-                    if !mark.attrs().is_empty() {
-                        mark_fields = mark_fields.checked_add(1)?;
-                        total = total
-                            .checked_add("attrs".len())?
-                            .checked_add(json_object_retained_bytes(mark.attrs().len())?)?;
-                        for (key, value) in mark.attrs() {
-                            total = total
-                                .checked_add(key.len())?
-                                .checked_add(cloned_json_value_retained_bytes(value)?)?;
-                        }
-                    }
-                    total = total.checked_add(json_object_retained_bytes(mark_fields)?)?;
-                }
-            }
-        } else {
-            let mut attrs = 0usize;
-            for (key, value) in projected_attrs(node, spec) {
-                attrs = attrs.checked_add(1)?;
-                total = total
-                    .checked_add(key.len())?
-                    .checked_add(cloned_json_value_retained_bytes(value)?)?;
-            }
-            if attrs != 0 {
-                fields = fields.checked_add(1)?;
-                total = total
-                    .checked_add("attrs".len())?
-                    .checked_add(json_object_retained_bytes(attrs)?)?;
-            }
-        }
-        let children = node
-            .content()
-            .map(|content| content.children())
-            .unwrap_or(&[]);
-        if !children.is_empty() {
-            fields = fields.checked_add(1)?;
-            total = total
-                .checked_add("content".len())?
-                .checked_add(children.len().checked_mul(std::mem::size_of::<Value>())?)?;
-            pending.extend(children);
-        }
-        total = total.checked_add(json_object_retained_bytes(fields)?)?;
-    }
-    Some(total)
-}
-
 pub(crate) fn write_node_json<'a>(
     sink: &mut impl std::io::Write,
     node: &'a Node,
@@ -419,12 +341,6 @@ mod tests {
                 let expected = crate::boundary::serialize_json_value_stack_safe(
                     &node_to_json(node, &schema),
                     0,
-                );
-                assert_eq!(
-                    projected_node_retained_bytes(node, &schema),
-                    crate::model::json_value_retained_bytes(&node_to_json(node, &schema)),
-                    "exact legacy JSON charge for {}",
-                    node.node_type()
                 );
                 let mut actual = Vec::new();
                 write_node_json(&mut actual, node, &schema).unwrap();

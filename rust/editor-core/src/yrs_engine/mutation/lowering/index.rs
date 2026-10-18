@@ -8,3 +8,5 @@ include!("index/localized_locators.rs");
 include!("index/localized_insert.rs");
 
 include!("index/localized_format.rs");
+
+include!("index/localized_split.rs");

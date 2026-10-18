@@ -215,6 +215,40 @@ pub(crate) fn can_replace_selected_text_blocks(
     }
     let replacement = vec![target_type; range.selected_blocks.len()];
     parent_accepts_range_replacement(document, schema, range, &replacement)
+        && range
+            .selected_blocks
+            .iter()
+            .all(|block| converted_text_block_content(schema, target_type, block).is_some())
+}
+
+pub(crate) fn converted_text_block_content(
+    schema: &Schema,
+    target_type: &str,
+    block: &Node,
+) -> Option<Fragment> {
+    let target = schema.node(target_type)?;
+    let accepts = |types: &[&str]| {
+        target.content.matches(types, |child, symbol| {
+            schema.node_matches_symbol(child, symbol)
+        })
+    };
+    let children = block
+        .content()?
+        .iter()
+        .map(|child| {
+            if accepts(&[child.node_type()]) {
+                return Some(child.clone());
+            }
+            let is_hard_break = schema
+                .node(child.node_type())
+                .is_some_and(|spec| matches!(spec.role, NodeRole::HardBreak));
+            let line_break = Node::text(crate::clipboard::LINE_BREAK_TEXT.to_owned(), Vec::new());
+            (is_hard_break && accepts(&[line_break.node_type()])).then_some(line_break)
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let children = crate::transform::steps::merge_adjacent_text_nodes(children);
+    accepts(&children.iter().map(Node::node_type).collect::<Vec<_>>())
+        .then(|| Fragment::from(children))
 }
 
 pub(crate) fn selected_block_range(

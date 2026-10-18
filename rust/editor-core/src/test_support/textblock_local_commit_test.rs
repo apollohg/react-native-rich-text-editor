@@ -33,6 +33,7 @@ const INSERT_MARK_VALIDATION_NODES: usize = 2;
 const DELETE_MARK_VALIDATION_NODES: usize = 10;
 const LARGE_TABLE_ROWS: usize = 1000;
 const LARGE_TABLE_COLUMNS: usize = 20;
+const FIRST_EDIT_AFTER_LOAD_REPLICA_ENCODINGS: usize = 1;
 const PROSE_PATH: [u32; 1] = [0];
 const EMPTY_PARAGRAPH_PATH: [u32; 1] = [1];
 const PROSE_TABLE_INDEX: u32 = 2;
@@ -46,7 +47,7 @@ enum ExpectedRoute {
     Localized,
     Generic,
     NestedTableRefusal,
-    CellBoundaryRefusal,
+    CellEdgeNoOp,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -376,23 +377,20 @@ fn assert_route(case: &TextblockEditCase, audit: &RunAudit, passes: &FullPassCou
                 "{name}: a refused insert must take the generic planner: {passes:#?}"
             );
         }
-        ExpectedRoute::CellBoundaryRefusal => {
-            let error = audit
-                .insert
-                .as_ref()
-                .expect_err("cell boundary joins remain refused");
-            assert_eq!(error.code, "OPERATION_INVALID", "{name}: {error:?}");
+        ExpectedRoute::CellEdgeNoOp => {
             assert_eq!(
-                error
-                    .details
+                audit
+                    .insert
                     .as_ref()
-                    .and_then(|details| details.get("field")),
-                Some(&json!("tableCellBoundary")),
-                "{name}: {error:?}"
+                    .ok()
+                    .and_then(|outcome| outcome.get("type")),
+                Some(&json!("notApplicable")),
+                "{name}: a deletion at a cell edge is a successful no-op: {:?}",
+                audit.insert
             );
             assert!(
                 !audit.after_insert.can_undo,
-                "{name}: refusal must not create history"
+                "{name}: a no-op must not create history"
             );
         }
         ExpectedRoute::NestedTableRefusal => {
@@ -530,7 +528,16 @@ fn textblock_range_cases() -> Vec<TextblockEditCase> {
             CaretOffset::At(LEAF_START),
             0,
             "deleteBackward",
-            ExpectedRoute::CellBoundaryRefusal,
+            ExpectedRoute::CellEdgeNoOp,
+        ),
+        case(
+            "delete forward at a cell end",
+            prose_and_table_document(),
+            cell_paragraph(TEXT_CELL),
+            CaretOffset::ContentEnd,
+            0,
+            "deleteForward",
+            ExpectedRoute::CellEdgeNoOp,
         ),
         case(
             "delete text before an inline atom",
@@ -657,10 +664,7 @@ fn localized_render_transitions_equal_a_fresh_full_render() {
     {
         let (mut session, request) = prepared_session(&case, true);
         let inserted = submit_insert(&mut session, &request);
-        if matches!(
-            case.route,
-            ExpectedRoute::NestedTableRefusal | ExpectedRoute::CellBoundaryRefusal
-        ) {
+        if case.route == ExpectedRoute::NestedTableRefusal {
             assert!(inserted.is_err(), "{}: {inserted:?}", case.name);
         } else {
             assert!(inserted.is_ok(), "{}: {inserted:?}", case.name);
@@ -940,13 +944,13 @@ fn assert_large_table_edit_is_validated_locally(intent: &str) {
             },
             canonical_serializations: 1,
             canonical_hashes: 1,
-            compilation_snapshot_scans: usize::from(intent != INSERT_INTENTS[0]),
             canonical_identity_predicate_nodes_visited: passes
                 .canonical_identity_predicate_nodes_visited,
             position_map_clones: passes.position_map_clones,
             position_map_compactions: passes.position_map_compactions,
             cell_content_keys: 1,
             cell_content_generations: 1,
+            whole_state_encodings: FIRST_EDIT_AFTER_LOAD_REPLICA_ENCODINGS,
             ..FullPassCounts::default()
         }
     );

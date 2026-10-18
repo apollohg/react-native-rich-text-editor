@@ -146,7 +146,7 @@ fn prepared_wrap_undo_and_encoded_limits_match_public_eager_exactly() {
     let generic_result = public_eager_apply(&mut generic, request_id).unwrap();
     assert_eq!(
         take_root_window_lowering_counts_for_test(),
-        (1, 1, 0, 0, 1, 0),
+        (1, 1, 0, 0, 0, 0),
         "{field} eager exact"
     );
     assert_eq!(prepared_result, generic_result, "{field} exact");
@@ -272,7 +272,7 @@ fn prepared_wrap_undo_and_encoded_limits_match_public_eager_exactly() {
         public_eager_apply,
         (1, 1, 0, 0, 1, 0),
         (1, 1, 0, 0, 1, 0),
-        (1, 1, 0, 0, 2, 0),
+        (1, 1, 0, 0, 1, 0),
     );
     assert_eq!(
         prepared_result, generic_result,

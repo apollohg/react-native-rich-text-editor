@@ -438,22 +438,17 @@ pub(super) fn insertion_is_schema_valid(
         .collect::<Vec<_>>();
     let valid = parent_spec
         .content
-        .matches_with_budget(
+        .matches_keyed_with_budget(
             &children,
-            |child, symbol| {
-                let node = match child {
-                    Child::Existing(node) | Child::Inserted(node) => node,
-                };
-                if matches!(node.node_type(), "__opaque" | "__opaque_json") {
-                    return node
-                        .attrs()
-                        .get("opaque_placement")
-                        .and_then(serde_json::Value::as_str)
-                        .is_some_and(|placement| {
-                            schema.symbol_accepts_opaque_placement(symbol, placement)
-                        });
+            |child| match child {
+                Child::Existing(node) | Child::Inserted(node) => {
+                    crate::transform::apply::child_match_key(node)
                 }
-                schema.node_matches_symbol(node.node_type(), symbol)
+            },
+            |child, symbol| match child {
+                Child::Existing(node) | Child::Inserted(node) => {
+                    crate::transform::apply::child_matches_group(node, symbol, schema)
+                }
             },
             resolver_budget,
         )

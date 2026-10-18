@@ -1,0 +1,141 @@
+--- a/src/branch.rs
++++ b/src/branch.rs
+@@ -461,7 +461,23 @@
+             index: 0,
+             current_attrs: None,
+         };
++
++        txn.create_item(&pos, value, None)
++    }
+ 
++    pub(crate) fn insert_after<V: Prelim>(
++        &self,
++        txn: &mut TransactionMut,
++        left: ItemPtr,
++        value: V,
++    ) -> Option<ItemPtr> {
++        let pos = ItemPosition {
++            parent: BranchPtr::from(self).into(),
++            left: Some(left),
++            right: left.right,
++            index: 0,
++            current_attrs: None,
++        };
+         txn.create_item(&pos, value, None)
+     }
+ 
+--- a/src/types/xml.rs
++++ b/src/types/xml.rs
+@@ -1088,6 +1088,24 @@
+         }
+     }
+ 
++    fn insert_after<V>(&self, txn: &mut TransactionMut, left: &XmlOut, xml_node: V) -> V::Return
++    where
++        V: XmlPrelim,
++    {
++        let parent = BranchPtr::from(self.as_ref());
++        let left = left
++            .as_ref()
++            .item
++            .filter(|item| item.parent == TypePtr::Branch(parent))
++            .expect("insert_after requires a child of the current XML fragment");
++        let ptr = self.as_ref().insert_after(txn, left, xml_node).unwrap();
++        if let Ok(integrated) = V::Return::try_from(ptr) {
++            integrated
++        } else {
++            panic!("Defect: inserted XML element returned primitive value block")
++        }
++    }
++
+     /// Inserts given `value` at the end of the current array.
+     fn push_back<V>(&self, txn: &mut TransactionMut, xml_node: V) -> V::Return
+     where
+@@ -2021,4 +2039,87 @@
+         let xml = frag_b.get_string(&doc_b.transact());
+         assert_eq!(xml, "<zero></zero><first></first>"); // fails: "<first></first><zero></zero>"
+     }
++
++    fn fragment_with_inserted_run(chained: bool) -> (Doc, Vec<u8>) {
++        let doc = Doc::with_client_id(7);
++        let fragment = doc.get_or_insert_xml_fragment("xml");
++        {
++            let mut txn = doc.transact_mut();
++            for tag in ["a", "b", "c", "d"] {
++                fragment.push_back(&mut txn, XmlElementPrelim::empty(tag));
++            }
++        }
++        fragment.remove_range(&mut doc.transact_mut(), 1, 2);
++        let base_update = doc
++            .transact()
++            .encode_state_as_update_v1(&StateVector::default());
++        {
++            let mut txn = doc.transact_mut();
++            let mut left =
++                XmlOut::Element(fragment.insert(&mut txn, 1, XmlElementPrelim::empty("p0")));
++            for index in 1..6u32 {
++                let tag = format!("p{index}");
++                left = match (chained, index % 2 == 0) {
++                    (true, true) => XmlOut::Element(fragment.insert_after(
++                        &mut txn,
++                        &left,
++                        XmlElementPrelim::empty(tag.as_str()),
++                    )),
++                    (true, false) => XmlOut::Text(fragment.insert_after(
++                        &mut txn,
++                        &left,
++                        XmlTextPrelim::new(tag.as_str()),
++                    )),
++                    (false, true) => XmlOut::Element(fragment.insert(
++                        &mut txn,
++                        1 + index,
++                        XmlElementPrelim::empty(tag.as_str()),
++                    )),
++                    (false, false) => XmlOut::Text(fragment.insert(
++                        &mut txn,
++                        1 + index,
++                        XmlTextPrelim::new(tag.as_str()),
++                    )),
++                };
++            }
++        }
++        (doc, base_update)
++    }
++
++    #[test]
++    fn insert_after_encodes_and_converges_like_indexed_inserts_across_tombstones() {
++        let (chained, base_update) = fragment_with_inserted_run(true);
++        let (indexed, _) = fragment_with_inserted_run(false);
++        let xml = |doc: &Doc| {
++            doc.get_or_insert_xml_fragment("xml")
++                .get_string(&doc.transact())
++        };
++        assert_eq!(
++            xml(&chained),
++            "<a></a><p0></p0>p1<p2></p2>p3<p4></p4>p5<d></d>"
++        );
++        assert_eq!(
++            chained
++                .transact()
++                .encode_state_as_update_v1(&StateVector::default()),
++            indexed
++                .transact()
++                .encode_state_as_update_v1(&StateVector::default())
++        );
++        let peer = Doc::with_client_id(9);
++        peer.get_or_insert_xml_fragment("xml");
++        peer.transact_mut()
++            .apply_update(Update::decode_v1(&base_update).unwrap())
++            .unwrap();
++        let base_vector = peer.transact().state_vector();
++        let chained_delta = chained.transact().encode_state_as_update_v1(&base_vector);
++        assert_eq!(
++            chained_delta,
++            indexed.transact().encode_state_as_update_v1(&base_vector)
++        );
++        peer.transact_mut()
++            .apply_update(Update::decode_v1(&chained_delta).unwrap())
++            .unwrap();
++        assert_eq!(xml(&peer), xml(&indexed));
++    }
+ }

@@ -19,6 +19,15 @@ use crate::yrs_engine::{
     YrsDocumentEngine, YrsEngineConfig,
 };
 
+#[path = "native_intent_test/clipboard.rs"]
+mod clipboard;
+#[path = "native_intent_test/command_availability.rs"]
+mod command_availability;
+#[path = "native_intent_test/command_planning.rs"]
+mod command_planning;
+#[path = "native_intent_test/paste_round_trip.rs"]
+mod paste_round_trip;
+
 fn engine(mode: InitializationMode) -> YrsDocumentEngine {
     YrsDocumentEngine::new(YrsEngineConfig {
         schema: tiptap_schema(),
@@ -55,6 +64,109 @@ fn collaborative_session_with_filter(input_filter: Option<&str>) -> EditorSessio
 
 fn collaborative_session() -> EditorSession {
     collaborative_session_with_filter(None)
+}
+
+fn default_schema_session(document: &str) -> EditorSession {
+    let config = EditorSessionConfig::local_for_test();
+    let mut session = EditorSession::new(
+        YrsDocumentEngine::new(YrsEngineConfig {
+            schema: crate::schema::presets::default_schema(),
+            fragment_name: "prosemirror".into(),
+            initialization_mode: InitializationMode::LocalEmpty,
+            resource_limits: ResourceLimits::default(),
+            editing_limits: EditingLimits::default(),
+            max_length: None,
+            scope: None,
+        })
+        .unwrap(),
+        SessionPolicy::from_config(&config),
+        DocumentState::LocalReady,
+        CollaborationLimits::default(),
+    )
+    .unwrap();
+    session
+        .replace_document_json(1, document, ReplacementHistory::ResetAndClear)
+        .unwrap();
+    session
+}
+
+#[test]
+fn native_split_preserves_opaque_siblings_and_splits_the_target_marked_paragraph() {
+    const OWNER: u64 = 18_001;
+    const REQUEST: u64 = 18_002;
+    const SPLIT_TEXT_OFFSET: u32 = 9;
+    const SPLIT_SCALAR_BOUNDARY_WIDTH: u32 = 1;
+    const PARAGRAPH: &str = r#"{"type":"paragraph","content":[{"type":"text","text":"abcd"},{"type":"text","text":"efgh","marks":[{"type":"bold"}]},{"type":"text","text":"ijkl","marks":[{"type":"italic"}]},{"type":"text","text":"mnop","marks":[{"type":"link","attrs":{"href":"https://example.com/item/47"}}]}]}"#;
+    let paragraph: serde_json::Value = serde_json::from_str(PARAGRAPH).unwrap();
+    let opaque = serde_json::json!({"type":"horizontalRule","attrs":{"future":"preserved"}});
+    let mut left = paragraph.clone();
+    left["content"].as_array_mut().unwrap().truncate(3);
+    left["content"][2]["text"] = serde_json::json!("i");
+    let mut right = paragraph.clone();
+    right["content"].as_array_mut().unwrap().drain(..2);
+    right["content"][0]["text"] = serde_json::json!("jkl");
+    for opaque_first in [true, false] {
+        let (content, expected_content) = if opaque_first {
+            (
+                vec![opaque.clone(), paragraph.clone()],
+                vec![opaque.clone(), left.clone(), right.clone()],
+            )
+        } else {
+            (
+                vec![paragraph.clone(), opaque.clone()],
+                vec![left.clone(), right.clone(), opaque.clone()],
+            )
+        };
+        let before = serde_json::json!({"type":"doc","content":content});
+        let expected = serde_json::json!({"type":"doc","content":expected_content});
+        let mut session = default_schema_session(&before.to_string());
+        assert_eq!(session.engine.document_json().unwrap(), before);
+        let target_block = usize::from(opaque_first);
+        let position_map = session.engine.position_map().unwrap();
+        let caret = position_map.effective_scalar_start(target_block)
+            + position_map.block(target_block).unwrap().scalar_prefix_len
+            + SPLIT_TEXT_OFFSET;
+        let request = native_intent_request(
+            &mut session,
+            OWNER,
+            REQUEST,
+            serde_json::json!({"type":"splitBlock","anchor":caret,"head":caret}),
+        );
+        let before_revision = session.engine.revision();
+        let outcome = NativeTransactionBridge::new(&mut session)
+            .submit_native_intent(&request)
+            .unwrap();
+        let outcome: serde_json::Value = serde_json::from_str(&outcome).unwrap();
+        assert_eq!(outcome["documentChanged"], true,
+            "Return inside a valid marked paragraph must split despite an unrelated preserved block (opaque_first={opaque_first}): {outcome}");
+        assert_eq!(session.engine.revision(), before_revision + 1);
+        assert_eq!(
+            session.engine.document_json().unwrap(),
+            expected,
+            "split must preserve both marked text halves and the opaque sibling payload"
+        );
+        let Some(ResolvedSelection::Text { anchor, head }) = session.engine.resolved_selection()
+        else {
+            panic!("native split must produce a text selection");
+        };
+        assert_eq!(anchor.scalar, caret + SPLIT_SCALAR_BOUNDARY_WIDTH);
+        assert_eq!(head.scalar, anchor.scalar);
+        assert!(session.engine.can_undo());
+        let undone = session
+            .engine
+            .undo(REQUEST + 1)
+            .unwrap()
+            .expect("native split must have one undo item");
+        assert!(undone.changed);
+        assert_eq!(session.engine.document_json().unwrap(), before);
+        let redone = session
+            .engine
+            .redo(REQUEST + 2)
+            .unwrap()
+            .expect("native split must have one redo item");
+        assert!(redone.changed);
+        assert_eq!(session.engine.document_json().unwrap(), expected);
+    }
 }
 
 fn scalar(offset: u32) -> RevisionedPosition {

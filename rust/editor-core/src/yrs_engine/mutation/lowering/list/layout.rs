@@ -6,12 +6,19 @@ impl MutationCompiler {
         splices: &[VirtualStructuralSplice],
         preserved_prepared_inserts: &[usize],
     ) -> OperationResult<()> {
+        let (complement_parents, complement_targets) = self
+            .structural_window_complement
+            .map_or((0, 0), |complement| {
+                (complement.parent_count, complement.target_count)
+            });
         let traversal_work = splices
             .len()
             .checked_add(self.structural_parents.len())
+            .and_then(|work| work.checked_add(complement_parents))
             .and_then(|work| work.checked_add(self.prepared_elements.len()))
             .and_then(|work| work.checked_add(self.prepared_inserts.len()))
             .and_then(|work| work.checked_add(self.targets.len()))
+            .and_then(|work| work.checked_add(complement_targets))
             .and_then(|work| work.checked_add(self.actions.len()))
             .and_then(|work| work.checked_add(self.pending_element_attrs.len()))
             .ok_or_else(|| work_overflow(self.request_id, operation_index, self.action_limit))?;
@@ -122,10 +129,34 @@ impl MutationCompiler {
                         .semantic_index
                         .checked_add(splice.semantic_delete)
                         .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
-                    if pending.first_semantic_index < delete_end
+                    if splice.semantic_delete > 0
+                        && pending.first_semantic_index < delete_end
                         && batch_end > splice.semantic_index
                     {
-                        deleted_prepared_insert_ids.insert(insert_id);
+                        let first_merges_into_previous_text =
+                            pending.first_semantic_index.checked_add(1) == Some(delete_end)
+                                && pending
+                                    .nodes
+                                    .iter()
+                                    .find(|child| !is_zero_width_prepared_text(&child.node))
+                                    .is_some_and(|child| {
+                                        matches!(child.node, PreparedXmlNode::Text { .. })
+                                    })
+                                && splice
+                                    .semantic_index
+                                    .checked_sub(1)
+                                    .and_then(|previous| {
+                                        after
+                                            .node_at(&splice.parent_path)
+                                            .and_then(Node::content)?
+                                            .child(previous as usize)
+                                    })
+                                    .is_some_and(Node::is_text);
+                        if first_merges_into_previous_text {
+                            pending.first_semantic_index = splice.semantic_index - 1;
+                        } else {
+                            deleted_prepared_insert_ids.insert(insert_id);
+                        }
                     } else if pending.first_semantic_index >= delete_end {
                         pending.first_semantic_index = shift_semantic_index(
                             pending.first_semantic_index,
@@ -283,8 +314,31 @@ impl MutationCompiler {
         operation_index: usize,
         after: &Document,
     ) -> OperationResult<()> {
-        let (content_positions, mut layout_work) =
-            collect_document_content_positions(self.request_id, after.root())?;
+        let (content_positions, mut layout_work) = match self.structural_window_complement {
+            None => collect_document_content_positions(self.request_id, after.root(), None)?,
+            Some(complement) => {
+                let window_children = after
+                    .root()
+                    .child_count()
+                    .checked_sub(complement.root_children)
+                    .and_then(|window| {
+                        Some(complement.root_child..complement.root_child.checked_add(window)?)
+                    })
+                    .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+                let (positions, window_work) = collect_document_content_positions(
+                    self.request_id,
+                    after.root(),
+                    Some(window_children),
+                )?;
+                let work = window_work
+                    .checked_add(complement.content_position_work)
+                    .and_then(|work| work.checked_add(complement.parent_layout_work))
+                    .ok_or_else(|| {
+                        work_overflow(self.request_id, operation_index, self.action_limit)
+                    })?;
+                (positions, work)
+            }
+        };
         let mut existing_starts = HashMap::new();
         let mut inline_prepared_starts = HashMap::new();
         let mut inline_prepared_elements = HashMap::new();
@@ -309,6 +363,21 @@ impl MutationCompiler {
                 _ => None,
             })
             .collect::<HashMap<_, _>>();
+        let created_text_lengths = self
+            .targets
+            .iter()
+            .filter_map(|target| match &target.kind {
+                ResolvedTargetKind::Missing {
+                    parent,
+                    child_index,
+                    ..
+                } if target.scalar_len > 0 => Some((
+                    (AsRef::<Branch>::as_ref(parent).id(), *child_index),
+                    target.scalar_len,
+                )),
+                _ => None,
+            })
+            .collect::<HashMap<_, _>>();
         for (path, parent) in &self.structural_parents {
             let node = after
                 .node_at(path)
@@ -330,8 +399,21 @@ impl MutationCompiler {
             let mut semantic_index = 0usize;
             let mut semantic_text_offset = 0u32;
             let mut boundaries = Vec::with_capacity(parent.storage_children.len() + 1);
-            for storage in &parent.storage_children {
+            let parent_id = parent.parent.id();
+            for (storage_index, storage) in parent.storage_children.iter().enumerate() {
                 boundaries.push(cursor);
+                let gap = u32::try_from(storage_index)
+                    .map_err(|_| invalid_action_range(self.request_id, operation_index))?;
+                if let Some(&created) = created_text_lengths.get(&(parent_id.clone(), gap)) {
+                    consume_semantic_text(
+                        content,
+                        created,
+                        &mut cursor,
+                        &mut semantic_index,
+                        &mut semantic_text_offset,
+                    )
+                    .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+                }
                 let text_length = match storage {
                     StorageChildKind::Text {
                         scalar_len, target, ..
@@ -363,25 +445,15 @@ impl MutationCompiler {
                         scalar_len: None, ..
                     } => None,
                 };
-                if let Some(mut remaining) = text_length {
-                    while remaining > 0 {
-                        let child = content.child(semantic_index).ok_or_else(|| {
-                            invalid_action_range(self.request_id, operation_index)
-                        })?;
-                        if !child.is_text() || semantic_text_offset >= child.node_size() {
-                            return Err(invalid_action_range(self.request_id, operation_index));
-                        }
-                        let consumed = remaining.min(child.node_size() - semantic_text_offset);
-                        cursor = cursor.checked_add(consumed).ok_or_else(|| {
-                            invalid_action_range(self.request_id, operation_index)
-                        })?;
-                        remaining -= consumed;
-                        semantic_text_offset += consumed;
-                        if semantic_text_offset == child.node_size() {
-                            semantic_index += 1;
-                            semantic_text_offset = 0;
-                        }
-                    }
+                if let Some(remaining) = text_length {
+                    consume_semantic_text(
+                        content,
+                        remaining,
+                        &mut cursor,
+                        &mut semantic_index,
+                        &mut semantic_text_offset,
+                    )
+                    .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
                 } else {
                     if semantic_text_offset != 0 {
                         return Err(invalid_action_range(self.request_id, operation_index));
@@ -407,11 +479,23 @@ impl MutationCompiler {
                     semantic_index += 1;
                 }
             }
+            boundaries.push(cursor);
+            let end_gap = u32::try_from(parent.storage_children.len())
+                .map_err(|_| invalid_action_range(self.request_id, operation_index))?;
+            if let Some(&created) = created_text_lengths.get(&(parent_id.clone(), end_gap)) {
+                consume_semantic_text(
+                    content,
+                    created,
+                    &mut cursor,
+                    &mut semantic_index,
+                    &mut semantic_text_offset,
+                )
+                .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+            }
             if semantic_text_offset != 0 || semantic_index != content.child_count() {
                 return Err(invalid_action_range(self.request_id, operation_index));
             }
-            boundaries.push(cursor);
-            missing_starts.insert(parent.parent.id(), boundaries);
+            missing_starts.insert(parent_id, boundaries);
         }
 
         let mut prepared_starts = HashMap::new();
@@ -437,11 +521,11 @@ impl MutationCompiler {
                 &mut elements,
                 &mut texts,
             )?;
-            for (path, handle, _) in texts {
+            for (path, handle, runs) in texts {
                 let start = inline_prepared_starts
                     .get(&handle)
                     .copied()
-                    .or_else(|| first_text_doc_position(after.root(), &path))
+                    .or_else(|| first_text_doc_position(after.root(), &path, runs.is_empty()))
                     .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
                 prepared_starts.insert(handle, start);
             }
@@ -454,6 +538,12 @@ impl MutationCompiler {
         }
 
         let target_count = self.targets.len();
+        let charged_target_count = self
+            .structural_window_complement
+            .map_or(Some(target_count), |complement| {
+                target_count.checked_add(complement.target_count)
+            })
+            .ok_or_else(|| work_overflow(self.request_id, operation_index, self.action_limit))?;
         let mut indexed = Vec::with_capacity(target_count);
         for (ordinal, target) in std::mem::take(&mut self.targets).into_iter().enumerate() {
             let start = match &target.kind {
@@ -474,9 +564,12 @@ impl MutationCompiler {
             indexed.push((start, ordinal, target));
         }
         layout_work = layout_work
-            .checked_add(target_count)
+            .checked_add(charged_target_count)
             .and_then(|work| {
-                work.checked_add(target_count.checked_mul(binary_partition_work(target_count))?)
+                work.checked_add(
+                    charged_target_count
+                        .checked_mul(binary_partition_work(charged_target_count))?,
+                )
             })
             .ok_or_else(|| work_overflow(self.request_id, operation_index, self.action_limit))?;
         self.charge_operation_work(operation_index, layout_work)?;
@@ -493,4 +586,28 @@ impl MutationCompiler {
         }
         Ok(())
     }
+}
+
+fn consume_semantic_text(
+    content: &Fragment,
+    mut remaining: u32,
+    cursor: &mut u32,
+    semantic_index: &mut usize,
+    semantic_text_offset: &mut u32,
+) -> Option<()> {
+    while remaining > 0 {
+        let child = content.child(*semantic_index)?;
+        if !child.is_text() || *semantic_text_offset >= child.node_size() {
+            return None;
+        }
+        let consumed = remaining.min(child.node_size() - *semantic_text_offset);
+        *cursor = cursor.checked_add(consumed)?;
+        remaining -= consumed;
+        *semantic_text_offset += consumed;
+        if *semantic_text_offset == child.node_size() {
+            *semantic_index += 1;
+            *semantic_text_offset = 0;
+        }
+    }
+    Some(())
 }

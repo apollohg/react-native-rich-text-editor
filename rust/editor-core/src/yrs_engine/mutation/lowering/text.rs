@@ -323,14 +323,7 @@ impl MutationCompiler {
                     work_overflow(self.request_id, operation_index, self.action_limit)
                 })?,
         )?;
-        let Some(spans) = self.covered_spans(operation_index, from, to, boundaries)? else {
-            return Err(OperationError::operation_invalid(
-                self.request_id,
-                operation_index,
-                "range",
-                "mark range crosses structural XML content",
-            ));
-        };
+        let (spans, _) = self.text_spans(operation_index, from, to, boundaries)?;
         let pieces = spans
             .iter()
             .flat_map(|span| {
@@ -471,6 +464,216 @@ impl MutationCompiler {
         Ok(())
     }
 
+    fn insert_inline_nodes_in_sequence(
+        &mut self,
+        operation_index: usize,
+        context: MutationDocumentContext<'_>,
+        from: u32,
+        content: &Fragment,
+    ) -> OperationResult<()> {
+        let MutationDocumentContext {
+            before,
+            schema,
+            limits,
+            ..
+        } = context;
+        let mut current = before.clone();
+        let mut position = from;
+        for node in content.iter() {
+            let (next, _) = crate::transform::apply_step_canonical_marks(
+                &current,
+                &crate::transform::Step::ReplaceRange {
+                    from: position,
+                    to: position,
+                    content: Fragment::from(vec![node.clone()]),
+                },
+                schema,
+            )
+            .map_err(|message| {
+                OperationError::operation_invalid(
+                    self.request_id,
+                    operation_index,
+                    "content",
+                    message.to_string(),
+                )
+            })?;
+            match node.text_str() {
+                Some(text) => self.insert(operation_index, position, text, node.marks())?,
+                None => self.insert_structural_node(
+                    operation_index,
+                    MutationDocumentContext {
+                        before: &current,
+                        after: &next,
+                        schema,
+                        limits,
+                    },
+                    position,
+                    node,
+                )?,
+            }
+            position = position
+                .checked_add(node.node_size())
+                .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+            current = next;
+        }
+        Ok(())
+    }
+
+    fn insert_tracked_replacement(
+        &mut self,
+        operation_index: usize,
+        context: MutationDocumentContext<'_>,
+        from: u32,
+        from_resolved: &crate::model::ResolvedPos,
+        content: &Fragment,
+    ) -> OperationResult<()> {
+        let MutationDocumentContext {
+            before: deleted,
+            after,
+            schema,
+            limits,
+        } = context;
+        let path = from_resolved.node_path.to_vec();
+        if let Some(handle) = self.prepared_elements.get(&path).cloned() {
+            return self.replace_prepared_element_from_after(
+                operation_index,
+                &handle,
+                &path,
+                after,
+                schema,
+                limits,
+            );
+        }
+        if content.iter().all(Node::is_text) {
+            return self.insert_cross_parent_replacement(
+                operation_index,
+                deleted,
+                after,
+                from,
+                from_resolved,
+                content,
+                schema,
+                limits,
+            );
+        }
+        let deleted_children = deleted
+            .node_at(&path)
+            .and_then(Node::content)
+            .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+        let target = self
+            .structural_parents
+            .get(&path)
+            .cloned()
+            .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+        self.ensure_no_created_text(operation_index, "range", &target.parent.id())?;
+        let child_index = match self
+            .current_storage_insertion(
+                deleted_children.iter(),
+                &target.storage_children,
+                from_resolved.parent_offset,
+            )
+            .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?
+        {
+            StorageInsertion::Boundary(child_index) => child_index,
+            StorageInsertion::InsideText { .. } => {
+                return self.insert_inline_nodes_in_sequence(
+                    operation_index,
+                    MutationDocumentContext {
+                        before: deleted,
+                        after,
+                        schema,
+                        limits,
+                    },
+                    from,
+                    content,
+                );
+            }
+            StorageInsertion::InsidePreparedText { .. } => {
+                return Err(invalid_action_range(self.request_id, operation_index));
+            }
+        };
+        let semantic_index =
+            semantic_insertion_index(deleted_children, from_resolved.parent_offset)
+                .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+        let follows_text = semantic_index
+            .checked_sub(1)
+            .and_then(|previous| deleted_children.child(previous as usize))
+            .is_some_and(Node::is_text);
+        let leading_text_count = if follows_text {
+            content.iter().take_while(|node| node.is_text()).count()
+        } else {
+            0
+        };
+        let mut leading_text_len = 0u32;
+        for node in content.iter().take(leading_text_count) {
+            let text = node
+                .text_str()
+                .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+            let position = from
+                .checked_add(leading_text_len)
+                .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+            self.insert(operation_index, position, text, node.marks())?;
+            leading_text_len = leading_text_len
+                .checked_add(node.node_size())
+                .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+        }
+        let mut batch = crate::yrs_engine::codec::prepare_model_nodes(
+            &content.children()[leading_text_count..],
+            schema,
+            limits,
+            path.len().saturating_add(2),
+        )
+        .map_err(|error| map_prepared_node_error(self.request_id, operation_index, error))?;
+        let insert_id = self.prepared_inserts.len();
+        for child in &mut batch.nodes {
+            child.index = child_index
+                .checked_add(child.index)
+                .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+        }
+        let storage_insert =
+            self.prepared_storage_children(operation_index, insert_id, &batch.nodes)?;
+        self.charge_operation_work(operation_index, batch.work)?;
+        self.drop_text_gaps_from(&target.parent.id(), child_index + 1);
+        let inserted_children = after
+            .node_at(&path)
+            .and_then(Node::content)
+            .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+        let first_semantic_index = from_resolved
+            .parent_offset
+            .checked_add(leading_text_len)
+            .and_then(|offset| semantic_insertion_index(inserted_children, offset))
+            .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+        let insert_id = self.queue_prepared_insert(PendingPreparedInsert {
+            parent: target.parent.clone(),
+            child_index,
+            nodes: batch.nodes,
+            signature: target.signature.clone(),
+            operation_index,
+            semantic_parent_path: path.clone(),
+            first_semantic_index,
+        });
+        let semantic_insert = inserted_children
+            .child_count()
+            .checked_sub(deleted_children.child_count())
+            .and_then(|count| u32::try_from(count).ok())
+            .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+        self.apply_virtual_structural_splices(
+            operation_index,
+            after,
+            &[VirtualStructuralSplice {
+                parent_path: path,
+                semantic_index,
+                semantic_delete: 0,
+                semantic_insert,
+                storage_index: child_index,
+                storage_delete: 0,
+                storage_insert: Some(storage_insert),
+            }],
+            &[insert_id],
+        )?;
+        self.register_prepared_insert_state(operation_index, insert_id, after)
+    }
+
     pub(crate) fn replace_structural_range(
         &mut self,
         operation_index: usize,
@@ -519,106 +722,18 @@ impl MutationCompiler {
                 from,
                 to,
             )?;
-            if content.iter().all(Node::is_text) {
-                return self.insert_cross_parent_replacement(
-                    operation_index,
-                    document,
+            return self.insert_tracked_replacement(
+                operation_index,
+                MutationDocumentContext {
+                    before: &deleted,
                     after,
-                    from,
-                    &from_resolved,
-                    content,
                     schema,
                     limits,
-                );
-            }
-            let path = from_resolved.node_path.to_vec();
-            let deleted_children = deleted
-                .node_at(&path)
-                .and_then(Node::content)
-                .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
-            let target = self
-                .structural_parents
-                .get(&path)
-                .cloned()
-                .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
-            let StorageInsertion::Boundary(child_index) = self
-                .current_storage_insertion(
-                    deleted_children.iter(),
-                    &target.storage_children,
-                    from_resolved.parent_offset,
-                )
-                .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?
-            else {
-                return Err(invalid_action_range(self.request_id, operation_index));
-            };
-            let semantic_index =
-                semantic_insertion_index(deleted_children, from_resolved.parent_offset)
-                    .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
-            let mut batch = crate::yrs_engine::codec::prepare_model_nodes(
-                content.children(),
-                schema,
-                limits,
-                path.len().saturating_add(2),
-            )
-            .map_err(|error| map_prepared_node_error(self.request_id, operation_index, error))?;
-            let insert_id = self.prepared_inserts.len();
-            for child in &mut batch.nodes {
-                child.index = child_index
-                    .checked_add(child.index)
-                    .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
-            }
-            let storage_insert =
-                self.prepared_storage_children(operation_index, insert_id, &batch.nodes)?;
-            let storage_count = u32::try_from(storage_insert.len())
-                .map_err(|_| invalid_action_range(self.request_id, operation_index))?;
-            self.charge_operation_work(operation_index, batch.work)?;
-            let insert_id = self.queue_prepared_insert(PendingPreparedInsert {
-                parent: target.parent.clone(),
-                child_index,
-                nodes: batch.nodes,
-                signature: target.signature.clone(),
-                operation_index,
-                semantic_parent_path: path.clone(),
-                first_semantic_index: semantic_index,
-            });
-            for candidate in &mut self.targets {
-                if let ResolvedTargetKind::Missing {
-                    parent,
-                    child_index: gap,
-                    ..
-                } = &mut candidate.kind
-                {
-                    if AsRef::<Branch>::as_ref(parent).id() == target.parent.id()
-                        && *gap >= child_index
-                    {
-                        *gap += storage_count;
-                    }
-                }
-            }
-            let inserted_children = after
-                .node_at(&path)
-                .and_then(Node::content)
-                .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
-            let semantic_insert = inserted_children
-                .child_count()
-                .checked_sub(deleted_children.child_count())
-                .and_then(|count| u32::try_from(count).ok())
-                .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
-            self.apply_virtual_structural_splices(
-                operation_index,
-                after,
-                &[VirtualStructuralSplice {
-                    parent_path: path,
-                    semantic_index,
-                    semantic_delete: 0,
-                    semantic_insert,
-                    storage_index: child_index,
-                    storage_delete: 0,
-                    storage_insert: Some(storage_insert),
-                }],
-                &[insert_id],
-            )?;
-            return self.register_prepared_insert_state(operation_index, insert_id, after);
+                },
+                from,
+                &from_resolved,
+                content,
+            );
         }
         if from_resolved.node_path != to_resolved.node_path {
             let (deleted, _) = crate::transform::apply_step_canonical_marks(
@@ -771,12 +886,9 @@ impl MutationCompiler {
         }
 
         let depth = path.len().saturating_add(2);
-        let mut batch = if let Some(canonical_content) = replacement.canonical_content {
-            prepare_xml_nodes(canonical_content, limits, depth)
-        } else {
+        let mut batch =
             crate::yrs_engine::codec::prepare_model_nodes(content.children(), schema, limits, depth)
-        }
-        .map_err(|error| map_prepared_node_error(self.request_id, operation_index, error))?;
+                .map_err(|error| map_prepared_node_error(self.request_id, operation_index, error))?;
 
         for child in &mut batch.nodes {
             child.index = delete_start

@@ -70,21 +70,21 @@ fn localized_insert_compile_only_skips_every_proved_full_pass() {
             mutation_guard_snapshot_requests: 2,
             compilation_snapshot_scans: 1,
             compilation_snapshot_reuses: 1,
-            document_validations: 2,
+            document_validations: 0,
             canonical_mark_tree_scans: 1,
             canonical_mark_validation_attempts: 1,
             canonical_mark_validation_completions: 1,
-            canonical_mark_nodes_visited: 3,
+            canonical_mark_nodes_visited: 7,
             canonical_identity_predicate_nodes_visited: 3,
-            canonical_projections: 1,
-            canonical_serializations: 1,
+            canonical_projections: 0,
+            canonical_serializations: 0,
             canonical_hashes: 0,
             affected_top_level_scans: 1,
             position_map_clones: 1,
             position_map_compactions: 1,
-            rendered_text_derivations: 1,
-            raw_document_text_scans: 2,
-            document_node_count_scans: 1,
+            rendered_text_derivations: 0,
+            raw_document_text_scans: 0,
+            document_node_count_scans: 0,
             render_identity_scans: 0,
             ordinary_step_applications: 1,
             table_projection_derivations: 1,
@@ -154,7 +154,10 @@ fn localized_insert_semantic_preview_matches_forced_generic_matrix() {
         assert_eq!(localized.preview, generic.preview);
         let localized_artifact = localized.canonical_artifact.as_ref().unwrap();
         let generic_artifact = generic.canonical_artifact.as_ref().unwrap();
-        assert_eq!(localized_artifact.value(), generic_artifact.value());
+        assert_eq!(
+            localized_artifact.projected_value(),
+            generic_artifact.projected_value()
+        );
         assert_eq!(localized_artifact.sha256(), generic_artifact.sha256());
         assert_eq!(
             localized_artifact.serialized_len(),
@@ -389,8 +392,8 @@ fn localized_insert_semantic_preview_matches_forced_generic_matrix() {
             "{case}"
         );
         assert_eq!(
-            localized_state.canonical_artifact.value(),
-            generic_state.canonical_artifact.value(),
+            localized_state.canonical_artifact.projected_value(),
+            generic_state.canonical_artifact.projected_value(),
             "{case}"
         );
         assert_eq!(

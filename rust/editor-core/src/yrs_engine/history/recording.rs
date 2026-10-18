@@ -29,7 +29,7 @@ impl YrsHistory {
                 policy,
                 class,
                 undo_units_bound,
-                before.metadata_bytes,
+                &before,
                 after_metadata_bytes,
                 prepared.now_millis,
             )?;
@@ -48,7 +48,7 @@ impl YrsHistory {
                 policy,
                 class,
                 undo_units_bound,
-                before.metadata_bytes,
+                &before,
                 after_metadata_bytes,
             )?
         };
@@ -74,7 +74,11 @@ impl YrsHistory {
         let compatible =
             !rolls && self.capture_is_compatible(origin, policy, class, limits.now_millis);
         let metadata_increment = after_metadata_bytes
-            .checked_add(if compatible { 0 } else { before.metadata_bytes })
+            .checked_add(if compatible {
+                0
+            } else {
+                self.retained_before_metadata_bytes(&before, rolls)
+            })
             .expect("standalone history metadata was checked before capture");
         Ok(PreparedRecordedHistoryAdmission {
             origin,
@@ -399,11 +403,34 @@ impl YrsHistory {
     }
 
     #[cfg(test)]
+    pub(crate) fn document_snapshot_identities_for_test(&self) -> Vec<[Option<usize>; 2]> {
+        self.manager
+            .undo_stack()
+            .iter()
+            .map(|item| {
+                let slots = item.meta().slots();
+                [slots.before, slots.after].map(|slot| {
+                    slot.as_ref()
+                        .and_then(HistorySnapshotSlot::get)
+                        .and_then(|snapshot| snapshot.document_snapshot.as_ref())
+                        .map(|document| Arc::as_ptr(document) as usize)
+                })
+            })
+            .collect()
+    }
+
+    #[cfg(test)]
     pub(crate) fn stack_depths_for_test(&self) -> (usize, usize) {
         (
             self.manager.undo_stack().len(),
             self.manager.redo_stack().len(),
         )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn undo_stack_metadata_bytes_for_test(&self) -> usize {
+        stack_metadata_bytes(self.manager.undo_stack(), 0, &self.limits)
+            .expect("retained undo metadata fits its limit")
     }
 
     #[cfg(test)]

@@ -110,7 +110,8 @@ fn history_snapshot_and_forced_fallback_match_affinity_and_stored_marks() {
     assert_eq!(text_affinities(&fast), text_affinities(&fallback));
     assert_eq!(text_affinities(&fast), (Affinity::Before, Affinity::After));
     assert_eq!(fast_undo_passes.canonical_projections, 0);
-    assert!(fallback_undo_passes.canonical_projections > 0);
+    assert_eq!(fast_undo_passes.canonical_serializations, 0);
+    assert!(fallback_undo_passes.canonical_serializations > 0);
 
     crate::yrs_engine::observability::reset_full_pass_counts_for_test();
     fast.redo_with_result(108_055).unwrap().unwrap();
@@ -125,7 +126,8 @@ fn history_snapshot_and_forced_fallback_match_affinity_and_stored_marks() {
     assert_eq!(text_affinities(&fast), text_affinities(&fallback));
     assert_eq!(text_affinities(&fast), (Affinity::Before, Affinity::After));
     assert_eq!(fast_redo_passes.canonical_projections, 0);
-    assert!(fallback_redo_passes.canonical_projections > 0);
+    assert_eq!(fast_redo_passes.canonical_serializations, 0);
+    assert!(fallback_redo_passes.canonical_serializations > 0);
 }
 
 #[test]
@@ -187,7 +189,7 @@ fn history_snapshot_context_drift_falls_back_without_changing_undo_result() {
         let passes = crate::yrs_engine::observability::take_full_pass_counts_for_test();
         assert_eq!(engine.document().unwrap().root().text_content(), "ab");
         assert!(
-            passes.canonical_projections > 0,
+            passes.canonical_serializations > 0,
             "{context} drift must reject snapshot reuse and run the fallback"
         );
     }

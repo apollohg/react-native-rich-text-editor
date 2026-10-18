@@ -181,6 +181,12 @@ pub(super) fn plan(
             }
         }
         TypedCommand::ToggleHeading { level } => {
+            if !context.structural_command_is_available(
+                &selection,
+                crate::editor_state::StructuralCommand::ToggleHeading(level),
+            ) {
+                return Ok(CommandPlan::NotApplicable);
+            }
             let Some(plan) = crate::command_planner::plan_toggle_heading(
                 context.document,
                 context.schema,
@@ -204,6 +210,12 @@ pub(super) fn plan(
             )
         }
         TypedCommand::ToggleCodeBlock => {
+            if !context.structural_command_is_available(
+                &selection,
+                crate::editor_state::StructuralCommand::ToggleCodeBlock,
+            ) {
+                return Ok(CommandPlan::NotApplicable);
+            }
             let Some(plan) = crate::command_planner::plan_toggle_code_block(
                 context.document,
                 context.schema,
@@ -226,6 +238,12 @@ pub(super) fn plan(
             )
         }
         TypedCommand::ToggleBlockquote => {
+            if !context.structural_command_is_available(
+                &selection,
+                crate::editor_state::StructuralCommand::ToggleBlockquote,
+            ) {
+                return Ok(CommandPlan::NotApplicable);
+            }
             let Some(plan) = crate::command_planner::plan_toggle_blockquote(
                 context.document,
                 context.schema,

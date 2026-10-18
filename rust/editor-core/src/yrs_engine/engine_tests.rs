@@ -9,7 +9,6 @@ use crate::serialize::FromHtmlOptions;
 use crate::serialize::{from_prosemirror_json, UnknownTypeMode};
 use crate::transform::DocumentValidator;
 use serde_json::json;
-use sha2::Digest;
 use yrs::OffsetKind;
 
 use yrs::branch::{Branch, BranchID, BranchPtr};
@@ -27,22 +26,19 @@ use crate::yrs_engine::{
 
 use super::{
     admit_max_encoded_state_len, check_compiled_commit_preparation_stage_for_test,
-    encode_state_bounded, equivalent_private_candidate_doc, fresh_utf16_doc_excluding,
-    fresh_utf16_doc_excluding_with, history_metadata_bytes,
-    mark_compiled_commit_durable_write_for_test, prepare_import_candidate_cache,
-    reset_encoded_state_reuse_counts_for_test, reset_history_replay_guard_encodings_for_test,
-    reset_import_receipt_sha256_counts_for_test, reset_import_receipt_state_decodings_for_test,
-    reset_import_state_encoding_counts_for_test, reset_prepared_candidate_cache_counts_for_test,
-    retained_import_state_charge, seal_candidate_state_vector,
+    encode_state_bounded, fresh_utf16_doc_excluding, fresh_utf16_doc_excluding_with,
+    history_metadata_bytes, mark_compiled_commit_durable_write_for_test,
+    reset_commit_state_encodings_for_test, reset_history_replay_guard_encodings_for_test,
+    reset_import_receipt_sha256_counts_for_test, reset_import_state_encoding_counts_for_test,
+    reset_prepared_candidate_cache_counts_for_test, seal_candidate_state_vector,
     set_compiled_commit_stage_failpoint_for_test, set_outbound_staging_copy_failure_for_test,
     set_quarantined_update_reservation_failure_for_test,
-    set_replay_candidate_perturbation_for_test, take_compiled_commit_authority_counts_for_test,
-    take_encoded_state_reuse_counts_for_test, take_history_replay_guard_encodings_for_test,
-    take_import_receipt_sha256_counts_for_test, take_import_receipt_state_decodings_for_test,
-    take_import_state_encoding_counts_for_test, take_prepared_candidate_cache_counts_for_test,
-    utf16_doc, CandidateDocument, CompiledCommitPreparationStage, CompiledTransaction,
-    EngineDocumentState, OutboundUpdateSink, ValidatedImportDocument, YrsDocumentCodec,
-    YrsDocumentEngine, YrsEngineConfig,
+    set_replay_candidate_perturbation_for_test, take_commit_state_encodings_for_test,
+    take_compiled_commit_authority_counts_for_test, take_history_replay_guard_encodings_for_test,
+    take_import_receipt_sha256_counts_for_test, take_import_state_encoding_counts_for_test,
+    take_prepared_candidate_cache_counts_for_test, utf16_doc, CandidateDocument,
+    CompiledCommitPreparationStage, CompiledTransaction, EngineDocumentState, OutboundUpdateSink,
+    ValidatedImportDocument, YrsDocumentCodec, YrsDocumentEngine, YrsEngineConfig,
 };
 
 #[derive(Debug, PartialEq)]
@@ -101,14 +97,42 @@ fn assert_prepared_candidate_state_vector_exact(engine: &YrsDocumentEngine) {
     assert_eq!(cache.state_vector, live_txn.state_vector());
 }
 
+fn assert_imported_lookup_seed_is_ready_without_replica(engine: &YrsDocumentEngine, context: &str) {
+    assert!(
+        engine.prepared_candidate_cache.is_none(),
+        "{context}: an import must not retain a proving replica"
+    );
+    assert!(
+        engine
+            .derived_state
+            .as_ref()
+            .unwrap()
+            .mutation_lookup_seed
+            .is_ready_for_test(),
+        "{context}: an import must install its ready lookup seed"
+    );
+}
+
+fn root_text(engine: &YrsDocumentEngine) -> String {
+    engine.document().unwrap().root().text_content()
+}
+
+fn equivalent_private_candidate_doc(source: &Doc) -> Doc {
+    Doc::with_options(Options {
+        client_id: source.client_id(),
+        guid: source.guid(),
+        offset_kind: source.offset_kind(),
+        skip_gc: source.skip_gc(),
+        ..Options::default()
+    })
+}
+
 fn transaction_engine() -> YrsDocumentEngine {
     transaction_engine_with_editing_limits(crate::yrs_engine::EditingLimits::default())
 }
 
-fn transaction_engine_with_editing_limits(
-    editing_limits: crate::yrs_engine::EditingLimits,
-) -> YrsDocumentEngine {
-    YrsDocumentEngine::new(YrsEngineConfig {
+fn transaction_engine_config(editing_limits: crate::yrs_engine::EditingLimits) -> YrsEngineConfig {
+    YrsEngineConfig {
         schema: tiptap_schema(),
         fragment_name: "prosemirror".into(),
         initialization_mode: crate::yrs_engine::InitializationMode::LocalEmpty,
@@ -119,7 +143,22 @@ fn transaction_engine_with_editing_limits(
             document_id: "doc".into(),
             lineage_id: "lineage".into(),
         }),
-    })
+    }
+}
+
+fn transaction_engine_with_editing_limits(
+    editing_limits: crate::yrs_engine::EditingLimits,
+) -> YrsDocumentEngine {
+    YrsDocumentEngine::new(transaction_engine_config(editing_limits)).unwrap()
+}
+
+fn transaction_engine_with_history_clock(
+    clock: Arc<dyn yrs::sync::time::Clock>,
+) -> YrsDocumentEngine {
+    YrsDocumentEngine::new_with_history_clock(
+        transaction_engine_config(crate::yrs_engine::EditingLimits::default()),
+        clock,
+    )
     .unwrap()
 }
 
@@ -408,6 +447,7 @@ fn eager_pre_admission_error_cases() -> Vec<EagerPreAdmissionErrorCase> {
             TransactionOrigin::DocumentImport,
         )
         .unwrap();
+    force_lookup_seed_unavailable(&mut retained_history);
     assert!(retained_history
         .derived_state
         .as_ref()
@@ -567,7 +607,7 @@ fn marked_insert_transaction(
     }
 }
 
-fn import_document_with_unavailable_lookup_seed() -> YrsDocumentEngine {
+fn import_document_with_installed_lookup_seed() -> YrsDocumentEngine {
     let mut engine = transaction_engine();
     engine
         .import_json(
@@ -575,6 +615,13 @@ fn import_document_with_unavailable_lookup_seed() -> YrsDocumentEngine {
             TransactionOrigin::DocumentImport,
         )
         .unwrap();
+    assert_imported_lookup_seed_is_ready_without_replica(&engine, "abc import");
+    engine
+}
+
+fn import_document_with_unavailable_lookup_seed() -> YrsDocumentEngine {
+    let mut engine = import_document_with_installed_lookup_seed();
+    force_lookup_seed_unavailable(&mut engine);
     assert!(engine
         .derived_state
         .as_ref()
@@ -639,16 +686,24 @@ fn select_text(engine: &mut YrsDocumentEngine, request_id: u64, anchor: u32, hea
 mod candidate_cache;
 #[path = "engine_tests/candidate_publication.rs"]
 mod candidate_publication;
+#[path = "engine_tests/certified_validation.rs"]
+mod certified_validation;
 #[path = "engine_tests/history_and_commit.rs"]
 mod history_and_commit;
 #[path = "engine_tests/import_admission.rs"]
 mod import_admission;
 #[path = "engine_tests/localized_compilation.rs"]
 mod localized_compilation;
+#[path = "engine_tests/localized_split.rs"]
+mod localized_split;
 #[path = "engine_tests/prepared_commands.rs"]
 mod prepared_commands;
 #[path = "engine_tests/remote_updates.rs"]
 mod remote_updates;
+#[path = "engine_tests/structural_invariants.rs"]
+mod structural_invariants;
+#[path = "engine_tests/structural_representation.rs"]
+mod structural_representation;
 
 #[path = "engine_tests/document_revision.rs"]
 mod document_revision;

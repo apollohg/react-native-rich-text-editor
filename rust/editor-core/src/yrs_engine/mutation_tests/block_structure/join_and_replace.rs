@@ -430,6 +430,69 @@ fn join_blocks_copies_mixed_right_children_into_the_retained_left_element() {
 }
 
 #[test]
+fn join_blocks_appends_a_mixed_right_text_prefix_to_the_left_text() {
+    let source = json!({
+        "type": "doc",
+        "content": [
+            { "type": "paragraph", "content": [{ "type": "text", "text": "ab" }] },
+            {
+                "type": "paragraph",
+                "content": [
+                    { "type": "text", "text": "R", "marks": [{ "type": "bold" }] },
+                    { "type": "hardBreak" },
+                    { "type": "text", "text": "T" }
+                ]
+            }
+        ]
+    });
+    let (doc, schema, limits, compiled) = compile_operations_with_schema(
+        &source,
+        vec![TypedOperation::JoinBlocks {
+            at: point_for_test(2),
+        }],
+        tiptap_schema(),
+    );
+    let left_text_id = {
+        let txn = doc.transact();
+        let fragment = txn.get_xml_fragment("prosemirror").unwrap();
+        <XmlTextRef as AsRef<Branch>>::as_ref(&paragraph_text(&fragment, &txn, 0)).id()
+    };
+    assert!(
+        matches!(
+            compiled.mutation_plan.actions.as_slice(),
+            [
+                YrsMutationAction::InsertText { .. },
+                YrsMutationAction::InsertXmlChildren { .. },
+                YrsMutationAction::DeleteXmlChildren { .. }
+            ]
+        ),
+        "the right text prefix extends the left XML text before the remaining children are copied: {:?}",
+        compiled.mutation_plan.actions
+    );
+    let expected = to_prosemirror_json(&compiled.preview, &schema);
+    {
+        let mut txn = doc.transact_mut();
+        execute_mutation_plan(compiled.mutation_plan, &mut txn);
+    }
+    let txn = doc.transact();
+    let fragment = txn.get_xml_fragment("prosemirror").unwrap();
+    let XmlOut::Element(left) = fragment.get(&txn, 0).unwrap() else {
+        panic!("retained paragraph expected")
+    };
+    let XmlOut::Text(left_text) = left.get(&txn, 0).unwrap() else {
+        panic!("retained XML text expected")
+    };
+    assert_eq!(
+        <XmlTextRef as AsRef<Branch>>::as_ref(&left_text).id(),
+        left_text_id
+    );
+    let actual = YrsDocumentCodec::new(&schema, &limits)
+        .read_json(&fragment, &txn)
+        .unwrap();
+    assert_eq!(actual, expected);
+}
+
+#[test]
 fn join_blocks_copies_nested_any_attributes_without_flattening() {
     let source = json!({
         "type": "doc",
@@ -549,6 +612,7 @@ fn structural_replace_trims_marked_unicode_text_endpoints_around_an_atom() {
                 editing_limits: &editing_limits,
                 document_revision: 0,
                 max_length: None,
+                validation_certificate: None,
             },
             TypedTransaction {
                 request_id: 114,
@@ -652,6 +716,7 @@ fn structural_replace_disambiguates_duplicate_equal_atoms_by_position() {
                     editing_limits: &editing_limits,
                     document_revision: 0,
                     max_length: None,
+                    validation_certificate: None,
                 },
                 TypedTransaction {
                     request_id: 115,
@@ -762,6 +827,7 @@ fn structural_delete_maps_mark_runs_to_storage_and_preserves_unaffected_sticky()
                 editing_limits: &editing_limits,
                 document_revision: 0,
                 max_length: None,
+                validation_certificate: None,
             },
             TypedTransaction {
                 request_id: 110,

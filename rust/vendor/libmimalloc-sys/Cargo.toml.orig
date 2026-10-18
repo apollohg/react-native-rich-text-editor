@@ -35,6 +35,7 @@ cc = "1.2"
 
 [features]
 secure = []
+secure_guards = []
 debug = []
 debug_in_debug = []
 override = []

@@ -32,12 +32,16 @@ pub(super) fn planned_relative_selection<T: yrs::ReadTxn>(
     };
     let owned_rendered;
     let owned_map;
-    let (rendered, map) = if let Some(cached) = cached_view {
-        (cached.rendered_text, cached.position_map)
+    let (rendered, map, block_branch_index) = if let Some(cached) = cached_view {
+        (
+            cached.rendered_text,
+            cached.position_map,
+            cached.block_branch_index,
+        )
     } else {
         owned_rendered = base_rendered_text(context.document, context.schema);
         owned_map = base_position_map(context.document, context.schema);
-        (owned_rendered.as_str(), &owned_map)
+        (owned_rendered.as_str(), &owned_map, None)
     };
     let relative_point = |field: &'static str, point: yrs_engine::RevisionedPosition| {
         yrs_engine::revisioned_position_to_relative_point(
@@ -48,6 +52,7 @@ pub(super) fn planned_relative_selection<T: yrs::ReadTxn>(
             map,
             context.document,
             context.schema,
+            block_branch_index,
         )
         .ok_or_else(|| {
             OperationError::selection_position_invalid(

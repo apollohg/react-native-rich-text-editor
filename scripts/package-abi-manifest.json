@@ -55,6 +55,7 @@
     { "name": "editor_v2_redo", "checksum": 48065 },
     { "name": "editor_v2_release_native_binding", "checksum": 2756 },
     { "name": "editor_v2_render_native_frame", "checksum": 615 },
+    { "name": "editor_v2_render_state", "checksum": 57358 },
     { "name": "editor_v2_render_update", "checksum": 13282 },
     { "name": "editor_v2_replace_document", "checksum": 31032 },
     { "name": "editor_v2_resolve_scalar_selection", "checksum": 26332 },

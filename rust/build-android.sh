@@ -12,6 +12,7 @@ LIB_NAME="libeditor_core.so"
 MIN_SDK_VERSION=24
 
 source "$SCRIPT_DIR/toolchain.sh"
+source "$SCRIPT_DIR/release-profile.sh"
 export CARGO="$RUST_TOOLCHAIN_CARGO"
 TARGET_DIR="${CARGO_TARGET_DIR:-$CRATE_DIR/target}"
 if [[ -n "${RUST_TOOLCHAIN_CARGO_PLUGIN_DIR:-}" ]]; then
@@ -46,8 +47,6 @@ for pair in "${TARGET_ABI_PAIRS[@]}"; do
     abi="${pair#* }"
     echo "  -> $target ($abi)"
 
-    CARGO_PROFILE_RELEASE_LTO=thin \
-    CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 \
     "$RUST_TOOLCHAIN_CARGO" ndk \
         --target "$target" \
         --platform "$MIN_SDK_VERSION" \

@@ -403,6 +403,17 @@ mod whole_root_replacement {
         })
     }
 
+    fn store_snapshot(update: &[u8]) -> yrs::Snapshot {
+        let doc = Doc::new();
+        {
+            let mut txn = doc.transact_mut();
+            txn.apply_update(Update::decode_v1(update).unwrap())
+                .unwrap();
+        }
+        let txn = doc.transact();
+        txn.snapshot()
+    }
+
     fn state_vector_entries(update: &[u8]) -> HashMap<u64, u32> {
         let doc = Doc::new();
         {
@@ -459,8 +470,9 @@ mod whole_root_replacement {
             if expected_changed {
                 prop_assert!(
                     after_entries.get(&writer).copied().unwrap_or(0)
-                        > before_entries.get(&writer).copied().unwrap_or(0)
+                        >= before_entries.get(&writer).copied().unwrap_or(0)
                 );
+                prop_assert_ne!(store_snapshot(&after_state), store_snapshot(&base_state));
             } else {
                 prop_assert_eq!(&after_entries, &before_entries);
             }

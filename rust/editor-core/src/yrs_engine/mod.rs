@@ -58,6 +58,7 @@ pub use engine::{
     EngineCommit, EngineRenderState, InitializationMode, YrsDocumentEngine, YrsEngineConfig,
 };
 pub use error::{YrsEngineError, YrsEngineResult};
+pub(crate) use operation::LoweringRefusal;
 pub use operation::{
     Affinity, CellSelectionPoint, EditorOffsetKind, HistoryPolicy, OperationError, OperationResult,
     RenderUpdate, ResolvedPoint, ResolvedSelection, RevisionedPosition, RevisionedRange,
@@ -79,6 +80,7 @@ pub use position::{
     revisioned_position_to_relative_point, scalar_offset_to_utf16, utf16_offset_to_scalar,
     RelativePoint, RelativeSelection,
 };
+pub(crate) use position::{scalar_offset_to_byte, scalar_offset_to_byte_and_utf16};
 
 pub use snapshot::{DocumentScope, DocumentSnapshot, SNAPSHOT_FORMAT_VERSION};
 

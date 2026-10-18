@@ -87,6 +87,10 @@ fn semantic_insertion_index(children: &Fragment, position: u32) -> Option<u32> {
         .flatten()
 }
 
+fn is_zero_width_prepared_text(node: &PreparedXmlNode) -> bool {
+    matches!(node, PreparedXmlNode::Text { runs } if runs.is_empty())
+}
+
 fn prepared_clone_work(nodes: &[PreparedXmlChild]) -> Option<usize> {
     fn node_work(node: &PreparedXmlNode) -> Option<usize> {
         match node {
@@ -219,7 +223,7 @@ pub(crate) fn direct_root_wrap_metrics(
     .expect("metrics were requested for the prepared root-wrap oracle"))
 }
 
-fn first_text_doc_position(root: &Node, path: &[u32]) -> Option<u32> {
+fn first_text_doc_position(root: &Node, path: &[u32], zero_width: bool) -> Option<u32> {
     fn relative(node: &Node) -> Option<u32> {
         if node.is_text() {
             return Some(0);
@@ -245,11 +249,14 @@ fn first_text_doc_position(root: &Node, path: &[u32]) -> Option<u32> {
             .try_fold(boundary, |total, child| {
                 total.checked_add(child.node_size())
             })?;
+        if zero_width && depth + 1 == path.len() {
+            return (index <= content.child_count()).then_some(boundary);
+        }
         let Some(child) = content.child(index) else {
             // Prepared empty textblocks carry a virtual zero-width XmlText at
             // semantic child 0. Its document position is the content start.
-            return (depth + 1 == path.len() && index == 0 && content.child_count() == 0)
-                .then_some(boundary);
+            let trailing = index == content.child_count() && index == 0;
+            return (depth + 1 == path.len() && trailing).then_some(boundary);
         };
         node = child;
         if depth + 1 < path.len() {
@@ -257,88 +264,6 @@ fn first_text_doc_position(root: &Node, path: &[u32]) -> Option<u32> {
         }
     }
     boundary.checked_add(relative(node)?)
-}
-
-fn collect_prepared_handles(
-    insert_id: usize,
-    nodes: &[PreparedXmlChild],
-    semantic_root: &[u32],
-    semantic_document: &Document,
-    elements: &mut Vec<(Vec<u32>, PreparedHandle)>,
-    texts: &mut Vec<(PreparedHandle, Vec<PreparedTextRun>)>,
-) -> OperationResult<()> {
-    fn visit(
-        insert_id: usize,
-        node: &PreparedXmlNode,
-        ordinal_path: &mut Vec<usize>,
-        semantic_path: &mut Vec<u32>,
-        semantic_document: &Document,
-        elements: &mut Vec<(Vec<u32>, PreparedHandle)>,
-        texts: &mut Vec<(PreparedHandle, Vec<PreparedTextRun>)>,
-    ) -> OperationResult<()> {
-        let handle = PreparedHandle {
-            insert_id,
-            ordinal_path: ordinal_path.clone().into_boxed_slice(),
-        };
-        match node {
-            PreparedXmlNode::Text { runs } => texts.push((handle, runs.clone())),
-            PreparedXmlNode::Element { children, .. } => {
-                elements.push((semantic_path.clone(), handle));
-                if semantic_document
-                    .node_at(semantic_path)
-                    .is_some_and(Node::is_void)
-                {
-                    return Ok(());
-                }
-                for (ordinal, child) in children.iter().enumerate() {
-                    ordinal_path.push(ordinal);
-                    semantic_path.push(u32::try_from(ordinal).map_err(|_| {
-                        OperationError::engine_invariant_failed(
-                            0,
-                            None,
-                            "prepared semantic child ordinal exceeds u32",
-                        )
-                    })?);
-                    visit(
-                        insert_id,
-                        &child.node,
-                        ordinal_path,
-                        semantic_path,
-                        semantic_document,
-                        elements,
-                        texts,
-                    )?;
-                    semantic_path.pop();
-                    ordinal_path.pop();
-                }
-            }
-        }
-        Ok(())
-    }
-
-    for (ordinal, child) in nodes.iter().enumerate() {
-        let mut ordinal_path = vec![ordinal];
-        let mut semantic_path = semantic_root.to_vec();
-        if nodes.len() > 1 {
-            semantic_path.push(u32::try_from(ordinal).map_err(|_| {
-                OperationError::engine_invariant_failed(
-                    0,
-                    None,
-                    "prepared root ordinal exceeds u32",
-                )
-            })?);
-        }
-        visit(
-            insert_id,
-            &child.node,
-            &mut ordinal_path,
-            &mut semantic_path,
-            semantic_document,
-            elements,
-            texts,
-        )?;
-    }
-    Ok(())
 }
 
 fn collect_prepared_child_handles(
@@ -375,15 +300,19 @@ fn collect_prepared_child_handles(
                 {
                     return Ok(());
                 }
+                let mut semantic_ordinal = 0u32;
                 for (ordinal, child) in children.iter().enumerate() {
                     ordinal_path.push(ordinal);
-                    semantic_path.push(u32::try_from(ordinal).map_err(|_| {
-                        OperationError::engine_invariant_failed(
-                            0,
-                            None,
-                            "prepared semantic child ordinal exceeds u32",
-                        )
-                    })?);
+                    semantic_path.push(semantic_ordinal);
+                    if !is_zero_width_prepared_text(&child.node) {
+                        semantic_ordinal = semantic_ordinal.checked_add(1).ok_or_else(|| {
+                            OperationError::engine_invariant_failed(
+                                0,
+                                None,
+                                "prepared semantic child ordinal exceeds u32",
+                            )
+                        })?;
+                    }
                     visit(
                         insert_id,
                         &child.node,
@@ -401,26 +330,20 @@ fn collect_prepared_child_handles(
         Ok(())
     }
 
+    let mut semantic_index = first_semantic_index;
     for (ordinal, child) in nodes.iter().enumerate() {
         let mut ordinal_path = vec![ordinal];
         let mut semantic_path = parent_path.to_vec();
-        semantic_path.push(
-            first_semantic_index
-                .checked_add(u32::try_from(ordinal).map_err(|_| {
-                    OperationError::engine_invariant_failed(
-                        0,
-                        None,
-                        "prepared root ordinal exceeds u32",
-                    )
-                })?)
-                .ok_or_else(|| {
-                    OperationError::engine_invariant_failed(
-                        0,
-                        None,
-                        "prepared semantic child index overflow",
-                    )
-                })?,
-        );
+        semantic_path.push(semantic_index);
+        if !is_zero_width_prepared_text(&child.node) {
+            semantic_index = semantic_index.checked_add(1).ok_or_else(|| {
+                OperationError::engine_invariant_failed(
+                    0,
+                    None,
+                    "prepared semantic child index overflow",
+                )
+            })?;
+        }
         visit(
             insert_id,
             &child.node,

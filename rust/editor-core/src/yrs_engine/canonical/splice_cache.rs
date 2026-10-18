@@ -367,7 +367,11 @@ fn selected_textblock<'a>(artifact: &'a CanonicalArtifact, path: &[u32]) -> Opti
         .then_some(node)
 }
 
-fn replacement_node<'a>(mut before: &Node, mut after: &'a Node, path: &[u32]) -> Option<&'a Node> {
+pub(crate) fn replacement_node<'a>(
+    mut before: &Node,
+    mut after: &'a Node,
+    path: &[u32],
+) -> Option<&'a Node> {
     for &index in path {
         let index = usize::try_from(index).ok()?;
         if before.node_type() == "__opaque_json"
@@ -562,13 +566,8 @@ mod tests {
                     ));
             for (index, step) in steps.enumerate() {
                 let (next, _) = apply_step(&document, &step, &schema).unwrap();
-                let after = CanonicalArtifact::derive_localized(
-                    &artifact,
-                    &next,
-                    document.root().child(target).unwrap(),
-                    next.root().child(target).unwrap(),
-                )
-                .unwrap();
+                let after = CanonicalArtifact::derive_localized(&artifact, &next, &[target as u32])
+                    .unwrap();
                 let previous = cache.as_ref().unwrap();
                 let prior_buffer = previous.bytes.as_ptr();
                 let prior_path = previous.path.as_ptr();

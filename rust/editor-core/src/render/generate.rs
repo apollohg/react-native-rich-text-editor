@@ -73,7 +73,7 @@ fn walk_children(
                 elements.push(RenderElement::VoidInline {
                     node_type: child.node_type().to_string(),
                     doc_pos: *pos,
-                    attrs: child.attrs().clone(),
+                    attrs: Box::new(child.attrs().clone()),
                 });
                 *pos += child.node_size(); // 1 for void
             }
@@ -132,7 +132,7 @@ fn walk_children(
                         .and_then(serde_json::Value::as_str)
                         .map(str::to_owned),
                     depth,
-                    list_context,
+                    list_context: list_context.map(Box::new),
                 });
                 *pos += 1; // listItem open tag
                 walk_children(child, schema, elements, pos, depth + 1, None)?;
@@ -166,7 +166,7 @@ fn walk_children(
                 elements.push(RenderElement::VoidBlock {
                     node_type: child.node_type().to_string(),
                     doc_pos: *pos,
-                    attrs: child.attrs().clone(),
+                    attrs: Box::new(child.attrs().clone()),
                 });
                 *pos += child.node_size(); // 1 for void
             }
@@ -189,10 +189,11 @@ fn walk_children(
             Some(NodeRole::Inline) if child.is_void() => {
                 elements.push(RenderElement::OpaqueInlineAtom {
                     node_type: child.node_type().to_string(),
-                    label: inline_atom_label(child.node_type(), child.attrs()),
+                    label: inline_atom_label(child.node_type(), child.attrs()).into(),
                     doc_pos: *pos,
-                    attrs: child.attrs().clone(),
-                    mention_theme: inline_atom_mention_theme(child.node_type(), child.attrs()),
+                    attrs: Box::new(child.attrs().clone()),
+                    mention_theme: inline_atom_mention_theme(child.node_type(), child.attrs())
+                        .map(Box::new),
                 });
                 *pos += child.node_size();
             }
@@ -210,20 +211,21 @@ fn walk_children(
                     if is_inline {
                         elements.push(RenderElement::OpaqueInlineAtom {
                             node_type: child.node_type().to_string(),
-                            label: inline_atom_label(child.node_type(), child.attrs()),
+                            label: inline_atom_label(child.node_type(), child.attrs()).into(),
                             doc_pos: *pos,
-                            attrs: child.attrs().clone(),
+                            attrs: Box::new(child.attrs().clone()),
                             mention_theme: inline_atom_mention_theme(
                                 child.node_type(),
                                 child.attrs(),
-                            ),
+                            )
+                            .map(Box::new),
                         });
                     } else {
                         elements.push(RenderElement::OpaqueBlockAtom {
                             node_type: child.node_type().to_string(),
-                            label: inline_atom_label(child.node_type(), child.attrs()),
+                            label: inline_atom_label(child.node_type(), child.attrs()).into(),
                             doc_pos: *pos,
-                            attrs: child.attrs().clone(),
+                            attrs: Box::new(child.attrs().clone()),
                         });
                     }
                     *pos += child.node_size();

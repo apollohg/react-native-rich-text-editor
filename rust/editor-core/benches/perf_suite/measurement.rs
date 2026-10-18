@@ -190,6 +190,7 @@ fn print_json_summary(mode: BenchMode, profile: BenchProfile, results: &[BenchRe
             "selectionWidth": profile.selection_width,
             "typingBurst": profile.typing_burst,
             "editingTypingBurst": EDITING_TYPING_BURST,
+            "nativePublicationArticleBlocks": [NATIVE_PUBLICATION_ARTICLE_BLOCKS, NATIVE_PUBLICATION_ARTICLE_BLOCKS * 2, NATIVE_PUBLICATION_ARTICLE_BLOCKS * 8, NATIVE_PUBLICATION_ARTICLE_BLOCKS * 32],
             "selectionScrubPoints": profile.selection_scrub_points,
             "awarenessPeerCount": profile.awareness_peer_count,
             "opaquePayloadBytes": profile.opaque_payload_bytes,

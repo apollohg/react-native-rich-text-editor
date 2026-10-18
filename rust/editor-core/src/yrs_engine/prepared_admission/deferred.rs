@@ -476,22 +476,12 @@ impl DeferredCommandAdmission {
                 "deferred insert history evidence does not match its candidate document",
             ));
         }
-        let Some(retained_charge) = self.candidate_canonical.history_snapshot_retained_charge()
-        else {
-            return Err(OperationError::engine_invariant_failed(
-                self.request_id,
-                Some(0),
-                "deferred insert history retention accounting overflowed",
-            ));
-        };
         Ok(DeferredCommandHistoryEvidence {
             candidate_derivations,
             canonical_fingerprint,
             canonical_projection_fingerprint: self.candidate_canonical.projection_sha256(),
             canonical_serialized_len,
             canonical_text_scalar_len: self.candidate_canonical.text_scalar_len(),
-            canonical_retained_bytes: retained_charge.canonical_retained_bytes,
-            source_document_retained_bytes: retained_charge.source_document_retained_bytes,
         })
     }
 

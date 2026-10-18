@@ -975,6 +975,16 @@ fn ambiguous_wrap_in_list_keeps_the_public_proof_path() {
 
 include!("prepared_commands/format_commands.rs");
 
+include!("prepared_commands/localized_marks.rs");
+
+include!("prepared_commands/boundary_typing.rs");
+
+include!("prepared_commands/paste_root_window.rs");
+
+include!("prepared_commands/root_window_evidence.rs");
+
+include!("prepared_commands/root_window_lookup.rs");
+
 include!("prepared_commands/wrap_commands.rs");
 
 include!("prepared_commands/wrap_limits.rs");

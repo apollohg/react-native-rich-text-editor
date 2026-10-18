@@ -169,6 +169,18 @@ impl PositionMap {
         start..end
     }
 
+    pub(crate) fn block_range_for_root_children(
+        &self,
+        children: std::ops::Range<u32>,
+    ) -> std::ops::Range<usize> {
+        let blocks_before = |bound: u32| {
+            self.blocks.partition_point(|block| {
+                block.node_path.first().is_some_and(|first| *first < bound)
+            })
+        };
+        blocks_before(children.start)..blocks_before(children.end)
+    }
+
     pub(crate) fn block_doc_positions(
         &self,
         block_index: usize,

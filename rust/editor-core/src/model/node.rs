@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::model::attrs::Attrs;
 use crate::model::fragment::Fragment;
 use crate::model::mark::Mark;
 
@@ -20,55 +21,66 @@ pub(crate) fn take_deep_node_payload_clones_for_test() -> usize {
     DEEP_NODE_PAYLOAD_CLONES.replace(0)
 }
 
-/// The kind of a node determines how it behaves in the position model.
-#[derive(Debug, Clone, PartialEq)]
-enum NodeKind {
-    /// A text node: carries a string and marks, occupies `text.chars().count()`
-    /// tokens (Unicode scalar values). Has no children.
-    Text { text: String },
-    /// A void/leaf node (e.g. hardBreak, horizontalRule): occupies exactly 1
-    /// token. Has no children.
-    Void,
-    /// A regular element node (e.g. doc, paragraph, list): occupies
-    /// `1 (open) + content.size() + 1 (close)` tokens.
-    Element { content: Fragment },
+const TEXT_NODE_TYPE: &str = "text";
+
+#[derive(Debug)]
+enum NodeData {
+    Text {
+        text: String,
+        marks: Vec<Mark>,
+    },
+    Void {
+        node_type: String,
+        attrs: Attrs,
+    },
+    Element {
+        node_type: String,
+        attrs: Attrs,
+        content: Fragment,
+    },
 }
 
-/// A node in the document tree.
-///
-/// There are three kinds:
-/// - **Text**: inline content with optional marks, measured in Unicode scalars
-/// - **Void**: atomic nodes like hard breaks, always 1 token
-/// - **Element**: container nodes with a content fragment
-#[derive(Debug)]
-struct NodeData {
-    node_type: String,
-    attrs: HashMap<String, serde_json::Value>,
-    marks: Vec<Mark>,
-    kind: NodeKind,
-}
+const _: () = assert!(
+    std::mem::size_of::<NodeData>()
+        == std::mem::size_of::<String>()
+            + std::mem::size_of::<Attrs>()
+            + std::mem::size_of::<Fragment>()
+);
 
 impl Clone for NodeData {
     fn clone(&self) -> Self {
         #[cfg(test)]
         DEEP_NODE_PAYLOAD_CLONES.set(DEEP_NODE_PAYLOAD_CLONES.get().saturating_add(1));
-        Self {
-            node_type: self.node_type.clone(),
-            attrs: crate::boundary::clone_json_object_stack_safe(&self.attrs),
-            marks: self.marks.clone(),
-            kind: self.kind.clone(),
+        match self {
+            Self::Text { text, marks } => Self::Text {
+                text: text.clone(),
+                marks: marks.clone(),
+            },
+            Self::Void { node_type, attrs } => Self::Void {
+                node_type: node_type.clone(),
+                attrs: attrs.clone(),
+            },
+            Self::Element {
+                node_type,
+                attrs,
+                content,
+            } => Self::Element {
+                node_type: node_type.clone(),
+                attrs: attrs.clone(),
+                content: content.clone(),
+            },
         }
     }
 }
 
 impl NodeData {
     fn take_recursive_payloads(&mut self, pending_nodes: &mut Vec<Node>) {
-        for value in self.attrs.values_mut() {
-            crate::boundary::drop_json_value_stack_safe(std::mem::take(value));
-        }
-        self.marks.clear();
-        if let NodeKind::Element { content } = &mut self.kind {
-            pending_nodes.extend(content.take_children_for_drop());
+        match self {
+            Self::Text { marks, .. } => marks.clear(),
+            Self::Void { .. } => {}
+            Self::Element { content, .. } => {
+                pending_nodes.extend(content.take_children_for_drop());
+            }
         }
     }
 }
@@ -120,13 +132,14 @@ impl PartialEq for Node {
             {
                 return false;
             }
-            match (&left.data.kind, &right.data.kind) {
-                (NodeKind::Text { text: left }, NodeKind::Text { text: right })
+            match (left.data.as_ref(), right.data.as_ref()) {
+                (NodeData::Text { text: left, .. }, NodeData::Text { text: right, .. })
                     if left == right => {}
-                (NodeKind::Void, NodeKind::Void) => {}
-                (NodeKind::Element { content: left }, NodeKind::Element { content: right })
-                    if left.child_count() == right.child_count() =>
-                {
+                (NodeData::Void { .. }, NodeData::Void { .. }) => {}
+                (
+                    NodeData::Element { content: left, .. },
+                    NodeData::Element { content: right, .. },
+                ) if left.child_count() == right.child_count() => {
                     pending.extend(left.iter().zip(right.iter()));
                 }
                 _ => return false,
@@ -142,23 +155,16 @@ impl Node {
     /// Create a text node with the given content and marks.
     pub fn text(text: String, marks: Vec<Mark>) -> Self {
         Self {
-            data: Arc::new(NodeData {
-                node_type: "text".to_string(),
-                attrs: HashMap::new(),
-                marks,
-                kind: NodeKind::Text { text },
-            }),
+            data: Arc::new(NodeData::Text { text, marks }),
         }
     }
 
     /// Create a void (atomic) node like hardBreak or horizontalRule.
     pub fn void(node_type: String, attrs: HashMap<String, serde_json::Value>) -> Self {
         Self {
-            data: Arc::new(NodeData {
+            data: Arc::new(NodeData::Void {
                 node_type,
-                attrs,
-                marks: Vec::new(),
-                kind: NodeKind::Void,
+                attrs: Attrs::new(attrs),
             }),
         }
     }
@@ -170,43 +176,51 @@ impl Node {
         content: Fragment,
     ) -> Self {
         Self {
-            data: Arc::new(NodeData {
+            data: Arc::new(NodeData::Element {
                 node_type,
-                attrs,
-                marks: Vec::new(),
-                kind: NodeKind::Element { content },
+                attrs: Attrs::new(attrs),
+                content,
             }),
         }
     }
 
     /// The node type name (e.g. "paragraph", "text", "hardBreak").
     pub fn node_type(&self) -> &str {
-        &self.data.node_type
+        match self.data.as_ref() {
+            NodeData::Text { .. } => TEXT_NODE_TYPE,
+            NodeData::Void { node_type, .. } | NodeData::Element { node_type, .. } => node_type,
+        }
     }
 
     /// The node's attributes.
     pub fn attrs(&self) -> &HashMap<String, serde_json::Value> {
-        &self.data.attrs
+        match self.data.as_ref() {
+            NodeData::Text { .. } => Attrs::empty(),
+            NodeData::Void { attrs, .. } | NodeData::Element { attrs, .. } => attrs.get(),
+        }
     }
 
     /// The marks applied to this node (only meaningful for text nodes).
     pub fn marks(&self) -> &[Mark] {
-        &self.data.marks
+        match self.data.as_ref() {
+            NodeData::Text { marks, .. } => marks,
+            NodeData::Void { .. } | NodeData::Element { .. } => &[],
+        }
     }
 
     /// Whether this is a text node.
     pub fn is_text(&self) -> bool {
-        matches!(&self.data.kind, NodeKind::Text { .. })
+        matches!(self.data.as_ref(), NodeData::Text { .. })
     }
 
     /// Whether this is a void (atomic) node.
     pub fn is_void(&self) -> bool {
-        matches!(&self.data.kind, NodeKind::Void)
+        matches!(self.data.as_ref(), NodeData::Void { .. })
     }
 
     /// Whether this is an element (container) node.
     pub fn is_element(&self) -> bool {
-        matches!(&self.data.kind, NodeKind::Element { .. })
+        matches!(self.data.as_ref(), NodeData::Element { .. })
     }
 
     /// The token size of this node in the ProseMirror position model.
@@ -215,10 +229,10 @@ impl Node {
     /// - Void nodes: always 1
     /// - Element nodes: 1 (open) + content size + 1 (close)
     pub fn node_size(&self) -> u32 {
-        match &self.data.kind {
-            NodeKind::Text { text } => text.chars().count() as u32,
-            NodeKind::Void => 1,
-            NodeKind::Element { content } => 1 + content.size() + 1,
+        match self.data.as_ref() {
+            NodeData::Text { text, .. } => text.chars().count() as u32,
+            NodeData::Void { .. } => 1,
+            NodeData::Element { content, .. } => 1 + content.size() + 1,
         }
     }
 
@@ -226,10 +240,10 @@ impl Node {
     /// For text nodes this equals `node_size()`. For void nodes this is 0.
     /// For element nodes this is the fragment size.
     pub fn content_size(&self) -> u32 {
-        match &self.data.kind {
-            NodeKind::Text { text } => text.chars().count() as u32,
-            NodeKind::Void => 0,
-            NodeKind::Element { content } => content.size(),
+        match self.data.as_ref() {
+            NodeData::Text { text, .. } => text.chars().count() as u32,
+            NodeData::Void { .. } => 0,
+            NodeData::Element { content, .. } => content.size(),
         }
     }
 
@@ -238,10 +252,10 @@ impl Node {
         let mut output = String::new();
         let mut pending = vec![self];
         while let Some(node) = pending.pop() {
-            match &node.data.kind {
-                NodeKind::Text { text } => output.push_str(text),
-                NodeKind::Void => {}
-                NodeKind::Element { content } => {
+            match node.data.as_ref() {
+                NodeData::Text { text, .. } => output.push_str(text),
+                NodeData::Void { .. } => {}
+                NodeData::Element { content, .. } => {
                     pending.extend(content.iter().rev());
                 }
             }
@@ -251,32 +265,32 @@ impl Node {
 
     /// Number of direct children. Text and void nodes have 0 children.
     pub fn child_count(&self) -> usize {
-        match &self.data.kind {
-            NodeKind::Element { content } => content.child_count(),
+        match self.data.as_ref() {
+            NodeData::Element { content, .. } => content.child_count(),
             _ => 0,
         }
     }
 
     /// Access a direct child by index.
     pub fn child(&self, index: usize) -> Option<&Node> {
-        match &self.data.kind {
-            NodeKind::Element { content } => content.child(index),
+        match self.data.as_ref() {
+            NodeData::Element { content, .. } => content.child(index),
             _ => None,
         }
     }
 
     /// Access the content fragment. Returns `None` for text and void nodes.
     pub fn content(&self) -> Option<&Fragment> {
-        match &self.data.kind {
-            NodeKind::Element { content } => Some(content),
+        match self.data.as_ref() {
+            NodeData::Element { content, .. } => Some(content),
             _ => None,
         }
     }
 
     /// The raw text of a text node. Returns `None` for non-text nodes.
     pub fn text_str(&self) -> Option<&str> {
-        match &self.data.kind {
-            NodeKind::Text { text } => Some(text.as_str()),
+        match self.data.as_ref() {
+            NodeData::Text { text, .. } => Some(text.as_str()),
             _ => None,
         }
     }
@@ -295,65 +309,77 @@ impl Node {
             self.data = Arc::new(self.data.as_ref().clone());
         }
         let data = Arc::get_mut(&mut self.data).expect("replacement owns its ancestor payload");
-        if !shared {
-            // Rebuilding normalizes metadata capacity even on an owned ancestor.
-            let node_type = data.node_type.to_string();
-            let attrs = crate::boundary::clone_json_object_stack_safe(&data.attrs);
-            let kind = std::mem::replace(&mut data.kind, NodeKind::Void);
-            *data = NodeData {
-                node_type,
-                attrs,
-                marks: Vec::new(),
-                kind,
-            };
-        }
-        let NodeKind::Element { content } = &mut data.kind else {
+        let NodeData::Element {
+            node_type,
+            attrs,
+            content,
+        } = data
+        else {
             panic!("non-leaf node in path must be an element");
         };
+        if !shared {
+            // Rebuilding normalizes metadata capacity even on an owned ancestor.
+            *node_type = node_type.as_str().to_owned();
+            *attrs = attrs.clone();
+        }
         content.replace_node_at_path(path, replacement);
+    }
+
+    pub(crate) fn history_snapshot_retained_bytes_beyond(&self, base: &Self) -> Option<usize> {
+        if self.shares_storage_with(base) {
+            return Some(0);
+        }
+        let (Some(content), Some(base_content)) = (self.content(), base.content()) else {
+            return self.history_snapshot_retained_bytes();
+        };
+        let window = crate::model::unshared_window(
+            content.children(),
+            base_content.children(),
+            Self::shares_storage_with,
+        );
+        content.children()[window].iter().try_fold(
+            self.history_snapshot_own_retained_bytes()?,
+            |total, child| total.checked_add(child.history_snapshot_retained_bytes()?),
+        )
     }
 
     pub(crate) fn history_snapshot_retained_bytes(&self) -> Option<usize> {
         let mut total = 0usize;
         let mut pending = vec![self];
         while let Some(node) = pending.pop() {
-            total = total
-                .checked_add(crate::model::arc_allocation_retained_bytes(
-                    std::mem::size_of::<NodeData>(),
-                )?)?
-                .checked_add(node.data.node_type.capacity())?;
-            total = total.checked_add(crate::model::hash_table_retained_bytes::<
-                String,
-                serde_json::Value,
-            >(node.data.attrs.capacity())?)?;
-            for (key, value) in &node.data.attrs {
-                total = total
-                    .checked_add(key.capacity())?
-                    .checked_add(crate::model::json_value_retained_bytes(value)?)?;
-            }
-            total = total.checked_add(
-                node.data
-                    .marks
-                    .capacity()
-                    .checked_mul(std::mem::size_of::<Mark>())?,
-            )?;
-            for mark in &node.data.marks {
-                total = total.checked_add(mark.history_snapshot_clone_retained_bytes()?)?;
-            }
-            match &node.data.kind {
-                NodeKind::Text { text } => total = total.checked_add(text.capacity())?,
-                NodeKind::Void => {}
-                NodeKind::Element { content } => {
-                    total = total.checked_add(
-                        content
-                            .children_capacity()
-                            .checked_mul(std::mem::size_of::<Node>())?,
-                    )?;
-                    pending.extend(content.iter());
-                }
+            total = total.checked_add(node.history_snapshot_own_retained_bytes()?)?;
+            if let NodeData::Element { content, .. } = node.data.as_ref() {
+                pending.extend(content.iter());
             }
         }
         Some(total)
+    }
+
+    pub(crate) fn history_snapshot_own_retained_bytes(&self) -> Option<usize> {
+        let total = crate::model::arc_allocation_retained_bytes(std::mem::size_of::<NodeData>())?;
+        match self.data.as_ref() {
+            NodeData::Text { text, marks } => marks.iter().try_fold(
+                total
+                    .checked_add(text.capacity())?
+                    .checked_add(marks.capacity().checked_mul(std::mem::size_of::<Mark>())?)?,
+                |total, mark| total.checked_add(mark.history_snapshot_clone_retained_bytes()?),
+            ),
+            NodeData::Void { node_type, attrs } => total
+                .checked_add(node_type.capacity())?
+                .checked_add(attrs.retained_bytes()?),
+            NodeData::Element {
+                node_type,
+                attrs,
+                content,
+            } => total
+                .checked_add(node_type.capacity())?
+                .checked_add(attrs.retained_bytes()?)?
+                .checked_add(
+                    content
+                        .children_capacity()
+                        .checked_mul(std::mem::size_of::<Node>())?,
+                ),
+        }
     }
 }
 

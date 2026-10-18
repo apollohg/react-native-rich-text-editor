@@ -1,0 +1,116 @@
+--- a/src/branch.rs
++++ b/src/branch.rs
+@@ -1,4 +1,5 @@
+-use crate::block::{Block, Item, ItemContent, ItemPosition, ItemPtr, Prelim};
++use crate::block::{Block, ClientID, Item, ItemContent, ItemPosition, ItemPtr, Prelim};
++use crate::doc::OffsetKind;
+ use crate::types::array::ArrayEvent;
+ use crate::types::map::MapEvent;
+ use crate::types::text::TextEvent;
+@@ -220,6 +221,106 @@
+ }
+ 
+ impl Branch {
++    pub fn visit_text_range_deletion_scope<F: FnMut(ClientID, u32)>(
++        &self,
++        offset_kind: OffsetKind,
++        index: u32,
++        len: u32,
++        visit: &mut F,
++    ) -> usize {
++        let end = index.saturating_add(len);
++        let mut position = 0u32;
++        let mut walked = 0usize;
++        let mut pending = Vec::new();
++        let mut next = self.start;
++        while let Some(item) = next {
++            walked += 1;
++            next = item.right;
++            if item.is_deleted() {
++                continue;
++            }
++            if !item.is_countable() {
++                if position >= index {
++                    pending.push(item);
++                }
++            } else if position >= end {
++                if matches!(item.content, ItemContent::String(_) | ItemContent::Embed(_)) {
++                    break;
++                }
++            } else {
++                let item_end = position.saturating_add(item.content_len(offset_kind));
++                if item_end > index {
++                    pending.push(item);
++                }
++                position = item_end;
++            }
++        }
++        walked + Self::visit_deletion_subtrees(pending, visit)
++    }
++
++    pub fn visit_child_range_deletion_scope<F: FnMut(ClientID, u32)>(
++        &self,
++        index: u32,
++        count: u32,
++        visit: &mut F,
++    ) -> usize {
++        let end = index.saturating_add(count);
++        let mut position = 0u32;
++        let mut walked = 0usize;
++        let mut pending = Vec::new();
++        let mut next = self.start;
++        while position < end {
++            let Some(item) = next else {
++                break;
++            };
++            walked += 1;
++            next = item.right;
++            if item.is_deleted() || !item.is_countable() {
++                continue;
++            }
++            let item_end = position.saturating_add(item.len());
++            if item_end > index {
++                pending.push(item);
++            }
++            position = item_end;
++        }
++        walked + Self::visit_deletion_subtrees(pending, visit)
++    }
++
++    pub fn visit_map_entry_deletion_scope<F: FnMut(ClientID, u32)>(
++        &self,
++        key: &str,
++        visit: &mut F,
++    ) -> usize {
++        match self.map.get(key) {
++            Some(item) => Self::visit_deletion_subtrees(vec![*item], visit),
++            None => 0,
++        }
++    }
++
++    fn visit_deletion_subtrees<F: FnMut(ClientID, u32)>(
++        mut pending: Vec<ItemPtr>,
++        visit: &mut F,
++    ) -> usize {
++        let mut walked = 0usize;
++        while let Some(item) = pending.pop() {
++            walked += 1;
++            if item.is_deleted() {
++                continue;
++            }
++            visit(item.id.client, item.len());
++            if let ItemContent::Type(inner) = &item.content {
++                let mut next = inner.start;
++                while let Some(child) = next {
++                    pending.push(child);
++                    next = child.right;
++                }
++                pending.extend(inner.map.values().copied());
++            }
++        }
++        walked
++    }
++
+     pub fn new(type_ref: TypeRef) -> Box<Self> {
+         Box::new(Self {
+             start: None,

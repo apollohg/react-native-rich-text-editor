@@ -50,35 +50,8 @@ impl YrsDocumentEngine {
                 self.yrs_state_epoch,
                 self.revision,
             );
-        let staged_lookup_seed = self
-            .prepared_candidate_cache
-            .as_ref()
-            .filter(|cache| {
-                cache.document_revision == self.revision
-                    && cache.yrs_state_epoch == self.yrs_state_epoch
-            })
-            .and_then(|cache| cache.staged_lookup_seed.as_ref())
-            .filter(|seed| {
-                seed.matches_canonical_artifact(&state.canonical_artifact)
-                    && seed.matches(
-                        &txn,
-                        &fragment,
-                        &state.document,
-                        &self.resource_limits,
-                        &self.editing_limits,
-                        self.max_length,
-                        &self.schema_fingerprint,
-                        self.yrs_state_epoch,
-                        self.revision,
-                    )
-            })
-            .cloned();
         let lookup_seed = if installed_seed_matches {
             Arc::clone(&state.mutation_lookup_seed)
-        } else if let Some(seed) = staged_lookup_seed {
-            #[cfg(test)]
-            yrs_engine::observability::record_staged_seed_preparation();
-            seed
         } else {
             let target_capacity_hint = state
                 .localized_text_index
@@ -210,6 +183,98 @@ impl YrsDocumentEngine {
         #[cfg(test)]
         yrs_engine::observability::record_staged_identity_materialization();
         Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn root_window_lookup_splice<C: ReadTxn, N: ReadTxn>(
+        &self,
+        request_id: u64,
+        current_txn: &C,
+        current_fragment: &XmlFragmentRef,
+        next_txn: &N,
+        next_fragment: &XmlFragmentRef,
+        preview: &Document,
+        derivations: Option<&yrs_engine::compiler::CompiledDocumentDerivations>,
+        next_yrs_state_epoch: u64,
+        next_document_revision: u64,
+    ) -> yrs_engine::OperationResult<
+        Option<(
+            yrs_engine::mutation::MutationLookupSeed,
+            Option<Option<yrs_engine::block_branch_index::BlockBranchIndex>>,
+        )>,
+    > {
+        let Some(state) = self.derived_state.as_ref() else {
+            return Ok(None);
+        };
+        let (Some(derivations), Some(index)) = (derivations, state.block_branch_index.as_ref())
+        else {
+            return Ok(None);
+        };
+        if state.mutation_lookup_seed.is_unavailable() {
+            return Ok(None);
+        }
+        let Some(window) = yrs_engine::derived_state::RootChildWindow::between(
+            state.document.root(),
+            preview.root(),
+        ) else {
+            return Ok(None);
+        };
+        let (Ok(from), Ok(old_to), Ok(new_to)) = (
+            u32::try_from(window.from()),
+            u32::try_from(window.old_to()),
+            u32::try_from(window.new_to()),
+        ) else {
+            return Ok(None);
+        };
+        let old_blocks = state
+            .position_map
+            .block_range_for_root_children(from..old_to);
+        let new_blocks = derivations
+            .position_map
+            .block_range_for_root_children(from..new_to);
+        let start_position = preview.root().content().and_then(|children| {
+            children
+                .children()
+                .get(..window.from())?
+                .iter()
+                .try_fold(0u32, |position, child| {
+                    position.checked_add(child.node_size())
+                })
+        });
+        let Some(start_position) = start_position.filter(|_| old_blocks.start == new_blocks.start)
+        else {
+            return Ok(None);
+        };
+        let mut capture = Some(
+            yrs_engine::block_branch_index::BlockBranchIndexCapture::for_root_window(
+                &derivations.position_map,
+                new_blocks.clone(),
+                from,
+                start_position,
+            ),
+        );
+        let seed = state.mutation_lookup_seed.with_root_window_replaced(
+            request_id,
+            current_txn,
+            current_fragment,
+            next_txn,
+            next_fragment,
+            &window,
+            &self.schema,
+            &mut capture,
+            preview,
+            &self.resource_limits,
+            &self.editing_limits,
+            self.max_length,
+            &self.schema_fingerprint,
+            next_yrs_state_epoch,
+            next_document_revision,
+        )?;
+        let branch_index = capture
+            .and_then(|capture| capture.finish_root_window(new_blocks))
+            .and_then(|branches| index.with_root_window_replaced(old_blocks, &window, branches))
+            .map(Some);
+        Ok(Some((seed, branch_index)))
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -689,6 +689,39 @@ fn insertable_nodes_validate_the_untouched_suffix() {
 }
 
 #[test]
+fn insertable_nodes_share_parent_matching_across_equivalent_candidates() {
+    use crate::schema::content_rule::{WorkBudget, DEFAULT_RUNTIME_WORK_LIMIT};
+    const SIBLINGS: usize = 384;
+    const MAX_WORK_PER_SIBLING: usize = 16;
+    let schema = tiptap_schema();
+    let siblings = vec!["paragraph"; SIBLINGS];
+    let budget = WorkBudget::new(DEFAULT_RUNTIME_WORK_LIMIT);
+    let mut result = schema
+        .insertable_nodes_at_with_budget(
+            schema.node("doc").unwrap(),
+            &siblings[..SIBLINGS / 2],
+            &siblings[SIBLINGS / 2..],
+            &budget,
+        )
+        .expect("real preset insertability should fit its bounded work budget");
+    result.sort();
+    assert_eq!(
+        result,
+        [
+            "blockquote",
+            "bulletList",
+            "horizontalRule",
+            "image",
+            "orderedList",
+            "taskList"
+        ]
+    );
+    let work = budget.consumed(DEFAULT_RUNTIME_WORK_LIMIT);
+    assert!(work <= SIBLINGS * MAX_WORK_PER_SIBLING,
+        "parent/suffix proof must be shared across six equivalent block candidates: {work} work units for {SIBLINGS} siblings");
+}
+
+#[test]
 fn preset_null_attribute_defaults_are_explicit_defaults() {
     let schema = tiptap_schema();
     let alt = &schema.node("image").unwrap().attrs["alt"];

@@ -6,12 +6,246 @@ use crate::yrs_engine::TypedCommand;
 const OWNER: u64 = 15_001;
 const REQUEST: u64 = 15_002;
 const EDITOR: &str = "15000";
+const PROJECTION_PROSE_BLOCKS: usize = 48;
+const PROJECTION_PROSE_TEXT: &str = "native frame prose publication ";
+
+fn full_projection_json(session: &mut crate::session::EditorSession) -> serde_json::Value {
+    let (snapshot, _) = super::render::root_snapshot(session, EDITOR, None, None).unwrap();
+    serde_json::from_str::<serde_json::Value>(&snapshot).unwrap()["renderBlocks"].take()
+}
+
+fn fresh_projection(
+    session: &crate::session::EditorSession,
+) -> Vec<super::render::RootRenderBlock> {
+    super::render::root_projection(&session.engine, None)
+        .unwrap()
+        .into_retained()
+}
 
 fn frame(
     session: &mut crate::session::EditorSession,
     owner: Option<u64>,
 ) -> super::types::FfiNativeRenderFrame {
     build_native_frame(session, EDITOR, owner, None).unwrap()
+}
+
+#[test]
+fn native_frame_same_revision_shares_the_retained_root_projection() {
+    let mut session = session_with_document(&serde_json::json!({
+        "type": "doc",
+        "content": (0..PROJECTION_PROSE_BLOCKS).map(|block| serde_json::json!({
+            "type": "paragraph",
+            "content": [{"type": "text", "text": format!("{block}: {PROJECTION_PROSE_TEXT}")}]
+        })).collect::<Vec<_>>()
+    }));
+    frame(&mut session, Some(OWNER));
+    let retained = session.native_render_cursor(OWNER).unwrap();
+    let borrowed = session.native_render_cursor(OWNER).unwrap();
+    assert_eq!(
+        retained.root_projection.as_ptr(),
+        borrowed.root_projection.as_ptr(),
+        "reading a native cursor must share its document-sized JSON projection"
+    );
+    super::render::ROOT_PROJECTION_BUILDS.set(0);
+    let same = frame(&mut session, Some(OWNER));
+    assert_eq!(super::render::ROOT_PROJECTION_BUILDS.get(), 0);
+    assert_eq!(
+        retained.root_projection.as_ptr(),
+        session
+            .native_render_cursor(OWNER)
+            .unwrap()
+            .root_projection
+            .as_ptr(),
+        "same-revision selection publication must retain the shared projection"
+    );
+    let same: serde_json::Value = serde_json::from_str(&same.snapshot_json).unwrap();
+    assert_eq!(same["renderBlocks"], serde_json::Value::Null);
+    assert_eq!(same["renderPatch"]["deleteCount"], 0);
+    assert_eq!(same["renderPatch"]["renderBlocks"], serde_json::json!([]));
+    assert_eq!(
+        same["renderPatch"]["startIndex"],
+        retained.root_projection.len()
+    );
+}
+
+#[test]
+fn native_frame_prose_edit_serializes_only_the_changed_root_block() {
+    let mut session = session_with_document(&serde_json::json!({
+        "type": "doc",
+        "content": (0..PROJECTION_PROSE_BLOCKS).map(|block| serde_json::json!({
+            "type": "paragraph",
+            "content": [{"type": "text", "text": format!("{block}: {PROJECTION_PROSE_TEXT}") }]
+        })).collect::<Vec<_>>()
+    }));
+    let first = frame(&mut session, Some(OWNER));
+    let first: serde_json::Value = serde_json::from_str(&first.snapshot_json).unwrap();
+    let mut projected = first["renderBlocks"].as_array().unwrap().clone();
+    let retained = session.native_render_cursor(OWNER).unwrap();
+    let old_projection = std::sync::Arc::downgrade(&retained.root_projection);
+    native_edit(&mut session, REQUEST, 0, "🦀");
+    super::render::ROOT_BLOCK_SERIALIZATIONS.set(0);
+    let next = frame(&mut session, Some(OWNER));
+    assert_eq!(
+        super::render::ROOT_BLOCK_SERIALIZATIONS.get(),
+        1,
+        "a local prose edit must reuse all unchanged root block publications"
+    );
+    let next: serde_json::Value = serde_json::from_str(&next.snapshot_json).unwrap();
+    let patch = &next["renderPatch"];
+    let start = patch["startIndex"].as_u64().unwrap() as usize;
+    let delete = patch["deleteCount"].as_u64().unwrap() as usize;
+    projected.splice(
+        start..start + delete,
+        patch["renderBlocks"].as_array().unwrap().clone(),
+    );
+    let current = session.native_render_cursor(OWNER).unwrap();
+    assert_ne!(retained.root_projection[0], current.root_projection[0]);
+    assert_eq!(
+        retained.root_projection[1..],
+        current.root_projection[1..],
+        "unchanged blocks must keep their retained publication digests"
+    );
+    assert_eq!(
+        serde_json::Value::Array(projected),
+        full_projection_json(&mut session)
+    );
+    let current_projection = std::sync::Arc::downgrade(&current.root_projection);
+    drop(retained);
+    assert!(
+        old_projection.upgrade().is_none(),
+        "reused blocks must not retain obsolete projection vectors"
+    );
+    drop(current);
+    session.release_position_epoch_owner(OWNER);
+    assert!(
+        current_projection.upgrade().is_none(),
+        "releasing the native owner must free its projection"
+    );
+}
+
+#[test]
+fn root_publication_does_not_extend_render_payload_ownership() {
+    let mut session = session_with_document(&serde_json::json!({
+        "type":"doc", "content":[{"type":"paragraph", "content":[{"type":"text", "text":PROJECTION_PROSE_TEXT}]}]
+    }));
+    frame(&mut session, Some(OWNER));
+    let cached = session.engine.cached_render_blocks().unwrap();
+    let source = cached.root_blocks().next().unwrap();
+    assert_eq!(std::sync::Arc::strong_count(source), 1,
+        "serialized publication must not become another owner of render payloads with guarded drop semantics");
+}
+
+#[test]
+fn native_frame_builds_the_root_projection_once_per_published_revision() {
+    let mut session = session_with_document(&two_table_document());
+    super::render::ROOT_PROJECTION_BUILDS.set(0);
+    let first = frame(&mut session, Some(OWNER));
+    assert_eq!(
+        super::render::ROOT_PROJECTION_BUILDS.get(),
+        1,
+        "the first publication must retain the projection it already serialized"
+    );
+    let first: serde_json::Value = serde_json::from_str(&first.snapshot_json).unwrap();
+    let mut projected = first["renderBlocks"].as_array().unwrap().clone();
+    native_edit(&mut session, REQUEST, 0, "🦀");
+    super::render::ROOT_PROJECTION_BUILDS.set(0);
+    let next = frame(&mut session, Some(OWNER));
+    assert_eq!(
+        super::render::ROOT_PROJECTION_BUILDS.get(),
+        1,
+        "a prose edit must build one projection and reuse it for cursor retention"
+    );
+    let next: serde_json::Value = serde_json::from_str(&next.snapshot_json).unwrap();
+    let patch = &next["renderPatch"];
+    let start = patch["startIndex"].as_u64().unwrap() as usize;
+    let delete = patch["deleteCount"].as_u64().unwrap() as usize;
+    projected.splice(
+        start..start + delete,
+        patch["renderBlocks"].as_array().unwrap().clone(),
+    );
+    assert_eq!(
+        serde_json::Value::Array(projected),
+        full_projection_json(&mut session)
+    );
+    assert_eq!(
+        *session.native_render_cursor(OWNER).unwrap().root_projection,
+        fresh_projection(&session),
+        "the cursor must retain exactly the projection published by the patch"
+    );
+}
+
+#[test]
+fn rejected_native_frame_preserves_the_existing_projection_cursor() {
+    let mut session = session_with_document(&two_table_document());
+    let first = frame(&mut session, Some(OWNER));
+    let retained = session.native_render_cursor(OWNER).unwrap();
+    let limit = crate::position_epoch::PositionEpochLimits::default().max_owners as u64;
+    for owner in 0..limit - 1 {
+        session
+            .pin_position_epoch(owner, session.engine.revision())
+            .unwrap();
+    }
+    session
+        .engine
+        .apply_command(REQUEST, TypedCommand::InsertText { text: "x".into() })
+        .unwrap();
+    let error = build_native_frame(&mut session, EDITOR, Some(limit), None).unwrap_err();
+    assert_eq!(error.code, "POSITION_EPOCH_LIMIT_EXCEEDED");
+    assert!(session.native_render_cursor(limit).is_none());
+    let after = session.native_render_cursor(OWNER).unwrap();
+    assert_eq!(retained.document_revision, after.document_revision);
+    assert_eq!(
+        retained.root_projection.as_ptr(),
+        after.root_projection.as_ptr(),
+        "an unpublishable frame must leave the previous cursor intact"
+    );
+    let next = frame(&mut session, Some(OWNER));
+    let next: serde_json::Value = serde_json::from_str(&next.snapshot_json).unwrap();
+    let first: serde_json::Value = serde_json::from_str(&first.snapshot_json).unwrap();
+    assert_eq!(
+        next["renderPatch"]["baseDocumentVersion"],
+        first["documentVersion"]
+    );
+}
+#[test]
+fn native_frame_publishes_its_position_epoch_beside_the_exact_commit_snapshot() {
+    const COMMIT_SNAPSHOT_KEYS: [&str; 9] = [
+        "activeState",
+        "documentIsEmpty",
+        "documentVersion",
+        "historyState",
+        "renderBlocks",
+        "renderPatch",
+        "scalarLength",
+        "selection",
+        "stateRevision",
+    ];
+    let mut session = session_with_document(&two_table_document());
+    for owner in [None, Some(OWNER)] {
+        let published = frame(&mut session, owner);
+        let snapshot: serde_json::Value = serde_json::from_str(&published.snapshot_json).unwrap();
+        let mut keys: Vec<&str> = snapshot
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(keys, COMMIT_SNAPSHOT_KEYS, "owner {owner:?}: snapshot keys");
+        match owner {
+            None => assert_eq!(published.position_epoch, None, "unowned frames pin nothing"),
+            Some(_) => {
+                let epoch = published
+                    .position_epoch
+                    .expect("an owned frame publishes its position epoch");
+                assert_eq!(
+                    epoch.parse::<u64>().map(|value| value.to_string()),
+                    Ok(epoch.clone()),
+                    "the epoch is a canonical decimal u64"
+                );
+            }
+        }
+    }
 }
 
 #[test]
@@ -92,6 +326,17 @@ fn native_edit(
     block: usize,
     text: &str,
 ) {
+    native_text_intent(session, request, "insertText", block, 0, text);
+}
+
+fn native_text_intent(
+    session: &mut crate::session::EditorSession,
+    request: u64,
+    intent: &str,
+    block: usize,
+    replaced_scalars: u32,
+    text: &str,
+) {
     let map = session.engine.position_map().unwrap();
     let scalar = map.effective_scalar_start(block) + map.block(block).unwrap().scalar_prefix_len;
     let epoch = session
@@ -99,7 +344,7 @@ fn native_edit(
         .unwrap();
     crate::native_transaction_bridge::NativeTransactionBridge::new(session).submit_native_intent(&serde_json::json!({
         "version":1,"requestId":request.to_string(),"ownerId":OWNER.to_string(),"positionEpoch":epoch.to_string(),
-        "intent":{"type":"insertText","anchor":scalar,"head":scalar,"text":text}
+        "intent":{"type":intent,"anchor":scalar,"head":scalar + replaced_scalars,"text":text}
     }).to_string()).unwrap();
 }
 
@@ -923,22 +1168,147 @@ fn native_frame_single_cell_offsets_stop_at_the_next_boundary_and_bulk_offsets_s
 
 #[test]
 fn replacement_keeps_canonical_json_deferred_through_first_native_frame() {
-    use crate::yrs_engine::observability::{reset_full_pass_counts_for_test, take_full_pass_counts_for_test};
     use crate::test_support::large_table_fixture::plain_table_document;
+    use crate::yrs_engine::observability::{
+        reset_full_pass_counts_for_test, take_full_pass_counts_for_test,
+    };
     let mut session = session_with_document(&two_table_document());
     let source = plain_table_document(1000, 20);
     reset_full_pass_counts_for_test();
-    session.replace_document_json(REQUEST, &source.to_string(),
-        crate::yrs_engine::ReplacementHistory::ResetAndClear).unwrap();
+    session
+        .replace_document_json(
+            REQUEST,
+            &source.to_string(),
+            crate::yrs_engine::ReplacementHistory::ResetAndClear,
+        )
+        .unwrap();
     let first = frame(&mut session, Some(OWNER));
     assert_eq!(first.tables.kind, FfiTableFrameKind::Full);
     assert_eq!(first.tables.tables.len(), 1);
     let counts = take_full_pass_counts_for_test();
-    assert_eq!(counts.canonical_projections, 0,
-        "replacement and its first frame must leave the canonical tree deferred: {counts:?}");
-    assert_eq!(counts.canonical_hashes, 1,
-        "the existing over-budget history fallback still hashes eagerly");
+    assert_eq!(
+        counts.canonical_projections, 0,
+        "replacement and its first frame must leave the canonical tree deferred: {counts:?}"
+    );
+    assert_eq!(
+        counts.canonical_hashes, 1,
+        "the existing over-budget history fallback still hashes eagerly"
+    );
     assert_eq!(session.get_json().unwrap(), source);
-    assert_eq!(take_full_pass_counts_for_test().canonical_projections, 1,
-        "explicit export materializes the canonical JSON");
+    assert_eq!(
+        take_full_pass_counts_for_test().canonical_projections,
+        1,
+        "explicit export materializes the canonical JSON"
+    );
+}
+
+fn apply_client_patch(
+    client: &mut Vec<serde_json::Value>,
+    snapshot: &serde_json::Value,
+    previous_full: &serde_json::Value,
+    next_full: &serde_json::Value,
+    step: &str,
+) {
+    let patch = &snapshot["renderPatch"];
+    let old = previous_full.as_array().unwrap();
+    let new = next_full.as_array().unwrap();
+    let prefix = old.iter().zip(new).take_while(|(a, b)| a == b).count();
+    let suffix = old[prefix..]
+        .iter()
+        .rev()
+        .zip(new[prefix..].iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    assert_eq!(patch["startIndex"], prefix, "{step}: start index");
+    assert_eq!(
+        patch["deleteCount"],
+        old.len() - prefix - suffix,
+        "{step}: delete count"
+    );
+    assert_eq!(
+        patch["renderBlocks"].as_array().unwrap().as_slice(),
+        &new[prefix..new.len() - suffix],
+        "{step}: published blocks"
+    );
+    client.splice(
+        prefix..old.len() - suffix,
+        patch["renderBlocks"].as_array().unwrap().clone(),
+    );
+    assert_eq!(
+        serde_json::Value::Array(client.clone()),
+        *next_full,
+        "{step}: client projection"
+    );
+}
+
+#[test]
+fn digest_patches_equal_full_json_diffs_across_prose_table_and_history_edits() {
+    const HISTORY_REQUEST: u64 = 15_100;
+    const TRAILING_PROSE_ROOT: u32 = 4;
+    let mut document = two_table_document();
+    document["content"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({
+            "type": "paragraph",
+            "content": [{"type": "text", "text": PROJECTION_PROSE_TEXT}]
+        }));
+    let mut session = session_with_document(&document);
+    let first = frame(&mut session, Some(OWNER));
+    let first: serde_json::Value = serde_json::from_str(&first.snapshot_json).unwrap();
+    let mut client = first["renderBlocks"].as_array().unwrap().clone();
+    assert_eq!(
+        serde_json::Value::Array(client.clone()),
+        full_projection_json(&mut session)
+    );
+    let root_block = |session: &crate::session::EditorSession, root: u32| {
+        let map = session.engine.position_map().unwrap();
+        (0..map.block_count())
+            .find(|index| map.block(*index).unwrap().node_path.first() == Some(&root))
+            .unwrap()
+    };
+    let steps: [(&str, &dyn Fn(&mut crate::session::EditorSession, u64)); 7] = [
+        ("prose before tables", &|session, request| {
+            native_edit(session, request, 0, "a")
+        }),
+        ("same-length prose replacement", &|session, request| {
+            native_text_intent(session, request, "replaceSelectionText", 0, 1, "z")
+        }),
+        ("first table cell", &|session, request| {
+            native_edit(session, request, 1, "b")
+        }),
+        ("prose and second table together", &|session, request| {
+            let between = root_block(session, 2);
+            native_edit(session, request, between, "c");
+            let second_table = root_block(session, 3);
+            native_edit(session, request + 1, second_table, "d");
+        }),
+        (
+            "first and last root blocks around reused prose and tables",
+            &|session, request| {
+                native_edit(session, request, 0, "e");
+                let trailing = root_block(session, TRAILING_PROSE_ROOT);
+                native_edit(session, request + 1, trailing, "f");
+            },
+        ),
+        ("undo", &|session, request| {
+            session.engine.undo(request).unwrap().unwrap();
+        }),
+        ("redo", &|session, request| {
+            session.engine.redo(request).unwrap().unwrap();
+        }),
+    ];
+    for (step, (name, edit)) in steps.iter().enumerate() {
+        let previous_full = full_projection_json(&mut session);
+        edit(&mut session, HISTORY_REQUEST + 10 * step as u64);
+        let next_full = full_projection_json(&mut session);
+        let next = frame(&mut session, Some(OWNER));
+        let next: serde_json::Value = serde_json::from_str(&next.snapshot_json).unwrap();
+        apply_client_patch(&mut client, &next, &previous_full, &next_full, name);
+        assert_eq!(
+            *session.native_render_cursor(OWNER).unwrap().root_projection,
+            fresh_projection(&session),
+            "{name}: retained digests"
+        );
+    }
 }

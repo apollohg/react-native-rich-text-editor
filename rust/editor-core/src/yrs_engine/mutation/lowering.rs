@@ -18,7 +18,7 @@ use super::super::codec::{
     is_attributeless_mark_value, json_to_any, prepare_xml_nodes, PreparedTextRun, PreparedXmlChild,
     PreparedXmlNode,
 };
-use super::super::{EditingLimits, OperationError, OperationResult};
+use super::super::{EditingLimits, LoweringRefusal, OperationError, OperationResult};
 use super::plan::{
     attrs_work, binary_partition_work, capture_document_guard,
     capture_document_guard_with_read_scope, crdt_clock_scan_reservation, expected_preflight_work,
@@ -145,11 +145,41 @@ std::thread_local! {
     static RANGE_FORMAT_EAGER_FALLBACK_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static LOCALIZED_ROOT_WINDOW_HIT_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static ROOT_WINDOW_EAGER_FALLBACK_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static LOCALIZED_SPLIT_HIT_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static SPLIT_EAGER_FALLBACK_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static UNAVAILABLE_LOOKUP_SEED_INSTALL_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static LOCALIZED_ROOT_ATTR_MAP_BUILD_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static LOCALIZED_FORMAT_PROMOTION_TARGET_VISIT_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static SUPPRESS_RANGE_FORMAT_LOWERING_COUNTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static IMPORT_LOOKUP_EVENT_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static FORCE_EAGER_MUTATION_LOWERING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static MATERIALIZED_YRS_TEXT_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_materialized_yrs_text_count_for_test() {
+    MATERIALIZED_YRS_TEXT_COUNT.set(0);
+}
+
+#[cfg(test)]
+pub(crate) fn take_materialized_yrs_text_count_for_test() -> usize {
+    MATERIALIZED_YRS_TEXT_COUNT.replace(0)
+}
+
+#[cfg(test)]
+pub(crate) struct ForcedEagerMutationLowering;
+
+#[cfg(test)]
+impl Drop for ForcedEagerMutationLowering {
+    fn drop(&mut self) {
+        FORCE_EAGER_MUTATION_LOWERING.set(false);
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn force_eager_mutation_lowering_for_test() -> ForcedEagerMutationLowering {
+    FORCE_EAGER_MUTATION_LOWERING.set(true);
+    ForcedEagerMutationLowering
 }
 
 #[cfg(test)]
@@ -258,6 +288,29 @@ pub(crate) fn take_root_window_lowering_counts_for_test(
 #[cfg(test)]
 pub(crate) fn record_root_window_eager_fallback_for_test() {
     ROOT_WINDOW_EAGER_FALLBACK_COUNT.set(ROOT_WINDOW_EAGER_FALLBACK_COUNT.get().saturating_add(1));
+}
+
+#[cfg(test)]
+pub(crate) fn reset_split_lowering_counts_for_test() {
+    EAGER_RANGE_TEXT_COLLECTION_COUNT.set(0);
+    EAGER_RANGE_PARENT_COLLECTION_COUNT.set(0);
+    LOCALIZED_SPLIT_HIT_COUNT.set(0);
+    SPLIT_EAGER_FALLBACK_COUNT.set(0);
+}
+
+#[cfg(test)]
+pub(crate) fn take_split_lowering_counts_for_test() -> (usize, usize, usize, usize) {
+    (
+        EAGER_RANGE_TEXT_COLLECTION_COUNT.replace(0),
+        EAGER_RANGE_PARENT_COLLECTION_COUNT.replace(0),
+        LOCALIZED_SPLIT_HIT_COUNT.replace(0),
+        SPLIT_EAGER_FALLBACK_COUNT.replace(0),
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn record_split_eager_fallback_for_test() {
+    SPLIT_EAGER_FALLBACK_COUNT.set(SPLIT_EAGER_FALLBACK_COUNT.get().saturating_add(1));
 }
 
 #[cfg(test)]

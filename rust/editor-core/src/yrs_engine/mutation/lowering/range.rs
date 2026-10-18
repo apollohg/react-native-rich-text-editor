@@ -111,7 +111,8 @@ impl MutationCompiler {
             operation_index,
             "at",
             "text insertion does not resolve to an existing Yrs XML text target",
-        ))
+        )
+        .refused_by_lowering(LoweringRefusal::UnresolvedTextTarget))
     }
 
     fn covered_spans(
@@ -121,6 +122,17 @@ impl MutationCompiler {
         to: u32,
         boundaries: &[u32],
     ) -> OperationResult<Option<Vec<ResolvedSpan>>> {
+        let (spans, covered) = self.text_spans(operation_index, from, to, boundaries)?;
+        Ok((covered == to - from).then_some(spans))
+    }
+
+    fn text_spans(
+        &mut self,
+        operation_index: usize,
+        from: u32,
+        to: u32,
+        boundaries: &[u32],
+    ) -> OperationResult<(Vec<ResolvedSpan>, u32)> {
         if boundaries.windows(2).any(|pair| pair[0] >= pair[1]) {
             return Err(OperationError::engine_invariant_failed(
                 self.request_id,
@@ -194,10 +206,7 @@ impl MutationCompiler {
                     )
                 })?;
         }
-        if covered != to - from {
-            return Ok(None);
-        }
-        Ok(Some(spans))
+        Ok((spans, covered))
     }
 }
 
@@ -309,6 +318,13 @@ fn mutation_action_touches_branches(
     action: &YrsMutationAction,
     branches: &HashSet<BranchID>,
 ) -> bool {
+    if action
+        .signature_path()
+        .iter()
+        .any(|(parent, _)| branches.contains(parent))
+    {
+        return true;
+    }
     match action {
         YrsMutationAction::InsertText { target, .. }
         | YrsMutationAction::DeleteText { target, .. }
@@ -335,12 +351,14 @@ fn mutation_action_touches_branches(
 fn collect_document_content_positions(
     request_id: u64,
     root: &Node,
+    root_window: Option<std::ops::Range<usize>>,
 ) -> OperationResult<(HashMap<Vec<u32>, u32>, usize)> {
     fn visit(
         request_id: u64,
         node: &Node,
         path: &mut Vec<u32>,
         content_position: u32,
+        root_window: Option<&std::ops::Range<usize>>,
         positions: &mut HashMap<Vec<u32>, u32>,
         work: &mut usize,
     ) -> OperationResult<()> {
@@ -360,7 +378,7 @@ fn collect_document_content_positions(
         };
         let mut child_position = content_position;
         for (index, child) in content.iter().enumerate() {
-            if child.is_element() {
+            if child.is_element() && root_window.is_none_or(|window| window.contains(&index)) {
                 path.push(u32::try_from(index).map_err(|_| {
                     OperationError::engine_invariant_failed(
                         request_id,
@@ -379,6 +397,7 @@ fn collect_document_content_positions(
                             "document content position overflow",
                         )
                     })?,
+                    None,
                     positions,
                     work,
                 )?;
@@ -404,24 +423,21 @@ fn collect_document_content_positions(
         root,
         &mut Vec::new(),
         0,
+        root_window.as_ref(),
         &mut positions,
         &mut work,
     )?;
     Ok((positions, work))
 }
 
-#[allow(clippy::too_many_arguments)]
-fn collect_structural_parents<T: ReadTxn>(
+fn structural_parent_target<T: ReadTxn>(
     request_id: u64,
     txn: &T,
     parent: XmlParentRef,
-    semantic_path: Vec<u32>,
-    branch_path: Vec<(BranchID, u32)>,
-    schema: &Schema,
+    branch_path: &[(BranchID, u32)],
     traversal_work: &mut usize,
     materialized_texts: &HashMap<BranchID, MaterializedText>,
-    output: &mut HashMap<Vec<u32>, StructuralParentTarget>,
-) -> OperationResult<()> {
+) -> OperationResult<(StructuralParentTarget, Vec<XmlOut>)> {
     let children = match &parent {
         XmlParentRef::Fragment(parent) => parent.children(txn).collect::<Vec<_>>(),
         XmlParentRef::Element(parent) => parent.children(txn).collect::<Vec<_>>(),
@@ -440,7 +456,7 @@ fn collect_structural_parents<T: ReadTxn>(
     let parent_id = parent.id();
     let signature = Arc::new(StructuralParentSignature {
         parent: parent_id.clone(),
-        path: branch_path.clone(),
+        path: branch_path.to_vec(),
         children: children.iter().map(XmlOut::id).collect(),
     });
     let storage_children = children
@@ -553,17 +569,38 @@ fn collect_structural_parents<T: ReadTxn>(
             )),
         })
         .collect::<OperationResult<Vec<_>>>()?;
-    if output
-        .insert(
-            semantic_path.clone(),
-            StructuralParentTarget {
-                parent: parent.clone(),
-                signature,
-                storage_children,
-            },
-        )
-        .is_some()
-    {
+    Ok((
+        StructuralParentTarget {
+            parent,
+            signature,
+            storage_children,
+        },
+        children,
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_structural_parents<T: ReadTxn>(
+    request_id: u64,
+    txn: &T,
+    parent: XmlParentRef,
+    semantic_path: Vec<u32>,
+    branch_path: Vec<(BranchID, u32)>,
+    schema: &Schema,
+    traversal_work: &mut usize,
+    materialized_texts: &HashMap<BranchID, MaterializedText>,
+    output: &mut HashMap<Vec<u32>, StructuralParentTarget>,
+) -> OperationResult<()> {
+    let parent_id = parent.id();
+    let (target, children) = structural_parent_target(
+        request_id,
+        txn,
+        parent,
+        &branch_path,
+        traversal_work,
+        materialized_texts,
+    )?;
+    if output.insert(semantic_path.clone(), target).is_some() {
         return Err(OperationError::engine_invariant_failed(
             request_id,
             None,

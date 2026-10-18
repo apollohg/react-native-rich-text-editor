@@ -367,7 +367,9 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
     };
 
     fn fixture() -> YrsDocumentEngine {
-        let mut engine = transaction_engine();
+        const BURST_HISTORY_CLOCK_MILLIS: u64 = 10_000;
+        let mut engine =
+            transaction_engine_with_history_clock(Arc::new(|| BURST_HISTORY_CLOCK_MILLIS));
         let content = (0..160)
             .map(|index| {
                 json!({
@@ -540,7 +542,7 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
             yrs_tree_walks: 0,
             whole_state_encodings: 0,
             mutation_guard_snapshot_requests: 0,
-            compilation_snapshot_scans: 1,
+            compilation_snapshot_scans: 0,
             compilation_snapshot_reuses: 0,
             cell_content_keys: 0,
             attribute_serializations: 0,
@@ -584,7 +586,7 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
             yrs_tree_walks: 0,
             whole_state_encodings: 0,
             mutation_guard_snapshot_requests: 0,
-            compilation_snapshot_scans: 1,
+            compilation_snapshot_scans: 0,
             compilation_snapshot_reuses: 0,
             cell_content_keys: 0,
             attribute_serializations: 0,
@@ -609,7 +611,7 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
             canonical_mark_validation_completions: 0,
             canonical_mark_nodes_visited: 2,
             canonical_identity_predicate_nodes_visited: 321,
-            canonical_projections: 1,
+            canonical_projections: 0,
             canonical_serializations: 0,
             canonical_hashes: 0,
             affected_top_level_scans: 0,
@@ -629,7 +631,7 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
             yrs_tree_walks: 0,
             whole_state_encodings: 0,
             mutation_guard_snapshot_requests: 0,
-            compilation_snapshot_scans: 1,
+            compilation_snapshot_scans: 0,
             compilation_snapshot_reuses: 0,
             cell_content_keys: 0,
             attribute_serializations: 0,
@@ -643,19 +645,18 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
     );
     for (index, actual) in commit_counts.iter().enumerate() {
         let mut expected = expected_commit;
-        expected.0.compilation_snapshot_scans = usize::from(index == 0);
+        expected.0.whole_state_encodings = usize::from(index == 0);
         assert_eq!(*actual, expected, "direct commit edit {index}");
     }
     for (index, actual) in result_counts.iter().enumerate() {
         let mut expected = expected_result;
-        expected.0.compilation_snapshot_scans = usize::from(index == 0);
+        expected.0.whole_state_encodings = usize::from(index == 0);
         assert_eq!(*actual, expected, "direct result edit {index}");
     }
     for (index, actual) in command_counts.iter().enumerate() {
         let mut expected = expected_command;
         let first = index == 0;
-        expected.0.compilation_snapshot_scans = usize::from(first);
-        expected.0.whole_state_encodings = command_full_encodings[index];
+        expected.0.whole_state_encodings = command_full_encodings[index] + usize::from(first);
         expected.0.canonical_serializations = usize::from(!first);
         expected.0.canonical_hashes = usize::from(!first);
         expected.0.active_applicability_passes = usize::from(first);
@@ -692,6 +693,11 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
             "sequential edit {index}"
         );
     }
+    assert_eq!(
+        promoted.history.stack_depths_for_test(),
+        rebuilt.history.stack_depths_for_test(),
+        "both engines coalesce the burst into identical undo groups"
+    );
     assert_eq!(
         promoted.undo(700_153).unwrap(),
         rebuilt.undo(700_153).unwrap()

@@ -1,6 +1,6 @@
 use super::{
     actual_marks_equal, any_matches_json, any_to_json_bounded, attrs_to_marks,
-    insert_prepared_node, marks_to_attrs, prepare_xml_nodes,
+    insert_prepared_nodes, marks_to_attrs, prepare_xml_nodes,
     take_json_projection_materialization_count_for_test, YrsDocumentCodec,
 };
 use crate::boundary::ResourceLimits;
@@ -309,3 +309,5 @@ include!("codec_tests/json_matching.rs");
 include!("codec_tests/roundtrip_limits.rs");
 
 include!("codec_tests/model_preparation.rs");
+
+include!("codec_tests/chained_insertion.rs");

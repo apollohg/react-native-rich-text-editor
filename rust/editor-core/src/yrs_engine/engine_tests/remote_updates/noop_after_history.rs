@@ -134,7 +134,7 @@ fn empty_and_fullstate_after_redo_are_noops_on_both_remote_surfaces() {
                 !commit.changed,
                 "redo history must not make a duplicate update change the document"
             );
-            assert_eq!(take_import_state_encoding_counts_for_test(), (2, 0));
+            assert_eq!(take_import_state_encoding_counts_for_test(), 2);
             assert_eq!(atomic_audit(&engine), before);
         }
         let redone = engine.document_json();

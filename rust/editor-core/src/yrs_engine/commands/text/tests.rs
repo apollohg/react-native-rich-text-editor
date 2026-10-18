@@ -64,9 +64,12 @@ fn structural_diff_work_budget_excess_is_an_operation_limit_not_resource_exhaust
         yrs_state_epoch: 0,
         canonical_schema: &canonical_schema,
         canonical_artifact: &canonical_artifact,
-        allow_deferred_admission: false,
+        allow_deferred_admission: &|| false,
         preparation: None,
         localized_textblock_state: None,
+        compilation_view: None,
+        derived_state: None,
+        structural_representation_only: false,
     };
     let error = super::structural_fallback_transaction(
         &context,

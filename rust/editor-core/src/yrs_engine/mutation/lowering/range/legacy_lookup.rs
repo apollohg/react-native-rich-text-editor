@@ -357,13 +357,13 @@ fn legacy_build_lookup_seed_payload<T: ReadTxn>(
         "mapPublication",
         std::mem::size_of::<HashMap<BranchID, usize>>(),
     )?;
-    let path_parent_widths = Arc::new(path_parent_widths);
+    let path_parent_widths = LookupEntries::new(path_parent_widths);
     probe_lookup_seed_publication(
         request_id,
         "mapPublication",
         std::mem::size_of::<HashMap<BranchID, usize>>(),
     )?;
-    let target_materialization_work = TargetMaterializationWork::new(target_materialization_work);
+    let target_materialization_work = LookupEntries::new(target_materialization_work);
     Ok(MutationLookupPayload {
         target_count,
         pending_traversal_work,

@@ -198,7 +198,7 @@ mod prepared_batch_tests {
         compiler.targets.clear();
         let mut current_end = 0u32;
         for (path, handle, runs) in texts {
-            let start = first_text_doc_position(before.root(), &path)
+            let start = first_text_doc_position(before.root(), &path, false)
                 .ok_or_else(|| invalid_action_range(compiler.request_id, 0))?;
             let text = prepared_runs_text(&runs);
             let scalar_len = u32::try_from(text.chars().count())
@@ -218,7 +218,7 @@ mod prepared_batch_tests {
                 .checked_add(scalar_len)
                 .ok_or_else(|| invalid_action_range(compiler.request_id, 0))?;
         }
-        let tail_start = first_text_doc_position(before.root(), &[2, 0])
+        let tail_start = first_text_doc_position(before.root(), &[2, 0], false)
             .ok_or_else(|| invalid_action_range(compiler.request_id, 0))?;
         compiler.targets.push(ResolvedText {
             kind: old_tail_kind,

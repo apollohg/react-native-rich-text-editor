@@ -61,6 +61,7 @@ local_dynamic_tls = []
 no_thp = []
 override = []
 secure = []
+secure_guards = []
 v2 = []
 win_direct_tls = []
 

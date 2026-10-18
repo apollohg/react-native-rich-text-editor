@@ -1,0 +1,40 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -61,6 +61,7 @@
+ no_thp = []
+ override = []
+ secure = []
++secure_guards = []
+ v2 = []
+ win_direct_tls = []
+ 
+--- a/Cargo.toml.orig
++++ b/Cargo.toml.orig
+@@ -35,6 +35,7 @@
+ 
+ [features]
+ secure = []
++secure_guards = []
+ debug = []
+ debug_in_debug = []
+ override = []
+--- a/build.rs
++++ b/build.rs
+@@ -2,6 +2,8 @@
+ use std::fs;
+ use std::path::{Path, PathBuf};
+ 
++const SECURE_GUARDS_LEVEL: &str = "1";
++
+ fn main() {
+     let mut build = cc::Build::new();
+ 
+@@ -81,6 +83,8 @@
+ 
+     if env::var_os("CARGO_FEATURE_SECURE").is_some() {
+         build.define("MI_SECURE", "4");
++    } else if env::var_os("CARGO_FEATURE_SECURE_GUARDS").is_some() {
++        build.define("MI_SECURE", SECURE_GUARDS_LEVEL);
+     }
+ 
+     if target_os == "windows" && env::var_os("CARGO_FEATURE_WIN_DIRECT_TLS").is_some() {

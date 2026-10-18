@@ -396,7 +396,19 @@ fn plan_at_selection(
     if moved_cells.is_some() {
         return Ok(CommandPlan::NotApplicable);
     }
+    let pastes_into_a_cell = selection.from(context.document).is_some_and(|position| {
+        crate::tables::mutation_guard::position_is_inside_cell(
+            context.document,
+            context.schema,
+            position,
+        )
+    });
     for slice in slices {
+        let slice = if pastes_into_a_cell {
+            slice.with_tables_flattened(context.schema)
+        } else {
+            slice
+        };
         let Some(plan) = clipboard::replacement(
             context.document,
             &selection,

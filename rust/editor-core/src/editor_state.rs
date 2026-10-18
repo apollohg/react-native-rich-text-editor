@@ -97,29 +97,22 @@ fn active_state_impl(
         }
     }
 
-    let (allowed_marks, insertable_nodes) = match selection {
-        Selection::All | Selection::Cell { .. } => (Vec::new(), Vec::new()),
-        Selection::Node { .. } => (
-            Vec::new(),
-            insertable_nodes(document, schema, pos, limits).unwrap_or_default(),
-        ),
+    let allowed_marks = match selection {
+        Selection::All | Selection::Cell { .. } | Selection::Node { .. } => Vec::new(),
         Selection::Text { .. } => {
             let active_names = marks_at
                 .iter()
                 .map(|mark| mark.mark_type())
                 .collect::<Vec<_>>();
-            let allowed = document
+            document
                 .resolve(pos)
                 .ok()
                 .and_then(|resolved| schema.node(resolved.parent(document).node_type()))
                 .map(|spec| schema.allowed_marks_at(spec, &active_names))
-                .unwrap_or_default();
-            (
-                allowed,
-                insertable_nodes(document, schema, pos, limits).unwrap_or_default(),
-            )
+                .unwrap_or_default()
         }
     };
+    let insertable_nodes = insertable_nodes_for_selection(document, schema, selection, limits);
 
     ActiveState {
         marks,
@@ -299,6 +292,70 @@ fn command_applicability_with_known_node_count_impl(
         ),
     );
     commands
+}
+
+pub(crate) enum StructuralCommand<'a> {
+    ToggleBlockquote,
+    ToggleCodeBlock,
+    ToggleHeading(u8),
+    ApplyListType(&'a str),
+    WrapInList {
+        list_type: &'a str,
+        item_type: &'a str,
+    },
+}
+
+pub(crate) fn structural_command_is_available(
+    document: &Document,
+    schema: &Schema,
+    selection: &Selection,
+    limits: &ResourceLimits,
+    document_node_count: usize,
+    command: StructuralCommand<'_>,
+) -> bool {
+    let block_range = selection
+        .text_range(document)
+        .and_then(|(from, to)| selected_block_range(document, schema, from, to));
+    match command {
+        StructuralCommand::ToggleBlockquote => can_toggle_blockquote_local(
+            document,
+            schema,
+            selection,
+            limits,
+            document_node_count,
+            block_range.as_ref(),
+        ),
+        StructuralCommand::ToggleCodeBlock => {
+            can_toggle_code_block(document, schema, block_range.as_ref())
+        }
+        StructuralCommand::ToggleHeading(level) => {
+            can_toggle_heading(document, schema, block_range.as_ref(), level)
+        }
+        StructuralCommand::ApplyListType(list_type) => can_apply_list_type_local(
+            document,
+            schema,
+            selection,
+            list_type,
+            limits,
+            document_node_count,
+            block_range.as_ref(),
+            root_wrap_range(document, schema, selection).as_ref(),
+        ),
+        StructuralCommand::WrapInList {
+            list_type,
+            item_type,
+        } => block_range.is_some_and(|range| {
+            can_wrap_range_in_list_local(
+                document,
+                schema,
+                &range,
+                list_type,
+                item_type,
+                limits,
+                document_node_count,
+            )
+        }),
+    }
 }
 
 pub(crate) fn table_command_surface() -> [(&'static str, TableCommand); TABLE_COMMAND_ENTRIES] {
@@ -565,32 +622,33 @@ pub(crate) fn marks_at_position(document: &Document, position: u32) -> Vec<Mark>
     Vec::new()
 }
 
-pub(crate) fn range_has_mark(document: &Document, from: u32, to: u32, mark_name: &str) -> bool {
-    let Ok(resolved) = document.resolve(from) else {
-        return false;
-    };
-    let Some(content) = resolved.parent(document).content() else {
-        return false;
-    };
+pub(crate) fn range_mark_coverage(
+    document: &Document,
+    from: u32,
+    to: u32,
+    mark_name: &str,
+) -> Option<bool> {
+    let resolved = document.resolve(from).ok()?;
+    let content = resolved.parent(document).content()?;
     let from_offset = resolved.parent_offset;
     let to_offset = from_offset.saturating_add(to.saturating_sub(from));
     let mut offset = 0u32;
-    let mut found = false;
+    let mut coverage = None;
     for child in content.iter() {
         let end = offset.saturating_add(child.node_size());
         if child.is_text() && end > from_offset && offset < to_offset {
-            found = true;
             if !child
                 .marks()
                 .iter()
                 .any(|mark| mark.mark_type() == mark_name)
             {
-                return false;
+                return Some(false);
             }
+            coverage = Some(true);
         }
         offset = end;
     }
-    found
+    coverage
 }
 
 pub(crate) fn mark_range_at_position(
@@ -740,6 +798,24 @@ fn collect_text_marks(
     }
 }
 
+pub(crate) fn insertable_nodes_for_selection(
+    document: &Document,
+    schema: &Schema,
+    selection: &Selection,
+    limits: &ResourceLimits,
+) -> Vec<String> {
+    let position = match selection.from(document) {
+        Some(from) => from,
+        None => selection.anchor(document),
+    };
+    match selection {
+        Selection::All | Selection::Cell { .. } => Vec::new(),
+        Selection::Node { .. } | Selection::Text { .. } => {
+            insertable_nodes(document, schema, position, limits).unwrap_or_default()
+        }
+    }
+}
+
 fn insertable_nodes(
     document: &Document,
     schema: &Schema,
@@ -767,14 +843,20 @@ fn insertable_nodes(
         });
     }
     let inline_parent = resolved.parent(document);
-    if schema
+    if let Some(inline_parent_spec) = schema
         .node(inline_parent.node_type())
-        .is_some_and(|spec| matches!(spec.role, NodeRole::TextBlock))
+        .filter(|spec| matches!(spec.role, NodeRole::TextBlock))
     {
         for node_type in schema
             .all_nodes()
             .filter(|spec| {
-                matches!(spec.role, NodeRole::HardBreak | NodeRole::Inline) && spec.is_void
+                matches!(spec.role, NodeRole::HardBreak | NodeRole::Inline)
+                    && spec.is_void
+                    && inline_parent_spec
+                        .content
+                        .matches(&[spec.name.as_str()], |child, symbol| {
+                            schema.node_matches_symbol(child, symbol)
+                        })
             })
             .map(|spec| spec.name.clone())
         {

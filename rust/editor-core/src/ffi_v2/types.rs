@@ -387,6 +387,8 @@ pub struct FfiNativeRenderFrameResult {
 pub struct FfiNativeRenderFrame {
     pub snapshot_json: String,
     pub tables: FfiTableFrame,
+    #[uniffi(default = None)]
+    pub position_epoch: Option<String>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum FfiTableFrameKind {

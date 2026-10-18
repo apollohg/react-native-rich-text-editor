@@ -808,6 +808,8 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
 // For large crates we prevent `MethodTooLargeException` (see #2340)
 // N.B. the name of the extension is very misleading, since it is
 // rather `InterfaceTooLargeException`, caused by too many methods
@@ -882,6 +884,8 @@ fun uniffi_editor_core_checksum_func_editor_v2_redo(
 fun uniffi_editor_core_checksum_func_editor_v2_release_native_binding(
 ): Short
 fun uniffi_editor_core_checksum_func_editor_v2_render_native_frame(
+): Short
+fun uniffi_editor_core_checksum_func_editor_v2_render_state(
 ): Short
 fun uniffi_editor_core_checksum_func_editor_v2_render_update(
 ): Short
@@ -1047,6 +1051,8 @@ fun uniffi_editor_core_fn_func_editor_v2_redo(`editorId`: RustBuffer.ByValue,`re
 fun uniffi_editor_core_fn_func_editor_v2_release_native_binding(`editorId`: RustBuffer.ByValue,`ownerId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
 fun uniffi_editor_core_fn_func_editor_v2_render_native_frame(`editorId`: RustBuffer.ByValue,`ownerId`: RustBuffer.ByValue,`mirrorScalarAnchor`: RustBuffer.ByValue,`mirrorScalarHead`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+fun uniffi_editor_core_fn_func_editor_v2_render_state(`editorId`: RustBuffer.ByValue,`mirrorScalarAnchor`: RustBuffer.ByValue,`mirrorScalarHead`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
 fun uniffi_editor_core_fn_func_editor_v2_render_update(`editorId`: RustBuffer.ByValue,`mirrorScalarAnchor`: RustBuffer.ByValue,`mirrorScalarHead`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
@@ -1282,6 +1288,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_editor_core_checksum_func_editor_v2_render_native_frame() != 615.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_editor_core_checksum_func_editor_v2_render_state() != 57358.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_editor_core_checksum_func_editor_v2_render_update() != 13282.toShort()) {
@@ -2166,7 +2175,8 @@ public object FfiConverterTypeFfiJsonResult: FfiConverterRustBuffer<FfiJsonResul
 
 data class FfiNativeRenderFrame (
     var `snapshotJson`: kotlin.String,
-    var `tables`: FfiTableFrame
+    var `tables`: FfiTableFrame,
+    var `positionEpoch`: kotlin.String? = null
 ) {
 
     companion object
@@ -2180,17 +2190,20 @@ public object FfiConverterTypeFfiNativeRenderFrame: FfiConverterRustBuffer<FfiNa
         return FfiNativeRenderFrame(
             FfiConverterString.read(buf),
             FfiConverterTypeFfiTableFrame.read(buf),
+            FfiConverterOptionalString.read(buf),
         )
     }
 
     override fun allocationSize(value: FfiNativeRenderFrame) = (
             FfiConverterString.allocationSize(value.`snapshotJson`) +
-            FfiConverterTypeFfiTableFrame.allocationSize(value.`tables`)
+            FfiConverterTypeFfiTableFrame.allocationSize(value.`tables`) +
+            FfiConverterOptionalString.allocationSize(value.`positionEpoch`)
     )
 
     override fun write(value: FfiNativeRenderFrame, buf: ByteBuffer) {
             FfiConverterString.write(value.`snapshotJson`, buf)
             FfiConverterTypeFfiTableFrame.write(value.`tables`, buf)
+            FfiConverterOptionalString.write(value.`positionEpoch`, buf)
     }
 }
 
@@ -4659,6 +4672,15 @@ public object FfiConverterMapStringString: FfiConverterRustBuffer<Map<kotlin.Str
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_editor_core_fn_func_editor_v2_render_native_frame(
         FfiConverterString.lower(`editorId`),FfiConverterOptionalString.lower(`ownerId`),FfiConverterOptionalUInt.lower(`mirrorScalarAnchor`),FfiConverterOptionalUInt.lower(`mirrorScalarHead`),_status)
+}
+    )
+    }
+
+ fun `editorV2RenderState`(`editorId`: kotlin.String, `mirrorScalarAnchor`: kotlin.UInt?, `mirrorScalarHead`: kotlin.UInt?): FfiJsonResult {
+            return FfiConverterTypeFfiJsonResult.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_editor_core_fn_func_editor_v2_render_state(
+        FfiConverterString.lower(`editorId`),FfiConverterOptionalUInt.lower(`mirrorScalarAnchor`),FfiConverterOptionalUInt.lower(`mirrorScalarHead`),_status)
 }
     )
     }

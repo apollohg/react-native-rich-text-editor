@@ -51,7 +51,7 @@ pub fn apply_step(
 ) -> Result<(Document, StepMap), TransformError> {
     match step {
         Step::InsertText { pos, text, marks } => apply_insert_text(doc, *pos, text, marks, schema),
-        Step::DeleteRange { from, to } => apply_delete_range(doc, *from, *to),
+        Step::DeleteRange { from, to } => apply_delete_range(doc, *from, *to, schema),
         Step::AddMark { from, to, mark } => apply_add_mark(doc, *from, *to, mark, schema),
         Step::RemoveMark {
             from,

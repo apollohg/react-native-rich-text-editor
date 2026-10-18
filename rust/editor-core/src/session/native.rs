@@ -81,6 +81,7 @@ impl EditorSession {
             )
         })?;
         self.position_epochs.admit_boundary_count(count)?;
+        let mut spliced = None;
         if let Some(previous) = self.latest_epoch_snapshot.as_mut() {
             if previous.document_revision != document_revision
                 || previous.yrs_state_epoch != self.engine.yrs_state_epoch()
@@ -93,16 +94,22 @@ impl EditorSession {
                         update,
                     );
                 }
+                spliced = self
+                    .engine
+                    .prepare_position_epoch_splice(previous)
+                    .map(std::sync::Arc::new);
             }
         }
-        let snapshot = self
-            .latest_epoch_snapshot
-            .as_ref()
-            .filter(|snapshot| {
-                snapshot.document_revision == document_revision
-                    && snapshot.yrs_state_epoch == self.engine.yrs_state_epoch()
+        let snapshot = spliced
+            .or_else(|| {
+                self.latest_epoch_snapshot
+                    .as_ref()
+                    .filter(|snapshot| {
+                        snapshot.document_revision == document_revision
+                            && snapshot.yrs_state_epoch == self.engine.yrs_state_epoch()
+                    })
+                    .cloned()
             })
-            .cloned()
             .or_else(|| {
                 self.engine
                     .build_position_epoch_snapshot()
@@ -187,7 +194,10 @@ impl EditorSession {
         self.native_render_cursors.remove(&owner_id);
     }
 
-    pub(crate) fn native_render_cursor(&self, owner_id: u64) -> Option<NativeRenderCursor> {
+    pub(crate) fn native_render_cursor(
+        &self,
+        owner_id: u64,
+    ) -> Option<std::sync::Arc<NativeRenderCursor>> {
         self.native_render_cursors.get(&owner_id).cloned()
     }
 
@@ -196,18 +206,18 @@ impl EditorSession {
         owner_id: u64,
         document_revision: u64,
         render_blocks: std::sync::Arc<crate::render::incremental::CachedRenderBlocks>,
+        root_projection: std::sync::Arc<Vec<crate::ffi_v2::render::RootRenderBlock>>,
     ) {
         self.native_render_cursors.insert(
             owner_id,
-            NativeRenderCursor {
+            std::sync::Arc::new(NativeRenderCursor {
                 schema_fingerprint: self.engine.schema_fingerprint().to_owned(),
                 table_keys: crate::ffi_v2::render::table_keys(&self.engine)
                     .expect("ready table identities"),
-                root_projection: crate::ffi_v2::render::root_projection(&self.engine)
-                    .expect("ready root projection"),
+                root_projection,
                 document_revision,
                 render_blocks,
-            },
+            }),
         );
     }
 
@@ -243,7 +253,11 @@ impl EditorSession {
                 "the document engine is not ready",
             )
         })?;
-        self.retain_native_render_cursor(owner_id, document_revision, blocks);
+        let projection =
+            std::sync::Arc::new(
+            crate::ffi_v2::render::root_projection(&self.engine, None)?.into_retained(),
+        );
+        self.retain_native_render_cursor(owner_id, document_revision, blocks, projection);
         Ok(())
     }
 

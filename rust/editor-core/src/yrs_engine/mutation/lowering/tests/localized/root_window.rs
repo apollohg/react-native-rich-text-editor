@@ -111,7 +111,6 @@ fn localized_root_window_matches_eager_structural_plan_and_work() {
                 limits: &limits,
             },
             ReplacementInput {
-                canonical_content: None,
                 from,
                 to,
                 boundaries: &[],
@@ -120,13 +119,11 @@ fn localized_root_window_matches_eager_structural_plan_and_work() {
         )?;
         compiler.finish(Some(0))
     };
-    let canonical = crate::serialize::to_prosemirror_json(&preview, &schema);
-    let canonical_children = &canonical["content"].as_array().unwrap()[1..];
     let compile_localized = |action_limit, scan_limit| {
         let locator = LocalizedRootWindowLocator::mint(
             720,
             &document,
-            &preview,
+            Some(&preview),
             &replacement,
             &seed,
             &txn,
@@ -160,7 +157,6 @@ fn localized_root_window_matches_eager_structural_plan_and_work() {
                 limits: &limits,
             },
             ReplacementInput {
-                canonical_content: Some(canonical_children),
                 from,
                 to,
                 boundaries: &[],
@@ -339,7 +335,7 @@ fn localized_root_window_rejects_wrong_replacement_content_with_attribution() {
     let locator = LocalizedRootWindowLocator::mint(
         723,
         &document,
-        &preview,
+        Some(&preview),
         &replacement,
         &seed,
         &txn,
@@ -369,7 +365,6 @@ fn localized_root_window_rejects_wrong_replacement_content_with_attribution() {
                 limits: &limits,
             },
             ReplacementInput {
-                canonical_content: None,
                 from,
                 to,
                 boundaries: &[],
@@ -428,7 +423,7 @@ fn localized_root_window_streams_normalized_attrs_without_map_materialization() 
     let locator = LocalizedRootWindowLocator::mint(
         724,
         &document,
-        &document,
+        Some(&document),
         &replacement,
         &seed,
         &txn,

@@ -259,6 +259,7 @@ impl OperationCompiler<'_> {
             localized_insert,
             localized_format,
             localized_root_window,
+            localized_split,
             prelowered_plan,
             prelowered_lookup_transition,
             request_id,
@@ -296,6 +297,7 @@ impl OperationCompiler<'_> {
         if localized_insert.is_some()
             || localized_format.is_some()
             || localized_root_window.is_some()
+            || localized_split.is_some()
         {
             return Err(OperationError::engine_invariant_failed(
                 request_id,
@@ -368,7 +370,6 @@ impl OperationCompiler<'_> {
                                 limits: context.resource_limits,
                             },
                             ReplacementInput {
-                                canonical_content: None,
                                 from,
                                 to,
                                 boundaries: &boundaries,
@@ -522,6 +523,7 @@ impl OperationCompiler<'_> {
                 localized_insert,
                 localized_format,
                 localized_root_window,
+                localized_split,
                 prelowered_plan,
                 prelowered_lookup_transition,
                 request_id,

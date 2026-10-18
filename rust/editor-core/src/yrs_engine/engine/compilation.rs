@@ -219,8 +219,8 @@ impl YrsDocumentEngine {
                                 compiled
                                     .preview_derivations
                                     .as_ref()
-                                    .map(|derivations| derivations.rendered_text.as_str())
-                                    .unwrap_or(state.rendered_text.as_str()),
+                                    .map(|derivations| &*derivations.rendered_text)
+                                    .unwrap_or(&*state.rendered_text),
                                 &yrs_engine::derived_state::selection_table_index(
                                     &compiled.preview,
                                     &operation_result_legacy,
@@ -443,6 +443,7 @@ impl YrsDocumentEngine {
             editing_limits: &self.editing_limits,
             document_revision: self.revision,
             max_length: self.max_length,
+            validation_certificate: Some(cached.validation_certificate),
         };
         let stored_marks_context = StoredMarksCompilationContext {
             stored_marks: state.stored_marks.as_deref(),

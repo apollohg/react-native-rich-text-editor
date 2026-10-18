@@ -318,6 +318,7 @@ fn sequential_operations_resolve_against_base_and_map_selection() {
         editing_limits: engine.editing_limits(),
         document_revision: engine.revision(),
         max_length: None,
+        validation_certificate: None,
     };
     let mut tx = transaction(
         &engine,
@@ -335,7 +336,7 @@ fn sequential_operations_resolve_against_base_and_map_selection() {
         ],
     );
     tx.selection_intent = SelectionIntent::Preserve;
-    let compiled = super::compile_transaction(context, tx).unwrap();
+    let compiled = super::compile_transaction_with_view(context, tx, None).unwrap();
     assert_eq!(compiled.preview.root().text_content(), "!Hello?");
     assert_eq!(
         compiled.selection_plan,
@@ -350,13 +351,14 @@ fn sequential_operations_resolve_against_base_and_map_selection() {
         editing_limits: engine.editing_limits(),
         document_revision: engine.revision(),
         max_length: None,
+        validation_certificate: None,
     };
     let mut tx = transaction(&engine, vec![]);
     tx.selection_intent = SelectionIntent::Set(SelectionInput::Text {
         anchor: point(1),
         head: point(4),
     });
-    let compiled = super::compile_transaction(context, tx).unwrap();
+    let compiled = super::compile_transaction_with_view(context, tx, None).unwrap();
     assert_eq!(
         compiled.selection_plan,
         SelectionPlan::Explicit(Selection::text(2, 5))

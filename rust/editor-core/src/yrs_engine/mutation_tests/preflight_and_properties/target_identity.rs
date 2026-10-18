@@ -20,6 +20,7 @@ fn structural_delete_preflight_rejects_same_count_child_substitution_atomically(
                 editing_limits: &editing_limits,
                 document_revision: 0,
                 max_length: None,
+                validation_certificate: None,
             },
             TypedTransaction {
                 request_id: 111,
@@ -74,6 +75,7 @@ fn pure_insert_preflight_rejects_same_count_parent_substitution_atomically() {
                 editing_limits: &editing_limits,
                 document_revision: 0,
                 max_length: None,
+                validation_certificate: None,
             },
             TypedTransaction {
                 request_id: 118,
@@ -141,6 +143,7 @@ fn nested_text_and_attribute_preflight_reject_gc_replaced_parents_without_panick
                 editing_limits: &editing_limits,
                 document_revision: 0,
                 max_length: None,
+                validation_certificate: None,
             },
             TypedTransaction {
                 request_id: 119,
@@ -221,6 +224,7 @@ fn nested_text_and_attribute_preflight_reject_gc_replaced_parents_without_panick
                 editing_limits: &attr_editing,
                 document_revision: 0,
                 max_length: None,
+                validation_certificate: None,
             },
             TypedTransaction {
                 request_id: 120,
@@ -284,6 +288,7 @@ fn create_text_preflight_rejects_same_count_neighbor_replacement() {
                 editing_limits: &editing_limits,
                 document_revision: 0,
                 max_length: None,
+                validation_certificate: None,
             },
             TypedTransaction {
                 request_id: 86,
@@ -381,6 +386,7 @@ fn nested_empty_textblock_create_preserves_unaffected_sibling_identity_and_stick
                 editing_limits: &editing_limits,
                 document_revision: 0,
                 max_length: None,
+                validation_certificate: None,
             },
             TypedTransaction {
                 request_id: 78,
@@ -446,6 +452,7 @@ fn create_text_preflight_rejects_stale_parent_atomically() {
                 editing_limits: &editing_limits,
                 document_revision: 0,
                 max_length: None,
+                validation_certificate: None,
             },
             TypedTransaction {
                 request_id: 79,

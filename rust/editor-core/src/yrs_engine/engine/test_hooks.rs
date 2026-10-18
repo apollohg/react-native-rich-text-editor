@@ -40,12 +40,9 @@ std::thread_local! {
     pub(super) static PREPARED_CANDIDATE_CACHE_HITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static PREPARED_CANDIDATE_FULL_BOOTSTRAPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static CANDIDATE_BOUNDED_STATE_ENCODINGS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(super) static IMPORT_CANDIDATE_STATE_ENCODINGS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(super) static IMPORT_RECEIPT_STATE_DECODINGS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static IMPORT_RECEIPT_SHA256_MINTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static IMPORT_RECEIPT_SHA256_MATCHES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static COMMIT_CURRENT_STATE_ENCODINGS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(super) static COMMIT_SEALED_STATE_REUSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static FAIL_QUARANTINED_UPDATE_RESERVATION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     pub(super) static FAIL_OUTBOUND_STAGING_COPY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     pub(super) static PERTURB_REPLAYED_HISTORY_CANDIDATE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -91,34 +88,18 @@ pub(super) fn take_prepared_candidate_cache_counts_for_test() -> (usize, usize) 
 }
 
 #[cfg(test)]
-pub(super) fn reset_encoded_state_reuse_counts_for_test() {
-    IMPORT_CANDIDATE_STATE_ENCODINGS.set(0);
+pub(super) fn reset_commit_state_encodings_for_test() {
     COMMIT_CURRENT_STATE_ENCODINGS.set(0);
-    COMMIT_SEALED_STATE_REUSES.set(0);
 }
 
 #[cfg(test)]
 pub(super) fn reset_import_state_encoding_counts_for_test() {
     CANDIDATE_BOUNDED_STATE_ENCODINGS.set(0);
-    IMPORT_CANDIDATE_STATE_ENCODINGS.set(0);
 }
 
 #[cfg(test)]
-pub(super) fn take_import_state_encoding_counts_for_test() -> (usize, usize) {
-    (
-        CANDIDATE_BOUNDED_STATE_ENCODINGS.replace(0),
-        IMPORT_CANDIDATE_STATE_ENCODINGS.replace(0),
-    )
-}
-
-#[cfg(test)]
-pub(super) fn reset_import_receipt_state_decodings_for_test() {
-    IMPORT_RECEIPT_STATE_DECODINGS.set(0);
-}
-
-#[cfg(test)]
-pub(super) fn take_import_receipt_state_decodings_for_test() -> usize {
-    IMPORT_RECEIPT_STATE_DECODINGS.replace(0)
+pub(super) fn take_import_state_encoding_counts_for_test() -> usize {
+    CANDIDATE_BOUNDED_STATE_ENCODINGS.replace(0)
 }
 
 #[cfg(test)]
@@ -136,12 +117,8 @@ pub(super) fn take_import_receipt_sha256_counts_for_test() -> (usize, usize) {
 }
 
 #[cfg(test)]
-pub(super) fn take_encoded_state_reuse_counts_for_test() -> (usize, usize, usize) {
-    (
-        IMPORT_CANDIDATE_STATE_ENCODINGS.replace(0),
-        COMMIT_CURRENT_STATE_ENCODINGS.replace(0),
-        COMMIT_SEALED_STATE_REUSES.replace(0),
-    )
+pub(super) fn take_commit_state_encodings_for_test() -> usize {
+    COMMIT_CURRENT_STATE_ENCODINGS.replace(0)
 }
 
 #[cfg(test)]

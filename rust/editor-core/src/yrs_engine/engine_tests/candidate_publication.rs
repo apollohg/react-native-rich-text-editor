@@ -101,7 +101,7 @@ fn prepare_history_candidate_capability_for_test<T: ReadTxn>(
         )
         .unwrap()
         .into_parts();
-    assert_eq!(&json, canonical_artifact.value());
+    assert_eq!(json, canonical_artifact.to_json_value());
     admission
         .expect("exact candidate read must create one consuming admission")
         .mint_capability_for_test(request_id, txn, fragment)

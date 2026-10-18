@@ -21,7 +21,7 @@ use crate::yrs_engine::compiler::{
 use crate::yrs_engine::editing_limits::CheckedWork;
 use crate::yrs_engine::mutation::{
     LocalizedFormatCompiler, LocalizedInsertCompiler, LocalizedRootWindowCompiler,
-    MutationCompiler, YrsMutationPlan,
+    LocalizedSplitCompiler, MutationCompiler, YrsMutationPlan,
 };
 use crate::yrs_engine::{
     Affinity, OperationError, OperationResult, TypedOperation, TypedTransaction,
@@ -37,6 +37,7 @@ pub(super) struct OperationCompiler<'a> {
     pub(super) localized_insert: Option<LocalizedInsertCompiler>,
     pub(super) localized_format: Option<LocalizedFormatCompiler>,
     pub(super) localized_root_window: Option<LocalizedRootWindowCompiler>,
+    pub(super) localized_split: Option<LocalizedSplitCompiler>,
     pub(super) prelowered_plan: Option<YrsMutationPlan>,
     pub(super) prelowered_lookup_transition: Option<MutationLookupTransition>,
     pub(super) request_id: u64,
@@ -110,13 +111,14 @@ impl OperationCompiler<'_> {
             localized_insert,
             localized_format,
             localized_root_window,
+            localized_split,
             prelowered_plan,
             prelowered_lookup_transition,
             request_id,
             mut work,
             base_position_map,
             rendered_text,
-            preview,
+            mut preview,
             composed_map,
             operation_result,
             undo_units_bound,
@@ -244,13 +246,15 @@ impl OperationCompiler<'_> {
                     && operation_index == 0
                     && *preview == *prepared.expected_preview
             }) {
-                charge_prepared_preview_output(
+                let artifact = charge_prepared_preview_output(
                     &mut work,
                     request_id,
                     operation_index,
                     prepared.admission,
                     context,
-                )?
+                )?;
+                preview = Cow::Borrowed(prepared.expected_preview);
+                artifact
             } else if let Some(localized) = localized_derivations.as_ref() {
                 charge_canonical_output(
                     &mut work,
@@ -260,6 +264,18 @@ impl OperationCompiler<'_> {
                     context,
                 )?;
                 localized.canonical_artifact.clone()
+            } else if let Some(artifact) = canonical_artifact
+                .as_ref()
+                .and_then(|previous| CanonicalArtifact::derive_root_window(previous, &preview))
+            {
+                charge_canonical_output(
+                    &mut work,
+                    request_id,
+                    operation_index,
+                    &artifact,
+                    context,
+                )?;
+                artifact
             } else {
                 charge_preview_output(
                     &mut work,
@@ -293,6 +309,7 @@ impl OperationCompiler<'_> {
             localized_insert,
             localized_format,
             localized_root_window,
+            localized_split,
             prelowered_plan,
             prelowered_lookup_transition,
             request_id,

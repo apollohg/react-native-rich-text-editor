@@ -1,0 +1,88 @@
+--- a/src/types/text.rs
++++ b/src/types/text.rs
+@@ -11,6 +11,7 @@
+ use std::convert::{TryFrom, TryInto};
+ use std::fmt::Formatter;
+ use std::ops::{Deref, DerefMut};
++use std::sync::Arc;
+ 
+ /// A shared data type used for collaborative text editing. It enables multiple users to add and
+ /// remove chunks of text in efficient manner. This type is internally represented as a mutable
+@@ -378,6 +379,46 @@
+         }
+     }
+ 
++    /// Copies a single live text item's identity and content in a UTF-16 document.
++    /// Deleted, formatted, fragmented, and non-text sequences are not certified.
++    fn try_single_text_item<T: ReadTxn>(&self, txn: &T) -> Option<(ID, String)> {
++        if txn.store().offset_kind != OffsetKind::Utf16 {
++            return None;
++        }
++        let branch = self.as_ref();
++        let item = branch.start.as_deref()?;
++        if item.right.is_some() || item.is_deleted() || !item.is_countable() {
++            return None;
++        }
++        let ItemContent::String(value) = &item.content else {
++            return None;
++        };
++        if value.len(OffsetKind::Utf16) != item.len() as usize
++            || branch.content_len != item.len()
++        {
++            return None;
++        }
++        Some((item.id, value.as_str().to_owned()))
++    }
++
++    /// Reads text without formatting. Returns `None` if any visible item is
++    /// neither text nor formatting; callers can use [Text::diff] for those items.
++    fn try_plain_string<T: ReadTxn>(&self, _txn: &T) -> Option<String> {
++        let mut next = self.as_ref().start;
++        let mut result = String::new();
++        while let Some(item) = next.as_deref() {
++            if !item.is_deleted() {
++                match &item.content {
++                    ItemContent::String(value) => result.push_str(value.as_str()),
++                    ItemContent::Format(_, _) => {}
++                    _ => return None,
++                }
++            }
++            next = item.right;
++        }
++        Some(result)
++    }
++
+     /// Returns an ordered sequence of formatted chunks, current [Text] corresponds of. These chunks
+     /// may contain inserted pieces of text or more complex elements like embedded binaries of
+     /// shared objects. Chunks are organized by type of inserted value and formatting attributes
+@@ -960,6 +1001,12 @@
+             pos.forward();
+         }
+     }
++}
++
++fn sorted_attributes(attrs: Attrs) -> Vec<(Arc<str>, Any)> {
++    let mut attrs: Vec<_> = attrs.into_iter().collect();
++    attrs.sort_unstable_by(|left, right| left.0.cmp(&right.0));
++    attrs
+ }
+ 
+ fn insert_attributes(
+@@ -970,7 +1017,7 @@
+ ) -> Attrs {
+     let mut negated_attrs = HashMap::with_capacity(attrs.len());
+     let mut store = txn.store_mut();
+-    for (k, v) in attrs {
++    for (k, v) in sorted_attributes(attrs) {
+         let current_value = pos
+             .current_attrs
+             .as_ref()
+@@ -1027,7 +1074,7 @@
+     }
+ 
+     let mut store = txn.store_mut();
+-    for (k, v) in attrs {
++    for (k, v) in sorted_attributes(attrs) {
+         let client_id = store.client_id;
+         let parent = this.into();
+         let item = Item::new(

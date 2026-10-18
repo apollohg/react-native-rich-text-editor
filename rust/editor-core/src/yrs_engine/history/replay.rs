@@ -81,7 +81,7 @@ impl YrsHistory {
         let PreparedExcludedHistoryAdmission {
             origin,
             work_units,
-            mut reserved_update,
+            reserved_update,
             disposition,
             replay_slot,
         } = admission;
@@ -99,11 +99,10 @@ impl YrsHistory {
             accepted_update.len() <= reserved_update.capacity(),
             "admitted excluded update exceeds its exact pre-write reservation"
         );
-        reserved_update.extend_from_slice(&accepted_update);
         self.push_prepared_replay_event(
             replay_slot.expect("retained excluded admission owns a replay slot"),
             ReplayEvent::Excluded {
-                update: reserved_update,
+                update: retained_replay_update(reserved_update, accepted_update),
                 origin,
                 work_units,
             },
@@ -163,6 +162,26 @@ impl YrsHistory {
             self.replay_events.len(),
             self.replay_bytes,
             self.force_next_boundary,
+        )
+    }
+
+    #[cfg(all(test, not(target_os = "android")))]
+    pub(crate) fn release_for_test(&mut self) {
+        self.manager.clear_all();
+        self.manager.reset();
+        self.replay_events = Vec::new();
+        self.redone_chains = Vec::new();
+        self.epoch_baseline = Vec::new();
+        self.pending_replay_event = None;
+    }
+
+    #[cfg(all(test, not(target_os = "android")))]
+    pub(crate) fn replay_bytes_retained_for_test(&self) -> usize {
+        self.epoch_baseline.capacity().saturating_add(
+            self.replay_events
+                .iter()
+                .map(ReplayEvent::encoded_bytes)
+                .sum::<usize>(),
         )
     }
 

@@ -1,11 +1,9 @@
 pub(crate) fn crdt_envelope<T: ReadTxn>(
     request_id: u64,
-    txn: &T,
+    _read_lock: &T,
+    plan: &YrsMutationPlan,
     snapshot_scan_reservation: usize,
 ) -> OperationResult<CrdtEnvelope> {
-    // Reserve against the already-admitted encoded-state ceiling before the
-    // public snapshot API traverses the store. The measured public metadata
-    // scan is reconciled into the compiler's input-work budget by the caller.
     if snapshot_scan_reservation == 0 {
         return Err(OperationError::operation_limit_exceeded(
             request_id,
@@ -15,48 +13,121 @@ pub(crate) fn crdt_envelope<T: ReadTxn>(
             1,
         ));
     }
-    let snapshot = txn.snapshot();
-    let mut clients = HashSet::new();
-    let mut state_clock_units = 0u64;
-    let mut scan_work = 0usize;
-    for (client, clock) in snapshot.state_map.iter() {
-        clients.insert(*client);
-        state_clock_units = state_clock_units
-            .checked_add(u64::from(*clock))
-            .ok_or_else(|| snapshot_metric_overflow(request_id))?;
-        scan_work = scan_work
-            .checked_add(usize::try_from(*clock).unwrap_or(usize::MAX))
-            .and_then(|work| work.checked_add(1))
-            .ok_or_else(|| snapshot_metric_overflow(request_id))?;
-    }
-    let mut deleted_clock_units = 0u64;
-    for (client, ranges) in snapshot.delete_set.iter() {
-        clients.insert(*client);
-        scan_work = scan_work
-            .checked_add(1)
-            .ok_or_else(|| snapshot_metric_overflow(request_id))?;
-        for range in ranges {
-            let range_len = range
-                .end
-                .checked_sub(range.start)
-                .ok_or_else(|| snapshot_metric_overflow(request_id))?;
-            deleted_clock_units = deleted_clock_units
-                .checked_add(u64::from(range_len))
-                .ok_or_else(|| snapshot_metric_overflow(request_id))?;
-            scan_work = scan_work
-                .checked_add(1)
-                .ok_or_else(|| snapshot_metric_overflow(request_id))?;
+    let mut text_actions = HashMap::<BranchID, usize>::new();
+    let mut child_actions = HashMap::<BranchID, usize>::new();
+    for action in &plan.actions {
+        match action {
+            YrsMutationAction::InsertText { target, .. }
+            | YrsMutationAction::DeleteText { target, .. }
+            | YrsMutationAction::FormatText { target, .. } => {
+                *text_actions
+                    .entry(AsRef::<Branch>::as_ref(target).id())
+                    .or_default() += 1;
+            }
+            YrsMutationAction::DeleteXmlChildren { parent, .. }
+            | YrsMutationAction::InsertXmlChildren { parent, .. } => {
+                *child_actions.entry(parent.id()).or_default() += 1;
+            }
+            YrsMutationAction::CreateText { parent, .. } => {
+                *child_actions
+                    .entry(AsRef::<Branch>::as_ref(parent).id())
+                    .or_default() += 1;
+            }
+            YrsMutationAction::SetXmlAttribute { .. }
+            | YrsMutationAction::RemoveXmlAttribute { .. } => {}
         }
     }
-    let live_clock_units = state_clock_units
-        .checked_sub(deleted_clock_units)
-        .ok_or_else(|| {
-            OperationError::engine_invariant_failed(
-                request_id,
-                None,
-                "Yrs snapshot delete clocks exceed observed state clocks",
-            )
-        })?;
+    let mut clients = HashSet::new();
+    let mut live_clock_units = 0u64;
+    let mut overflowed = false;
+    let mut visit = |client, len: u32| {
+        clients.insert(client);
+        match live_clock_units.checked_add(u64::from(len)) {
+            Some(units) => live_clock_units = units,
+            None => overflowed = true,
+        }
+    };
+    let mut whole_targets = HashSet::new();
+    let mut scan_work = 0usize;
+    for action in &plan.actions {
+        let action_work = match action {
+            YrsMutationAction::DeleteText {
+                target,
+                index_utf16,
+                len_utf16,
+                ..
+            }
+            | YrsMutationAction::FormatText {
+                target,
+                index_utf16,
+                len_utf16,
+                ..
+            } => {
+                let branch = AsRef::<Branch>::as_ref(target);
+                if text_actions.get(&branch.id()) == Some(&SINGLE_SCOPED_ACTION) {
+                    branch.visit_text_range_deletion_scope(
+                        OffsetKind::Utf16,
+                        *index_utf16,
+                        *len_utf16,
+                        &mut visit,
+                    )
+                } else if whole_targets.insert(branch.id()) {
+                    branch.visit_text_range_deletion_scope(
+                        OffsetKind::Utf16,
+                        0,
+                        u32::MAX,
+                        &mut visit,
+                    )
+                } else {
+                    0
+                }
+            }
+            YrsMutationAction::DeleteXmlChildren {
+                parent,
+                child_index,
+                child_count,
+                ..
+            } => {
+                let branch = parent.branch();
+                if child_actions.get(&branch.id()) == Some(&SINGLE_SCOPED_ACTION) {
+                    branch.visit_child_range_deletion_scope(
+                        *child_index,
+                        *child_count,
+                        &mut visit,
+                    )
+                } else if whole_targets.insert(branch.id()) {
+                    branch.visit_child_range_deletion_scope(0, u32::MAX, &mut visit)
+                } else {
+                    0
+                }
+            }
+            YrsMutationAction::RemoveXmlAttribute { target, key, .. } => {
+                AsRef::<Branch>::as_ref(target).visit_map_entry_deletion_scope(key, &mut visit)
+            }
+            YrsMutationAction::SetXmlAttribute {
+                target,
+                key,
+                signature,
+                ..
+            } if signature
+                .attrs
+                .binary_search_by(|(candidate, _)| candidate.as_ref().cmp(key.as_ref()))
+                .is_ok() =>
+            {
+                AsRef::<Branch>::as_ref(target).visit_map_entry_deletion_scope(key, &mut visit)
+            }
+            YrsMutationAction::SetXmlAttribute { .. }
+            | YrsMutationAction::InsertText { .. }
+            | YrsMutationAction::InsertXmlChildren { .. }
+            | YrsMutationAction::CreateText { .. } => 0,
+        };
+        scan_work = scan_work
+            .checked_add(action_work)
+            .ok_or_else(|| snapshot_metric_overflow(request_id))?;
+    }
+    if overflowed {
+        return Err(snapshot_metric_overflow(request_id));
+    }
     if scan_work > snapshot_scan_reservation {
         return Err(OperationError::operation_limit_exceeded(
             request_id,
@@ -72,6 +143,8 @@ pub(crate) fn crdt_envelope<T: ReadTxn>(
         scan_work,
     })
 }
+
+const SINGLE_SCOPED_ACTION: usize = 1;
 
 pub(crate) fn crdt_clock_scan_reservation<T: ReadTxn>(
     request_id: u64,

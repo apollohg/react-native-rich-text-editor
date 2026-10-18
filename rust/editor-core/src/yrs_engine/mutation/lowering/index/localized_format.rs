@@ -87,6 +87,7 @@ impl LocalizedFormatCompiler {
                 pending_traversal_work: seed_payload.pending_traversal_work,
                 localized_position_target_count: Some(seed_payload.target_count),
                 explicit_path_parent_widths: Some(path_parent_widths),
+                structural_window_complement: None,
                 action_limit,
                 scan_work,
                 scan_limit,
@@ -457,21 +458,18 @@ fn localized_existing_textblock_targets<T: ReadTxn>(
         return Ok(None);
     }
     if let LocalizedTextblockLocator::Insert(locator) = locator {
-        let matching_targets = located
-            .iter()
-            .filter(|target| {
-                let LocatedTarget::Existing {
-                    start, scalar_len, ..
-                } = target
-                else {
-                    return false;
-                };
-                start
-                    .checked_add(*scalar_len)
-                    .is_some_and(|end| locator.position >= *start && locator.position <= end)
-            })
-            .count();
-        if matching_targets != 1 {
+        let position_has_target = located.iter().any(|target| {
+            let LocatedTarget::Existing {
+                start, scalar_len, ..
+            } = target
+            else {
+                return false;
+            };
+            start
+                .checked_add(*scalar_len)
+                .is_some_and(|end| locator.position >= *start && locator.position <= end)
+        });
+        if !position_has_target {
             return Ok(None);
         }
     }

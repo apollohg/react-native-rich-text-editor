@@ -220,6 +220,7 @@ fn update_node_attrs_rejects_ambiguous_attrless_target() {
             editing_limits: &editing_limits,
             document_revision: 0,
             max_length: None,
+            validation_certificate: None,
         },
         TypedTransaction {
             request_id: 119,
@@ -275,6 +276,7 @@ fn compile_and_execute_attribute_update(
                 editing_limits: &editing_limits,
                 document_revision: 0,
                 max_length: None,
+                validation_certificate: None,
             },
             TypedTransaction {
                 request_id: 117,
@@ -349,7 +351,7 @@ fn compile_and_execute_attribute_update(
     )
 }
 
-fn compile_attribute_operations(
+pub(super) fn compile_attribute_operations(
     source: Value,
     updates: Vec<HashMap<String, Value>>,
 ) -> (
@@ -372,6 +374,7 @@ fn compile_attribute_operations(
                 editing_limits: &editing_limits,
                 document_revision: 0,
                 max_length: None,
+                validation_certificate: None,
             },
             TypedTransaction {
                 request_id: 118,
