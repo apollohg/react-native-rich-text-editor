@@ -12,20 +12,31 @@ import com.apollohg.editor.NativeEditorExpoView.PendingNativeAction
 import com.apollohg.editor.NativeEditorExpoView.PreflightUpdateEvent
 import com.apollohg.editor.NativeEditorExpoView.ToolbarPlacement
 
-internal fun NativeEditorExpoView.refreshToolbarStateFromEditorSelection(): String? {
+internal fun NativeEditorExpoView.currentEditorSelectionState(): EditorSelectionState? {
     if (richTextView.editorId == 0L) return null
     if (handleDestroyedCurrentEditorIfNeeded()) return null
-    onRefreshToolbarStateFromEditorSelectionForTesting?.let { callback ->
-        val stateJson = callback()
-        noteDocumentVersionFromUpdateJSON(stateJson)
-        return stateJson
-    }
-    val stateJson = richTextView.editorEditText.v2Driver?.currentSelectionStateJson() ?: return null
-    noteDocumentVersionFromUpdateJSON(stateJson)
-    val state = NativeToolbarState.fromUpdateJson(stateJson) ?: return null
+    val state = when (val override = onRefreshToolbarStateFromEditorSelectionForTesting) {
+        null -> richTextView.editorEditText.v2Driver?.currentSelectionState()
+        else -> override()
+    } ?: return null
+    lastDocumentVersion = state.documentVersion
+    return state
+}
+
+internal fun NativeEditorExpoView.refreshToolbarStateFromEditorSelection(): String? {
+    val state = currentEditorSelectionState() ?: return null
+    presentToolbarState(state)
+    return state.json()
+}
+
+internal fun NativeEditorExpoView.presentToolbarState(selectionState: EditorSelectionState) =
+    presentToolbarState(
+        NativeToolbarState.fromState(selectionState.activeState, selectionState.historyState)
+    )
+
+internal fun NativeEditorExpoView.presentToolbarState(state: NativeToolbarState) {
     toolbarState = state
-    keyboardToolbarView.applyState(state)
-    return stateJson
+    if (keyboardToolbarView.parent != null) keyboardToolbarView.applyState(state)
 }
 
 internal fun NativeEditorExpoView.ensureKeyboardToolbarAttached() {
@@ -44,6 +55,7 @@ internal fun NativeEditorExpoView.ensureKeyboardToolbarAttached() {
             Gravity.BOTTOM or Gravity.START
         )
     )
+    keyboardToolbarView.applyState(toolbarState)
     updateKeyboardToolbarLayout()
     ViewCompat.requestApplyInsets(keyboardToolbarView)
 }

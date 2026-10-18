@@ -16,15 +16,21 @@ import android.view.accessibility.AccessibilityManager
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.EditText
 import android.widget.FrameLayout
+import com.apollohg.editor.ADMITTED_NESTED_TABLE_DEPTH
+import com.apollohg.editor.BOUNDED_THREAD_STACK_BYTES
 import com.apollohg.editor.DecodedBitmapBudget
 import com.apollohg.editor.DecodedBitmapLease
 import com.apollohg.editor.DecodedBitmapPriority
+import com.apollohg.editor.HARD_MAXIMUM_DOCUMENT_DEPTH
 import com.apollohg.editor.NativeCodeHighlightingConfig
 import com.apollohg.editor.ProseViewerConfiguration
 import com.apollohg.editor.ProseViewerError
 import com.apollohg.editor.ProseViewerSource
 import com.apollohg.editor.ProseViewerView
 import com.apollohg.editor.RenderImageLoader
+import com.apollohg.editor.configWithMaxDocumentDepth
+import com.apollohg.editor.nestedTablesSource
+import com.apollohg.editor.runOnThreadStack
 import com.apollohg.editor.viewer.AndroidProseLayoutEngine
 import com.apollohg.editor.viewer.FabricAttachmentSidecars
 import com.apollohg.editor.viewer.FabricGenerationToken
@@ -56,8 +62,11 @@ import com.apollohg.editor.viewer.ViewerImagePipeline
 import com.apollohg.editor.viewer.ViewerInline
 import com.apollohg.editor.viewer.cellDocument
 import com.apollohg.editor.viewer.cellSemanticSourceIndex
+import com.apollohg.editor.viewer.cellShapeCatalogBytes
+import com.apollohg.editor.viewer.cellShapeKey
 import com.apollohg.editor.viewer.cellSupportsBackgroundPreparation
 import com.apollohg.editor.viewer.compileWithRust
+import com.apollohg.editor.viewer.sha256
 import com.facebook.react.bridge.BridgeReactContext
 import com.facebook.react.uimanager.ThemedReactContext
 import java.util.Locale
@@ -65,6 +74,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
@@ -6192,7 +6202,7 @@ class ViewerTableTest {
     fun `compiler backed raised depth 110 tables prepare finite retained surfaces`() {
         val layout = prepare(
             nestedTablesSource(110),
-            config = CONFIG.dropLast(1) + ",\"limits\":{\"resource\":{\"maxDocumentDepth\":1024}}}"
+            config = configWithMaxDocumentDepth(CONFIG, HARD_MAXIMUM_DOCUMENT_DEPTH)
         )
 
         assertNull(layout.error)
@@ -7358,8 +7368,7 @@ class ViewerTableTest {
     fun `mounted presentation traverses admitted depth without dropping metadata`() {
         val layout = prepare(
             nestedTablesSource(110),
-            config =
-                CONFIG.dropLast(1) + ",\"limits\":{\"resource\":{\"maxDocumentDepth\":1024}}}"
+            config = configWithMaxDocumentDepth(CONFIG, HARD_MAXIMUM_DOCUMENT_DEPTH)
         )
         val snapshot = ViewerTablePresentation.project(
             layout,
@@ -7368,6 +7377,510 @@ class ViewerTableTest {
         )
         assertEquals(110, snapshot.cells.size)
         assertEquals(110, snapshot.mountedCells.size)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `hard maximum depth preparation and traversals fit a bounded thread stack`() {
+        val depth = ADMITTED_NESTED_TABLE_DEPTH
+        val imageSource = "https://example.test/deepest.png"
+        val codeText = "deepest"
+        val leaf =
+            """{"type":"codeBlock","content":[{"type":"text","text":"$codeText"}]},""" +
+                """{"type":"image","attrs":{"src":"$imageSource","width":20,"height":20}}"""
+        val configuration = ProseViewerConfiguration(
+            configWithMaxDocumentDepth(CONFIG, HARD_MAXIMUM_DOCUMENT_DEPTH),
+            imagesEnabled = true
+        )
+        fun request(nestedDepth: Int) = ProseViewerRequest(
+            ProseViewerSource.Json(nestedTablesSource(nestedDepth, leaf)),
+            configuration
+        )
+        lateinit var layout: PreparedProseLayout
+        runOnThreadStack(BOUNDED_THREAD_STACK_BYTES) {
+            val registry = PreparedProseLayoutRegistry(compiler = ::compileWithRust)
+            assertNotNull(
+                "one more nested table must exceed the hard document depth",
+                registry.measure(request(depth + 1), 320, 1f).error
+            )
+            layout = registry.measure(request(depth), 320, 1f)
+            assertNull("preparation must not fail at the admitted depth", layout.error)
+            val surfaces = ViewerTablePresentation.surfaces(layout)
+            assertEquals("every nested surface must be enumerated", depth, surfaces.size)
+            val snapshot = ViewerTablePresentation.project(
+                layout,
+                ViewerTablePresentationOwner(),
+                ViewerTablePresentationViewport.Unknown
+            )
+            assertEquals("projection must reach the deepest cell", depth, snapshot.cells.size)
+            assertEquals(listOf(imageSource), snapshot.images.map { it.attachment.source })
+            assertEquals(
+                listOf(codeText),
+                TableAccessibility.text(snapshot.layouts.last().layout)
+            )
+            assertEquals(
+                listOf(imageSource),
+                surfaces.first().parentImageAttachments(0, Rect()).map { it.source }
+            )
+            var retainedLayouts = 0
+            var retainedTables = 0
+            layout.forEachRetainedLayout({ retainedLayouts += 1 }, { retainedTables += 1 })
+            assertEquals("retained accounting must reach every cell", depth + 1, retainedLayouts)
+            assertEquals("retained accounting must reach every surface", depth, retainedTables)
+            assertTrue(
+                "retained accounting must reach nested cell shapes",
+                layout.cellShapeCatalogBytes() > 0
+            )
+
+            val document = compileWithRust(request(depth))
+            var deepest = document
+            while (true) {
+                val block = deepest.blocks.first()
+                val table = block.tableSource() ?: break
+                deepest = deepest.cellDocument(table.cells.first(), requireNotNull(block.tableKey))
+            }
+            val theme = PreparedProseTheme.resolve(null, 1f)
+            fun imageGeometry(document: ViewerDocument) = cellShapeKey(
+                "depth",
+                document,
+                320,
+                theme,
+                1f,
+                "depth",
+                PreparedCellShapeCatalog().newBuildContext()
+            ).imageGeometryDigest
+            assertNotEquals(sha256(""), imageGeometry(deepest))
+            assertEquals(imageGeometry(deepest), imageGeometry(document))
+        }
+
+        val drawing = PreparedProseDrawingView(RuntimeEnvironment.getApplication())
+        drawing.install(layout)
+        drawing.layout(0, 0, layout.widthPx, layout.heightPx)
+        var paintedCells = 0
+        drawing.onTableChromeDrawnForTesting = { paintedCells += 1 }
+        val canvas = Canvas(Bitmap.createBitmap(320, 320, Bitmap.Config.ARGB_8888))
+        runOnThreadStack(BOUNDED_THREAD_STACK_BYTES) { drawing.draw(canvas) }
+        assertEquals("background painting must reach the deepest cell", depth, paintedCells)
+    }
+
+    @Test
+    fun `bound and neutral cell layouts charge their own bytes plus the tables they hold`() {
+        fun cell(vararg content: String) =
+            """{"type":"table_cell","content":[${content.joinToString(",")}]}"""
+        fun table(vararg cells: String) = """{"type":"table","content":[{"type":"table_row",""" +
+            """"content":[${cells.joinToString(",")}]}]}"""
+        fun linked(level: Int) =
+            """{"type":"paragraph","content":[{"type":"text","text":"level $level",""" +
+                """"marks":[{"type":"link","attrs":{"href":"https://example.test/$level"}}]},""" +
+                """{"type":"mention","attrs":{"id":"user-$level","label":"User $level"}}]}"""
+        var node = table(cell(linked(0)))
+        for (level in 1..BYTE_ACCOUNTING_NESTED_TABLE_DEPTH) {
+            node = table(cell(linked(level)), cell(node))
+        }
+        val document = compileWithRust(
+            ProseViewerRequest(
+                ProseViewerSource.Json("""{"type":"doc","content":[$node]}"""),
+                ProseViewerConfiguration(interactionConfig())
+            )
+        )
+        var preparedCells = 0
+        val engine = StaticLayoutAndroidProseLayoutEngine().apply {
+            tablePreparationWorkerLimit = 1
+            tableCellPreparationObserver = { _, _ ->
+                preparedCells += 1
+                Unit
+            }
+        }
+        val catalog = PreparedCellShapeCatalog()
+        val key = ProseLayoutKey(document.semanticKey, 320, "bytes", 0, 0, 1L, 0, "bytes")
+        fun prepareWithShapes(): PreparedProseLayout {
+            val context = catalog.newBuildContext()
+            return engine.prepare(
+                document,
+                key,
+                PreparedProseTheme.resolve(null, 1f),
+                320,
+                1f,
+                false,
+                key.semanticGenerationIdentity,
+                context
+            ).also { context.close() }
+        }
+        fun heldTableBytes(layout: PreparedProseLayout) =
+            layout.blocks.sumOf { it.tableSurface?.retainedBytes ?: 0L }
+        val fresh = prepareWithShapes()
+        catalog.synchronizeOwners(listOf(fresh))
+        preparedCells = 0
+        val bound = prepareWithShapes()
+        assertEquals("the second pass must bind every cell from its shape", 0, preparedCells)
+
+        val pending = ArrayDeque(listOf(Triple("root", fresh, bound)))
+        var compared = 0
+        var withAccessibility = 0
+        while (pending.isNotEmpty()) {
+            val (path, freshLayout, boundLayout) = pending.removeLast()
+            freshLayout.blocks.zip(boundLayout.blocks).forEachIndexed { blockIndex, blocks ->
+                val freshSurface = blocks.first.tableSurface ?: return@forEachIndexed
+                val boundSurface = requireNotNull(blocks.second.tableSurface)
+                freshSurface.cells.zip(boundSurface.cells).forEach { (freshCell, boundCell) ->
+                    val cellPath = "$path/$blockIndex:${freshCell.sourceIndex}"
+                    val freshContent = freshCell.content
+                    val boundContent = boundCell.content
+                    val neutral = requireNotNull(freshContent.cellShape).localLayout
+                    assertEquals(
+                        "$cellPath neutral shape must charge only its own bytes",
+                        freshContent.ownRetainedBytes + heldTableBytes(neutral),
+                        neutral.retainedBytes
+                    )
+                    assertEquals(
+                        "$cellPath bound layout must charge its own bytes plus held tables",
+                        freshContent.ownRetainedBytes + heldTableBytes(boundContent),
+                        boundContent.retainedBytes
+                    )
+                    if (freshContent.accessibilityNodes.isNotEmpty()) withAccessibility += 1
+                    compared += 1
+                    pending.addLast(Triple(cellPath, freshContent, boundContent))
+                }
+            }
+        }
+        assertEquals(BYTE_ACCOUNTING_NESTED_TABLE_DEPTH * 2 + 1, compared)
+        assertEquals(BYTE_ACCOUNTING_NESTED_TABLE_DEPTH + 1, withAccessibility)
+    }
+
+    @Test
+    fun `cell shape geometry digests each nested block once per build pass`() {
+        val configuration = ProseViewerConfiguration(
+            configWithMaxDocumentDepth(CONFIG, HARD_MAXIMUM_DOCUMENT_DEPTH)
+        )
+        for (depth in listOf(GEOMETRY_DIGEST_NESTED_TABLE_DEPTH, ADMITTED_NESTED_TABLE_DEPTH)) {
+            val document = compileWithRust(
+                ProseViewerRequest(ProseViewerSource.Json(nestedTablesSource(depth)), configuration)
+            )
+            val engine = StaticLayoutAndroidProseLayoutEngine()
+            for (width in GEOMETRY_DIGEST_WIDTHS) {
+                val context = PreparedCellShapeCatalog().newBuildContext()
+                val key = ProseLayoutKey(
+                    document.semanticKey,
+                    width,
+                    "geometry",
+                    0,
+                    0,
+                    1L,
+                    0,
+                    "geometry"
+                )
+                val layout = engine.prepare(
+                    document,
+                    key,
+                    PreparedProseTheme.resolve(null, 1f),
+                    width,
+                    1f,
+                    false,
+                    key.semanticGenerationIdentity,
+                    context
+                )
+                context.close()
+                assertNull(layout.error)
+                assertEquals(
+                    "depth $depth width $width must digest each nested cell block exactly once",
+                    depth,
+                    context.geometryBlockVisitsForTesting
+                )
+            }
+        }
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `nested table preparation reproduces recorded geometry shapes and observer order`() {
+        val expected = requireNotNull(javaClass.getResource(PREPARATION_GOLDEN_RESOURCE)) {
+            "missing golden resource $PREPARATION_GOLDEN_RESOURCE"
+        }.readText().trimEnd().lines()
+        val actual = preparationGoldenDump().lines()
+        val mismatches = (0 until maxOf(expected.size, actual.size)).mapNotNull { index ->
+            val wanted = expected.getOrNull(index)
+            val found = actual.getOrNull(index)
+            if (wanted == found) {
+                null
+            } else {
+                "line ${index + 1}\n  expected: $wanted\n  actual:   $found"
+            }
+        }
+        assertTrue(
+            "${mismatches.size} golden lines differ " +
+                "(expected ${expected.size} lines, actual ${actual.size}):\n" +
+                mismatches.take(GOLDEN_MISMATCHES_REPORTED).joinToString("\n"),
+            mismatches.isEmpty()
+        )
+    }
+
+    internal fun preparationGoldenDump(): String {
+        val lines = mutableListOf<String>()
+        val atomTheme = """{"viewerAtoms":{"generation":"golden","revision":"one",""" +
+            """"nodeTypes":["card"],"estimatedHeights":{"card":40}}}"""
+        fun document(source: String) = compileWithRust(
+            ProseViewerRequest(
+                ProseViewerSource.Json(source),
+                ProseViewerConfiguration(CONFIG, themeJson = atomTheme, imagesEnabled = true)
+            )
+        )
+        fun observedEngine(events: MutableList<String>) =
+            StaticLayoutAndroidProseLayoutEngine().apply {
+                tablePreparationWorkerLimit = 1
+                tableCellPreparationObserver = { index, contentKey ->
+                    events += "prepare $index ${contentKey.take(GOLDEN_KEY_DIGEST_LENGTH)}"
+                    Unit
+                }
+                tableCellLayoutObserverForTesting = { index, layout ->
+                    events += "layout $index ${layout.widthPx}x${layout.heightPx}"
+                    Unit
+                }
+            }
+        fun record(name: String, layout: PreparedProseLayout, events: List<String>) {
+            events.forEachIndexed { index, event -> lines += "$name event[$index]=$event" }
+            dumpPreparedLayout("$name layout", layout, lines)
+        }
+        for ((name, source) in preparationGoldenSources()) {
+            for (width in PREPARATION_GOLDEN_WIDTHS) {
+                val case = "$name@$width"
+                val events = mutableListOf<String>()
+                val engine = observedEngine(events)
+                val key = ProseLayoutKey(
+                    document(source).semanticKey,
+                    width,
+                    "golden",
+                    0,
+                    0,
+                    1L,
+                    0,
+                    "golden"
+                )
+                val theme = PreparedProseTheme.resolve(atomTheme, 1f)
+                record(
+                    "$case engine",
+                    engine.prepare(document(source), key, theme, width, 1f, false),
+                    events.toList()
+                )
+                events.clear()
+                val catalog = PreparedCellShapeCatalog()
+                val first = catalog.newBuildContext()
+                val fresh = engine.prepare(
+                    document(source),
+                    key,
+                    theme,
+                    width,
+                    1f,
+                    false,
+                    key.semanticGenerationIdentity,
+                    first
+                )
+                first.close()
+                record("$case fresh-shapes", fresh, events.toList())
+                catalog.synchronizeOwners(listOf(fresh))
+                events.clear()
+                val second = catalog.newBuildContext()
+                val bound = engine.prepare(
+                    document(source),
+                    key,
+                    theme,
+                    width,
+                    1f,
+                    false,
+                    key.semanticGenerationIdentity,
+                    second
+                )
+                second.close()
+                record("$case bound-shapes", bound, events.toList())
+                events.clear()
+                val registryEngine = observedEngine(events).apply {
+                    tableCellMeasurementEnabled = true
+                }
+                val registry = PreparedProseLayoutRegistry(
+                    compiler = ::compileWithRust,
+                    layoutEngine = registryEngine
+                )
+                val measured = registry.measure(
+                    ProseViewerRequest(
+                        ProseViewerSource.Json(source),
+                        ProseViewerConfiguration(
+                            CONFIG,
+                            themeJson = atomTheme,
+                            imagesEnabled = true
+                        )
+                    ),
+                    width,
+                    1f
+                )
+                record("$case registry", measured, events.toList())
+            }
+        }
+        val styles = mutableMapOf<String, Int>()
+        return PROCESS_STYLE_DIGEST.replace(lines.joinToString("\n")) { match ->
+            "styleDigest=style#" + styles.getOrPut(match.groupValues[1]) { styles.size }
+        }
+    }
+
+    private fun dumpPreparedLayout(
+        path: String,
+        layout: PreparedProseLayout,
+        lines: MutableList<String>
+    ) {
+        fun key(value: String) = sha256(value).take(GOLDEN_KEY_DIGEST_LENGTH)
+        fun optional(name: String, values: List<String>) {
+            if (values.isNotEmpty()) lines += "$path.$name=${values.joinToString()}"
+        }
+        val shape = layout.cellShape?.key?.let {
+            "${key(it.contentKey)}:${it.widthPx}:${it.densityBits}:styleDigest=${it.styleDigest}:" +
+                "${key(it.atomGeometryDigest)}:${key(it.imageGeometryDigest)}:${it.format}"
+        }
+        lines += "$path=${layout.widthPx}x${layout.heightPx} key=${key(layout.key.semanticKey)} " +
+            "bytes=${layout.retainedBytes} error=${layout.error} shape=$shape " +
+            "rebuild=${layout.cellPreparation != null}"
+        optional(
+            "images",
+            layout.imageAttachments.map {
+                "${it.ordinal}:${it.source}:${it.bounds.toShortString()}:${it.declaredSize}"
+            }
+        )
+        optional(
+            "atoms",
+            layout.viewerAtoms.map { "${it.nodeType}:${it.docPos}:${it.bounds.toShortString()}" }
+        )
+        optional(
+            "interactions",
+            layout.interactions.map {
+                "${it.kind}:${it.docPos}:${it.sourceBlockIndex}:" +
+                    it.rects.joinToString("/") { rect -> rect.toShortString() }
+            }
+        )
+        optional(
+            "accessibility",
+            layout.accessibilityNodes.map {
+                "${it.interactionIndex}:${it.role}:${it.label}:${it.bounds.toShortString()}"
+            }
+        )
+        optional("code", layout.codeHighlightBlocks.map { "${it.start}:${it.text}" })
+        optional("codeKeys", layout.highlightedCodeKeys.sorted().map(::key))
+        layout.blocks.forEachIndexed { blockIndex, block ->
+            val blockPath = "$path.blocks[$blockIndex]"
+            lines += "$blockPath=${block.bounds.toShortString()} " +
+                "table=${block.tableBounds?.toShortString()} " +
+                "image=${block.imageAttachment?.source}"
+            block.fragments.forEachIndexed { fragmentIndex, fragment ->
+                lines += "$blockPath.fragments[$fragmentIndex]=${fragment.kind} " +
+                    "${fragment.bounds.toShortString()} " +
+                    "at=${fragment.layoutX},${fragment.layoutY} " +
+                    "text=${fragment.layout?.text} label=${fragment.label} " +
+                    "atom=${fragment.atomNodeType}:${fragment.atomDocPos}"
+            }
+            val surface = block.tableSurface ?: return@forEachIndexed
+            val tablePath = "$blockPath.table"
+            val result = surface.layout
+            lines += "$tablePath=${surface.identity} editor=${surface.editorTableId} " +
+                "host=${surface.hostViewportWidth} rtl=${surface.isRightToLeft} " +
+                "error=${surface.preparationError} failure=${result.failure} " +
+                "metadataBytes=${surface.metadataRetainedBytes} bytes=${surface.retainedBytes}"
+            lines += "$tablePath.grid=columns${result.columnWidths} " +
+                "offsets${result.columnOffsets} rows${result.rowOffsets.toList()} " +
+                "content=${result.contentWidth}x${result.contentHeight} " +
+                "order=${result.sourceOrder.toList()}"
+            surface.cells.forEachIndexed { cellIndex, cell ->
+                val cellPath = "$tablePath.cells[$cellIndex]"
+                val frame = surface.frameOfCell(cell)
+                lines += "$cellPath=${cell.sourceIndex}:${cell.row},${cell.column} " +
+                    "span=${cell.rowspan}x${cell.colspan} header=${cell.isHeader} " +
+                    "frame=${frame.left},${frame.top},${frame.width},${frame.height} " +
+                    "content=${cell.contentWidthPx}x${cell.contentHeightPx} " +
+                    "origin=${cell.contentOrigin} " +
+                    "key=${key(cell.contentKey.semanticKey)}:${cell.contentKey.widthPx} " +
+                    "nested=${cell.hasNestedTables} images=${cell.hasImages} " +
+                    "atoms=${cell.hasAtoms} plain=${cell.isMeasuredPlain} " +
+                    "pending=${cell.pendingMeasurement != null} error=${cell.contentError} " +
+                    "text=${cell.accessibilityText}"
+                dumpPreparedLayout("$cellPath.layout", cell.content, lines)
+            }
+        }
+    }
+
+    private fun preparationGoldenSources(): List<Pair<String, String>> {
+        fun paragraph(text: String) =
+            """{"type":"paragraph","content":[{"type":"text","text":"$text"}]}"""
+        fun code(text: String) =
+            """{"type":"codeBlock","content":[{"type":"text","text":"$text"}]}"""
+        fun image(name: String) =
+            """{"type":"image","attrs":{"src":"https://example.test/$name.png",""" +
+                """"width":20,"height":20}}"""
+        val card = """{"type":"card"}"""
+        fun cell(vararg content: String, attrs: String = "", header: Boolean = false) =
+            """{"type":"${if (header) "table_header" else "table_cell"}"""" +
+                (if (attrs.isEmpty()) "" else ""","attrs":{$attrs}""") +
+                ""","content":[${content.joinToString(",")}]}"""
+        fun table(vararg rows: List<String>) =
+            """{"type":"table","content":[""" + rows.joinToString(",") { row ->
+                """{"type":"table_row","content":[${row.joinToString(",")}]}"""
+            } + "]}"
+        fun doc(vararg content: String) =
+            """{"type":"doc","content":[${content.joinToString(",")}]}"""
+        fun layered(level: Int): String = if (level == 0) {
+            table(listOf(cell(image("leaf"), card)))
+        } else {
+            table(
+                listOf(cell(paragraph("level $level")), cell(layered(level - 1))),
+                listOf(cell(code("code $level"), attrs = "\"colspan\":2"))
+            )
+        }
+        val repeated = table(listOf(cell(paragraph("same")), cell(code("same"))))
+        val listedTable = table(
+            listOf(cell(paragraph("list cell")), cell(table(listOf(cell(image("listed"))))))
+        )
+        return listOf(
+            "mixed" to doc(
+                paragraph("before"),
+                table(
+                    listOf(
+                        cell(paragraph("plain a")),
+                        cell(table(listOf(cell(code("nested code")), cell(image("nested")))))
+                    ),
+                    listOf(cell(paragraph("wide"), card, attrs = "\"colspan\":2"))
+                ),
+                paragraph("after")
+            ),
+            "spans" to doc(
+                table(
+                    listOf(
+                        cell(
+                            table(
+                                listOf(cell(paragraph("inner"))),
+                                listOf(cell(table(listOf(cell(paragraph("deep"))))))
+                            ),
+                            attrs = "\"rowspan\":2,\"colwidth\":[120]",
+                            header = true
+                        ),
+                        cell(paragraph("h2"), header = true),
+                        cell(paragraph("h3"), header = true)
+                    ),
+                    listOf(cell(paragraph("x")), cell(image("span"))),
+                    listOf(
+                        cell(
+                            """{"type":"bulletList","content":[{"type":"listItem",""" +
+                                """"content":[${paragraph("item")},""" +
+                                "${table(listOf(cell(paragraph("listed"))))}]}]}",
+                            attrs = "\"colspan\":3"
+                        )
+                    )
+                )
+            ),
+            "layered" to doc(paragraph("top"), layered(PREPARATION_GOLDEN_LAYERS)),
+            "repeated" to doc(
+                table(listOf(cell(repeated), cell(repeated), cell(paragraph("other"))))
+            ),
+            "containers" to doc(
+                """{"type":"blockquote","content":[${paragraph("quoted")},""" +
+                    "${table(listOf(cell(table(listOf(cell(paragraph("quoted cell")))))))}]}",
+                """{"type":"bulletList","content":[{"type":"listItem","content":[""" +
+                    "${paragraph("item")},$listedTable]}]}"
+            )
+        )
     }
 
     private fun drainMainUntil(latch: java.util.concurrent.CountDownLatch): Boolean {
@@ -7659,16 +8172,6 @@ class ViewerTableTest {
             """"measurements":{"$docPos":{"width":$width,""" +
             """"height":$height}}}}"""
 
-    private fun nestedTablesSource(depth: Int): String {
-        var node = """{"type":"paragraph","content":[{"type":"text","text":"deep"}]}"""
-        repeat(depth) {
-            node =
-                """{"type":"table","content":[{"type":"table_row",""" +
-                """"content":[{"type":"table_cell","content":[$node]}]}]}"""
-        }
-        return """{"type":"doc","content":[$node]}"""
-    }
-
     private class CountingAdmissionLayoutEngine : AndroidProseLayoutEngine {
         var preparationCount = 0
 
@@ -7686,6 +8189,15 @@ class ViewerTableTest {
     }
 
     internal companion object {
+        private const val PREPARATION_GOLDEN_RESOURCE = "nested-table-preparation.golden"
+        private const val GOLDEN_MISMATCHES_REPORTED = 40
+        private const val PREPARATION_GOLDEN_LAYERS = 4
+        private val PREPARATION_GOLDEN_WIDTHS = listOf(180, 320, 1_000)
+        private val PROCESS_STYLE_DIGEST = Regex("styleDigest=([0-9a-f]+)")
+        private const val GOLDEN_KEY_DIGEST_LENGTH = 16
+        private const val GEOMETRY_DIGEST_NESTED_TABLE_DEPTH = 100
+        private const val BYTE_ACCOUNTING_NESTED_TABLE_DEPTH = 3
+        private val GEOMETRY_DIGEST_WIDTHS = listOf(320, 200)
         const val CONFIG = """{"schema":{"nodes":[{"name":"doc","content":"block+",""" +
             """"role":"doc"},{"name":"paragraph","content":"inline*",""" +
             """"group":"block","role":"textBlock"},""" +

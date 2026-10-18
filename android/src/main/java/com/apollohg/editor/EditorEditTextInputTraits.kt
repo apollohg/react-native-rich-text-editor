@@ -6,12 +6,15 @@ import android.text.Annotation
 import android.text.InputType
 import android.text.SpannableStringBuilder
 import android.text.Spanned
+import android.text.TextUtils
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import com.apollohg.editor.EditorEditText.Companion.DEFAULT_AUTO_CAPITALIZE
 import com.apollohg.editor.EditorEditText.Companion.DEFAULT_AUTO_CORRECT
 import com.apollohg.editor.EditorEditText.Companion.DEFAULT_KEYBOARD_TYPE
 import com.apollohg.editor.EditorEditText.ImeInitialSurroundingText
+
+internal const val IME_INITIAL_SURROUNDING_TEXT_MARGIN = 2048
 
 internal fun EditorEditText.setAutoCapitalizeImpl(autoCapitalize: String?) {
     val next = when (autoCapitalize) {
@@ -147,12 +150,12 @@ internal fun EditorEditText.applyInitialSurroundingTextForIme(
 
     outAttrs.initialSelStart = initialText.selectionStart
     outAttrs.initialSelEnd = initialText.selectionEnd
-    outAttrs.setInitialSurroundingText(initialText.text)
+    outAttrs.setInitialSurroundingSubText(initialText.text, initialText.textStart)
     return initialText
 }
 
 internal fun ImeInitialSurroundingText.textBeforeSelectionTailForImeLog(limit: Int = 24): String {
-    val end = selectionStart.coerceIn(0, text.length)
+    val end = (selectionStart - textStart).coerceIn(0, text.length)
     val start = maxOf(0, end - limit)
     return text.substring(start, end).toImeTraceSnippet()
 }
@@ -208,10 +211,9 @@ internal fun EditorEditText.samsungSentenceCapsComposingTextForEditorImpl(
         appendCodePoint(Character.toTitleCase(firstCodePoint))
         append(composingText.substring(Character.charCount(firstCodePoint)))
     }
-    recordImeTraceForTesting(
-        "samsungSentenceCapsFallback",
+    recordImeTraceForTesting("samsungSentenceCapsFallback") {
         "range=$replacementStart..$replacementEnd textLength=${composingText.length}"
-    )
+    }
     return adjusted
 }
 
@@ -235,11 +237,23 @@ internal fun EditorEditText.initialSurroundingTextForImeForEditorImpl(
     if (start < 0 || end < 0) return null
     val rawSelectionStart = start.coerceIn(0, rawText.length)
     val rawSelectionEnd = end.coerceIn(0, rawText.length)
+    val imeSelectionStart = coordinateMapper.rawToIme(rawSelectionStart)
+    val imeSelectionEnd = coordinateMapper.rawToIme(rawSelectionEnd)
+    val visibleText = coordinateMapper.visibleText
+    val textStart = maxOf(
+        0,
+        minOf(imeSelectionStart, imeSelectionEnd) - IME_INITIAL_SURROUNDING_TEXT_MARGIN
+    )
+    val textEnd = minOf(
+        visibleText.length,
+        maxOf(imeSelectionStart, imeSelectionEnd) + IME_INITIAL_SURROUNDING_TEXT_MARGIN
+    )
 
     return ImeInitialSurroundingText(
-        text = coordinateMapper.visibleText.toString(),
-        selectionStart = coordinateMapper.rawToIme(rawSelectionStart),
-        selectionEnd = coordinateMapper.rawToIme(rawSelectionEnd),
+        text = TextUtils.substring(visibleText, textStart, textEnd),
+        textStart = textStart,
+        selectionStart = imeSelectionStart,
+        selectionEnd = imeSelectionEnd,
         originalSelectionStart = rawSelectionStart,
         originalSelectionEnd = rawSelectionEnd,
         removedPlaceholderCount = removedCount
@@ -358,8 +372,7 @@ internal fun EditorEditText.configureInputConnection(
     val mapper = imeTextCoordinateMapperForEditor(generation) ?: return null
     val initialSurroundingText = applyInitialSurroundingTextForIme(outAttrs, mapper)
     NativeEditorViewRegistry.registerInputView(editorId, this)
-    recordImeTraceForTesting(
-        "createInputConnection",
+    recordImeTraceForTesting("createInputConnection") {
         "boundEditor=$editorId boundGen=$generation inputType=$inputType " +
             "initialCaps=$originalInitialCapsMode->${outAttrs.initialCapsMode} " +
             "imeContextPlaceholdersRemoved=" +
@@ -371,7 +384,7 @@ internal fun EditorEditText.configureInputConnection(
             "${initialSurroundingText?.originalSelectionStart ?: selectionStart}.." +
             "${initialSurroundingText?.originalSelectionEnd ?: selectionEnd} " +
             "imeContextBeforeTail=\"${initialSurroundingText?.textBeforeSelectionTailForImeLog() ?: ""}\""
-    )
+    }
     return EditorInputConnection(
         this,
         baseConnection,

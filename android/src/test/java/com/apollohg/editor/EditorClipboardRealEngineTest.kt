@@ -104,7 +104,9 @@ class EditorClipboardRealEngineTest {
         )
         val destination = realEditor("<p>Before</p>")
         try {
-            val blocks = requireNotNull(source.editText.currentRenderBlocksJson)
+            val blocks = ResolvedRenderBlocks.retained(
+                requireNotNull(source.editText.currentRenderBlocks)
+            ).toJsonArray()
             val atom = (0 until blocks.length())
                 .asSequence()
                 .mapNotNull { blocks.optJSONArray(it) }
@@ -147,7 +149,9 @@ class EditorClipboardRealEngineTest {
             "<p>Before</p><img src=\"https://example.com/cat.png\" alt=\"Cat\" width=\"320\" height=\"180\">"
         )
         try {
-            val blocks = requireNotNull(source.editText.currentRenderBlocksJson)
+            val blocks = ResolvedRenderBlocks.retained(
+                requireNotNull(source.editText.currentRenderBlocks)
+            ).toJsonArray()
             val atom = (0 until blocks.length())
                 .asSequence()
                 .mapNotNull { blocks.optJSONArray(it) }

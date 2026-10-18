@@ -1322,20 +1322,34 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         val cells = IdentityHashMap<ViewerTableSurface, MutableList<ViewerTablePresentedCell>>()
         visibleCells.forEach { cells.getOrPut(it.surface) { mutableListOf() }.add(it) }
 
-        fun drawLayout(presented: com.apollohg.editor.tables.ViewerTablePresentedLayout) {
-            blocks[presented.layout].orEmpty().forEach { block ->
-                if (presented.layout !== root || block.block.intersects(paintClip)) {
-                    drawPresented(canvas, block, snapshot) { drawBackground(canvas, it) }
-                }
-                val surface = block.block.tableSurface ?: return@forEach
-                val surfaceCells = cells[surface].orEmpty()
-                surfaceCells.forEach { drawTableChromeBackground(canvas, it) }
-                surfaceCells.forEach { cell ->
-                    if (cell.content in mountedLayouts) layouts[cell.content]?.let(::drawLayout)
-                }
-            }
+        class Cursor(val layout: PreparedProseLayout) {
+            val pendingBlocks = blocks[layout].orEmpty().iterator()
+            var pendingCells: Iterator<ViewerTablePresentedCell> = Collections.emptyIterator()
         }
-        snapshot.layouts.firstOrNull()?.let(::drawLayout)
+        val stack = ArrayDeque<Cursor>()
+        snapshot.layouts.firstOrNull()?.let { stack.addLast(Cursor(it.layout)) }
+        while (stack.isNotEmpty()) {
+            val cursor = stack.last()
+            if (cursor.pendingCells.hasNext()) {
+                val content = cursor.pendingCells.next().content
+                if (content in mountedLayouts) {
+                    layouts[content]?.let { stack.addLast(Cursor(it.layout)) }
+                }
+                continue
+            }
+            if (!cursor.pendingBlocks.hasNext()) {
+                stack.removeLast()
+                continue
+            }
+            val block = cursor.pendingBlocks.next()
+            if (cursor.layout !== root || block.block.intersects(paintClip)) {
+                drawPresented(canvas, block, snapshot) { drawBackground(canvas, it) }
+            }
+            val surface = block.block.tableSurface ?: continue
+            val surfaceCells = cells[surface].orEmpty()
+            surfaceCells.forEach { drawTableChromeBackground(canvas, it) }
+            cursor.pendingCells = surfaceCells.iterator()
+        }
     }
 
     private fun drawTableChromeBorders(canvas: Canvas, cells: List<ViewerTablePresentedCell>) {

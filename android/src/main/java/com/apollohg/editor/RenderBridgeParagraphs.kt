@@ -57,7 +57,7 @@ internal fun RenderBridge.parseMarks(marksArray: JSONArray?): List<Any> {
  * character to create vertical spacing after the preceding block.
  */
 internal fun RenderBridge.appendInterBlockNewline(
-    builder: SpannableStringBuilder,
+    builder: RenderTextBuilder,
     baseFontSize: Float,
     textColor: Int,
     spacingPx: Int = 0,
@@ -94,7 +94,7 @@ internal fun RenderBridge.appendInterBlockNewline(
             Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
         )
     }
-    annotateTopLevelChild(builder, start, end, topLevelChildIndex)
+    topLevelChildIndex?.let { builder.annotateTopLevelSeparator(start, end, it) }
     if (inBlockquote) {
         builder.setSpan(
             Annotation(NATIVE_BLOCKQUOTE_ANNOTATION, "1"),
@@ -106,7 +106,7 @@ internal fun RenderBridge.appendInterBlockNewline(
 }
 
 internal fun RenderBridge.appendTrailingHardBreakPlaceholderIfNeeded(
-    builder: SpannableStringBuilder,
+    builder: RenderTextBuilder,
     endedBlock: BlockContext,
     remainingBlockStack: List<BlockContext>,
     baseFontSize: Float,
@@ -156,27 +156,25 @@ internal fun RenderBridge.lastCharacterIsHardBreak(builder: SpannableStringBuild
 }
 
 internal fun RenderBridge.annotateTopLevelChild(
-    builder: SpannableStringBuilder,
+    builder: RenderTextBuilder,
     start: Int,
     end: Int,
     topLevelChildIndex: Int?
 ) {
     if (topLevelChildIndex == null || start >= end) return
-    builder.setSpan(
-        Annotation(NATIVE_TOP_LEVEL_CHILD_INDEX_ANNOTATION, topLevelChildIndex.toString()),
-        start,
-        end,
-        Spanned.SPAN_INCLUSIVE_EXCLUSIVE
-    )
+    builder.annotateTopLevelChild(start, end, topLevelChildIndex)
 }
 
-internal fun RenderBridge.trailingRenderedContentHasBlockquote(builder: Spanned): Boolean {
+internal fun RenderBridge.trailingRenderedContentHasBlockquote(
+    builder: Spanned,
+    emptyFallback: Boolean = false
+): Boolean {
     for (index in builder.length - 1 downTo 0) {
         val ch = builder[index]
         if (ch == '\n' || ch == '\r') continue
         return hasBlockquoteAnnotationAt(builder, index)
     }
-    return false
+    return emptyFallback
 }
 
 internal fun RenderBridge.defaultParagraphEnd(text: String, length: Int, paragraphStart: Int): Int {

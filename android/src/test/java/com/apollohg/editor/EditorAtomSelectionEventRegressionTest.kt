@@ -77,6 +77,7 @@ internal class EditorAtomSelectionEventRegressionTest : NativeEditorExpoViewTest
                 SELECTION_STATE_KEYS,
                 state.keys().asSequence().toSet()
             )
+            assertEquals(adapter.stateRevision.toString(), state.getString("stateRevision"))
             assertEquals("node", state.getJSONObject("selection").getString("type"))
             assertEquals(state.getJSONObject("selection").getInt("pos"), event["anchor"])
             assertEquals((event["anchor"] as Int) + 1, event["head"])
@@ -89,6 +90,6 @@ internal class EditorAtomSelectionEventRegressionTest : NativeEditorExpoViewTest
 
     private companion object {
         val SELECTION_STATE_KEYS =
-            setOf("documentVersion", "selection", "activeState", "historyState")
+            setOf("documentVersion", "stateRevision", "selection", "activeState", "historyState")
     }
 }

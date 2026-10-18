@@ -1,8 +1,14 @@
 package com.apollohg.editor
 
+import java.nio.ByteBuffer
+import uniffi.editor_core.FfiConverterRustBuffer
+import uniffi.editor_core.FfiConverterString
+import uniffi.editor_core.FfiConverterTypeFfiJsonResult
+import uniffi.editor_core.FfiConverterTypeFfiNativeRenderFrameResult
 import uniffi.editor_core.FfiError
 import uniffi.editor_core.FfiJsonResult
 import uniffi.editor_core.FfiNativeRenderFrame
+import uniffi.editor_core.InternalException
 import uniffi.editor_core.editorV2ApplyCommand
 import uniffi.editor_core.editorV2ApplyInput
 import uniffi.editor_core.editorV2ApplyLocalApi
@@ -46,9 +52,20 @@ import uniffi.editor_core.editorV2Undo
  * live v2 session.
  */
 internal object UniffiEditorV2Backend : EditorV2Backend {
+    private const val DIRECT_CALL_FAILED = "editor core direct call failed"
+    private const val DIRECT_CALL_TRAILING_BYTES = "editor core direct call returned trailing bytes"
 
     private fun FfiError.toV2() =
         EditorV2Error(domain, code, message, requestId, operationIndex, limit, actual, detailsJson)
+
+    private fun utf8(value: String): ByteArray = FfiConverterString.toUtf8(value).array()
+
+    private fun <T> liftDirect(bytes: ByteArray?, converter: FfiConverterRustBuffer<T>): T {
+        val buffer = ByteBuffer.wrap(bytes ?: throw InternalException(DIRECT_CALL_FAILED))
+        return converter.read(buffer).also {
+            if (buffer.hasRemaining()) throw InternalException(DIRECT_CALL_TRAILING_BYTES)
+        }
+    }
 
     private fun contractError(message: String): EditorV2Error =
         EditorV2Error(domain = "boundary", code = "FFI_RESULT_INVALID", message = message)
@@ -222,7 +239,21 @@ internal object UniffiEditorV2Backend : EditorV2Backend {
         if ((mirrorAnchor != null && anchor == null) || (mirrorHead != null && head == null)) {
             return EditorV2CallResult.Err(contractError("render mirror is not an exact u32"))
         }
-        val result = editorV2RenderNativeFrame(editorId, ownerId, anchor, head)
+        val result = if (EditorCoreJni.isBound) {
+            liftDirect(
+                EditorCoreJni.renderNativeFrame(
+                    utf8(editorId),
+                    ownerId?.let(::utf8),
+                    anchor != null,
+                    anchor?.toLong() ?: 0L,
+                    head != null,
+                    head?.toLong() ?: 0L
+                ),
+                FfiConverterTypeFfiNativeRenderFrameResult
+            )
+        } else {
+            editorV2RenderNativeFrame(editorId, ownerId, anchor, head)
+        }
         val frame = result.frame
         val error = result.error
         return when {
@@ -253,7 +284,16 @@ internal object UniffiEditorV2Backend : EditorV2Backend {
     override fun applyNativeIntent(
         editorId: String,
         requestJson: String
-    ): EditorV2CallResult<String> = normalize(editorV2ApplyNativeIntent(editorId, requestJson))
+    ): EditorV2CallResult<String> = normalize(
+        if (EditorCoreJni.isBound) {
+            liftDirect(
+                EditorCoreJni.applyNativeIntent(utf8(editorId), utf8(requestJson)),
+                FfiConverterTypeFfiJsonResult
+            )
+        } else {
+            editorV2ApplyNativeIntent(editorId, requestJson)
+        }
+    )
 
     override fun releaseNativeBinding(editorId: String, ownerId: String): EditorV2Error? =
         editorV2ReleaseNativeBinding(editorId, ownerId).error?.toV2()

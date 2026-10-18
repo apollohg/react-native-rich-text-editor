@@ -1,5 +1,6 @@
 package com.apollohg.editor.viewer
 
+import com.apollohg.editor.BuildConfig
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -14,7 +15,7 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 class PreparedProseInstrumentationContractTest {
     @Test
-    fun classifierAndSchemaContract() {
+    fun classifierContract() {
         val fixture = fixture().getJSONObject("frameClassification")
         val period = fixture.getLong("nominalFramePeriodNanos")
         val tolerance = fixture.getLong("singleTickToleranceNanos")
@@ -75,7 +76,13 @@ class PreparedProseInstrumentationContractTest {
                 period
             )
         )
+    }
 
+    @Test
+    fun schemaContractMatchesBuildVariant() {
+        val fixture = fixture().getJSONObject("frameClassification")
+        val period = fixture.getLong("nominalFramePeriodNanos")
+        val tolerance = fixture.getLong("singleTickToleranceNanos")
         PreparedProseInstrumentation.beginBenchmark()
         listOf(
             PreparedProseInstrumentation.TraversalPhase.COLD,
@@ -86,6 +93,14 @@ class PreparedProseInstrumentationContractTest {
             PreparedProseInstrumentation.endPhase()
         }
         val export = JSONObject(PreparedProseInstrumentation.exportJson())
+        if (!BuildConfig.PREPARED_PROSE_INSTRUMENTATION) {
+            assertEquals(
+                "release builds compile prepared-prose instrumentation out: $export",
+                0,
+                export.length()
+            )
+            return
+        }
         assertEquals(2, export.getInt("schemaVersion"))
         assertEquals(period, export.getLong("nominalFramePeriodNanos"))
         assertEquals(tolerance, export.getLong("singleTickToleranceNanos"))

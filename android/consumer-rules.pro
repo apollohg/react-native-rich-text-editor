@@ -13,6 +13,9 @@
     public static void beginNativeFinalLayout(long, int, int);
     public static void endNativeMeasure();
 }
+-keepclasseswithmembernames class com.apollohg.editor.EditorCoreJni {
+    native <methods>;
+}
 -keepattributes Signature,InnerClasses,EnclosingMethod,*Annotation*
 
 # Preserve native editor View class names in consuming release builds so Android

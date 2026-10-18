@@ -121,23 +121,20 @@ internal class NativeEditorExpoViewControlledUpdateReconciliationTest :
     fun `pending controlled update keeps retrying after fast retry budget`() {
         val expoContext = testExpoContext(RuntimeEnvironment.getApplication())
         val view = NativeEditorExpoView(expoContext.context, expoContext.appContext)
-        val editorId = 778842L
         val editText = view.richTextView.editorEditText
-        val updateJson = renderUpdateJson("recovered")
         val readyPayloads = mutableListOf<Map<String, Any>>()
 
-        view.richTextView.setEditorIdWhileDetached(editorId)
-        editText.applyUpdateJSON(renderUpdateJson(""), notifyListener = false)
-        editText.setSelection(0)
-        editText.editorId = editorId
-        view.setAttachedToNativeWindowForTesting(true)
-        view.blockEditorUpdatePreflightForTesting = true
         view.onEditorReadyForTesting = { payload ->
             readyPayloads.add(payload)
         }
         view.onRefreshToolbarStateFromEditorSelectionForTesting = { null }
         view.onSelectionChangeForTesting = {}
         view.onAddonEventForTesting = {}
+        val bound = bindFakeEditorForViewTest(view, "")
+        val editorId = bound.viewToken
+        editText.setSelection(0)
+        val updateJson = bound.setEngineText("recovered")
+        view.blockEditorUpdatePreflightForTesting = true
         view.setPendingEditorUpdateJson(updateJson)
         view.setPendingEditorUpdateEditorId(editorId)
         view.setPendingEditorUpdateRevision(9)
@@ -154,28 +151,30 @@ internal class NativeEditorExpoViewControlledUpdateReconciliationTest :
 
         assertNull(view.pendingEditorUpdateJsonForTesting())
         assertEquals(9L, readyPayloads.last()["editorUpdateRevision"])
+        assertEquals("recovered", editText.text?.toString())
 
-        NativeEditorViewRegistry.unregister(editorId, view)
+        bound.release(view)
     }
 
     @Test
     fun `successful JS editor update preserves queued native update events`() {
         val expoContext = testExpoContext(RuntimeEnvironment.getApplication())
         val view = NativeEditorExpoView(expoContext.context, expoContext.appContext)
-        val editorId = 778843L
         val editText = view.richTextView.editorEditText
-        val nativeUpdateJson = renderUpdateJson("native")
-        val jsUpdateJson = renderUpdateJson("controlled")
         val payloads = mutableListOf<Map<String, Any>>()
 
         view.onAddonEventForTesting = {}
         view.onEditorUpdateForTesting = { payloads += it }
-        view.richTextView.setEditorIdWhileDetached(editorId)
-        editText.applyUpdateJSON(renderUpdateJson("initial"), notifyListener = false)
+        val bound = bindFakeEditorForViewTest(view, "initial")
         editText.setSelection(editText.text?.length ?: 0)
         editText.onSetSelectionScalarInRustForTesting = { _, _ -> }
-        editText.editorId = editorId
-        view.setAttachedToNativeWindowForTesting(true)
+        shadowOf(Looper.getMainLooper()).idle()
+        payloads.clear()
+        bound.setEngineText("native")
+        val nativeUpdateJson = requireNotNull(bound.adapter.refreshFromRustState(null))
+        val nativeRevision = JSONObject(nativeUpdateJson).getString("documentVersion")
+        val nativeAtomicUpdateJson = bound.adapter.atomicRenderJson(nativeRevision)
+        val jsUpdateJson = bound.setEngineText("controlled")
 
         view.onEditorUpdate(nativeUpdateJson)
 
@@ -190,7 +189,8 @@ internal class NativeEditorExpoViewControlledUpdateReconciliationTest :
         assertTrue(applied.get())
         assertEquals(0, view.pendingEditorUpdateEventCountForTesting())
         assertEquals(1, payloads.size)
-        assertEquals(nativeUpdateJson, payloads.single()["updateJson"])
+        assertEquals(nativeAtomicUpdateJson, payloads.single()["updateJson"])
+        assertEquals(nativeRevision, payloads.single()["documentRevision"])
         assertEquals("controlled", editText.text?.toString())
 
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(100))
@@ -202,24 +202,22 @@ internal class NativeEditorExpoViewControlledUpdateReconciliationTest :
             }
         )
 
-        NativeEditorViewRegistry.unregister(editorId, view)
+        bound.release(view)
     }
 
     @Test
     fun `pending JS editor update applies again when only revision changes`() {
         val expoContext = testExpoContext(RuntimeEnvironment.getApplication())
         val view = NativeEditorExpoView(expoContext.context, expoContext.appContext)
-        val editorId = 778850L
         val editText = view.richTextView.editorEditText
 
         view.onAddonEventForTesting = {}
         view.onRefreshToolbarStateFromEditorSelectionForTesting = { null }
         view.onEditorReadyForTesting = {}
-        view.richTextView.setEditorIdWhileDetached(editorId)
-        editText.editorId = editorId
-        view.setAttachedToNativeWindowForTesting(true)
+        val bound = bindFakeEditorForViewTest(view, "before")
+        val editorId = bound.viewToken
 
-        view.setPendingEditorUpdateJson(renderUpdateJson(""))
+        view.setPendingEditorUpdateJson(bound.setEngineText(""))
         view.setPendingEditorUpdateEditorId(editorId)
         view.setPendingEditorUpdateRevision(1)
         view.applyPendingEditorUpdateIfNeeded()
@@ -234,7 +232,7 @@ internal class NativeEditorExpoViewControlledUpdateReconciliationTest :
         assertNull(view.pendingEditorUpdateJsonForTesting())
         assertEquals(0, view.pendingEditorUpdateRevisionForTesting())
 
-        NativeEditorViewRegistry.unregister(editorId, view)
+        bound.release(view)
     }
 
     @Test
@@ -264,15 +262,10 @@ internal class NativeEditorExpoViewControlledUpdateReconciliationTest :
     fun `view command update wakes after retry budget is exhausted`() {
         val expoContext = testExpoContext(RuntimeEnvironment.getApplication())
         val view = NativeEditorExpoView(expoContext.context, expoContext.appContext)
-        val editorId = 88991L
         val editText = view.richTextView.editorEditText
-        val updateJson = renderUpdateJson("next")
-
-        view.richTextView.setEditorIdWhileDetached(editorId)
-        editText.applyUpdateJSON(renderUpdateJson("before"), notifyListener = false)
+        val bound = bindFakeEditorForViewTest(view, "before")
         editText.setSelection(0)
-        editText.editorId = editorId
-        view.setAttachedToNativeWindowForTesting(true)
+        val updateJson = bound.setEngineText("next")
         view.blockEditorUpdatePreflightForTesting = true
 
         assertFalse(view.applyEditorUpdate(updateJson))
@@ -291,6 +284,7 @@ internal class NativeEditorExpoViewControlledUpdateReconciliationTest :
 
         assertNull(view.pendingViewCommandUpdateJsonForTesting())
         assertEquals("next", editText.text?.toString())
+        bound.release(view)
     }
 
     @Test

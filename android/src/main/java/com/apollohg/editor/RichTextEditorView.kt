@@ -39,6 +39,7 @@ class RichTextEditorView @JvmOverloads constructor(
     val editorViewport: FrameLayout
     val editorContentFrame: FrameLayout
     private val contentFrame: EditorContentFrame
+    private val caretOverlayView: EditorCaretOverlayView
 
     private inner class EditorScrollView(context: Context) : ScrollView(context) {
         override fun computeScrollDeltaToGetChildRectOnScreen(rect: Rect): Int {
@@ -84,16 +85,17 @@ class RichTextEditorView @JvmOverloads constructor(
         }
 
         override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
+            val surface = tableSurfaceForDocument()
             if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
                 downX = ev.x
                 downY = ev.y
                 horizontalAtomGesture = false
                 horizontalTableGesture = false
-                nativeTableSelectionGesture = editorTableSurface.nativeTextSelectionActive()
+                nativeTableSelectionGesture = surface?.nativeTextSelectionActive() == true
                 val tableX = ev.x + scrollX - editorContentFrame.left
                 val tableY = ev.y + scrollY - editorContentFrame.top
-                tableDown = editorTableSurface.hasTableAt(tableX, tableY)
-                editorTableSurface.beginHostGesture()
+                tableDown = surface?.hasTableAt(tableX, tableY) == true
+                surface?.beginHostGesture()
                 atomDown = atomHostViews.values.any { child ->
                     val x = ev.x + scrollX - editorContentFrame.left
                     val y = ev.y + scrollY - editorContentFrame.top
@@ -104,7 +106,7 @@ class RichTextEditorView @JvmOverloads constructor(
                 pendingAtomAnchor = null
             }
             if (ev.actionMasked != MotionEvent.ACTION_DOWN &&
-                editorTableSurface.resizeClaimsGesture(ev, ev.x - downX, ev.y - downY)
+                surface?.resizeClaimsGesture(ev, ev.x - downX, ev.y - downY) == true
             ) {
                 return false
             }
@@ -116,14 +118,14 @@ class RichTextEditorView @JvmOverloads constructor(
             if (tableDown && !atomDown && ev.actionMasked == MotionEvent.ACTION_MOVE &&
                 !horizontalTableGesture
             ) {
-                if (editorTableSurface.nativeTextSelectionActive()) {
+                if (surface?.nativeTextSelectionActive() == true) {
                     nativeTableSelectionGesture =
                         true
                 }
                 val tableX = downX + scrollX - editorContentFrame.left
                 val tableY = downY + scrollY - editorContentFrame.top
                 if (!nativeTableSelectionGesture &&
-                    editorTableSurface.hostGestureAxis(
+                    surface?.hostGestureAxis(
                         tableX,
                         tableY,
                         ev.x - downX,
@@ -173,9 +175,10 @@ class RichTextEditorView @JvmOverloads constructor(
         private var routingTextSelectionDrag = false
 
         override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+            val surface = tableSurfaceForDocument()
             if (event.actionMasked == MotionEvent.ACTION_DOWN) routingTextSelectionDrag = false
             if (routingTextSelectionDrag) {
-                editorTableSurface.onDragTouch(event)
+                surface?.onDragTouch(event)
                 if (event.actionMasked == MotionEvent.ACTION_UP ||
                     event.actionMasked == MotionEvent.ACTION_CANCEL
                 ) {
@@ -183,8 +186,8 @@ class RichTextEditorView @JvmOverloads constructor(
                 }
                 return true
             }
-            val input = editorTableSurface.activeInput
-            if (editorTableSurface.beginTextSelectionDrag(event)) {
+            val input = surface?.activeInput
+            if (surface?.beginTextSelectionDrag(event) == true) {
                 routingTextSelectionDrag = true
                 if (input != null) {
                     val cancel = MotionEvent.obtain(event).apply {
@@ -205,27 +208,28 @@ class RichTextEditorView @JvmOverloads constructor(
         }
 
         override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
-            editorTableSurface.trackFrameGesture(event)
-            if (editorTableSurface.dragActive()) return true
+            val surface = tableSurfaceForDocument()
+            surface?.trackFrameGesture(event)
+            if (surface?.dragActive() == true) return true
             if (event.actionMasked != MotionEvent.ACTION_DOWN &&
-                editorTableSurface.resizeClaimsGesture(
+                surface?.resizeClaimsGesture(
                     event,
                     event.x - tableDownX,
                     event.y - tableDownY
-                )
+                ) == true
             ) {
-                return editorTableSurface.dragActive()
+                return surface.dragActive()
             }
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    if (editorTableSurface.beginFrameGesture(event)) return true
+                    if (surface?.beginFrameGesture(event) == true) return true
                     tableDownX = event.x
                     tableDownY = event.y
                     routingTableDrag = false
                     drawingStreamStarted = false
                     forwardedMoveTime = Long.MIN_VALUE
-                    nativeTableSelectionGesture = editorTableSurface.nativeTextSelectionActive()
-                    tableGestureEligible = editorTableSurface.hasTableAt(event.x, event.y) &&
+                    nativeTableSelectionGesture = surface?.nativeTextSelectionActive() == true
+                    tableGestureEligible = surface?.hasTableAt(event.x, event.y) == true &&
                         atomHostViews.values.none { atom ->
                             atom.visibility == View.VISIBLE && event.x >= atom.left &&
                                 event.x < atom.right && event.y >= atom.top && event.y < atom.bottom
@@ -233,13 +237,14 @@ class RichTextEditorView @JvmOverloads constructor(
                 }
 
                 MotionEvent.ACTION_MOVE -> {
-                    if (editorTableSurface.nativeTextSelectionActive()) {
+                    if (surface?.nativeTextSelectionActive() == true) {
                         nativeTableSelectionGesture =
                             true
                     }
                     if (!routingTableDrag && tableGestureEligible && !nativeTableSelectionGesture &&
-                        !editorTableSurface.drawingView.tracksTableGesture &&
-                        editorTableSurface.hostGestureAxis(
+                        surface != null &&
+                        !surface.drawingView.tracksTableGesture &&
+                        surface.hostGestureAxis(
                             tableDownX,
                             tableDownY,
                             event.x - tableDownX,
@@ -257,17 +262,18 @@ class RichTextEditorView @JvmOverloads constructor(
         }
 
         override fun onTouchEvent(event: MotionEvent): Boolean {
+            val surface = tableSurfaceForDocument()
             if (event.actionMasked != MotionEvent.ACTION_DOWN &&
-                editorTableSurface.resizeClaimsGesture(
+                surface?.resizeClaimsGesture(
                     event,
                     event.x - tableDownX,
                     event.y - tableDownY
-                ) &&
-                !editorTableSurface.dragActive()
+                ) == true &&
+                !surface.dragActive()
             ) {
                 return true
             }
-            if (editorTableSurface.dragActive()) return editorTableSurface.onDragTouch(event)
+            if (surface?.dragActive() == true) return surface.onDragTouch(event)
             if (routingTableDrag) {
                 val handled = if (event.actionMasked == MotionEvent.ACTION_MOVE &&
                     event.eventTime == forwardedMoveTime
@@ -285,8 +291,8 @@ class RichTextEditorView @JvmOverloads constructor(
                 }
                 return handled
             }
-            editorTableSurface.onRootTouch(event)
-            if (editorTableSurface.activeInput == null &&
+            surface?.onRootTouch(event)
+            if (surface?.activeInput == null &&
                 event.actionMasked == MotionEvent.ACTION_DOWN
             ) {
                 editorEditText.isFocusableInTouchMode = true
@@ -334,14 +340,14 @@ class RichTextEditorView @JvmOverloads constructor(
                 )
                 return
             }
-            if (child === editorTableSurface.drawingView) {
+            if (child === caretOverlayView || child === tableSurface?.drawingView) {
                 child.measure(
                     MeasureSpec.makeMeasureSpec(editorEditText.measuredWidth, MeasureSpec.EXACTLY),
                     MeasureSpec.makeMeasureSpec(editorEditText.measuredHeight, MeasureSpec.EXACTLY)
                 )
                 return
             }
-            if (child === editorTableSurface.activeInput) {
+            if (child === tableSurface?.activeInput) {
                 val params = child.layoutParams as FrameLayout.LayoutParams
                 child.measure(
                     MeasureSpec.makeMeasureSpec(params.width, MeasureSpec.EXACTLY),
@@ -389,13 +395,28 @@ class RichTextEditorView @JvmOverloads constructor(
             super.onLayout(changed, left, top, right, bottom)
             restoreAtomScrollAnchor()
             layoutAtomHostViews()
-            editorTableSurface.updateGeometry()
+            tableSurface?.updateGeometry()
         }
     }
 
     val editorEditText: EditorEditText
-    internal val editorTableSurface by lazy { EditorTableSurface(this) }
-    val activeTextInput: EditorEditText get() = editorTableSurface.activeInput ?: editorEditText
+    private var tableSurface: EditorTableSurface? = null
+    private var tableSelectionGeometryListener: (() -> Unit)? = null
+    internal val editorTableSurface: EditorTableSurface
+        get() = tableSurface ?: EditorTableSurface(this).also { surface ->
+            tableSurface = surface
+            surface.hostTableDirection = tableDirection
+            surface.onSelectionGeometryMayChange = tableSelectionGeometryListener
+        }
+    internal val existingTableSurface: EditorTableSurface? get() = tableSurface
+
+    internal fun tableSurfaceForDocument(): EditorTableSurface? =
+        tableSurface ?: if (documentHasTables()) editorTableSurface else null
+
+    private fun documentHasTables(): Boolean = editorEditText.rootTablePositionMap != null ||
+        (editorEditText.v2Driver as? EditorV2Adapter)?.tableIndex?.tableKeys?.isNotEmpty() == true
+
+    val activeTextInput: EditorEditText get() = tableSurface?.activeInput ?: editorEditText
     internal var onTableCellInputCreated: ((EditorEditText) -> Unit)? = null
 
     internal fun layoutEditorContentChild(child: View) = contentFrame.layoutChildInPlace(child)
@@ -414,11 +435,12 @@ class RichTextEditorView @JvmOverloads constructor(
     }
 
     internal fun invalidateActiveTableCellInput() {
-        editorTableSurface.invalidateCell()
+        tableSurface?.invalidateCell()
     }
     val editorScrollView: ScrollView
-    private val remoteSelectionOverlayView: RemoteSelectionOverlayView
-    private val imageResizeOverlayView: ImageResizeOverlayView
+    private val decorationLayer: EditorDecorationLayer
+    private var remoteSelectionOverlay: RemoteSelectionOverlayView? = null
+    private var imageResizeOverlay: ImageResizeOverlayView? = null
 
     private var heightBehavior: EditorHeightBehavior = EditorHeightBehavior.FIXED
     private var imageResizingEnabled = true
@@ -470,6 +492,7 @@ class RichTextEditorView @JvmOverloads constructor(
         orientation = VERTICAL
 
         editorEditText = EditorEditText(context)
+        caretOverlayView = EditorCaretOverlayView(context, editorEditText)
         contentFrame = EditorContentFrame(context)
         editorContentFrame = contentFrame
         editorScrollView = EditorScrollView(context).apply {
@@ -479,9 +502,8 @@ class RichTextEditorView @JvmOverloads constructor(
             isFillViewport = true
         }
         editorViewport = FrameLayout(context)
-        remoteSelectionOverlayView = RemoteSelectionOverlayView(context)
-        imageResizeOverlayView = ImageResizeOverlayView(context)
         editorContentFrame.addView(editorEditText, createEditorLayoutParams())
+        editorContentFrame.addView(caretOverlayView, createEditorLayoutParams())
         editorScrollView.addView(
             editorContentFrame,
             FrameLayout.LayoutParams(
@@ -496,35 +518,19 @@ class RichTextEditorView @JvmOverloads constructor(
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
         )
-        val decorationLayer = EditorDecorationLayer(context)
-        editorViewport.addView(
-            decorationLayer,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-        )
-        decorationLayer.addView(
-            remoteSelectionOverlayView,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-        )
-        decorationLayer.addView(
-            imageResizeOverlayView,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-        )
-        remoteSelectionOverlayView.bind(this)
-        imageResizeOverlayView.bind(this)
-        editorEditText.onBeforeRenderRefresh = imageResizeOverlayView::cancelActiveResize
-        editorEditText.onTableRootTouch = editorTableSurface::onRootTouch
-        editorEditText.onTableRootGesture = editorTableSurface::releaseActiveCellForRootGesture
-        editorEditText.onRootUpdateApplied = editorTableSurface::followRootSelectionIntoCell
-        editorEditText.tableCellDropHandler = editorTableSurface::onRootDragEvent
+        decorationLayer = EditorDecorationLayer(context)
+        editorViewport.addView(decorationLayer, createEditorLayoutParams())
+        editorEditText.onBeforeRenderRefresh = { imageResizeOverlay?.cancelActiveResize() }
+        editorEditText.onTableRootTouch = { event -> tableSurfaceForDocument()?.onRootTouch(event) }
+        editorEditText.onTableRootGesture = {
+            tableSurface?.releaseActiveCellForRootGesture() != false
+        }
+        editorEditText.onRootUpdateApplied = { selection ->
+            tableSurfaceForDocument()?.followRootSelectionIntoCell(selection)
+        }
+        editorEditText.tableCellDropHandler = { event ->
+            tableSurfaceForDocument()?.onRootDragEvent(event)
+        }
         editorScrollView.setOnScrollChangeListener { _, _, _, _, _ ->
             // Visibility queries must not overwrite Android's in-flight caret request rectangle.
             if (isAttachedToWindow && !scrollObserversPosted) {
@@ -843,6 +849,7 @@ class RichTextEditorView @JvmOverloads constructor(
             atomMeasurementWidth = width
             invalidateAtomMeasurements()
         }
+        if (atomHostViews.isEmpty() && atomRenderConfiguration == null) return
         val spanList = content.getSpans(0, content.length, AtomBlockSpan::class.java).toList()
         emitAtomLayoutIfAvailable(content, textLayout, spanList)
         val spans = spanList.associateBy { it.atomKey }
@@ -950,33 +957,34 @@ class RichTextEditorView @JvmOverloads constructor(
     }
 
     internal var onTableSelectionGeometryMayChange: (() -> Unit)?
-        get() = editorTableSurface.onSelectionGeometryMayChange
+        get() = tableSelectionGeometryListener
         set(value) {
-            editorTableSurface.onSelectionGeometryMayChange = value
+            tableSelectionGeometryListener = value
+            tableSurface?.onSelectionGeometryMayChange = value
         }
 
     internal fun tableSelectionGeometry(
         obstructions: TableSelectionObstructions
-    ): TableSelectionGeometry? = editorTableSurface.selectionGeometry(obstructions)
+    ): TableSelectionGeometry? = tableSurface?.selectionGeometry(obstructions)
 
     internal var tableEditMenuEnabled: Boolean = true
         set(value) {
             if (field == value) return
             field = value
-            editorTableSurface.dismissCellEditMenu()
+            tableSurface?.dismissCellEditMenu()
         }
 
     internal var tableDirection: TableLayoutDirection? = null
         set(value) {
             if (field == value) return
             field = value
-            editorTableSurface.hostTableDirection = value
-            editorTableSurface.refresh()
+            tableSurface?.hostTableDirection = value
+            tableSurfaceForDocument()?.refresh()
         }
 
     override fun onRtlPropertiesChanged(layoutDirection: Int) {
         super.onRtlPropertiesChanged(layoutDirection)
-        editorTableSurface.refresh()
+        tableSurfaceForDocument()?.refresh()
     }
 
     fun setImageResizingEnabled(enabled: Boolean) {
@@ -992,46 +1000,78 @@ class RichTextEditorView @JvmOverloads constructor(
         viewportBottomInsetPx = clampedInset
         updateScrollContainerInsets()
         editorEditText.setViewportBottomInsetPx(clampedInset)
-        editorTableSurface.activeInput?.setViewportBottomInsetPx(clampedInset)
+        tableSurface?.activeInput?.setViewportBottomInsetPx(clampedInset)
         refreshOverlays()
         requestLayout()
     }
 
     fun setViewportBottomOcclusionTopOnScreenPx(topPx: Int?) {
         editorEditText.setViewportBottomOcclusionTopOnScreenPx(topPx)
-        editorTableSurface.activeInput?.setViewportBottomOcclusionTopOnScreenPx(topPx)
+        tableSurface?.activeInput?.setViewportBottomOcclusionTopOnScreenPx(topPx)
     }
 
     internal fun viewportBottomInsetPxForTesting(): Int = viewportBottomInsetPx
 
     fun setRemoteSelections(selections: List<RemoteSelectionDecoration>) {
-        remoteSelectionOverlayView.setRemoteSelections(selections)
+        if (selections.isEmpty() && remoteSelectionOverlay == null) return
+        remoteSelectionOverlayView().setRemoteSelections(selections)
     }
 
     fun refreshRemoteSelections() {
-        if (!remoteSelectionOverlayView.hasSelectionsOrCachedGeometry()) return
-        remoteSelectionOverlayView.refreshGeometry()
+        val overlay = remoteSelectionOverlay ?: return
+        if (!overlay.hasSelectionsOrCachedGeometry()) return
+        overlay.refreshGeometry()
     }
 
+    private fun remoteSelectionOverlayView(): RemoteSelectionOverlayView =
+        remoteSelectionOverlay ?: RemoteSelectionOverlayView(context).also { overlay ->
+            remoteSelectionOverlay = overlay
+            addDecorationOverlay(overlay, 0)
+            overlay.bind(this)
+        }
+
+    private fun imageResizeOverlayView(): ImageResizeOverlayView =
+        imageResizeOverlay ?: ImageResizeOverlayView(context).also { overlay ->
+            imageResizeOverlay = overlay
+            addDecorationOverlay(overlay, decorationLayer.childCount)
+            overlay.bind(this)
+        }
+
+    private fun addDecorationOverlay(overlay: View, index: Int) {
+        decorationLayer.addView(overlay, index, createEditorLayoutParams())
+        if (!decorationLayer.isLaidOut) return
+        overlay.measure(
+            MeasureSpec.makeMeasureSpec(decorationLayer.width, MeasureSpec.EXACTLY),
+            MeasureSpec.makeMeasureSpec(decorationLayer.height, MeasureSpec.EXACTLY)
+        )
+        overlay.layout(0, 0, decorationLayer.width, decorationLayer.height)
+    }
+
+    internal val hasRemoteSelectionOverlayForTesting: Boolean
+        get() = remoteSelectionOverlay != null
+
+    internal val hasImageResizeOverlayForTesting: Boolean
+        get() = imageResizeOverlay != null
+
     fun imageResizeOverlayRectForTesting(): android.graphics.RectF? =
-        imageResizeOverlayView.visibleRectForTesting()
+        imageResizeOverlay?.visibleRectForTesting()
 
     fun resizeSelectedImageForTesting(widthPx: Float, heightPx: Float) {
-        imageResizeOverlayView.simulateResizeForTesting(widthPx, heightPx)
+        imageResizeOverlay?.simulateResizeForTesting(widthPx, heightPx)
     }
 
     internal fun dispatchImageResizeTouchForTesting(event: MotionEvent): Boolean =
-        imageResizeOverlayView.onTouchEvent(event)
+        imageResizeOverlay?.onTouchEvent(event) == true
 
     fun remoteSelectionDebugSnapshotsForTesting(): List<RemoteSelectionDebugSnapshot> =
-        remoteSelectionOverlayView.debugSnapshotsForTesting()
+        remoteSelectionOverlay?.debugSnapshotsForTesting().orEmpty()
 
     fun setRemoteSelectionScalarResolverForTesting(resolver: (Long, Int) -> Int) {
-        remoteSelectionOverlayView.docToScalarResolver = resolver
+        remoteSelectionOverlayView().docToScalarResolver = resolver
     }
 
     fun setRemoteSelectionEditorIdForTesting(editorId: Long) {
-        remoteSelectionOverlayView.editorIdOverrideForTesting = editorId
+        remoteSelectionOverlayView().editorIdOverrideForTesting = editorId
     }
 
     fun setContent(html: String) {
@@ -1058,9 +1098,9 @@ class RichTextEditorView @JvmOverloads constructor(
         }
     }
 
-    internal fun rebindEditorIfNeeded(notifyListener: Boolean = true) {
+    internal fun rebindEditorIfNeeded() {
         if (editorId != 0L && editorEditText.editorId != editorId) {
-            setEditorId(editorId, bindEditor = true, notifyListener = notifyListener)
+            setEditorId(editorId, bindEditor = true)
         }
     }
 
@@ -1084,18 +1124,18 @@ class RichTextEditorView @JvmOverloads constructor(
         }
     }
 
-    private fun setEditorId(value: Long, bindEditor: Boolean, notifyListener: Boolean = true) {
+    private fun setEditorId(value: Long, bindEditor: Boolean) {
         val targetBoundEditorId = if (bindEditor) value else 0L
         if (currentEditorId == value && editorEditText.editorId == targetBoundEditorId) return
-        imageResizeOverlayView.cancelActiveResize()
+        imageResizeOverlay?.cancelActiveResize()
         if (currentEditorId != value || editorEditText.editorId != targetBoundEditorId) {
             editorEditText.discardTransientNativeInputForEditorRebind()
         }
         invalidateAtomMeasurements(clearHeights = true)
-        editorTableSurface.clear()
+        tableSurface?.clear()
         currentEditorId = value
         if (bindEditor && value != 0L) {
-            editorEditText.bindEditor(value, notifyListener = notifyListener)
+            editorEditText.bindEditor(value)
         } else {
             editorEditText.unbindEditor()
         }
@@ -1106,17 +1146,17 @@ class RichTextEditorView @JvmOverloads constructor(
         super.onAttachedToWindow()
         clearDeferredEditorUnbind()
         rebindEditorIfNeeded()
-        editorTableSurface.refresh()
+        tableSurfaceForDocument()?.refresh()
         refreshRemoteSelections()
         atomHostViews.forEach { (key, child) -> scheduleAtomMeasurement(child, key) }
     }
 
     override fun onDetachedFromWindow() {
-        editorTableSurface.cancelActiveDrag()
+        tableSurface?.cancelActiveDrag()
         invalidateAtomMeasurements()
-        editorTableSurface.clear()
+        tableSurface?.clear()
         onBeforeDetachedFromWindow?.invoke()
-        imageResizeOverlayView.cancelActiveResize()
+        imageResizeOverlay?.cancelActiveResize()
         super.onDetachedFromWindow()
         if (editorId != 0L && !deferEditorUnbindOnDetach) {
             editorEditText.unbindEditor()
@@ -1175,7 +1215,7 @@ class RichTextEditorView @JvmOverloads constructor(
             }
         }
         layoutAtomHostViews()
-        editorTableSurface.refresh()
+        tableSurfaceForDocument()?.refresh()
         refreshRemoteSelections()
     }
 
@@ -1199,8 +1239,9 @@ class RichTextEditorView @JvmOverloads constructor(
         }
 
         val density = resources.displayMetrics.density
-        val topInset = ((theme?.contentInsets?.top ?: 0f) * density).toInt()
-        val bottomInset = ((theme?.contentInsets?.bottom ?: 0f) * density).toInt()
+        val contentInsets = theme?.takeIf { it.styleSheet == null }?.contentInsets
+        val topInset = ((contentInsets?.top ?: 0f) * density).toInt()
+        val bottomInset = ((contentInsets?.bottom ?: 0f) * density).toInt()
         editorScrollView.setPadding(0, topInset, 0, bottomInset + viewportBottomInsetPx)
     }
 
@@ -1283,9 +1324,11 @@ class RichTextEditorView @JvmOverloads constructor(
     }
 
     private fun refreshOverlays() {
-        editorTableSurface.refresh()
+        tableSurfaceForDocument()?.refresh()
         layoutAtomHostViews()
-        remoteSelectionOverlayView.refreshGeometry()
-        imageResizeOverlayView.refresh()
+        remoteSelectionOverlay?.refreshGeometry()
+        if (imageResizeOverlay != null || selectedImageGeometry() != null) {
+            imageResizeOverlayView().refresh()
+        }
     }
 }

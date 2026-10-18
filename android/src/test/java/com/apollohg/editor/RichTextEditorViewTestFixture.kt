@@ -29,7 +29,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
-internal abstract class RichTextEditorViewTestFixture {
+internal abstract class RichTextEditorViewTestFixture : NativeEditorExpoViewTestSupport() {
     protected class InterceptAwareFrameLayout(context: android.content.Context) :
         FrameLayout(context) {
         var disallowInterceptRequested = false

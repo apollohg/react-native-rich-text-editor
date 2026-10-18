@@ -61,10 +61,10 @@ internal fun NativeEditorExpoView.handleEditorDestroyedImpl(editorId: Long) {
     lastEditorResetUpdateJsonProp = null
     lastEditorResetUpdateEditorIdProp = null
     lastDocumentVersion = null
+    selectionEventActiveState.reset()
     renderedDocumentRevision = null
     lastReadyEditorId = null
-    toolbarState = NativeToolbarState.empty
-    keyboardToolbarView.applyState(toolbarState)
+    presentToolbarState(NativeToolbarState.empty)
     keyboardToolbarView.visibility = View.GONE
     richTextView.editorId = 0L
 }
@@ -93,10 +93,7 @@ internal fun NativeEditorExpoView.handleAttachedToWindow() {
         handleEditorDestroyed(editorId)
         return
     }
-    richTextView.rebindEditorIfNeeded(
-        notifyListener = !hasPendingEditorResetUpdateForEditor(editorId) &&
-            !hasPendingEditorUpdateForEditor(editorId)
-    )
+    richTextView.rebindEditorIfNeeded()
     bindEditorErrorCallbackIfLive(editorId)
     if (hasPendingTheme) {
         pendingThemeRetry.bind(editorId)

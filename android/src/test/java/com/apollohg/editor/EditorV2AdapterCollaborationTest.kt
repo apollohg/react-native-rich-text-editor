@@ -328,6 +328,34 @@ internal class EditorV2AdapterCollaborationTest : EditorV2AdapterTestFixture() {
     }
 
     @Test
+    fun `external render notice reads only the top level document version of a valid object`() {
+        val adapter = makeAdapter()
+        val nested =
+            """{"renderPatch":{"documentVersion":"9","blocks":[[{"documentVersion":"8"}]]},""" +
+                """"documentVersion":"12","renderBlocks":null}"""
+        assertEquals("12", adapter.parseExternalRenderNotice(nested)?.documentVersion)
+        assertEquals(
+            "a repeated key keeps its last value",
+            "13",
+            adapter.parseExternalRenderNotice("""{"documentVersion":"12","documentVersion":"13"}""")
+                ?.documentVersion
+        )
+        val errors = mutableListOf<EditorV2Error>()
+        adapter.onAutonomousError = { errors += it }
+        for (invalid in listOf(
+            """{"renderPatch":{"documentVersion":"9"}}""",
+            """{"documentVersion":12}""",
+            """{"documentVersion":"12","documentVersion":13}""",
+            """{"documentVersion":"12","renderBlocks":[""",
+            """["documentVersion","12"]""",
+            ""
+        )) {
+            assertNull("notice $invalid", adapter.parseExternalRenderNotice(invalid))
+        }
+        assertEquals(6, errors.size)
+    }
+
+    @Test
     fun `atomic external snapshot rejects non canonical revision without changing adopted state`() {
         val adapter = makeAdapter()
         val valid = atomicRenderSnapshot("base", "7", selectionScalar = 1)

@@ -1,7 +1,6 @@
 package com.apollohg.editor
 
 import android.text.Selection
-import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.view.inputmethod.BaseInputConnection
 import org.json.JSONObject
@@ -9,10 +8,15 @@ import org.json.JSONObject
 internal fun EditorEditText.runWithTransientInputMutationGuardImpl(block: () -> Boolean): Boolean {
     val wasApplyingRustState = isApplyingRustState
     isApplyingRustState = true
+    beginBatchEdit()
     return try {
         block()
     } finally {
-        isApplyingRustState = wasApplyingRustState
+        try {
+            endBatchEdit()
+        } finally {
+            isApplyingRustState = wasApplyingRustState
+        }
     }
 }
 
@@ -74,7 +78,9 @@ internal fun EditorEditText.beginExternalTextCompositionImpl(sessionId: String):
         replacementStartUtf16 = replacementStart,
         replacementEndUtf16 = replacementEnd,
         startingAuthorizedText = lastAuthorizedText,
-        startingAuthorizedRenderedText = lastAuthorizedRenderedText?.let(::SpannableStringBuilder)
+        startingAuthorizedRenderedText = lastAuthorizedRenderedText?.let(
+            ::frozenRenderedTextSnapshot
+        )
     )
     return externalCompositionActiveJSON(sessionId)
 }
@@ -284,7 +290,7 @@ internal fun EditorEditText.restoreAuthorizedExternalComposition(
     runWithTransientInputMutationGuard {
         beginBatchEdit()
         try {
-            setText(snapshot)
+            setText(frozenRenderedTextSnapshot(snapshot))
             val length = text?.length ?: 0
             Selection.setSelection(
                 text,

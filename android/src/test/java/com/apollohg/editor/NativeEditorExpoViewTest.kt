@@ -84,6 +84,7 @@ internal class NativeEditorExpoViewTest : NativeEditorExpoViewTestFixture() {
         val errors = mutableListOf<Map<String, Any>>()
         try {
             view.onEditorErrorForTesting = { errors += it }
+            view.onEditorUpdateForTesting = {}
             view.onAddonEventForTesting = {}
             view.onEditorReadyForTesting = {}
             view.onSelectionChangeForTesting = {}
@@ -326,8 +327,7 @@ internal class NativeEditorExpoViewTest : NativeEditorExpoViewTestFixture() {
             assertTrue(inputConnection!!.commitText("abc", 1))
             shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(200))
 
-            val rawFrame = JSONObject(requireNotNull(adapter.cachedAtomicRenderJson))
-            assertTrue("raw frame: $rawFrame", rawFrame.has("positionEpoch"))
+            assertNotNull("binding epoch", adapter.positionEpoch)
             val commit = updates.lastOrNull { it.containsKey("updateJson") }
             assertNotNull("updates: $updates", commit)
             val published = JSONObject(commit!!["updateJson"] as String)

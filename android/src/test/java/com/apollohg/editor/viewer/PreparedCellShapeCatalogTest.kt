@@ -351,6 +351,7 @@ internal class PreparedCellShapeCatalogTest {
             """"text":{"fontSize":18}},"rules":[{"path":["blockquote",""" +
             """"paragraph"],"style":{"paddingLeft":3}}]}"""
         val document = ViewerDocument("document", emptyList(), true, 0)
+        val context = PreparedCellShapeCatalog().newBuildContext()
 
         val first = cellShapeKey(
             "content",
@@ -358,7 +359,8 @@ internal class PreparedCellShapeCatalogTest {
             100,
             PreparedProseTheme.resolve(themeJson, 1f),
             1f,
-            cellShapeStyleDigest(PreparedProseTheme.resolve(themeJson, 1f), 0, 0)
+            cellShapeStyleDigest(PreparedProseTheme.resolve(themeJson, 1f), 0, 0),
+            context
         )
         val second = cellShapeKey(
             "content",
@@ -366,7 +368,8 @@ internal class PreparedCellShapeCatalogTest {
             100,
             PreparedProseTheme.resolve(themeJson, 1f),
             1f,
-            cellShapeStyleDigest(PreparedProseTheme.resolve(themeJson, 1f), 0, 0)
+            cellShapeStyleDigest(PreparedProseTheme.resolve(themeJson, 1f), 0, 0),
+            context
         )
 
         assertEquals(first, second)
@@ -375,6 +378,7 @@ internal class PreparedCellShapeCatalogTest {
     @Test
     fun `font scale is a shape dependency even when the caller advances a font revision`() {
         val document = ViewerDocument("document", emptyList(), true, 0)
+        val context = PreparedCellShapeCatalog().newBuildContext()
 
         val normal = cellShapeKey(
             "content",
@@ -382,7 +386,8 @@ internal class PreparedCellShapeCatalogTest {
             100,
             PreparedProseTheme.resolve(null, 1f, 1f),
             1f,
-            cellShapeStyleDigest(PreparedProseTheme.resolve(null, 1f, 1f), 7, 0)
+            cellShapeStyleDigest(PreparedProseTheme.resolve(null, 1f, 1f), 7, 0),
+            context
         )
         val scaled = cellShapeKey(
             "content",
@@ -390,7 +395,8 @@ internal class PreparedCellShapeCatalogTest {
             100,
             PreparedProseTheme.resolve(null, 1f, 1.5f),
             1f,
-            cellShapeStyleDigest(PreparedProseTheme.resolve(null, 1f, 1.5f), 7, 0)
+            cellShapeStyleDigest(PreparedProseTheme.resolve(null, 1f, 1.5f), 7, 0),
+            context
         )
 
         assertNotEquals(normal, scaled)
@@ -399,6 +405,7 @@ internal class PreparedCellShapeCatalogTest {
     @Test
     fun `ordered list marker formatting is a shape dependency`() {
         val document = ViewerDocument("document", emptyList(), true, 0)
+        val context = PreparedCellShapeCatalog().newBuildContext()
         val decimal = cellShapeKey(
             "content",
             document,
@@ -415,7 +422,8 @@ internal class PreparedCellShapeCatalogTest {
                 ),
                 0,
                 0
-            )
+            ),
+            context
         )
         val romanTheme = PreparedProseTheme.resolve(
             """{"list":{"orderedMarker":{"schemes":["upperRoman"],"suffix":")"}}}""",
@@ -428,7 +436,8 @@ internal class PreparedCellShapeCatalogTest {
                 100,
                 romanTheme,
                 1f,
-                cellShapeStyleDigest(romanTheme, 0, 0)
+                cellShapeStyleDigest(romanTheme, 0, 0),
+                context
             )
 
         assertNotEquals(decimal, roman)

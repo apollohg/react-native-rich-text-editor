@@ -19,8 +19,21 @@ internal fun EditorEditText.authorizedUtf16RangeImpl(start: Int, end: Int): Pair
     return PositionBridge.snapRangeToScalarBoundaries(start, end, lastAuthorizedText)
 }
 
-internal fun EditorEditText.isCurrentTextAuthorizedForEditorImpl(): Boolean =
-    (text?.toString() ?: "") == lastAuthorizedText
+internal fun EditorEditText.isCurrentTextAuthorizedForEditorImpl(): Boolean {
+    val editable = text
+    val contentVersion = (editable as? EditorEditable)?.contentVersion
+    if (contentVersion != null && contentVersion == verifiedAuthorizedContentVersion &&
+        lastAuthorizedText === verifiedAuthorizedText
+    ) {
+        return true
+    }
+    val authorized = (editable?.toString() ?: "") == lastAuthorizedText
+    if (authorized) {
+        verifiedAuthorizedContentVersion = contentVersion
+        verifiedAuthorizedText = lastAuthorizedText
+    }
+    return authorized
+}
 
 internal fun EditorEditText.captureCompositionReplacementRangeIfNeededImpl() {
     if (didInvalidateCompositionReplacementRange) return
@@ -234,7 +247,7 @@ internal fun EditorEditText.restoreAuthorizedTextSnapshotForEditor() {
     isApplyingRustState = true
     beginBatchEdit()
     try {
-        setText(authorizedSnapshot)
+        setText(frozenRenderedTextSnapshot(authorizedSnapshot))
     } finally {
         endBatchEdit()
         isApplyingRustState = wasApplyingRustState

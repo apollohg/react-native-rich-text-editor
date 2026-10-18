@@ -4,8 +4,10 @@ import android.app.Activity
 import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Looper
+import android.text.Editable
 import android.text.StaticLayout
 import android.text.TextPaint
+import android.text.TextWatcher
 import android.text.style.CharacterStyle
 import android.view.inputmethod.EditorInfo
 import java.util.concurrent.LinkedBlockingQueue
@@ -341,10 +343,91 @@ internal class EditorNativeInputPatchTest : EditorInputConnectionTestFixture() {
         }
     }
 
+    @Test
+    fun `matching native patch authorizes optimistic text once and retains input styling`() =
+        withStyledEditor { harness ->
+            val editor = harness.editText
+            val original = editor.text.toString()
+            val expectedAppearance = appearanceAt(editor, 0)
+            val bodyAppearance = appearanceAt(editor, original.lastIndex)
+            val changes = mutableListOf<String>()
+            val watcher = object : TextWatcher {
+                override fun beforeTextChanged(
+                    s: CharSequence?,
+                    start: Int,
+                    count: Int,
+                    after: Int
+                ) = Unit
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                    changes.add("range=$start before=$before count=$count text=$s")
+                }
+                override fun afterTextChanged(s: Editable?) = Unit
+            }
+            editor.addTextChangedListener(watcher)
+            try {
+                editor.setSelection(HEADING_TEXT.length)
+                val originalEditable = editor.text
+                val input = requireNotNull(editor.onCreateInputConnection(EditorInfo()))
+                val revision = harness.adapter.baseDocumentRevision
+                assertTrue(input.commitText(OPTIMISTIC_TYPED_TEXT, 1))
+                assertEquals(
+                    "authoritative render must not repeat the accepted optimistic text change: " +
+                        changes.joinToString("\n") +
+                        " html=${harness.adapter.documentHtml()} " +
+                        editor.imeTraceSnapshotForTesting().takeLast(8),
+                    1,
+                    changes.size
+                )
+                assertTrue(editor.text === originalEditable)
+                assertTrue(harness.adapter.baseDocumentRevision > revision)
+                assertEquals(
+                    "$HEADING_TEXT$OPTIMISTIC_TYPED_TEXT\n$BODY_TEXT",
+                    editor.text.toString()
+                )
+                assertEquals(
+                    HEADING_TEXT.length + OPTIMISTIC_TYPED_TEXT.length,
+                    editor.selectionStart
+                )
+                for (offset in OPTIMISTIC_TYPED_TEXT.indices) {
+                    assertEquals(
+                        expectedAppearance,
+                        appearanceAt(
+                            editor,
+                            HEADING_TEXT.length + offset
+                        )
+                    )
+                }
+                assertEquals(bodyAppearance, appearanceAt(editor, editor.text.length - 1))
+                assertTrue(editor.lastRenderAppliedPatchForTesting)
+                changes.clear()
+                assertTrue(input.deleteSurroundingText(OPTIMISTIC_TYPED_TEXT.length, 0))
+                assertEquals(
+                    "original input connection must remain usable",
+                    original,
+                    editor.text.toString()
+                )
+                assertEquals(
+                    "accepted deletion must publish one visible change: $changes",
+                    1,
+                    changes.size
+                )
+                assertEquals(HEADING_TEXT.length, editor.selectionStart)
+                assertEquals(editor.selectionStart, editor.selectionEnd)
+                assertEquals(
+                    "<h1>$HEADING_TEXT</h1><p>$BODY_TEXT</p>",
+                    harness.adapter.documentHtml()
+                )
+                assertEquals(bodyAppearance, appearanceAt(editor, editor.text.length - 1))
+            } finally {
+                editor.removeTextChangedListener(watcher)
+            }
+        }
+
     private companion object {
         const val HEADING_TEXT = "Heading"
         const val BODY_TEXT = "Body"
         const val TYPED_TEXT = " words"
+        const val OPTIMISTIC_TYPED_TEXT = "!"
         const val BODY_FONT_SIZE = 16f
         const val HEADING_FONT_SIZE = 32f
         const val HEADING_LINE_HEIGHT = 80f

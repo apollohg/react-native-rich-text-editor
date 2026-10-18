@@ -46,8 +46,9 @@ internal object EditorBoxDrawing {
         return Path().apply { addRoundRect(bounds, radii, Path.Direction.CW) }
     }
 
+    @Suppress("DEPRECATION")
     fun draw(canvas: Canvas, bounds: RectF, box: EditorBoxStyle) {
-        if (bounds.isEmpty) return
+        if (bounds.isEmpty || canvas.quickReject(bounds, Canvas.EdgeType.AA)) return
         val paint = Paint(Paint.ANTI_ALIAS_FLAG)
         val outer = path(bounds, box.corners)
         box.backgroundColor?.let {

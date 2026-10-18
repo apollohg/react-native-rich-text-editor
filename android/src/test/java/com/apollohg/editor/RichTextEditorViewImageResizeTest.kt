@@ -509,6 +509,34 @@ internal class RichTextEditorViewImageResizeTest : RichTextEditorViewTestFixture
     }
 
     @Test
+    fun `resize overlay is created by the first image selection`() {
+        val view = RichTextEditorView(RuntimeEnvironment.getApplication())
+        view.editorEditText.applyRenderJSON(imageRenderJson())
+        view.measure(
+            View.MeasureSpec.makeMeasureSpec(600, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(240, View.MeasureSpec.EXACTLY)
+        )
+        view.layout(0, 0, view.measuredWidth, view.measuredHeight)
+        val text = view.editorEditText.text as Spanned
+        val imageSpan = text.getSpans(0, text.length, BlockImageSpan::class.java).single()
+        val spanStart = text.getSpanStart(imageSpan)
+        val spanEnd = text.getSpanEnd(imageSpan)
+
+        view.editorEditText.setSelection(0, 1)
+        view.editorEditText.onSelectionOrContentMayChange?.invoke()
+        assertFalse(
+            "text selections must not build the resize overlay",
+            view.hasImageResizeOverlayForTesting
+        )
+        assertNull(view.imageResizeOverlayRectForTesting())
+
+        view.editorEditText.setSelection(spanStart, spanEnd)
+        view.editorEditText.onSelectionOrContentMayChange?.invoke()
+        assertTrue(view.hasImageResizeOverlayForTesting)
+        assertNotNull(view.imageResizeOverlayRectForTesting())
+    }
+
+    @Test
     fun `tapping rendered image selects it for resize overlay`() {
         val context = RuntimeEnvironment.getApplication()
         val view = RichTextEditorView(context)

@@ -1,6 +1,7 @@
 package com.apollohg.editor
 
 import android.graphics.Rect
+import android.os.Looper
 import android.view.MotionEvent
 import android.view.View
 import android.view.inputmethod.EditorInfo
@@ -8,6 +9,7 @@ import com.apollohg.editor.viewer.PreparedProseDrawingView
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertTrue
+import org.robolectric.Shadows.shadowOf
 
 abstract class NativeEditorExpoViewTestSupport {
     protected fun tapCell(view: NativeEditorExpoView, index: Int) {
@@ -130,8 +132,46 @@ abstract class NativeEditorExpoViewTestSupport {
         return inputConnection.commitText(text, 1)
     }
 
+    internal class FakeBoundEditor(
+        val backend: FakeEditorV2Backend,
+        val adapter: EditorV2Adapter,
+        val viewToken: Long
+    ) {
+        fun setEngineText(text: String): String {
+            val session = backend.sessions.getValue(adapter.editorId)
+            session.text = StringBuilder(text)
+            session.revision += 1u
+            return renderNoticeJson(backend, adapter)
+        }
+
+        fun release(view: NativeEditorExpoView) {
+            EditorV2Registry.remove(adapter.editorId)
+            NativeEditorViewRegistry.unregister(viewToken, view)
+        }
+    }
+
+    internal fun bindFakeEditorForViewTest(
+        view: NativeEditorExpoView,
+        initialText: String
+    ): FakeBoundEditor {
+        val backend = FakeEditorV2Backend()
+        val adapter = attachAdapterForViewTest(backend)
+        val bound = FakeBoundEditor(backend, adapter, EditorV2Registry.register(adapter))
+        bound.setEngineText(initialText)
+        view.onAddonEventForTesting = view.onAddonEventForTesting ?: {}
+        view.onEditorUpdateForTesting = view.onEditorUpdateForTesting ?: {}
+        view.onEditorReadyForTesting = view.onEditorReadyForTesting ?: {}
+        view.onSelectionChangeForTesting = view.onSelectionChangeForTesting ?: {}
+        view.onFocusChangeForTesting = view.onFocusChangeForTesting ?: {}
+        view.onContentHeightChangeForTesting = view.onContentHeightChangeForTesting ?: {}
+        view.setAttachedToNativeWindowForTesting(true)
+        view.setEditorId(bound.viewToken)
+        shadowOf(Looper.getMainLooper()).idle()
+        return bound
+    }
+
     internal fun attachAdapterForViewTest(
-        backend: FakeEditorV2Backend,
+        backend: EditorV2Backend,
         configJson: String = "{\"initialization\":{\"type\":\"localEmpty\"}}"
     ): EditorV2Adapter {
         val created = backend.create(configJson, null)
@@ -142,4 +182,14 @@ abstract class NativeEditorExpoViewTestSupport {
             roomBound = false
         )!!
     }
+}
+
+internal fun renderNoticeJson(backend: EditorV2Backend, adapter: EditorV2Adapter): String {
+    val render = backend.renderUpdate(adapter.editorId, null, null)
+    assertTrue("render=$render", render is EditorV2CallResult.Ok)
+    val snapshot = JSONObject((render as EditorV2CallResult.Ok).value)
+    return JSONObject()
+        .put("documentVersion", snapshot.getString("documentVersion"))
+        .put("stateRevision", snapshot.getString("stateRevision"))
+        .toString()
 }

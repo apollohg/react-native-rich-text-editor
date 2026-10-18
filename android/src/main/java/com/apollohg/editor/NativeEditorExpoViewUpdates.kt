@@ -32,10 +32,11 @@ internal fun NativeEditorExpoView.applyEditorResetUpdateOutcome(
         return PendingEditorUpdateApplyOutcome.PERMANENTLY_REJECTED
     }
     val adapter = EditorV2Registry.adapterForViewToken(richTextView.editorId)
-    if (adapter != null && !adapter.validateExternalRender(updateJson)) {
+        ?: return PendingEditorUpdateApplyOutcome.PERMANENTLY_REJECTED
+    if (!adapter.validateExternalRender(updateJson)) {
         return PendingEditorUpdateApplyOutcome.PERMANENTLY_REJECTED
     }
-    if (adapter != null && resetJson != null && !adapter.validateExternalReset(resetJson)) {
+    if (resetJson != null && !adapter.validateExternalReset(resetJson)) {
         return PendingEditorUpdateApplyOutcome.PERMANENTLY_REJECTED
     }
     if (!isEditorReadyForNativeUpdate()) {
@@ -48,19 +49,14 @@ internal fun NativeEditorExpoView.applyEditorResetUpdateOutcome(
     richTextView.editorEditText.discardTransientNativeInputForExternalRecovery()
     clearPendingEditorUpdateState(resetAppliedRevision = false)
     clearPendingViewCommandUpdateRetry()
-    val adoptedUpdateJson = if (adapter == null) {
-        updateJson
-    } else {
-        (
-            if (resetJson == null) {
-                adapter.adoptExternalRender(updateJson)
-            } else {
-                adapter.adoptExternalReset(updateJson, resetJson)
-            }
-            )
-            ?: return PendingEditorUpdateApplyOutcome.PERMANENTLY_REJECTED
-    }
-    if (adapter != null && resetJson == null) adapter.markTablePresentationReset()
+    val adoptedUpdateJson = (
+        if (resetJson == null) {
+            adapter.adoptExternalRender(updateJson)
+        } else {
+            adapter.adoptExternalReset(updateJson, resetJson)
+        }
+        ) ?: return PendingEditorUpdateApplyOutcome.PERMANENTLY_REJECTED
+    if (resetJson == null) adapter.markTablePresentationReset()
     drainPendingEditorUpdateEvents()
     isApplyingJSUpdate = true
     val applied = try {
@@ -80,6 +76,7 @@ internal fun NativeEditorExpoView.applyEditorResetUpdateOutcome(
         isApplyingJSUpdate = false
     }
     if (applied) {
+        selectionEventActiveState.reset()
         if (resetJson != null &&
             documentVersionFromUpdateJSON(adoptedUpdateJson) !=
             documentVersionFromUpdateJSON(updateJson)
@@ -170,15 +167,15 @@ internal fun NativeEditorExpoView.applyEditorUpdateOutcome(
         return PendingEditorUpdateApplyOutcome.PERMANENTLY_REJECTED
     }
     val adapter = EditorV2Registry.adapterForViewToken(richTextView.editorId)
-    if (adapter != null && !adapter.validateExternalRender(updateJson)) {
-        return PendingEditorUpdateApplyOutcome.PERMANENTLY_REJECTED
-    }
-    if (adapter != null && isSupersededEditorUpdate(updateJson)) {
-        richTextView.editorEditText.recordImeTraceForTesting(
-            "pendingEditorUpdateSuperseded",
-            "updateRevision=${documentVersionFromUpdateJSON(updateJson)}" +
+        ?: return PendingEditorUpdateApplyOutcome.PERMANENTLY_REJECTED
+    val renderNotice = adapter.parseExternalRenderNotice(updateJson)
+        ?: return PendingEditorUpdateApplyOutcome.PERMANENTLY_REJECTED
+    val incomingDocumentVersion = renderNotice.documentVersion
+    if (isSupersededEditorUpdate(incomingDocumentVersion)) {
+        richTextView.editorEditText.recordImeTraceForTesting("pendingEditorUpdateSuperseded") {
+            "updateRevision=$incomingDocumentVersion" +
                 " rendered=$renderedDocumentRevision"
-        )
+        }
         return PendingEditorUpdateApplyOutcome.APPLIED
     }
     if (!isEditorReadyForNativeUpdate()) {
@@ -205,13 +202,9 @@ internal fun NativeEditorExpoView.applyEditorUpdateOutcome(
     // has already rendered and adopted the post-operation snapshot, so
     // reuse that exact result rather than rendering Rust state again or
     // installing the now-stale external snapshot.
-    val adoptedUpdateJson = preflight.adoptedUpdateJSON ?: if (adapter == null) {
-        updateJson
-    } else {
-        adapter.adoptExternalRender(updateJson) ?: run {
-            return PendingEditorUpdateApplyOutcome.PERMANENTLY_REJECTED
-        }
-    }
+    val adoptedUpdateJson = preflight.adoptedUpdateJSON
+        ?: adapter.adoptExternalRender(renderNotice)
+        ?: return PendingEditorUpdateApplyOutcome.PERMANENTLY_REJECTED
     drainPendingEditorUpdateEvents()
     isApplyingJSUpdate = true
     return try {
@@ -219,6 +212,7 @@ internal fun NativeEditorExpoView.applyEditorUpdateOutcome(
             adoptedUpdateJson,
             refreshInputConnectionForExternalUpdate = true
         )
+        selectionEventActiveState.reset()
         PendingEditorUpdateApplyOutcome.APPLIED
     } catch (error: Throwable) {
         Log.w(LOG_TAG, "Failed to apply JS editor update", error)

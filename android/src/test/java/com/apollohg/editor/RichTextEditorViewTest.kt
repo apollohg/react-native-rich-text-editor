@@ -3,10 +3,12 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Rect
+import android.os.Looper
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.StaticLayout
 import android.text.TextPaint
+import android.text.style.CharacterStyle
 import android.text.style.ForegroundColorSpan
 import android.text.style.LeadingMarginSpan
 import android.view.MotionEvent
@@ -16,6 +18,7 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import kotlin.math.roundToInt
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -25,8 +28,10 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
@@ -331,6 +336,117 @@ internal class RichTextEditorViewTest : RichTextEditorViewTestFixture() {
     }
 
     @Test
+    fun `mounted public theme keeps one content inset across fixed and auto grow`() {
+        assertPublicThemeContentInsets()
+    }
+
+    @Test
+    @Config(qualifiers = "420dpi")
+    fun `benchmark projection matches actual public text width at fractional density`() {
+        assertPublicThemeContentInsets()
+    }
+
+    private fun assertPublicThemeContentInsets() {
+        withPublicThemeViewport(SMALL_PUBLIC_FIXTURE) { view, adapter, corpus ->
+            val richText = view.richTextView
+            val editor = richText.editorEditText
+            val density = view.resources.displayMetrics.density
+            val expectedTop =
+                editorPerformanceContentInsetPx(corpus.getJSONObject("style"), density)
+            val expectedWidth = (corpus.getJSONObject("viewport").getDouble("widthDp") * density)
+                .roundToInt() - expectedTop * 2
+            val originalState = publicThemeState(view, adapter)
+            val contentOrigins = mutableListOf<Int>()
+
+            for (behavior in listOf("fixed", "autoGrow", "fixed")) {
+                view.setHeightBehavior(behavior)
+                measurePublicThemeViewport(view, corpus)
+                richText.editorScrollView.scrollTo(0, 0)
+                val layout = requireNotNull(editor.layout)
+                val baseline = Rect(
+                    0,
+                    editor.totalPaddingTop + layout.getLineBaseline(0),
+                    0,
+                    editor.totalPaddingTop + layout.getLineBaseline(0)
+                )
+                richText.editorViewport.offsetDescendantRectToMyCoords(editor, baseline)
+                contentOrigins += baseline.top - layout.getLineBaseline(0)
+                assertEquals(
+                    "$behavior must retain the common text width",
+                    expectedWidth,
+                    layout.width
+                )
+                assertEquals(
+                    "$behavior must preserve all rich content and its caret",
+                    originalState,
+                    publicThemeState(view, adapter)
+                )
+            }
+
+            assertEquals(
+                "public content padding must apply once in fixed, autoGrow, then fixed",
+                List(contentOrigins.size) { expectedTop },
+                contentOrigins
+            )
+        }
+    }
+
+    @Test
+    fun `mounted public theme keeps trailing inset outside reserved keyboard space`() {
+        withPublicThemeViewport(MEDIUM_PUBLIC_FIXTURE) { view, adapter, corpus ->
+            val richText = view.richTextView
+            val editor = richText.editorEditText
+            val scroll = richText.editorScrollView
+            val density = view.resources.displayMetrics.density
+            val top = editorPerformanceContentInsetPx(corpus.getJSONObject("style"), density)
+            val bottom = top
+            val originalState = publicThemeState(view, adapter)
+            val trailingInsets = mutableListOf<Int>()
+            val travel = mutableListOf<Int>()
+            val expectedTravel = mutableListOf<Int>()
+
+            for (reserved in listOf(PUBLIC_VIEWPORT_BOTTOM_INSET_PX, 0)) {
+                richText.setViewportBottomInsetPx(reserved)
+                measurePublicThemeViewport(view, corpus)
+                val layout = requireNotNull(editor.layout)
+                assertTrue(
+                    "the medium fixture must require genuine scrolling",
+                    editor.height > scroll.height
+                )
+                val actualRange = (
+                    scroll.getChildAt(0).height + scroll.paddingTop + scroll.paddingBottom -
+                        scroll.height
+                    ).coerceAtLeast(0)
+                assertTrue("the fixture must travel beyond the first viewport", actualRange > 0)
+                scroll.scrollTo(0, actualRange)
+                val textBottom = editor.totalPaddingTop + layout.height
+                val lastLine = Rect(0, textBottom, 0, textBottom)
+                richText.editorViewport.offsetDescendantRectToMyCoords(editor, lastLine)
+                trailingInsets += scroll.height - lastLine.bottom
+                travel += scroll.scrollY
+                expectedTravel += layout.height + top + bottom + reserved - scroll.height
+                assertEquals(
+                    "keyboard inset $reserved must preserve rich content and its caret",
+                    originalState,
+                    publicThemeState(view, adapter)
+                )
+            }
+
+            assertEquals(
+                "one trailing content inset must remain outside the reserved keyboard space",
+                listOf(bottom + PUBLIC_VIEWPORT_BOTTOM_INSET_PX, bottom),
+                trailingInsets
+            )
+            assertEquals("scroll travel must include content padding once", expectedTravel, travel)
+            assertEquals(
+                "removing only keyboard space must remove only its reserved travel",
+                PUBLIC_VIEWPORT_BOTTOM_INSET_PX,
+                travel.first() - travel.last()
+            )
+        }
+    }
+
+    @Test
     fun `unordered marker scale does not change list item height`() {
         val context = RuntimeEnvironment.getApplication()
         val renderJson = singleBulletListRenderJson()
@@ -499,5 +615,113 @@ internal class RichTextEditorViewTest : RichTextEditorViewTestFixture() {
                 "(viewport=${scrollView.height}, field=${editText.height})",
             editText.height > scrollView.height
         )
+    }
+
+    private data class PublicThemeState(
+        val text: String,
+        val styles: Map<CharacterStyle, Triple<Int, Int, Int>>,
+        val caret: Int,
+        val html: String,
+        val revision: ULong?
+    )
+
+    private fun publicThemeState(
+        view: NativeEditorExpoView,
+        adapter: EditorV2Adapter
+    ): PublicThemeState {
+        val editor = view.richTextView.editorEditText
+        assertEquals(
+            "geometry updates must keep the caret collapsed",
+            editor.selectionStart,
+            editor.selectionEnd
+        )
+        return PublicThemeState(
+            editor.text.toString(),
+            editor.text.getSpans(0, editor.text.length, CharacterStyle::class.java).associateWith {
+                Triple(
+                    editor.text.getSpanStart(it),
+                    editor.text.getSpanEnd(it),
+                    editor.text.getSpanFlags(it)
+                )
+            },
+            editor.selectionStart,
+            requireNotNull(adapter.documentHtml()),
+            adapter.baseDocumentRevision
+        )
+    }
+
+    private fun measurePublicThemeViewport(view: NativeEditorExpoView, corpus: JSONObject) {
+        val viewport = corpus.getJSONObject("viewport")
+        val density = view.resources.displayMetrics.density
+        val width = (viewport.getDouble("widthDp") * density).roundToInt()
+        val height = (viewport.getDouble("heightDp") * density).roundToInt()
+        view.measure(
+            View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY)
+        )
+        view.layout(0, 0, view.measuredWidth, view.measuredHeight)
+    }
+
+    private fun withPublicThemeViewport(
+        fixtureId: String,
+        block: (NativeEditorExpoView, EditorV2Adapter, JSONObject) -> Unit
+    ) {
+        val activity = Robolectric.buildActivity(android.app.Activity::class.java).setup().get()
+        val corpus = activity.assets.open(EDITOR_PUBLIC_THEME_FIXTURES_ASSET).bufferedReader().use {
+            JSONObject(it.readText())
+        }
+        val fixtures = corpus.getJSONArray("fixtures")
+        val fixture = (0 until fixtures.length()).map { fixtures.getJSONObject(it) }
+            .single { it.getString("id") == fixtureId }
+        val publicThemeJson = corpus.getJSONObject("theme").toString()
+        val expo = testExpoContext(activity)
+        val view = NativeEditorExpoView(expo.context, expo.appContext)
+        val adapter = attachAdapterForViewTest(UniffiEditorV2Backend)
+        val token = EditorV2Registry.register(adapter)
+        try {
+            view.onEditorUpdateForTesting = {}
+            view.onAddonEventForTesting = {}
+            view.onEditorReadyForTesting = {}
+            view.onSelectionChangeForTesting = {}
+            view.onFocusChangeForTesting = {}
+            view.onContentHeightChangeForTesting = {}
+            view.setShowToolbar(false)
+            activity.setContentView(view)
+            view.setAttachedToNativeWindowForTesting(true)
+            view.setThemeJson(publicThemeJson)
+            view.setEditorId(token)
+            view.richTextView.setContent(fixture.getString("html"))
+            shadowOf(Looper.getMainLooper()).idle()
+            measurePublicThemeViewport(view, corpus)
+            val editor = view.richTextView.editorEditText
+            assertNotNull(
+                "the public JSON must use the stylesheet renderer",
+                editor.theme?.styleSheet
+            )
+            assertEquals(
+                "the mounted fixture must retain its complete common text",
+                fixture.getString("visibleText"),
+                editor.text.toString()
+            )
+            val caret = fixture.getJSONObject("caret")
+            val paragraphs = fixture.getJSONArray("paragraphs")
+            val caretOffset = (0 until caret.getInt("paragraphIndex")).sumOf {
+                paragraphs.getJSONObject(it).getString("text").length + 1
+            } + caret.getInt("offsetUtf16")
+            editor.setSelection(caretOffset)
+            block(view, adapter, corpus)
+        } finally {
+            view.handleDetachedFromWindowForTesting()
+            EditorV2Registry.remove(adapter.editorId)
+            NativeEditorViewRegistry.unregister(token, view)
+            adapter.destroy()
+            activity.finish()
+        }
+    }
+
+    private companion object {
+        const val SMALL_PUBLIC_FIXTURE = "small"
+        const val MEDIUM_PUBLIC_FIXTURE = "medium"
+        const val PUBLIC_VIEWPORT_BOTTOM_INSET_PX = 96
     }
 }

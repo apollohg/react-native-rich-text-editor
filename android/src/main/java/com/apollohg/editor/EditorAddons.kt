@@ -113,7 +113,7 @@ internal fun resolveMentionQueryState(
         start -= 1
     }
 
-    if (start >= scalars.size || scalars[start] != triggerCodePoint) return null
+    if (start >= cursorScalar || scalars[start] != triggerCodePoint) return null
     if (start > 0) {
         val previous = scalars[start - 1]
         if (isMentionIdentifierCodePoint(previous)) {

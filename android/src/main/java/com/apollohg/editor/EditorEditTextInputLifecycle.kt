@@ -10,7 +10,9 @@ internal fun EditorEditText.restartInputForEditorIfFocused(source: String) {
 }
 
 internal fun EditorEditText.restartInputForEditor(source: String = "explicit") {
-    recordImeTraceForTesting("restartInput", "source=$source")
+    recordImeTraceForTesting("restartInput") {
+        "source=$source"
+    }
     val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
     imm?.restartInput(this)
     scheduleSelectionUpdateAfterRestartInput(source)
@@ -24,10 +26,9 @@ internal fun EditorEditText.scheduleSelectionUpdateAfterRestartInput(source: Str
         val start = selectionStart
         val end = selectionEnd
         if (start < 0 || end < 0) {
-            recordImeTraceForTesting(
-                "updateSelectionAfterRestartSkipped",
+            recordImeTraceForTesting("updateSelectionAfterRestartSkipped") {
                 "source=$source reason=selection start=$start end=$end"
-            )
+            }
             return@post
         }
         val mapper = imeTextCoordinateMapperForEditor() ?: return@post
@@ -54,28 +55,25 @@ internal fun EditorEditText.scheduleSelectionUpdateAfterRestartInput(source: Str
             imeComposingStart,
             imeComposingEnd
         )
-        recordImeTraceForTesting(
-            "updateSelectionAfterRestart",
+        recordImeTraceForTesting("updateSelectionAfterRestart") {
             "source=$source sel=$imeStart..$imeEnd"
-        )
+        }
     }
 }
 
 internal fun EditorEditText.scheduleLineBoundaryInputRefreshForEditor(source: String) {
     if (!hasFocus()) return
     val generation = ++lineBoundaryInputRefreshGeneration
-    recordImeTraceForTesting(
-        "lineBoundaryInputRefreshScheduled",
+    recordImeTraceForTesting("lineBoundaryInputRefreshScheduled") {
         "source=$source generation=$generation"
-    )
+    }
     post {
         if (generation != lineBoundaryInputRefreshGeneration) return@post
         if (!hasFocus()) return@post
         if (!isCursorAtRenderedLineStartForSentenceCaps()) {
-            recordImeTraceForTesting(
-                "lineBoundaryInputRefreshSkipped",
+            recordImeTraceForTesting("lineBoundaryInputRefreshSkipped") {
                 "source=$source reason=cursor"
-            )
+            }
             return@post
         }
         restartInputForEditor("lineBoundary:$source")
@@ -99,7 +97,9 @@ internal fun EditorEditText.isInputConnectionCurrentForEditorImpl(
 internal fun EditorEditText.invalidateInputConnectionsForEditor() {
     inputConnectionGeneration += 1L
     cachedImeTextCoordinateMapper = null
-    recordImeTraceForTesting("invalidateInputConnections", "nextGen=$inputConnectionGeneration")
+    recordImeTraceForTesting("invalidateInputConnections") {
+        "nextGen=$inputConnectionGeneration"
+    }
     activeInputConnection = null
 }
 
@@ -136,10 +136,9 @@ internal fun EditorEditText.restoreAuthorizedTextIfNeededImpl() {
     if (isTableCellInput) return
     if (!hasLiveEditor()) return
     if ((text?.toString() ?: "") == lastAuthorizedText) return
-    recordImeTraceForTesting(
-        "restoreAuthorizedText",
+    recordImeTraceForTesting("restoreAuthorizedText") {
         "authorizedLength=${lastAuthorizedText.length}"
-    )
+    }
     val stateJSON = v2Driver?.currentStateJson() ?: return
     applyUpdateJSON(stateJSON)
 }

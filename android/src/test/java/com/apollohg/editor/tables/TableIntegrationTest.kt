@@ -32,7 +32,6 @@ import com.apollohg.editor.RemoteSelectionOverlayView
 import com.apollohg.editor.RenderImageLoader
 import com.apollohg.editor.UniffiEditorV2Backend
 import com.apollohg.editor.canDispatchTableCellMutation
-import com.apollohg.editor.initialUpdateJson
 import com.apollohg.editor.inputScalarSelection
 import com.apollohg.editor.tableRecordsForTesting
 import com.apollohg.editor.testExpoContext
@@ -1851,7 +1850,7 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
                         ) {
                             adapter.setContentJson(document)
                         } else {
-                            adapter.initialUpdateJson()
+                            adapter.recoverNativeRender()
                         }
                     )
                 )

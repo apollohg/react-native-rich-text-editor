@@ -22,75 +22,66 @@ import android.text.style.UnderlineSpan
 internal fun EditorEditText.handleTextCommitImpl(text: String, newCursorPosition: Int = 1) {
     val startedAt = System.nanoTime()
     if (!isEditable) {
-        recordImeTraceForTesting(
-            "handleTextCommitNoop",
+        recordImeTraceForTesting("handleTextCommitNoop") {
             "reason=notEditable textLength=${text.length}"
-        )
+        }
         return
     }
     if (isApplyingRustState) {
-        recordImeTraceForTesting(
-            "handleTextCommitNoop",
+        recordImeTraceForTesting("handleTextCommitNoop") {
             "reason=applyingRust textLength=${text.length}"
-        )
+        }
         return
     }
     if (isTableCellInput && !canDispatchTableCellMutation()) return
     val selectionRange = normalizedUtf16SelectionRange()
     if (selectionRange == null) {
-        recordImeTraceForTesting(
-            "handleTextCommitNoop",
+        recordImeTraceForTesting("handleTextCommitNoop") {
             "reason=noSelection textLength=${text.length}"
-        )
+        }
         return
     }
     if (isCollapsedAtomBoundarySelection(selectionRange.first, selectionRange.second)) {
-        recordImeTraceForTesting(
-            "handleTextCommitNoop",
+        recordImeTraceForTesting("handleTextCommitNoop") {
             "reason=atomBoundary textLength=${text.length}"
-        )
+        }
         return
     }
     if (editorId == 0L) {
         val editable = this.text ?: return
         val (start, end) = selectionRange
         editable.replace(start, end, text)
-        recordImeTraceForTesting(
-            "handleTextCommitDirect",
+        recordImeTraceForTesting("handleTextCommitDirect") {
             "textLength=${text.length} utf16Sel=$start..$end totalUs=${nanosToMicros(
                 System.nanoTime() - startedAt
             )}"
-        )
+        }
         return
     }
     if (discardTransientInputForDestroyedEditorIfNeeded()) {
-        recordImeTraceForTesting(
-            "handleTextCommitNoop",
+        recordImeTraceForTesting("handleTextCommitNoop") {
             "reason=destroyedEditor textLength=${text.length}"
-        )
+        }
         return
     }
 
     if (text == "\n") {
-        recordImeTraceForTesting(
-            "handleTextCommit",
+        recordImeTraceForTesting("handleTextCommit") {
             "route=return utf16Sel=${selectionRange.first}..${selectionRange.second}"
-        )
+        }
         handleReturnKey()
-        recordImeTraceForTesting(
-            "handleTextCommitDone",
+        recordImeTraceForTesting("handleTextCommitDone") {
             "route=return totalUs=${nanosToMicros(System.nanoTime() - startedAt)}"
-        )
+        }
         return
     }
 
     val currentText = this.text?.toString() ?: ""
     val scalarSelectionRange = normalizedScalarSelectionRange(currentText)
     if (scalarSelectionRange == null) {
-        recordImeTraceForTesting(
-            "handleTextCommitNoop",
+        recordImeTraceForTesting("handleTextCommitNoop") {
             "reason=noScalarSelection textLength=${text.length}"
-        )
+        }
         return
     }
     val (scalarStart, scalarEnd) = scalarSelectionRange
@@ -102,10 +93,9 @@ internal fun EditorEditText.handleTextCommitImpl(text: String, newCursorPosition
         text,
         newCursorPosition
     )
-    recordImeTraceForTesting(
-        "handleTextCommit",
+    recordImeTraceForTesting("handleTextCommit") {
         "textLength=${text.length} cursor=$newCursorPosition utf16Sel=${selectionRange.first}..${selectionRange.second} scalarSel=$scalarStart..$scalarEnd requestedCursor=$requestedCursor"
-    )
+    }
     val didApplyOptimisticVisibleText = applyOptimisticPlainTextCommitIfPossible(
         startUtf16 = selectionRange.first,
         endUtf16 = selectionRange.second,
@@ -115,10 +105,9 @@ internal fun EditorEditText.handleTextCommitImpl(text: String, newCursorPosition
             ?: scalarStart + text.codePointCount(0, text.length)
     )
     if (didApplyOptimisticVisibleText) {
-        recordImeTraceForTesting(
-            "optimisticVisibleTextCommit",
+        recordImeTraceForTesting("optimisticVisibleTextCommit") {
             "textLength=${text.length} utf16Sel=${selectionRange.first}..${selectionRange.second}"
-        )
+        }
     }
     insertPlainTextRangeInRust(
         scalarStart,
@@ -126,10 +115,9 @@ internal fun EditorEditText.handleTextCommitImpl(text: String, newCursorPosition
         text,
         requestedCursorScalar = requestedCursor
     )
-    recordImeTraceForTesting(
-        "handleTextCommitDone",
+    recordImeTraceForTesting("handleTextCommitDone") {
         "textLength=${text.length} totalUs=${nanosToMicros(System.nanoTime() - startedAt)}"
-    )
+    }
 }
 
 internal fun EditorEditText.applyOptimisticPlainTextCommitIfPossible(
@@ -304,18 +292,16 @@ internal fun EditorEditText.commitVisibleCompositionMutationForPendingImeOperati
         mutation.replacementStartUtf16,
         mutation.replacementEndUtf16
     ) ?: run {
-        recordImeTraceForTesting(
-            "alreadyVisibleCompositionNoop",
+        recordImeTraceForTesting("alreadyVisibleCompositionNoop") {
             "reason=noToken committedLength=${committedText.length} visibleRange=${mutation.replacementStartUtf16}..${mutation.replacementEndUtf16}"
-        )
+        }
         return false
     }
     val visibleToken = currentText.substring(tokenRange.first, tokenRange.second)
     if (visibleToken != committedText) {
-        recordImeTraceForTesting(
-            "alreadyVisibleCompositionNoop",
+        recordImeTraceForTesting("alreadyVisibleCompositionNoop") {
             "reason=tokenMismatch committedLength=${committedText.length} tokenLength=${visibleToken.length} visibleRange=${mutation.replacementStartUtf16}..${mutation.replacementEndUtf16}"
-        )
+        }
         return false
     }
 
@@ -327,10 +313,9 @@ internal fun EditorEditText.commitVisibleCompositionMutationForPendingImeOperati
         mutation.replacementText,
         newCursorPosition
     )
-    recordImeTraceForTesting(
-        "alreadyVisibleCompositionApply",
+    recordImeTraceForTesting("alreadyVisibleCompositionApply") {
         "range=${mutation.scalarFrom}..${mutation.scalarTo} replacementLength=${mutation.replacementText.length} committedLength=${committedText.length} requestedCursor=$requestedCursor"
-    )
+    }
     pendingOptimisticRenderText = null
     insertPlainTextRangeInRust(
         mutation.scalarFrom,

@@ -14,7 +14,7 @@ import java.util.concurrent.atomic.AtomicReference
 internal class AtomBlockSpan(
     val atomKey: String,
     val nodeType: String,
-    val docPos: Int,
+    var docPos: Int,
     var reservedHeightPx: Int,
     val hasStableAtomId: Boolean,
     val isDirectRootChild: Boolean

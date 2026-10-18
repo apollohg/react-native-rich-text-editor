@@ -10,7 +10,7 @@ import android.text.style.LeadingMarginSpan
 import org.json.JSONObject
 
 internal fun RenderBridge.applyBlockStyle(
-    builder: SpannableStringBuilder,
+    builder: RenderTextBuilder,
     start: Int,
     end: Int,
     blockStack: List<BlockContext>,
@@ -157,6 +157,10 @@ internal fun RenderBridge.applyPendingLeadingMargins(
 
     val text = builder.toString()
     val entries = pendingLeadingMargins.toSortedMap().entries.toList()
+    val existingMarginsByStart = builder
+        .getSpans(0, builder.length, LeadingMarginSpan::class.java)
+        .filterNot { it is EditorBlockBoxSpan }
+        .groupBy(builder::getSpanStart)
     var index = 0
     while (index < entries.size) {
         val paragraphStart = entries[index].key
@@ -175,10 +179,7 @@ internal fun RenderBridge.applyPendingLeadingMargins(
             }
             index = nextIndex
 
-            builder
-                .getSpans(0, builder.length, LeadingMarginSpan::class.java)
-                .filter { it !is EditorBlockBoxSpan && builder.getSpanStart(it) == paragraphStart }
-                .forEach(builder::removeSpan)
+            existingMarginsByStart[paragraphStart].orEmpty().forEach(builder::removeSpan)
 
             builder.setSpan(
                 BlockquoteSpan(
@@ -208,10 +209,7 @@ internal fun RenderBridge.applyPendingLeadingMargins(
                 LeadingMarginSpan.Standard(spec.indentPx, it)
             } ?: LeadingMarginSpan.Standard(spec.indentPx)
 
-            builder
-                .getSpans(0, builder.length, LeadingMarginSpan::class.java)
-                .filter { it !is EditorBlockBoxSpan && builder.getSpanStart(it) == paragraphStart }
-                .forEach(builder::removeSpan)
+            existingMarginsByStart[paragraphStart].orEmpty().forEach(builder::removeSpan)
 
             builder.setSpan(span, paragraphStart, paragraphEnd, Spanned.SPAN_PARAGRAPH)
         }

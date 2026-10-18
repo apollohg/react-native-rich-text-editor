@@ -2,7 +2,6 @@ package com.apollohg.editor
 
 import android.os.Handler
 import android.os.Looper
-import android.text.SpannableStringBuilder
 import com.apollohg.editor.EditorEditText.AuthoritativeInputSnapshot
 import org.json.JSONObject
 
@@ -10,19 +9,17 @@ import org.json.JSONObject
 // for one space tap. Defer the render from finishComposingText() by one
 // loop so setText() does not restart input before the pending space arrives.
 internal fun EditorEditText.runWithDeferredRustUpdateApplicationImpl(block: () -> Unit) {
-    recordImeTraceForTesting(
-        "deferRustUpdateBegin",
+    recordImeTraceForTesting("deferRustUpdateBegin") {
         "depth=$deferredRustUpdateApplicationDepth pending=${deferredRustUpdateJSON != null}"
-    )
+    }
     deferredRustUpdateApplicationDepth += 1
     try {
         block()
     } finally {
         deferredRustUpdateApplicationDepth -= 1
-        recordImeTraceForTesting(
-            "deferRustUpdateEnd",
+        recordImeTraceForTesting("deferRustUpdateEnd") {
             "depth=$deferredRustUpdateApplicationDepth pending=${deferredRustUpdateJSON != null}"
-        )
+        }
         if (deferredRustUpdateApplicationDepth == 0) {
             scheduleDeferredRustUpdateApplication()
         }
@@ -47,10 +44,9 @@ internal fun EditorEditText.applyRustUpdateJSON(
         // Keep the visible IME commit authorized until the external view
         // consumes this exact adapter-adopted snapshot below.
         authorizeCurrentVisibleTextForDeferredRustUpdate()
-        recordImeTraceForTesting(
-            "rustUpdateCapturedForExternalPreflight",
+        recordImeTraceForTesting("rustUpdateCapturedForExternalPreflight") {
             "jsonLength=${updateJSON.length} depth=$externalUpdatePreparationCaptureDepth"
-        )
+        }
         return
     }
     // Root table coordinates must track the accepted document revision.
@@ -62,17 +58,15 @@ internal fun EditorEditText.applyRustUpdateJSON(
         }
         deferredRustUpdateJSON = updateJSON
         deferredRustUpdateLineBoundaryRefreshSource = lineBoundaryRefreshSource
-        recordImeTraceForTesting(
-            "rustUpdateDeferred",
+        recordImeTraceForTesting("rustUpdateDeferred") {
             "jsonLength=${updateJSON.length} depth=$deferredRustUpdateApplicationDepth"
-        )
+        }
         authorizeCurrentVisibleTextForDeferredRustUpdate()
         return
     }
-    recordImeTraceForTesting(
-        "rustUpdateApply",
+    recordImeTraceForTesting("rustUpdateApply") {
         "mode=immediate jsonLength=${updateJSON.length}"
-    )
+    }
     if (applyUpdateJSON(updateJSON)) {
         lineBoundaryRefreshSource?.let(::scheduleLineBoundaryInputRefreshForEditor)
     }
@@ -84,7 +78,9 @@ internal fun EditorEditText.authorizeCurrentVisibleTextForDeferredRustUpdate() {
         authorizedVisibleTextNeedsRebuild = true
     }
     lastAuthorizedText = visibleText
-    lastAuthorizedRenderedText = text?.let { SpannableStringBuilder(it) }
+    lastAuthorizedRenderedText = text?.let {
+        immutableRenderedText(it, excludeNoCopySpans = true)
+    }
     lastAuthorizedTextRevision += 1L
     clearNativeTextMutationAdoptionSuppression()
     clearNativeTextMutationAfterBlurWindow()
@@ -104,15 +100,14 @@ internal fun EditorEditText.authorizeCurrentVisibleTextForPendingImeOperationFor
             documentVersion = null
         )
     }
-    recordImeTraceForTesting(
-        "authorizePendingImeVisibleText",
+    recordImeTraceForTesting("authorizePendingImeVisibleText") {
         "textLength=${lastAuthorizedText.length}"
-    )
+    }
 }
 
 internal fun EditorEditText.captureAuthoritativeInputSnapshotImpl(): AuthoritativeInputSnapshot =
     AuthoritativeInputSnapshot(
-        renderedText = SpannableStringBuilder(lastAuthorizedRenderedText ?: lastAuthorizedText),
+        renderedText = frozenRenderedTextSnapshot(lastAuthorizedRenderedText ?: lastAuthorizedText),
         selectionStart = selectionStart.coerceAtLeast(0),
         selectionEnd = selectionEnd.coerceAtLeast(0)
     )
@@ -154,7 +149,7 @@ internal fun EditorEditText.restoreAuthoritativeInputForEditorImpl(
     isApplyingRustState = true
     beginBatchEdit()
     try {
-        setText(snapshot.renderedText)
+        setText(frozenRenderedTextSnapshot(snapshot.renderedText))
         val length = text?.length ?: 0
         setSelection(
             snapshot.selectionStart.coerceIn(0, length),
@@ -287,31 +282,33 @@ internal fun EditorEditText.scheduleDeferredRustUpdateApplication() {
     val pendingUpdateJSON = deferredRustUpdateJSON ?: return
     val pendingLineBoundaryRefreshSource = deferredRustUpdateLineBoundaryRefreshSource
     val generation = ++deferredRustUpdateGeneration
-    recordImeTraceForTesting(
-        "rustUpdateDeferredScheduled",
+    recordImeTraceForTesting("rustUpdateDeferredScheduled") {
         "generation=$generation jsonLength=${pendingUpdateJSON.length}"
-    )
+    }
     Handler(Looper.getMainLooper()).post {
         if (generation != deferredRustUpdateGeneration) {
-            recordImeTraceForTesting(
-                "rustUpdateDeferredSkip",
+            recordImeTraceForTesting("rustUpdateDeferredSkip") {
                 "reason=generation generation=$generation current=$deferredRustUpdateGeneration"
-            )
+            }
             return@post
         }
         if (deferredRustUpdateJSON != pendingUpdateJSON) {
-            recordImeTraceForTesting(
-                "rustUpdateDeferredSkip",
+            recordImeTraceForTesting("rustUpdateDeferredSkip") {
                 "reason=replaced generation=$generation"
-            )
+            }
+            return@post
+        }
+        if (hasPendingCompositionForExternalRefresh()) {
+            recordImeTraceForTesting("rustUpdateDeferredSkip") {
+                "reason=composition generation=$generation"
+            }
             return@post
         }
         deferredRustUpdateJSON = null
         deferredRustUpdateLineBoundaryRefreshSource = null
-        recordImeTraceForTesting(
-            "rustUpdateApply",
+        recordImeTraceForTesting("rustUpdateApply") {
             "mode=deferred generation=$generation jsonLength=${pendingUpdateJSON.length}"
-        )
+        }
         if (applyUpdateJSON(pendingUpdateJSON)) {
             pendingLineBoundaryRefreshSource?.let(::scheduleLineBoundaryInputRefreshForEditor)
         }
@@ -328,9 +325,9 @@ internal fun EditorEditText.advanceRenderBlocksThroughDeferredUpdate(updateJSON:
     val updateDocumentVersion = canonicalV2U64(update.opt("documentVersion") as? String)
     val renderBlocks = update.optJSONArray("renderBlocks")
     val patch = parseRenderPatch(update.optJSONObject("renderPatch"))
-    val resolved = renderBlocks
+    val resolved = renderBlocks?.let(ResolvedRenderBlocks::from)
         ?: patch?.takeIf { patchMatchesCurrentRenderBlocks(it, updateDocumentVersion) }?.let {
-            currentRenderBlocksJson?.let { current -> mergeRenderBlocks(current, it) }
+            currentRenderBlocks?.let { current -> ResolvedRenderBlocks.merge(current, it) }
         }
     retainCurrentRenderBlocks(
         resolved,
@@ -343,10 +340,9 @@ internal fun EditorEditText.cancelDeferredRustUpdateApplication(
     invalidateRenderBlocks: Boolean = true
 ) {
     if (deferredRustUpdateJSON == null) return
-    recordImeTraceForTesting(
-        "rustUpdateDeferredCancel",
+    recordImeTraceForTesting("rustUpdateDeferredCancel") {
         "generation=$deferredRustUpdateGeneration"
-    )
+    }
     deferredRustUpdateJSON = null
     deferredRustUpdateLineBoundaryRefreshSource = null
     deferredRustUpdateGeneration += 1L

@@ -89,7 +89,8 @@ internal interface EditorV2Driver {
     fun docPositionForScalar(scalar: Int): Int?
 
     fun currentStateJson(): String?
-    fun currentSelectionStateJson(): String?
+    fun currentSelectionState(): EditorSelectionState?
+    fun currentSelectionStateJson(): String? = currentSelectionState()?.json()
     fun documentHtml(): String?
     fun documentJson(): String?
     fun contentSnapshotJson(): String?

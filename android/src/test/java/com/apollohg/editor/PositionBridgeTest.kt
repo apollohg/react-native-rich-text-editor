@@ -468,4 +468,57 @@ class PositionBridgeTest {
             scalar
         )
     }
+
+    @Test
+    fun `conversions match a code point walk for pairs, lone surrogates and clamped offsets`() {
+        val text = "\uD83D\uDE00\uFFFC\uD83D\uDE00a\uD800b\uDC00\uD83C\uDDFA\uD83C\uDDF8" +
+            "c\u00E9\uFFFC\uD840\uDC0B"
+        val scalarCount = text.codePointCount(0, text.length)
+        for (offset in -2..text.length + 2) {
+            val clamped = offset.coerceIn(0, text.length)
+            var expected = 0
+            var position = 0
+            while (position < clamped) {
+                position += Character.charCount(Character.codePointAt(text, position))
+                expected++
+            }
+            assertEquals(
+                "utf16 offset $offset",
+                expected,
+                PositionBridge.utf16ToScalar(offset, text)
+            )
+        }
+        for (scalar in -2..scalarCount + 2) {
+            val expected = if (scalar <=
+                0
+            ) {
+                0
+            } else {
+                text.offsetByCodePoints(0, minOf(scalar, scalarCount))
+            }
+            assertEquals("scalar $scalar", expected, PositionBridge.scalarToUtf16(scalar, text))
+        }
+    }
+
+    @Test
+    fun `conversion cache for a large document stays proportional to its surrogate pairs`() {
+        val paragraph = "x".repeat(LARGE_DOCUMENT_PARAGRAPH_LENGTH) + "\uD83D\uDE00"
+        val text = paragraph.repeat(LARGE_DOCUMENT_PARAGRAPHS)
+        val allocated = bytesAllocatedBy {
+            assertEquals(
+                text.length - LARGE_DOCUMENT_PARAGRAPHS,
+                PositionBridge.utf16ToScalar(text.length, text)
+            )
+        }
+        assertTrue(
+            "conversion of a ${text.length}-unit document allocated $allocated bytes",
+            allocated < LARGE_DOCUMENT_ALLOCATION_LIMIT_BYTES
+        )
+    }
+
+    private companion object {
+        const val LARGE_DOCUMENT_PARAGRAPH_LENGTH = 998
+        const val LARGE_DOCUMENT_PARAGRAPHS = 1_000
+        const val LARGE_DOCUMENT_ALLOCATION_LIMIT_BYTES = 64L * 1024L
+    }
 }

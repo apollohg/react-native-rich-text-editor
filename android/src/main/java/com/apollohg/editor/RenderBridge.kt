@@ -17,9 +17,12 @@ object RenderBridge {
     internal const val NATIVE_SYNTHETIC_PLACEHOLDER_ANNOTATION = "nativeSyntheticPlaceholder"
     internal const val NATIVE_ROOT_TABLE_MARKER_ANNOTATION = "nativeRootTableMarker"
     internal const val NATIVE_VOID_NODE_TYPE_ANNOTATION = "nativeVoidNodeType"
+    internal const val NATIVE_DOC_POS_ANNOTATION = "nativeDocPos"
+    internal const val RENDER_BLOCK_START_TYPE = "blockStart"
+    internal const val RENDER_BLOCK_END_TYPE = "blockEnd"
 
     internal data class RenderBuildState(
-        val result: SpannableStringBuilder = SpannableStringBuilder(),
+        var result: RenderTextBuilder = RenderTextBuilder(),
         val blockStack: MutableList<BlockContext> = mutableListOf(),
         val pendingLeadingMargins: MutableMap<Int, PendingLeadingMargin> = linkedMapOf(),
         val pendingCodeBlockSpans: MutableList<PendingCodeBlockSpan> = mutableListOf(),
@@ -32,7 +35,8 @@ object RenderBridge {
         val rootTableIds: Set<String> = emptySet(),
         var isFirstBlock: Boolean = true,
         var nextBlockSpacingBefore: Float? = null,
-        var pendingListBoundarySpacing: Float? = null
+        var pendingListBoundarySpacing: Float? = null,
+        var trailingFragmentInBlockquote: Boolean = false
     ) {
         fun replaceNextBlockSpacing(spacing: Float?) {
             nextBlockSpacingBefore = spacing
@@ -109,6 +113,7 @@ object RenderBridge {
             hostView = hostView,
             atomConfiguration = atomConfiguration
         )
+        state.result.flushTopLevelChild()
         applyPendingLeadingMargins(state.result, state.pendingLeadingMargins)
         applyPendingCodeBlockSpans(state.result, state.pendingCodeBlockSpans, theme, density)
         if (theme?.styleSheet != null) state.result.applyStyleSheetLineMetrics()
@@ -135,6 +140,14 @@ object RenderBridge {
                 rootTableIds = rootTableIds,
                 synthesizeTrailingHardBreakPlaceholders = synthesizeTrailingHardBreakPlaceholders
             )
+        val fragments = if (blocks.length() > 1 && renderBlocksHaveClosedContainers(blocks)) {
+            mutableListOf<android.text.Spanned>()
+        } else {
+            null
+        }
+        val pendingMargins = linkedMapOf<Int, PendingLeadingMargin>()
+        val pendingCode = mutableListOf<PendingCodeBlockSpan>()
+        var fragmentOffset = 0
         for (blockOffset in 0 until blocks.length()) {
             val blockElements = blocks.optJSONArray(blockOffset) ?: continue
             appendElements(
@@ -148,6 +161,30 @@ object RenderBridge {
                 atomConfiguration = atomConfiguration,
                 topLevelChildIndex = startIndex + blockOffset
             )
+            state.result.flushTopLevelChild()
+            if (fragments != null) {
+                fragments.add(state.result)
+                state.pendingLeadingMargins.forEach { (start, margin) ->
+                    pendingMargins[fragmentOffset + start] = margin
+                }
+                state.pendingCodeBlockSpans.forEach { span ->
+                    pendingCode.add(
+                        span.copy(
+                            start = fragmentOffset + span.start,
+                            end =
+                                fragmentOffset + span.end
+                        )
+                    )
+                }
+                fragmentOffset += state.result.length
+                state.trailingFragmentInBlockquote = trailingRenderedContentHasBlockquote(
+                    state.result,
+                    state.trailingFragmentInBlockquote
+                )
+                state.result = RenderTextBuilder()
+                state.pendingLeadingMargins.clear()
+                state.pendingCodeBlockSpans.clear()
+            }
         }
         if (includeTrailingInterBlockSeparator && !state.isFirstBlock) {
             val spacingPx = ((state.nextBlockSpacingBefore ?: 0f) * density).toInt()
@@ -159,10 +196,38 @@ object RenderBridge {
                 topLevelChildIndex = startIndex + blocks.length()
             )
         }
-        applyPendingLeadingMargins(state.result, state.pendingLeadingMargins)
-        applyPendingCodeBlockSpans(state.result, state.pendingCodeBlockSpans, theme, density)
-        if (theme?.styleSheet != null) state.result.applyStyleSheetLineMetrics()
-        return state.result
+        state.result.flushTopLevelChild()
+        val result = if (fragments != null) {
+            if (state.result.isNotEmpty()) fragments.add(state.result)
+            state.pendingLeadingMargins.putAll(pendingMargins)
+            state.pendingCodeBlockSpans.addAll(pendingCode)
+            concatenateRenderedText(fragments)
+        } else {
+            state.result
+        }
+        applyPendingLeadingMargins(result, state.pendingLeadingMargins)
+        applyPendingCodeBlockSpans(result, state.pendingCodeBlockSpans, theme, density)
+        if (theme?.styleSheet != null) result.applyStyleSheetLineMetrics()
+        return result
+    }
+
+    private fun renderBlocksHaveClosedContainers(blocks: JSONArray): Boolean {
+        for (blockIndex in 0 until blocks.length()) {
+            val block = blocks.optJSONArray(blockIndex) ?: continue
+            var open = 0
+            for (elementIndex in 0 until block.length()) {
+                when (block.optJSONObject(elementIndex)?.optString("type")) {
+                    RENDER_BLOCK_START_TYPE -> open++
+
+                    RENDER_BLOCK_END_TYPE -> {
+                        if (open == 0) return false
+                        open--
+                    }
+                }
+            }
+            if (open != 0) return false
+        }
+        return true
     }
 
     private fun reusableImages(host: View?): MutableList<BlockImageSpan> =

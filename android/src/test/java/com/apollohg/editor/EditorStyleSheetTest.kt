@@ -355,6 +355,66 @@ class EditorStyleSheetTest {
     }
 
     @Test
+    fun `repeated style resolution reuses one resolved style per query`() {
+        val sheet = EditorTheme.fromJson(
+            """
+            {
+                "version": 1,
+                "styles": {
+                    "text": {"fontSize": 15, "color": "#ff111111"},
+                    "bold": {"color": "#ff222222"},
+                    "bulletList": {"indent": 24}
+                },
+                "rules": [
+                    {"path": ["blockquote", "paragraph"], "style": {"color": "#ff333333"}},
+                    {"path": ["paragraph", "bold"], "style": {"fontSize": 21}},
+                    {"path": ["blockquote", "bulletList"], "style": {"indent": 8}}
+                ]
+            }
+            """.trimIndent()
+        )!!.styleSheet!!
+        val queries = listOf(
+            Triple("paragraph", emptyList(), emptyList()),
+            Triple("paragraph", listOf("blockquote"), emptyList()),
+            Triple("paragraph", listOf("blockquote"), listOf("bold")),
+            Triple("h2", listOf("bulletList", "listItem"), listOf("bold", "italic"))
+        )
+        val first = queries.map { (element, ancestors, marks) ->
+            sheet.resolveText(element, ancestors, marks)
+        }
+        queries.forEachIndexed { index, (element, ancestors, marks) ->
+            assertSame(
+                "text query $index",
+                first[index],
+                sheet.resolveText(element, ancestors.toList(), marks.toList())
+            )
+        }
+        assertEquals(21f, first[2].fontSize)
+        assertTrue(
+            "the descendant rule recolors quoted paragraphs",
+            first[1].color != first[0].color
+        )
+        val list = sheet.resolveElement("bulletList", listOf("blockquote"))
+        assertSame(list, sheet.resolveElement("bulletList", listOf("blockquote")))
+        assertEquals(8f, list?.indent)
+        assertEquals(24f, sheet.resolveElement("bulletList")?.indent)
+
+        val replacement = EditorTheme.fromJson(
+            """{"version": 1, "styles": {"text": {"fontSize": 30}, "bulletList": {"indent": 40}}}"""
+        )!!.styleSheet!!
+        val replaced = replacement.resolveText("paragraph")
+        assertEquals("a replacement theme resolves its own text style", 30f, replaced.fontSize)
+        assertEquals(
+            "the original sheet keeps its style",
+            15f,
+            sheet.resolveText("paragraph").fontSize
+        )
+        assertTrue("sheets never share resolved styles", replaced !== first[0])
+        assertEquals(40f, replacement.resolveElement("bulletList")?.indent)
+        assertEquals(24f, sheet.resolveElement("bulletList")?.indent)
+    }
+
+    @Test
     fun `element rules overlay special properties without filling sparse fields`() {
         val sheet = EditorTheme.fromJson(
             """

@@ -12,7 +12,36 @@ internal fun EditorEditText.setEditorAccessibilityHintImpl(hint: CharSequence?) 
     editorAccessibilityHint = hint
 }
 
+internal data class CaretGeometryKey(
+    val layoutBuild: Int,
+    val selectionStart: Int,
+    val selectionEnd: Int,
+    val scrollX: Int,
+    val width: Int,
+    val compoundPaddingLeft: Int,
+    val compoundPaddingRight: Int
+)
+
 internal fun EditorEditText.nativeCursorDrawRectImpl(): RectF? {
+    val key = CaretGeometryKey(
+        currentLayoutBuild,
+        selectionStart,
+        selectionEnd,
+        scrollX,
+        width,
+        compoundPaddingLeft,
+        compoundPaddingRight
+    )
+    if (key == caretGeometryKey) return caretGeometry?.let(::RectF)
+    val geometry = measureNativeCursorDrawRect()
+    if (isCursorVisible) {
+        caretGeometryKey = key
+        caretGeometry = geometry
+    }
+    return geometry?.let(::RectF)
+}
+
+private fun EditorEditText.measureNativeCursorDrawRect(): RectF? {
     if (isCollapsedAtomBoundarySelection(selectionStart, selectionEnd)) {
         isCursorVisible = false
         return null

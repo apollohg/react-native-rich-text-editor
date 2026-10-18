@@ -1,7 +1,6 @@
 package com.apollohg.editor
 
 import android.text.Annotation
-import android.text.SpannableStringBuilder
 import android.text.Spanned
 
 private fun isRenderedContentSpan(span: Any): Boolean =
@@ -51,8 +50,9 @@ internal fun EditorEditText.applyRenderedSpannable(
     replacedTopLevelStartIndex: Int? = null,
     replacedTopLevelDeleteCount: Int = 0,
     usedPatch: Boolean,
-    preserveInputConnectionForExternalUpdate: Boolean = false
-) {
+    preserveInputConnectionForExternalUpdate: Boolean = false,
+    finalizePositionalMetadata: (() -> Boolean)? = null
+): Boolean {
     inputRerendersForTesting += 1
     onBeforeRenderRefresh?.invoke()
     val startedAt = System.nanoTime()
@@ -63,6 +63,7 @@ internal fun EditorEditText.applyRenderedSpannable(
         reuseImagesDuringThemeUpdate && replaceRange == null &&
             text?.toString() == spannable.toString()
     var shouldRestartInput = false
+    var metadataApplied = true
     val mode = if (replaceRange != null) "replace" else "setText"
     val precedingParagraphSpans = replaceRange
         ?.let { paragraphSpansEndingAt(it.start) }
@@ -116,7 +117,28 @@ internal fun EditorEditText.applyRenderedSpannable(
                         editableText.getSpanEnd(it) <= replaceRange.endExclusive
                 }
                 .forEach(editableText::removeSpan)
-            editableText.replace(replaceRange.start, replaceRange.endExclusive, spannable)
+            val matchesVisibleText =
+                spannable.length == replaceRange.endExclusive - replaceRange.start &&
+                    spannable.indices.all { editableText[replaceRange.start + it] == spannable[it] }
+            if (matchesVisibleText && spannable is Spanned) {
+                spannable.getSpans(0, spannable.length, Any::class.java).forEach { span ->
+                    editableText.setSpan(
+                        span,
+                        replaceRange.start + spannable.getSpanStart(span),
+                        replaceRange.start + spannable.getSpanEnd(span),
+                        spannable.getSpanFlags(span)
+                    )
+                }
+            } else {
+                val replacement = if (spannable is Spanned) {
+                    immutableRenderedText(
+                        spannable
+                    )
+                } else {
+                    spannable
+                }
+                editableText.replace(replaceRange.start, replaceRange.endExclusive, replacement)
+            }
             precedingParagraphSpans.forEach { snapshot ->
                 editableText.setSpan(
                     snapshot.span,
@@ -138,10 +160,7 @@ internal fun EditorEditText.applyRenderedSpannable(
         } else {
             setText(spannable)
         }
-        lastAuthorizedText = text?.toString().orEmpty()
-        lastAuthorizedRenderedText = text?.let { SpannableStringBuilder(it) }
-        lastAuthorizedTextRevision += 1L
-        clearNativeTextMutationAdoptionSuppression()
+        metadataApplied = finalizePositionalMetadata?.invoke() ?: true
         if (styleOnly) {
             // Existing composing spans remain attached to the same Editable.
         } else if (hadCompositionTracking && preserveInputConnectionForExternalUpdate) {
@@ -153,29 +172,36 @@ internal fun EditorEditText.applyRenderedSpannable(
         } else {
             clearCompositionTrackingForEditor()
         }
+        invalidateImeTextCoordinateMapperForEditor()
+        lastAuthorizedText = text?.toString().orEmpty()
+        lastAuthorizedRenderedText = text?.let {
+            immutableRenderedText(it, excludeNoCopySpans = true)
+        }
+        lastAuthorizedTextRevision += 1L
+        clearNativeTextMutationAdoptionSuppression()
         lastRenderAppliedPatchForTesting = usedPatch
         clearNativeTextMutationAfterBlurWindow()
     } finally {
         endBatchEdit()
         isApplyingRustState = false
     }
-    recordImeTraceForTesting(
-        "applyRenderedSpannable",
+    recordImeTraceForTesting("applyRenderedSpannable") {
         "mode=$mode usedPatch=$usedPatch incomingLength=${spannable.length} " +
             "replace=${replaceRange?.start}..${replaceRange?.endExclusive} " +
             "hadComposition=$hadCompositionTracking restartInput=$shouldRestartInput " +
             "applyUs=${nanosToMicros(
                 System.nanoTime() - startedAt
             )} scroll=$previousScrollX,$previousScrollY->$scrollX,$scrollY laidOut=$isLaidOut"
-    )
+    }
     invalidateRenderedContent()
     restartInputAfterCompositionInvalidationIfNeeded(shouldRestartInput)
     refreshCodeHighlighting()
+    return metadataApplied
 }
 
 internal fun EditorEditText.paragraphSpansEndingAt(offset: Int): List<ParagraphSpanSnapshot> =
     editableText
-        .getSpans(0, editableText.length, Any::class.java)
+        .getSpans(offset, offset, Any::class.java)
         .filter { span ->
             editableText.getSpanEnd(span) == offset &&
                 editableText.getSpanFlags(span) and Spanned.SPAN_PARAGRAPH == Spanned.SPAN_PARAGRAPH
@@ -191,7 +217,7 @@ internal fun EditorEditText.paragraphSpansEndingAt(offset: Int): List<ParagraphS
 
 internal fun EditorEditText.paragraphSpansStartingAt(offset: Int): List<ParagraphSpanSnapshot> =
     editableText
-        .getSpans(0, editableText.length, Any::class.java)
+        .getSpans(offset, offset, Any::class.java)
         .filter { span ->
             editableText.getSpanStart(span) == offset &&
                 (
@@ -220,7 +246,7 @@ internal fun EditorEditText.removeRenderSpansOwnedByTopLevelRange(
     if (deleteCount <= 0) return
     val endIndex = startIndex + deleteCount
     val topLevelAnnotations = editableText
-        .getSpans(0, editableText.length, Annotation::class.java)
+        .getSpans(replaceRange.start, replaceRange.endExclusive, Annotation::class.java)
         .asSequence()
         .filter { it.key == RenderBridge.NATIVE_TOP_LEVEL_CHILD_INDEX_ANNOTATION }
         .mapNotNull { annotation ->
@@ -235,7 +261,7 @@ internal fun EditorEditText.removeRenderSpansOwnedByTopLevelRange(
         .toList()
 
     editableText
-        .getSpans(0, editableText.length, Any::class.java)
+        .getSpans(replaceRange.start, replaceRange.endExclusive, Any::class.java)
         .filter { span ->
             editableText.getSpanFlags(span) and Spanned.SPAN_COMPOSING == 0 &&
                 isRenderedContentSpan(span)
@@ -245,6 +271,9 @@ internal fun EditorEditText.removeRenderSpansOwnedByTopLevelRange(
             val spanEnd = editableText.getSpanEnd(span)
             if (spanStart >= replaceRange.endExclusive || spanEnd <= replaceRange.start) {
                 return@filter false
+            }
+            if (spanStart >= replaceRange.start && spanEnd <= replaceRange.endExclusive) {
+                return@filter true
             }
             val ownerIndex = topLevelAnnotations.firstOrNull { annotation ->
                 annotation.first < spanEnd && annotation.second > spanStart
@@ -271,8 +300,10 @@ internal fun EditorEditText.authorizeVisibleTextForMatchedOptimisticRender(
     }
     val visibleText = text?.toString().orEmpty()
     lastAuthorizedText = visibleText
-    lastAuthorizedRenderedText = text?.let { SpannableStringBuilder(it) }
-        ?: SpannableStringBuilder(spannable)
+    lastAuthorizedRenderedText = immutableRenderedText(
+        text ?: spannable,
+        excludeNoCopySpans = true
+    )
     lastAuthorizedTextRevision += 1L
     clearNativeTextMutationAdoptionSuppression()
     clearCompositionTrackingForEditor()
@@ -281,11 +312,10 @@ internal fun EditorEditText.authorizeVisibleTextForMatchedOptimisticRender(
     invalidateImeTextCoordinateMapperForEditor()
     invalidateRenderedContent()
     refreshCodeHighlighting()
-    recordImeTraceForTesting(
-        "reuseOptimisticVisibleTextRender",
+    recordImeTraceForTesting("reuseOptimisticVisibleTextRender") {
         "textLength=${visibleText.length} " +
             "applyUs=${nanosToMicros(System.nanoTime() - startedAt)}"
-    )
+    }
 }
 
 /**
@@ -326,10 +356,9 @@ internal fun EditorEditText.applyRenderJSONImpl(renderJSON: String) {
     } else {
         preserveScrollPosition(previousScrollX, previousScrollY)
     }
-    recordImeTraceForTesting(
-        "applyRenderJSON",
+    recordImeTraceForTesting("applyRenderJSON") {
         "jsonLength=${renderJSON.length} totalUs=${nanosToMicros(System.nanoTime() - startedAt)}"
-    )
+    }
 }
 
 internal fun renderedTextMatches(left: CharSequence?, right: CharSequence): Boolean {

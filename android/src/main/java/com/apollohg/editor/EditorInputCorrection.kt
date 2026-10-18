@@ -82,10 +82,9 @@ internal fun EditorInputConnection.consumePendingCompositionCorrectionCommitIfNe
     if (text != pending.text) return false
     pendingCompositionCorrectionCommit = null
     pendingCompositionCorrectionGeneration += 1L
-    editorView.recordImeTraceForTesting(
-        "commitTextConsumesPendingCorrection",
+    editorView.recordImeTraceForTesting("commitTextConsumesPendingCorrection") {
         "textLength=${text.length}"
-    )
+    }
     commitTextToEditor(text, newCursorPosition)
     return true
 }
@@ -98,10 +97,9 @@ internal fun EditorInputConnection.applyPendingCompositionCorrectionCommitIfNeed
     pendingCompositionCorrectionGeneration += 1L
     if (!isCurrentInputSessionFor("applyPendingCompositionCorrection")) return false
     if (!editorView.isEditable || editorView.editorId == 0L) return false
-    editorView.recordImeTraceForTesting(
-        "applyPendingCompositionCorrection",
+    editorView.recordImeTraceForTesting("applyPendingCompositionCorrection") {
         "source=$source textLength=${pending.text.length}"
-    )
+    }
     commitTextToEditor(pending.text, 1)
     return true
 }

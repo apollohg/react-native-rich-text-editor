@@ -55,6 +55,7 @@ internal fun NativeEditorExpoView.setEditorIdImpl(id: Long) {
     if (previousEditorId != id) {
         NativeEditorViewRegistry.unregister(previousEditorId, this)
         lastDocumentVersion = null
+        selectionEventActiveState.reset()
         renderedDocumentRevision = null
         cancelPendingToolbarRefocus()
         cancelPendingEditorUpdateRetry()
@@ -93,8 +94,7 @@ internal fun NativeEditorExpoView.setEditorIdImpl(id: Long) {
                 blockCommandsUntilRegistered = true
             )
         } else {
-            toolbarState = NativeToolbarState.empty
-            keyboardToolbarView.applyState(toolbarState)
+            presentToolbarState(NativeToolbarState.empty)
         }
         richTextView.emitAtomLayoutIfAvailable(force = true)
         return
@@ -102,7 +102,7 @@ internal fun NativeEditorExpoView.setEditorIdImpl(id: Long) {
 
     if (hasPendingEditorResetUpdateForEditor(id) || hasPendingEditorUpdateForEditor(id)) {
         richTextView.setEditorIdWhileDetached(id)
-        richTextView.rebindEditorIfNeeded(notifyListener = false)
+        richTextView.rebindEditorIfNeeded()
     } else {
         richTextView.editorId = id
     }
@@ -113,8 +113,7 @@ internal fun NativeEditorExpoView.setEditorIdImpl(id: Long) {
         }
         bindEditorErrorCallbackIfLive(id)
     } else {
-        toolbarState = NativeToolbarState.empty
-        keyboardToolbarView.applyState(toolbarState)
+        presentToolbarState(NativeToolbarState.empty)
     }
     applyPendingEditorResetUpdateIfNeeded()
     applyPendingEditorUpdateIfNeeded()

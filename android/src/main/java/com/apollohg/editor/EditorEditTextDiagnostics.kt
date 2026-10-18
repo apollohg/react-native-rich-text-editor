@@ -33,7 +33,7 @@ internal fun EditorEditText.recordImeTraceForTestingImpl(event: String, details:
     imeTraceForTesting.addLast(
         if (details.isEmpty()) event else "$event:$details"
     )
-    if (Log.isLoggable(IME_TRACE_LOG_TAG, Log.VERBOSE)) {
+    if (imeTraceLogging) {
         val now = SystemClock.uptimeMillis()
         val deltaMs = if (lastImeTraceUptimeMs == 0L) 0L else now - lastImeTraceUptimeMs
         lastImeTraceUptimeMs = now

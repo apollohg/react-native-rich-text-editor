@@ -141,25 +141,24 @@ internal class NativeEditorExpoViewControlledUpdateResetTest :
     fun `JS editor reset update bypasses preflight and clears stale pending updates`() {
         val expoContext = testExpoContext(RuntimeEnvironment.getApplication())
         val view = NativeEditorExpoView(expoContext.context, expoContext.appContext)
-        val editorId = 778844L
         val editText = view.richTextView.editorEditText
-        val staleUpdateJson = renderUpdateJson("stale")
-        val resetUpdateJson = renderUpdateJson("reset")
 
         view.onAddonEventForTesting = {}
         view.onEditorUpdateForTesting = {}
         view.onRefreshToolbarStateFromEditorSelectionForTesting = { null }
         view.onEditorReadyForTesting = {}
-        view.richTextView.setEditorIdWhileDetached(editorId)
-        editText.applyUpdateJSON(renderUpdateJson("before"), notifyListener = false)
+        val bound = bindFakeEditorForViewTest(view, "before")
+        val editorId = bound.viewToken
         editText.setSelection(editText.text?.length ?: 0)
-        editText.editorId = editorId
-        view.setAttachedToNativeWindowForTesting(true)
+        val staleUpdateJson = bound.setEngineText("stale")
+        val staleNativeUpdateJson = requireNotNull(bound.adapter.refreshFromRustState(null))
+        val resetUpdateJson = bound.setEngineText("reset")
         view.setPendingEditorUpdateJson(staleUpdateJson)
         view.setPendingEditorUpdateEditorId(editorId)
         view.setPendingEditorUpdateRevision(8)
         view.scheduleViewCommandUpdateRetryForTesting(staleUpdateJson)
-        view.onEditorUpdate(staleUpdateJson)
+        view.onEditorUpdate(staleNativeUpdateJson)
+        assertEquals(1, view.pendingEditorUpdateEventCountForTesting())
         view.blockEditorUpdatePreflightForTesting = true
 
         assertEquals(editorId, view.richTextView.editorId)
@@ -180,32 +179,31 @@ internal class NativeEditorExpoViewControlledUpdateResetTest :
         assertNull(view.pendingViewCommandUpdateJsonForTesting())
         assertEquals(0, view.pendingEditorUpdateEventCountForTesting())
 
-        NativeEditorViewRegistry.unregister(editorId, view)
+        bound.release(view)
     }
 
     @Test
     fun `pending JS reset prop uses reset path and clears stale pending updates`() {
         val expoContext = testExpoContext(RuntimeEnvironment.getApplication())
         val view = NativeEditorExpoView(expoContext.context, expoContext.appContext)
-        val editorId = 778845L
         val editText = view.richTextView.editorEditText
-        val staleUpdateJson = renderUpdateJson("stale")
-        val resetUpdateJson = renderUpdateJson("")
 
         view.onAddonEventForTesting = {}
         view.onEditorUpdateForTesting = {}
         view.onRefreshToolbarStateFromEditorSelectionForTesting = { null }
         view.onEditorReadyForTesting = {}
-        view.richTextView.setEditorIdWhileDetached(editorId)
-        editText.applyUpdateJSON(renderUpdateJson("before"), notifyListener = false)
+        val bound = bindFakeEditorForViewTest(view, "before")
+        val editorId = bound.viewToken
         editText.setSelection(editText.text?.length ?: 0)
-        editText.editorId = editorId
-        view.setAttachedToNativeWindowForTesting(true)
+        val staleUpdateJson = bound.setEngineText("stale")
+        val staleNativeUpdateJson = requireNotNull(bound.adapter.refreshFromRustState(null))
+        val resetUpdateJson = bound.setEngineText("")
         view.setPendingEditorUpdateJson(staleUpdateJson)
         view.setPendingEditorUpdateEditorId(editorId)
         view.setPendingEditorUpdateRevision(8)
         view.scheduleViewCommandUpdateRetryForTesting(staleUpdateJson)
-        view.onEditorUpdate(staleUpdateJson)
+        view.onEditorUpdate(staleNativeUpdateJson)
+        assertEquals(1, view.pendingEditorUpdateEventCountForTesting())
         view.setPendingEditorResetUpdateJson(resetUpdateJson)
         view.setPendingEditorResetUpdateEditorId(editorId)
         view.setPendingEditorResetUpdateRevision(9)
@@ -227,7 +225,7 @@ internal class NativeEditorExpoViewControlledUpdateResetTest :
         assertNull(view.pendingViewCommandUpdateJsonForTesting())
         assertEquals(0, view.pendingEditorUpdateEventCountForTesting())
 
-        NativeEditorViewRegistry.unregister(editorId, view)
+        bound.release(view)
     }
 
     @Test
@@ -311,17 +309,15 @@ internal class NativeEditorExpoViewControlledUpdateResetTest :
     fun `pending JS editor reset prop retries when editor view is not ready`() {
         val expoContext = testExpoContext(RuntimeEnvironment.getApplication())
         val view = NativeEditorExpoView(expoContext.context, expoContext.appContext)
-        val editorId = 778846L
         val editText = view.richTextView.editorEditText
-        val resetUpdateJson = renderUpdateJson("")
 
         view.onAddonEventForTesting = {}
         view.onRefreshToolbarStateFromEditorSelectionForTesting = { null }
         view.onEditorReadyForTesting = {}
-        view.richTextView.setEditorIdWhileDetached(editorId)
-        editText.applyUpdateJSON(renderUpdateJson("before"), notifyListener = false)
+        val bound = bindFakeEditorForViewTest(view, "before")
+        val editorId = bound.viewToken
+        val resetUpdateJson = bound.setEngineText("")
         editText.editorId = 0L
-        view.setAttachedToNativeWindowForTesting(true)
         view.setPendingEditorResetUpdateJson(resetUpdateJson)
         view.setPendingEditorResetUpdateEditorId(editorId)
         view.setPendingEditorResetUpdateRevision(10)
@@ -341,24 +337,21 @@ internal class NativeEditorExpoViewControlledUpdateResetTest :
         assertNull(view.pendingEditorResetUpdateJsonForTesting())
         assertEquals(0, view.pendingEditorResetUpdateRevisionForTesting())
 
-        NativeEditorViewRegistry.unregister(editorId, view)
+        bound.release(view)
     }
 
     @Test
     fun `pending JS editor reset prop applies again when only revision changes`() {
         val expoContext = testExpoContext(RuntimeEnvironment.getApplication())
         val view = NativeEditorExpoView(expoContext.context, expoContext.appContext)
-        val editorId = 778847L
         val editText = view.richTextView.editorEditText
-        val resetUpdateJson = renderUpdateJson("")
 
         view.onAddonEventForTesting = {}
         view.onRefreshToolbarStateFromEditorSelectionForTesting = { null }
         view.onEditorReadyForTesting = {}
-        view.richTextView.setEditorIdWhileDetached(editorId)
-        editText.editorId = editorId
-        view.setAttachedToNativeWindowForTesting(true)
-        editText.applyUpdateJSON(renderUpdateJson("first"), notifyListener = false)
+        val bound = bindFakeEditorForViewTest(view, "first")
+        val editorId = bound.viewToken
+        val resetUpdateJson = bound.setEngineText("")
         view.setPendingEditorResetUpdateJson(resetUpdateJson)
         view.setPendingEditorResetUpdateEditorId(editorId)
         view.setPendingEditorResetUpdateRevision(1)
@@ -375,7 +368,7 @@ internal class NativeEditorExpoViewControlledUpdateResetTest :
         assertNull(view.pendingEditorResetUpdateJsonForTesting())
         assertEquals(0, view.pendingEditorResetUpdateRevisionForTesting())
 
-        NativeEditorViewRegistry.unregister(editorId, view)
+        bound.release(view)
     }
 
     @Test
@@ -405,9 +398,10 @@ internal class NativeEditorExpoViewControlledUpdateResetTest :
     fun `view command update retry attempts advance instead of resetting for same payload`() {
         val expoContext = testExpoContext(RuntimeEnvironment.getApplication())
         val view = NativeEditorExpoView(expoContext.context, expoContext.appContext)
-        val updateJson = """{"renderElements":[],"selection":{"type":"text","anchor":0,"head":0}}"""
+        val bound = bindFakeEditorForViewTest(view, "")
+        val updateJson = bound.setEngineText("retried")
+        view.blockEditorUpdatePreflightForTesting = true
 
-        view.richTextView.setEditorIdWhileDetached(44556L)
         view.scheduleViewCommandUpdateRetryForTesting(updateJson)
 
         assertEquals(updateJson, view.pendingViewCommandUpdateJsonForTesting())
@@ -422,5 +416,6 @@ internal class NativeEditorExpoViewControlledUpdateResetTest :
 
         assertEquals(updateJson, view.pendingViewCommandUpdateJsonForTesting())
         assertEquals(3, view.pendingViewCommandUpdateRetryAttemptsForTesting())
+        bound.release(view)
     }
 }

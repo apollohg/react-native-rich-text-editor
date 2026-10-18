@@ -1,6 +1,10 @@
 package com.apollohg.editor
 
 import android.content.Context
+import android.os.Parcel
+import android.text.Annotation
+import android.text.Spanned
+import android.text.TextUtils
 import android.view.KeyEvent
 import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.CorrectionInfo
@@ -27,6 +31,63 @@ class EditorSurfaceInputConnectionTest {
             keys += event.keyCode
             return true
         }
+    }
+
+    @Test
+    fun `renderer metadata keeps its current value through direct and text parceling`() {
+        val metadata = RenderMetadataAnnotation(RenderBridge.NATIVE_DOC_POS_ANNOTATION, "1")
+        metadata.updateValue("2")
+        val directParcel = Parcel.obtain()
+        val textParcel = Parcel.obtain()
+        try {
+            metadata.writeToParcel(directParcel, 0)
+            directParcel.setDataPosition(0)
+            assertEquals("2", Annotation(directParcel).value)
+            val text = android.text.SpannableStringBuilder("a😀b")
+            text.setSpan(metadata, 1, 3, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            TextUtils.writeToParcel(text, textParcel, 0)
+            textParcel.setDataPosition(0)
+            val restored = TextUtils.CHAR_SEQUENCE_CREATOR.createFromParcel(textParcel) as Spanned
+            val annotation = restored.getSpans(1, 3, Annotation::class.java).single()
+            assertEquals(RenderBridge.NATIVE_DOC_POS_ANNOTATION, annotation.key)
+            assertEquals("2", annotation.value)
+            assertEquals(1, restored.getSpanStart(annotation))
+            assertEquals(3, restored.getSpanEnd(annotation))
+        } finally {
+            directParcel.recycle()
+            textParcel.recycle()
+        }
+    }
+
+    @Test
+    fun `annotation batch publishes once and restores the text change watcher`() {
+        val surface = Surface(RuntimeEnvironment.getApplication())
+        surface.setText("a😀b")
+        val editable = surface.editableText
+        val input = requireNotNull(surface.onCreateInputConnection(EditorInfo()))
+        val position = Annotation(RenderBridge.NATIVE_DOC_POS_ANNOTATION, "1")
+        editable.setSpan(position, 1, 3, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        surface.published = 0
+        input.beginBatchEdit()
+        surface.updateAnnotationSpans {
+            editable.removeSpan(position)
+            editable.setSpan(
+                Annotation(RenderBridge.NATIVE_DOC_POS_ANNOTATION, "2"),
+                1,
+                3,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+        }
+        assertSame(editable, surface.editableText)
+        assertEquals(0, surface.published)
+        input.endBatchEdit()
+        assertEquals(1, surface.published)
+        assertEquals("2", editable.getSpans(1, 3, Annotation::class.java).single().value)
+        surface.published = 0
+        surface.setSelection(editable.length)
+        assertTrue(input.commitText("!", 1))
+        assertEquals("a😀b!", surface.text.toString())
+        assertTrue("text mutation must still publish input state", surface.published > 0)
     }
 
     @Test

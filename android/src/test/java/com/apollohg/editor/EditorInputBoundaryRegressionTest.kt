@@ -355,7 +355,7 @@ internal class EditorInputBoundaryRegressionTest : EditorInputConnectionTestFixt
     }
 
     @Test
-    fun `selecting card publishes pending text deletion before selection event`() {
+    fun `selecting card publishes text deletion before selection event`() {
         val harness = atomHarness()
         try {
             val editor = harness.editText
@@ -383,7 +383,7 @@ internal class EditorInputBoundaryRegressionTest : EditorInputConnectionTestFixt
             }
             val input = requireNotNull(editor.onCreateInputConnection(EditorInfo()))
             assertTrue(input.deleteSurroundingText(1, 0))
-            assertTrue(editor.hasDeferredRustUpdateApplicationForTesting())
+            assertEquals(listOf("commit"), events)
             val afterTextDeletion = harness.adapter.documentJson()
 
             assertTrue(input.deleteSurroundingText(1, 0))

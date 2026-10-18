@@ -354,8 +354,7 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
     ).getJSONObject("selection").toString()
 
     private fun pressAfterPendingUpdates(view: NativeEditorExpoView, label: String) {
-        shadowOf(Looper.getMainLooper())
-            .idleFor(Duration.ofMillis(NativeEditorExpoView.EDITOR_UPDATE_EVENT_DEBOUNCE_MS))
+        shadowOf(Looper.getMainLooper()).idle()
         view.pressKeyboardToolbarButton(label)
     }
 
@@ -814,8 +813,8 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
                 payload["documentRevision"]?.toString()
             )
             assertEquals(
-                "the action carries the exact settled commit snapshot: $payload",
-                adapter.cachedCommitSnapshotJson,
+                "the action carries the exact settled native snapshot: $payload",
+                adapter.cachedAtomicRenderJson,
                 payload["updateJson"]
             )
             assertEquals(
@@ -1619,7 +1618,7 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
     }
 
     @Test
-    fun `cell typing publishes a table free snapshot without the epoch`() = withActiveCell {
+    fun `cell typing publishes the exact table free native snapshot`() = withActiveCell {
             view,
             input,
             adapter
@@ -1636,9 +1635,8 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
         }
         assertEquals(adapter.editorId, event["editorId"])
         assertEquals(adapter.baseDocumentRevision.toString(), event["documentRevision"])
+        assertEquals(requireNotNull(snapshot), event["updateJson"])
         val payload = JSONObject(event["updateJson"] as String)
-        val frame = JSONObject(requireNotNull(snapshot)).apply { remove("positionEpoch") }
-        assertEquals(frame.toString(), payload.toString())
         assertEquals(ATOMIC_RENDER_SNAPSHOT_KEYS, payload.keys().asSequence().toSet())
     }
 
@@ -1710,7 +1708,7 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
             val boundEpoch = input.tableCellPositionMap?.binding?.epoch
             val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
             input.setSelection(1)
-            assertNotEquals(boundEpoch, adapter.positionEpoch)
+            assertEquals(boundEpoch, adapter.positionEpoch)
             assertTrue(
                 "cell map=${input.tableCellPositionMap?.binding} adapter epoch=${adapter.positionEpoch}",
                 input.isAuthorizedForTableCellInput()

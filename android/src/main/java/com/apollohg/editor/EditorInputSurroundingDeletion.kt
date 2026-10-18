@@ -19,7 +19,7 @@ internal data class SurroundingDeleteRange(
     val scalarEnd: Int
 )
 
-internal fun EditorInputConnection.shouldDeferPlainSurroundingDelete(
+internal fun EditorInputConnection.shouldHandlePlainSurroundingDelete(
     beforeLength: Int,
     afterLength: Int
 ): Boolean = beforeLength.coerceAtLeast(0) + afterLength.coerceAtLeast(0) > 0
@@ -81,7 +81,7 @@ internal fun EditorInputConnection.performMappedCompositionSurroundingDelete(
     return true
 }
 
-internal fun EditorInputConnection.performDeferredPlainSurroundingDelete(
+internal fun EditorInputConnection.performPlainSurroundingDelete(
     beforeLength: Int,
     afterLength: Int,
     deleteInCodePoints: Boolean
@@ -161,10 +161,9 @@ internal fun EditorInputConnection.performDeferredPlainSurroundingDelete(
                 normalizedRawStart
             )
         ) {
-            editorView.recordImeTraceForTesting(
-                "structuralSurroundingDelete",
+            editorView.recordImeTraceForTesting("structuralSurroundingDelete") {
                 "before=$beforeLength after=$afterLength codePoints=$deleteInCodePoints hiddenGap=true"
-            )
+            }
             editorView.handleStructuralBackspace()
             return true
         }
@@ -177,10 +176,9 @@ internal fun EditorInputConnection.performDeferredPlainSurroundingDelete(
             deleteRange.utf16End
         )
     ) {
-        editorView.recordImeTraceForTesting(
-            "structuralSurroundingDelete",
+        editorView.recordImeTraceForTesting("structuralSurroundingDelete") {
             "before=$beforeLength after=$afterLength codePoints=$deleteInCodePoints"
-        )
+        }
         if (isCollapsedBackwardDelete) {
             editorView.handleStructuralBackspace()
         } else {
@@ -194,10 +192,9 @@ internal fun EditorInputConnection.performDeferredPlainSurroundingDelete(
         return true
     }
 
-    editorView.recordImeTraceForTesting(
-        "deferredSurroundingDeleteBegin",
+    editorView.recordImeTraceForTesting("plainSurroundingDeleteBegin") {
         "before=$beforeLength after=$afterLength codePoints=$deleteInCodePoints utf16=$beforeUtf16Length,$afterUtf16Length scalar=${deleteRange?.scalarStart}..${deleteRange?.scalarEnd}"
-    )
+    }
 
     val authoritative = editorView.captureAuthoritativeInputSnapshotForEditor()
     val didDeleteVisibleText = editorView.runWithTransientInputMutationGuard {
@@ -211,12 +208,10 @@ internal fun EditorInputConnection.performDeferredPlainSurroundingDelete(
             )
         ) {
             is EditorV2NativeIntentResult.Applied -> {
-                editorView.runWithDeferredRustUpdateApplication {
-                    editorView.promoteOptimisticInputForEditor(
-                        outcome.render,
-                        deleteRange.scalarStart
-                    )
-                }
+                editorView.promoteOptimisticInputForEditor(
+                    outcome.render,
+                    deleteRange.scalarStart
+                )
             }
 
             is EditorV2NativeIntentResult.Recovered -> {
@@ -237,10 +232,9 @@ internal fun EditorInputConnection.performDeferredPlainSurroundingDelete(
             }
         }
     }
-    editorView.recordImeTraceForTesting(
-        "deferredSurroundingDeleteEnd",
+    editorView.recordImeTraceForTesting("plainSurroundingDeleteEnd") {
         "visibleDeleted=$didDeleteVisibleText visibleLength=${editorView.text?.length ?: -1}"
-    )
+    }
     return true
 }
 

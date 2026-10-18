@@ -3,9 +3,14 @@ package com.apollohg.editor
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Matrix
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.Rect
 import android.graphics.RectF
 import android.text.StaticLayout
 import android.text.TextPaint
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -18,6 +23,125 @@ import org.robolectric.annotation.GraphicsMode
 @Config(sdk = [34])
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class EditorStyleSheetDrawingTest {
+    private data class DrawingCase(val name: String, val bounds: RectF, val matrix: Matrix)
+
+    private class RecordingCanvas(bitmap: Bitmap) : Canvas(bitmap) {
+        var pathDrawCount = 0
+            private set
+
+        override fun drawPath(path: Path, paint: Paint) {
+            pathDrawCount++
+            super.drawPath(path, paint)
+        }
+    }
+
+    @Test
+    @Config(sdk = [28, 34])
+    fun `fully clipped decoration boxes issue no path draws`() {
+        val bitmap = Bitmap.createBitmap(100, 100, Bitmap.Config.ARGB_8888)
+        val canvas = RecordingCanvas(bitmap)
+        canvas.clipRect(20, 20, 80, 80)
+        val box = EditorBoxStyle(
+            backgroundColor = Color.YELLOW,
+            border = EditorEdges(4f, 4f, 4f, 4f),
+            corners = EditorCorners(8f, 8f, 8f, 8f)
+        )
+        val outsideBounds = listOf(
+            RectF(25f, -40f, 75f, 10f),
+            RectF(25f, 90f, 75f, 140f),
+            RectF(-40f, 25f, 10f, 75f),
+            RectF(90f, 25f, 140f, 75f)
+        )
+        for (bounds in outsideBounds) {
+            EditorBoxDrawing.draw(canvas, bounds, box)
+            assertEquals(
+                "clipped bounds $bounds must not issue draw commands",
+                0,
+                canvas.pathDrawCount
+            )
+        }
+    }
+
+    @Test
+    @Config(sdk = [28, 34])
+    fun `clipped transformed decoration pixels match unculled drawing`() {
+        val width = 100
+        val height = 80
+        val clip = Rect(18, 12, 75, 65)
+        val cases = listOf(
+            DrawingCase(
+                "rotated",
+                RectF(8f, 4f, 88f, 74f),
+                Matrix().apply {
+                    setRotate(12f, width / 2f, height / 2f)
+                    postTranslate(5.25f, -2.5f)
+                }
+            ),
+            DrawingCase(
+                "translated into clip",
+                RectF(-190f, 4f, -110f, 74f),
+                Matrix().apply { setTranslate(200f, 0f) }
+            ),
+            DrawingCase(
+                "fractional clip edge",
+                RectF(75.25f, 20f, 115.25f, 60f),
+                Matrix().apply { setTranslate(-0.5f, 0f) }
+            )
+        )
+        val rounded = EditorBoxStyle(
+            backgroundColor = Color.YELLOW,
+            border = EditorEdges(4f, 4f, 4f, 4f),
+            borderColors = List(4) { Color.RED },
+            corners = EditorCorners(20f, 20f, 20f, 20f)
+        )
+        val asymmetric = rounded.copy(
+            border = EditorEdges(4f, 0f, 6f, 8f),
+            borderColors = listOf(Color.RED, Color.BLUE, Color.GREEN, Color.MAGENTA),
+            corners = EditorCorners(30f, 0f, 12f, 6f)
+        )
+        val styles = listOf(
+            rounded,
+            asymmetric,
+            asymmetric.copy(borderStyle = "dashed"),
+            asymmetric.copy(borderStyle = "dotted"),
+            rounded.copy(corners = EditorCorners(200f, 100f, 150f, 300f))
+        )
+        for (case in cases) {
+            for (style in styles) {
+                val complete = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                val clipped = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                complete.eraseColor(Color.LTGRAY)
+                clipped.eraseColor(Color.LTGRAY)
+                val completeCanvas = object : Canvas(complete) {
+                    @Suppress("DEPRECATION")
+                    override fun quickReject(rect: RectF, type: EdgeType): Boolean = false
+                }.apply {
+                    clipRect(clip)
+                    concat(case.matrix)
+                }
+                val clippedCanvas = Canvas(clipped).apply {
+                    clipRect(clip)
+                    concat(case.matrix)
+                }
+                EditorBoxDrawing.draw(completeCanvas, case.bounds, style)
+                EditorBoxDrawing.draw(clippedCanvas, case.bounds, style)
+                val expected = IntArray(width * height)
+                complete.getPixels(expected, 0, width, 0, 0, width, height)
+                val actual = IntArray(width * height)
+                clipped.getPixels(actual, 0, width, 0, 0, width, height)
+                val description = "${case.name}: $style"
+                assertTrue(
+                    "reference must draw visible pixels for $description",
+                    expected.any {
+                        it !=
+                            Color.LTGRAY
+                    }
+                )
+                assertArrayEquals("clipped pixels for $description", expected, actual)
+            }
+        }
+    }
+
     @Test
     fun `rounded border fills the corners around its rounded interior`() {
         val bitmap = Bitmap.createBitmap(100, 100, Bitmap.Config.ARGB_8888)

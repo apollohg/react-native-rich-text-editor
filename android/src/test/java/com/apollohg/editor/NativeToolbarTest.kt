@@ -606,6 +606,122 @@ class NativeToolbarTest {
     }
 
     @Test
+    fun `empty mention clears retain buttons while state theme and press callbacks change`() {
+        val context = RuntimeEnvironment.getApplication()
+        val toolbar = EditorKeyboardToolbarView(context)
+        val boldIndex = 0
+        val inactiveColor = Color.BLUE
+        val activeColor = Color.GREEN
+        toolbar.setItems(
+            listOf(
+                NativeToolbarItem(
+                    type = ToolbarItemKind.MARK,
+                    mark = "bold",
+                    label = "Bold",
+                    icon = NativeToolbarIcon(glyphText = "B")
+                )
+            )
+        )
+        toolbar.applyTheme(EditorToolbarTheme(buttonColor = inactiveColor))
+        val originalButton = requireNotNull(toolbar.buttonAtForTesting(boldIndex))
+        var pressedMark: String? = null
+        toolbar.onPressItem = { item -> pressedMark = item.mark }
+        assertFalse(toolbar.setMentionSuggestions(emptyList(), trigger = "@"))
+        toolbar.applyState(
+            NativeToolbarState.empty.copy(
+                marks = mapOf("bold" to true),
+                allowedMarks = setOf("bold")
+            )
+        )
+        toolbar.applyTheme(EditorToolbarTheme(buttonActiveColor = activeColor))
+        assertFalse(toolbar.setMentionSuggestions(emptyList(), trigger = "#"))
+        val currentButton = requireNotNull(toolbar.buttonAtForTesting(boldIndex))
+        assertTrue("bold remains enabled after the empty clear", currentButton.isEnabled)
+        assertTrue("new active state still reaches bold", currentButton.isSelected)
+        assertEquals(
+            "new active theme still reaches bold",
+            activeColor,
+            currentButton.currentTextColor
+        )
+        currentButton.performClick()
+        assertEquals("the original command callback remains usable", "bold", pressedMark)
+        toolbar.applyState(NativeToolbarState.empty)
+        assertFalse("disabled state still reaches retained bold", currentButton.isEnabled)
+        assertFalse("inactive state still reaches retained bold", currentButton.isSelected)
+        assertSame(
+            "repeated empty clears must retain the real button",
+            originalButton,
+            currentButton
+        )
+    }
+
+    @Test
+    fun `mention replacement updates chips and clearing restores buttons once`() {
+        val context = RuntimeEnvironment.getApplication()
+        val toolbar = EditorKeyboardToolbarView(context)
+        val suggestionIndex = 0
+        val boldIndex = 0
+        val activeColor = Color.MAGENTA
+        val alice = NativeMentionSuggestion(
+            key = "alice",
+            title = "Alice",
+            subtitle = null,
+            label = "alice",
+            attrs = org.json.JSONObject().put("id", "user_alice")
+        )
+        val updatedAlice = alice.copy(title = "Alice Chen", label = "alice-chen")
+        var selectedSuggestion: NativeMentionSuggestion? = null
+        toolbar.onSelectMentionSuggestion = { selectedSuggestion = it }
+        assertTrue(toolbar.setMentionSuggestions(listOf(alice), trigger = "@"))
+        val chip = requireNotNull(toolbar.mentionChipAtForTesting(suggestionIndex))
+        assertFalse(toolbar.setMentionSuggestions(listOf(updatedAlice), trigger = "#"))
+        assertSame(
+            "a changed nonempty query retains matching chips",
+            chip,
+            toolbar.mentionChipAtForTesting(suggestionIndex)
+        )
+        assertEquals(
+            "the new trigger and label are visible",
+            "#alice-chen",
+            chip.titleTextForTesting()
+        )
+        toolbar.triggerMentionSuggestionTapForTesting(suggestionIndex)
+        assertSame(
+            "the callback must receive the replacement suggestion",
+            updatedAlice,
+            selectedSuggestion
+        )
+        toolbar.applyState(
+            NativeToolbarState.empty.copy(
+                marks = mapOf("bold" to true),
+                allowedMarks = setOf("bold")
+            )
+        )
+        toolbar.applyTheme(EditorToolbarTheme(buttonActiveColor = activeColor))
+        assertTrue(
+            "populated suggestions must clear back to buttons",
+            toolbar.setMentionSuggestions(emptyList())
+        )
+        assertFalse(toolbar.isShowingMentionSuggestions)
+        val restoredBold = requireNotNull(toolbar.buttonAtForTesting(boldIndex))
+        assertTrue("restored buttons use the latest state", restoredBold.isSelected)
+        assertEquals(
+            "restored buttons use the latest theme",
+            activeColor,
+            restoredBold.currentTextColor
+        )
+        assertFalse(
+            "already empty clear must report no mode change",
+            toolbar.setMentionSuggestions(emptyList())
+        )
+        assertSame(
+            "the second clear must retain the restored button",
+            restoredBold,
+            toolbar.buttonAtForTesting(boldIndex)
+        )
+    }
+
+    @Test
     fun `toolbar switches to mention suggestion mode`() {
         val context = RuntimeEnvironment.getApplication()
         val toolbar = EditorKeyboardToolbarView(context)

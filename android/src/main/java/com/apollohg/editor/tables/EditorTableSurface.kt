@@ -1400,7 +1400,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) :
             "${input.renderAppearanceRevision}:$hostTableDirection:${host.layoutDirection}:${adapter?.tablePresentationDocumentGeneration}"
         val width = (input.measuredWidth - input.compoundPaddingLeft - input.compoundPaddingRight)
             .coerceAtLeast(0)
-        val markers = markers(input)
+        val markers = if (input.rootTablePositionMap == null) emptyMap() else markers(input)
         val accessibilityKey = Triple(revision, width, if (width > 0) input.layout.height else null)
         if (accessibilityKey != this.accessibilityKey) {
             this.accessibilityKey = accessibilityKey

@@ -54,30 +54,36 @@ internal fun EditorEditText.ensureSelectionVisible() {
     if (selectionEnd < 0 || caretVisibilityRequestPosted) return
 
     caretVisibilityRequestPosted = true
-    val posted = post {
+    val reveal = Runnable {
         caretVisibilityRequestPosted = false
-        if (!hasFocus() || !isLaidOut || layout == null) return@post
-        val selectionOffset = selectionEnd.takeIf { it >= 0 } ?: return@post
-        val viewportBottomClearance = resolveViewportBottomClearancePx()
-        if (heightBehavior == EditorHeightBehavior.FIXED) {
-            bringPointIntoView(selectionOffset)
-        }
+        revealSelectionInViewport()
+    }
+    if (!isLayoutRequested) {
+        postOnAnimation(reveal)
+    } else if (!post(reveal)) {
+        caretVisibilityRequestPosted = false
+    }
+}
 
-        val textLayout = layout ?: return@post
-        val clampedOffset = selectionOffset.coerceAtMost(textLayout.text.length)
-        val line = textLayout.getLineForOffset(clampedOffset)
-        val caretLeft = textLayout.getPrimaryHorizontal(clampedOffset).toInt()
-        val rect = Rect(
-            caretLeft + totalPaddingLeft,
-            textLayout.editorTextLineTop(line) + totalPaddingTop,
-            caretLeft + totalPaddingLeft + 1,
-            textLayout.editorTextLineBottom(line) + totalPaddingTop + viewportBottomClearance
-        )
-        requestRectangleOnScreen(rect)
+private fun EditorEditText.revealSelectionInViewport() {
+    if (!hasFocus() || !isLaidOut || layout == null) return
+    val selectionOffset = selectionEnd.takeIf { it >= 0 } ?: return
+    val viewportBottomClearance = resolveViewportBottomClearancePx()
+    if (heightBehavior == EditorHeightBehavior.FIXED) {
+        bringPointIntoView(selectionOffset)
     }
-    if (!posted) {
-        caretVisibilityRequestPosted = false
-    }
+
+    val textLayout = layout ?: return
+    val clampedOffset = selectionOffset.coerceAtMost(textLayout.text.length)
+    val line = textLayout.getLineForOffset(clampedOffset)
+    val caretLeft = textLayout.getPrimaryHorizontal(clampedOffset).toInt()
+    val rect = Rect(
+        caretLeft + totalPaddingLeft,
+        textLayout.editorTextLineTop(line) + totalPaddingTop,
+        caretLeft + totalPaddingLeft + 1,
+        textLayout.editorTextLineBottom(line) + totalPaddingTop + viewportBottomClearance
+    )
+    requestRectangleOnScreen(rect)
 }
 
 internal fun EditorEditText.resolveViewportBottomClearancePx(): Int {

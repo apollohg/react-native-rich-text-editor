@@ -735,10 +735,12 @@ internal object NativePerformanceFixtureFactory {
 
     /**
      * Load the large fixture document into a v2 session through its adapter;
-     * returns the resulting update JSON (null when the apply fails).
+     * returns the resulting update JSON after successful admission.
      */
-    fun loadLargeDocumentIntoEditor(adapter: EditorV2Adapter): String? =
-        adapter.setContentJson(largeDocumentJson())
+    fun loadLargeDocumentIntoEditor(adapter: EditorV2Adapter): String =
+        requireNotNull(adapter.setContentJson(largeDocumentJson())) {
+            "large performance fixture must load into the authoritative editor"
+        }
 
     fun remoteSelections(
         totalScalar: Int,
@@ -773,8 +775,10 @@ internal object NativePerformanceFixtureFactory {
             }
     }
 
-    fun typingCursorOffset(renderedText: CharSequence): Int =
-        selectionScrubOffsets(renderedText, points = 1).firstOrNull() ?: 0
+    fun typingCursorOffset(renderedText: CharSequence): Int {
+        val offsets = selectionScrubOffsets(renderedText, points = 3)
+        return offsets[offsets.size / 2]
+    }
 
     fun selectionScrubOffsets(renderedText: CharSequence, points: Int): List<Int> {
         val candidates = renderedText
@@ -872,8 +876,16 @@ internal object NativePerformanceFixtureFactory {
 
         val content = JSONArray()
         appendTextNode(content, text.substring(0, cutA))
-        appendTextNode(content, text.substring(cutA, cutB), JSONArray().put("bold"))
-        appendTextNode(content, text.substring(cutB, cutC), JSONArray().put("italic"))
+        appendTextNode(
+            content,
+            text.substring(cutA, cutB),
+            JSONArray().put(JSONObject().put("type", "bold"))
+        )
+        appendTextNode(
+            content,
+            text.substring(cutB, cutC),
+            JSONArray().put(JSONObject().put("type", "italic"))
+        )
         appendTextNode(
             content,
             text.substring(cutC),

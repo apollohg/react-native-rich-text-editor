@@ -2,7 +2,10 @@ package com.apollohg.editor
 
 import com.apollohg.editor.tables.EditorTableIndex
 import com.apollohg.editor.tables.EditorTablePresentationSnapshot
+import java.lang.ref.WeakReference
 import org.json.JSONObject
+
+internal data class ExternalRenderNotice(val documentVersion: String)
 
 internal class EditorV2Adapter private constructor(
     internal val backend: EditorV2Backend,
@@ -44,12 +47,11 @@ internal class EditorV2Adapter private constructor(
     internal var cachedActiveState: JSONObject? = null
     internal var cachedHistoryState: JSONObject? = null
     internal var cachedViewUpdateJson: String? = null
-    internal var cachedViewUpdateObject: JSONObject? = null
+    internal var cachedViewUpdateObject: WeakReference<JSONObject>? = null
     internal var cachedAtomicRenderJson: String? = null
-    internal var cachedCommitSnapshotJson: String? = null
     internal var cachedAtomicRenderSelectionObject: JSONObject? = null
-    internal var cachedSemanticRenderBlocks: List<List<Any?>>? = null
-    internal var cachedSemanticRenderBlocksRevision: ULong? = null
+    internal var cachedSemanticBlockTableIds: List<List<String>>? = null
+    internal var cachedSemanticBlockTableIdsRevision: ULong? = null
     internal var tableIndex = EditorTableIndex()
     internal var installedFrameRevision: ULong? = null
     internal var cachedTablePresentation: EditorTablePresentationSnapshot? = null
@@ -67,6 +69,7 @@ internal class EditorV2Adapter private constructor(
     val debugNotes = mutableListOf<String>()
 
     companion object {
+        private const val DOCUMENT_VERSION_KEY = "documentVersion"
         private const val TABLE_CELL_DROP_KEY = "cellDrop"
         private const val TABLE_CELL_DROP_TARGET_KEY = "targetCell"
         private const val TABLE_CELL_DROP_MOVED_KEY = "movedCells"
@@ -118,8 +121,8 @@ internal class EditorV2Adapter private constructor(
         nativeOwnerToken = null
         positionEpoch = null
         destroyed = true
-        cachedSemanticRenderBlocks = null
-        cachedSemanticRenderBlocksRevision = null
+        cachedSemanticBlockTableIds = null
+        cachedSemanticBlockTableIdsRevision = null
         tableIndex = EditorTableIndex()
         installedFrameRevision = null
         cachedTablePresentation = null
@@ -169,6 +172,12 @@ internal class EditorV2Adapter private constructor(
         call: (String) -> EditorV2CallResult<String>
     ): EditorV2CallResult<String> =
         callWithEnvelopeJson({ payload.toString() }, includeBaseRevision, call)
+
+    internal fun callWithEnvelope(
+        payloadJson: String,
+        includeBaseRevision: Boolean = true,
+        call: (String) -> EditorV2CallResult<String>
+    ): EditorV2CallResult<String> = callWithEnvelopeJson({ payloadJson }, includeBaseRevision, call)
 
     private inline fun callWithEnvelopeJson(
         payload: () -> String,
@@ -300,7 +309,7 @@ internal class EditorV2Adapter private constructor(
     internal fun atomicRenderJson(matchingDocumentRevision: String): String? {
         val revision = matchingDocumentRevision.toULongOrNull() ?: return null
         if (cachedAtomicRenderDocumentRevision != revision) return null
-        return cachedCommitSnapshotJson
+        return cachedAtomicRenderJson
     }
 
     @Volatile
@@ -408,27 +417,35 @@ internal class EditorV2Adapter private constructor(
         tablePresentationDocumentGeneration++
     }
 
-    internal fun adoptExternalRender(renderJson: String): String? {
-        if (destroyed) {
-            emit(destroyedError())
-            return null
-        }
-        if (!validateExternalRender(renderJson)) return null
+    internal fun adoptExternalRender(renderJson: String): String? =
+        parseExternalRenderNotice(renderJson)?.let(::adoptExternalRender)
+
+    internal fun adoptExternalRender(renderNotice: ExternalRenderNotice): String? {
+        if (!validateExternalRenderNotice(renderNotice.documentVersion)) return null
         return refreshInternal(null, stripViewSelection = false)?.also {
             publishCollaborationCellsIfChanged()
         }
     }
 
-    internal fun validateExternalRender(renderJson: String): Boolean {
+    internal fun validateExternalRender(renderJson: String): Boolean =
+        parseExternalRenderNotice(renderJson) != null
+
+    internal fun parseExternalRenderNotice(renderJson: String): ExternalRenderNotice? {
+        if (destroyed) {
+            emit(destroyedError())
+            return null
+        }
+        val documentVersion = topLevelStringField(renderJson, DOCUMENT_VERSION_KEY)
+        if (!validateExternalRenderNotice(documentVersion)) return null
+        return ExternalRenderNotice(requireNotNull(documentVersion))
+    }
+
+    private fun validateExternalRenderNotice(documentVersion: String?): Boolean {
         if (destroyed) {
             emit(destroyedError())
             return false
         }
-        val valid = try {
-            canonicalV2U64(JSONObject(renderJson).opt("documentVersion") as? String) != null
-        } catch (_: org.json.JSONException) {
-            false
-        }
+        val valid = canonicalV2U64(documentVersion) != null
         if (!valid) emit(contractError("external editor update notice is malformed"))
         return valid
     }
@@ -456,15 +473,16 @@ internal class EditorV2Adapter private constructor(
     override fun currentStateJson(): String? =
         refreshInternal(cachedAuthoritativeScalarSelection?.copyOf(), stripViewSelection = false)
 
-    override fun currentSelectionStateJson(): String? {
+    override fun currentSelectionState(): EditorSelectionState? {
         if (!hasCurrentSelectionState()) currentStateJson() ?: return null
         if (!hasCurrentSelectionState()) return null
-        return JSONObject()
-            .put("documentVersion", requireNotNull(cachedAtomicRenderDocumentRevision).toString())
-            .put("selection", cachedAtomicRenderSelectionObject)
-            .put("activeState", cachedActiveState)
-            .put("historyState", cachedHistoryState)
-            .toString()
+        return EditorSelectionState(
+            requireNotNull(cachedAtomicRenderDocumentRevision).toString(),
+            stateRevision.toString(),
+            requireNotNull(cachedAtomicRenderSelectionObject),
+            requireNotNull(cachedActiveState),
+            requireNotNull(cachedHistoryState)
+        )
     }
 
     private fun hasCurrentSelectionState(): Boolean =

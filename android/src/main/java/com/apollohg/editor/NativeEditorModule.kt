@@ -23,6 +23,7 @@ import uniffi.editor_core.editorV2GetDocumentJson
 import uniffi.editor_core.editorV2GetDocumentMarkdown
 import uniffi.editor_core.editorV2GetState
 import uniffi.editor_core.editorV2Redo
+import uniffi.editor_core.editorV2RenderState
 import uniffi.editor_core.editorV2RenderUpdate
 import uniffi.editor_core.editorV2ReplaceDocument
 import uniffi.editor_core.editorV2SetSelection
@@ -278,6 +279,22 @@ internal fun createEditorV2FromModule(
     return result.toJSMap()
 }
 
+private fun mirroredRenderResult(
+    editorId: String,
+    mirrorScalarAnchor: Double?,
+    mirrorScalarHead: Double?,
+    render: (String, UInt?, UInt?) -> FfiJsonResult
+): Map<String, Any?> {
+    val anchor = mirrorScalarAnchor?.let(::exactV2U32)
+    val head = mirrorScalarHead?.let(::exactV2U32)
+    if ((mirrorScalarAnchor != null && anchor == null) ||
+        (mirrorScalarHead != null && head == null)
+    ) {
+        return v2BoundaryErrorRecord("invalid render mirror")
+    }
+    return render(editorId, anchor, head).toJSMap()
+}
+
 private fun mutationResult(editorId: String, operation: () -> FfiJsonResult): Map<String, Any?> {
     val adapter = EditorV2Registry.viewTokenForHandle(
         editorId
@@ -420,17 +437,24 @@ class NativeEditorModule : Module() {
                 mirrorScalarAnchor: Double?,
                 mirrorScalarHead: Double?
             ->
-            // The render accessor for the interactive component: after a
-            // JS-driven engine change the component fetches the current
-            // render update here and pushes it to the bound view.
-            val anchor = mirrorScalarAnchor?.let(::exactV2U32)
-            val head = mirrorScalarHead?.let(::exactV2U32)
-            if ((mirrorScalarAnchor != null && anchor == null) ||
-                (mirrorScalarHead != null && head == null)
-            ) {
-                return@Function v2BoundaryErrorRecord("invalid render mirror")
-            }
-            editorV2RenderUpdate(editorId, anchor, head).toJSMap()
+            mirroredRenderResult(
+                editorId,
+                mirrorScalarAnchor,
+                mirrorScalarHead,
+                ::editorV2RenderUpdate
+            )
+        }
+        Function("editorV2RenderState") {
+                editorId: String,
+                mirrorScalarAnchor: Double?,
+                mirrorScalarHead: Double?
+            ->
+            mirroredRenderResult(
+                editorId,
+                mirrorScalarAnchor,
+                mirrorScalarHead,
+                ::editorV2RenderState
+            )
         }
 
         Function("editorV2CollaborationConfigureTransport") {

@@ -9,6 +9,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Rect
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.os.Bundle
@@ -32,6 +33,9 @@ import android.view.ActionMode
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
+import android.view.ViewOverlay
+import android.view.ViewTreeObserver
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.inputmethod.EditorInfo
@@ -43,17 +47,20 @@ open class EditorTextSurface @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
     defStyleAttr: Int = 0
-) : View(context, attrs, defStyleAttr) {
+) : View(context, attrs, defStyleAttr),
+    ViewTreeObserver.OnPreDrawListener {
     val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
         density = resources.displayMetrics.density
         textSize =
             TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 16f, resources.displayMetrics)
         color = Color.BLACK
     }
-    private var buffer = SpannableStringBuilder()
+    private var buffer: SpannableStringBuilder = EditorEditable()
     private val watchers = mutableListOf<TextWatcher>()
     private var cachedLayout: EditorDocumentLayout? = null
     private var layoutDirty = true
+    private var layoutChangedRange: IntRange? = null
+    private var layoutChangedEverywhere = true
     private var layoutWidth = -1
     private var textChangeDepth = 0
     private var batchDepth = 0
@@ -72,11 +79,21 @@ open class EditorTextSurface @JvmOverloads constructor(
         if (monitorCursor) publishSurfaceCursor()
     }
     private var blinkVisible = true
+    internal val isCaretBlinkVisible get() = blinkVisible
+    internal var onCaretInvalidation: (() -> Boolean)? = null
+    internal var isCaretDrawnSeparately = false
+    internal var hasAccessedOwnOverlay = false
+        private set
     internal var selectionActionMode: ActionMode? = null
     internal val interaction by lazy { EditorTextSurfaceInteraction(this, attrs, defStyleAttr) }
     private val dragDrop by lazy { EditorTextSurfaceDragDrop(this) }
     private val selectionPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val selectionPath = Path()
+    private var viewportObserver: ViewTreeObserver? = null
+    private val drawingViewport = Rect()
+    private val observedViewport = Rect()
+    private var viewportObserved = false
+    private var observedViewportClipped = false
 
     var text: Editable
         get() = buffer
@@ -101,22 +118,11 @@ open class EditorTextSurface @JvmOverloads constructor(
                     compoundPaddingRight
                 ).coerceAtLeast(1)
             if (layoutDirty || layoutWidth != available || cachedLayout == null) {
-                documentLayoutBuildCount++
-                cachedLayout =
-                    EditorDocumentLayout(
-                        buffer,
-                        paint,
-                        available,
-                        includeFontPadding,
-                        lineSpacingMultiplier,
-                        lineSpacingExtra,
-                        cachedLayout
-                    )
-                layoutWidth = available
-                layoutDirty = false
+                rebuildDocumentLayout(available)
             }
             return requireNotNull(cachedLayout)
         }
+    internal val currentLayoutBuild: Int get() = layout.let { documentLayoutBuildCount }
     var textSize: Float
         get() = paint.textSize
         set(value) {
@@ -223,7 +229,8 @@ open class EditorTextSurface @JvmOverloads constructor(
             watchers.toList().forEach { it.beforeTextChanged(s, start, count, after) }
         }
         override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-            invalidateTextLayout()
+            shiftLayoutChangedRange(TextReplacement(start, before, count))
+            invalidateTextLayout(start, start + count)
             watchers.toList().forEach { it.onTextChanged(s, start, before, count) }
             val event = AccessibilityEvent.obtain(AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED)
             event.beforeText = textBeforeAccessibilityChange
@@ -242,9 +249,9 @@ open class EditorTextSurface @JvmOverloads constructor(
             }
         }
         override fun onSpanAdded(text: Spannable?, what: Any?, start: Int, end: Int) =
-            spanChanged(text, what)
+            spanChanged(text, what, start..end)
         override fun onSpanRemoved(text: Spannable?, what: Any?, start: Int, end: Int) =
-            spanChanged(text, what)
+            spanChanged(text, what, start..end)
         override fun onSpanChanged(
             text: Spannable?,
             what: Any?,
@@ -252,8 +259,17 @@ open class EditorTextSurface @JvmOverloads constructor(
             oldEnd: Int,
             newStart: Int,
             newEnd: Int
-        ) = spanChanged(text, what)
-        private fun spanChanged(text: Spannable?, what: Any?) {
+        ) {
+            val change = (text as? EditorEditable)?.replacementInProgress
+            val shiftedStart = change?.map(oldStart) ?: oldStart
+            val shiftedEnd = change?.map(oldEnd) ?: oldEnd
+            if (change != null && shiftedStart == newStart && shiftedEnd == newEnd) {
+                spanChanged(text, what, null)
+            } else {
+                spanChanged(text, what, minOf(shiftedStart, newStart)..maxOf(shiftedEnd, newEnd))
+            }
+        }
+        private fun spanChanged(text: Spannable?, what: Any?, layoutRange: IntRange?) {
             if (what === this || replacingBuffer) return
             if (what === Selection.SELECTION_START || what === Selection.SELECTION_END) {
                 if ((text?.getSpanFlags(what) ?: 0) and Spanned.SPAN_INTERMEDIATE ==
@@ -262,7 +278,7 @@ open class EditorTextSurface @JvmOverloads constructor(
                     notifySelectionChanged()
                 }
             } else {
-                invalidateTextLayout()
+                layoutRange?.let { invalidateTextLayout(it.first, it.last) }
                 notifyInputStateChanged()
             }
         }
@@ -271,7 +287,9 @@ open class EditorTextSurface @JvmOverloads constructor(
     private val blink = object : Runnable {
         override fun run() {
             blinkVisible = !blinkVisible
-            if (hasFocus() && isCursorVisible) invalidate()
+            if (hasFocus() && isCursorVisible && onCaretInvalidation?.invoke() != true) {
+                invalidate()
+            }
             if (isAttachedToWindow && hasFocus()) postDelayed(this, 500)
         }
     }
@@ -290,7 +308,7 @@ open class EditorTextSurface @JvmOverloads constructor(
     @JvmOverloads
     fun setText(value: CharSequence?, type: BufferType = BufferType.EDITABLE) {
         val previousText = buffer.toString()
-        val next = SpannableStringBuilder(value ?: "")
+        val next = EditorEditable(value ?: "")
         watchers.toList().forEach { it.beforeTextChanged(buffer, 0, buffer.length, next.length) }
         val before = buffer.length
         replacingBuffer = true
@@ -382,9 +400,64 @@ open class EditorTextSurface @JvmOverloads constructor(
     }
 
     internal fun invalidateTextLayout() {
+        layoutChangedEverywhere = true
+        layoutChangedRange = null
+        markTextLayoutDirty()
+    }
+
+    private fun invalidateTextLayout(start: Int, end: Int) {
+        if (!layoutChangedEverywhere) {
+            layoutChangedRange = layoutChangedRange?.let {
+                minOf(it.first, start)..maxOf(it.last, end)
+            } ?: (start..end)
+        }
+        markTextLayoutDirty()
+    }
+
+    private fun shiftLayoutChangedRange(change: TextReplacement) {
+        val changed = layoutChangedRange ?: return
+        layoutChangedRange = change.map(changed.first)..change.map(changed.last)
+    }
+
+    private fun markTextLayoutDirty() {
         layoutDirty = true
         requestLayout()
         invalidate()
+    }
+
+    private fun rebuildDocumentLayout(available: Int) {
+        documentLayoutBuildCount++
+        cachedLayout =
+            EditorDocumentLayout(
+                buffer,
+                paint,
+                available,
+                includeFontPadding,
+                lineSpacingMultiplier,
+                lineSpacingExtra,
+                cachedLayout,
+                layoutChangedRange.takeUnless { layoutChangedEverywhere }
+            )
+        layoutWidth = available
+        layoutDirty = false
+        layoutChangedEverywhere = false
+        layoutChangedRange = null
+    }
+
+    internal fun updateAnnotationSpans(update: () -> Unit) {
+        val watchedBuffer = buffer
+        watchedBuffer.removeSpan(changeWatcher)
+        try {
+            update()
+        } finally {
+            watchedBuffer.setSpan(
+                changeWatcher,
+                0,
+                watchedBuffer.length,
+                Spanned.SPAN_INCLUSIVE_INCLUSIVE
+            )
+            notifyInputStateChanged()
+        }
     }
 
     private fun notifySelectionChanged() {
@@ -392,13 +465,19 @@ open class EditorTextSurface @JvmOverloads constructor(
         val start = selectionStart
         val end = selectionEnd
         if (start == lastSelectionStart && end == lastSelectionEnd) return
+        val collapsedCaretMove = lastSelectionStart >= 0 &&
+            lastSelectionStart == lastSelectionEnd && start >= 0 && start == end
         lastSelectionStart = start
         lastSelectionEnd = end
         blinkVisible = true
         onSelectionChanged(start, end)
         interaction.selectionChanged()
         notifyInputStateChanged()
-        invalidate()
+        if (!collapsedCaretMove || layoutDirty || selectionStart != start || selectionEnd != end ||
+            onCaretInvalidation?.invoke() != true
+        ) {
+            invalidate()
+        }
     }
 
     protected open fun onSelectionChanged(selStart: Int, selEnd: Int) = Unit
@@ -486,19 +565,7 @@ open class EditorTextSurface @JvmOverloads constructor(
         val measured = resolveSize(suggestedMinimumWidth.coerceAtLeast(1), widthMeasureSpec)
         val available = (measured - compoundPaddingLeft - compoundPaddingRight).coerceAtLeast(1)
         if (layoutDirty || layoutWidth != available || cachedLayout == null) {
-            documentLayoutBuildCount++
-            cachedLayout =
-                EditorDocumentLayout(
-                    buffer,
-                    paint,
-                    available,
-                    includeFontPadding,
-                    lineSpacingMultiplier,
-                    lineSpacingExtra,
-                    cachedLayout
-                )
-            layoutDirty = false
-            layoutWidth = available
+            rebuildDocumentLayout(available)
         }
         val content = requireNotNull(cachedLayout)
         val textHeight = if (content.lineCount >
@@ -520,29 +587,52 @@ open class EditorTextSurface @JvmOverloads constructor(
         super.onDraw(canvas)
         val layout = layout
         val save = canvas.save()
-        canvas.translate(compoundPaddingLeft.toFloat(), compoundPaddingTop.toFloat())
-        val start = selectionStart
-        val end = selectionEnd
-        val selection = if (start >= 0 && end >= 0 && start != end && hasFocus()) {
-            selectionPath.reset()
-            layout.getSelectionPath(minOf(start, end), maxOf(start, end), selectionPath)
-            selectionPaint.color = highlightColor
-            selectionPath
-        } else {
-            null
-        }
-        layout.draw(canvas, selection, selectionPaint, 0)
-        if (isCursorVisible && blinkVisible && start >= 0 && start == end && hasFocus() &&
-            hasWindowFocus()
-        ) {
-            val editor = this as? EditorEditText
-            editor?.nativeCursorDrawRect()?.let { rect ->
-                selectionPaint.color = editor.caretColor
-                canvas.drawRect(rect, selectionPaint)
+        try {
+            if (canvas.isHardwareAccelerated && readDrawingViewport(drawingViewport)) {
+                canvas.clipRect(drawingViewport)
             }
+            canvas.translate(compoundPaddingLeft.toFloat(), compoundPaddingTop.toFloat())
+            val start = selectionStart
+            val end = selectionEnd
+            val selection = if (start >= 0 && end >= 0 && start != end && hasFocus()) {
+                selectionPath.reset()
+                layout.getSelectionPath(minOf(start, end), maxOf(start, end), selectionPath)
+                selectionPaint.color = highlightColor
+                selectionPath
+            } else {
+                null
+            }
+            layout.draw(canvas, selection, selectionPaint, 0)
+            if (!canvas.isHardwareAccelerated || !isCaretDrawnSeparately) drawCaret(canvas)
+            interaction.drawHandles(canvas)
+        } finally {
+            canvas.restoreToCount(save)
         }
-        interaction.drawHandles(canvas)
-        canvas.restoreToCount(save)
+    }
+
+    internal fun caretDrawingBounds(includeBlink: Boolean = true): RectF? {
+        val start = selectionStart
+        if (!isCursorVisible || (includeBlink && !blinkVisible) || start < 0 ||
+            start != selectionEnd || !hasFocus() || !hasWindowFocus()
+        ) {
+            return null
+        }
+        return (this as? EditorEditText)?.nativeCursorDrawRect()
+    }
+
+    internal fun drawCaret(canvas: Canvas) {
+        val editor = this as? EditorEditText ?: return
+        val bounds = caretDrawingBounds() ?: return
+        selectionPaint.color = editor.caretColor
+        canvas.drawRect(bounds, selectionPaint)
+    }
+
+    override fun getOverlay(): ViewOverlay {
+        if (!hasAccessedOwnOverlay) {
+            hasAccessedOwnOverlay = true
+            invalidate()
+        }
+        return super.getOverlay()
     }
 
     fun getOffsetForPosition(x: Float, y: Float): Int {
@@ -714,9 +804,14 @@ open class EditorTextSurface @JvmOverloads constructor(
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
+        viewportObserved = false
+        viewportObserver = viewTreeObserver.also { it.addOnPreDrawListener(this) }
         if (hasFocus()) postDelayed(blink, 500)
     }
     override fun onDetachedFromWindow() {
+        viewportObserver?.takeIf { it.isAlive }?.removeOnPreDrawListener(this)
+        viewportObserver = null
+        viewportObserved = false
         removeCallbacks(blink)
         removeCallbacks(publishCursor)
         cursorPublicationPosted = false
@@ -726,6 +821,37 @@ open class EditorTextSurface @JvmOverloads constructor(
         interaction.dispose()
         dragDrop.dispose()
         super.onDetachedFromWindow()
+    }
+    override fun onPreDraw(): Boolean {
+        val clipped = readDrawingViewport(drawingViewport)
+        if (!viewportObserved || clipped != observedViewportClipped ||
+            (clipped && drawingViewport != observedViewport)
+        ) {
+            viewportObserved = true
+            observedViewportClipped = clipped
+            if (clipped) observedViewport.set(drawingViewport) else observedViewport.setEmpty()
+            invalidate()
+        }
+        return true
+    }
+
+    private fun readDrawingViewport(bounds: Rect): Boolean {
+        if (!isAttachedToWindow || !isHardwareAccelerated ||
+            (parent as? ViewGroup)?.clipChildren != true
+        ) {
+            return false
+        }
+        var ancestor: View? = this
+        while (ancestor != null) {
+            if (!ancestor.matrix.isIdentity || ancestor.animation != null ||
+                ancestor.layerType == LAYER_TYPE_SOFTWARE
+            ) {
+                return false
+            }
+            ancestor = ancestor.parent as? View
+        }
+        if (!getLocalVisibleRect(bounds)) bounds.setEmpty()
+        return true
     }
     override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) {
         super.onScrollChanged(l, t, oldl, oldt)

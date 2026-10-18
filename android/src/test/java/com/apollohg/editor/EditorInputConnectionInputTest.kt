@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.os.Bundle
 import android.os.Looper
 import android.provider.Settings
+import android.text.Annotation
 import android.text.InputType
 import android.text.SpannableStringBuilder
 import android.text.Spanned
@@ -269,6 +270,181 @@ internal class EditorInputConnectionInputTest : EditorInputConnectionTestFixture
         assertTrue(
             editorInfo.initialCapsMode hasInputFlag InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
         )
+    }
+
+    @Test
+    fun `initial surrounding text copies only the IME window of a long document`() {
+        val margin = IME_INITIAL_SURROUNDING_TEXT_MARGIN
+        val raw = SpannableStringBuilder()
+        val hidden = sortedSetOf<Int>()
+        for (unit in 0 until LONG_DOCUMENT_UNITS) {
+            if (unit % MARKER_UNIT_INTERVAL == 0) {
+                val markerStart = raw.length
+                raw.append(LIST_MARKER_TEXT)
+                raw.setSpan(
+                    Annotation(RenderBridge.NATIVE_LIST_MARKER_ANNOTATION, LIST_MARKER_TEXT),
+                    markerStart,
+                    raw.length,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+                hidden.addAll(markerStart until raw.length)
+            }
+            raw.append("w$unit😀")
+            if (unit % PLACEHOLDER_UNIT_INTERVAL == 0) {
+                hidden.add(raw.length)
+                raw.append(LayoutConstants.SYNTHETIC_PLACEHOLDER_CHARACTER)
+            }
+            raw.append('\n')
+        }
+        val rawText = raw.toString()
+        val visibleRawOffsets = rawText.indices.filterNot { it in hidden }
+        val visible = String(visibleRawOffsets.map { rawText[it] }.toCharArray())
+        fun visibleBefore(rawOffset: Int) = visibleRawOffsets.count { it < rawOffset }
+        fun rawCaret(imeOffset: Int) = visibleRawOffsets.getOrElse(imeOffset) { rawText.length }
+        fun caretAllowed(imeOffset: Int) = imeOffset in 0..visible.length &&
+            (imeOffset == visible.length || !visible[imeOffset].isLowSurrogate())
+
+        val windowStartsOnLowSurrogate = visible.indices.first { index ->
+            visible[index].isLowSurrogate() && caretAllowed(index + margin)
+        } + margin
+        val windowEndsOnHighSurrogate = (1..visible.length).first { end ->
+            visible[end - 1].isHighSurrogate() && caretAllowed(end - margin)
+        } - margin
+        val hiddenImeOffsets = hidden.map(::visibleBefore).filter { it > 0 }
+        val windowStartsAtHidden = hiddenImeOffsets.first { caretAllowed(it + margin) } + margin
+        val windowEndsAtHidden = hiddenImeOffsets.first { caretAllowed(it - margin) } - margin
+        fun allowedCaretFrom(imeOffset: Int) =
+            if (caretAllowed(imeOffset)) imeOffset else imeOffset + 1
+        val middle = allowedCaretFrom(visible.length / 2)
+        val nearStart = allowedCaretFrom(margin / 2)
+        val nearEnd = allowedCaretFrom(visible.length - margin / 2)
+        val imeSelections = listOf(
+            0 to 0,
+            1 to 1,
+            nearStart to nearStart,
+            middle to middle,
+            middle to middle + SELECTED_SPAN_LENGTH,
+            windowStartsOnLowSurrogate to windowStartsOnLowSurrogate,
+            windowEndsOnHighSurrogate to windowEndsOnHighSurrogate,
+            windowStartsAtHidden to windowStartsAtHidden,
+            windowEndsAtHidden to windowEndsAtHidden,
+            nearEnd to nearEnd,
+            visible.length to visible.length
+        )
+        val editText = EditorEditText(RuntimeEnvironment.getApplication())
+        editText.setText(raw)
+
+        for ((imeStart, imeEnd) in imeSelections) {
+            val description = "IME selection $imeStart..$imeEnd of ${visible.length}"
+            assertTrue(description, caretAllowed(imeStart) && caretAllowed(imeEnd))
+            editText.setSelection(rawCaret(imeStart), rawCaret(imeEnd))
+            assertEquals(description, rawCaret(imeStart), editText.selectionStart)
+            assertEquals(description, rawCaret(imeEnd), editText.selectionEnd)
+            val editorInfo = EditorInfo()
+            assertNotNull(editText.onCreateInputConnection(editorInfo))
+            val reference = EditorInfo().apply {
+                initialSelStart = imeStart
+                initialSelEnd = imeEnd
+                setInitialSurroundingText(visible)
+            }
+
+            assertEquals(description, imeStart, editorInfo.initialSelStart)
+            assertEquals(description, imeEnd, editorInfo.initialSelEnd)
+            for (length in listOf(1, 2, margin - 1, margin, margin + 1, visible.length)) {
+                assertEquals(
+                    "$description before $length",
+                    reference.getInitialTextBeforeCursor(length, 0)?.toString(),
+                    editorInfo.getInitialTextBeforeCursor(length, 0)?.toString()
+                )
+                assertEquals(
+                    "$description after $length",
+                    reference.getInitialTextAfterCursor(length, 0)?.toString(),
+                    editorInfo.getInitialTextAfterCursor(length, 0)?.toString()
+                )
+                val expectedSurrounding = reference.getInitialSurroundingText(length, length, 0)
+                val actualSurrounding = editorInfo.getInitialSurroundingText(length, length, 0)
+                assertEquals(
+                    "$description surrounding $length",
+                    listOf(
+                        expectedSurrounding?.text?.toString(),
+                        expectedSurrounding?.selectionStart,
+                        expectedSurrounding?.selectionEnd,
+                        expectedSurrounding?.offset
+                    ),
+                    listOf(
+                        actualSurrounding?.text?.toString(),
+                        actualSurrounding?.selectionStart,
+                        actualSurrounding?.selectionEnd,
+                        actualSurrounding?.offset
+                    )
+                )
+            }
+            assertEquals(
+                description,
+                reference.getInitialSelectedText(0)?.toString(),
+                editorInfo.getInitialSelectedText(0)?.toString()
+            )
+            val copied = requireNotNull(editText.initialSurroundingTextForImeForEditor())
+            assertEquals(description, maxOf(0, imeStart - margin), copied.textStart)
+            assertEquals(
+                description,
+                visible.substring(copied.textStart, minOf(visible.length, imeEnd + margin)),
+                copied.text
+            )
+            assertTrue(
+                "$description copied ${copied.text.length} of ${visible.length} IME characters",
+                copied.text.length <= imeEnd - imeStart + 2 * margin
+            )
+        }
+        assertTrue(
+            "the window start splits a surrogate pair",
+            visible[windowStartsOnLowSurrogate - margin].isLowSurrogate()
+        )
+        assertTrue(
+            "the window end splits a surrogate pair",
+            visible[windowEndsOnHighSurrogate + margin - 1].isHighSurrogate()
+        )
+    }
+
+    @Test
+    fun `IME trace details are built only when trace recording is requested`() {
+        val property = BuildConfig.IME_TRACE_RECORDING_PROPERTY
+        val requested = System.getProperty(property)
+        fun traceAfterCommit(): Pair<List<String>, Int> {
+            val editText = EditorEditText(RuntimeEnvironment.getApplication())
+            editText.applyUpdateJSON(renderBlocksUpdateJson("Hello"), notifyListener = false)
+            editText.setSelection(TRACE_PROBE_CARET)
+            val inputConnection = requireNotNull(editText.onCreateInputConnection(EditorInfo()))
+            assertTrue(inputConnection.commitText("!", 1))
+            var builtDetails = 0
+            editText.recordImeTraceForTesting(TRACE_PROBE_EVENT) {
+                builtDetails += 1
+                TRACE_PROBE_EVENT
+            }
+            return editText.imeTraceSnapshotForTesting() to builtDetails
+        }
+
+        try {
+            System.clearProperty(property)
+            val (silentTrace, silentDetails) = traceAfterCommit()
+            assertEquals("production editors record no IME trace", emptyList<String>(), silentTrace)
+            assertEquals("production editors build no trace details", 0, silentDetails)
+
+            System.setProperty(property, true.toString())
+            val (recordedTrace, recordedDetails) = traceAfterCommit()
+            assertTrue(
+                "requested recording keeps the IME trace: $recordedTrace",
+                recordedTrace.any { it.startsWith("commitText") }
+            )
+            assertEquals("$TRACE_PROBE_EVENT:$TRACE_PROBE_EVENT", recordedTrace.last())
+            assertEquals(1, recordedDetails)
+        } finally {
+            if (requested == null) {
+                System.clearProperty(property)
+            } else {
+                System.setProperty(property, requested)
+            }
+        }
     }
 
     @Test
@@ -654,5 +830,15 @@ internal class EditorInputConnectionInputTest : EditorInputConnectionTestFixture
         assertEquals("fresh ", insertedText)
         assertEquals(6, insertedScalar)
         assertEquals(0, editText.reconciliationCount)
+    }
+
+    private companion object {
+        const val LONG_DOCUMENT_UNITS = 900
+        const val MARKER_UNIT_INTERVAL = 5
+        const val PLACEHOLDER_UNIT_INTERVAL = 3
+        const val SELECTED_SPAN_LENGTH = 40
+        const val LIST_MARKER_TEXT = "• "
+        const val TRACE_PROBE_CARET = 5
+        const val TRACE_PROBE_EVENT = "traceProbe"
     }
 }
