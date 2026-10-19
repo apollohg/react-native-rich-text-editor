@@ -81,6 +81,8 @@ class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegat
     }()
 
     let codeHighlightingSession = NativeCodeHighlightingSession()
+    var appliedCodeHighlightState: EditorCodeHighlightState?
+    var appliedCodeHighlightOutput: [NativeHighlightedCodeBlock] = []
     var onCodeHighlightingError: ((Error) -> Void)?
     var codeHighlighting: NativeCodeHighlightConfiguration? {
         didSet {

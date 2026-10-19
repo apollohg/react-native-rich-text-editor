@@ -187,6 +187,7 @@ extension EditorTextView {
         } else {
             nativeTextReplacementApplied = false
         }
+        let displayedRender = preservingCodeHighlighting(in: attrStr)
         let beginEditingStartedAt = DispatchTime.now().uptimeNanoseconds
         textStorage.beginEditing()
         let beginEditingNanos = DispatchTime.now().uptimeNanoseconds - beginEditingStartedAt
@@ -199,18 +200,18 @@ extension EditorTextView {
                 }
                 let destinationRange = NSRange(location: replaceRange.location, length: attrStr.length)
                 let attributeMutationStartedAt = DispatchTime.now().uptimeNanoseconds
-                applyAttributes(from: attrStr, to: destinationRange)
+                applyAttributes(from: displayedRender, to: destinationRange)
                 attributeMutationNanos =
                     DispatchTime.now().uptimeNanoseconds - attributeMutationStartedAt
             } else {
                 let stringMutationStartedAt = DispatchTime.now().uptimeNanoseconds
-                textStorage.replaceCharacters(in: replaceRange, with: attrStr)
+                textStorage.replaceCharacters(in: replaceRange, with: displayedRender)
                 stringMutationNanos =
                     DispatchTime.now().uptimeNanoseconds - stringMutationStartedAt
             }
         } else {
             let stringMutationStartedAt = DispatchTime.now().uptimeNanoseconds
-            textStorage.setAttributedString(attrStr)
+            textStorage.setAttributedString(displayedRender)
             stringMutationNanos =
                 DispatchTime.now().uptimeNanoseconds - stringMutationStartedAt
         }
