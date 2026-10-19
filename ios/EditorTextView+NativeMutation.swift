@@ -30,6 +30,15 @@ extension EditorTextView {
         let inputGeneration: UInt64
     }
 
+    func textStorageMatchesAuthorizedText() -> Bool {
+        let currentText = textStorage.string
+        if (currentText as NSString).isEqual(lastAuthorizedTextStorage) { return true }
+        // Preserve Swift's canonical equivalence when UTF16 representations differ.
+        return PreparedProseInstrumentation.measureTableStage(.authorizedTextCanonicalComparison) {
+            currentText == lastAuthorizedText
+        }
+    }
+
     /// The last Rust-authorized storage with one native replacement applied.
     ///
     /// A caret inside a natively mutated document cannot be converted against
@@ -75,10 +84,10 @@ extension EditorTextView {
         return NativeMutationSelectionStorage(storage: patched, rootTablePositionMap: projectedRootTablePositionMap)
     }
 
-    func nativeTextMutationFromAuthorizedDiff(
-        currentText: String
-    ) -> NativeTextMutation? {
-        let authorizedText = lastAuthorizedText
+    func plainTextReplacement(
+        from authorizedText: String,
+        to currentText: String
+    ) -> (range: NSRange, text: String)? {
         guard currentText != authorizedText else { return nil }
 
         let authorized = authorizedText as NSString
@@ -107,6 +116,20 @@ extension EditorTextView {
         let rawReplacementText = current.substring(
             with: NSRange(location: prefix, length: replacementLength)
         )
+        return (NSRange(location: prefix, length: authorizedEnd - prefix), rawReplacementText)
+    }
+
+    func nativeTextMutationFromAuthorizedDiff(
+        currentText: String
+    ) -> NativeTextMutation? {
+        let authorizedText = lastAuthorizedText
+        guard let change = plainTextReplacement(from: authorizedText, to: currentText) else { return nil }
+        let authorized = authorizedText as NSString
+        let current = currentText as NSString
+        let prefix = change.range.location
+        let authorizedEnd = NSMaxRange(change.range)
+        let currentEnd = prefix + change.text.utf16.count
+        let rawReplacementText = change.text
 
         let rawSelectionUtf16Range = selectedUtf16Range()
         let authorizedSelectionUtf16Range = lastAuthorizedSelectedUtf16Range
@@ -141,10 +164,7 @@ extension EditorTextView {
             currentEndUtf16: currentEnd + (preservesAcceptedSpace ? 1 : 0),
             currentTextUtf16Length: current.length + (preservesAcceptedSpace ? 1 : 0)
         )
-        let authorizedReplacementUtf16Range = NSRange(
-            location: prefix,
-            length: authorizedEnd - prefix
-        )
+        let authorizedReplacementUtf16Range = change.range
         let selectionStorage = authorizedStorageApplying(replacementText, inUtf16Range: authorizedReplacementUtf16Range)
         let selectedScalarRange = targetSelectionUtf16Range.flatMap { range in
             selectionStorage.flatMap {

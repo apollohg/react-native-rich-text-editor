@@ -13,10 +13,13 @@ mod text_boundaries;
 mod yrs_compilation;
 
 use super::canonical::CanonicalArtifact;
-use super::derived_state::{LocalizedTextblockEditAdmission, PreparedDerivedEvidence};
+use super::derived_state::{
+    DocumentValidationCertificate, LocalizedTextblockEditAdmission, PreparedDerivedEvidence,
+};
 use super::mutation::{
     LocalizedFormatCompiler, LocalizedInsertCompiler, LocalizedRootWindowCompiler,
-    MutationCompiler, MutationLookupPromotion, YrsMutationAction, YrsMutationPlan,
+    LocalizedSplitCompiler, MutationCompiler, MutationLookupPromotion, YrsMutationAction,
+    YrsMutationPlan,
 };
 use super::prepared_admission::DerivedStateAuthority;
 use super::{
@@ -79,6 +82,7 @@ pub(crate) struct CompilationContext<'a> {
     pub editing_limits: &'a EditingLimits,
     pub document_revision: u64,
     pub max_length: Option<u32>,
+    pub validation_certificate: Option<&'a DocumentValidationCertificate>,
 }
 
 #[derive(Clone, Copy)]
@@ -94,6 +98,8 @@ pub(crate) struct CachedCompilationView<'a> {
     pub state_revision: u64,
     pub schema_fingerprint: &'a str,
     pub canonical_artifact: &'a CanonicalArtifact,
+    pub block_branch_index: Option<&'a super::block_branch_index::BlockBranchIndex>,
+    pub validation_certificate: &'a DocumentValidationCertificate,
 }
 
 #[derive(Clone, Copy)]
@@ -324,7 +330,7 @@ impl CompiledTransaction {
 pub(crate) struct CompiledDocumentDerivations {
     pub identity_seal: Arc<()>,
     pub position_map: PositionMap,
-    pub rendered_text: String,
+    pub rendered_text: Arc<str>,
     pub rendered_scalars: u32,
     pub document_text_bytes: usize,
     pub document_node_count: usize,
@@ -335,6 +341,7 @@ enum TransactionMutationLowering {
     LocalizedInsert(Box<LocalizedInsertCompiler>),
     LocalizedFormat(Box<LocalizedFormatCompiler>),
     LocalizedRootWindow(Box<LocalizedRootWindowCompiler>),
+    LocalizedSplit(Box<LocalizedSplitCompiler>),
 }
 
 #[derive(Clone, Copy)]
@@ -351,9 +358,10 @@ struct SemanticCompilationShortcuts<'a> {
     localized: Option<LocalizedSemanticCompilation>,
 }
 
-pub(super) fn compile_transaction(
+pub(super) fn compile_transaction_with_view(
     context: CompilationContext<'_>,
     transaction: TypedTransaction,
+    cached_view: Option<CachedCompilationView<'_>>,
 ) -> OperationResult<CompiledTransaction> {
     admit_transaction_envelope(context, &transaction)?;
     compile_transaction_impl(
@@ -362,7 +370,7 @@ pub(super) fn compile_transaction(
         None,
         None,
         None,
-        None,
+        cached_view,
         SemanticCompilationShortcuts {
             prepared: None,
             localized: None,
@@ -424,16 +432,17 @@ pub(super) fn compile_prepared_transaction_with_yrs_and_stored_marks<T: yrs::Rea
 pub(crate) fn document_text_bytes(document: &Document) -> Option<usize> {
     #[cfg(test)]
     super::observability::record_raw_document_text_scan();
-    fn node_bytes(node: &Node) -> Option<usize> {
-        let mut total = node.text_str().map_or(0, str::len);
-        if let Some(content) = node.content() {
-            for child in content.iter() {
-                total = total.checked_add(node_bytes(child)?)?;
-            }
+    node_text_bytes(document.root())
+}
+
+pub(super) fn node_text_bytes(node: &Node) -> Option<usize> {
+    let mut total = node.text_str().map_or(0, str::len);
+    if let Some(content) = node.content() {
+        for child in content.iter() {
+            total = total.checked_add(node_text_bytes(child)?)?;
         }
-        Some(total)
     }
-    node_bytes(document.root())
+    Some(total)
 }
 
 fn base_document_text_bytes(document: &Document) -> Option<usize> {

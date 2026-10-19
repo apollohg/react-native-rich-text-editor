@@ -269,6 +269,82 @@ pub(crate) struct DocumentValidationCertificate {
     pub(super) yrs_state_epoch: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RootChildWindow {
+    from: usize,
+    old_to: usize,
+    new_to: usize,
+}
+
+impl RootChildWindow {
+    pub(crate) fn between(old_root: &Node, new_root: &Node) -> Option<Self> {
+        let old_children = old_root.content()?.children();
+        let new_children = new_root.content()?.children();
+        let from = old_children
+            .iter()
+            .zip(new_children)
+            .take_while(|(old, new)| old.shares_storage_with(new))
+            .count();
+        let suffix = old_children[from..]
+            .iter()
+            .rev()
+            .zip(new_children[from..].iter().rev())
+            .take_while(|(old, new)| old.shares_storage_with(new))
+            .count();
+        Some(Self {
+            from,
+            old_to: old_children.len().checked_sub(suffix)?,
+            new_to: new_children.len().checked_sub(suffix)?,
+        })
+    }
+
+    pub(crate) fn from(&self) -> usize {
+        self.from
+    }
+
+    pub(crate) fn old_to(&self) -> usize {
+        self.old_to
+    }
+
+    pub(crate) fn new_to(&self) -> usize {
+        self.new_to
+    }
+}
+
+struct ValidationContribution {
+    report: DocumentValidationReport,
+    depth_counts: Vec<usize>,
+}
+
+impl ValidationContribution {
+    fn subtree(
+        node: &Node,
+        schema: &Schema,
+        limits: &ResourceLimits,
+        depth: usize,
+    ) -> Option<Self> {
+        Some(Self {
+            report: DocumentValidator::validate_subtree_report(node, schema, limits, depth).ok()?,
+            depth_counts: DocumentValidationCertificate::subtree_depth_counts(node, depth),
+        })
+    }
+
+    fn node_itself(
+        node: &Node,
+        schema: &Schema,
+        limits: &ResourceLimits,
+        depth: usize,
+    ) -> Option<Self> {
+        let mut depth_counts = vec![0; depth.checked_add(1)?];
+        depth_counts[depth] = 1;
+        Some(Self {
+            report: DocumentValidator::validate_node_itself_report(node, schema, limits, depth)
+                .ok()?,
+            depth_counts,
+        })
+    }
+}
+
 impl PartialEq for DocumentValidationCertificate {
     fn eq(&self, other: &Self) -> bool {
         let canonical_identity_matches = if self.canonical_fingerprint_materialized
@@ -435,6 +511,7 @@ impl DocumentValidationCertificate {
         self.canonical_fingerprint_materialized
     }
 
+    #[cfg(test)]
     pub(super) fn materialize_canonical_artifact(&mut self) {
         if !self.canonical_fingerprint_materialized {
             self.canonical_fingerprint = self.canonical_artifact.sha256();
@@ -471,44 +548,123 @@ impl DocumentValidationCertificate {
         limits: &ResourceLimits,
     ) -> Option<Self> {
         let depth = crate::transform::DOCUMENT_ROOT_DEPTH.checked_add(block_path.len())?;
-        let old =
-            DocumentValidator::validate_subtree_report(old_block, schema, limits, depth).ok()?;
-        let new =
-            DocumentValidator::validate_subtree_report(new_block, schema, limits, depth).ok()?;
+        let removed = ValidationContribution::subtree(old_block, schema, limits, depth)?;
+        let added = ValidationContribution::subtree(new_block, schema, limits, depth)?;
         crate::transform::validate_subtree_marks(new_block, schema).ok()?;
-        if previous.resource_limits != *limits {
+        previous.with_contributions_replaced(&[removed], &[added], limits)
+    }
+
+    pub(crate) fn certifies_root_window(
+        &self,
+        base: &Document,
+        candidate: &Document,
+        schema: &Schema,
+        limits: &ResourceLimits,
+    ) -> bool {
+        let certified =
+            RootChildWindow::between(base.root(), candidate.root()).is_some_and(|window| {
+                Self::mint_root_window(self, base.root(), candidate.root(), window, schema, limits)
+                    .is_some()
+            });
+        #[cfg(test)]
+        if certified {
+            super::observability::ROOT_WINDOW_CERTIFICATION_COUNT.set(
+                super::observability::ROOT_WINDOW_CERTIFICATION_COUNT
+                    .get()
+                    .saturating_add(1),
+            );
+        }
+        certified
+    }
+
+    pub(super) fn mint_root_window(
+        previous: &Self,
+        old_root: &Node,
+        new_root: &Node,
+        window: RootChildWindow,
+        schema: &Schema,
+        limits: &ResourceLimits,
+    ) -> Option<Self> {
+        let root_depth = crate::transform::DOCUMENT_ROOT_DEPTH;
+        let child_depth = root_depth.checked_add(1)?;
+        if old_root.node_type() != new_root.node_type() {
             return None;
         }
-        let mut depth_counts = previous.depth_counts.to_vec();
-        let old_depths = Self::subtree_depth_counts(old_block, depth);
-        let new_depths = Self::subtree_depth_counts(new_block, depth);
-        depth_counts.resize(depth_counts.len().max(new_depths.len()), 0);
-        for (depth, count) in depth_counts.iter_mut().enumerate() {
-            *count = count
-                .checked_sub(old_depths.get(depth).copied().unwrap_or_default())?
-                .checked_add(new_depths.get(depth).copied().unwrap_or_default())?;
+        let old_children = old_root.content()?;
+        let new_children = new_root.content()?;
+        let mut removed = vec![ValidationContribution::node_itself(
+            old_root, schema, limits, root_depth,
+        )?];
+        for index in window.from..window.old_to {
+            removed.push(ValidationContribution::subtree(
+                old_children.child(index)?,
+                schema,
+                limits,
+                child_depth,
+            )?);
+        }
+        let mut added = vec![ValidationContribution::node_itself(
+            new_root, schema, limits, root_depth,
+        )?];
+        for index in window.from..window.new_to {
+            let child = new_children.child(index)?;
+            crate::transform::validate_subtree_marks(child, schema).ok()?;
+            added.push(ValidationContribution::subtree(
+                child,
+                schema,
+                limits,
+                child_depth,
+            )?);
+        }
+        previous.with_contributions_replaced(&removed, &added, limits)
+    }
+
+    fn with_contributions_replaced(
+        &self,
+        removed: &[ValidationContribution],
+        added: &[ValidationContribution],
+        limits: &ResourceLimits,
+    ) -> Option<Self> {
+        if self.resource_limits != *limits {
+            return None;
+        }
+        let mut depth_counts = self.depth_counts.to_vec();
+        let mut node_count = self.stats.node_count;
+        let mut metadata_bytes = self.metrics.metadata_bytes;
+        let mut validation_work = self.metrics.validation_work;
+        for contribution in removed {
+            node_count = node_count.checked_sub(contribution.report.stats.node_count)?;
+            metadata_bytes =
+                metadata_bytes.checked_sub(contribution.report.metrics.metadata_bytes)?;
+            validation_work =
+                validation_work.checked_sub(contribution.report.metrics.validation_work)?;
+            for (depth, count) in contribution.depth_counts.iter().enumerate() {
+                let slot = depth_counts.get_mut(depth)?;
+                *slot = slot.checked_sub(*count)?;
+            }
+        }
+        for contribution in added {
+            node_count = node_count.checked_add(contribution.report.stats.node_count)?;
+            metadata_bytes =
+                metadata_bytes.checked_add(contribution.report.metrics.metadata_bytes)?;
+            validation_work =
+                validation_work.checked_add(contribution.report.metrics.validation_work)?;
+            if depth_counts.len() < contribution.depth_counts.len() {
+                depth_counts.resize(contribution.depth_counts.len(), 0);
+            }
+            for (depth, count) in contribution.depth_counts.iter().enumerate() {
+                depth_counts[depth] = depth_counts[depth].checked_add(*count)?;
+            }
         }
         let max_depth = depth_counts.iter().rposition(|count| *count > 0)?;
         depth_counts.truncate(max_depth.checked_add(1)?);
         let stats = DocumentStats {
-            node_count: previous
-                .stats
-                .node_count
-                .checked_sub(old.stats.node_count)?
-                .checked_add(new.stats.node_count)?,
+            node_count,
             max_depth,
         };
         let metrics = DocumentValidationMetrics {
-            metadata_bytes: previous
-                .metrics
-                .metadata_bytes
-                .checked_sub(old.metrics.metadata_bytes)?
-                .checked_add(new.metrics.metadata_bytes)?,
-            validation_work: previous
-                .metrics
-                .validation_work
-                .checked_sub(old.metrics.validation_work)?
-                .checked_add(new.metrics.validation_work)?,
+            metadata_bytes,
+            validation_work,
         };
         if stats.node_count > limits.max_document_nodes
             || stats.max_depth > limits.max_document_depth
@@ -521,7 +677,7 @@ impl DocumentValidationCertificate {
             stats,
             depth_counts: depth_counts.into(),
             metrics,
-            ..previous.clone()
+            ..self.clone()
         })
     }
 
@@ -543,7 +699,14 @@ impl DocumentValidationCertificate {
         {
             return None;
         }
-        Some(Self {
+        Some(self.with_unmaterialized_canonical(canonical_artifact))
+    }
+
+    pub(super) fn with_unmaterialized_canonical(
+        self,
+        canonical_artifact: &CanonicalArtifact,
+    ) -> Self {
+        Self {
             canonical_artifact: canonical_artifact.clone(),
             canonical_fingerprint: [0; 32],
             canonical_serialized_len: canonical_artifact.serialized_len(),
@@ -551,7 +714,28 @@ impl DocumentValidationCertificate {
             raw_text_scalars: canonical_artifact.text_scalar_len(),
             raw_text_utf8_bytes: canonical_artifact.text_utf8_bytes(),
             ..self
-        })
+        }
+    }
+
+    pub(super) fn report(&self) -> DocumentValidationReport {
+        DocumentValidationReport {
+            stats: self.stats,
+            metrics: self.metrics,
+        }
+    }
+
+    pub(super) fn resealed(
+        self,
+        document_revision: u64,
+        state_revision: u64,
+        yrs_state_epoch: u64,
+    ) -> Self {
+        Self {
+            document_revision,
+            state_revision,
+            yrs_state_epoch,
+            ..self
+        }
     }
 
     #[allow(clippy::too_many_arguments)]

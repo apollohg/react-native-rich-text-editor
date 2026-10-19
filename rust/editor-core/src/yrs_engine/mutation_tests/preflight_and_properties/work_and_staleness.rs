@@ -21,6 +21,7 @@ fn yrs_scan_accounting_accepts_exact_limit_rejects_one_over_and_amplification() 
                 editing_limits: &editing_limits,
                 document_revision: 0,
                 max_length: None,
+                validation_certificate: None,
             },
             TypedTransaction {
                 request_id: 80,
@@ -112,6 +113,7 @@ fn invalid_envelopes_reject_before_yrs_scan_and_semantic_noop_charges_initial_sc
                 editing_limits: &editing_limits,
                 document_revision: 0,
                 max_length: None,
+                validation_certificate: None,
             },
             TypedTransaction {
                 request_id: 81,
@@ -164,6 +166,7 @@ fn invalid_envelopes_reject_before_yrs_scan_and_semantic_noop_charges_initial_sc
                 editing_limits: &editing_limits,
                 document_revision: 0,
                 max_length: None,
+                validation_certificate: None,
             },
             TypedTransaction {
                 request_id: 82,
@@ -341,6 +344,7 @@ fn unicode_actions_store_checked_utf16_coordinates() {
                 editing_limits: &editing_limits,
                 document_revision: 0,
                 max_length: None,
+                validation_certificate: None,
             },
             TypedTransaction {
                 request_id: 72,
@@ -411,6 +415,7 @@ fn unaffected_branch_identity_and_sticky_resolution_survive_local_edit() {
                 editing_limits: &editing_limits,
                 document_revision: 0,
                 max_length: None,
+                validation_certificate: None,
             },
             TypedTransaction {
                 request_id: 73,
@@ -537,6 +542,7 @@ fn format_actions_split_at_mark_boundaries_inside_one_xml_text() {
                 editing_limits: &editing_limits,
                 document_revision: 0,
                 max_length: None,
+                validation_certificate: None,
             },
             TypedTransaction {
                 request_id: 74,
@@ -596,6 +602,7 @@ fn preflight_rejects_a_target_changed_after_compilation() {
                 editing_limits: &editing_limits,
                 document_revision: 0,
                 max_length: None,
+                validation_certificate: None,
             },
             TypedTransaction {
                 request_id: 75,
@@ -718,6 +725,7 @@ fn document_guard_rejects_hostile_stale_attributes_before_live_attribute_materia
                 editing_limits: &editing_limits,
                 document_revision: 0,
                 max_length: None,
+                validation_certificate: None,
             },
             TypedTransaction {
                 request_id: 177,
@@ -794,6 +802,7 @@ fn replace_mark_then_replace_range_executes_to_preview() {
                 editing_limits: &editing_limits,
                 document_revision: 0,
                 max_length: None,
+                validation_certificate: None,
             },
             TypedTransaction {
                 request_id: 76,
@@ -852,6 +861,7 @@ fn replace_mark_then_replace_range_executes_to_preview() {
                 editing_limits: &editing_limits,
                 document_revision: 0,
                 max_length: None,
+                validation_certificate: None,
             },
             TypedTransaction {
                 request_id: 77,

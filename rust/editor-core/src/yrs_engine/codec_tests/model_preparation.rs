@@ -123,9 +123,7 @@ fn model_preparation_matches_json_nodes_work_limits_and_wire_output() {
             });
             let mut txn = doc.transact_mut();
             let fragment = txn.get_or_insert_xml_fragment("prosemirror");
-            for child in batch.nodes {
-                insert_prepared_node(&fragment, &mut txn, child.index, child.node);
-            }
+            insert_prepared_nodes(&fragment, &mut txn, batch.nodes);
             let value = YrsDocumentCodec::new(&schema, &ResourceLimits::default())
                 .read_json(&fragment, &txn)
                 .unwrap();

@@ -424,7 +424,7 @@ impl DerivedStateCache {
         })
     }
 
-    fn textblock_index_at(&self, document_position: u32) -> Option<usize> {
+    pub(super) fn textblock_index_at(&self, document_position: u32) -> Option<usize> {
         if !self.position_map.has_effective_stored_bounds() {
             return None;
         }

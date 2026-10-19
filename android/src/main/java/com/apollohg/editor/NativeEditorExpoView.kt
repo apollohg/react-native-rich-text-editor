@@ -63,6 +63,7 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
         val editorId: String,
         /** Captured canonical document revision used by TS echo suppression. */
         val documentRevision: String,
+        val stateRevision: ULong?,
         val viewUpdateJSON: String,
         val atomicUpdateJSON: String
     )
@@ -194,7 +195,9 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
         this::dispatchTableSelectionGeometry
     )
     internal var onOutsideTapTraceForTesting: ((String) -> Unit)? = null
-    internal var onRefreshToolbarStateFromEditorSelectionForTesting: (() -> String?)? = null
+    internal var onRefreshToolbarStateFromEditorSelectionForTesting:
+        (() -> EditorSelectionState?)? = null
+    internal val selectionEventActiveState = SelectionEventActiveStateChannel()
     internal var isAttachedToNativeWindow = false
     internal var didApplyAutoFocus = false
     internal var heightBehavior = EditorHeightBehavior.FIXED
@@ -299,7 +302,6 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
     internal var lastReadyEditorId: Long? = null
     internal val pendingEditorUpdateEvents = java.util.ArrayDeque<PendingEditorUpdateEvent>()
     internal val pendingEditorUpdateKeys = mutableSetOf<NativeCommitKey>()
-    internal var pendingEditorUpdateDispatchGeneration = 0
     internal var pendingEditorUpdateDispatchScheduled = false
     internal val pendingEditorErrorEvents = java.util.ArrayDeque<PendingEditorErrorEvent>()
     internal var pendingEditorErrorDispatchGeneration = 0
@@ -345,7 +347,6 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
         keyboardToolbarView.onSelectMentionSuggestion = { suggestion ->
             insertMentionSuggestion(suggestion)
         }
-        keyboardToolbarView.applyState(toolbarState)
         ViewCompat.setOnApplyWindowInsetsListener(keyboardToolbarView) { _, insets ->
             keyboardToolbarImeAnimationController.onApplyWindowInsets(insets)
             insets
@@ -607,11 +608,7 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
         applyRemoteCommitRefreshImpl(expectedEditorId)
 
     override fun onSelectionChanged(anchor: Int, head: Int) {
-        val stateJson = refreshToolbarStateFromEditorSelection()
-        refreshMentionQuery()
-        clearPendingNativeActionRetryIfScopeChanged()
-        schedulePendingPreflightWake()
-        richTextView.refreshRemoteSelections()
+        val selectionState = currentEditorSelectionState()
         val event = mutableMapOf<String, Any>(
             "anchor" to anchor,
             "head" to head,
@@ -620,19 +617,23 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
         lastDocumentVersion?.let {
             event["documentVersion"] = it
         }
-        if (stateJson != null) {
-            event["stateJson"] = stateJson
+        if (selectionState != null) {
+            event["stateJson"] = selectionEventActiveState.stateJson(selectionState)
         }
         onSelectionChangeForTesting?.invoke(event) ?: onSelectionChange(event)
+        selectionState?.let(::presentToolbarState)
+        refreshMentionQuery()
+        clearPendingNativeActionRetryIfScopeChanged()
+        schedulePendingPreflightWake()
+        richTextView.refreshRemoteSelections()
     }
 
     override fun onEditorUpdate(updateJSON: String) {
         val documentRevision = documentVersionFromUpdateJSON(updateJSON)
         if (documentRevision == null) {
-            richTextView.editorEditText.recordImeTraceForTesting(
-                "nativeViewEditorUpdateSkipped",
+            richTextView.editorEditText.recordImeTraceForTesting("nativeViewEditorUpdateSkipped") {
                 "reason=invalidDocumentRevision jsonLength=${updateJSON.length}"
-            )
+            }
             return
         }
         renderedDocumentRevision = documentRevision
@@ -641,10 +642,9 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
         val cachedAtomicUpdateJSON =
             adapter?.atomicRenderJson(matchingDocumentRevision = documentRevision)
         if (adapter != null && cachedAtomicUpdateJSON == null) {
-            richTextView.editorEditText.recordImeTraceForTesting(
-                "nativeViewEditorUpdateSkipped",
+            richTextView.editorEditText.recordImeTraceForTesting("nativeViewEditorUpdateSkipped") {
                 "reason=missingAtomicSnapshot documentRevision=$documentRevision"
-            )
+            }
             return
         }
         val atomicUpdateJSON = cachedAtomicUpdateJSON ?: updateJSON
@@ -653,6 +653,7 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
                 PendingEditorUpdateEvent(
                     editorId = sourceEditorId,
                     documentRevision = documentRevision,
+                    stateRevision = adapter?.stateRevision,
                     viewUpdateJSON = updateJSON,
                     atomicUpdateJSON = atomicUpdateJSON
                 ),
@@ -663,6 +664,7 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
         val event = PendingEditorUpdateEvent(
             editorId = sourceEditorId,
             documentRevision = documentRevision,
+            stateRevision = adapter?.stateRevision,
             viewUpdateJSON = updateJSON,
             atomicUpdateJSON = atomicUpdateJSON
         )
@@ -677,10 +679,9 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
             return
         }
         pendingEditorUpdateEvents.addLast(event)
-        richTextView.editorEditText.recordImeTraceForTesting(
-            "nativeViewEditorUpdateQueued",
+        richTextView.editorEditText.recordImeTraceForTesting("nativeViewEditorUpdateQueued") {
             "queue=${pendingEditorUpdateEvents.size} jsonLength=${updateJSON.length}"
-        )
+        }
         schedulePendingEditorUpdateDispatch()
     }
 
@@ -886,7 +887,6 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
         internal const val OUTSIDE_TAP_BLUR_DELAY_MS = 100L
         internal const val OUTSIDE_TAP_HANDLER_INSTALL_RETRY_DELAY_MS = 64L
         internal const val NATIVE_ACTION_RETRY_DELAY_MS = 16L
-        internal const val EDITOR_UPDATE_EVENT_DEBOUNCE_MS = 64L
         internal const val PENDING_UPDATE_RECOVERY_RETRY_DELAY_MS = 250L
         internal const val MAX_NATIVE_ACTION_RETRY_ATTEMPTS = 3
         internal const val MAX_PENDING_UPDATE_RETRY_ATTEMPTS = 5

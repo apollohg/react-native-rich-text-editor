@@ -22,7 +22,14 @@ extension NativeEditorExpoView {
                 input.reloadInputViews()
             }
         }
+        buildAccessoryToolbarButtonsIfPresented()
         markAccessoryMutationSucceeded(.updateAccessoryToolbarVisibility)
+    }
+
+    func buildAccessoryToolbarButtonsIfPresented() {
+        let input = richTextView.activeTextInput
+        guard input.isFirstResponder, input.inputAccessoryView === accessoryToolbar else { return }
+        accessoryToolbar.rebuildButtonsIfNeeded()
     }
 
     func refreshSystemAssistantToolbarIfNeeded() {

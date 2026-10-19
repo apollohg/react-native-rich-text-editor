@@ -304,9 +304,11 @@ impl PreparedDerivedEvidence {
         {
             return None;
         }
-        self.validation_certificate.document_revision = next_document_revision;
-        self.validation_certificate.state_revision = next_state_revision;
-        self.validation_certificate.yrs_state_epoch = next_yrs_state_epoch;
+        self.validation_certificate = self.validation_certificate.resealed(
+            next_document_revision,
+            next_state_revision,
+            next_yrs_state_epoch,
+        );
         if let Some(index) = self.localized_text_index.as_mut() {
             index.document_revision = next_document_revision;
             index.canonical_fingerprint = self.validation_certificate.canonical_fingerprint;

@@ -1549,3 +1549,33 @@ fn localized_table_cell_lookup_rejects_boundaries_and_row_gaps() {
         );
     }
 }
+
+#[test]
+fn cached_textblocks_and_voids_allocate_exactly_their_render_elements() {
+    let schema = tiptap_schema();
+    let limits = ResourceLimits::default();
+    let bold = || vec![Mark::new("bold".into(), HashMap::new())];
+    let document = doc(vec![
+        paragraph(vec![
+            text("plain "),
+            Node::text("bold".into(), bold()),
+            text(" middle "),
+            hard_break(),
+            Node::text("tail".into(), bold()),
+            text(" end"),
+            text("!"),
+        ]),
+        paragraph(vec![text("single run")]),
+        paragraph(vec![]),
+        horizontal_rule(),
+    ]);
+    let cache = CachedRenderBlocks::build(&document, &schema, &limits).unwrap();
+    for (index, block) in cache.blocks.iter().enumerate() {
+        assert_eq!(
+            block.elements.capacity(),
+            block.elements.len(),
+            "top-level block {index} retains spare render element capacity: {:?}",
+            block.elements
+        );
+    }
+}

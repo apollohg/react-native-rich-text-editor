@@ -125,6 +125,13 @@ pub struct ContentRule {
     start: usize,
     accept: usize,
     symbols: BTreeSet<String>,
+    compact_tables: std::sync::OnceLock<CompactRuleTables>,
+}
+
+#[derive(Debug, Clone)]
+struct CompactRuleTables {
+    closures: Vec<u64>,
+    state_charges: Vec<usize>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -181,6 +188,7 @@ impl ContentRule {
             start,
             accept,
             symbols,
+            compact_tables: std::sync::OnceLock::new(),
         })
     }
 
@@ -215,27 +223,112 @@ impl ContentRule {
     where
         F: FnMut(&T, &str) -> bool,
     {
+        self.matches_keyed_with_budget(children, std::ptr::from_ref, symbol_matches, budget)
+    }
+
+    pub(crate) fn matches_keyed_with_budget<'children, T, K, FK, F>(
+        &self,
+        children: &'children [T],
+        child_key: FK,
+        symbol_matches: F,
+        budget: &WorkBudget,
+    ) -> Result<bool, ()>
+    where
+        K: PartialEq,
+        FK: FnMut(&'children T) -> K,
+        F: FnMut(&T, &str) -> bool,
+    {
         if self.states.len() <= COMPACT_MATCH_STATES {
-            self.matches_with_states::<CompactMatchingStates, _, _>(
+            self.compact_matches(children, child_key, symbol_matches, budget)
+        } else {
+            self.matches_with_states::<HashSet<usize>, _, _>(
                 children,
+                self.start,
                 symbol_matches,
                 budget,
             )
-        } else {
-            self.matches_with_states::<HashSet<usize>, _, _>(children, symbol_matches, budget)
         }
+    }
+
+    fn compact_matches<'children, T, K, FK, F>(
+        &self,
+        children: &'children [T],
+        mut child_key: FK,
+        symbol_matches: F,
+        budget: &WorkBudget,
+    ) -> Result<bool, ()>
+    where
+        K: PartialEq,
+        FK: FnMut(&'children T) -> K,
+        F: FnMut(&T, &str) -> bool,
+    {
+        let tables = self.compact_tables();
+        let closure_charge = |seeds: u64, closed: u64| {
+            seeds.count_ones() as usize
+                + CompactMatchingStates(closed)
+                    .map(|state| self.states[state].epsilon.len())
+                    .sum::<usize>()
+        };
+        let mut steps = CompactChildSteps::new(self, symbol_matches, &tables.closures);
+        let mut current = steps.closures[self.start];
+        if !budget.consume_n(closure_charge(1u64 << self.start, current)) {
+            return Err(());
+        }
+        for child in children {
+            let step_charge = CompactMatchingStates(current)
+                .map(|state| tables.state_charges[state])
+                .sum();
+            if !budget.consume_n(step_charge) {
+                return Err(());
+            }
+            let row = steps.row(child_key(child), child);
+            let next = CompactMatchingStates(current).fold(0, |next, state| next | row.raw[state]);
+            if next == 0 {
+                return Ok(false);
+            }
+            let closed =
+                CompactMatchingStates(next).fold(0, |closed, state| closed | steps.closures[state]);
+            if !budget.consume_n(closure_charge(next, closed)) {
+                return Err(());
+            }
+            current = closed;
+        }
+        Ok(current & 1u64 << self.accept != 0)
+    }
+
+    fn compact_tables(&self) -> &CompactRuleTables {
+        self.compact_tables.get_or_init(|| CompactRuleTables {
+            closures: self
+                .compact_closures(&WorkBudget::new(usize::MAX))
+                .expect("an unlimited budget completes every epsilon closure"),
+            state_charges: self
+                .states
+                .iter()
+                .map(|state| 1 + state.transitions.len())
+                .collect(),
+        })
+    }
+
+    fn compact_closures(&self, budget: &WorkBudget) -> Result<Vec<u64>, ()> {
+        (0..self.states.len())
+            .map(|state| {
+                self.epsilon_closure_with_states::<CompactMatchingStates, _>([state], budget)
+                    .map(|closure| closure.0)
+            })
+            .collect()
     }
 
     fn matches_with_states<S: MatchingStates, T, F>(
         &self,
         children: &[T],
+        initial_state: usize,
         mut symbol_matches: F,
         budget: &WorkBudget,
     ) -> Result<bool, ()>
     where
         F: FnMut(&T, &str) -> bool,
     {
-        let mut current = self.epsilon_closure_with_states::<S, _>([self.start], budget)?;
+        let mut current = self.epsilon_closure_with_states::<S, _>([initial_state], budget)?;
         for child in children {
             let mut next = S::default();
             for state in current {
@@ -257,6 +350,127 @@ impl ContentRule {
             current = self.epsilon_closure_with_states(next, budget)?;
         }
         Ok(current.contains_state(self.accept))
+    }
+
+    pub(crate) fn insertion_symbols_with_budget<T, F>(
+        &self,
+        prefix: &[T],
+        suffix: &[T],
+        symbol_matches: F,
+        budget: &WorkBudget,
+    ) -> Result<Vec<&str>, ()>
+    where
+        T: PartialEq,
+        F: FnMut(&T, &str) -> bool,
+    {
+        if self.states.len() <= COMPACT_MATCH_STATES {
+            self.compact_insertion_symbols(prefix, suffix, symbol_matches, budget)
+        } else {
+            self.insertion_symbols_with_states::<HashSet<usize>, _, _>(
+                prefix,
+                suffix,
+                symbol_matches,
+                budget,
+            )
+        }
+    }
+
+    fn compact_insertion_symbols<T, F>(
+        &self,
+        prefix: &[T],
+        suffix: &[T],
+        symbol_matches: F,
+        budget: &WorkBudget,
+    ) -> Result<Vec<&str>, ()>
+    where
+        T: PartialEq,
+        F: FnMut(&T, &str) -> bool,
+    {
+        let mut steps =
+            CompactChildSteps::new(self, symbol_matches, self.compact_closures(budget)?);
+        let mut reachable = steps.closures[self.start];
+        for child in prefix {
+            if reachable == 0 {
+                break;
+            }
+            if !budget.consume() {
+                return Err(());
+            }
+            let advanced = &steps.row(child, child).closed;
+            reachable =
+                CompactMatchingStates(reachable).fold(0, |next, state| next | advanced[state]);
+        }
+        let mut accepting = 1u64 << self.accept;
+        for child in suffix.iter().rev() {
+            if accepting == 0 {
+                break;
+            }
+            if !budget.consume() {
+                return Err(());
+            }
+            accepting = steps
+                .row(child, child)
+                .closed
+                .iter()
+                .enumerate()
+                .filter(|(_, next)| **next & accepting != 0)
+                .fold(0, |states, (state, _)| states | 1u64 << state);
+        }
+        let mut symbols = BTreeSet::new();
+        for state in CompactMatchingStates(reachable) {
+            for (symbol, target) in &self.states[state].transitions {
+                if !budget.consume() {
+                    return Err(());
+                }
+                if steps.closures[*target] & accepting != 0 {
+                    symbols.insert(symbol.as_str());
+                }
+            }
+        }
+        Ok(symbols.into_iter().collect())
+    }
+
+    fn insertion_symbols_with_states<S: MatchingStates, T, F>(
+        &self,
+        prefix: &[T],
+        suffix: &[T],
+        mut symbol_matches: F,
+        budget: &WorkBudget,
+    ) -> Result<Vec<&str>, ()>
+    where
+        F: FnMut(&T, &str) -> bool,
+    {
+        let states =
+            self.states_after_with_states::<S, _, _>(prefix, &mut symbol_matches, budget)?;
+        let mut continuations = HashMap::new();
+        let mut symbols = BTreeSet::new();
+        for state in states {
+            if !budget.consume() {
+                return Err(());
+            }
+            for (symbol, target) in &self.states[state].transitions {
+                if !budget.consume() {
+                    return Err(());
+                }
+                let accepts_suffix = match continuations.get(target) {
+                    Some(accepted) => *accepted,
+                    None => {
+                        let accepted = self.matches_with_states::<S, _, _>(
+                            suffix,
+                            *target,
+                            &mut symbol_matches,
+                            budget,
+                        )?;
+                        continuations.insert(*target, accepted);
+                        accepted
+                    }
+                };
+                if accepts_suffix {
+                    symbols.insert(symbol.as_str());
+                }
+            }
+        }
+        Ok(symbols.into_iter().collect())
     }
 
     /// Return symbols accepted immediately after the supplied prefix.
@@ -450,9 +664,21 @@ impl ContentRule {
     where
         F: FnMut(&T, &str) -> bool,
     {
-        let mut current = self.epsilon_closure_budgeted([self.start], budget)?;
+        self.states_after_with_states(children, symbol_matches, budget)
+    }
+
+    fn states_after_with_states<S: MatchingStates, T, F>(
+        &self,
+        children: &[T],
+        symbol_matches: &mut F,
+        budget: &WorkBudget,
+    ) -> Result<S, ()>
+    where
+        F: FnMut(&T, &str) -> bool,
+    {
+        let mut current = self.epsilon_closure_with_states::<S, _>([self.start], budget)?;
         for child in children {
-            let mut next = HashSet::new();
+            let mut next = S::default();
             for state in current {
                 if !budget.consume() {
                     return Err(());
@@ -462,14 +688,14 @@ impl ContentRule {
                         return Err(());
                     }
                     if symbol_matches(child, symbol) {
-                        next.insert(*target);
+                        next.insert_state(*target);
                     }
                 }
             }
             if next.is_empty() {
                 return Ok(next);
             }
-            current = self.epsilon_closure_budgeted(next, budget)?;
+            current = self.epsilon_closure_with_states(next, budget)?;
         }
         Ok(current)
     }
@@ -502,6 +728,78 @@ impl ContentRule {
             }
         }
         Ok(result)
+    }
+}
+
+const COMPACT_STEP_MEMO_ROWS: usize = 16;
+
+struct CompactChildRow {
+    raw: Vec<u64>,
+    closed: Vec<u64>,
+}
+
+struct CompactChildSteps<'rule, K, F> {
+    rule: &'rule ContentRule,
+    symbol_matches: F,
+    closures: std::borrow::Cow<'rule, [u64]>,
+    rows: Vec<(K, CompactChildRow)>,
+    last: usize,
+    next_eviction: usize,
+}
+
+impl<'rule, K: PartialEq, F> CompactChildSteps<'rule, K, F> {
+    fn new(
+        rule: &'rule ContentRule,
+        symbol_matches: F,
+        closures: impl Into<std::borrow::Cow<'rule, [u64]>>,
+    ) -> Self {
+        Self {
+            rule,
+            symbol_matches,
+            closures: closures.into(),
+            rows: Vec::with_capacity(COMPACT_STEP_MEMO_ROWS),
+            last: 0,
+            next_eviction: 0,
+        }
+    }
+
+    fn row<T>(&mut self, key: K, child: &T) -> &CompactChildRow
+    where
+        F: FnMut(&T, &str) -> bool,
+    {
+        let known = match self.rows.get(self.last) {
+            Some((previous, _)) if *previous == key => Some(self.last),
+            _ => self.rows.iter().position(|(known, _)| *known == key),
+        };
+        self.last = match known {
+            Some(index) => index,
+            None => {
+                let mut raw = Vec::with_capacity(self.rule.states.len());
+                let mut closed = Vec::with_capacity(self.rule.states.len());
+                for state in &self.rule.states {
+                    let (mut targets, mut closure) = (0u64, 0u64);
+                    for (symbol, target) in &state.transitions {
+                        if (self.symbol_matches)(child, symbol) {
+                            targets |= 1u64 << target;
+                            closure |= self.closures[*target];
+                        }
+                    }
+                    raw.push(targets);
+                    closed.push(closure);
+                }
+                let row = (key, CompactChildRow { raw, closed });
+                if self.rows.len() < COMPACT_STEP_MEMO_ROWS {
+                    self.rows.push(row);
+                    self.rows.len() - 1
+                } else {
+                    let index = self.next_eviction;
+                    self.next_eviction = (index + 1) % COMPACT_STEP_MEMO_ROWS;
+                    self.rows[index] = row;
+                    index
+                }
+            }
+        };
+        &self.rows[self.last].1
     }
 }
 

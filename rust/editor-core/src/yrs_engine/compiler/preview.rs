@@ -1,6 +1,7 @@
 use crate::model::Document;
 use crate::position::update::UpdateMode;
 use crate::position::PositionMap;
+use crate::render::RENDERED_BLOCK_SEPARATOR;
 use crate::transform::{DocumentValidator, Step, StepMap};
 use crate::yrs_engine;
 use crate::yrs_engine::canonical::{CanonicalArtifact, CanonicalSchemaContext};
@@ -8,11 +9,14 @@ use crate::yrs_engine::compiler::admission::PreparedSemanticAdmission;
 #[cfg(test)]
 use crate::yrs_engine::compiler::observability::FORCE_LOCALIZED_SEMANTIC_ALLOCATION_FAILURE;
 use crate::yrs_engine::compiler::{
-    document_text_bytes, CompilationContext, CompiledDocumentDerivations, PreparedSemanticContext,
+    document_text_bytes, node_text_bytes, CachedCompilationView, CompilationContext,
+    CompiledDocumentDerivations, PreparedSemanticContext,
 };
 use crate::yrs_engine::derived_state::ValidatedLocalizedTextblockEditAdmission;
 use crate::yrs_engine::editing_limits::CheckedWork;
-use crate::yrs_engine::{OperationError, OperationResult, TypedOperation, TypedTransaction};
+use crate::yrs_engine::{
+    scalar_offset_to_byte, OperationError, OperationResult, TypedOperation, TypedTransaction,
+};
 use std::sync::Arc;
 
 pub(super) struct LocalizedSemanticCompilation {
@@ -28,7 +32,7 @@ pub(super) struct LocalizedSemanticStep {
 
 pub(super) struct LocalizedSemanticDerivations {
     pub(super) affected_top_level_blocks: Vec<usize>,
-    pub(super) rendered_text: String,
+    pub(super) rendered_text: Arc<str>,
     pub(super) rendered_scalars: u32,
     pub(super) document_text_bytes: usize,
     pub(super) document_node_count: usize,
@@ -116,31 +120,41 @@ pub(super) fn validate_preview(
     preview: &Document,
     context: CompilationContext<'_>,
 ) -> OperationResult<()> {
-    DocumentValidator::validate(preview, context.schema, context.resource_limits).map_err(
-        |error| {
-            let field = if error.code() == "DOCUMENT_LIMIT_EXCEEDED" {
-                "document"
-            } else {
-                "content"
-            };
-            if error.code() == "DOCUMENT_LIMIT_EXCEEDED" {
-                OperationError::document_limit_exceeded(
-                    request_id,
-                    operation_index,
-                    field,
-                    error.limit.unwrap_or(0) as u64,
-                    error.actual.unwrap_or(0) as u64,
-                )
-            } else {
-                OperationError::document_invalid(
-                    request_id,
-                    operation_index,
-                    field,
-                    error.to_string(),
-                )
-            }
-        },
-    )?;
+    let certified = context.validation_certificate.is_some_and(|certificate| {
+        certificate.certifies_root_window(
+            context.document,
+            preview,
+            context.schema,
+            context.resource_limits,
+        )
+    });
+    if !certified {
+        DocumentValidator::validate(preview, context.schema, context.resource_limits).map_err(
+            |error| {
+                let field = if error.code() == "DOCUMENT_LIMIT_EXCEEDED" {
+                    "document"
+                } else {
+                    "content"
+                };
+                if error.code() == "DOCUMENT_LIMIT_EXCEEDED" {
+                    OperationError::document_limit_exceeded(
+                        request_id,
+                        operation_index,
+                        field,
+                        error.limit.unwrap_or(0) as u64,
+                        error.actual.unwrap_or(0) as u64,
+                    )
+                } else {
+                    OperationError::document_invalid(
+                        request_id,
+                        operation_index,
+                        field,
+                        error.to_string(),
+                    )
+                }
+            },
+        )?;
+    }
     if let Some(limit) = context.max_length {
         let actual = preview.root().text_content().chars().count() as u64;
         if actual > limit as u64 {
@@ -156,17 +170,6 @@ pub(super) fn validate_preview(
     Ok(())
 }
 
-pub(super) fn scalar_byte_offset(text: &str, scalar_offset: u32) -> Option<usize> {
-    let mut scalars = 0u32;
-    for (byte, _) in text.char_indices() {
-        if scalars == scalar_offset {
-            return Some(byte);
-        }
-        scalars = scalars.checked_add(1)?;
-    }
-    (scalars == scalar_offset).then_some(text.len())
-}
-
 pub(super) fn try_localized_semantic_compilation(
     context: CompilationContext<'_>,
     transaction: &TypedTransaction,
@@ -180,7 +183,7 @@ pub(super) fn try_localized_semantic_compilation(
     let old_block = context.document.node_at(validated.block_path())?;
     let old_text = old_block.text_content();
     let original_start_scalar = validated.rendered_scalar_position();
-    let rendered_byte = scalar_byte_offset(validated.rendered_text(), original_start_scalar)?;
+    let rendered_byte = scalar_offset_to_byte(validated.rendered_text(), original_start_scalar)?;
     let placeholder = crate::render::empty_text_block_placeholder_string();
     let placeholder_scalars = u32::try_from(placeholder.chars().count()).ok()?;
     let prefix_end = if validated.creates_leaf() {
@@ -191,7 +194,8 @@ pub(super) fn try_localized_semantic_compilation(
     } else {
         rendered_byte
     };
-    let suffix_start = scalar_byte_offset(validated.rendered_text(), validated.range_end_scalar())?;
+    let suffix_start =
+        scalar_offset_to_byte(validated.rendered_text(), validated.range_end_scalar())?;
     let removed_rendered_scalars = if validated.creates_leaf() {
         placeholder_scalars
     } else {
@@ -270,8 +274,7 @@ pub(super) fn try_localized_semantic_compilation(
         current_artifact = CanonicalArtifact::derive_localized(
             &current_artifact,
             &preview,
-            current_document.node_at(validated.block_path())?,
-            block,
+            validated.block_path(),
         )?;
         current_document = preview.clone();
         steps.push_back(LocalizedSemanticStep {
@@ -280,7 +283,7 @@ pub(super) fn try_localized_semantic_compilation(
             step_map,
             derivations: LocalizedSemanticDerivations {
                 affected_top_level_blocks,
-                rendered_text,
+                rendered_text: rendered_text.into(),
                 rendered_scalars: validated
                     .base_rendered_scalars()
                     .checked_sub(removed_rendered_scalars)?
@@ -294,11 +297,132 @@ pub(super) fn try_localized_semantic_compilation(
     Some(LocalizedSemanticCompilation { steps })
 }
 
+struct PreviewTextMetrics {
+    rendered_text: String,
+    rendered_scalars: u32,
+    document_text_bytes: usize,
+    document_node_count: usize,
+}
+
+fn root_window_preview_text_metrics(
+    schema: &crate::schema::Schema,
+    base: CachedCompilationView<'_>,
+    preview: &Document,
+) -> Option<PreviewTextMetrics> {
+    let window =
+        yrs_engine::derived_state::RootChildWindow::between(base.document.root(), preview.root())?;
+    let old_window = base
+        .document
+        .root()
+        .content()?
+        .children()
+        .get(window.from()..window.old_to())?;
+    let new_window = preview
+        .root()
+        .content()?
+        .children()
+        .get(window.from()..window.new_to())?;
+    let map = base.position_map;
+    let blocks = map.block_range_for_root_children(
+        u32::try_from(window.from()).ok()?..u32::try_from(window.old_to()).ok()?,
+    );
+    let window_text = crate::render::rendered_root_children_text(
+        preview,
+        schema,
+        window.from()..window.new_to(),
+    )?;
+    let prefix_scalars = match blocks.start.checked_sub(1) {
+        Some(last_before) => {
+            let block = map.block(last_before)?;
+            Some(
+                map.effective_scalar_start(last_before)
+                    .checked_add(block.scalar_prefix_len)?
+                    .checked_add(block.scalar_len)?,
+            )
+        }
+        None => None,
+    };
+    let suffix_start =
+        (blocks.end < map.block_count()).then(|| map.effective_scalar_start(blocks.end));
+    let prefix_byte = prefix_scalars
+        .map(|scalars| scalar_offset_to_byte(base.rendered_text, scalars))
+        .unwrap_or(Some(0))?;
+    let suffix_byte = match suffix_start {
+        Some(scalars) => prefix_byte.checked_add(scalar_offset_to_byte(
+            base.rendered_text.get(prefix_byte..)?,
+            scalars.checked_sub(prefix_scalars.unwrap_or(0))?,
+        )?)?,
+        None => base.rendered_text.len(),
+    };
+    let segments = [
+        prefix_scalars.map(|_| base.rendered_text.get(..prefix_byte)),
+        window_text.as_deref().map(Some),
+        suffix_start.map(|_| base.rendered_text.get(suffix_byte..)),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Option<Vec<&str>>>()?;
+    let mut rendered_text = String::new();
+    rendered_text
+        .try_reserve_exact(
+            segments
+                .iter()
+                .try_fold(segments.len().saturating_sub(1), |total, segment| {
+                    total.checked_add(segment.len())
+                })?,
+        )
+        .ok()?;
+    for (index, segment) in segments.iter().enumerate() {
+        if index > 0 {
+            rendered_text.push(RENDERED_BLOCK_SEPARATOR);
+        }
+        rendered_text.push_str(segment);
+    }
+    let window_text_bytes = |nodes: &[crate::model::Node]| {
+        nodes.iter().try_fold(0usize, |total, node| {
+            total.checked_add(node_text_bytes(node)?)
+        })
+    };
+    let window_node_count = |nodes: &[crate::model::Node]| {
+        nodes.iter().try_fold(0usize, |total, node| {
+            total.checked_add(crate::editor_state::document_node_count(node))
+        })
+    };
+    Some(PreviewTextMetrics {
+        rendered_scalars: u32::try_from(segments.len().saturating_sub(1))
+            .ok()?
+            .checked_add(prefix_scalars.unwrap_or(0))?
+            .checked_add(
+                u32::try_from(
+                    window_text
+                        .as_deref()
+                        .map_or(0, |text| text.chars().count()),
+                )
+                .ok()?,
+            )?
+            .checked_add(
+                suffix_start
+                    .map(|start| base.rendered_scalars.checked_sub(start))
+                    .unwrap_or(Some(0))?,
+            )?,
+        rendered_text,
+        document_text_bytes: base
+            .document_text_bytes
+            .checked_sub(window_text_bytes(old_window)?)?
+            .checked_add(window_text_bytes(new_window)?)?,
+        document_node_count: base
+            .document_node_count
+            .checked_sub(window_node_count(old_window)?)?
+            .checked_add(window_node_count(new_window)?)?,
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn derive_preview_document(
     request_id: u64,
     context: CompilationContext<'_>,
     base_position_map: &PositionMap,
+    cached_view: Option<CachedCompilationView<'_>>,
     preview: &Document,
     composed_map: &StepMap,
     position_update_mode: UpdateMode,
@@ -322,14 +446,42 @@ pub(super) fn derive_preview_document(
     #[cfg(test)]
     yrs_engine::observability::record_position_map_compaction();
     yrs_engine::derived_state::record_preview_rendered_text_derivation();
-    let rendered_text = crate::render::rendered_text(preview, context.schema);
-    let rendered_scalars = u32::try_from(rendered_text.chars().count()).map_err(|_| {
-        OperationError::engine_invariant_failed(
-            request_id,
-            None,
-            "preview rendered scalar count exceeds the position domain",
-        )
-    })?;
+    let PreviewTextMetrics {
+        rendered_text,
+        rendered_scalars,
+        document_text_bytes,
+        document_node_count,
+    } = match cached_view
+        .and_then(|base| root_window_preview_text_metrics(context.schema, base, preview))
+    {
+        Some(spliced) => spliced,
+        None => {
+            let rendered_text = crate::render::rendered_text(preview, context.schema);
+            let rendered_scalars = u32::try_from(rendered_text.chars().count()).map_err(|_| {
+                OperationError::engine_invariant_failed(
+                    request_id,
+                    None,
+                    "preview rendered scalar count exceeds the position domain",
+                )
+            })?;
+            let document_text_bytes = document_text_bytes(preview).ok_or_else(|| {
+                OperationError::engine_invariant_failed(
+                    request_id,
+                    None,
+                    "preview document text byte metric overflowed",
+                )
+            })?;
+            #[cfg(test)]
+            yrs_engine::observability::record_document_node_count_scan();
+            let document_node_count = crate::editor_state::document_node_count(preview.root());
+            PreviewTextMetrics {
+                rendered_text,
+                rendered_scalars,
+                document_text_bytes,
+                document_node_count,
+            }
+        }
+    };
     if rendered_scalars != position_map.total_scalars() {
         return Err(OperationError::engine_invariant_failed(
             request_id,
@@ -337,20 +489,10 @@ pub(super) fn derive_preview_document(
             "preview rendered text and position map have different scalar lengths",
         ));
     }
-    let document_text_bytes = document_text_bytes(preview).ok_or_else(|| {
-        OperationError::engine_invariant_failed(
-            request_id,
-            None,
-            "preview document text byte metric overflowed",
-        )
-    })?;
-    #[cfg(test)]
-    yrs_engine::observability::record_document_node_count_scan();
-    let document_node_count = crate::editor_state::document_node_count(preview.root());
     Ok(CompiledDocumentDerivations {
         identity_seal: Arc::new(()),
         position_map,
-        rendered_text,
+        rendered_text: rendered_text.into(),
         rendered_scalars,
         document_text_bytes,
         document_node_count,

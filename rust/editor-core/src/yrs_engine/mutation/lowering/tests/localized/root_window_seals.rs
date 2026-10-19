@@ -65,7 +65,7 @@ fn localized_root_window_rejects_exact_stale_seal_matrix() {
         LocalizedRootWindowLocator::mint(
             726,
             semantic,
-            semantic,
+            Some(semantic),
             &replacement,
             &seed,
             txn,
@@ -219,7 +219,7 @@ fn localized_root_window_rejects_exact_stale_seal_matrix() {
         let locator = LocalizedRootWindowLocator::mint(
             726,
             &document,
-            &document,
+            Some(&document),
             &replacement,
             &seed,
             &txn,
@@ -287,7 +287,7 @@ fn localized_root_window_fails_closed_for_invalid_shapes_and_shallow_drift() {
     .unwrap();
     for (case, parent_path, from_child, to_child) in [
         ("nonroot", vec![0], 0, 1),
-        ("empty", vec![], 0, 0),
+        ("inverted", vec![], 1, 0),
         ("outOfBounds", vec![], 0, 2),
     ] {
         let replacement = crate::yrs_engine::StructuralReplacement::new(
@@ -301,7 +301,7 @@ fn localized_root_window_fails_closed_for_invalid_shapes_and_shallow_drift() {
             LocalizedRootWindowLocator::mint(
                 721,
                 &document,
-                &document,
+                Some(&document),
                 &replacement,
                 &seed,
                 &txn,
@@ -354,7 +354,7 @@ fn localized_root_window_fails_closed_for_invalid_shapes_and_shallow_drift() {
         let locator = LocalizedRootWindowLocator::mint(
             722,
             &semantic,
-            &semantic,
+            Some(&semantic),
             &replacement,
             &wire_seed,
             &wire_txn,
@@ -455,14 +455,14 @@ fn localized_root_window_fails_closed_for_invalid_shapes_and_shallow_drift() {
     let MutationLookupSeedState::Ready(payload) = &mut stale_width_seed.state else {
         panic!("freshly built lookup seed must be ready")
     };
-    payload.path_parent_widths = Arc::new(HashMap::from([(
+    payload.path_parent_widths = LookupEntries::new(HashMap::from([(
         AsRef::<Branch>::as_ref(&fragment).id(),
         2,
     )]));
     let locator = LocalizedRootWindowLocator::mint(
         721,
         &document,
-        &document,
+        Some(&document),
         &replacement,
         &stale_width_seed,
         &txn,

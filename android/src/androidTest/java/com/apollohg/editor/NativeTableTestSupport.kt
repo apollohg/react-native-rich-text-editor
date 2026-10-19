@@ -103,15 +103,19 @@ internal fun Instrumentation.tableCellScreenPoint(
 
 internal fun Instrumentation.saveDeviceScreenshot(filename: String): File {
     waitForIdleSync()
-    val directory = requireNotNull(targetContext.getExternalFilesDir(null))
-    val file = File(directory, filename)
     val bitmap = requireNotNull(uiAutomation.takeScreenshot())
-    try {
-        file.outputStream().use {
-            assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, PNG_QUALITY, it))
-        }
+    return try {
+        saveDeviceScreenshot(filename, bitmap)
     } finally {
         bitmap.recycle()
+    }
+}
+
+internal fun Instrumentation.saveDeviceScreenshot(filename: String, bitmap: Bitmap): File {
+    val directory = requireNotNull(targetContext.getExternalFilesDir(null))
+    val file = File(directory, filename)
+    file.outputStream().use {
+        assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, PNG_QUALITY, it))
     }
     return file
 }

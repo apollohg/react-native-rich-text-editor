@@ -180,26 +180,16 @@ fn prepared_candidate_cache_reuses_one_exact_store_across_successful_insert_burs
             TransactionOrigin::DocumentImport,
         )
         .unwrap();
-    let imported_cache = engine
-        .prepared_candidate_cache_store_token_for_test()
-        .expect("successful bounded import prepares a candidate cache");
-    assert!(engine
-        .derived_state
-        .as_ref()
-        .unwrap()
-        .mutation_lookup_seed
-        .is_unavailable_for_test());
+    assert_imported_lookup_seed_is_ready_without_replica(&engine, "json import");
     reset_prepared_candidate_cache_counts_for_test();
 
     engine
         .apply_typed_transaction(insert_transaction(&engine, 70_103))
         .unwrap();
     assert_prepared_candidate_state_vector_exact(&engine);
-    assert_eq!(
-        engine.prepared_candidate_cache_store_token_for_test(),
-        Some(imported_cache),
-        "the exact prepared candidate becomes the next sealed cache"
-    );
+    let bootstrapped = engine
+        .prepared_candidate_cache_store_token_for_test()
+        .expect("the first local edit retains its proving replica");
     let cached_encoded = super::encode_state_bounded(
         &engine.prepared_candidate_cache.as_ref().unwrap().doc,
         &engine.resource_limits,
@@ -213,15 +203,15 @@ fn prepared_candidate_cache_reuses_one_exact_store_across_successful_insert_burs
 
     assert_eq!(
         engine.prepared_candidate_cache_store_token_for_test(),
-        Some(imported_cache)
+        Some(bootstrapped),
+        "the exact prepared candidate becomes the next cache"
     );
-    assert_eq!(take_prepared_candidate_cache_counts_for_test(), (2, 0));
+    assert_eq!(take_prepared_candidate_cache_counts_for_test(), (1, 1));
 }
 
 #[test]
-fn imported_candidate_bytes_are_consumed_once_then_local_commits_need_no_encoding() {
+fn import_retains_no_replica_and_its_first_local_edit_encodes_state_once() {
     let mut engine = transaction_engine();
-    reset_encoded_state_reuse_counts_for_test();
     reset_import_state_encoding_counts_for_test();
 
     engine
@@ -231,29 +221,45 @@ fn imported_candidate_bytes_are_consumed_once_then_local_commits_need_no_encodin
         )
         .unwrap();
 
-    assert_eq!(take_import_state_encoding_counts_for_test(), (1, 0));
-    assert_eq!(take_encoded_state_reuse_counts_for_test(), (0, 0, 0));
+    assert_eq!(
+        take_import_state_encoding_counts_for_test(),
+        1,
+        "candidate admission performs its one mandatory bounded encode"
+    );
+    assert_imported_lookup_seed_is_ready_without_replica(&engine, "json import");
+    crate::yrs_engine::mutation::reset_localized_lookup_counts_for_test();
+    reset_commit_state_encodings_for_test();
     engine
         .apply_typed_transaction(insert_transaction(&engine, 70_113))
         .unwrap();
     assert_eq!(
-        take_encoded_state_reuse_counts_for_test(),
-        (0, 0, 1),
-        "the import's exact one-shot bytes must replace the first commit-time full encode"
+        take_commit_state_encodings_for_test(),
+        1,
+        "the first local edit bootstraps its replica from one current-state encode"
+    );
+    assert_eq!(
+        crate::yrs_engine::mutation::take_localized_lookup_counts_for_test().0,
+        0,
+        "the installed import lookup seed must not be rebuilt by the first edit"
     );
 
     engine
         .apply_typed_transaction(insert_transaction(&engine, 70_114))
         .unwrap();
     assert_eq!(
-        take_encoded_state_reuse_counts_for_test(),
-        (0, 0, 0),
-        "the retained candidate needs neither encoding nor stale import bytes"
+        take_commit_state_encodings_for_test(),
+        0,
+        "the retained replica needs no further encoding"
+    );
+    assert_eq!(
+        root_text(&engine),
+        "axxbc",
+        "both edits land exactly after the first scalar"
     );
 }
 
 #[test]
-fn validated_html_import_carries_its_first_bounded_encode_into_the_cache() {
+fn validated_html_import_retains_no_replica_and_installs_its_lookup_seed() {
     let mut engine = transaction_engine();
     reset_import_state_encoding_counts_for_test();
 
@@ -265,8 +271,8 @@ fn validated_html_import_carries_its_first_bounded_encode_into_the_cache() {
         )
         .unwrap();
 
-    assert_eq!(take_import_state_encoding_counts_for_test(), (1, 0));
-    assert_prepared_candidate_state_vector_exact(&engine);
+    assert_eq!(take_import_state_encoding_counts_for_test(), 1);
+    assert_imported_lookup_seed_is_ready_without_replica(&engine, "html import");
 }
 
 #[test]
@@ -309,15 +315,14 @@ fn import_cache_eligibility_requires_a_localized_mutation_target() {
             TransactionOrigin::DocumentImport,
         )
         .unwrap();
-    assert!(
-        one_text_target.prepared_candidate_cache.is_some(),
-        "one localized text target remains eligible"
+    assert_imported_lookup_seed_is_ready_without_replica(
+        &one_text_target,
+        "one localized text target remains eligible",
     );
     assert_eq!(take_import_receipt_sha256_counts_for_test(), (1, 1));
 
     let mut known_void = transaction_engine();
     reset_import_state_encoding_counts_for_test();
-    reset_import_receipt_state_decodings_for_test();
     reset_import_receipt_sha256_counts_for_test();
     known_void
         .import_json(
@@ -327,13 +332,18 @@ fn import_cache_eligibility_requires_a_localized_mutation_target() {
         .unwrap();
     assert_eq!(
         take_import_state_encoding_counts_for_test(),
-        (1, 0),
+        1,
         "candidate admission still performs its one mandatory bounded encode"
     );
-    assert_eq!(take_import_receipt_state_decodings_for_test(), 0);
     assert_eq!(take_import_receipt_sha256_counts_for_test(), (0, 0));
+    assert!(known_void.prepared_candidate_cache.is_none());
     assert!(
-        known_void.prepared_candidate_cache.is_none(),
+        known_void
+            .derived_state
+            .as_ref()
+            .unwrap()
+            .mutation_lookup_seed
+            .is_unavailable_for_test(),
         "a textless void-only document has no localized target to accelerate"
     );
     assert_eq!(
@@ -385,10 +395,7 @@ fn import_cache_eligibility_requires_a_localized_mutation_target() {
         engine
             .import_json(&value.to_string(), TransactionOrigin::DocumentImport)
             .unwrap();
-        assert!(
-            engine.prepared_candidate_cache.is_some(),
-            "{name} must retain import acceleration"
-        );
+        assert_imported_lookup_seed_is_ready_without_replica(&engine, name);
         assert_eq!(engine.document_json().unwrap(), value, "{name}");
     }
 }
@@ -430,8 +437,8 @@ fn deferred_import_still_obeys_exact_candidate_encoded_state_ceiling() {
     let encoded_len = super::encode_state_bounded(&candidate.doc, &probe.resource_limits)
         .unwrap()
         .len();
-    let exact_doc = super::equivalent_private_candidate_doc(&candidate.doc);
-    let one_under_doc = super::equivalent_private_candidate_doc(&candidate.doc);
+    let exact_doc = equivalent_private_candidate_doc(&candidate.doc);
+    let one_under_doc = equivalent_private_candidate_doc(&candidate.doc);
 
     let mut exact = transaction_engine();
     exact.resource_limits = ResourceLimits {
@@ -447,7 +454,7 @@ fn deferred_import_still_obeys_exact_candidate_encoded_state_ceiling() {
         )
         .expect("the exact authoritative candidate byte ceiling must admit");
     assert!(!exact_candidate.import_acceleration_eligible);
-    assert_eq!(take_import_state_encoding_counts_for_test(), (1, 0));
+    assert_eq!(take_import_state_encoding_counts_for_test(), 1);
 
     let mut one_under = transaction_engine();
     one_under.resource_limits = ResourceLimits {
@@ -466,7 +473,7 @@ fn deferred_import_still_obeys_exact_candidate_encoded_state_ceiling() {
     assert_eq!(error.code, "DOCUMENT_LIMIT_EXCEEDED");
     assert_eq!(error.limit, Some(encoded_len - 1));
     assert_eq!(error.actual, Some(encoded_len));
-    assert_eq!(take_import_state_encoding_counts_for_test(), (1, 0));
+    assert_eq!(take_import_state_encoding_counts_for_test(), 1);
 }
 
 #[test]
@@ -480,7 +487,6 @@ fn opaque_only_import_defers_replica_then_first_structural_mutation_bootstraps()
     });
     let mut engine = transaction_engine();
     reset_import_state_encoding_counts_for_test();
-    reset_import_receipt_state_decodings_for_test();
     reset_import_receipt_sha256_counts_for_test();
 
     engine
@@ -489,10 +495,9 @@ fn opaque_only_import_defers_replica_then_first_structural_mutation_bootstraps()
 
     assert_eq!(
         take_import_state_encoding_counts_for_test(),
-        (1, 0),
+        1,
         "candidate admission still performs its one mandatory bounded encode"
     );
-    assert_eq!(take_import_receipt_state_decodings_for_test(), 0);
     assert_eq!(take_import_receipt_sha256_counts_for_test(), (0, 0));
     assert!(engine.prepared_candidate_cache.is_none());
     assert!(engine
@@ -504,13 +509,13 @@ fn opaque_only_import_defers_replica_then_first_structural_mutation_bootstraps()
     assert_eq!(engine.document_json().unwrap(), opaque);
 
     reset_prepared_candidate_cache_counts_for_test();
-    reset_encoded_state_reuse_counts_for_test();
+    reset_commit_state_encodings_for_test();
     engine
         .apply_typed_transaction(paragraph_insert_transaction(&engine, 70_115))
         .unwrap();
 
     assert_eq!(take_prepared_candidate_cache_counts_for_test(), (0, 1));
-    assert_eq!(take_encoded_state_reuse_counts_for_test(), (0, 1, 0));
+    assert_eq!(take_commit_state_encodings_for_test(), 1);
     assert!(engine.prepared_candidate_cache.is_some());
     assert!(engine
         .derived_state
@@ -636,3 +641,5 @@ include!("candidate_cache/import_receipts.rs");
 include!("candidate_cache/cache_reuse.rs");
 
 include!("candidate_cache/lookup_lifecycle.rs");
+
+include!("candidate_cache/root_replacement.rs");

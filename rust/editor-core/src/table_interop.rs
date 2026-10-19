@@ -579,7 +579,12 @@ impl RustPeer {
         );
         let reason = crate::tables::command_context::take_preparation_refusal(request_id)
             .filter(|_| unavailable);
-        let mut value = parse_outcome(serialize_native_outcome(outcome, false, document_changed));
+        let mut value = parse_outcome(serialize_native_outcome(
+            &outcome,
+            false,
+            document_changed,
+            None,
+        ));
         self.capture_outbound(EventOrigin::Local, request_id)?;
         let pending_unchanged = pending_before
             .as_ref()

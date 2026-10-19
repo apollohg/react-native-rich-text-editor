@@ -44,6 +44,7 @@ import {
     type MarkdownExportOptions,
     type ContentSnapshot,
     type NativeEditorAtomicRenderSnapshot,
+    type NativeEditorAtomicRenderState,
     type NativeEditorReplaceDocumentRequest,
     type NativeEditorInputRequest,
     type NativeEditorCommandRequest,
@@ -56,6 +57,7 @@ import {
     normalizeNativeEditorV2DocumentJsonValue,
     normalizeNativeEditorV2ContentSnapshotValue,
     normalizeNativeEditorV2RenderUpdateValue,
+    normalizeNativeEditorV2RenderStateValue,
     type NativeEditorSnapshotExport,
     normalizeNativeEditorV2SnapshotExportValue,
 } from './NativeEditorRenderNormalization';
@@ -268,34 +270,61 @@ export class NativeEditorDocumentBridge {
         anchor: number;
         head: number;
     }): NativeEditorAtomicRenderSnapshot {
-        this.assertAlive();
-        const mirrorAnchor = mirrorScalarSelection?.anchor ?? null;
-        const mirrorHead = mirrorScalarSelection?.head ?? null;
-
-        if ((mirrorAnchor == null) !== (mirrorHead == null)) {
-            throw invalidV2RequestError(
-                'NativeEditorBridge: render update mirror requires both scalar anchor and head'
-            );
-        }
-
-        if (mirrorAnchor != null) {
-            requireNativeEditorV2U32(mirrorAnchor, 'mirrorScalarAnchor');
-        }
-
-        if (mirrorHead != null) {
-            requireNativeEditorV2U32(mirrorHead, 'mirrorScalarHead');
-        }
+        const mirror = this.requireRenderMirror(mirrorScalarSelection);
 
         return this.callV2(
             () =>
                 invokeNativeEditorV2(
                     'editorV2RenderUpdate',
                     this._editorId,
-                    mirrorAnchor,
-                    mirrorHead
+                    mirror.anchor,
+                    mirror.head
                 ),
             normalizeNativeEditorV2RenderUpdateValue
         );
+    }
+
+    renderState(mirrorScalarSelection?: {
+        anchor: number;
+        head: number;
+    }): NativeEditorAtomicRenderState {
+        const mirror = this.requireRenderMirror(mirrorScalarSelection);
+
+        return this.callV2(
+            () =>
+                invokeNativeEditorV2(
+                    'editorV2RenderState',
+                    this._editorId,
+                    mirror.anchor,
+                    mirror.head
+                ),
+            normalizeNativeEditorV2RenderStateValue
+        );
+    }
+
+    private requireRenderMirror(mirrorScalarSelection?: {
+        anchor: number;
+        head: number;
+    }): { anchor: number | null; head: number | null } {
+        this.assertAlive();
+        const anchor = mirrorScalarSelection?.anchor ?? null;
+        const head = mirrorScalarSelection?.head ?? null;
+
+        if ((anchor == null) !== (head == null)) {
+            throw invalidV2RequestError(
+                'NativeEditorBridge: render update mirror requires both scalar anchor and head'
+            );
+        }
+
+        if (anchor != null) {
+            requireNativeEditorV2U32(anchor, 'mirrorScalarAnchor');
+        }
+
+        if (head != null) {
+            requireNativeEditorV2U32(head, 'mirrorScalarHead');
+        }
+
+        return { anchor, head };
     }
 
     replaceDocument(request: NativeEditorReplaceDocumentRequest): NativeEditorCommitInfo {

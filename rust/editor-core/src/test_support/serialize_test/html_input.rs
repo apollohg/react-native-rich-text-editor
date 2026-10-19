@@ -243,8 +243,14 @@ fn test_from_html_image_node() {
         image_node.attrs().get("title"),
         Some(&serde_json::Value::String("Preview".to_string()))
     );
-    assert_eq!(image_node.attrs().get("width"), None);
-    assert_eq!(image_node.attrs().get("height"), None);
+    assert_eq!(
+        image_node.attrs().get("width"),
+        Some(&serde_json::Value::Null)
+    );
+    assert_eq!(
+        image_node.attrs().get("height"),
+        Some(&serde_json::Value::Null)
+    );
 }
 
 #[test]
@@ -299,7 +305,10 @@ fn test_from_html_base64_image_requires_opt_in() {
         image_node.attrs().get("alt"),
         Some(&serde_json::Value::String("Inline".to_string()))
     );
-    assert_eq!(image_node.attrs().get("title"), None);
+    assert_eq!(
+        image_node.attrs().get("title"),
+        Some(&serde_json::Value::Null)
+    );
 }
 
 #[test]

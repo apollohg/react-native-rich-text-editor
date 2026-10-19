@@ -3,7 +3,9 @@ import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -72,7 +74,70 @@ internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
     }
 
     @Test
-    fun `fresh binding expands retained root blocks without consuming another frame`() =
+    fun `selection only frame retains validated blocks without revisiting document elements`() =
+        withFrameAdapter { adapter, backend, errors ->
+            assertNotNull(adapter.setContentHtml("<p>first😀</p><p>second</p>"))
+            val retained = requireNotNull(adapter.cachedSemanticBlockTableIds)
+            var documentVisits = 0
+            val observed =
+                object : List<List<String>> by retained {
+                    override fun iterator(): Iterator<List<String>> {
+                        documentVisits++
+                        return retained.iterator()
+                    }
+                }
+            adapter.cachedSemanticBlockTableIds = observed
+            val revision = adapter.baseDocumentRevision
+            val firstParagraphContentStart = 1
+            backend.frames.clear()
+
+            for (offset in listOf(2, 5, 1)) {
+                val selection = requireNotNull(adapter.syncSelection(offset, offset))
+                assertEquals(firstParagraphContentStart + offset, selection.docAnchor)
+                assertEquals(firstParagraphContentStart + offset, selection.docHead)
+                assertEquals(offset, adapter.cachedAuthoritativeScalarSelection?.get(0))
+                assertEquals(offset, adapter.cachedAuthoritativeScalarSelection?.get(1))
+                assertEquals(revision, adapter.baseDocumentRevision)
+                assertSame(observed, adapter.cachedSemanticBlockTableIds)
+                assertEquals("Selection must reuse the validated document", 0, documentVisits)
+                assertTrue("selection state must not render a frame", backend.frames.isEmpty())
+            }
+
+            assertNotNull(adapter.insertText("X", 2))
+            assertNotSame(observed, adapter.cachedSemanticBlockTableIds)
+            assertTrue(adapter.baseDocumentRevision > revision)
+            assertEquals("fiXrst😀\nsecond", renderedText(adapter.recoverNativeRender()))
+            assertTrue(errors.toString(), errors.isEmpty())
+        }
+
+    @Test
+    fun `empty root patch with removed table still rejects inconsistent frame and recovers`() =
+        withFrameAdapter { adapter, backend, errors ->
+            val key = adapter.tableIndex.tableKeys.single()
+            val retained = adapter.cachedSemanticBlockTableIds
+            backend.transform = { frame ->
+                if (frame.tables.kind == uniffi.editor_core.FfiTableFrameKind.DELTA) {
+                    frame.copy(tables = frame.tables.copy(removedTableKeys = listOf(key)))
+                } else {
+                    frame
+                }
+            }
+
+            assertNotNull(adapter.refreshFromRustState(null))
+            assertEquals(
+                listOf(
+                    uniffi.editor_core.FfiTableFrameKind.DELTA,
+                    uniffi.editor_core.FfiTableFrameKind.FULL
+                ),
+                backend.frames.map { it.tables.kind }
+            )
+            assertNotSame(retained, adapter.cachedSemanticBlockTableIds)
+            assertEquals(setOf(key), adapter.tableIndex.tableKeys.toSet())
+            assertTrue(errors.toString(), errors.isEmpty())
+        }
+
+    @Test
+    fun `fresh binding renders the full root document from a single engine frame`() =
         withFrameAdapter {
                 adapter,
                 backend,
@@ -93,7 +158,7 @@ internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
                 input.bindEditor(token, null)
                 assertNotNull(input.rootTablePositionMap)
                 assertEquals(
-                    listOf(uniffi.editor_core.FfiTableFrameKind.DELTA),
+                    listOf(uniffi.editor_core.FfiTableFrameKind.FULL),
                     backend.frames.map {
                         it.tables.kind
                     }
@@ -163,7 +228,7 @@ internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
         assertTrue(adapter.tableIndex.tableKeys.isEmpty())
         assertNull(adapter.installedFrameRevision)
         assertNull(adapter.cachedTablePresentation)
-        assertNull(adapter.cachedSemanticRenderBlocks)
+        assertNull(adapter.cachedSemanticBlockTableIds)
     }
 
     @Test
@@ -216,7 +281,7 @@ internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
     }
 
     @Test
-    fun `native keystroke adopts one changed cell and caches a table free commit snapshot`() =
+    fun `native keystroke adopts one changed cell and caches the frame as the commit snapshot`() =
         withFrameAdapter {
                 adapter,
                 backend,
@@ -238,12 +303,74 @@ internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
             assertEquals(before.cells.drop(1), after.cells.drop(1))
             val snapshot =
                 requireNotNull(adapter.atomicRenderJson(adapter.baseDocumentRevision.toString()))
-            assertEquals(backend.frames.single().snapshotJson, snapshot)
+            val frame = backend.frames.single()
+            assertSame(frame.snapshotJson, snapshot)
+            assertSame(adapter.cachedAtomicRenderJson, snapshot)
+            assertEquals(requireNotNull(frame.positionEpoch), adapter.positionEpoch)
+            assertEquals(
+                ATOMIC_RENDER_SNAPSHOT_KEYS,
+                JSONObject(snapshot).keys().asSequence().toSet()
+            )
             for (legacyKey in listOf("tableAttributes", "tableRecords", "tableInputMappings")) {
                 assertFalse(legacyKey, JSONObject(snapshot).has(legacyKey))
             }
             assertTrue(errors.toString(), errors.isEmpty())
         }
+
+    @Test
+    fun `frame epoch is admitted only as a canonical record field`() = withFrameAdapter {
+            adapter,
+            backend,
+            errors
+        ->
+        val epoch = requireNotNull(adapter.positionEpoch)
+        val atomic = adapter.cachedAtomicRenderJson
+        val installed = adapter.installedFrameRevision
+        fun assertRejected(
+            label: String,
+            corrupt: (
+                uniffi.editor_core.FfiNativeRenderFrame
+            ) -> uniffi.editor_core.FfiNativeRenderFrame
+        ) {
+            backend.frames.clear()
+            errors.clear()
+            backend.transform = corrupt
+            assertNull(label, adapter.refreshFromRustState(null))
+            assertTrue("$label frames=${backend.frames}", backend.frames.isNotEmpty())
+            assertTrue(
+                "$label frames=${backend.frames}",
+                backend.frames.all { it.positionEpoch != null }
+            )
+            assertEquals(label, epoch, adapter.positionEpoch)
+            assertSame(label, atomic, adapter.cachedAtomicRenderJson)
+            assertEquals(label, installed, adapter.installedFrameRevision)
+            assertEquals(
+                label,
+                listOf("native table frame violates the frozen shape"),
+                errors.map { it.message }
+            )
+        }
+        assertRejected("leading zero epoch field") {
+            it.copy(positionEpoch = "0${it.positionEpoch}")
+        }
+        assertRejected("non numeric epoch field") {
+            it.copy(positionEpoch = "${it.positionEpoch}x")
+        }
+        assertRejected("epoch key inside the snapshot") {
+            it.copy(
+                snapshotJson = JSONObject(it.snapshotJson)
+                    .put("positionEpoch", it.positionEpoch).toString()
+            )
+        }
+        backend.frames.clear()
+        errors.clear()
+        backend.transform = null
+        assertNotNull(adapter.refreshFromRustState(null))
+        val accepted = backend.frames.last()
+        assertEquals(requireNotNull(accepted.positionEpoch), adapter.positionEpoch)
+        assertSame(accepted.snapshotJson, adapter.cachedAtomicRenderJson)
+        assertTrue(errors.toString(), errors.isEmpty())
+    }
 
     @Test
     fun `stale frame base recovers with exactly one full frame`() = withFrameAdapter {
@@ -718,7 +845,9 @@ internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
             assertTrue(input.applyUpdateJSON(requireNotNull(adapter.setContentJson(document))))
             val originalText = input.text
             val originalMap = requireNotNull(input.rootTablePositionMap)
-            val originalBlocks = input.currentRenderBlocksJson.toString()
+            val originalBlocks = ResolvedRenderBlocks.retained(
+                requireNotNull(input.currentRenderBlocks)
+            ).toJsonArray().toString()
             val proseLocal = input.text.toString().indexOf("after")
             val beforeScalar =
                 requireNotNull(
@@ -733,7 +862,12 @@ internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
             val update =
                 requireNotNull(adapter.insertText(inserted, cell.blocks.first().contentScalarStart))
             assertTrue("a map-only table update is still adopted", input.applyUpdateJSON(update))
-            assertEquals(originalBlocks, input.currentRenderBlocksJson.toString())
+            assertEquals(
+                originalBlocks,
+                ResolvedRenderBlocks.retained(
+                    requireNotNull(input.currentRenderBlocks)
+                ).toJsonArray().toString()
+            )
             assertTrue(
                 "root Editable must survive the extent-only update",
                 input.text === originalText
@@ -1003,6 +1137,41 @@ internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
         )
 
         assertNotNull(adoptExternalRender(adapter, snapshot.toString()))
+    }
+
+    @Test
+    fun `render patches validate every inserted element before adoption`() {
+        val adapter = makeAdapter()
+        fun adopt(snapshot: String): String? {
+            backend.nextRenderUpdateResult = EditorV2CallResult.Ok(snapshot)
+            return adapter.adoptExternalRender("""{"documentVersion":"0"}""")
+        }
+        assertNotNull(adopt(atomicRenderSnapshot("base", "1")))
+        val installed = adapter.cachedViewUpdateJson
+        fun patch(element: JSONObject) = JSONObject(atomicRenderSnapshot("next", "2"))
+            .put("renderBlocks", JSONObject.NULL)
+            .put(
+                "renderPatch",
+                JSONObject()
+                    .put("baseDocumentVersion", "1")
+                    .put("startIndex", 1)
+                    .put("deleteCount", 0)
+                    .put(
+                        "renderBlocks",
+                        org.json.JSONArray().put(org.json.JSONArray().put(element))
+                    )
+            )
+            .toString()
+        val malformed = JSONObject().put("type", "textRun").put("text", "missing marks")
+        assertNull("an inserted element without marks", adopt(patch(malformed)))
+        assertEquals(
+            "rejected patches keep the installed frame",
+            installed,
+            adapter.cachedViewUpdateJson
+        )
+        val valid = JSONObject().put("type", "textRun").put("text", "tail")
+            .put("marks", org.json.JSONArray())
+        assertNotNull("a valid inserted element", adopt(patch(valid)))
     }
 
     @Test

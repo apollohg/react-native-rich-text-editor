@@ -57,6 +57,11 @@ export interface NativeEditorModule {
         mirrorScalarAnchor: number | null,
         mirrorScalarHead: number | null
     ): unknown;
+    editorV2RenderState(
+        editorId: string,
+        mirrorScalarAnchor: number | null,
+        mirrorScalarHead: number | null
+    ): unknown;
     editorV2CollaborationConfigureTransport(
         editorId: string,
         configJsonOrNull: string | null

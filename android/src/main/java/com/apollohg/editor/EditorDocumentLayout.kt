@@ -8,6 +8,7 @@ import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.text.LineBreaker
 import android.os.Build
+import android.text.Annotation
 import android.text.Layout
 import android.text.NoCopySpan
 import android.text.SpannableStringBuilder
@@ -28,9 +29,15 @@ internal class EditorDocumentLayout(
     private val includeFontPadding: Boolean = false,
     spacingMultiplier: Float = 1f,
     spacingAdd: Float = 0f,
-    previous: EditorDocumentLayout? = null
+    previous: EditorDocumentLayout? = null,
+    changedRange: IntRange? = null
 ) : Layout(
-    SpannedString(text),
+    // Android 7's span sort affects the paragraph copies' drawing order.
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+        SpannableStringBuilder(text)
+    } else {
+        immutableRenderedText(text, excludeNoCopySpans = true)
+    },
     TextPaint(paint),
     width.coerceAtLeast(1),
     Alignment.ALIGN_NORMAL,
@@ -70,7 +77,8 @@ internal class EditorDocumentLayout(
         val key: Key,
         val topTrim: Int,
         val bottomTrim: Int,
-        val afterSpacing: Int
+        val afterSpacing: Int,
+        val emptyExtra: Int
     )
     private data class Line(val fragment: Fragment, val local: Int)
 
@@ -97,9 +105,14 @@ internal class EditorDocumentLayout(
             paint.textLocale,
             paint.fontFeatureSettings
         )
+    internal val fragmentKeysShareLayoutTextForTesting: Boolean
+        get() = fragments.all { it.key.text === it.layout.text.toString() }
     internal val reusedFragmentCount: Int
+    internal val retainedParagraphCount: Int
+    internal val hasPostCaretDecoration: Boolean
 
     init {
+        var postCaretDecoration = false
         val paragraphs = mutableListOf<Paragraph>()
         var start = 0
         for (index in content.indices) {
@@ -118,11 +131,19 @@ internal class EditorDocumentLayout(
             }
             return low
         }
-        boxes = content.resolvedBlockSpacing().map { (span, style) ->
-            Box(span, content.getSpanStart(span), content.getSpanEnd(span), style, span.depth)
-        } + content.getSpans(0, content.length, CodeBlockSpan::class.java).map {
-            Box(it, content.getSpanStart(it), content.getSpanEnd(it), it.documentBox, Int.MAX_VALUE)
-        }
+        boxes = (
+            content.resolvedBlockSpacing().map { (span, style) ->
+                Box(span, content.getSpanStart(span), content.getSpanEnd(span), style, span.depth)
+            } + content.getSpans(0, content.length, CodeBlockSpan::class.java).map {
+                Box(
+                    it,
+                    content.getSpanStart(it),
+                    content.getSpanEnd(it),
+                    it.documentBox,
+                    Int.MAX_VALUE
+                )
+            }
+            ).sortedBy { it.depth }
         val opens = Array(paragraphs.size) { mutableListOf<Box>() }
         val closes = Array(paragraphs.size) { mutableListOf<Box>() }
         val trailingCodeLines = boxes.filter {
@@ -155,12 +176,42 @@ internal class EditorDocumentLayout(
         } else {
             mutableMapOf()
         }
+        val retainedByStart = if (changedRange != null && reusable.isNotEmpty()) {
+            requireNotNull(previous).fragments.associateBy { it.start }
+        } else {
+            emptyMap()
+        }
+        val lengthDelta = content.length - (previous?.content?.length ?: 0)
+        fun retainedFragment(paragraph: Paragraph, available: Int): Fragment? {
+            val changed = changedRange ?: return null
+            if (paragraph.end >= changed.first && paragraph.start <= changed.last) return null
+            val shift = if (paragraph.start > changed.last) lengthDelta else 0
+            val fragment = retainedByStart[paragraph.start - shift] ?: return null
+            if (fragment.end != paragraph.end - shift || fragment.key.width != available) {
+                return null
+            }
+            val unchangedMeasurements = fragment.key.spans.all { key ->
+                val span = key.span as? ReplacementSpan ?: return@all true
+                val metrics = Paint.FontMetricsInt()
+                val size = span.getSize(
+                    TextPaint(this.paint),
+                    content,
+                    paragraph.start + key.start,
+                    paragraph.start + key.end,
+                    metrics
+                )
+                key.measured ==
+                    listOf(size, metrics.ascent, metrics.descent, metrics.top, metrics.bottom)
+            }
+            return fragment.takeIf { unchangedMeasurements }
+        }
         val built = mutableListOf<Fragment>()
         val builtLines = mutableListOf<Line>()
         var left = 0f
         var right = 0f
         var y = 0
         var reused = 0
+        var retainedParagraphs = 0
         for ((index, paragraph) in paragraphs.withIndex()) {
             opens[index].sortBy { it.depth }
             for (box in opens[index]) {
@@ -171,118 +222,143 @@ internal class EditorDocumentLayout(
                 right += box.style.outerInset.right
                 y += ceil(box.style.outerInset.top).toInt()
             }
-            val local = SpannableStringBuilder(content, paragraph.start, paragraph.end)
-            if (local.isEmpty() && paragraph.start in trailingCodeLines) {
-                content.getSpans(
-                    paragraph.start - 1,
-                    paragraph.start,
-                    MetricAffectingSpan::class.java
-                )
-                    .filter {
-                        content.getSpanStart(it) < paragraph.start &&
-                            content.getSpanEnd(it) >= paragraph.start
+            val available = (this.width - ceil(left).toInt() - ceil(right).toInt()).coerceAtLeast(1)
+            val retained = retainedFragment(paragraph, available)
+            val (key, shaped, emptyExtra) = if (retained != null) {
+                retainedParagraphs++
+                reused++
+                if (retained.key.spans.any {
+                        (it.span as? EditorResolvedTextSpan)?.style?.hasCustomDecoration() == true
                     }
-                    .forEach { local.setSpan(it, 0, 0, Spanned.SPAN_MARK_MARK) }
-            }
-            local.getSpans(0, local.length, Any::class.java).filter {
-                it is EditorBlockBoxSpan || it is CodeBlockSpan || it is NoCopySpan
-            }.forEach(local::removeSpan)
-            local.setSpan(
-                EditorOwnedBlockGeometrySpan,
-                0,
-                local.length,
-                Spanned.SPAN_INCLUSIVE_INCLUSIVE
-            )
-            val requestedAlignment = local.getSpans(
-                0,
-                local.length,
-                EditorParagraphAlignmentSpan::class.java
-            ).lastOrNull()?.value
-            val rtl = TextDirectionHeuristics.FIRSTSTRONG_LTR.isRtl(local, 0, local.length)
-            val alignment = when (requestedAlignment) {
-                "left" -> if (rtl) Alignment.ALIGN_OPPOSITE else Alignment.ALIGN_NORMAL
-                "right" -> if (rtl) Alignment.ALIGN_NORMAL else Alignment.ALIGN_OPPOSITE
-                "center" -> Alignment.ALIGN_CENTER
-                else -> Alignment.ALIGN_NORMAL
-            }
-            if (requestedAlignment !=
-                null
-            ) {
-                local.getSpans(
+                ) {
+                    postCaretDecoration = true
+                }
+                Triple(retained.key, retained.layout, retained.emptyExtra)
+            } else {
+                val local = SpannableStringBuilder(content, paragraph.start, paragraph.end)
+                if (local.isEmpty() && paragraph.start in trailingCodeLines) {
+                    content.getSpans(
+                        paragraph.start - 1,
+                        paragraph.start,
+                        MetricAffectingSpan::class.java
+                    )
+                        .filter {
+                            content.getSpanStart(it) < paragraph.start &&
+                                content.getSpanEnd(it) >= paragraph.start
+                        }
+                        .forEach { local.setSpan(it, 0, 0, Spanned.SPAN_MARK_MARK) }
+                }
+                local.getSpans(0, local.length, Any::class.java).filter {
+                    it is EditorBlockBoxSpan || it is CodeBlockSpan || it is NoCopySpan
+                }.forEach(local::removeSpan)
+                local.setSpan(
+                    EditorOwnedBlockGeometrySpan,
                     0,
                     local.length,
-                    AlignmentSpan::class.java
-                ).forEach(local::removeSpan)
-            }
-            val available = (this.width - ceil(left).toInt() - ceil(right).toInt()).coerceAtLeast(1)
-            val spanKeys = local.getSpans(0, local.length, Any::class.java).map { span ->
-                val spanStart = local.getSpanStart(span)
-                val spanEnd = local.getSpanEnd(span)
-                val measured = if (span is ReplacementSpan) {
-                    val fm = Paint.FontMetricsInt()
-                    val size = span.getSize(TextPaint(this.paint), local, spanStart, spanEnd, fm)
-                    listOf(size, fm.ascent, fm.descent, fm.top, fm.bottom)
-                } else {
-                    null
-                }
-                SpanKey(span, spanStart, spanEnd, local.getSpanFlags(span), measured)
-            }
-            val key =
-                Key(
-                    local.toString(),
-                    available,
-                    alignment,
-                    requestedAlignment == "justify",
-                    spanKeys
+                    Spanned.SPAN_INCLUSIVE_INCLUSIVE
                 )
-            val cached = reusable[key]?.removeFirstOrNull()
-            val fragmentPaint = TextPaint(this.paint)
-            val emptyStyles = if (local.isEmpty()) {
-                local.getSpans(
+                val requestedAlignment = local.getSpans(
                     0,
-                    0,
-                    EditorResolvedTextSpan::class.java
-                ).toList()
-            } else {
-                emptyList()
-            }
-            if (local.isEmpty()) {
-                local.getSpans(0, 0, MetricAffectingSpan::class.java).forEach {
-                    it.updateMeasureState(fragmentPaint)
+                    local.length,
+                    EditorParagraphAlignmentSpan::class.java
+                ).lastOrNull()?.value
+                val rtl = TextDirectionHeuristics.FIRSTSTRONG_LTR.isRtl(local, 0, local.length)
+                val alignment = when (requestedAlignment) {
+                    "left" -> if (rtl) Alignment.ALIGN_OPPOSITE else Alignment.ALIGN_NORMAL
+                    "right" -> if (rtl) Alignment.ALIGN_NORMAL else Alignment.ALIGN_OPPOSITE
+                    "center" -> Alignment.ALIGN_CENTER
+                    else -> Alignment.ALIGN_NORMAL
                 }
-            }
-            val shaped =
-                cached?.layout
-                    ?: StaticLayout.Builder.obtain(
-                        SpannedString(local),
+                if (requestedAlignment !=
+                    null
+                ) {
+                    local.getSpans(
                         0,
                         local.length,
-                        fragmentPaint,
-                        available
+                        AlignmentSpan::class.java
+                    ).forEach(local::removeSpan)
+                }
+                val spanKeys = local.getSpans(0, local.length, Any::class.java).filterNot {
+                    it is Annotation
+                }.map { span ->
+                    if (span is EditorResolvedTextSpan && span.style.hasCustomDecoration()) {
+                        postCaretDecoration = true
+                    }
+                    val spanStart = local.getSpanStart(span)
+                    val spanEnd = local.getSpanEnd(span)
+                    val measured = if (span is ReplacementSpan) {
+                        val fm = Paint.FontMetricsInt()
+                        val size = span.getSize(
+                            TextPaint(this.paint),
+                            local,
+                            spanStart,
+                            spanEnd,
+                            fm
+                        )
+                        listOf(size, fm.ascent, fm.descent, fm.top, fm.bottom)
+                    } else {
+                        null
+                    }
+                    SpanKey(span, spanStart, spanEnd, local.getSpanFlags(span), measured)
+                }
+                val key =
+                    Key(
+                        local.toString(),
+                        available,
+                        alignment,
+                        requestedAlignment == "justify",
+                        spanKeys
                     )
-                        .setIncludePad(includeFontPadding)
-                        .setAlignment(alignment)
-                        .setTextDirection(TextDirectionHeuristics.FIRSTSTRONG_LTR)
-                        .setLineSpacing(spacingAdd, spacingMultiplier)
-                        .apply {
-                            if (Build.VERSION.SDK_INT >=
-                                26
-                            ) {
-                                setJustificationMode(
-                                    if (key.justify) {
-                                        LineBreaker.JUSTIFICATION_MODE_INTER_WORD
-                                    } else {
-                                        LineBreaker.JUSTIFICATION_MODE_NONE
-                                    }
-                                )
+                val cached = reusable[key]?.removeFirstOrNull()
+                val fragmentPaint = TextPaint(this.paint)
+                val emptyStyles = if (local.isEmpty()) {
+                    local.getSpans(
+                        0,
+                        0,
+                        EditorResolvedTextSpan::class.java
+                    ).toList()
+                } else {
+                    emptyList()
+                }
+                if (local.isEmpty()) {
+                    local.getSpans(0, 0, MetricAffectingSpan::class.java).forEach {
+                        it.updateMeasureState(fragmentPaint)
+                    }
+                }
+                val shaped =
+                    cached?.layout
+                        ?: StaticLayout.Builder.obtain(
+                            SpannedString(local),
+                            0,
+                            local.length,
+                            fragmentPaint,
+                            available
+                        )
+                            .setIncludePad(includeFontPadding)
+                            .setAlignment(alignment)
+                            .setTextDirection(TextDirectionHeuristics.FIRSTSTRONG_LTR)
+                            .setLineSpacing(spacingAdd, spacingMultiplier)
+                            .apply {
+                                if (Build.VERSION.SDK_INT >=
+                                    26
+                                ) {
+                                    setJustificationMode(
+                                        if (key.justify) {
+                                            LineBreaker.JUSTIFICATION_MODE_INTER_WORD
+                                        } else {
+                                            LineBreaker.JUSTIFICATION_MODE_NONE
+                                        }
+                                    )
+                                }
                             }
-                        }
-                        .build()
-            if (cached != null) reused++
-            val emptyExtra = (
-                (emptyStyles.maxOfOrNull { it.lineHeightPx ?: 0 } ?: 0) -
-                    shaped.height
-                ).coerceAtLeast(0)
+                            .build()
+                if (cached != null) reused++
+                val emptyExtra = (
+                    (emptyStyles.maxOfOrNull { it.lineHeightPx ?: 0 } ?: 0) -
+                        shaped.height
+                    ).coerceAtLeast(0)
+                Triple(cached?.key ?: key.copy(text = shaped.text.toString()), shaped, emptyExtra)
+            }
             val topTrim =
                 (if (includeFontPadding && index > 0) -shaped.topPadding else 0) - emptyExtra / 2
             val bottomTrim =
@@ -313,7 +389,8 @@ internal class EditorDocumentLayout(
                     ceil(
                         left
                     ),
-                    y - topTrim, builtLines.size, shaped, key, topTrim, bottomTrim, afterSpacing
+                    y - topTrim, builtLines.size, shaped, key, topTrim, bottomTrim, afterSpacing,
+                    emptyExtra
                 )
             built += fragment
             repeat(shaped.lineCount) { builtLines += Line(fragment, it) }
@@ -337,11 +414,13 @@ internal class EditorDocumentLayout(
                         ?: 0
             }
         }
+        hasPostCaretDecoration = postCaretDecoration
         fragments = built
         lines = builtLines
         monotonicLineTops = (1 until lines.size).all { textLineTop(it - 1) <= textLineTop(it) }
         documentHeight = y
         reusedFragmentCount = reused
+        retainedParagraphCount = retainedParagraphs
     }
 
     internal fun emptyLinePaint(offset: Int): TextPaint? =
@@ -583,8 +662,15 @@ internal class EditorDocumentLayout(
         highlightPaint: Paint?,
         cursorOffsetVertical: Int
     ) {
-        boxes.sortedBy { it.depth }.forEach { EditorBoxDrawing.draw(canvas, it.bounds, it.style) }
+        val clip = Rect()
+        if (!canvas.getClipBounds(clip)) return
+        boxes.forEach { EditorBoxDrawing.draw(canvas, it.bounds, it.style) }
         for (fragment in fragments) {
+            if (fragment.y >= clip.bottom ||
+                fragment.y + fragment.layout.height <= clip.top
+            ) {
+                continue
+            }
             val saved = canvas.save()
             canvas.translate(fragment.x, fragment.y.toFloat())
             val localHighlight = highlight?.let {

@@ -39,6 +39,7 @@ impl YrsDocumentEngine {
             editing_limits: &self.editing_limits,
             document_revision: self.revision,
             max_length: self.max_length,
+            validation_certificate: None,
         };
         #[cfg(test)]
         yrs_engine::compiler::check_atomic_failpoint(
@@ -77,7 +78,7 @@ impl YrsDocumentEngine {
             | yrs_engine::SelectionIntent::UseOperationResult => false,
         };
         let rendered_text = if needs_rendered_text {
-            current.rendered_text.as_str()
+            &*current.rendered_text
         } else {
             ""
         };
@@ -160,14 +161,14 @@ impl YrsDocumentEngine {
                                     normalized_anchor,
                                     anchor.affinity,
                                     &self.schema,
+                                    current.block_branch_index.as_deref().map(|index| {
+                                        (index, &current.position_map, &current.document)
+                                    }),
                                 )?;
                             let scalar = current
                                 .position_map
                                 .doc_to_scalar(normalized_anchor, &current.document);
-                            let utf16 = yrs_engine::position::scalar_offset_to_utf16(
-                                &current.rendered_text,
-                                scalar,
-                            )?;
+                            let utf16 = current.rendered_scalar_to_utf16(scalar)?;
                             let resolved = yrs_engine::ResolvedPoint {
                                 document: normalized_anchor,
                                 scalar,

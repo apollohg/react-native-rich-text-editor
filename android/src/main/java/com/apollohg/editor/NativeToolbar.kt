@@ -37,8 +37,15 @@ internal data class NativeToolbarState(
             } catch (_: Exception) {
                 return null
             }
-            val activeState = root.optJSONObject("activeState") ?: JSONObject()
-            val historyState = root.optJSONObject("historyState") ?: JSONObject()
+            return fromState(root.optJSONObject("activeState"), root.optJSONObject("historyState"))
+        }
+
+        fun fromState(
+            activeStateObject: JSONObject?,
+            historyStateObject: JSONObject?
+        ): NativeToolbarState {
+            val activeState = activeStateObject ?: JSONObject()
+            val historyState = historyStateObject ?: JSONObject()
             return NativeToolbarState(
                 marks = boolMap(activeState.optJSONObject("marks")),
                 nodes = boolMap(activeState.optJSONObject("nodes")),

@@ -10,6 +10,8 @@ const FIXTURE_CLIENT_ID: u64 = 991;
 const RANDOM_SEED: u64 = 0x7ab1e;
 const RANDOM_MULTIPLIER: u64 = 6364136223846793005;
 const RANDOM_INCREMENT: u64 = 1;
+const FIRST_EDIT_REPLICA_BOOTSTRAP_ENCODINGS: usize = 1;
+const EXACT_CANDIDATE_ADMISSION_ENCODINGS: usize = 1;
 
 fn encoded_bound_engine() -> YrsDocumentEngine {
     let mut engine = transaction_engine();
@@ -134,8 +136,8 @@ fn the_encoded_size_limit_decision_equals_the_exact_encoding_at_the_boundary() {
         let result = engine.apply_typed_transaction(transaction);
         assert_eq!(
             take_full_pass_counts_for_test().whole_state_encodings,
-            1,
-            "limit {limit}: exact candidate admission is measured"
+            FIRST_EDIT_REPLICA_BOOTSTRAP_ENCODINGS + EXACT_CANDIDATE_ADMISSION_ENCODINGS,
+            "limit {limit}: the first edit after import bootstraps its replica and measures exact candidate admission"
         );
         if limit < exact {
             let error = result.expect_err("one byte under exact must reject");

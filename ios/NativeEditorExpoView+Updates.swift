@@ -189,7 +189,7 @@ extension NativeEditorExpoView {
         // A malformed external envelope is permanent, even if UIKit is in a
         // transient composition that would otherwise make application
         // retryable. Classify it before entering composition preflight.
-        guard adapter.validateExternalRender(updateJson) else {
+        guard let notice = adapter.externalRenderNotice(updateJson) else {
             return .rejected
         }
         if let resetJSON {
@@ -197,20 +197,23 @@ extension NativeEditorExpoView {
             isApplyingJSUpdate = true
             defer { isApplyingJSUpdate = false }
             richTextView.textView.discardTransientNativeInputForEditorReset()
-            guard let update = adapter.adoptExternalReset(updateJson, resetJSON: resetJSON) else {
+            guard let update = adapter.adoptExternalReset(resetJSON: resetJSON) else {
                 return .rejected
             }
             clearPendingViewCommandUpdateRetry()
             let applied = imageLoadOwner.withCurrent {
                 richTextView.textView.applyUpdateJSON(update)
             }
-            if applied, renderRevision(fromUpdateJSON: update)?.document != renderRevision(fromUpdateJSON: updateJson)?.document {
+            if applied {
+                selectionEventActiveState.reset()
+            }
+            if applied, renderRevision(fromUpdateJSON: update)?.document != notice.documentRevision {
                 isApplyingJSUpdate = false
                 editorTextView(richTextView.textView, didReceiveUpdate: update)
             }
             return applied ? .applied : .rejected
         }
-        if isSupersededEditorUpdate(updateJson) {
+        if isSupersededEditorUpdate(notice) {
             return .applied
         }
         let preflight = richTextView.activeTextInput.prepareForExternalEditorUpdateResult()
@@ -218,9 +221,10 @@ extension NativeEditorExpoView {
             return .retryableDeferred
         }
         if preflight.adoptedUpdateJSON != nil {
+            selectionEventActiveState.reset()
             return .applied
         }
-        let adoptedUpdateJSON = adapter.adoptExternalRender(updateJson)
+        let adoptedUpdateJSON = adapter.adoptExternalRender()
         guard let adoptedUpdateJSON else {
             // The adapter owns strict-parser and destroyed-race reporting.
             // Do not add a second view-side record for the same rejection.
@@ -234,6 +238,7 @@ extension NativeEditorExpoView {
             // whose revision has not already been adopted for native input.
             _ = richTextView.textView.applyUpdateJSON(adoptedUpdateJSON)
         }
+        selectionEventActiveState.reset()
         return .applied
     }
 

@@ -27,7 +27,7 @@ pub(crate) use structure::{
 };
 pub(crate) use text::{
     apply_operations, apply_operations_mapped, plan_delete_backward, plan_delete_scalar_range,
-    plan_insert_text, plan_replace_selection_text, plan_split, TextReplacementPlanError,
+    plan_insert_content, plan_insert_text, plan_replace_selection_text, plan_split,
 };
 use text::{default_text_block, node_delete_start};
 
@@ -98,6 +98,35 @@ pub(crate) enum SemanticOperation {
 }
 
 impl SemanticOperation {
+    pub(crate) fn position_span(&self) -> (u32, u32) {
+        match self {
+            Self::InsertText { pos, .. }
+            | Self::SplitBlock { pos, .. }
+            | Self::JoinBlocks { pos }
+            | Self::UnwrapFromList { pos }
+            | Self::OutdentListItem { pos }
+            | Self::IndentListItem { pos }
+            | Self::InsertNode { pos, .. }
+            | Self::UpdateNodeAttrs { pos, .. } => (*pos, *pos),
+            Self::DeleteRange { from, to }
+            | Self::AddMark { from, to, .. }
+            | Self::RemoveMark { from, to, .. }
+            | Self::ReplaceMark { from, to, .. }
+            | Self::ReplaceRange { from, to, .. }
+            | Self::WrapInList { from, to, .. } => (*from, *to),
+        }
+    }
+
+    pub(crate) fn preserves_positions(&self) -> bool {
+        matches!(
+            self,
+            Self::AddMark { .. }
+                | Self::RemoveMark { .. }
+                | Self::ReplaceMark { .. }
+                | Self::UpdateNodeAttrs { .. }
+        )
+    }
+
     pub(crate) fn as_step(&self) -> Step {
         match self {
             Self::InsertText { pos, text, marks } => Step::InsertText {
@@ -325,16 +354,8 @@ fn preferred_split_operation(
     let parent_spec = schema.node(parent.node_type()).ok_or(())?;
     let content = parent.content().ok_or(())?;
     let index = usize::try_from(block_index).map_err(|_| ())?;
-    let prefix = content
-        .iter()
-        .take(index + 1)
-        .map(Node::node_type)
-        .collect::<Vec<_>>();
-    let suffix = content
-        .iter()
-        .skip(index + 1)
-        .map(Node::node_type)
-        .collect::<Vec<_>>();
+    let prefix = content.iter().take(index + 1).collect::<Vec<_>>();
+    let suffix = content.iter().skip(index + 1).collect::<Vec<_>>();
     let work_limit = limits.max_document_nodes.saturating_mul(128);
     let budget = WorkBudget::new(work_limit);
     for name in preferred_text_blocks_for_parent(schema, parent_spec, &prefix, &suffix, &budget)? {
@@ -368,13 +389,13 @@ fn preferred_split_operation(
 fn preferred_text_blocks_for_parent(
     schema: &Schema,
     parent_spec: &NodeSpec,
-    prefix: &[&str],
-    suffix: &[&str],
+    prefix: &[&Node],
+    suffix: &[&Node],
     budget: &WorkBudget,
 ) -> Result<Vec<String>, ()> {
     let groups = parent_spec.content.accepting_symbols_after_with_budget(
         prefix,
-        |child, symbol| schema.node_matches_symbol(child, symbol),
+        |child, symbol| crate::transform::apply::child_matches_group(child, symbol, schema),
         budget,
     )?;
     let paragraph = schema
@@ -393,15 +414,20 @@ fn preferred_text_blocks_for_parent(
         {
             continue;
         }
-        let types = prefix
+        let children = prefix
             .iter()
             .copied()
-            .chain(std::iter::once(spec.name.as_str()))
-            .chain(suffix.iter().copied())
+            .map(Some)
+            .chain(std::iter::once(None))
+            .chain(suffix.iter().copied().map(Some))
             .collect::<Vec<_>>();
-        if parent_spec.content.matches_with_budget(
-            &types,
-            |child, symbol| schema.node_matches_symbol(child, symbol),
+        if parent_spec.content.matches_keyed_with_budget(
+            &children,
+            |child| child.map(crate::transform::apply::child_match_key),
+            |child, symbol| match child {
+                Some(child) => crate::transform::apply::child_matches_group(child, symbol, schema),
+                None => schema.node_matches_symbol(&spec.name, symbol),
+            },
             budget,
         )? {
             candidates.push(spec.name.clone());
@@ -447,16 +473,8 @@ fn plan_empty_non_default_text_block(
     let parent_spec = schema.node(parent.node_type()).ok_or(())?;
     let content = parent.content().ok_or(())?;
     let index = usize::try_from(index).map_err(|_| ())?;
-    let prefix = content
-        .iter()
-        .take(index)
-        .map(Node::node_type)
-        .collect::<Vec<_>>();
-    let suffix = content
-        .iter()
-        .skip(index + 1)
-        .map(Node::node_type)
-        .collect::<Vec<_>>();
+    let prefix = content.iter().take(index).collect::<Vec<_>>();
+    let suffix = content.iter().skip(index + 1).collect::<Vec<_>>();
     let budget = WorkBudget::new(limits.max_document_nodes.saturating_mul(128));
     let candidates =
         preferred_text_blocks_for_parent(schema, parent_spec, &prefix, &suffix, &budget)?;

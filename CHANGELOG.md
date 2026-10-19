@@ -1,5 +1,26 @@
 # Changelog
 
+## [2.1.2] - 2026-10-19
+
+### Changed
+
+- Reduced editing latency on iOS and Android. In the Rust core on a very large document, Return dropped from 44 ms to 3.2 ms, paste from 21 ms to 7.5 ms, typing from 1.7 ms to 0.6 ms, and delete and bold from about 4 ms to 0.8 ms. Caret moves no longer re-render the document.
+- Inserting content over a selection now replaces the selection.
+- A table pasted or inserted into a table cell now arrives as that cell's blocks instead of a nested table.
+- Commands that cannot apply at the current selection now return `notApplicable` instead of an error, and the toolbar no longer offers them.
+- `onActiveStateChange` now fires once when a document binds, with the document's real state.
+
+### Fixed
+
+- Fixed multi-line typing or paste over a selection that spans from a paragraph into a list deleting the rest of the list.
+- Fixed bold across paragraphs, and marks over hard breaks or mentions, failing from the toolbar.
+- Fixed undo history keeping only about one step on large documents.
+- Fixed editing errors and invalid documents from Backspace, Delete, paste, list, quote, and code-block commands in nested lists, quotes, and table cells.
+- Fixed deeply nested tables crashing iOS and Android and hanging Android re-layout.
+- Fixed the image toolbar button staying disabled for documents created with `localEmpty` (#8).
+- Fixed Android reporting a local commit when the editor mounts.
+- Fixed Backspace at the start of an empty table cell moving the iOS caret into the neighbouring cell.
+
 ## [2.1.1] - 2026-10-12
 
 ### Added
@@ -744,6 +765,7 @@ This is a hard cutover to shared native document, collaboration, and viewer boun
 - Controlled and uncontrolled content modes (HTML and JSON).
 - Undo/redo history.
 
+[2.1.2]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.1.1...2.1.2
 [2.1.1]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.1.0...2.1.1
 [2.1.0]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.12...2.1.0
 [2.0.12]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.11...2.0.12

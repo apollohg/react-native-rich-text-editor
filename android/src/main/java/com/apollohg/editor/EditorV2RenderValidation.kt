@@ -1,7 +1,12 @@
 package com.apollohg.editor
 
+import android.util.JsonReader
+import android.util.JsonToken
 import com.apollohg.editor.tables.EditorTableIndex
+import java.io.IOException
+import java.io.StringReader
 import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
 import org.json.JSONTokener
 
@@ -251,11 +256,26 @@ internal fun validSemanticRenderElements(
         if (element.opt("type") != "table") {
             validRenderElement(element)
         } else {
-            val key = element.opt("tableId") as? String
-            exactKeys(element, setOf("type", "tableId")) && !key.isNullOrEmpty() && keys.add(key) &&
-                (index == null || index.record(key) != null)
+            val key = semanticTableId(element)
+            key != null && keys.add(key) && (index == null || index.record(key) != null)
         }
     }
+}
+
+private fun semanticTableId(element: JSONObject): String? =
+    (element.opt("tableId") as? String)?.takeIf {
+        it.isNotEmpty() && exactKeys(element, setOf("type", "tableId"))
+    }
+
+internal fun semanticBlockTableIds(block: JSONArray): List<String>? {
+    var tableIds: MutableList<String>? = null
+    for (index in 0 until block.length()) {
+        val element = block.opt(index) as? JSONObject ?: continue
+        if (element.opt("type") != "table") continue
+        val key = semanticTableId(element) ?: return null
+        (tableIds ?: mutableListOf<String>().also { tableIds = it }).add(key)
+    }
+    return tableIds ?: emptyList()
 }
 
 private fun validRenderBlocks(value: Any?): Boolean {
@@ -349,20 +369,55 @@ private fun validSelection(value: Any?): Boolean {
     }
 }
 
+internal val RENDER_STATE_KEYS =
+    setOf(
+        "selection",
+        "activeState",
+        "historyState",
+        "documentVersion",
+        "stateRevision",
+        "scalarLength",
+        "documentIsEmpty"
+    )
+
+internal val ATOMIC_RENDER_SNAPSHOT_KEYS = setOf("renderBlocks", "renderPatch") + RENDER_STATE_KEYS
+
 internal data class AtomicRenderSnapshot(
     val renderObject: JSONObject,
-    val atomicRenderJson: String,
     val viewUpdateJson: String,
     val documentRevision: ULong,
     val stateRevision: ULong,
     val scalarLength: Int,
     val scalarSelection: IntArray?,
     val activeState: JSONObject,
-    val historyState: JSONObject,
-    val positionEpoch: String?
+    val historyState: JSONObject
 )
 
 internal data class TableScalarExtent(val scalarStart: Int, val scalarEnd: Int)
+
+internal fun topLevelStringField(json: String, key: String): String? = try {
+    JsonReader(StringReader(json)).use { reader ->
+        reader.isLenient = true
+        var value: String? = null
+        reader.beginObject()
+        while (reader.hasNext()) {
+            if (reader.nextName() != key) {
+                reader.skipValue()
+            } else if (reader.peek() == JsonToken.STRING) {
+                value = reader.nextString()
+            } else {
+                value = null
+                reader.skipValue()
+            }
+        }
+        reader.endObject()
+        value
+    }
+} catch (_: IOException) {
+    null
+} catch (_: IllegalStateException) {
+    null
+}
 
 internal fun parseSharedStringJsonObject(json: String): JSONObject {
     val strings = HashMap<String, String>()
@@ -372,21 +427,41 @@ internal fun parseSharedStringJsonObject(json: String): JSONObject {
     })
 }
 
-internal fun parseAtomicRenderSnapshot(json: String): AtomicRenderSnapshot? {
+internal fun parseAtomicRenderSnapshot(json: String): AtomicRenderSnapshot? = try {
+    atomicRenderSnapshot(parseSharedStringJsonObject(json))
+} catch (_: JSONException) {
+    null
+}
+
+internal class SelectionStateRenderFrame(
+    val atomicRenderJson: String,
+    val snapshot: AtomicRenderSnapshot
+)
+
+internal fun selectionStateRenderFrame(
+    selectionState: JSONObject,
+    documentRevision: ULong,
+    retainedBlockCount: Int
+): SelectionStateRenderFrame? {
+    if (!exactKeys(selectionState, RENDER_STATE_KEYS)) return null
+    val renderObject = JSONObject()
+        .put("renderBlocks", JSONObject.NULL)
+        .put(
+            "renderPatch",
+            JSONObject()
+                .put("baseDocumentVersion", documentRevision.toString())
+                .put("startIndex", retainedBlockCount)
+                .put("deleteCount", 0)
+                .put("renderBlocks", JSONArray())
+        )
+    for (key in RENDER_STATE_KEYS) renderObject.put(key, selectionState.opt(key))
+    val atomicRenderJson = renderObject.toString()
+    val snapshot = atomicRenderSnapshot(renderObject) ?: return null
+    return SelectionStateRenderFrame(atomicRenderJson, snapshot)
+}
+
+private fun atomicRenderSnapshot(jsonObject: JSONObject): AtomicRenderSnapshot? {
     return try {
-        val jsonObject = parseSharedStringJsonObject(json)
-        val requiredKeys =
-            setOf(
-                "renderBlocks",
-                "renderPatch",
-                "selection",
-                "activeState",
-                "historyState",
-                "documentVersion",
-                "stateRevision",
-                "scalarLength",
-                "documentIsEmpty"
-            )
         val renderBlocks = jsonObject.opt("renderBlocks")
         val renderPatch = jsonObject.opt("renderPatch")
         val validRenderPayload =
@@ -395,8 +470,7 @@ internal fun parseAtomicRenderSnapshot(json: String): AtomicRenderSnapshot? {
                     renderBlocks === JSONObject.NULL && renderPatch is JSONObject &&
                         validRenderPatch(renderPatch)
                     )
-        if (!onlyKeys(jsonObject, requiredKeys + setOf("positionEpoch")) ||
-            requiredKeys.any { !jsonObject.has(it) } ||
+        if (!exactKeys(jsonObject, ATOMIC_RENDER_SNAPSHOT_KEYS) ||
             !validRenderPayload ||
             !validSelection(jsonObject.opt("selection")) ||
             !validActiveState(jsonObject.opt("activeState")) ||
@@ -415,25 +489,16 @@ internal fun parseAtomicRenderSnapshot(json: String): AtomicRenderSnapshot? {
         val state = ulongField(jsonObject, "stateRevision") ?: return null
         val scalarLength = scalarField(jsonObject, "scalarLength") ?: return null
         val scalarSelection = scalarSelection(jsonObject.opt("selection"))
-        val positionEpoch = if (jsonObject.has("positionEpoch")) {
-            canonicalV2U64(jsonObject.opt("positionEpoch") as? String) ?: return null
-        } else {
-            null
-        }
-        jsonObject.remove("positionEpoch")
-        val atomicRenderJson = json
         jsonObject.remove("scalarLength")
         AtomicRenderSnapshot(
             jsonObject,
-            atomicRenderJson,
             jsonObject.toString(),
             revision,
             state,
             scalarLength,
             scalarSelection,
-            JSONObject(jsonObject.getJSONObject("activeState").toString()),
-            JSONObject(history.toString()),
-            positionEpoch
+            jsonObject.getJSONObject("activeState"),
+            history
         )
     } catch (_: Exception) {
         null

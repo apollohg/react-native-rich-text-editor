@@ -156,12 +156,13 @@ internal abstract class EditorInputConnectionTestFixture : EditorInputConnection
         initialText: String,
         configJson: String = """{"initialization":{"type":"localEmpty"}}""",
         roomBound: Boolean = false,
+        backend: EditorV2Backend = UniffiEditorV2Backend,
         collaborationWake: (String, CollaborationWakeReason) -> Unit = { _, _ -> }
     ): RealExternalCompositionHarness {
-        val created = UniffiEditorV2Backend.create(configJson, null) as EditorV2CallResult.Ok
+        val created = backend.create(configJson, null) as EditorV2CallResult.Ok
         val editorId = JSONObject(created.value).getString("editorId")
         val adapter = EditorV2Adapter.attach(
-            UniffiEditorV2Backend,
+            backend,
             editorId,
             roomBound = roomBound,
             collaborationWake = collaborationWake

@@ -66,47 +66,32 @@ internal fun cellShapeKey(
     widthPx: Int,
     theme: PreparedProseTheme,
     density: Float,
-    styleDigest: String
+    styleDigest: String,
+    context: PreparedCellShapeBuildContext
 ): PreparedCellShapeKey {
     val safeWidth = widthPx.coerceAtLeast(1)
-    fun atomGeometry(current: ViewerDocument): List<String> = buildList {
-        current.blocks.forEach { block ->
-            val custom = block.inlines.singleOrNull() as? ViewerInline.Atom
-            if (block.isBlockAtom && custom != null &&
-                theme.viewerAtoms?.nodeTypes?.contains(custom.nodeType) == true
-            ) {
-                add(
-                    "${custom.nodeType}:" +
-                        "${theme.viewerAtoms.measurements[custom.docPos.toString()]}:" +
-                        theme.viewerAtoms.estimatedHeights[custom.nodeType]
-                )
-            }
-            block.tableSource()?.let { table ->
-                table.cells.forEach {
-                    addAll(atomGeometry(current.cellDocument(it, requireNotNull(block.tableKey))))
-                }
-            }
-        }
-    }
-    fun imageGeometry(current: ViewerDocument): List<String> = buildList {
-        current.blocks.forEach { block ->
-            ViewerImageAttachment.sourceAndDeclaredSize(block)?.let { (id, source, declared) ->
-                add("$source:${declared ?: ViewerImageIntrinsicStore.shared.size(id)}")
-            }
-            block.tableSource()?.let { table ->
-                table.cells.forEach {
-                    addAll(imageGeometry(current.cellDocument(it, requireNotNull(block.tableKey))))
-                }
-            }
-        }
-    }
+    val digest = context.geometryDigest(document, theme)
     return PreparedCellShapeKey(
         contentKey,
         safeWidth,
         density.toRawBits(),
         styleDigest,
-        geometryDigest(atomGeometry(document)),
-        geometryDigest(imageGeometry(document))
+        geometryDigest(digest.atoms),
+        geometryDigest(digest.images)
+    )
+}
+
+internal class PreparedCellGeometryDigest(val atoms: List<String>, val images: List<String>)
+
+private data class PreparedCellGeometryDigestKey(
+    val semanticKey: String,
+    val atomGeneration: String?,
+    val atomRevision: String?
+) {
+    constructor(document: ViewerDocument, theme: PreparedProseTheme) : this(
+        document.semanticKey,
+        theme.viewerAtoms?.generation,
+        theme.viewerAtoms?.revision
     )
 }
 
@@ -126,19 +111,80 @@ internal class PreparedCellShapeBuildContext internal constructor(
 ) {
     private val resolved = linkedMapOf<PreparedCellShapeKey, WeakReference<PreparedCellShape>>()
     private val pins = WeakHashMap<PreparedCellShape, Unit>()
+    private val geometryDigests =
+        mutableMapOf<PreparedCellGeometryDigestKey, PreparedCellGeometryDigest>()
     private var closed = false
+    internal var geometryBlockVisitsForTesting = 0
+        private set
 
     fun fork(): PreparedCellShapeBuildContext = catalog.newBuildContext()
+
+    fun geometryDigest(
+        document: ViewerDocument,
+        theme: PreparedProseTheme
+    ): PreparedCellGeometryDigest {
+        geometryDigests[PreparedCellGeometryDigestKey(document, theme)]?.let { return it }
+        val atoms = mutableListOf<String>()
+        val images = mutableListOf<String>()
+        val starts = mutableMapOf<String, Pair<Int, Int>>()
+        document.forEachBlockInSourceOrder({ current, index, block ->
+            if (index == 0) starts[current.semanticKey] = atoms.size to images.size
+            geometryBlockVisitsForTesting += 1
+            val custom = block.inlines.singleOrNull() as? ViewerInline.Atom
+            if (block.isBlockAtom && custom != null &&
+                theme.viewerAtoms?.nodeTypes?.contains(custom.nodeType) == true
+            ) {
+                atoms.add(
+                    "${custom.nodeType}:" +
+                        "${theme.viewerAtoms.measurements[custom.docPos.toString()]}:" +
+                        theme.viewerAtoms.estimatedHeights[custom.nodeType]
+                )
+            }
+            ViewerImageAttachment.sourceAndDeclaredSize(block)?.let { (id, source, declared) ->
+                images.add("$source:${declared ?: ViewerImageIntrinsicStore.shared.size(id)}")
+            }
+        }, finishing = { current ->
+            val (atomStart, imageStart) = starts[current.semanticKey] ?: (atoms.size to images.size)
+            geometryDigests[PreparedCellGeometryDigestKey(current, theme)] =
+                PreparedCellGeometryDigest(
+                    atoms.subList(atomStart, atoms.size).toList(),
+                    images.subList(imageStart, images.size).toList()
+                )
+        })
+        return geometryDigests.getValue(PreparedCellGeometryDigestKey(document, theme))
+    }
 
     fun resolve(
         key: PreparedCellShapeKey,
         build: () -> PreparedProseLayout,
         retainShape: Boolean = true,
         bind: (PreparedCellShape) -> PreparedProseLayout?
+    ): PreparedProseLayout = requireNotNull(
+        resolution(key, { completedPreparation(build()) }, retainShape) {
+            completedPreparation(bind(it))
+        }.runToCompletion()
+    )
+
+    fun resolution(
+        key: PreparedCellShapeKey,
+        build: () -> Preparation,
+        retainShape: Boolean = true,
+        bind: (PreparedCellShape) -> Preparation
+    ): Preparation = iterator {
+        yield(PreparationStep.Complete(resolvedLayout(key, build, retainShape, bind)))
+    }
+
+    private suspend fun SequenceScope<PreparationStep>.resolvedLayout(
+        key: PreparedCellShapeKey,
+        build: () -> Preparation,
+        retainShape: Boolean,
+        bind: (PreparedCellShape) -> Preparation
     ): PreparedProseLayout {
-        if (closed) return build()
-        resolveCached(key, bind)?.let { return it }
-        val fresh = build()
+        if (closed) return requireNotNull(await(build()))
+        cachedShape(key)?.let { shape ->
+            await(bind(shape))?.let { return it.copy(cellShape = shape) }
+        }
+        val fresh = requireNotNull(await(build()))
         if (!retainShape) return fresh
         val shape = PreparedCellShape.fromBound(key, fresh)
         catalog.stageForBuild(shape)
@@ -150,10 +196,14 @@ internal class PreparedCellShapeBuildContext internal constructor(
         key: PreparedCellShapeKey,
         bind: (PreparedCellShape) -> PreparedProseLayout?
     ): PreparedProseLayout? {
-        if (closed) return null
-        val shape =
-            resolved[key]?.get() ?: catalog.acquireForBuild(key)?.also(::remember) ?: return null
+        val shape = cachedShape(key) ?: return null
         return bind(shape)?.copy(cellShape = shape)
+    }
+
+    private fun cachedShape(key: PreparedCellShapeKey): PreparedCellShape? = if (closed) {
+        null
+    } else {
+        resolved[key]?.get() ?: catalog.acquireForBuild(key)?.also(::remember)
     }
 
     private fun remember(shape: PreparedCellShape) {
@@ -178,6 +228,7 @@ internal class PreparedCellShapeBuildContext internal constructor(
         catalog.releaseBuildPins(pins.keys.toList())
         pins.clear()
         resolved.clear()
+        geometryDigests.clear()
     }
 }
 
@@ -261,6 +312,8 @@ private fun PreparedProseLayout.localShape(): PreparedProseLayout = copy(
             tableSurface = null
         )
     },
+    retainedBytes = ownRetainedBytes,
+    tableRetainedBytesAtPreparation = 0L,
     interactions = interactions.map { it.copy(docPos = null, attrsJson = null) },
     accessibilityNodes = emptyList(),
     imageAttachments = imageAttachments.map { it.copy(id = "", ordinal = -1) },

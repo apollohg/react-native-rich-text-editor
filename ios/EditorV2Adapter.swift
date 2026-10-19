@@ -74,11 +74,11 @@ final class EditorV2Adapter {
     var cachedScalarLength: UInt32?
     var cachedActiveState: [String: Any]?
     var cachedHistoryState: (canUndo: Bool, canRedo: Bool)?
-    var cachedViewUpdateJSON: String?
+    var cachedViewUpdate: EditorV2DerivedUpdate?
     var cachedAtomicRenderJSON: String?
     var cachedAtomicRenderSelectionObject: [String: Any]?
     var cachedAtomicRenderDocumentRevision: UInt64?
-    var cachedSemanticRenderBlocks: [[[String: Any]]]?
+    var cachedSemanticRenderBlocks: [[NSDictionary]]?
     var tableIndex = EditorTableIndex()
     var installedFrameRevision: UInt64?
     var fullFrameAdoptionCountForTesting = 0
@@ -279,6 +279,7 @@ final class EditorV2Adapter {
             installedFrameRevision = nil
             cachedTablePresentation = nil
             cachedSemanticRenderBlocks = nil
+            cachedViewUpdate = nil
         }
         runtimeLock.unlock()
         return normalized
@@ -305,9 +306,7 @@ final class EditorV2Adapter {
 
     // MARK: - Render derivation (v2 render accessor)
 
-    static let atomicRenderSnapshotKeys: Set<String> = [
-        "renderBlocks",
-        "renderPatch",
+    static let renderStateKeys: Set<String> = [
         "selection",
         "activeState",
         "historyState",
@@ -316,6 +315,8 @@ final class EditorV2Adapter {
         "scalarLength",
         "documentIsEmpty"
     ]
+
+    static let atomicRenderSnapshotKeys: Set<String> = renderStateKeys.union(["renderBlocks", "renderPatch"])
 
     static let activeStateKeys: Set<String> = [
         "marks",
@@ -383,7 +384,7 @@ final class EditorV2Adapter {
             "tableKeys": tableIndex.tableKeys.sorted(),
             "installedFrameRevision": installedFrameRevision.map(String.init) ?? NSNull(),
             "semanticRenderBlocks": cachedSemanticRenderBlocks ?? NSNull(),
-            "viewUpdateJSON": cachedViewUpdateJSON ?? NSNull()
+            "viewUpdateJSON": cachedViewUpdate?.updateJSON ?? NSNull()
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else {
             return ""

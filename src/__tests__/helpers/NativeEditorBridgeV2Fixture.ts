@@ -62,6 +62,20 @@ export const MOCK_ATOMIC_RENDER_SNAPSHOT = {
     documentIsEmpty: false,
 };
 
+export const MOCK_ATOMIC_RENDER_STATE = {
+    voidBlocks: [
+        [],
+        [ { type: 'voidBlock', nodeType: 'mention', docPos: 13, attrs: { id: 'u1' }, atomId: 'atom-1' } ],
+    ],
+    selection: MOCK_ATOMIC_RENDER_SNAPSHOT.selection,
+    activeState: MOCK_ATOMIC_RENDER_SNAPSHOT.activeState,
+    historyState: MOCK_ATOMIC_RENDER_SNAPSHOT.historyState,
+    documentVersion: MOCK_ATOMIC_RENDER_SNAPSHOT.documentVersion,
+    stateRevision: MOCK_ATOMIC_RENDER_SNAPSHOT.stateRevision,
+    scalarLength: MOCK_ATOMIC_RENDER_SNAPSHOT.scalarLength,
+    documentIsEmpty: MOCK_ATOMIC_RENDER_SNAPSHOT.documentIsEmpty,
+};
+
 export const MOCK_SNAPSHOT_METADATA = {
     formatVersion: 1,
     documentId: 'doc-1',
@@ -135,6 +149,9 @@ export function resetMockNativeModule() {
 
     mockNativeModule.editorV2RenderUpdate = jest.fn(() =>
         okRecord(JSON.stringify(MOCK_ATOMIC_RENDER_SNAPSHOT)));
+
+    mockNativeModule.editorV2RenderState = jest.fn(() =>
+        okRecord(JSON.stringify(MOCK_ATOMIC_RENDER_STATE)));
 
     mockNativeModule.editorV2ReplaceDocument = jest.fn(() =>
         okRecord(JSON.stringify({ changed: true, documentRevision: '6' })));

@@ -189,6 +189,7 @@ internal class EditorKeyboardToolbarView(context: Context) : FrameLayout(context
         val hadSuggestions = isShowingMentionSuggestions
         mentionTrigger = trigger
         mentionSuggestions = suggestions.take(8)
+        if (!hadSuggestions && !isShowingMentionSuggestions) return false
         if (hadSuggestions && isShowingMentionSuggestions) {
             updateMentionSuggestionsInPlace()
             updateChrome()

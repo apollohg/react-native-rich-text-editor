@@ -2,6 +2,48 @@ import ExpoModulesCore
 import XCTest
 
 extension RichTextEditorViewTests {
+    func testAuthorizedSelectionRecordingPreservesUnicodeTextMatchingAndRejectsChangedStorage() throws {
+        struct TextMatchCase {
+            let name: String
+            let authorized: String
+            let live: String
+            let recordsSelection: Bool
+        }
+        let cases: [TextMatchCase] = [
+            .init(name: "exact emoji and combining text", authorized: "👩‍💻 a\u{0301}\u{0323} tail", live: "👩‍💻 a\u{0301}\u{0323} tail", recordsSelection: true),
+            .init(name: "canonically equivalent reordered marks", authorized: "a\u{0301}\u{0323} tail", live: "a\u{0323}\u{0301} tail", recordsSelection: true),
+            .init(name: "canonical text with a different UTF16 length", authorized: "e\u{0301} tail", live: "é tail", recordsSelection: false),
+            .init(name: "changed text with the same UTF16 length", authorized: "a\u{0301}\u{0323} tail", live: "a\u{0301}\u{0323} fail", recordsSelection: false)
+        ]
+        for value in cases {
+            let editorId = makeV2Editor()
+            defer { destroyV2Editor(id: editorId) }
+            let input = EditorTextView(frame: CGRect(x: 0, y: 0, width: 320, height: 120))
+            input.bindEditor(id: editorId, initialHTML: "<p>\(value.authorized)</p>")
+            let authorizedHTML = EditorV2Shadow.getHtml(id: editorId)
+            XCTAssertEqual(input.lastAuthorizedText, value.authorized, value.name)
+            input.performTransientTextMutation {
+                input.textStorage.replaceCharacters(in: NSRange(location: 0, length: input.textStorage.length), with: value.live)
+                input.selectedRange = NSRange(location: input.textStorage.length, length: 0)
+            }
+            input.lastAuthorizedSelectedUtf16Range = nil
+            input.recordAuthorizedSelectionIfPossible()
+            XCTAssertEqual(input.lastAuthorizedSelectedUtf16Range,
+                value.recordsSelection ? input.selectedRange : nil, value.name)
+            XCTAssertEqual(EditorV2Shadow.getHtml(id: editorId), authorizedHTML,
+                "\(value.name): recording selection must not commit transient storage")
+
+            if value.authorized == value.live {
+                XCTAssertTrue(input.prepareForExternalEditorUpdate(), value.name)
+                XCTAssertEqual(input.textStorage.string, value.live, value.name)
+                XCTAssertEqual(EditorV2Shadow.getHtml(id: editorId), authorizedHTML, value.name)
+            } else {
+                input.restoreAuthorizedTextSnapshot()
+                XCTAssertEqual(input.textStorage.string, value.authorized, value.name)
+            }
+        }
+    }
+
     func testUnauthorizedTextMutationReconcilesOnNextRunLoop() {
         let editorId = makeV2Editor()
         defer { destroyV2Editor(id: editorId) }

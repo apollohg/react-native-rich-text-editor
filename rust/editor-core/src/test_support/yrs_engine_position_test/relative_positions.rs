@@ -31,6 +31,7 @@ fn revisioned_scalar_and_utf16_offsets_create_affinity_aware_relative_points() {
             &map,
             &document,
             &schema,
+            None,
         )
     };
 
@@ -91,6 +92,7 @@ fn revisioned_offsets_preserve_affinity_at_rendered_inter_block_break() {
                 &map,
                 &document,
                 &schema,
+                None,
             )
             .unwrap()
         };
@@ -107,6 +109,7 @@ fn revisioned_offsets_preserve_affinity_at_rendered_inter_block_break() {
             &map,
             &document,
             &schema,
+            None,
         )
         .is_none());
         assert_eq!(

@@ -241,7 +241,7 @@ fn prepared_candidate_cache_failure_is_private_atomic_and_falls_back_once() {
     set_compiled_commit_stage_failpoint_for_test(Some(
         CompiledCommitPreparationStage::HistoryUpdateEncoding,
     ));
-    reset_encoded_state_reuse_counts_for_test();
+    reset_commit_state_encodings_for_test();
 
     let error = engine
         .apply_typed_transaction(insert_transaction(&engine, 70_105))
@@ -251,9 +251,13 @@ fn prepared_candidate_cache_failure_is_private_atomic_and_falls_back_once() {
     assert!(error.message.contains("historyUpdateEncoding"));
     assert_eq!(atomic_audit(&engine), before);
     assert!(engine.prepared_candidate_cache.is_none());
-    assert_eq!(take_encoded_state_reuse_counts_for_test(), (0, 0, 1));
+    assert_eq!(
+        take_commit_state_encodings_for_test(),
+        1,
+        "the rejected first edit encoded the current state to bootstrap its replica"
+    );
     reset_prepared_candidate_cache_counts_for_test();
-    reset_encoded_state_reuse_counts_for_test();
+    reset_commit_state_encodings_for_test();
 
     engine
         .apply_typed_transaction(insert_transaction(&engine, 70_106))
@@ -261,15 +265,11 @@ fn prepared_candidate_cache_failure_is_private_atomic_and_falls_back_once() {
 
     assert!(engine.prepared_candidate_cache.is_some());
     assert_eq!(take_prepared_candidate_cache_counts_for_test(), (0, 1));
-    assert_eq!(take_encoded_state_reuse_counts_for_test(), (0, 1, 0));
+    assert_eq!(take_commit_state_encodings_for_test(), 1);
 }
 
 #[test]
 fn prepared_candidate_cache_revalidates_stale_revision_seal_before_reuse() {
-    use crate::yrs_engine::mutation::{
-        reset_localized_lookup_counts_for_test, take_localized_lookup_counts_for_test,
-    };
-
     let mut engine = transaction_engine();
     engine
         .import_json(
@@ -278,29 +278,33 @@ fn prepared_candidate_cache_revalidates_stale_revision_seal_before_reuse() {
         )
         .unwrap();
     engine
+        .apply_typed_transaction(insert_transaction(&engine, 70_107))
+        .unwrap();
+    engine
         .prepared_candidate_cache
         .as_mut()
-        .unwrap()
+        .expect("the first local edit retains its proving replica")
         .document_revision = engine.revision.saturating_add(1);
     reset_prepared_candidate_cache_counts_for_test();
-    reset_localized_lookup_counts_for_test();
 
     engine
         .apply_typed_transaction(insert_transaction(&engine, 70_108))
         .unwrap();
     let cache_counts = take_prepared_candidate_cache_counts_for_test();
-    let lookup_counts = take_localized_lookup_counts_for_test();
     let cached_encoded = super::encode_state_bounded(
         &engine.prepared_candidate_cache.as_ref().unwrap().doc,
         &engine.resource_limits,
     )
     .unwrap();
 
-    assert_eq!(cache_counts, (0, 1));
-    assert_eq!(lookup_counts, (1, 1, 1));
+    assert_eq!(
+        cache_counts,
+        (0, 1),
+        "a replica sealed for another revision must be rebuilt, not reused"
+    );
     assert_eq!(
         engine.document_json().unwrap()["content"][0]["content"][0]["text"],
-        "axbc"
+        "axxbc"
     );
     assert_eq!(cached_encoded, engine.encoded_state().unwrap());
 }

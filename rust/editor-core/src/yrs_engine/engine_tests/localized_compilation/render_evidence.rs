@@ -408,13 +408,14 @@ fn localized_render_failure_exposes_only_the_generic_transition_error() {
         set_localized_render_failure_stage_for_test(None);
         set_cached_render_error_for_test(None);
         let error = applied.expect_err("forced generic transition failure must be returned");
-        assert_eq!(atomic_audit(&engine), before);
-        FailureAudit {
+        let audit = FailureAudit {
             error,
             cached_counts: take_cached_render_counts_for_test(),
             lifecycle_counts: take_localized_render_transition_counts_for_test(),
             full_pass_counts: take_full_pass_counts_for_test(),
-        }
+        };
+        assert_eq!(atomic_audit(&engine), before);
+        audit
     }
 
     let generic = run(None);
@@ -426,7 +427,6 @@ fn localized_render_failure_exposes_only_the_generic_transition_error() {
         generic.full_pass_counts,
         FullPassCounts {
             table_projection_derivations: 1,
-            whole_state_encodings: 1,
             ..FullPassCounts::default()
         }
     );

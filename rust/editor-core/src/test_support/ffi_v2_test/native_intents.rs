@@ -1,4 +1,4 @@
-fn native_frame_snapshot(id: &str, owner: &str) -> Value {
+fn native_frame(id: &str, owner: &str) -> (Value, String) {
     let result = crate::ffi_v2::native_frame::editor_v2_render_native_frame(
         id.into(),
         Some(owner.into()),
@@ -6,8 +6,13 @@ fn native_frame_snapshot(id: &str, owner: &str) -> Value {
         None,
     );
     assert!(result.error.is_none(), "native frame: {:?}", result.error);
-    serde_json::from_str(&result.frame.expect("native frame").snapshot_json)
-        .expect("native snapshot")
+    let frame = result.frame.expect("native frame");
+    (
+        serde_json::from_str(&frame.snapshot_json).expect("native snapshot"),
+        frame
+            .position_epoch
+            .expect("an owned native frame publishes its position epoch"),
+    )
 }
 
 #[test]
@@ -19,8 +24,7 @@ fn native_intent_ffi_is_strict_owner_scoped_and_idempotent() {
         },
     }));
     assert_eq!(state_of(&id)["documentOrigin"], "import");
-    let render = native_frame_snapshot(&id, "4");
-    let epoch = render["positionEpoch"].as_str().unwrap().to_owned();
+    let (render, epoch) = native_frame(&id, "4");
     let request = json!({
         "version": 1,
         "requestId": "1",
@@ -43,7 +47,7 @@ fn native_intent_ffi_is_strict_owner_scoped_and_idempotent() {
         "ffXi seed"
     );
     assert_eq!(state_of(&id)["documentOrigin"], "nativeView");
-    let incremental_render = native_frame_snapshot(&id, "4");
+    let (incremental_render, _) = native_frame(&id, "4");
     assert_eq!(incremental_render["renderBlocks"], Value::Null);
     assert!(incremental_render["renderPatch"].is_object());
     assert_eq!(
@@ -80,7 +84,7 @@ fn native_intent_ffi_is_strict_owner_scoped_and_idempotent() {
         id.clone(),
         "4".into(),
     ));
-    let recovered_render = native_frame_snapshot(&id, "4");
+    let (recovered_render, _) = native_frame(&id, "4");
     assert!(recovered_render["renderBlocks"].is_array());
     assert_eq!(recovered_render["renderPatch"], Value::Null);
     assert_eq!(
@@ -109,7 +113,7 @@ fn external_full_render_pin_preserves_the_native_patch_base() {
     let id = create_handle(json!({
         "initialization": {"type": "localJson", "json": document("one", "three")},
     }));
-    let initial = native_frame_snapshot(&id, "41");
+    let (initial, _) = native_frame(&id, "41");
     assert_eq!(initial["renderBlocks"].as_array().unwrap().len(), 3);
 
     ok_json(&v2::editor_v2_replace_document(
@@ -140,7 +144,7 @@ fn external_full_render_pin_preserves_the_native_patch_base() {
         })
         .to_string(),
     ));
-    let incremental = native_frame_snapshot(&id, "41");
+    let (incremental, _) = native_frame(&id, "41");
     assert_eq!(incremental["renderBlocks"], Value::Null);
     assert_eq!(
         incremental["renderPatch"]["baseDocumentVersion"],
@@ -161,8 +165,7 @@ fn external_full_render_pin_preserves_the_native_patch_base() {
 #[test]
 fn native_intent_ffi_expires_results_outside_the_replay_window() {
     let id = create_handle(json!({ "initialization": { "type": "localEmpty" } }));
-    let render = native_frame_snapshot(&id, "7");
-    let epoch = render["positionEpoch"].as_str().unwrap();
+    let (_, epoch) = native_frame(&id, "7");
     for request_id in 1..=257_u64 {
         let result = v2::editor_v2_apply_native_intent(
             id.clone(),

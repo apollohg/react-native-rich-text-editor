@@ -47,6 +47,73 @@ fn create_error_from_json(config_json: String) -> FfiError {
 }
 
 #[test]
+fn public_html_replacement_preserves_shared_prefix_and_suffix_windows() {
+    const FIRST_REQUEST: u64 = 67_000;
+    const BASE_HTML: &str = "<h2>Prefix</h2><p><strong>Middle</strong></p><p>Suffix</p>";
+    const EDITED_HTML: &str = "<h2>Prefix</h2><p><strong>Edited</strong></p><p>Suffix</p>";
+    const APPENDED_HTML: &str =
+        "<h2>Prefix</h2><p><strong>Edited</strong></p><p>Suffix</p><p>Tail</p>";
+    for history in ["resetAndClear", "undoableBoundary"] {
+        let editor = create_editor(json!({ "initialization": { "type": "localEmpty" } }));
+        let replace = |request: u64, html: &str| {
+            super::editor::editor_v2_replace_document(
+                editor.clone(),
+                json!({
+                    "version": 1,
+                    "requestId": request.to_string(),
+                    "setHtml": html,
+                    "history": history,
+                })
+                .to_string(),
+            )
+        };
+        let initial = replace(FIRST_REQUEST, BASE_HTML);
+        assert!(
+            initial.error.is_none(),
+            "initial import: {:?}",
+            initial.error
+        );
+        let document = || {
+            let result = super::editor::editor_v2_get_document_json(editor.clone());
+            serde_json::from_str::<serde_json::Value>(result.value.as_deref().unwrap()).unwrap()
+        };
+        let base = document();
+        let mut edited = base.clone();
+        edited["content"][1]["content"][0]["text"] = json!("Edited");
+        let mut appended = edited.clone();
+        let mut tail = base["content"][2].clone();
+        tail["content"][0]["text"] = json!("Tail");
+        appended["content"].as_array_mut().unwrap().push(tail);
+        for (index, (case, html, expected)) in [
+            ("identical source", BASE_HTML, &base),
+            ("unchanged prefix and suffix", EDITED_HTML, &edited),
+            ("append after unchanged prefix", APPENDED_HTML, &appended),
+            ("remove after unchanged prefix", EDITED_HTML, &edited),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let result = replace(FIRST_REQUEST + index as u64 + 1, html);
+            assert!(
+                result.error.is_none(),
+                "{case} ({history}): {:?}",
+                result.error
+            );
+            assert!(
+                result.value.is_some(),
+                "{case} must publish its public result"
+            );
+            assert_eq!(
+                &document(),
+                expected,
+                "{case} ({history}) must preserve all rich nodes"
+            );
+        }
+        assert_eq!(super::editor::editor_v2_destroy(editor).value, Some(true));
+    }
+}
+
+#[test]
 fn create_installs_every_limit_override_in_the_created_session() {
     let config = json!({
         "initialization": { "type": "localEmpty" },

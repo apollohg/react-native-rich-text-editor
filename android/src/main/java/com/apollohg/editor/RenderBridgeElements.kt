@@ -242,7 +242,7 @@ internal fun RenderBridge.appendElements(
                 }
             }
 
-            "blockStart" -> {
+            RenderBridge.RENDER_BLOCK_START_TYPE -> {
                 val nodeType = element.optString("nodeType", "")
                 val depth = element.optInt("depth", 0)
                 val listContext = element.optJSONObject("listContext")
@@ -302,7 +302,10 @@ internal fun RenderBridge.appendElements(
                         )
                         val inBlockquoteSeparator =
                             blockquoteDepth(nextBlockStack) > 0f &&
-                                trailingRenderedContentHasBlockquote(state.result)
+                                trailingRenderedContentHasBlockquote(
+                                    state.result,
+                                    state.trailingFragmentInBlockquote
+                                )
                         val separatorStart = state.result.length
                         appendInterBlockNewline(
                             state.result,
@@ -538,7 +541,7 @@ internal fun RenderBridge.appendElements(
                 ctx.contentStart = state.result.length
             }
 
-            "blockEnd" -> {
+            RenderBridge.RENDER_BLOCK_END_TYPE -> {
                 if (state.blockStack.isNotEmpty()) {
                     val endedAncestors = state.blockStack.dropLast(1).map { it.nodeType }
                     val endedBlock = state.blockStack.removeAt(state.blockStack.lastIndex)

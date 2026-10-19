@@ -156,9 +156,44 @@ pub(crate) struct PlanningContext<'a> {
     pub yrs_state_epoch: u64,
     pub canonical_schema: &'a crate::yrs_engine::canonical::CanonicalSchemaContext,
     pub canonical_artifact: &'a crate::yrs_engine::canonical::CanonicalArtifact,
-    pub allow_deferred_admission: bool,
+    pub allow_deferred_admission: &'a dyn Fn() -> bool,
     pub preparation: Option<&'a std::cell::RefCell<Option<PreparedCommandProof>>>,
     pub localized_textblock_state: Option<&'a crate::yrs_engine::derived_state::DerivedStateCache>,
+    pub compilation_view: Option<crate::yrs_engine::compiler::CachedCompilationView<'a>>,
+    pub derived_state: Option<&'a crate::yrs_engine::derived_state::DerivedStateCache>,
+    pub structural_representation_only: bool,
+}
+
+impl<'a> PlanningContext<'a> {
+    pub(crate) fn validation_certificate(
+        &self,
+    ) -> Option<&'a crate::yrs_engine::derived_state::DocumentValidationCertificate> {
+        self.compilation_view
+            .filter(|view| view.document.shares_root_storage_with(self.document))
+            .map(|view| view.validation_certificate)
+    }
+
+    fn structural_command_is_available(
+        &self,
+        selection: &Selection,
+        command: crate::editor_state::StructuralCommand<'_>,
+    ) -> bool {
+        let document_node_count = self
+            .derived_state
+            .filter(|state| state.document.shares_root_storage_with(self.document))
+            .map_or_else(
+                || crate::editor_state::document_node_count(self.document.root()),
+                |state| state.document_node_count,
+            );
+        crate::editor_state::structural_command_is_available(
+            self.document,
+            self.schema,
+            selection,
+            self.resource_limits,
+            document_node_count,
+            command,
+        )
+    }
 }
 
 pub(crate) fn plan(
@@ -304,9 +339,12 @@ pub(crate) fn table_action_plan_for_test(
         yrs_state_epoch: request.yrs_state_epoch,
         canonical_schema: &canonical_schema,
         canonical_artifact: &canonical_artifact,
-        allow_deferred_admission: false,
+        allow_deferred_admission: &|| false,
         preparation: None,
         localized_textblock_state: None,
+        compilation_view: None,
+        derived_state: None,
+        structural_representation_only: false,
     };
     table_action_transaction(&context, prepared)
 }

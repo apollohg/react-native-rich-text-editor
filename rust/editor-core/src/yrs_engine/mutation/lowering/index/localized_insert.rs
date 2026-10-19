@@ -10,6 +10,10 @@ impl LocalizedRootWindowCompiler {
         scan_work: usize,
         locator: LocalizedRootWindowLocator<'_>,
     ) -> OperationResult<Option<Self>> {
+        #[cfg(test)]
+        if FORCE_EAGER_MUTATION_LOWERING.get() {
+            return Ok(None);
+        }
         if !locator.seed.matches_storage(
             txn,
             fragment,
@@ -78,6 +82,7 @@ impl LocalizedRootWindowCompiler {
                 pending_traversal_work: seed_payload.pending_traversal_work,
                 localized_position_target_count: Some(seed_payload.target_count),
                 explicit_path_parent_widths: Some(root_width),
+                structural_window_complement: None,
                 action_limit,
                 scan_work,
                 scan_limit,
@@ -90,7 +95,7 @@ impl LocalizedRootWindowCompiler {
                 virtual_delete_visits: 0,
             },
             document: locator.document.clone(),
-            expected_preview: locator.expected_preview.clone(),
+            expected_preview: locator.expected_preview.cloned(),
             from_child: locator.from_child,
             to_child: locator.to_child,
             expected_content: locator.expected_content,
@@ -136,8 +141,11 @@ impl LocalizedRootWindowCompiler {
             ));
         }
         if !context.before.shares_root_storage_with(&self.document)
-            || context.after != &self.expected_preview
-            || self.from_child >= self.to_child
+            || self
+                .expected_preview
+                .as_ref()
+                .is_some_and(|expected| context.after != expected)
+            || self.from_child > self.to_child
             || child_offset(self.from_child) != Some(replacement.from)
             || child_offset(self.to_child) != Some(replacement.to)
         {
@@ -173,6 +181,10 @@ impl LocalizedInsertCompiler {
         document_revision: u64,
         read_scope: Option<crate::yrs_engine::compiler::CompilationReadScope<'_>>,
     ) -> OperationResult<Option<Self>> {
+        #[cfg(test)]
+        if FORCE_EAGER_MUTATION_LOWERING.get() {
+            return Ok(None);
+        }
         if !seed.matches(
             txn,
             fragment,
@@ -235,6 +247,7 @@ impl LocalizedInsertCompiler {
                 pending_traversal_work: seed_payload.pending_traversal_work,
                 localized_position_target_count: Some(seed_payload.target_count),
                 explicit_path_parent_widths: Some(path_parent_widths),
+                structural_window_complement: None,
                 action_limit,
                 scan_work,
                 scan_limit,

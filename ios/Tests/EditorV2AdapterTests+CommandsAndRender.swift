@@ -272,4 +272,178 @@ extension EditorV2AdapterTests {
         XCTAssertEqual(spy.last?.domain, "lifecycle")
     }
 
+    private struct SelectionRenderObservation {
+        let update: NSDictionary
+        let atomicRender: NSDictionary
+        let cacheState: NSDictionary
+        let presentationRevision: UInt64?
+        let presentationBaseRevision: UInt64?
+        let presentationChanges: TableFrameChanges?
+        let lastSyncedSelection: [UInt32]?
+    }
+
+    private func observeSelectionRender(_ adapter: EditorV2Adapter, update: String) -> SelectionRenderObservation {
+        SelectionRenderObservation(
+            update: parseObject(update) as NSDictionary,
+            atomicRender: parseObject(adapter.cachedAtomicRenderJSON) as NSDictionary,
+            cacheState: parseObject(adapter.cacheStateForTesting).filter { $0.key != "viewUpdateJSON" } as NSDictionary,
+            presentationRevision: adapter.cachedTablePresentation?.documentRevision,
+            presentationBaseRevision: adapter.cachedTablePresentation?.baseDocumentRevision,
+            presentationChanges: adapter.cachedTablePresentation?.changes,
+            lastSyncedSelection: adapter.lastSyncedScalarSelection.map { [$0.anchor, $0.head] }
+        )
+    }
+
+    private func assertSameSelectionRender(
+        _ fast: SelectionRenderObservation,
+        _ full: SelectionRenderObservation,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertEqual(fast.update, full.update, "view update\nfast: \(fast.update)\nfull: \(full.update)", file: file, line: line)
+        XCTAssertEqual(fast.atomicRender, full.atomicRender,
+            "cached atomic render\nfast: \(fast.atomicRender)\nfull: \(full.atomicRender)", file: file, line: line)
+        XCTAssertEqual(fast.cacheState, full.cacheState,
+            "adapter caches\nfast: \(fast.cacheState)\nfull: \(full.cacheState)", file: file, line: line)
+        XCTAssertEqual(fast.presentationRevision, full.presentationRevision, file: file, line: line)
+        XCTAssertEqual(fast.presentationBaseRevision, full.presentationBaseRevision, file: file, line: line)
+        XCTAssertEqual(fast.presentationChanges, full.presentationChanges, file: file, line: line)
+        XCTAssertEqual(fast.lastSyncedSelection, full.lastSyncedSelection, file: file, line: line)
+    }
+
+    private func authoritativeSelectionState(_ adapter: EditorV2Adapter) throws -> [String: Any] {
+        let result = editorV2RenderNativeFrame(
+            editorId: adapter.editorId, ownerId: nil, mirrorScalarAnchor: nil, mirrorScalarHead: nil
+        )
+        XCTAssertNil(result.error)
+        let snapshot = parseObject(try XCTUnwrap(result.frame).snapshotJson)
+        return snapshot.filter { EditorV2Adapter.renderStateKeys.contains($0.key) }
+    }
+
+    private func assertSelectionStateAdoptionMatchesFullRender(
+        _ adapter: EditorV2Adapter,
+        outcome: EditorV2Adapter.NativeIntentOutcome,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        let selectionState = try authoritativeSelectionState(adapter)
+        let fastOutcome = EditorV2Adapter.NativeIntentOutcome(
+            changed: outcome.changed, documentChanged: outcome.documentChanged, selectionState: selectionState,
+            unappliedSelection: nil
+        )
+        let fullOutcome = EditorV2Adapter.NativeIntentOutcome(
+            changed: outcome.changed, documentChanged: outcome.documentChanged, selectionState: nil,
+            unappliedSelection: nil
+        )
+        let tableIndex = adapter.tableIndex
+        let retainedBlocks = adapter.cachedSemanticRenderBlocks.map { $0 as NSArray }
+        let fullAdoptions = adapter.fullFrameAdoptionCountForTesting
+        let deltaAdoptions = adapter.deltaFrameAdoptionCountForTesting
+        let positionEpoch = adapter.positionEpoch
+        let frameFetches = adapter.renderUpdateCallCountForTesting
+        let fast = try XCTUnwrap(adapter.renderNativeIntentOutcome(fastOutcome), "selection state adoption", file: file, line: line)
+        XCTAssertEqual(adapter.renderUpdateCallCountForTesting, frameFetches,
+            "a valid selection state must not fetch a native frame", file: file, line: line)
+        XCTAssertTrue(adapter.tableIndex === tableIndex, "selection state must keep the installed table index", file: file, line: line)
+        XCTAssertEqual(adapter.cachedSemanticRenderBlocks.map { $0 as NSArray }, retainedBlocks, file: file, line: line)
+        XCTAssertEqual(adapter.fullFrameAdoptionCountForTesting, fullAdoptions, file: file, line: line)
+        XCTAssertEqual(adapter.deltaFrameAdoptionCountForTesting, deltaAdoptions, file: file, line: line)
+        XCTAssertEqual(adapter.positionEpoch, positionEpoch, "selection state must keep the position epoch", file: file, line: line)
+        XCTAssertEqual(adapter.cachedTablePresentation?.positionEpoch, positionEpoch, file: file, line: line)
+        let fastObservation = observeSelectionRender(adapter, update: fast.updateJSON)
+
+        let full = try XCTUnwrap(adapter.renderNativeIntentOutcome(fullOutcome), "full render", file: file, line: line)
+        XCTAssertEqual(adapter.renderUpdateCallCountForTesting, frameFetches + 1,
+            "the outcome without selection state must take the full frame path", file: file, line: line)
+        XCTAssertEqual(fast.changed, full.changed, file: file, line: line)
+        XCTAssertEqual(fast.documentChanged, full.documentChanged, file: file, line: line)
+        assertSameSelectionRender(fastObservation, observeSelectionRender(adapter, update: full.updateJSON), file: file, line: line)
+    }
+
+    func testSelectionStateAdoptionMatchesTheFullFramePathForATextSelection() throws {
+        let adapter = makeAdapter()
+        XCTAssertNotNil(adapter.setContentHtml("<p><strong>bold 👩‍💻</strong> plain</p><blockquote><p>quoted</p></blockquote>"))
+        let owner = UUID()
+        adapter.claimNativeBindingIfUnowned(token: owner)
+        defer { adapter.releaseNativeBindingOwner(token: owner) }
+        XCTAssertNotNil(adapter.initialUpdateJSON())
+        let revision = adapter.baseDocumentRevision
+
+        let outcome = try XCTUnwrap(adapter.submitNativeIntent(adapter.nativeIntent("setSelection", anchor: 2, head: 9)))
+        XCTAssertFalse(outcome.documentChanged)
+        let deliveredSelectionState = try XCTUnwrap(outcome.selectionState,
+            "a selection-only intent against the owner's current render carries its selection state")
+        XCTAssertEqual(deliveredSelectionState as NSDictionary, try authoritativeSelectionState(adapter) as NSDictionary)
+        try assertSelectionStateAdoptionMatchesFullRender(adapter, outcome: outcome)
+        XCTAssertEqual(adapter.baseDocumentRevision, revision)
+        XCTAssertEqual(adapter.cachedAuthoritativeScalarSelection.map { [$0.anchor, $0.head] }, [2, 9])
+    }
+
+    func testSelectionStateAdoptionResolvesCellSelectionsAgainstTheInstalledTableIndex() throws {
+        let adapter = makeAdapter(configJson: TableInputTestSchema.tableConfig)
+        XCTAssertNotNil(adapter.setContentJson(TableInputTestSchema.twoCellDocument))
+        let owner = UUID()
+        adapter.claimNativeBindingIfUnowned(token: owner)
+        defer { adapter.releaseNativeBindingOwner(token: owner) }
+        XCTAssertNotNil(adapter.initialUpdateJSON())
+        let key = try XCTUnwrap(adapter.cachedTablePresentation?.index.tableKeys.first)
+        let admission = try XCTUnwrap(adapter.tableMutationAdmission(tableID: key))
+        XCTAssertNotNil(adapter.selectTableCell(cellIndex: 1, admission: admission))
+        XCTAssertEqual(adapter.cachedAtomicRenderSelection()?["type"] as? String, "cell")
+
+        try assertSelectionStateAdoptionMatchesFullRender(
+            adapter, outcome: EditorV2Adapter.NativeIntentOutcome(
+                changed: false, documentChanged: false, selectionState: nil, unappliedSelection: nil
+            )
+        )
+        XCTAssertEqual(adapter.cachedAtomicRenderSelection()?["type"] as? String, "cell")
+    }
+
+    func testInvalidSelectionStateFallsBackToTheFullFramePath() throws {
+        let adapter = makeAdapter(configJson: TableInputTestSchema.tableConfig)
+        XCTAssertNotNil(adapter.setContentJson(TableInputTestSchema.twoCellDocument))
+        let owner = UUID()
+        adapter.claimNativeBindingIfUnowned(token: owner)
+        defer { adapter.releaseNativeBindingOwner(token: owner) }
+        XCTAssertNotNil(adapter.initialUpdateJSON())
+        let key = try XCTUnwrap(adapter.cachedTablePresentation?.index.tableKeys.first)
+        let admission = try XCTUnwrap(adapter.tableMutationAdmission(tableID: key))
+        XCTAssertNotNil(adapter.selectTableCell(cellIndex: 0, admission: admission))
+        let valid = try authoritativeSelectionState(adapter)
+        let revision = try XCTUnwrap(valid["documentVersion"] as? String)
+        var unresolvedCell = valid
+        unresolvedCell["selection"] = ["type": "cell", "anchorCell": 0, "headCell": 0]
+        XCTAssertNotNil(EditorV2Adapter.atomicRenderSnapshot(validatingStateOf: unresolvedCell.merging(
+            ["renderBlocks": NSNull(), "renderPatch": NSNull()]) { current, _ in current }),
+            "the unresolved cell case must pass state validation so only cell resolution rejects it")
+        var staleRevision = valid
+        staleRevision["documentVersion"] = String(try XCTUnwrap(UInt64(revision)) + 1)
+        var extraKey = valid
+        extraKey["positionEpoch"] = "1"
+        var missingKey = valid
+        missingKey.removeValue(forKey: "documentIsEmpty")
+        var malformedHistory = valid
+        malformedHistory["historyState"] = ["canUndo": 1, "canRedo": false]
+        let cases: [(String, [String: Any]?)] = [
+            ("missing", nil), ("unresolved cell", unresolvedCell), ("stale document version", staleRevision),
+            ("extra key", extraKey), ("missing key", missingKey), ("malformed history", malformedHistory)
+        ]
+        for (label, selectionState) in cases {
+            let frameFetches = adapter.renderUpdateCallCountForTesting
+            let fallback = try XCTUnwrap(adapter.renderNativeIntentOutcome(EditorV2Adapter.NativeIntentOutcome(
+                changed: false, documentChanged: false, selectionState: selectionState,
+                unappliedSelection: nil
+            )), label)
+            XCTAssertEqual(adapter.renderUpdateCallCountForTesting, frameFetches + 1, "\(label) must take the full frame path")
+            let fallbackObservation = observeSelectionRender(adapter, update: fallback.updateJSON)
+            let full = try XCTUnwrap(adapter.renderNativeIntentOutcome(EditorV2Adapter.NativeIntentOutcome(
+                changed: false, documentChanged: false, selectionState: nil,
+                unappliedSelection: nil
+            )), label)
+            assertSameSelectionRender(fallbackObservation, observeSelectionRender(adapter, update: full.updateJSON))
+            XCTAssertEqual(adapter.cachedAtomicRenderSelection() as NSDictionary?, valid["selection"] as? NSDictionary,
+                "\(label) must leave the authoritative cell selection installed")
+        }
+    }
+
 }

@@ -196,3 +196,5 @@ include!("perf_suite/cases.rs");
 include!("perf_suite/measurement.rs");
 
 include!("perf_suite/fixtures.rs");
+
+include!("perf_suite/native_publication.rs");

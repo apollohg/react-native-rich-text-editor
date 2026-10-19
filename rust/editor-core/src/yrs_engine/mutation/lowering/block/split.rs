@@ -1,3 +1,5 @@
+const LIST_ITEM_LEADING_BLOCK: u32 = 0;
+
 impl MutationCompiler {
     fn normalize_existing_target_for_split(
         &mut self,
@@ -153,60 +155,35 @@ impl MutationCompiler {
         Ok((left_len_utf16, delete_len_utf16))
     }
 
-    fn register_prepared_block(
+    fn truncate_block_storage(
         &mut self,
         operation_index: usize,
-        insert_id: usize,
-        semantic_path: Vec<u32>,
-        after_target: usize,
-        first_gap_before: u32,
-        after: &Document,
+        block_path: &[u32],
+        storage_len: usize,
     ) -> OperationResult<()> {
-        let nodes = self
-            .prepared_inserts
-            .get(insert_id)
-            .and_then(Option::as_ref)
-            .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?
-            .nodes
-            .clone();
-        let mut elements = Vec::new();
-        let mut texts = Vec::new();
-        collect_prepared_handles(
-            insert_id,
-            &nodes,
-            &semantic_path,
-            after,
-            &mut elements,
-            &mut texts,
-        )?;
-        for (path, handle) in elements {
-            if self.prepared_elements.insert(path, handle).is_some() {
-                return Err(OperationError::engine_invariant_failed(
-                    self.request_id,
-                    Some(operation_index),
-                    "duplicate prepared element semantic path",
-                ));
+        let block = self
+            .structural_parents
+            .get_mut(block_path)
+            .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+        block.storage_children.truncate(storage_len);
+        let block_id = block.parent.id();
+        let last_gap = u32::try_from(storage_len)
+            .map_err(|_| invalid_action_range(self.request_id, operation_index))?;
+        let removed_gap = |target: &ResolvedText| {
+            matches!(
+                &target.kind,
+                ResolvedTargetKind::Missing { parent, child_index, .. }
+                    if AsRef::<Branch>::as_ref(parent).id() == block_id && *child_index > last_gap
+            )
+        };
+        for target in &mut self.targets {
+            if removed_gap(target) {
+                for slot in std::mem::take(&mut target.action_slots) {
+                    self.actions[slot] = ActionSlot::Tombstone;
+                }
             }
         }
-        for (insertion, (ordinal, (handle, runs))) in
-            (after_target + 1..).zip(texts.into_iter().enumerate())
-        {
-            let text = prepared_runs_text(&runs);
-            let scalar_len = u32::try_from(text.chars().count())
-                .map_err(|_| invalid_action_range(self.request_id, operation_index))?;
-            self.targets.insert(
-                insertion,
-                ResolvedText {
-                    kind: ResolvedTargetKind::Prepared { handle },
-                    gap_before: if ordinal == 0 { first_gap_before } else { 0 },
-                    text,
-                    scalar_len,
-                    base_runs: Vec::new(),
-                    current_runs: runs,
-                    action_slots: Vec::new(),
-                },
-            );
-        }
+        self.targets.retain(|target| !removed_gap(target));
         Ok(())
     }
 
@@ -248,26 +225,13 @@ impl MutationCompiler {
                 .children()
                 .get(wrapper_index as usize..wrapper_index as usize + WRAPPERS_AFTER_SPLIT as usize)
                 .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
-            let mut batch = crate::yrs_engine::codec::prepare_model_nodes(
+            let insert_id = self.replace_prepared_element_from_preview(
+                operation_index,
+                &handle,
                 replacement,
+                wrapper_path.len().saturating_add(1),
                 schema,
                 limits,
-                wrapper_path.len().saturating_add(1),
-            )
-            .map_err(|error| map_prepared_node_error(self.request_id, operation_index, error))?;
-            let empty_text_work = materialize_empty_prepared_textblocks(&mut batch.nodes, schema);
-            let insert_id = handle.insert_id;
-            self.replace_prepared_element_with_children(operation_index, &handle, batch.nodes)?;
-            self.prepared_elements
-                .retain(|_, candidate| candidate.insert_id != insert_id);
-            self.targets.retain(|target| {
-                !matches!(&target.kind, ResolvedTargetKind::Prepared { handle } if handle.insert_id == insert_id)
-            });
-            self.charge_operation_work(
-                operation_index,
-                batch.work.checked_add(empty_text_work).ok_or_else(|| {
-                    work_overflow(self.request_id, operation_index, self.action_limit)
-                })?,
             )?;
             if self.structural_parents.contains_key(&parent_path) {
                 self.apply_virtual_structural_splices(
@@ -298,6 +262,7 @@ impl MutationCompiler {
                     "split block has no tracked Yrs element",
                 )
             })?;
+        self.ensure_no_created_text(operation_index, "at", &block_target.parent.id())?;
         let block = resolved.parent(before);
         let block_content = block.content().ok_or_else(|| {
             OperationError::operation_invalid(
@@ -364,7 +329,7 @@ impl MutationCompiler {
             &block_target.storage_children,
             resolved.parent_offset,
         ) {
-            if move_index == 0 {
+            if move_index == 0 && block_path.last() == Some(&LIST_ITEM_LEADING_BLOCK) {
                 if let Some(item_path) = list_item_path.as_ref() {
                     let list_path = item_path[..item_path.len() - 1].to_vec();
                     let item_index = *item_path
@@ -446,7 +411,7 @@ impl MutationCompiler {
                 .map_err(|_| invalid_action_range(self.request_id, operation_index))?;
             let suffix_is_empty = block_target.storage_children[moved_start..]
                 .iter()
-                .all(|child| matches!(child, StorageChildKind::Text { scalar_len: 0, .. }));
+                .all(|child| self.current_storage_text_len(child) == Some(0));
             if moved_count == 0 || suffix_is_empty {
                 // Zero-length Yrs text children do not make a semantic suffix.
                 return self.finish_split_with_created_right(
@@ -461,13 +426,17 @@ impl MutationCompiler {
                     limits,
                 );
             }
-            self.push_action(YrsMutationAction::DeleteXmlChildren {
-                parent: block_target.parent.clone(),
-                child_index: move_index,
-                child_count: moved_count,
-                signature: block_target.signature.clone(),
-                operation_index,
-            });
+            let moved_existing =
+                self.release_prepared_storage_suffix(operation_index, &block_path, moved_start)?;
+            if moved_existing > 0 {
+                self.push_action(YrsMutationAction::DeleteXmlChildren {
+                    parent: block_target.parent.clone(),
+                    child_index: move_index,
+                    child_count: moved_existing,
+                    signature: block_target.signature.clone(),
+                    operation_index,
+                });
+            }
             let moved_ids = block_target.storage_children[moved_start..]
                 .iter()
                 .filter_map(|child| match child {
@@ -479,18 +448,10 @@ impl MutationCompiler {
                     | StorageChildKind::PreparedChild { .. } => None,
                 })
                 .collect::<HashSet<_>>();
-            let retained_text_id = block_target.storage_children[..moved_start]
+            let retains_text = block_target.storage_children[..moved_start]
                 .iter()
-                .rev()
-                .find_map(|child| match child {
-                    StorageChildKind::Text { target, .. } => {
-                        Some(AsRef::<Branch>::as_ref(target).id())
-                    }
-                    StorageChildKind::Element { .. }
-                    | StorageChildKind::PreparedElement
-                    | StorageChildKind::PreparedChild { .. } => None,
-                });
-            if retained_text_id.is_none() {
+                .any(|child| matches!(child, StorageChildKind::Text { .. }));
+            if !retains_text {
                 let first_moved_text_id =
                     block_target
                         .storage_children
@@ -556,104 +517,19 @@ impl MutationCompiler {
                         if moved_ids.contains(&AsRef::<Branch>::as_ref(target).id())
                 )
             });
-            let after_target = if let Some(retained_text_id) = retained_text_id {
-                self.targets.iter().position(|candidate| {
-                    matches!(
-                        &candidate.kind,
-                        ResolvedTargetKind::Existing { target, .. }
-                            if AsRef::<Branch>::as_ref(target).id() == retained_text_id
-                    )
-                })
-            } else {
-                let block_parent_id = match &block_target.parent {
-                    XmlParentRef::Element(element) => AsRef::<Branch>::as_ref(element).id(),
-                    XmlParentRef::Fragment(_) => {
-                        return Err(invalid_action_range(self.request_id, operation_index));
-                    }
-                };
-                self.targets.iter().position(|candidate| {
-                    matches!(
-                        &candidate.kind,
-                        ResolvedTargetKind::Missing {
-                            parent,
-                            child_index,
-                            ..
-                        }
-                            if AsRef::<Branch>::as_ref(parent).id() == block_parent_id
-                                && *child_index == move_index
-                    )
-                })
-            }
-            .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
-            let block_index = *block_path
-                .last()
-                .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
-            let insertion_index = block_index
-                .checked_add(1)
-                .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
-            let insertion_parent_path = block_path[..block_path.len() - 1].to_vec();
-            let mut inserted_path = insertion_parent_path.clone();
-            inserted_path.push(insertion_index);
-            let right_block = after
-                .node_at(&inserted_path)
-                .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
-            let json = crate::serialize::node_to_prosemirror_json(right_block, schema);
-            let mut batch = prepare_xml_nodes(
-                std::slice::from_ref(&json),
-                limits,
-                inserted_path.len().saturating_add(1),
-            )
-            .map_err(|error| map_prepared_node_error(self.request_id, operation_index, error))?;
-            for child in &mut batch.nodes {
-                child.index = insertion_index
-                    .checked_add(child.index)
-                    .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
-            }
-            let insertion_parent = self
-                .structural_parents
-                .get(&insertion_parent_path)
-                .cloned()
-                .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
-            let prepared_id = self.queue_prepared_insert(PendingPreparedInsert {
-                parent: insertion_parent.parent,
-                child_index: insertion_index,
-                nodes: batch.nodes,
-                signature: insertion_parent.signature,
+            self.truncate_block_storage(operation_index, &block_path, moved_start)?;
+            return self.finish_split_with_created_right(
                 operation_index,
-                semantic_parent_path: insertion_parent_path,
-                first_semantic_index: insertion_index,
-            });
-            let previous_end = self
-                .positions()?
-                .get(after_target)
-                .map(|(_, end)| *end)
-                .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
-            let created_start = first_text_doc_position(after.root(), &inserted_path)
-                .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
-            let first_gap_before = created_start
-                .checked_sub(previous_end)
-                .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
-            self.register_prepared_block(
-                operation_index,
-                prepared_id,
-                inserted_path,
-                after_target,
-                first_gap_before,
                 after,
-            )?;
-            self.charge_operation_work(
-                operation_index,
-                block_target
-                    .signature
-                    .children
-                    .len()
-                    .checked_add(batch.work)
-                    .and_then(|work| work.checked_add(usize::try_from(moved_count).ok()?))
-                    .ok_or_else(|| {
-                        work_overflow(self.request_id, operation_index, self.action_limit)
-                    })?,
-            )?;
-            return Ok(());
+                list_item_path,
+                &block_path,
+                block_target.signature.children.len(),
+                0,
+                usize::try_from(moved_count)
+                    .map_err(|_| invalid_action_range(self.request_id, operation_index))?,
+                schema,
+                limits,
+            );
         }
         let ResolvedInsertion {
             target_index,
@@ -757,15 +633,21 @@ impl MutationCompiler {
             .checked_sub(suffix_storage_start)
             .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
         if suffix_storage_count > 0 {
-            self.push_action(YrsMutationAction::DeleteXmlChildren {
-                parent: block_target.parent.clone(),
-                child_index: u32::try_from(suffix_storage_start)
-                    .map_err(|_| invalid_action_range(self.request_id, operation_index))?,
-                child_count: u32::try_from(suffix_storage_count)
-                    .map_err(|_| invalid_action_range(self.request_id, operation_index))?,
-                signature: block_target.signature.clone(),
+            let suffix_existing = self.release_prepared_storage_suffix(
                 operation_index,
-            });
+                &block_path,
+                suffix_storage_start,
+            )?;
+            if suffix_existing > 0 {
+                self.push_action(YrsMutationAction::DeleteXmlChildren {
+                    parent: block_target.parent.clone(),
+                    child_index: u32::try_from(suffix_storage_start)
+                        .map_err(|_| invalid_action_range(self.request_id, operation_index))?,
+                    child_count: suffix_existing,
+                    signature: block_target.signature.clone(),
+                    operation_index,
+                });
+            }
             let deleted_text_ids = block_target.storage_children[suffix_storage_start..]
                 .iter()
                 .filter_map(|child| match child {
@@ -796,11 +678,7 @@ impl MutationCompiler {
                         if deleted_text_ids.contains(&AsRef::<Branch>::as_ref(target).id())
                 )
             });
-            self.structural_parents
-                .get_mut(&block_path)
-                .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?
-                .storage_children
-                .truncate(suffix_storage_start);
+            self.truncate_block_storage(operation_index, &block_path, suffix_storage_start)?;
         }
 
         self.finish_split_with_created_right(
@@ -947,15 +825,35 @@ impl MutationCompiler {
             storage_insert: None,
         });
         self.apply_virtual_structural_splices(operation_index, after, &splices, &[])?;
-        let prepared_id = self.queue_prepared_insert(PendingPreparedInsert {
-            parent: insertion_parent.parent,
-            child_index: insertion_index,
-            nodes: batch.nodes,
-            signature: insertion_parent.signature,
-            operation_index,
-            semantic_parent_path: insertion_parent_path.clone(),
-            first_semantic_index: insertion_index,
-        });
+        let following_semantic_index = u32::try_from(batch.nodes.len())
+            .ok()
+            .and_then(|count| insertion_index.checked_add(count))
+            .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+        let prepared_id = match self.foldable_pending_insert(
+            &insertion_parent.parent,
+            insertion_index,
+            &insertion_parent_path,
+            following_semantic_index,
+        ) {
+            Some(existing) => {
+                self.prepend_prepared_nodes(
+                    operation_index,
+                    existing,
+                    batch.nodes,
+                    insertion_index,
+                )?;
+                existing
+            }
+            None => self.queue_prepared_insert(PendingPreparedInsert {
+                parent: insertion_parent.parent,
+                child_index: insertion_index,
+                nodes: batch.nodes,
+                signature: insertion_parent.signature,
+                operation_index,
+                semantic_parent_path: insertion_parent_path.clone(),
+                first_semantic_index: insertion_index,
+            }),
+        };
         self.register_prepared_insert_state(operation_index, prepared_id, after)?;
         let work = block_children_len
             .checked_add(batch.work)

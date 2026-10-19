@@ -131,7 +131,7 @@ internal fun reflowTableSurfaces(
         accessibilityNodes = layout.accessibilityNodes.map { it.copy(bounds = rect(it.bounds)) },
         imageAttachments = layout.imageAttachments.map { it.copy(bounds = rect(it.bounds)) },
         viewerAtoms = layout.viewerAtoms.map { it.copy(bounds = rect(it.bounds)) },
-        retainedBytes = layout.nonTableRetainedBytes + nextTableBytes,
+        retainedBytes = layout.ownRetainedBytes + nextTableBytes,
         tableRetainedBytesAtPreparation = nextTableBytes
     )
 }

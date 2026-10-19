@@ -342,7 +342,7 @@ impl MutationCompiler {
         let mut target_index = insertion_target;
         let mut current_end = previous_end;
         for (path, handle, runs) in texts {
-            let start = first_text_doc_position(after.root(), &path)
+            let start = first_text_doc_position(after.root(), &path, runs.is_empty())
                 .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
             let text = prepared_runs_text(&runs);
             let scalar_len = u32::try_from(text.chars().count())
@@ -570,7 +570,7 @@ impl MutationCompiler {
         let mut target_index = insertion_target;
         let mut current_end = previous_end;
         for (path, handle, runs) in texts {
-            let start = first_text_doc_position(after.root(), &path)
+            let start = first_text_doc_position(after.root(), &path, runs.is_empty())
                 .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
             let text = prepared_runs_text(&runs);
             let scalar_len = u32::try_from(text.chars().count())

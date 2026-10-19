@@ -28,6 +28,7 @@ fn malformed_reserved_opaque_insert_rejects_atomically_before_yrs_execution() {
             editing_limits: &editing_limits,
             document_revision: 0,
             max_length: None,
+            validation_certificate: None,
         },
         TypedTransaction {
             request_id: 172,
@@ -79,6 +80,7 @@ fn opaque_metadata_depth_and_width_limits_are_exact_and_atomic() {
                 editing_limits: &editing_limits,
                 document_revision: 0,
                 max_length: None,
+                validation_certificate: None,
             },
             TypedTransaction {
                 request_id: 173,
@@ -191,6 +193,7 @@ fn opaque_metadata_max_input_bytes_is_exact_aggregated_and_atomic() {
                 editing_limits: &editing_limits,
                 document_revision: 0,
                 max_length: None,
+                validation_certificate: None,
             },
             TypedTransaction {
                 request_id: 174,
@@ -215,7 +218,7 @@ fn opaque_metadata_max_input_bytes_is_exact_aggregated_and_atomic() {
     let baseline = compile(&limits).unwrap();
     let envelope_scan = {
         let txn = doc.transact();
-        crdt_envelope(174, &txn, limits.max_encoded_state_bytes)
+        crdt_envelope(174, &txn, &baseline.mutation_plan, limits.max_encoded_state_bytes)
             .unwrap()
             .scan_work
     };
@@ -373,6 +376,7 @@ fn structural_insert_splits_one_marked_unicode_storage_text_exactly() {
                 editing_limits: &editing_limits,
                 document_revision: 0,
                 max_length: None,
+                validation_certificate: None,
             },
             TypedTransaction {
                 request_id: 113,
@@ -474,6 +478,7 @@ fn structurally_identical_replace_is_a_document_no_op() {
                 editing_limits: &editing_limits,
                 document_revision: 0,
                 max_length: None,
+                validation_certificate: None,
             },
             TypedTransaction {
                 request_id: 116,

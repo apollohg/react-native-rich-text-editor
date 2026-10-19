@@ -206,6 +206,7 @@ public final class PreparedProseDrawingView: UIView {
         tablePresentationOwner.retainedBytes
     }
     internal var imageRevisionForTesting: UInt64 { imageRevisions.revision }
+    internal var observedViewportViewCountForTesting: Int { observedViewportViewIDs.count }
     internal var imageRevisionStateForTesting: ViewerAttachmentRevisionState { imageRevisions }
     private func updateSidecarInstrumentation() {
         PreparedProseInstrumentation.retained(
@@ -941,7 +942,7 @@ public final class PreparedProseDrawingView: UIView {
 
     private func refreshViewportObservations() {
         var views: [UIView] = []
-        if preparesTableCellsOnViewportChange {
+        if preparesTableCellsOnViewportChange, layout != nil {
             var current: UIView? = self
             while let view = current {
                 views.append(view)
@@ -1693,21 +1694,30 @@ public final class PreparedProseDrawingView: UIView {
         let blocks = Dictionary(grouping: snapshot.blocks, by: { ObjectIdentifier($0.layout) })
         let cells = Dictionary(grouping: visibleCells, by: { ObjectIdentifier($0.surface) })
 
-        func drawLayout(_ presented: ViewerTablePresentedLayout) {
-            guard !presented.clip.isNull, !presented.clip.isEmpty else { return }
-            if ObjectIdentifier(presented.layout) != excludedLayoutID {
-                context.saveGState()
-                context.clip(to: presented.clip)
-                context.translateBy(x: presented.origin.x, y: presented.origin.y)
-                for fragment in presented.layout.decorations {
-                    guard fragment.bounds.offsetBy(dx: presented.origin.x, dy: presented.origin.y).intersects(dirtyRect) else { continue }
-                    fragment.styleBox?.draw(in: fragment.bounds, context: context)
-                }
-                context.restoreGState()
-            }
+        enum BackgroundStep {
+            case layout(ViewerTablePresentedLayout)
+            case surface(ViewerTableSurface)
+        }
 
-            for block in blocks[ObjectIdentifier(presented.layout)] ?? [] {
-                guard let surface = block.block.tableSurface else { continue }
+        guard let root = snapshot.layouts.first else { return }
+        var pending: [BackgroundStep] = [.layout(root)]
+        while let step = pending.popLast() {
+            switch step {
+            case let .layout(presented):
+                guard !presented.clip.isNull, !presented.clip.isEmpty else { continue }
+                if ObjectIdentifier(presented.layout) != excludedLayoutID {
+                    context.saveGState()
+                    context.clip(to: presented.clip)
+                    context.translateBy(x: presented.origin.x, y: presented.origin.y)
+                    for fragment in presented.layout.decorations {
+                        guard fragment.bounds.offsetBy(dx: presented.origin.x, dy: presented.origin.y).intersects(dirtyRect) else { continue }
+                        fragment.styleBox?.draw(in: fragment.bounds, context: context)
+                    }
+                    context.restoreGState()
+                }
+                let surfaces = (blocks[ObjectIdentifier(presented.layout)] ?? []).compactMap(\.block.tableSurface)
+                pending.append(contentsOf: surfaces.reversed().map(BackgroundStep.surface))
+            case let .surface(surface):
                 let surfaceCells = cells[ObjectIdentifier(surface)] ?? []
                 context.saveGState()
                 context.setFillColor(surface.style.headerBackgroundColor.resolvedColor(with: traitCollection).cgColor)
@@ -1719,17 +1729,13 @@ public final class PreparedProseDrawingView: UIView {
                 // One fill keeps shared fractional edges opaque during scrolling.
                 context.fillPath()
                 context.restoreGState()
-                for cell in surfaceCells {
-                    guard let child = layouts[ObjectIdentifier(cell.content)],
-                          mountedLayoutIDs.contains(ObjectIdentifier(cell.content))
-                    else { continue }
-                    drawLayout(child)
+                let children = surfaceCells.compactMap { cell -> ViewerTablePresentedLayout? in
+                    guard mountedLayoutIDs.contains(ObjectIdentifier(cell.content)) else { return nil }
+                    return layouts[ObjectIdentifier(cell.content)]
                 }
+                pending.append(contentsOf: children.reversed().map(BackgroundStep.layout))
             }
         }
-
-        guard let root = snapshot.layouts.first else { return }
-        drawLayout(root)
     }
 
     private func drawTableChromeBorders(_ cells: [ViewerTablePresentedCell], context: CGContext) {

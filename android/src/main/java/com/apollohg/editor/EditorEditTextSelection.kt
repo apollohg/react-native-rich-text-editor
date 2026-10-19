@@ -108,10 +108,9 @@ internal fun EditorEditText.syncCurrentSelectionToRust() {
         authoritativeNodeSelectionRange = null
     }
 
-    val currentText = text?.toString() ?: ""
-    if (currentText != lastAuthorizedText) return
+    if (!isCurrentTextAuthorizedForEditorImpl()) return
     val (scalarAnchor, scalarHead) = currentLogicalScalarSelection()
-        ?: rawScalarSelection(currentText)
+        ?: rawScalarSelection(lastAuthorizedText)
         ?: return
     val mappedSelection = inputScalarSelection(scalarAnchor, scalarHead) ?: return
 
@@ -234,10 +233,9 @@ internal fun EditorEditText.currentLogicalScalarSelection(): Pair<Int, Int>? {
     if (selectionStart == snapshot.utf16Anchor && selectionEnd == snapshot.utf16Head) {
         return snapshot.scalarAnchor to snapshot.scalarHead
     }
-    recordImeTraceForTesting(
-        "logicalSelectionInvalidated",
+    recordImeTraceForTesting("logicalSelectionInvalidated") {
         "scalar=${snapshot.scalarAnchor}..${snapshot.scalarHead} projected=${snapshot.utf16Anchor}..${snapshot.utf16Head} physical=$selectionStart..$selectionEnd revision=${snapshot.documentVersion ?: "pending"}"
-    )
+    }
     logicalSelectionSnapshot = null
     return null
 }
@@ -304,7 +302,9 @@ internal fun EditorEditText.applySelectionFromJSON(
 ) {
     val type = selection.optString("type", "") ?: return
     if (isEditorDestroyedForInput()) {
-        recordImeTraceForTesting("applySelectionFromJSONSkipped", "reason=destroyed type=$type")
+        recordImeTraceForTesting("applySelectionFromJSONSkipped") {
+            "reason=destroyed type=$type"
+        }
         return
     }
     if (rootTableRenderNeedsRefresh) return
@@ -342,10 +342,9 @@ internal fun EditorEditText.applySelectionFromJSON(
                 val anchorUtf16 = PositionBridge.scalarToUtf16(localSelection.first, currentText)
                 val headUtf16 = PositionBridge.scalarToUtf16(localSelection.second, currentText)
                 val len = text?.length ?: 0
-                recordImeTraceForTesting(
-                    "applySelectionFromJSON",
+                recordImeTraceForTesting("applySelectionFromJSON") {
                     "doc=$docAnchor..$docHead scalar=$scalarAnchor..$scalarHead utf16=$anchorUtf16..$headUtf16 len=$len"
-                )
+                }
                 setSelection(
                     anchorUtf16.coerceIn(0, len),
                     headUtf16.coerceIn(0, len)

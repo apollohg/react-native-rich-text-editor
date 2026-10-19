@@ -10,6 +10,7 @@ import android.text.Selection
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.util.AttributeSet
+import android.util.Log
 import android.view.DragEvent
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -52,6 +53,7 @@ class EditorEditText @JvmOverloads constructor(
 
     internal data class ImeInitialSurroundingText(
         val text: String,
+        val textStart: Int,
         val selectionStart: Int,
         val selectionEnd: Int,
         val originalSelectionStart: Int,
@@ -235,6 +237,10 @@ class EditorEditText @JvmOverloads constructor(
     internal var nativeTextMutationAdoptionSuppression: NativeTextMutationAdoptionSuppression? =
         null
     internal var lastAuthorizedTextRevision: Long = 0L
+    internal var verifiedAuthorizedContentVersion: Long? = null
+    internal var verifiedAuthorizedText: String? = null
+    internal var caretGeometryKey: CaretGeometryKey? = null
+    internal var caretGeometry: RectF? = null
     internal var lastAuthorizedRenderedText: CharSequence? = null
     internal var explicitSelectedImageRange: ImageSelectionRange? = null
     internal var suppressedImageSelectionHighlightColor: Int? = null
@@ -243,9 +249,12 @@ class EditorEditText @JvmOverloads constructor(
     internal var captureApplyUpdateTraceForTesting: Boolean = false
     internal var lastApplyUpdateTraceForTesting: ApplyUpdateTrace? = null
     internal val imeTraceForTesting = java.util.ArrayDeque<String>()
+    internal val imeTraceLogging: Boolean = Log.isLoggable(IME_TRACE_LOG_TAG, Log.VERBOSE)
+    internal val imeTraceRecording: Boolean =
+        imeTraceLogging || System.getProperty(BuildConfig.IME_TRACE_RECORDING_PROPERTY).toBoolean()
     internal var imeTraceSequence: Long = 0L
     internal var lastImeTraceUptimeMs: Long = 0L
-    internal var currentRenderBlocksJson: org.json.JSONArray? = null
+    internal var currentRenderBlocks: List<RetainedRenderBlock>? = null
     internal var currentRenderBlocksDocumentVersion: String? = null
     internal var currentRenderBlocksNeedFullApply = false
     internal var rootTablePositionMap: RootTablePositionMap? = null
@@ -355,8 +364,9 @@ class EditorEditText @JvmOverloads constructor(
     internal fun applyRustUpdateJSONForTesting(updateJSON: String) =
         applyRustUpdateJSONForTestingImpl(updateJSON)
 
-    internal fun recordImeTraceForTesting(event: String, details: String = "") =
-        recordImeTraceForTestingImpl(event, details)
+    internal inline fun recordImeTraceForTesting(event: String, details: () -> String = { "" }) {
+        if (imeTraceRecording) recordImeTraceForTestingImpl(event, details())
+    }
 
     internal fun clearImeTraceForTesting() = clearImeTraceForTestingImpl()
 
@@ -634,8 +644,7 @@ class EditorEditText @JvmOverloads constructor(
      * @param id The editor session public ID.
      * @param initialHTML Optional HTML to set as initial content.
      */
-    fun bindEditor(id: Long, initialHTML: String? = null, notifyListener: Boolean = true) =
-        bindEditorImpl(id, initialHTML, notifyListener)
+    fun bindEditor(id: Long, initialHTML: String? = null) = bindEditorImpl(id, initialHTML)
 
     /**
      * Unbind from the current editor instance.

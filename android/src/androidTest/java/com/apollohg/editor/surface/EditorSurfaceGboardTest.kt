@@ -12,17 +12,22 @@ import android.view.accessibility.AccessibilityWindowInfo
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.apollohg.editor.requestImeTraceRecording
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Assume.assumeTrue
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class EditorSurfaceGboardTest {
+    @Before
+    fun recordImeTrace() = requestImeTraceRecording()
+
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
 
     @Test

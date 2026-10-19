@@ -33,7 +33,9 @@ pub(super) fn compile_transaction_impl(
     context: CompilationContext<'_>,
     transaction: &TypedTransaction,
     mutation_lowering: Option<TransactionMutationLowering>,
-    mut crdt_envelope_loader: Option<&mut dyn FnMut(usize) -> OperationResult<CrdtEnvelope>>,
+    mut crdt_envelope_loader: Option<
+        &mut dyn FnMut(&YrsMutationPlan) -> OperationResult<CrdtEnvelope>,
+    >,
     stored_marks_context: Option<StoredMarksCompilationContext<'_>>,
     cached_view: Option<CachedCompilationView<'_>>,
     semantic_shortcuts: SemanticCompilationShortcuts<'_>,
@@ -47,22 +49,26 @@ pub(super) fn compile_transaction_impl(
         localized_insert,
         localized_format,
         localized_root_window,
+        localized_split,
         prelowered_plan,
         prelowered_lookup_transition,
     ) = match mutation_lowering {
         Some(TransactionMutationLowering::Eager(compiler)) => {
-            (Some(*compiler), None, None, None, None, None)
+            (Some(*compiler), None, None, None, None, None, None)
         }
         Some(TransactionMutationLowering::LocalizedInsert(localized)) => {
-            (None, Some(*localized), None, None, None, None)
+            (None, Some(*localized), None, None, None, None, None)
         }
         Some(TransactionMutationLowering::LocalizedFormat(localized)) => {
-            (None, None, Some(*localized), None, None, None)
+            (None, None, Some(*localized), None, None, None, None)
         }
         Some(TransactionMutationLowering::LocalizedRootWindow(localized)) => {
-            (None, None, None, Some(*localized), None, None)
+            (None, None, None, Some(*localized), None, None, None)
         }
-        None => (None, None, None, None, None, None),
+        Some(TransactionMutationLowering::LocalizedSplit(localized)) => {
+            (None, None, None, None, Some(*localized), None, None)
+        }
+        None => (None, None, None, None, None, None, None),
     };
     #[cfg(test)]
     SEMANTIC_COMPILATION_COUNT.set(SEMANTIC_COMPILATION_COUNT.get().saturating_add(1));
@@ -112,7 +118,8 @@ pub(super) fn compile_transaction_impl(
     let yrs_lowering_requested = lowering.is_some()
         || localized_insert.is_some()
         || localized_format.is_some()
-        || localized_root_window.is_some();
+        || localized_root_window.is_some()
+        || localized_split.is_some();
     let preview = Cow::Borrowed(context.document);
     let composed_map = StepMap::empty();
     let operation_result = None;
@@ -197,6 +204,7 @@ pub(super) fn compile_transaction_impl(
         localized_insert,
         localized_format,
         localized_root_window,
+        localized_split,
         prelowered_plan,
         prelowered_lookup_transition,
         request_id,
@@ -229,6 +237,7 @@ pub(super) fn compile_transaction_impl(
         localized_insert: _localized_insert,
         localized_format: _localized_format,
         localized_root_window: _localized_root_window,
+        localized_split: _localized_split,
         prelowered_plan,
         prelowered_lookup_transition,
         request_id,
@@ -331,6 +340,7 @@ pub(super) fn compile_transaction_impl(
                 request_id,
                 context,
                 base_position_map,
+                cached_view,
                 &preview,
                 &composed_map,
                 position_update_mode,
@@ -462,7 +472,7 @@ pub(super) fn compile_transaction_impl(
                 None,
                 "Yrs live deletion plan has no snapshot envelope loader",
             )
-        })?(mutation_plan.scan_work)?)
+        })?(&mutation_plan)?)
     } else {
         None
     };

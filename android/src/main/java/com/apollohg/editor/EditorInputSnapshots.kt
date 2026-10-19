@@ -11,6 +11,13 @@ import android.view.inputmethod.SurroundingText
 import android.view.inputmethod.TextSnapshot
 import androidx.annotation.RequiresApi
 
+internal data class PublishedRawInputState(
+    val text: String,
+    val selection: List<Int>,
+    val generatedMarkers: List<IntRange>,
+    val contentVersion: Long?
+)
+
 internal fun EditorInputConnection.extractedTextForIme(
     request: ExtractedTextRequest?,
     flags: Int
@@ -97,14 +104,42 @@ private fun EditorInputConnection.composingSelectionForIme(
 }
 
 internal fun EditorInputConnection.publishInputStateIfNeeded() {
-    val mapper = currentMapper() ?: return
-    val composing = composingSelectionForIme(mapper)
-    val selection = listOf(
-        mapper.rawToIme(editorView.selectionStart.coerceAtLeast(0)),
-        mapper.rawToIme(editorView.selectionEnd.coerceAtLeast(0)),
-        composing.first,
-        composing.second
+    if (!isCurrentInputSession()) return
+    val editable = editorView.editableText
+    val contentVersion = (editable as? EditorEditable)?.contentVersion
+    val unchangedContent = lastPublishedRawInputState?.takeIf {
+        contentVersion != null && it.contentVersion == contentVersion
+    }
+    val composingRange = currentComposingSpanRawRange()
+    val rawState = PublishedRawInputState(
+        text = unchangedContent?.text ?: authorizedOrCurrentText(editable.toString()),
+        selection = listOf(
+            editorView.selectionStart.coerceAtLeast(0),
+            editorView.selectionEnd.coerceAtLeast(0),
+            composingRange?.first ?: -1,
+            composingRange?.second ?: -1
+        ),
+        generatedMarkers = unchangedContent?.generatedMarkers
+            ?: ImeTextCoordinateMapper.generatedMarkerRanges(editable),
+        contentVersion = contentVersion
     )
+    if (extractedTextRequest == null && rawState == lastPublishedRawInputState) return
+    val selection = if (extractedTextRequest == null) {
+        val projection = lastImeSelectionProjection?.takeIf {
+            it.text === rawState.text && it.generatedMarkers === rawState.generatedMarkers
+        } ?: ImeSelectionProjection(rawState.text, rawState.generatedMarkers)
+        lastImeSelectionProjection = projection
+        projection.project(rawState.selection)
+    } else {
+        val mapper = currentMapper() ?: return
+        val composing = composingSelectionForIme(mapper)
+        listOf(
+            mapper.rawToIme(editorView.selectionStart.coerceAtLeast(0)),
+            mapper.rawToIme(editorView.selectionEnd.coerceAtLeast(0)),
+            composing.first,
+            composing.second
+        )
+    }
     if (selection != lastPublishedSelection) {
         lastPublishedSelection = selection
         val manager = editorView.context.getSystemService(
@@ -112,8 +147,12 @@ internal fun EditorInputConnection.publishInputStateIfNeeded() {
         ) as? InputMethodManager
         manager?.updateSelection(editorView, selection[0], selection[1], selection[2], selection[3])
     }
+    lastPublishedRawInputState = rawState
     publishExtractedTextIfNeeded()
 }
+
+private fun EditorInputConnection.authorizedOrCurrentText(rawText: String): String =
+    if (rawText == editorView.lastAuthorizedText) editorView.lastAuthorizedText else rawText
 
 internal fun EditorInputConnection.publishExtractedTextIfNeeded() {
     val request = extractedTextRequest ?: return

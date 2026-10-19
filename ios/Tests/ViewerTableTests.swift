@@ -31,6 +31,12 @@ private final class TablePanLifecycleProbe: NSObject {
 }
 
 final class ViewerTableTests: XCTestCase {
+    private static let hardMaximumDocumentDepth = 1_024
+    private static let documentAndLeafDepth = 2
+    private static let nodesPerNestedTable = 3
+    private static let admittedNestedTableDepth = (hardMaximumDocumentDepth - documentAndLeafDepth) / nodesPerNestedTable
+    private static let secondaryThreadStackSize = 512 * 1_024
+
     func testSharedTableBordersKeepConfiguredThicknessIncludingMergedAndRTLCells() throws {
         let configuredBorderWidth: CGFloat = 4
         let columnWidth = 80
@@ -2138,11 +2144,11 @@ final class ViewerTableTests: XCTestCase {
     }
 
     func testDeepRegistryShapeReuseAndEvictionKeepEveryNestedSurfaceAndAppearance() throws {
-        let depth = 340
+        let depth = Self.admittedNestedTableDepth
         let registry = PreparedProseLayoutRegistry()
         let owner = "deep-registry-reuse"
         defer { registry.releaseDirectMounted(owner) }
-        let configuration = ProseViewerConfiguration(configJSON: try configWithMaxDocumentDepth(1024))
+        let configuration = ProseViewerConfiguration(configJSON: try configWithMaxDocumentDepth(Self.hardMaximumDocumentDepth))
         let source = try nestedTablesSource(depth: depth)
         let prefix = #"{"type":"doc","content":["#
         let shifted = prefix + (try jsonSource(paragraph("shifted anchor"))) + "," + source.dropFirst(prefix.count)
@@ -2209,7 +2215,7 @@ final class ViewerTableTests: XCTestCase {
     func testCompilerBackedRaisedDepth110TablesPrepareFiniteRetainedSurfaces() throws {
         let layout = try prepare(
             try nestedTablesSource(depth: 110),
-            configJSON: try configWithMaxDocumentDepth(1024)
+            configJSON: try configWithMaxDocumentDepth(Self.hardMaximumDocumentDepth)
         )
 
         XCTAssertNil(layout.error)
@@ -2739,14 +2745,204 @@ final class ViewerTableTests: XCTestCase {
     }
 
     func testCompilerBackedMountedPresentationTraversesAdmittedDepthWithoutDroppingMetadata() throws {
-        let layout = try prepare(nestedTablesSource(depth: 340), configJSON: try configWithMaxDocumentDepth(1024))
+        let depth = Self.admittedNestedTableDepth
+        let layout = try prepare(
+            nestedTablesSource(depth: depth),
+            configJSON: try configWithMaxDocumentDepth(Self.hardMaximumDocumentDepth)
+        )
         let snapshot = ViewerTablePresentation.project(
             layout: layout,
             owner: ViewerTablePresentationOwner(),
             viewport: .unknown
         )
-        XCTAssertEqual(snapshot.cells.count, 340)
-        XCTAssertEqual(snapshot.mountedCells.count, 340)
+        XCTAssertEqual(snapshot.cells.count, depth)
+        XCTAssertEqual(snapshot.mountedCells.count, depth)
+    }
+
+    func testDeepNestedRemeasureDigestsEachBlockOnceAndPreparesEachCellAtMostOnce() throws {
+        let maximumPreparationsPerCell = 1
+        let leafBlocks = 1
+        let widths: [CGFloat] = [320, 280]
+        let catalog = PreparedCellShapeCatalog()
+        for depth in [40, 45, Self.admittedNestedTableDepth] {
+            var compiled = viewerCompile(request: FfiViewerCompileRequest(
+                sourceKind: .json,
+                source: try nestedTablesSource(depth: depth),
+                configJson: try configWithMaxDocumentDepth(Self.hardMaximumDocumentDepth),
+                imagesEnabled: true,
+                mentionPrefix: nil
+            ))
+            let document = try ViewerDocument(compiled: try XCTUnwrap(compiled.value))
+                .withPreparedTheme(PreparedProseTheme.resolve(themeJSON: nil))
+            compiled.value = nil
+            let engine = CoreTextProseLayoutEngine()
+            var preparedKeys: [String] = []
+            engine.tableCellPreparationObserver = { _, contentKey in preparedKeys.append(contentKey) }
+            var previous: [PreparedProseLayout] = []
+            for width in widths {
+                preparedKeys.removeAll()
+                let context = catalog.newBuildContext(reusing: previous)
+                defer { context.close() }
+                let key = ProseLayoutKey(
+                    semanticKey: document.semanticKey,
+                    widthPixels: Int(width * 2),
+                    themeDigest: "table",
+                    nativeFontRevision: 0,
+                    fontEnvironmentRevision: 0,
+                    displayScale: 2,
+                    attachmentRevision: 0,
+                    generationIdentity: "table",
+                    semanticGenerationIdentity: "table"
+                )
+                let layout = try engine.prepare(
+                    document: document,
+                    key: key,
+                    widthPoints: width,
+                    displayScale: 2,
+                    cellShapeContext: context
+                )
+                XCTAssertNil(layout.error)
+                previous = [layout]
+                XCTAssertLessThanOrEqual(
+                    preparedKeys.count,
+                    maximumPreparationsPerCell * depth,
+                    "depth \(depth) width \(width): \(preparedKeys.count) cell preparations for \(depth) cells"
+                )
+                XCTAssertEqual(Set(preparedKeys).count, preparedKeys.count, "depth \(depth) width \(width): a cell was prepared twice")
+                XCTAssertLessThanOrEqual(
+                    context.geometryBlockVisitsForTesting,
+                    depth + leafBlocks,
+                    "depth \(depth) width \(width): cell geometry digests must visit each block once per pass"
+                )
+            }
+        }
+    }
+
+    func testCellShapeCatalogChargesEachNestedShapeItsOwnRetainedBytesOnce() throws {
+        let depth = 60
+        var compiled = viewerCompile(request: FfiViewerCompileRequest(
+            sourceKind: .json,
+            source: try nestedTablesSource(depth: depth),
+            configJson: try configWithMaxDocumentDepth(Self.hardMaximumDocumentDepth),
+            imagesEnabled: true,
+            mentionPrefix: nil
+        ))
+        let document = try ViewerDocument(compiled: try XCTUnwrap(compiled.value))
+            .withPreparedTheme(PreparedProseTheme.resolve(themeJSON: nil))
+        compiled.value = nil
+        let context = PreparedCellShapeCatalog().newBuildContext()
+        defer { context.close() }
+        let key = ProseLayoutKey(
+            semanticKey: document.semanticKey,
+            widthPixels: 640,
+            themeDigest: "table",
+            nativeFontRevision: 0,
+            fontEnvironmentRevision: 0,
+            displayScale: 2,
+            attachmentRevision: 0,
+            generationIdentity: "table",
+            semanticGenerationIdentity: "table"
+        )
+        let layout = try CoreTextProseLayoutEngine().prepare(
+            document: document,
+            key: key,
+            widthPoints: 320,
+            displayScale: 2,
+            cellShapeContext: context
+        )
+        XCTAssertNil(layout.error)
+        var level = 0
+        var realShapeBytes = 0
+        var chargedShapeBytes = 0
+        var current = layout
+        while let surface = current.blocks.first?.tableSurface {
+            level += 1
+            let content = try XCTUnwrap(surface.cells.first?.cachedContent, "level \(level) content must stay resident")
+            let shape = try XCTUnwrap(content.cellShape, "level \(level) must carry a cell shape")
+            let neutralTables = shape.localLayout.blocks.reduce(0) { $0 + ($1.tableSurface?.retainedBytes ?? 0) }
+            let real = content.ownRetainedBytes + neutralTables
+            XCTAssertEqual(
+                shape.localLayout.currentRetainedBytes,
+                real,
+                "level \(level): a shape must be charged its own bytes, not its nested subtree"
+            )
+            realShapeBytes += real
+            chargedShapeBytes += shape.localLayout.currentRetainedBytes
+            current = content
+        }
+        XCTAssertEqual(level, depth)
+        XCTAssertEqual(chargedShapeBytes, realShapeBytes, "the chain's shape bytes must sum each nested shape once")
+    }
+
+    func testHardMaximumDepthTraversalsFitSecondaryThreadStack() throws {
+        let depth = Self.admittedNestedTableDepth
+        let imageSource = "https://example.test/deepest.png"
+        let configJSON = try configWithMaxDocumentDepth(Self.hardMaximumDocumentDepth)
+        let leaf: [[String: Any]] = [
+            codeBlock("deepest"),
+            ["type": "image", "attrs": ["src": imageSource, "width": 20, "height": 20]]
+        ]
+        let nestingInset = TableStyle().cellPadding + TableStyle().borderWidth
+        let viewportWidth = (CGFloat(depth + 1) * nestingInset).rounded(.up)
+        let overflowingColumnWidth = 2 * Int(viewportWidth)
+        let source = try nestedTablesSource(depth: depth, leaf: leaf, columnWidth: overflowingColumnWidth)
+        let overlimitSource = try nestedTablesSource(depth: depth + 1, leaf: leaf, columnWidth: overflowingColumnWidth)
+        let configuration = ProseViewerConfiguration(configJSON: configJSON, imagesEnabled: true)
+        var measured: PreparedProseLayout?
+        try runOnSecondaryThreadStack {
+            let registry = PreparedProseLayoutRegistry()
+            func measure(_ source: String) -> PreparedProseLayout {
+                registry.measure(
+                    request: ProseViewerRequest(source: .json(source), configuration: configuration),
+                    widthPoints: viewportWidth,
+                    scale: 3
+                )
+            }
+            XCTAssertNotNil(measure(overlimitSource).error, "one more nested table must exceed the hard document depth")
+            let layout = measure(source)
+            XCTAssertNil(layout.error)
+            measured = layout
+
+            let surfaces = ViewerTablePresentation.surfaces(in: layout)
+            XCTAssertEqual(surfaces.count, depth, "every nested surface must be enumerated")
+            let snapshot = ViewerTablePresentation.project(layout: layout, owner: ViewerTablePresentationOwner(), viewport: .unknown)
+            XCTAssertEqual(snapshot.cells.count, depth, "projection must reach the deepest cell")
+            XCTAssertEqual(snapshot.images.map(\.attachment.source), [imageSource])
+            let rootSurface = try XCTUnwrap(surfaces.first)
+            XCTAssertEqual(rootSurface.parentImageAttachments(offset: 0, tableOrigin: .zero).map(\.source), [imageSource])
+            XCTAssertEqual(layout.currentRetainedBytes, layout.retainedBytes, "retained accounting must reach every nested layout exactly once")
+            XCTAssertGreaterThan(layout.cellShapeCatalogRetainedBytes, 0, "retained accounting must reach nested cell shapes")
+
+            var compiled = viewerCompile(request: FfiViewerCompileRequest(
+                sourceKind: .json,
+                source: source,
+                configJson: configJSON,
+                imagesEnabled: true,
+                mentionPrefix: nil
+            ))
+            let document = try ViewerDocument(compiled: try XCTUnwrap(compiled.value))
+            compiled.value = nil
+            var deepest = document
+            while let block = deepest.blocks.first, let table = block.tableSurfaceSource, let tableKey = block.tableKey {
+                deepest = try deepest.cellDocument(for: try XCTUnwrap(table.cells.first), in: tableKey)
+            }
+            let scope = CoreTextProseLayoutEngine.HighlightingScope(
+                configuration: NativeCodeHighlightConfiguration(provider: "depth-fixture", theme: "fixture"),
+                generation: "hard-maximum-depth"
+            )
+            scope.preassign(document: document)
+            XCTAssertEqual(scope.blocks.map(\.text), ["deepest"])
+            let deepestCode = try XCTUnwrap(deepest.blocks.first)
+            XCTAssertEqual(scope.scoped(to: document).start(document: deepest, index: 0, block: deepestCode), 0)
+        }
+
+        let layout = try XCTUnwrap(measured)
+        let drawing = PreparedProseDrawingView(frame: CGRect(origin: .zero, size: layout.size))
+        drawing.install(layout: layout)
+        var paintedCells = 0
+        drawing.onTableChromeDrawnForTesting = { _ in paintedCells += 1 }
+        _ = UIGraphicsImageRenderer(size: CGSize(width: 320, height: 320)).image { _ in drawing.draw(drawing.bounds) }
+        XCTAssertEqual(paintedCells, depth, "background painting must reach the deepest overflowing cell")
     }
 
     func testMountedTableOffsetsIncreaseAndResetFabricAndDirectHostRetention() throws {
@@ -3965,12 +4161,22 @@ final class ViewerTableTests: XCTestCase {
         return try jsonSource(["type": "doc", "content": [paragraph(beforeText), table, paragraph("after table")]])
     }
 
-    private func nestedTablesSource(depth: Int) throws -> String {
-        let tablePrefix = #"{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":["#
-        let tableSuffix = "]}]}]}"
-        let leaf = try jsonSource(paragraph("deep"))
-        return #"{"type":"doc","content":["# + String(repeating: tablePrefix, count: depth)
-            + leaf + String(repeating: tableSuffix, count: depth) + "]}"
+    private func nestedTablesSource(depth: Int, leaf: [[String: Any]]? = nil, columnWidth: Int? = nil) throws -> String {
+        let leafSource = try (leaf ?? [paragraph("deep")]).map(jsonSource).joined(separator: ",")
+        return nestedTablesDocumentSource(depth: depth, leafSource: leafSource, columnWidth: columnWidth)
+    }
+
+    private func runOnSecondaryThreadStack(_ body: @escaping () throws -> Void) throws {
+        var failure: Error?
+        let finished = DispatchSemaphore(value: 0)
+        let thread = Thread {
+            do { try body() } catch { failure = error }
+            finished.signal()
+        }
+        thread.stackSize = Self.secondaryThreadStackSize
+        thread.start()
+        finished.wait()
+        if let failure { throw failure }
     }
 
     private func tableHeavySource(payloadWordCount: Int) throws -> String {

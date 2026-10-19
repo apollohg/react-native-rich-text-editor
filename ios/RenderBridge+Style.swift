@@ -23,12 +23,13 @@ extension RenderBridge {
         _ context: BlockContext,
         blockStack: [BlockContext],
         theme: EditorTheme? = nil,
-        baseFont: UIFont = .systemFont(ofSize: 16)
+        baseFont: UIFont = .systemFont(ofSize: 16),
+        blockTextStyle: EditorTextStyle? = nil
     ) -> NSMutableParagraphStyle {
         let style = NSMutableParagraphStyle()
         if let sheet = theme?.styleSheet {
             let ancestors = blockStack.dropLast().map(\.nodeType)
-            let text = sheet.textStyle(context.nodeType, ancestors: ancestors)
+            let text = blockTextStyle ?? sheet.textStyle(context.nodeType, ancestors: ancestors)
             let horizontal = blockStack.enumerated().reduce(UIEdgeInsets.zero) { total, entry in
                 total.adding(sheet.box(entry.element.nodeType, ancestors: blockStack.prefix(entry.offset).map(\.nodeType)).outerInsets)
             }
@@ -197,7 +198,8 @@ extension RenderBridge {
         to attrs: [NSAttributedString.Key: Any],
         blockStack: [BlockContext],
         theme: EditorTheme?,
-        blockBaseFont: UIFont? = nil
+        blockBaseFont: UIFont? = nil,
+        blockTextStyle: EditorTextStyle? = nil
     ) -> [NSAttributedString.Key: Any] {
         guard let currentBlock = effectiveBlockContext(blockStack) else { return attrs }
         var mutableAttrs = attrs
@@ -208,7 +210,8 @@ extension RenderBridge {
             currentBlock,
             blockStack: blockStack,
             theme: theme,
-            baseFont: paragraphBaseFont
+            baseFont: paragraphBaseFont,
+            blockTextStyle: blockTextStyle
         )
         mutableAttrs[RenderBridgeAttributes.blockNodeType] = currentBlock.nodeType
         mutableAttrs[RenderBridgeAttributes.blockDepth] = currentBlock.depth
@@ -379,9 +382,12 @@ extension RenderBridge {
     static func resolvedFont(
         for blockStack: [BlockContext],
         baseFont: UIFont,
-        theme: EditorTheme?
+        theme: EditorTheme?,
+        blockTextStyle: EditorTextStyle? = nil
     ) -> UIFont {
-        resolvedTextStyle(for: blockStack, theme: theme)?.resolvedFont(fallback: baseFont)
+        let start = PreparedProseInstrumentation.now()
+        defer { PreparedProseInstrumentation.recordTableStage(.editorBlockFontResolution, start: start) }
+        return (blockTextStyle ?? resolvedTextStyle(for: blockStack, theme: theme))?.resolvedFont(fallback: baseFont)
             ?? baseFont
     }
 

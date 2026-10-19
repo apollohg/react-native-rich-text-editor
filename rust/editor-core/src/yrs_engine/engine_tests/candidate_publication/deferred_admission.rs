@@ -222,7 +222,7 @@ fn immediate_import_local_input_local_api_and_structural_routes_hydrate_real_con
         .mutation_lookup_seed
         .is_ready_for_test());
 
-    let mut structural = import_document_with_unavailable_lookup_seed();
+    let mut structural = import_document_with_installed_lookup_seed();
     crate::yrs_engine::mutation::reset_localized_lookup_counts_for_test();
     structural
         .apply_command(
@@ -237,7 +237,7 @@ fn immediate_import_local_input_local_api_and_structural_routes_hydrate_real_con
     assert_eq!(
         crate::yrs_engine::mutation::take_localized_lookup_counts_for_test(),
         (0, 0, 0),
-        "the structural command must consume the staged seed without a live rebuild"
+        "the structural command must consume the import's installed seed without a live rebuild"
     );
     assert_eq!(
         structural.document_json().unwrap()["content"][0]["type"],
@@ -484,7 +484,7 @@ fn unavailable_lookup_allocation_failpoints_are_resource_errors_and_atomic() {
     .enumerate()
     {
         let mut engine = import_document_with_unavailable_lookup_seed();
-        assert!(engine.prepared_candidate_cache.take().is_some());
+        assert!(engine.prepared_candidate_cache.is_none());
         let before = atomic_audit(&engine);
         let unavailable = Arc::clone(&engine.derived_state.as_ref().unwrap().mutation_lookup_seed);
         set_lookup_seed_hydration_failpoint_for_test(Some(failpoint));
@@ -522,7 +522,7 @@ fn lookup_seed_hydration_does_not_reserve_growth_with_spare_capacity() {
     };
 
     let mut engine = import_document_with_unavailable_lookup_seed();
-    assert!(engine.prepared_candidate_cache.take().is_some());
+    assert!(engine.prepared_candidate_cache.is_none());
     reset_lookup_seed_map_growth_attempts_for_test();
     engine
         .apply_command(65_126, TypedCommand::InsertText { text: "x".into() })

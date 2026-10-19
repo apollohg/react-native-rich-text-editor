@@ -15,6 +15,40 @@ use crate::tables::TableRole;
 /// Type alias for a node reference in the scraper parse tree.
 type SNodeRef<'a> = ego_tree::NodeRef<'a, scraper::Node>;
 
+const PARSED_NODES_PER_TAG_OPENING: usize = 2;
+const MIN_HTML_BYTES_PER_PRESIZED_NODE: usize = 16;
+
+fn presized_parse_node_capacity(html: &str) -> usize {
+    let bytes = html.as_bytes();
+    let tag_openings = memchr::memchr_iter(b'<', bytes)
+        .filter(|index| {
+            bytes
+                .get(index + 1)
+                .is_some_and(|next| next.is_ascii_alphabetic() || matches!(next, b'/' | b'!'))
+        })
+        .count();
+    tag_openings
+        .saturating_mul(PARSED_NODES_PER_TAG_OPENING)
+        .saturating_add(1)
+        .min(html.len() / MIN_HTML_BYTES_PER_PRESIZED_NODE + 1)
+}
+
+fn parse_html_fragment(html: &str) -> Html {
+    use html5ever::namespace_url;
+    use html5ever::tendril::TendrilSink;
+
+    let mut parsed = Html::new_fragment();
+    parsed.tree =
+        ego_tree::Tree::with_capacity(scraper::Node::Fragment, presized_parse_node_capacity(html));
+    html5ever::driver::parse_fragment(
+        scraper::HtmlTreeSink::new(parsed),
+        Default::default(),
+        html5ever::QualName::new(None, html5ever::ns!(html), html5ever::local_name!("body")),
+        Vec::new(),
+    )
+    .one(html)
+}
+
 /// Errors returned by `from_html`.
 #[derive(Debug, Clone)]
 pub enum ParseError {
@@ -254,7 +288,14 @@ fn extract_node_attrs(
         }
     }
 
-    attrs.retain(|_, value| !value.is_null());
+    let unset = attrs
+        .iter()
+        .filter(|(_, value)| value.is_null())
+        .map(|(name, _)| name.clone())
+        .collect::<Vec<_>>();
+    for name in unset {
+        super::reset_unset_attr(&mut attrs, spec, &name);
+    }
     attrs
 }
 
@@ -342,7 +383,7 @@ pub fn from_html_with_limits(
     options: &FromHtmlOptions,
     limits: &ResourceLimits,
 ) -> Result<Document, ParseError> {
-    let fragment = Html::parse_fragment(html);
+    let fragment = parse_html_fragment(html);
     let root_el = fragment.root_element();
 
     // Charge every scraper node once before recursive conversion. This shared
@@ -849,7 +890,7 @@ fn table_cell_attrs(
     let colwidth = crate::tables::roles::TABLE_CELL_COLWIDTH_ATTR;
     let mut attrs = extract_node_attrs(elem, spec);
     let Some(raw) = element_attr(elem, crate::serialize::html_out::TABLE_COLWIDTH_HTML_ATTR) else {
-        attrs.remove(colwidth);
+        super::reset_unset_attr(&mut attrs, spec, colwidth);
         return Ok(attrs);
     };
     match parse_colwidth(raw) {
@@ -857,7 +898,7 @@ fn table_cell_attrs(
             attrs.insert(colwidth.to_string(), serde_json::Value::Array(widths));
         }
         ColumnWidths::Unset => {
-            attrs.remove(colwidth);
+            super::reset_unset_attr(&mut attrs, spec, colwidth);
         }
         ColumnWidths::Malformed => {
             if options.strict {
@@ -866,7 +907,7 @@ fn table_cell_attrs(
                     value: raw.to_string(),
                 });
             }
-            attrs.remove(colwidth);
+            super::reset_unset_attr(&mut attrs, spec, colwidth);
         }
     }
     Ok(attrs)
@@ -1218,3 +1259,7 @@ mod atom_enum_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "html_in_tests.rs"]
+mod tests;

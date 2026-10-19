@@ -220,6 +220,60 @@ extension RichTextEditorViewTests {
         XCTAssertEqual(measuredHeight, fittedHeight, accuracy: 1.0)
     }
 
+    func testAutoGrowMeasuresFullStyledDocumentAfterHostCollapsesDuringMount() throws {
+        let editorId = makeV2Editor()
+        defer { destroyV2Editor(id: editorId) }
+        let hostWidth: CGFloat = 320
+        let initialHeight: CGFloat = 48
+        let textPadding: CGFloat = 12
+        let fontSize: CGFloat = 16
+        let paragraphCount = 96
+        let paragraphs = (1 ... paragraphCount).map { "Line \($0) café β 👩🏽‍💻" }
+        let html = paragraphs.map { "<p><strong>\($0)</strong></p>" }.joined()
+        let view = AutoGrowStyleTrackingNativeEditorView()
+        view.frame = CGRect(x: 0, y: 0, width: hostWidth, height: initialHeight)
+        let window = hostNativeEditorExpoView(view)
+        defer {
+            view.setEditorId(0)
+            view.removeFromSuperview()
+            window.isHidden = true
+        }
+        view.setThemeJson(try encodedJSONObject([
+            "version": 1,
+            "styles": [
+                "content": ["paddingTop": textPadding, "paddingBottom": textPadding],
+                "text": ["fontSize": fontSize],
+                "paragraph": ["marginTop": 0, "marginBottom": 0]
+            ]
+        ]))
+        view.setEditorId(editorId)
+        view.setHeightBehavior(EditorHeightBehavior.autoGrow.rawValue)
+        flushMainQueue()
+        view.frame.size.height = 0
+        let update = EditorV2Shadow.setHtml(id: editorId, html: html)
+        view.setPendingEditorUpdateJson(update)
+        view.setPendingEditorUpdateEditorId(String(editorId))
+        view.setPendingEditorUpdateRevision(1)
+        view.applyPendingEditorUpdateIfNeeded()
+        view.layoutIfNeeded()
+        flushMainQueue()
+
+        let input = view.richTextView.textView
+        let publishedHeight = try XCTUnwrap(view.publishedStyleHeights.compactMap { $0 }.last)
+        let measuredHeight = input.measuredAutoGrowHeightForTesting(width: hostWidth)
+        let fittedHeight = ceil(input.sizeThatFits(
+            CGSize(width: hostWidth, height: CGFloat.greatestFiniteMagnitude)
+        ).height)
+        XCTAssertEqual(input.textStorage.string, paragraphs.joined(separator: "\n"))
+        XCTAssertFalse(input.isScrollEnabled)
+        XCTAssertFalse(input.isFirstResponder, "Loading must grow the editor without a typing event")
+        XCTAssertGreaterThan(fittedHeight, window.bounds.height)
+        XCTAssertEqual(publishedHeight, fittedHeight, accuracy: NativeEditorExpoView.layoutEpsilon,
+            "The public height must include every loaded paragraph before any input")
+        XCTAssertEqual(measuredHeight, fittedHeight, accuracy: NativeEditorExpoView.layoutEpsilon,
+            "Cold auto-grow must measure every paragraph: bounds=\(input.bounds), container=\(input.textContainer.size), heightTracks=\(input.textContainer.heightTracksTextView)")
+    }
+
     func testRichTextEditorViewAutoGrowHeightAfterParagraphSplitMatchesSizeThatFits() {
         let editorId = makeV2Editor()
         defer { destroyV2Editor(id: editorId) }

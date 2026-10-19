@@ -1,5 +1,6 @@
 package com.apollohg.editor
 
+import java.util.concurrent.ConcurrentHashMap
 import org.json.JSONObject
 
 data class EditorEdges(
@@ -73,10 +74,21 @@ data class EditorElementStyle(
 
 private data class EditorStyleRule(val path: List<String>, val style: JSONObject)
 
+private data class EditorStyleQuery(
+    val element: String,
+    val ancestors: List<String>,
+    val marks: List<String> = emptyList()
+)
+
+private class ResolvedElementStyle(val style: EditorElementStyle?)
+
 class EditorStyleSheet private constructor(
     val styles: Map<String, EditorElementStyle>,
     private val rules: List<EditorStyleRule> = emptyList()
 ) {
+    private val resolvedTexts = ConcurrentHashMap<EditorStyleQuery, EditorTextStyle>()
+    private val resolvedElements = ConcurrentHashMap<EditorStyleQuery, ResolvedElementStyle>()
+
     /** Stable private serialization for prepared-layout eligibility. */
     internal fun shapingDigest(): String = buildString {
         styles.toSortedMap().forEach { (name, style) ->
@@ -92,7 +104,11 @@ class EditorStyleSheet private constructor(
     fun resolveElement(
         element: String,
         ancestors: List<String> = emptyList()
-    ): EditorElementStyle? {
+    ): EditorElementStyle? = resolvedElements.getOrPut(EditorStyleQuery(element, ancestors)) {
+        ResolvedElementStyle(computeElement(element, ancestors))
+    }.style
+
+    private fun computeElement(element: String, ancestors: List<String>): EditorElementStyle? {
         val name = canonicalMark(canonicalElement(element))
         val matches = matchingRules(name, ancestors)
         val existing = this[name]
@@ -121,6 +137,14 @@ class EditorStyleSheet private constructor(
         element: String,
         ancestors: List<String> = emptyList(),
         marks: List<String> = emptyList()
+    ): EditorTextStyle = resolvedTexts.getOrPut(EditorStyleQuery(element, ancestors, marks)) {
+        computeText(element, ancestors, marks)
+    }
+
+    private fun computeText(
+        element: String,
+        ancestors: List<String>,
+        marks: List<String>
     ): EditorTextStyle {
         val name = canonicalElement(element)
         var result = resolveBaseText(name, ancestors)

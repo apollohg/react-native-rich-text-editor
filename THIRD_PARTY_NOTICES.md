@@ -74,7 +74,7 @@ The Rust standard library and compiler runtime notices are supplied separately i
 | `indexmap` | `2.13.0` | Apache-2.0 OR MIT | [Source](https://crates.io/api/v1/crates/indexmap/2.13.0/download) |
 | `itoa` | `1.0.17` | MIT OR Apache-2.0 | [Source](https://crates.io/api/v1/crates/itoa/1.0.17/download) |
 | `libc` | `0.2.183` | MIT OR Apache-2.0 | [Source](https://crates.io/api/v1/crates/libc/0.2.183/download) |
-| `libmimalloc-sys` | `0.1.49` | MIT | [Source](https://crates.io/api/v1/crates/libmimalloc-sys/0.1.49/download) |
+| `libmimalloc-sys` | `0.1.49` | MIT | [Source](https://github.com/apollohg/react-native-rich-text-editor/tree/main/rust/vendor/libmimalloc-sys) |
 | `linux-raw-sys` | `0.12.1` | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | [Source](https://crates.io/api/v1/crates/linux-raw-sys/0.12.1/download) |
 | `lock_api` | `0.4.14` | MIT OR Apache-2.0 | [Source](https://crates.io/api/v1/crates/lock_api/0.4.14/download) |
 | `log` | `0.4.29` | MIT OR Apache-2.0 | [Source](https://crates.io/api/v1/crates/log/0.4.29/download) |
@@ -12092,9 +12092,9 @@ DEALINGS IN THE SOFTWARE.
 
 License expression: `MIT`.
 
-Source: [published crate](https://crates.io/api/v1/crates/libmimalloc-sys/0.1.49/download); [upstream repository](https://github.com/purpleprotocol/mimalloc_rust/tree/master/libmimalloc-sys).
+Source: [patched source in this repository](https://github.com/apollohg/react-native-rich-text-editor/tree/main/rust/vendor/libmimalloc-sys); [upstream repository](https://github.com/purpleprotocol/mimalloc_rust/tree/master/libmimalloc-sys). This project distributes a locally patched copy; the upstream published crate does not contain these changes.
 
-[LICENSE.txt](https://docs.rs/crate/libmimalloc-sys/0.1.49/source/LICENSE.txt)
+[LICENSE.txt](https://github.com/apollohg/react-native-rich-text-editor/tree/main/rust/vendor/libmimalloc-sys/LICENSE.txt)
 
 ````text
 Copyright 2019 Octavian Oncescu
@@ -12124,7 +12124,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-[c_src/mimalloc/v2/LICENSE](https://docs.rs/crate/libmimalloc-sys/0.1.49/source/c_src/mimalloc/v2/LICENSE)
+[c_src/mimalloc/v2/LICENSE](https://github.com/apollohg/react-native-rich-text-editor/tree/main/rust/vendor/libmimalloc-sys/c_src/mimalloc/v2/LICENSE)
 
 ````text
 MIT License
@@ -12150,7 +12150,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-[c_src/mimalloc/v3/LICENSE](https://docs.rs/crate/libmimalloc-sys/0.1.49/source/c_src/mimalloc/v3/LICENSE)
+[c_src/mimalloc/v3/LICENSE](https://github.com/apollohg/react-native-rich-text-editor/tree/main/rust/vendor/libmimalloc-sys/c_src/mimalloc/v3/LICENSE)
 
 ````text
 MIT License

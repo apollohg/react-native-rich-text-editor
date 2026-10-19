@@ -2,7 +2,10 @@ package com.apollohg.editor
 
 import com.apollohg.editor.viewer.PreparedProseInstrumentation
 import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
+
+private const val SELECTION_STATE_KEY = "selectionState"
 
 internal val STALE_POSITION_EPOCH_CODES =
     setOf("POSITION_EPOCH_INVALID", "POSITION_EPOCH_CELL_REMOVED")
@@ -13,9 +16,14 @@ internal sealed interface MutationOutcome {
     data class Replacement(val changed: Boolean, val revision: ULong) : MutationOutcome
 }
 
-internal fun EditorV2Adapter.parseMutationOutcome(json: String): MutationOutcome? {
+internal fun EditorV2Adapter.parseMutationOutcome(json: String): MutationOutcome? = try {
+    parseMutationOutcome(JSONObject(json))
+} catch (_: JSONException) {
+    null
+}
+
+internal fun EditorV2Adapter.parseMutationOutcome(outcome: JSONObject): MutationOutcome? {
     return try {
-        val outcome = JSONObject(json)
         when (outcome.getString("type")) {
             "transaction" -> MutationOutcome.Transaction(
                 changed = outcome.getBoolean("changed"),
@@ -31,7 +39,7 @@ internal fun EditorV2Adapter.parseMutationOutcome(json: String): MutationOutcome
 
             else -> null
         }
-    } catch (error: Exception) {
+    } catch (_: JSONException) {
         null
     }
 }
@@ -60,10 +68,8 @@ internal fun EditorV2Adapter.performNativeIntent(
     }
     val epoch = positionEpoch ?: return EditorV2NativeIntentResult.Rejected
     val result = callWithEnvelope(
-        JSONObject()
-            .put("ownerId", ownerId)
-            .put("positionEpoch", epoch)
-            .put("intent", intent),
+        "{\"ownerId\":${JSONObject.quote(ownerId)}," +
+            "\"positionEpoch\":${JSONObject.quote(epoch)},\"intent\":$intent}",
         includeBaseRevision = false
     ) { requestJson ->
         PreparedProseInstrumentation.measureTableStage(
@@ -90,18 +96,13 @@ internal fun EditorV2Adapter.performNativeIntent(
         }
 
         is EditorV2CallResult.Ok -> {
-            val outcome = parseMutationOutcome(result.value)
-            if (outcome == null) {
-                emit(
-                    EditorV2Adapter.contractError(
-                        "v2 native intent outcome violates the frozen shape"
-                    )
-                )
-                return EditorV2NativeIntentResult.Rejected
-            }
             val resultObject = try {
                 JSONObject(result.value)
-            } catch (_: Exception) {
+            } catch (_: JSONException) {
+                null
+            }
+            val outcome = resultObject?.let { parseMutationOutcome(it) }
+            if (resultObject == null || outcome == null) {
                 emit(
                     EditorV2Adapter.contractError(
                         "v2 native intent outcome violates the frozen shape"
@@ -128,8 +129,11 @@ internal fun EditorV2Adapter.performNativeIntent(
                 is MutationOutcome.NotApplicable -> false
                 is MutationOutcome.Replacement -> outcome.changed
             }
-            invalidateCachedAtomicState(null)
-            val update = refreshInternal(null, stripViewSelection = false)
+            val update = resultObject.optJSONObject(SELECTION_STATE_KEY)?.let(::adoptSelectionState)
+                ?: run {
+                    invalidateCachedAtomicState(null)
+                    refreshInternal(null, stripViewSelection = false)
+                }
             if (update == null) {
                 val recovery = recoverNativeRender()
                 if (recovery != null) {

@@ -156,8 +156,8 @@ impl CachedRenderBlocks {
         text.finish()
     }
 
-    pub(crate) fn root_blocks(&self) -> impl Iterator<Item = &[RenderElement]> {
-        self.blocks.iter().map(|block| block.elements.as_slice())
+    pub(crate) fn root_blocks(&self) -> impl ExactSizeIterator<Item = &Arc<Vec<RenderElement>>> {
+        self.blocks.iter().map(|block| &block.elements)
     }
 
     pub(crate) fn table_cell_output_bytes(
@@ -195,119 +195,76 @@ impl CachedRenderBlocks {
             .collect()
     }
 
-    pub(crate) fn history_snapshot_retained_bytes(&self) -> Option<usize> {
-        fn json_map_bytes(
-            values: &std::collections::HashMap<String, serde_json::Value>,
-        ) -> Option<usize> {
-            let table = crate::model::hash_table_retained_bytes::<String, serde_json::Value>(
-                values.capacity(),
-            )?;
-            values.iter().try_fold(table, |total, (key, value)| {
-                total
-                    .checked_add(key.capacity())?
-                    .checked_add(crate::model::json_value_retained_bytes(value)?)
-            })
-        }
-
-        fn element_bytes(element: &RenderElement) -> Option<usize> {
-            match element {
-                RenderElement::Table { table, .. } => {
-                    let bytes = table
-                        .retained_bytes(|element| element_bytes(element).unwrap_or(usize::MAX));
-                    (bytes < usize::MAX).then_some(bytes)
-                }
-                RenderElement::TextRun { text, marks } => {
-                    let slots = marks
-                        .capacity()
-                        .checked_mul(std::mem::size_of::<RenderMark>())?;
-                    marks
-                        .iter()
-                        .try_fold(text.capacity().checked_add(slots)?, |total, mark| {
-                            total
-                                .checked_add(mark.mark_type.capacity())?
-                                .checked_add(json_map_bytes(&mark.attrs)?)
-                        })
-                }
-                RenderElement::VoidInline {
-                    node_type, attrs, ..
-                }
-                | RenderElement::VoidBlock {
-                    node_type, attrs, ..
-                } => node_type.capacity().checked_add(json_map_bytes(attrs)?),
-                RenderElement::OpaqueInlineAtom {
-                    node_type,
-                    label,
-                    attrs,
-                    mention_theme,
-                    ..
-                } => node_type
-                    .capacity()
-                    .checked_add(label.capacity())?
-                    .checked_add(json_map_bytes(attrs)?)?
-                    .checked_add(mention_theme.as_ref().map_or(Some(0), json_map_bytes)?),
-                RenderElement::OpaqueBlockAtom {
-                    node_type,
-                    label,
-                    attrs,
-                    ..
-                } => node_type
-                    .capacity()
-                    .checked_add(label.capacity())?
-                    .checked_add(json_map_bytes(attrs)?),
-                RenderElement::BlockStart {
-                    node_type,
-                    language,
-                    list_context,
-                    ..
-                } => node_type
-                    .capacity()
-                    .checked_add(language.as_ref().map_or(0, String::capacity))?
-                    .checked_add(
-                        list_context
-                            .as_ref()
-                            .and_then(|context| context.kind.as_ref())
-                            .map_or(0, String::capacity),
-                    ),
-                RenderElement::BlockEnd => Some(0),
-            }
-        }
-
-        let block_slots = self
+    pub(crate) fn history_snapshot_retained_bytes_beyond_document(&self) -> Option<usize> {
+        let blocks = self
             .blocks
-            .capacity()
-            .checked_mul(std::mem::size_of::<CachedRenderBlock>())?;
-        let blocks = self.blocks.iter().try_fold(block_slots, |total, block| {
-            let node = crate::model::arc_allocation_retained_bytes(std::mem::size_of::<Node>())?
-                .checked_add(block.node.history_snapshot_retained_bytes()?)?;
-            let element_slots = block
-                .elements
-                .capacity()
-                .checked_mul(std::mem::size_of::<RenderElement>())?;
-            let elements = block
-                .elements
-                .iter()
-                .try_fold(element_slots, |bytes, element| {
-                    bytes.checked_add(element_bytes(element)?)
-                })?;
-            let elements = crate::model::arc_allocation_retained_bytes(std::mem::size_of::<
-                Vec<RenderElement>,
-            >())?
-            .checked_add(elements)?;
-            let position_indices =
-                crate::model::arc_allocation_retained_bytes(std::mem::size_of::<Vec<usize>>())?
-                    .checked_add(
-                        block
-                            .position_element_indices
-                            .capacity()
-                            .checked_mul(std::mem::size_of::<usize>())?,
-                    )?;
-            total
-                .checked_add(node)?
-                .checked_add(elements)?
-                .checked_add(position_indices)
-        })?;
+            .iter()
+            .enumerate()
+            .try_fold(0usize, |total, (index, block)| {
+                let bytes = Self::history_snapshot_block_retained_bytes(block)?;
+                total
+                    .checked_add(bytes.structure)?
+                    .checked_add(if self.block_shares_document(index, block) {
+                        0
+                    } else {
+                        bytes.node
+                    })
+            })?;
+        self.history_snapshot_container_retained_bytes()?
+            .checked_add(blocks)
+    }
+
+    pub(crate) fn history_snapshot_retained_bytes_beyond_document_relative_to(
+        &self,
+        base: &Self,
+    ) -> Option<usize> {
+        if std::ptr::eq(self, base) {
+            return Some(0);
+        }
+        let shares_block = |block: &CachedRenderBlock, base: &CachedRenderBlock| {
+            Arc::ptr_eq(&block.node, &base.node) && Arc::ptr_eq(&block.elements, &base.elements)
+        };
+        let window = crate::model::unshared_window(&self.blocks, &base.blocks, shares_block);
+        let base_window = crate::model::unshared_window(&base.blocks, &self.blocks, shares_block);
+        let paired = window.len() == base_window.len();
+        let blocks = self.blocks[window.clone()].iter().enumerate().try_fold(
+            0usize,
+            |total, (offset, block)| {
+                let structure = if paired {
+                    Self::history_snapshot_block_structure_beyond(
+                        block,
+                        &base.blocks[base_window.start + offset],
+                    )?
+                } else {
+                    Self::history_snapshot_block_retained_bytes(block)?.structure
+                };
+                let node = if self.block_shares_document(window.start + offset, block) {
+                    0
+                } else {
+                    block.node.history_snapshot_retained_bytes()?
+                };
+                total.checked_add(structure)?.checked_add(node)
+            },
+        )?;
+        self.history_snapshot_container_retained_bytes()?
+            .checked_add(blocks)
+    }
+
+    fn block_shares_document(&self, index: usize, block: &CachedRenderBlock) -> bool {
+        let root = &self.document_root_seal;
+        root.child_count() == self.blocks.len()
+            && root
+                .child(index)
+                .is_some_and(|child| block.node.shares_storage_with(child))
+    }
+
+    fn history_snapshot_container_retained_bytes(&self) -> Option<usize> {
         crate::model::arc_allocation_retained_bytes(std::mem::size_of::<Self>())?
-            .checked_add(blocks)?
+            .checked_add(
+                self.blocks
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<CachedRenderBlock>())?,
+            )?
             .checked_add(
                 self.table_attributes
                     .iter()
@@ -318,12 +275,159 @@ impl CachedRenderBlocks {
                             .checked_add(crate::model::arc_allocation_retained_bytes(json.len())?)
                     })?,
             )?
-            .checked_add(self.document_root_seal.history_snapshot_retained_bytes()?)?
             .checked_add(crate::model::arc_allocation_retained_bytes(
                 self.schema_fingerprint.len(),
             )?)
     }
 
+    fn snapshot_json_map_bytes(
+        values: &std::collections::HashMap<String, serde_json::Value>,
+    ) -> Option<usize> {
+        let table = crate::model::hash_table_retained_bytes::<String, serde_json::Value>(
+            values.capacity(),
+        )?;
+        values.iter().try_fold(table, |total, (key, value)| {
+            total
+                .checked_add(key.capacity())?
+                .checked_add(crate::model::json_value_retained_bytes(value)?)
+        })
+    }
+
+    fn snapshot_boxed_json_map_bytes(
+        values: &std::collections::HashMap<String, serde_json::Value>,
+    ) -> Option<usize> {
+        Self::snapshot_json_map_bytes(values)?.checked_add(std::mem::size_of_val(values))
+    }
+
+    fn snapshot_element_bytes(element: &RenderElement) -> Option<usize> {
+        match element {
+            RenderElement::Table { table, .. } => {
+                let bytes = table
+                    .retained_bytes(|element| Self::snapshot_element_bytes(element).unwrap_or(usize::MAX));
+                (bytes < usize::MAX).then_some(bytes)
+            }
+            RenderElement::TextRun { text, marks } => {
+                let slots = marks
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<RenderMark>())?;
+                marks
+                    .iter()
+                    .try_fold(text.capacity().checked_add(slots)?, |total, mark| {
+                        total
+                            .checked_add(mark.mark_type.capacity())?
+                            .checked_add(Self::snapshot_json_map_bytes(&mark.attrs)?)
+                    })
+            }
+            RenderElement::VoidInline {
+                node_type, attrs, ..
+            }
+            | RenderElement::VoidBlock {
+                node_type, attrs, ..
+            } => node_type
+                .capacity()
+                .checked_add(Self::snapshot_boxed_json_map_bytes(attrs)?),
+            RenderElement::OpaqueInlineAtom {
+                node_type,
+                label,
+                attrs,
+                mention_theme,
+                ..
+            } => node_type
+                .capacity()
+                .checked_add(label.len())?
+                .checked_add(Self::snapshot_boxed_json_map_bytes(attrs)?)?
+                .checked_add(
+                    mention_theme
+                        .as_deref()
+                        .map_or(Some(0), Self::snapshot_boxed_json_map_bytes)?,
+                ),
+            RenderElement::OpaqueBlockAtom {
+                node_type,
+                label,
+                attrs,
+                ..
+            } => node_type
+                .capacity()
+                .checked_add(label.len())?
+                .checked_add(Self::snapshot_boxed_json_map_bytes(attrs)?),
+            RenderElement::BlockStart {
+                node_type,
+                language,
+                list_context,
+                ..
+            } => node_type
+                .capacity()
+                .checked_add(language.as_ref().map_or(0, String::capacity))?
+                .checked_add(list_context.as_deref().map_or(0, |context| {
+                    std::mem::size_of_val(context)
+                        .saturating_add(context.kind.as_ref().map_or(0, String::capacity))
+                })),
+            RenderElement::BlockEnd => Some(0),
+        }
+    }
+
+    fn history_snapshot_block_structure_bytes(
+        block: &CachedRenderBlock,
+        element_bytes: impl Fn(usize, &RenderElement) -> Option<usize>,
+    ) -> Option<usize> {
+        let element_slots = block
+            .elements
+            .capacity()
+            .checked_mul(std::mem::size_of::<RenderElement>())?;
+        let elements = block.elements.iter().enumerate().try_fold(
+            element_slots,
+            |bytes, (index, element)| bytes.checked_add(element_bytes(index, element)?),
+        )?;
+        crate::model::arc_allocation_retained_bytes(std::mem::size_of::<Node>())?
+            .checked_add(crate::model::arc_allocation_retained_bytes(
+                std::mem::size_of::<Vec<RenderElement>>(),
+            )?)?
+            .checked_add(elements)?
+            .checked_add(crate::model::arc_allocation_retained_bytes(
+                std::mem::size_of::<Vec<usize>>(),
+            )?)?
+            .checked_add(
+                block
+                    .position_element_indices
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<usize>())?,
+            )
+    }
+
+    fn history_snapshot_block_structure_beyond(
+        block: &CachedRenderBlock,
+        base: &CachedRenderBlock,
+    ) -> Option<usize> {
+        Self::history_snapshot_block_structure_bytes(block, |index, element| {
+            match (element, base.elements.get(index)) {
+                (
+                    RenderElement::Table { table, .. },
+                    Some(RenderElement::Table {
+                        table: base_table, ..
+                    }),
+                ) => {
+                    let bytes = table.retained_bytes_beyond(base_table, |element| {
+                        Self::snapshot_element_bytes(element).unwrap_or(usize::MAX)
+                    });
+                    (bytes < usize::MAX).then_some(bytes)
+                }
+                _ => Self::snapshot_element_bytes(element),
+            }
+        })
+    }
+
+    fn history_snapshot_block_retained_bytes(
+        block: &CachedRenderBlock,
+    ) -> Option<CachedBlockRetainedBytes> {
+        *block.history_snapshot_retained_bytes.get_or_init(|| {
+            Some(CachedBlockRetainedBytes {
+                node: block.node.history_snapshot_retained_bytes()?,
+                structure: Self::history_snapshot_block_structure_bytes(block, |_, element| {
+                    Self::snapshot_element_bytes(element)
+                })?,
+            })
+        })
+    }
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn transition_localized_textblock(
         &self,

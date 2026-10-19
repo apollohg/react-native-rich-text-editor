@@ -229,46 +229,77 @@ fn finish_prepared_batch(
     })
 }
 
-pub(crate) fn insert_prepared_node<P: XmlFragment>(
+pub(crate) fn insert_prepared_nodes<P: XmlFragment>(
     parent: &P,
     txn: &mut TransactionMut<'_>,
-    index: u32,
-    node: PreparedXmlNode,
+    nodes: Vec<PreparedXmlChild>,
 ) {
+    let mut previous: Option<(u32, XmlOut)> = None;
+    for child in nodes {
+        let position = match &previous {
+            Some((index, left)) if index.checked_add(1) == Some(child.index) => {
+                PreparedNodePosition::After(left)
+            }
+            _ => PreparedNodePosition::Index(child.index),
+        };
+        let inserted = insert_prepared_node(parent, txn, position, child.node);
+        previous = Some((child.index, inserted));
+    }
+}
+
+enum PreparedNodePosition<'a> {
+    Index(u32),
+    After(&'a XmlOut),
+}
+
+fn insert_prepared_node<P: XmlFragment>(
+    parent: &P,
+    txn: &mut TransactionMut<'_>,
+    position: PreparedNodePosition<'_>,
+    node: PreparedXmlNode,
+) -> XmlOut {
     stacker::maybe_grow(
         RECURSION_RED_ZONE_BYTES,
         RECURSION_STACK_SEGMENT_BYTES,
-        || insert_prepared_node_inner(parent, txn, index, node),
-    );
+        || insert_prepared_node_inner(parent, txn, position, node),
+    )
 }
 
 fn insert_prepared_node_inner<P: XmlFragment>(
     parent: &P,
     txn: &mut TransactionMut<'_>,
-    index: u32,
+    position: PreparedNodePosition<'_>,
     node: PreparedXmlNode,
-) {
+) -> XmlOut {
     match node {
         PreparedXmlNode::Text { runs } => {
-            let target = parent.insert(txn, index, XmlTextPrelim::new(""));
+            let prelim = XmlTextPrelim::new("");
+            let target = match position {
+                PreparedNodePosition::Index(index) => parent.insert(txn, index, prelim),
+                PreparedNodePosition::After(left) => parent.insert_after(txn, left, prelim),
+            };
             for run in runs {
                 if !run.text.is_empty() {
                     target.insert_with_attributes(txn, run.index_utf16, &run.text, run.attrs);
                 }
             }
+            XmlOut::Text(target)
         }
         PreparedXmlNode::Element {
             tag,
             attrs,
             children,
         } => {
-            let element = parent.insert(txn, index, XmlElementPrelim::empty(tag.as_str()));
+            let prelim = XmlElementPrelim::empty(tag.as_str());
+            let element = match position {
+                PreparedNodePosition::Index(index) => parent.insert(txn, index, prelim),
+                PreparedNodePosition::After(left) => parent.insert_after(txn, left, prelim),
+            };
             for (key, value) in attrs {
                 element.insert_attribute(txn, key.as_str(), value);
             }
-            for child in children {
-                insert_prepared_node(&element, txn, child.index, child.node);
-            }
+            insert_prepared_nodes(&element, txn, children);
+            XmlOut::Element(element)
         }
     }
 }

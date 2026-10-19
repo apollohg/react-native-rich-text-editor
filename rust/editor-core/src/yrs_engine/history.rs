@@ -201,6 +201,24 @@ impl PartialEq for HistorySnapshot {
 
 impl Eq for HistorySnapshot {}
 
+impl HistorySnapshot {
+    pub(crate) fn document_snapshot_bytes(&self) -> usize {
+        self.document_snapshot.as_deref().map_or(
+            0,
+            super::derived_state::HistoryDocumentSnapshot::retained_bytes,
+        )
+    }
+
+    pub(crate) fn standalone_metadata_bytes(&self) -> usize {
+        self.metadata_bytes
+            .saturating_sub(self.document_snapshot_bytes())
+            .saturating_add(self.document_snapshot.as_deref().map_or(
+                0,
+                super::derived_state::HistoryDocumentSnapshot::standalone_retained_bytes,
+            ))
+    }
+}
+
 pub(crate) type HistoryLocalState = HistorySnapshot;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -574,6 +592,14 @@ mod availability_audit;
 #[cfg(feature = "table-interop")]
 pub(crate) use availability_audit::AvailabilityHistoryAudit;
 
+fn retained_replay_update(mut reservation: Vec<u8>, update: Vec<u8>) -> Vec<u8> {
+    if update.capacity() < reservation.capacity() {
+        return update;
+    }
+    reservation.extend_from_slice(&update);
+    reservation
+}
+
 fn stack_units(stack: &[StackItem<HistoryMetadata>], request_id: u64) -> OperationResult<u64> {
     let mut total = 0u64;
     for item in stack {
@@ -590,6 +616,7 @@ fn stack_metadata_bytes(
 ) -> OperationResult<usize> {
     let mut total = 0usize;
     let mut seen = HashSet::new();
+    let mut seen_documents = HashSet::new();
     for item in stack {
         let slots = item.meta().slots();
         for slot in [slots.before, slots.after].into_iter().flatten() {
@@ -601,8 +628,19 @@ fn stack_metadata_bytes(
                         "retained history contains an unsealed snapshot slot",
                     )
                 })?;
+                let document_already_charged = snapshot
+                    .document_snapshot
+                    .as_ref()
+                    .is_some_and(|document| !seen_documents.insert(Arc::as_ptr(document)));
+                let charge = if document_already_charged {
+                    snapshot
+                        .metadata_bytes
+                        .saturating_sub(snapshot.document_snapshot_bytes())
+                } else {
+                    snapshot.metadata_bytes
+                };
                 total = total
-                    .checked_add(snapshot.metadata_bytes)
+                    .checked_add(charge)
                     .ok_or_else(|| metadata_limit_error(request_id, limits, usize::MAX))?;
             }
         }

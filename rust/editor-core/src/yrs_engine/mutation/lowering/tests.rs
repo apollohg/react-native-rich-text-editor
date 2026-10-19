@@ -20,3 +20,5 @@ include!("tests/prepared_batches.rs");
 include!("tests/localized.rs");
 
 include!("tests/import_diagnostics.rs");
+
+include!("tests/lookup_entries.rs");

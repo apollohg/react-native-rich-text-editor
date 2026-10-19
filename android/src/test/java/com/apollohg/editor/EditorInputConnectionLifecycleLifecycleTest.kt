@@ -55,6 +55,34 @@ internal class EditorInputConnectionLifecycleLifecycleTest : EditorInputConnecti
     }
 
     @Test
+    fun `authorized text verification follows every content and authorization change`() {
+        val editText = EditorEditText(RuntimeEnvironment.getApplication())
+        editText.applyUpdateJSON(renderUpdateJson("Hello world"), notifyListener = false)
+        assertTrue("a fresh render is authorized", editText.isCurrentTextAuthorizedForEditor())
+        editText.setSelection(3)
+        assertTrue(
+            "a caret move keeps the render authorized",
+            editText.isCurrentTextAuthorizedForEditor()
+        )
+
+        editText.text?.insert(0, "x")
+        assertFalse("unauthorized typing is detected", editText.isCurrentTextAuthorizedForEditor())
+        editText.text?.delete(0, 1)
+        assertTrue("restored content matches again", editText.isCurrentTextAuthorizedForEditor())
+
+        editText.lastAuthorizedText = "Hello there"
+        assertFalse(
+            "a replaced authorization is verified against the content",
+            editText.isCurrentTextAuthorizedForEditor()
+        )
+        editText.lastAuthorizedText = String("Hello world".toCharArray())
+        assertTrue(
+            "an equal authorization string is accepted",
+            editText.isCurrentTextAuthorizedForEditor()
+        )
+    }
+
+    @Test
     fun `stale input connection is consumed after editor rebind`() {
         val editText = EditorEditText(RuntimeEnvironment.getApplication())
         editText.applyUpdateJSON(renderUpdateJson("first"), notifyListener = false)

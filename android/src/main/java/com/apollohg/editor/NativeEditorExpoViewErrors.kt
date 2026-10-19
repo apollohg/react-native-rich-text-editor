@@ -150,10 +150,9 @@ internal fun NativeEditorExpoView.clearPendingEditorErrorDispatchQueue(reason: S
     pendingEditorErrorDispatchScheduled = false
     pendingEditorErrorDispatchGeneration += 1
     if (clearedCount > 0) {
-        richTextView.editorEditText.recordImeTraceForTesting(
-            "nativeViewEditorErrorQueueCleared",
+        richTextView.editorEditText.recordImeTraceForTesting("nativeViewEditorErrorQueueCleared") {
             "reason=$reason count=$clearedCount"
-        )
+        }
     }
 }
 

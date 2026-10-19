@@ -7,7 +7,10 @@
 use std::sync::{LazyLock, Mutex};
 
 use serde::Serialize;
+use serde_json::value::RawValue;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
+use std::sync::Arc;
 
 use crate::boundary::{BoundaryError, ResourceLimits};
 use crate::model::Document;
@@ -22,6 +25,16 @@ use super::editor::{json_result, with_editor};
 #[cfg(test)]
 use super::types::parse_canonical_u64;
 use super::types::{decimal_u64, FfiJsonResult};
+
+#[cfg(test)]
+std::thread_local! {
+    pub(super) static ROOT_PROJECTION_BUILDS: std::cell::Cell<usize> = const {
+        std::cell::Cell::new(0)
+    };
+    pub(super) static ROOT_BLOCK_SERIALIZATIONS: std::cell::Cell<usize> = const {
+        std::cell::Cell::new(0)
+    };
+}
 
 #[cfg(test)]
 struct RenderSnapshotTestHook {
@@ -104,9 +117,24 @@ fn pause_render_snapshot_for_test(_: &str) {}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct AtomicRenderSnapshot {
-    render_blocks: Value,
-    render_patch: Value,
+struct AtomicRenderSnapshot<'a> {
+    render_blocks: Option<&'a [Box<RawValue>]>,
+    render_patch: Option<RootRenderPatch<'a>>,
+    #[serde(flatten)]
+    state: RenderStateFields,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AtomicRenderState {
+    void_blocks: Vec<Vec<Value>>,
+    #[serde(flatten)]
+    state: RenderStateFields,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RenderStateFields {
     selection: Value,
     active_state: Value,
     history_state: Value,
@@ -117,8 +145,39 @@ struct AtomicRenderSnapshot {
     /// Hosts must consume this rather than inspecting rendered characters,
     /// which cannot see structure that renders no text (an empty list item).
     document_is_empty: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    position_epoch: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RootRenderPatch<'a> {
+    base_document_version: String,
+    start_index: usize,
+    delete_count: usize,
+    render_blocks: &'a [Box<RawValue>],
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct RootRenderBlock {
+    // Keep source allocation identity without extending guarded payload lifetimes.
+    elements: std::sync::Weak<Vec<crate::render::RenderElement>>,
+    digest: [u8; 32],
+}
+
+impl PartialEq for RootRenderBlock {
+    fn eq(&self, other: &Self) -> bool {
+        self.digest == other.digest
+    }
+}
+
+pub(crate) struct RootProjection {
+    blocks: Vec<RootRenderBlock>,
+    published: Vec<Option<Box<RawValue>>>,
+}
+
+impl RootProjection {
+    pub(crate) fn into_retained(self) -> Vec<RootRenderBlock> {
+        self.blocks
+    }
 }
 
 /// Resolve the schema for a v2 create envelope exactly the way the session
@@ -210,18 +269,39 @@ fn resolved_selection_json(selection: &ResolvedSelection) -> Value {
 }
 
 #[uniffi::export]
+pub fn editor_v2_render_state(
+    editor_id: String,
+    mirror_scalar_anchor: Option<u32>,
+    mirror_scalar_head: Option<u32>,
+) -> FfiJsonResult {
+    json_result(with_editor(&editor_id, |session| {
+        let engine = &session.engine;
+        let state = render_state_fields(
+            engine,
+            render_mirror(mirror_scalar_anchor, mirror_scalar_head)?,
+        )?;
+        let snapshot = AtomicRenderState {
+            void_blocks: void_block_projection(engine)?,
+            state,
+        };
+        Ok(serde_json::to_string(&snapshot).expect("atomic render state serializes"))
+    }))
+}
+
+#[uniffi::export]
 pub fn editor_v2_render_update(
     editor_id: String,
     mirror_scalar_anchor: Option<u32>,
     mirror_scalar_head: Option<u32>,
 ) -> FfiJsonResult {
     json_result(with_editor(&editor_id, |session| {
-        root_snapshot_json(
+        root_snapshot(
             session,
             &editor_id,
             None,
             render_mirror(mirror_scalar_anchor, mirror_scalar_head)?,
         )
+        .map(|(json, _)| json)
     }))
 }
 
@@ -238,20 +318,119 @@ fn render_mirror(
     }
 }
 
-pub(crate) fn root_snapshot_json(
+pub(crate) fn root_snapshot(
     session: &mut EditorSession,
     editor_id: &str,
     owner_id: Option<u64>,
     mirror: Option<(u32, u32)>,
-) -> Result<String, SessionError> {
+) -> Result<(String, Arc<Vec<RootRenderBlock>>), SessionError> {
     let previous_native_render =
         owner_id.and_then(|owner_id| session.native_render_cursor(owner_id));
     let engine = &session.engine;
+    pause_render_snapshot_for_test(&editor_id);
+    let state = render_state_fields(engine, mirror)?;
+
+    let document_version = engine.revision();
+    let previous_projection = previous_native_render
+        .as_ref()
+        .filter(|previous| previous.schema_fingerprint == engine.schema_fingerprint());
+    let (current_projection, mut published) = match previous_projection
+        .filter(|previous| previous.document_revision == document_version)
+    {
+        Some(previous) => (previous.root_projection.clone(), Vec::new()),
+        None => {
+            let projection = root_projection(
+                engine,
+                previous_projection.map(|previous| previous.root_projection.as_slice()),
+            )?;
+            (Arc::new(projection.blocks), projection.published)
+        }
+    };
+    let current = current_projection.as_slice();
+    let (emitted, patch) = match previous_projection {
+        Some(previous) => {
+            let old = &previous.root_projection;
+            let prefix = if Arc::ptr_eq(old, &current_projection) {
+                current.len()
+            } else {
+                old.iter().zip(current).take_while(|(a, b)| a == b).count()
+            };
+            let suffix = old[prefix..]
+                .iter()
+                .rev()
+                .zip(current[prefix..].iter().rev())
+                .take_while(|(a, b)| a == b)
+                .count();
+            (
+                prefix..current.len() - suffix,
+                Some((previous.document_revision, old.len() - prefix - suffix)),
+            )
+        }
+        None => (0..current.len(), None),
+    };
+    let start_index = emitted.start;
+    let render_blocks = publish_root_blocks(engine, &mut published, emitted)?;
+    let snapshot = AtomicRenderSnapshot {
+        render_blocks: patch.is_none().then_some(render_blocks.as_slice()),
+        render_patch: patch.map(|(base_revision, delete_count)| RootRenderPatch {
+            base_document_version: base_revision.to_string(),
+            start_index,
+            delete_count,
+            render_blocks: &render_blocks,
+        }),
+        state,
+    };
+    let json = serde_json::to_string(&snapshot).expect("atomic render snapshot serializes");
+    Ok((json, current_projection))
+}
+
+fn publish_root_blocks(
+    engine: &crate::yrs_engine::YrsDocumentEngine,
+    published: &mut [Option<Box<RawValue>>],
+    emitted: std::ops::Range<usize>,
+) -> Result<Vec<Box<RawValue>>, SessionError> {
+    let cache = engine.cached_render_blocks().ok_or_else(engine_not_ready)?;
+    let mut source_ids = None;
+    cache
+        .root_blocks()
+        .enumerate()
+        .skip(emitted.start)
+        .take(emitted.len())
+        .map(
+            |(index, block)| match published.get_mut(index).and_then(Option::take) {
+                Some(json) => Ok(json),
+                None => {
+                    let source_ids = match &source_ids {
+                        Some(source_ids) => source_ids,
+                        None => source_ids.insert(RenderSourceIds::for_engine(engine)?),
+                    };
+                    serialize_root_block(block, source_ids)
+                }
+            },
+        )
+        .collect()
+}
+
+fn serialize_root_block(
+    block: &[crate::render::RenderElement],
+    source_ids: &RenderSourceIds<'_>,
+) -> Result<Box<RawValue>, SessionError> {
+    #[cfg(test)]
+    ROOT_BLOCK_SERIALIZATIONS.set(ROOT_BLOCK_SERIALIZATIONS.get().saturating_add(1));
+    let values = block
+        .iter()
+        .map(|element| serialize_render_element(element, source_ids))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(serde_json::value::to_raw_value(&values).expect("root render block serializes"))
+}
+
+fn render_state_fields(
+    engine: &crate::yrs_engine::YrsDocumentEngine,
+    mirror: Option<(u32, u32)>,
+) -> Result<RenderStateFields, SessionError> {
     let document = engine.document().ok_or_else(engine_not_ready)?;
     let position_map = engine.position_map().ok_or_else(engine_not_ready)?;
     let schema = engine.schema();
-    pause_render_snapshot_for_test(&editor_id);
-
     let (selection, selection_value, stored_marks) = match mirror {
         Some((anchor, head)) => {
             let selection = map_scalar_selection(document, position_map, anchor, head);
@@ -293,47 +472,14 @@ pub(crate) fn root_snapshot_json(
     let scalar_length = position_map.doc_to_scalar(u32::MAX, document);
     let document_is_empty = crate::editor_state::document_is_empty(document, schema);
 
-    let document_version = engine.revision();
-    let (render_blocks, render_patch) = {
-        let current = if let Some(previous) = previous_native_render.as_ref().filter(|previous| {
-            previous.document_revision == document_version
-                && previous.schema_fingerprint == engine.schema_fingerprint()
-        }) {
-            previous.root_projection.clone()
-        } else {
-            root_projection(engine)?
-        };
-        match previous_native_render
-            .as_ref()
-            .filter(|previous| previous.schema_fingerprint == engine.schema_fingerprint())
-        {
-            Some(previous) => {
-                let old = &previous.root_projection;
-                let prefix = old.iter().zip(&current).take_while(|(a, b)| a == b).count();
-                let suffix = old[prefix..]
-                    .iter()
-                    .rev()
-                    .zip(current[prefix..].iter().rev())
-                    .take_while(|(a, b)| a == b)
-                    .count();
-                (
-                    Value::Null,
-                    serde_json::json!({"baseDocumentVersion": previous.document_revision.to_string(), "startIndex": prefix, "deleteCount": old.len() - prefix - suffix, "renderBlocks": &current[prefix..current.len()-suffix]}),
-                )
-            }
-            None => (Value::Array(current), Value::Null),
-        }
-    };
-    let mut snapshot = AtomicRenderSnapshot {
-        render_blocks,
-        render_patch,
+    Ok(RenderStateFields {
         selection: selection_value,
         active_state: serialize_active_state(&active_state),
         history_state: serde_json::json!({
             "canUndo": engine.can_undo(),
             "canRedo": engine.can_redo(),
         }),
-        document_version: decimal_u64(document_version)
+        document_version: decimal_u64(engine.revision())
             .as_str()
             .expect("decimal u64 serializer returns a string")
             .to_owned(),
@@ -343,17 +489,31 @@ pub(crate) fn root_snapshot_json(
             .to_owned(),
         scalar_length,
         document_is_empty,
-        position_epoch: None,
-    };
-    if let Some(owner_id) = owner_id {
-        snapshot.position_epoch = Some(
-            session
-                .pin_position_epoch(owner_id, document_version)?
-                .to_string(),
-        );
-    }
-    let json = serde_json::to_string(&snapshot).expect("atomic render snapshot serializes");
-    Ok(json)
+    })
+}
+
+pub(crate) fn native_selection_state(
+    engine: &crate::yrs_engine::YrsDocumentEngine,
+) -> Result<Value, SessionError> {
+    Ok(serde_json::to_value(render_state_fields(engine, None)?)
+        .expect("native selection state serializes"))
+}
+
+fn void_block_projection(
+    engine: &crate::yrs_engine::YrsDocumentEngine,
+) -> Result<Vec<Vec<Value>>, SessionError> {
+    let source_ids = RenderSourceIds::for_engine(engine)?;
+    let cache = engine.cached_render_blocks().ok_or_else(engine_not_ready)?;
+    cache
+        .root_blocks()
+        .map(|block| {
+            block
+                .iter()
+                .filter(|element| matches!(element, crate::render::RenderElement::VoidBlock { .. }))
+                .map(|element| serialize_render_element(element, &source_ids))
+                .collect()
+        })
+        .collect()
 }
 
 #[uniffi::export]
@@ -397,11 +557,7 @@ pub fn editor_v2_scalar_to_doc(editor_id: String, scalar: u32) -> FfiJsonResult 
 pub(crate) fn table_keys(
     engine: &crate::yrs_engine::YrsDocumentEngine,
 ) -> Result<std::collections::BTreeMap<u32, String>, SessionError> {
-    let document = engine.document().ok_or_else(engine_not_ready)?;
-    let source_ids = RenderSourceIds {
-        document,
-        index: engine.block_branch_index().ok_or_else(engine_not_ready)?,
-    };
+    let source_ids = RenderSourceIds::for_engine(engine)?;
     let cache = engine.cached_render_blocks().ok_or_else(engine_not_ready)?;
     let mut tables = Vec::new();
     cache.visit_table_records(&mut tables);
@@ -423,23 +579,46 @@ pub(crate) fn table_keys(
 
 pub(crate) fn root_projection(
     engine: &crate::yrs_engine::YrsDocumentEngine,
-) -> Result<Vec<Value>, SessionError> {
-    let document = engine.document().ok_or_else(engine_not_ready)?;
-    let source_ids = RenderSourceIds {
-        document,
-        index: engine.block_branch_index().ok_or_else(engine_not_ready)?,
-    };
+    previous: Option<&[RootRenderBlock]>,
+) -> Result<RootProjection, SessionError> {
+    #[cfg(test)]
+    ROOT_PROJECTION_BUILDS.set(ROOT_PROJECTION_BUILDS.get().saturating_add(1));
+    let source_ids = RenderSourceIds::for_engine(engine)?;
     let cache = engine.cached_render_blocks().ok_or_else(engine_not_ready)?;
-    cache
-        .root_blocks()
-        .map(|block| {
-            block
-                .iter()
-                .map(|element| serialize_render_element(element, &source_ids))
-                .collect::<Result<Vec<_>, _>>()
-                .map(Value::Array)
-        })
-        .collect()
+    let previous: std::collections::HashMap<_, _> = previous
+        .into_iter()
+        .flatten()
+        .map(|block| (block.elements.as_ptr(), block))
+        .collect();
+    let mut projection = RootProjection {
+        blocks: Vec::with_capacity(cache.root_blocks().len()),
+        published: Vec::with_capacity(cache.root_blocks().len()),
+    };
+    for block in cache.root_blocks() {
+        // Tables and block atoms also depend on live CRDT source identities.
+        let source_dependent = block.iter().any(|element| {
+            matches!(
+                element,
+                crate::render::RenderElement::Table { .. }
+                    | crate::render::RenderElement::VoidBlock { .. }
+            )
+        });
+        if let Some(previous) = previous
+            .get(&Arc::as_ptr(block))
+            .filter(|_| !source_dependent)
+        {
+            projection.blocks.push((*previous).clone());
+            projection.published.push(None);
+            continue;
+        }
+        let json = serialize_root_block(block, &source_ids)?;
+        projection.blocks.push(RootRenderBlock {
+            elements: Arc::downgrade(block),
+            digest: Sha256::digest(json.get()).into(),
+        });
+        projection.published.push(Some(json));
+    }
+    Ok(projection)
 }
 
 struct RenderSourceIds<'a> {
@@ -447,7 +626,14 @@ struct RenderSourceIds<'a> {
     document: &'a crate::model::Document,
 }
 
-impl RenderSourceIds<'_> {
+impl<'a> RenderSourceIds<'a> {
+    fn for_engine(engine: &'a crate::yrs_engine::YrsDocumentEngine) -> Result<Self, SessionError> {
+        Ok(Self {
+            document: engine.document().ok_or_else(engine_not_ready)?,
+            index: engine.block_branch_index().ok_or_else(engine_not_ready)?,
+        })
+    }
+
     fn table_key(&self, position: u32) -> Option<&str> {
         self.index
             .table_key(&crate::tables::commands::node_path_starting_at(

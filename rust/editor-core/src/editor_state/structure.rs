@@ -91,7 +91,11 @@ fn empty_text_block_range(
     Some((start, start.checked_add(block.node_size())?))
 }
 
-fn block_insert_position(document: &Document, schema: &Schema, position: u32) -> Option<u32> {
+pub(crate) fn block_insert_position(
+    document: &Document,
+    schema: &Schema,
+    position: u32,
+) -> Option<u32> {
     let resolved = document.resolve(position).ok()?;
     let parent = resolved.parent(document);
     if !schema

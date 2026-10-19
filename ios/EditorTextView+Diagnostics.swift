@@ -40,6 +40,8 @@ extension EditorTextView {
         let postApplyHeightNotifyContentSizeNanos: UInt64
         let postApplyHeightNotifySizeThatFitsNanos: UInt64
         let postApplySelectionOrContentCallbackNanos: UInt64
+        var selectionPositionNanos: UInt64 = 0
+        var deriveRenderPatchNanos: UInt64 = 0
     }
 
     struct PatchApplyTrace {
@@ -80,6 +82,7 @@ extension EditorTextView {
         let resolveNanos: UInt64
         let assignmentNanos: UInt64
         let chromeNanos: UInt64
+        var positionNanos: UInt64 = 0
     }
 
     struct PostApplyTrace {

@@ -6,14 +6,17 @@ pub(crate) use lowering::{
     ImportElementAttributeWork, ImportLookupMaterialization, ImportLookupMaterializationCollector,
     ImportTextCaptureWork, LocalizedFormatCompiler, LocalizedFormatLocator,
     LocalizedInsertCompiler, LocalizedInsertLocator, LocalizedRootWindowCompiler,
-    LocalizedRootWindowLocator, MutationCompiler, MutationDocumentContext, MutationLookupPromotion,
-    MutationLookupSeed, ReplacementInput, TextRangeDisposition,
+    LocalizedRootWindowLocator, LocalizedSplitCompiler, LocalizedSplitLocator, MutationCompiler,
+    MutationDocumentContext, MutationLookupPromotion, MutationLookupSeed, ReplacementInput,
+    TextRangeDisposition,
 };
 
 #[cfg(test)]
 pub(crate) use lowering::{
-    assert_lookup_and_branch_index_parity_for_test, lookup_payload_legacy_parity_for_test, reset_import_lookup_event_count_for_test,
-    set_lookup_seed_hydration_failpoint_for_test, take_import_lookup_event_count_for_test,
+    assert_lookup_and_branch_index_parity_for_test, force_eager_mutation_lowering_for_test,
+    lookup_payload_legacy_parity_for_test, reset_import_lookup_event_count_for_test,
+    reset_materialized_yrs_text_count_for_test, set_lookup_seed_hydration_failpoint_for_test,
+    take_import_lookup_event_count_for_test, take_materialized_yrs_text_count_for_test,
     LookupSeedHydrationFailpoint,
 };
 pub(crate) use plan::{
@@ -32,9 +35,10 @@ pub(crate) use plan::{preflight_mutation_plan, preflight_mutation_work_for_test}
 #[cfg(test)]
 pub(crate) use lowering::{
     record_range_format_eager_fallback_for_test, record_root_window_eager_fallback_for_test,
-    record_unavailable_lookup_seed_install_for_test, reset_localized_lookup_counts_for_test,
-    reset_lookup_seed_map_growth_attempts_for_test, reset_range_format_lowering_counts_for_test,
-    reset_root_window_lowering_counts_for_test, take_localized_lookup_counts_for_test,
+    record_split_eager_fallback_for_test, record_unavailable_lookup_seed_install_for_test,
+    reset_localized_lookup_counts_for_test, reset_lookup_seed_map_growth_attempts_for_test,
+    reset_range_format_lowering_counts_for_test, reset_root_window_lowering_counts_for_test,
+    reset_split_lowering_counts_for_test, take_localized_lookup_counts_for_test,
     take_lookup_seed_map_growth_attempts_for_test, take_range_format_lowering_counts_for_test,
-    take_root_window_lowering_counts_for_test,
+    take_root_window_lowering_counts_for_test, take_split_lowering_counts_for_test,
 };

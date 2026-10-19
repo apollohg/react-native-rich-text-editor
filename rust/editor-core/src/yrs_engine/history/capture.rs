@@ -9,7 +9,7 @@ impl YrsHistory {
         policy: HistoryPolicy,
         class: HistoryClass,
         undo_units_bound: u64,
-        before_metadata_bytes: usize,
+        before: &HistoryLocalState,
         after_metadata_bytes: usize,
     ) -> OperationResult<PreparedHistoryLimits> {
         self.pre_admit_capture_limits_at(
@@ -18,7 +18,7 @@ impl YrsHistory {
             policy,
             class,
             undo_units_bound,
-            before_metadata_bytes,
+            before,
             after_metadata_bytes,
             self.clock.now(),
         )
@@ -32,13 +32,15 @@ impl YrsHistory {
         policy: HistoryPolicy,
         class: HistoryClass,
         undo_units_bound: u64,
-        before_metadata_bytes: usize,
+        before: &HistoryLocalState,
         after_metadata_bytes: usize,
         now_millis: u64,
     ) -> OperationResult<PreparedHistoryLimits> {
         debug_assert_ne!(policy, HistoryPolicy::Skip);
         debug_assert_ne!(class, HistoryClass::Skip);
-        let standalone_metadata_bytes = before_metadata_bytes
+        let retained_before_metadata_bytes = self.retained_before_metadata_bytes(before, false);
+        let standalone_metadata_bytes = before
+            .standalone_metadata_bytes()
             .checked_add(after_metadata_bytes)
             .ok_or_else(|| metadata_limit_error(request_id, &self.limits, usize::MAX))?;
         if undo_units_bound > self.limits.max_undo_retained_units {
@@ -52,7 +54,11 @@ impl YrsHistory {
         }
         let compatible = self.capture_is_compatible(origin, policy, class, now_millis);
         let prospective_metadata_increment = after_metadata_bytes
-            .checked_add(if compatible { 0 } else { before_metadata_bytes })
+            .checked_add(if compatible {
+                0
+            } else {
+                retained_before_metadata_bytes
+            })
             .ok_or_else(|| metadata_limit_error(request_id, &self.limits, usize::MAX))?;
         let pending_metadata_bytes = self
             .retained_metadata_bytes(request_id)?
@@ -65,7 +71,7 @@ impl YrsHistory {
                 policy,
                 class,
                 undo_units_bound,
-                before_metadata_bytes,
+                retained_before_metadata_bytes,
                 after_metadata_bytes,
                 now_millis,
             )?;
@@ -146,7 +152,7 @@ impl YrsHistory {
                 policy,
                 class,
                 undo_units_bound,
-                before.metadata_bytes,
+                &before,
                 after_metadata_bytes,
                 prepared.now_millis,
             )?;
@@ -165,7 +171,7 @@ impl YrsHistory {
                 policy,
                 class,
                 undo_units_bound,
-                before.metadata_bytes,
+                &before,
                 after_metadata_bytes,
             )?
         };
@@ -197,7 +203,11 @@ impl YrsHistory {
         self.clock.latch_at(now);
         let compatible = self.capture_is_compatible(origin, policy, class, now);
         let metadata_increment = after_metadata_bytes
-            .checked_add(if compatible { 0 } else { before.metadata_bytes })
+            .checked_add(if compatible {
+                0
+            } else {
+                self.retained_before_metadata_bytes(&before, rolls)
+            })
             .expect("standalone history metadata was checked before capture");
         let metadata = HistoryMetadata::capture(before.clone());
         let origin_value = self.begin_capture(origin, policy, class, Some(now), metadata.clone());
@@ -257,7 +267,7 @@ impl YrsHistory {
         policy: HistoryPolicy,
         class: HistoryClass,
         undo_units_bound: u64,
-        before_metadata_bytes: usize,
+        retained_before_metadata_bytes: usize,
         after_metadata_bytes: usize,
         now: u64,
     ) -> OperationResult<bool> {
@@ -271,7 +281,8 @@ impl YrsHistory {
             .saturating_add(usize::from(!compatible));
         let current_metadata_bytes =
             stack_metadata_bytes(self.manager.undo_stack(), request_id, &self.limits)?;
-        let standalone_metadata_bytes = before_metadata_bytes.saturating_add(after_metadata_bytes);
+        let retained_metadata_bytes =
+            retained_before_metadata_bytes.saturating_add(after_metadata_bytes);
         let next_metadata_bytes = if compatible {
             let replaced_after = self
                 .manager
@@ -285,7 +296,7 @@ impl YrsHistory {
                 .and_then(|value| value.checked_add(after_metadata_bytes))
                 .unwrap_or(usize::MAX)
         } else {
-            current_metadata_bytes.saturating_add(standalone_metadata_bytes)
+            current_metadata_bytes.saturating_add(retained_metadata_bytes)
         };
         Ok(next_units > self.limits.max_undo_retained_units
             || next_groups > self.limits.max_undo_groups
@@ -308,6 +319,36 @@ impl YrsHistory {
             && self
                 .last_capture_millis
                 .is_some_and(|last| now >= last && now - last < CAPTURE_TIMEOUT_MILLIS)
+    }
+
+    pub(crate) fn latest_undo_group_before_document_snapshot(
+        &self,
+    ) -> Option<Arc<super::derived_state::HistoryDocumentSnapshot>> {
+        let slots = self.manager.undo_stack().last()?.meta().slots();
+        slots.before?.get()?.document_snapshot.clone()
+    }
+
+    fn retained_before_metadata_bytes(&self, before: &HistoryLocalState, rolls: bool) -> usize {
+        let Some(document) = before.document_snapshot.as_ref().filter(|_| !rolls) else {
+            return before.standalone_metadata_bytes();
+        };
+        let latest_after_retains_document = self
+            .manager
+            .undo_stack()
+            .last()
+            .and_then(|item| item.meta().slots().after)
+            .is_some_and(|slot| {
+                slot.get()
+                    .and_then(|after| after.document_snapshot.as_ref())
+                    .is_some_and(|after| Arc::ptr_eq(after, document))
+            });
+        if latest_after_retains_document {
+            before
+                .metadata_bytes
+                .saturating_sub(before.document_snapshot_bytes())
+        } else {
+            before.standalone_metadata_bytes()
+        }
     }
 
     fn retained_metadata_bytes(&self, request_id: u64) -> OperationResult<usize> {
@@ -466,7 +507,7 @@ impl YrsHistory {
                     undo_units_bound,
                     capture_millis,
                     metadata,
-                    update: mut reserved_update,
+                    update: reservation,
                     metadata_increment,
                     replay_slot,
                 }) = self.pending_replay_event.take()
@@ -475,12 +516,11 @@ impl YrsHistory {
                     return;
                 };
                 assert!(
-                    update.len() <= reserved_update.capacity(),
+                    update.len() <= reservation.capacity(),
                     "admitted history update exceeds its exact pre-write reservation"
                 );
-                reserved_update.extend_from_slice(&update);
                 let event = ReplayEvent::Recorded {
-                    update: reserved_update,
+                    update: retained_replay_update(reservation, update),
                     origin,
                     policy,
                     class,

@@ -44,6 +44,16 @@ impl MutationCompiler {
             )
         })?;
         let path = from_resolved.node_path.iter().copied().collect::<Vec<_>>();
+        if let Some(handle) = self.prepared_elements.get(&path).cloned() {
+            return self.replace_prepared_element_from_after(
+                operation_index,
+                &handle,
+                &path,
+                after,
+                schema,
+                limits,
+            );
+        }
         let target = self.structural_parents.get(&path).cloned().ok_or_else(|| {
             OperationError::engine_invariant_failed(
                 self.request_id,
@@ -51,6 +61,7 @@ impl MutationCompiler {
                 "semantic structural parent has no tracked Yrs branch",
             )
         })?;
+        self.ensure_no_created_text(operation_index, "range", &target.parent.id())?;
         let start = self
             .current_storage_insertion(
                 content.iter(),
@@ -195,27 +206,7 @@ impl MutationCompiler {
         } else {
             deletes.push((child_index, child_count));
         }
-        let removed_count = deletes.iter().map(|(_, count)| *count).sum::<u32>();
-        let parent_id = target.parent.id();
-        self.targets.retain(|candidate| {
-            !matches!(&candidate.kind,
-                ResolvedTargetKind::Missing { parent, child_index: gap, .. }
-                    if AsRef::<Branch>::as_ref(parent).id() == parent_id
-                        && *gap > child_index && *gap <= child_end
-            )
-        });
-        for candidate in &mut self.targets {
-            if let ResolvedTargetKind::Missing {
-                parent,
-                child_index: gap,
-                ..
-            } = &mut candidate.kind
-            {
-                if AsRef::<Branch>::as_ref(parent).id() == parent_id && *gap > child_end {
-                    *gap -= removed_count;
-                }
-            }
-        }
+        self.drop_text_gaps_from(&target.parent.id(), child_index + 1);
         let mut removed_prepared = vec![false; target.storage_children.len()];
         let mut removed_handles = Vec::new();
         for &(storage_index, storage_delete) in &deletes {
@@ -363,15 +354,43 @@ impl MutationCompiler {
         } else {
             self.rebuild_target_layout(operation_index, &trimmed)?;
         }
-        let remove_from = from
-            .checked_add(crate::tables::commands::NODE_CLOSING_TOKENS)
-            .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
         let remove_to = last_end
             .checked_add(crate::tables::commands::NODE_CLOSING_TOKENS)
             .and_then(|end| end.checked_sub(first_end - from))
             .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+        self.merge_following_blocks_into_retained(
+            operation_index,
+            MutationDocumentContext {
+                before: &trimmed,
+                after,
+                schema,
+                limits,
+            },
+            from,
+            remove_to,
+            &suffix,
+        )
+    }
+
+    fn merge_following_blocks_into_retained(
+        &mut self,
+        operation_index: usize,
+        context: MutationDocumentContext<'_>,
+        from: u32,
+        remove_to: u32,
+        suffix: &Fragment,
+    ) -> OperationResult<()> {
+        let MutationDocumentContext {
+            before,
+            after,
+            schema,
+            limits,
+        } = context;
+        let remove_from = from
+            .checked_add(crate::tables::commands::NODE_CLOSING_TOKENS)
+            .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
         let (without_blocks, _) = crate::transform::apply_step_canonical_marks(
-            &trimmed,
+            before,
             &crate::transform::Step::DeleteRange {
                 from: remove_from,
                 to: remove_to,
@@ -390,7 +409,7 @@ impl MutationCompiler {
         self.delete_structural_range(
             operation_index,
             MutationDocumentContext {
-                before: &trimmed,
+                before,
                 after: &without_blocks,
                 schema,
                 limits,
@@ -399,7 +418,10 @@ impl MutationCompiler {
             remove_to,
         )?;
         let sibling_deletes = self.actions.split_off(delete_action_start);
-        self.replace_structural_range(
+        let retained_parent = without_blocks.resolve(from).map_err(|message| {
+            OperationError::operation_invalid(self.request_id, operation_index, "range", message)
+        })?;
+        self.insert_tracked_replacement(
             operation_index,
             MutationDocumentContext {
                 before: &without_blocks,
@@ -407,13 +429,9 @@ impl MutationCompiler {
                 schema,
                 limits,
             },
-            ReplacementInput {
-                from,
-                to: from,
-                boundaries: &[],
-                content: &suffix,
-                canonical_content: None,
-            },
+            from,
+            &retained_parent,
+            suffix,
         )?;
         // The suffix is inserted into the retained parent before its siblings are removed.
         self.actions.extend(sibling_deletes);
@@ -723,7 +741,7 @@ impl MutationCompiler {
             .map(|(_, end)| *end)
             .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
         for (insertion, (path, handle, runs)) in (after_target + 1..).zip(texts) {
-            let start = first_text_doc_position(after.root(), &path)
+            let start = first_text_doc_position(after.root(), &path, runs.is_empty())
                 .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
             let text = prepared_runs_text(&runs);
             let scalar_len = u32::try_from(text.chars().count())

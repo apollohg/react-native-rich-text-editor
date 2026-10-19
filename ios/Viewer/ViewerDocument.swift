@@ -737,6 +737,25 @@ struct ViewerDocument {
         )
     }
 
+    func forEachBlockInSourceOrder(
+        _ visit: (ViewerDocument, Int, ViewerBlock) -> Void,
+        finishing: (ViewerDocument) -> Void = { _ in }
+    ) {
+        var pending: [(ViewerDocument, Int)] = [(self, 0)]
+        while case let (document, index)? = pending.popLast() {
+            guard document.blocks.indices.contains(index) else {
+                finishing(document)
+                continue
+            }
+            let block = document.blocks[index]
+            visit(document, index, block)
+            pending.append((document, index + 1))
+            guard let table = block.tableSurfaceSource, let tableKey = block.tableKey else { continue }
+            let children = table.cells.compactMap { try? document.cellDocument(for: $0, in: tableKey) }
+            pending.append(contentsOf: children.reversed().map { ($0, 0) })
+        }
+    }
+
     func withPreparedTheme(_ theme: PreparedProseTheme) -> ViewerDocument {
         ViewerDocument(
             semanticKey: semanticKey,

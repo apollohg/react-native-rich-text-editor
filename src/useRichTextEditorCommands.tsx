@@ -124,7 +124,7 @@ export function useRichTextEditorCommands(
                 });
             } catch (error) {
                 if (isRevisionMismatchError(error)) {
-                    refreshAtomsFromUpdate(bridge.renderUpdate());
+                    refreshAtomsFromUpdate(bridge.renderState());
                     document.refresh();
                     throw new AtomUpdateAttrsError(
                         'stale-revision',
@@ -148,7 +148,7 @@ export function useRichTextEditorCommands(
             }
 
             if (outcome.type === 'notApplicable') {
-                refreshAtomsFromUpdate(bridge.renderUpdate());
+                refreshAtomsFromUpdate(bridge.renderState());
                 document.refresh();
                 throw new AtomUpdateAttrsError(
                     'not-applicable',
@@ -251,7 +251,7 @@ export function useRichTextEditorCommands(
                 }
 
                 if (isRevisionMismatchError(error)) {
-                    refreshAtomsFromUpdate(bridge.renderUpdate());
+                    refreshAtomsFromUpdate(bridge.renderState());
                     document.refresh();
                     throw new AtomUpdateAttrsError(
                         'stale-revision',

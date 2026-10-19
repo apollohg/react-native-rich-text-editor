@@ -82,8 +82,8 @@ enum EditorV2Shadow {
         adapter(for: id)?.currentStateJSON() ?? "{}"
     }
 
-    static func getSelectionState(id: UInt64) -> String {
-        adapter(for: id)?.currentSelectionStateJSON() ?? "{}"
+    static func getSelectionState(id: UInt64) -> EditorSelectionState? {
+        adapter(for: id)?.currentSelectionState()
     }
 
     static func getSelection(id: UInt64) -> String {

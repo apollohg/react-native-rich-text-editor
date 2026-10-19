@@ -4,6 +4,7 @@ mod history_snapshot;
 mod insert_admission;
 mod localized_index;
 mod localized_insert;
+mod localized_marks;
 mod observability;
 mod render_evidence;
 mod selection;
@@ -36,15 +37,16 @@ pub(crate) use active_state::{
 pub(crate) use candidate_evidence::{PreparedCandidateEvidence, PreparedCandidateValidation};
 #[cfg(test)]
 pub(crate) use history_snapshot::{
-    history_document_snapshot_retained_bytes,
-    history_document_snapshot_retained_bytes_with_canonical_charge,
-    prepare_history_candidate_read_for_test, HistoryDocumentSnapshotRetainedInput,
+    history_document_snapshot_retained_bytes, prepare_history_candidate_read_for_test,
+    HistoryDocumentSnapshotRetainedInput,
 };
 #[allow(unused_imports)]
 pub(crate) use history_snapshot::{
+    history_document_snapshot_retained_bytes_beyond,
     history_document_snapshot_retained_bytes_with_precomputed_document_charge,
-    AdmittedHistoryCandidateRead, AdmittedHistoryMutationLookupProof, HistoryDocumentSnapshot,
-    HistoryDocumentSnapshotRetainedBytes, HistoryMutationLookupCapability,
+    history_document_snapshot_standalone_retained_bytes, AdmittedHistoryCandidateRead,
+    AdmittedHistoryMutationLookupProof, HistoryDocumentSnapshot,
+    HistoryDocumentSnapshotRetainedBytes, HistoryMutationLookupCapability, HistorySnapshotParts,
     PreparedHistoryCandidateRead, RestoredHistoryDocumentState,
 };
 pub(crate) use insert_admission::{
@@ -55,6 +57,7 @@ pub(crate) use insert_admission::{
 use localized_index::canonical_marks_sha256;
 #[allow(unused_imports)]
 pub(crate) use localized_index::{LocalizedTextLeafCertificate, LocalizedTextLeafIndex};
+pub(crate) use localized_marks::LocalizedMarkCandidate;
 #[cfg(test)]
 use observability::FORCE_INITIALIZE_SCALAR_MISMATCH;
 #[allow(unused_imports)]
@@ -85,9 +88,9 @@ pub(crate) use observability::{
     take_localized_index_lifecycle_counts_for_test, take_localized_index_metrics_for_test,
     take_localized_insert_admission_work_for_test, take_localized_leaf_text_hashes_for_test,
     take_preview_derivation_counts_for_test, take_prewrite_selection_proof_counts_for_test,
-    take_relative_selection_traversal_counts_for_test, ForcedHistoryDocumentSnapshotFallback,
-    ForcedHistorySnapshotSemanticFallback, HistorySnapshotSemanticFallbackForTest,
-    LocalizedIndexAllocationStage,
+    take_relative_selection_traversal_counts_for_test, take_root_window_certifications_for_test,
+    ForcedHistoryDocumentSnapshotFallback, ForcedHistorySnapshotSemanticFallback,
+    HistorySnapshotSemanticFallbackForTest, LocalizedIndexAllocationStage,
 };
 pub(crate) use render_evidence::{FinalizedDerivedEvidence, PreparedDerivedEvidence};
 use selection::preserve_with_mapped_fallback;
@@ -100,7 +103,8 @@ pub(crate) use selection::{
 };
 use std::sync::Arc;
 pub(crate) use validation::{
-    DocumentValidationCertificate, ValidatedCandidateContext, ValidatedDocumentEvidence,
+    DocumentValidationCertificate, RootChildWindow, ValidatedCandidateContext,
+    ValidatedDocumentEvidence,
 };
 use yrs::types::xml::XmlFragmentRef;
 use yrs::ReadTxn;
@@ -111,7 +115,7 @@ pub(crate) struct DerivedStateCache {
     pub canonical_artifact: CanonicalArtifact,
     pub position_map: PositionMap,
     pub block_branch_index: Option<Arc<super::block_branch_index::BlockBranchIndex>>,
-    pub rendered_text: String,
+    pub rendered_text: Arc<str>,
     pub rendered_scalars: u32,
     pub document_text_bytes: usize,
     pub document_node_count: usize,
@@ -132,6 +136,53 @@ pub(crate) struct DerivedStateCache {
     table_command_availability:
         std::cell::RefCell<Option<table_availability::CachedTableCommandAvailability>>,
     render_active_state: std::cell::OnceCell<table_availability::CachedRenderActiveState>,
+    rendered_utf16_checkpoints: std::cell::OnceCell<Vec<RenderedUtf16Checkpoint>>,
+    history_snapshot_standalone_bytes: std::cell::OnceCell<usize>,
+    history_document_snapshot: std::cell::OnceCell<Arc<HistoryDocumentSnapshot>>,
+}
+
+const RENDERED_UTF16_CHECKPOINT_SCALARS: u32 = 1024;
+
+#[derive(Debug, Clone, Copy)]
+struct RenderedUtf16Checkpoint {
+    byte: usize,
+    utf16: u32,
+}
+
+impl DerivedStateCache {
+    pub(crate) fn rendered_scalar_to_utf16(&self, scalar: u32) -> Option<u32> {
+        let checkpoints = self
+            .rendered_utf16_checkpoints
+            .get_or_init(|| rendered_utf16_checkpoints(&self.rendered_text));
+        let checkpoint =
+            checkpoints.get(usize::try_from(scalar / RENDERED_UTF16_CHECKPOINT_SCALARS).ok()?)?;
+        let mut utf16 = checkpoint.utf16;
+        let mut characters = self.rendered_text.get(checkpoint.byte..)?.chars();
+        for _ in 0..scalar % RENDERED_UTF16_CHECKPOINT_SCALARS {
+            utf16 += characters.next()?.len_utf16() as u32;
+        }
+        Some(utf16)
+    }
+}
+
+fn rendered_utf16_checkpoints(text: &str) -> Vec<RenderedUtf16Checkpoint> {
+    let mut checkpoints = vec![RenderedUtf16Checkpoint { byte: 0, utf16: 0 }];
+    let mut utf16 = 0u32;
+    let mut scalars = 0u32;
+    for (byte, character) in text.char_indices() {
+        if scalars > 0 && scalars % RENDERED_UTF16_CHECKPOINT_SCALARS == 0 {
+            checkpoints.push(RenderedUtf16Checkpoint { byte, utf16 });
+        }
+        utf16 += character.len_utf16() as u32;
+        scalars += 1;
+    }
+    if scalars > 0 && scalars % RENDERED_UTF16_CHECKPOINT_SCALARS == 0 {
+        checkpoints.push(RenderedUtf16Checkpoint {
+            byte: text.len(),
+            utf16,
+        });
+    }
+    checkpoints
 }
 
 impl DerivedStateCache {
@@ -194,6 +245,22 @@ impl DerivedStateCache {
     }
 
     #[cfg(test)]
+    pub(crate) fn rebuilt_localized_text_index_for_test(
+        &self,
+        resource_limits: &ResourceLimits,
+        schema: &Schema,
+    ) -> Option<LocalizedTextLeafIndex> {
+        LocalizedTextLeafIndex::build(
+            &self.document,
+            &self.position_map,
+            &self.rendered_text,
+            &self.validation_certificate,
+            resource_limits,
+            schema,
+        )
+    }
+
+    #[cfg(test)]
     pub(crate) fn materialize_mutation_identity(&mut self) {
         self.validation_certificate.materialize_canonical_artifact();
         if let Some(index) = self.localized_text_index.as_mut() {
@@ -249,6 +316,69 @@ impl DerivedStateCache {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn prepare_root_window_derived_evidence(
+        &self,
+        document: &Document,
+        canonical_artifact: &CanonicalArtifact,
+        derivations: &CompiledDocumentDerivations,
+        schema: &Schema,
+        resource_limits: &ResourceLimits,
+        schema_fingerprint: &str,
+        document_revision: u64,
+        state_revision: u64,
+        yrs_state_epoch: u64,
+    ) -> Option<FinalizedDerivedEvidence> {
+        if !canonical_artifact.matches_exact_source_document(document)
+            || canonical_artifact.schema_fingerprint() != schema_fingerprint
+            || self.validation_certificate.schema_fingerprint.as_ref() != schema_fingerprint
+        {
+            return None;
+        }
+        let window = RootChildWindow::between(self.document.root(), document.root())?;
+        let validation_certificate = DocumentValidationCertificate::mint_root_window(
+            &self.validation_certificate,
+            self.document.root(),
+            document.root(),
+            window,
+            schema,
+            resource_limits,
+        )?
+        .with_unmaterialized_canonical(canonical_artifact)
+        .resealed(document_revision, state_revision, yrs_state_epoch);
+        let localized_text_index = self
+            .localized_text_index
+            .as_ref()
+            .filter(|previous| previous.matches(&self.validation_certificate))
+            .and_then(|previous| {
+                previous.splice_root_window(
+                    &self.document,
+                    &self.position_map,
+                    &self.rendered_text,
+                    document,
+                    &derivations.position_map,
+                    &derivations.rendered_text,
+                    &validation_certificate,
+                    resource_limits,
+                    schema,
+                )
+            })
+            .or_else(|| {
+                LocalizedTextLeafIndex::build(
+                    document,
+                    &derivations.position_map,
+                    &derivations.rendered_text,
+                    &validation_certificate,
+                    resource_limits,
+                    schema,
+                )
+            });
+        Some(FinalizedDerivedEvidence {
+            validation_certificate,
+            localized_text_index,
+        })
+    }
+
     pub(crate) fn clone_with_fallible_localized_index(&self) -> Self {
         let localized_text_index = self.localized_text_index.as_ref().and_then(|index| {
             index.try_clone(self.validation_certificate.resource_limits.max_input_bytes)
@@ -277,6 +407,9 @@ impl DerivedStateCache {
             active_state_certificate: None,
             table_command_availability: self.table_command_availability.clone(),
             render_active_state: std::cell::OnceCell::new(),
+            rendered_utf16_checkpoints: std::cell::OnceCell::new(),
+            history_snapshot_standalone_bytes: std::cell::OnceCell::new(),
+            history_document_snapshot: self.history_document_snapshot.clone(),
         }
     }
 
@@ -600,7 +733,7 @@ impl DerivedStateCache {
             canonical_artifact,
             block_branch_index,
             position_map,
-            rendered_text,
+            rendered_text: rendered_text.into(),
             rendered_scalars,
             document_text_bytes,
             document_node_count,
@@ -619,6 +752,9 @@ impl DerivedStateCache {
             active_state_certificate: None,
             table_command_availability: std::cell::RefCell::new(None),
             render_active_state: std::cell::OnceCell::new(),
+            rendered_utf16_checkpoints: std::cell::OnceCell::new(),
+            history_snapshot_standalone_bytes: std::cell::OnceCell::new(),
+            history_document_snapshot: std::cell::OnceCell::new(),
         })
     }
 
@@ -648,7 +784,9 @@ impl DerivedStateCache {
         document_revision: u64,
         state_revision: u64,
         yrs_state_epoch: u64,
-        prepared_block_branch_index: Option<Option<Arc<super::block_branch_index::BlockBranchIndex>>>,
+        prepared_block_branch_index: Option<
+            Option<Arc<super::block_branch_index::BlockBranchIndex>>,
+        >,
     ) -> Option<Self> {
         if canonical_artifact.schema_fingerprint() != schema_fingerprint
             || canonical_artifact.format_version()
@@ -683,7 +821,7 @@ impl DerivedStateCache {
             position_map.update(step_map, &self.document, &document, update_mode, schema);
             position_map.compact();
             record_preview_rendered_text_derivation();
-            let rendered_text = crate::render::rendered_text(&document, schema);
+            let rendered_text: Arc<str> = crate::render::rendered_text(&document, schema).into();
             let rendered_scalars = u32::try_from(rendered_text.chars().count()).ok()?;
             let document_node_count = crate::editor_state::document_node_count(document.root());
             (
@@ -835,6 +973,9 @@ impl DerivedStateCache {
             active_state_certificate: None,
             table_command_availability: self.table_command_availability.clone(),
             render_active_state: std::cell::OnceCell::new(),
+            rendered_utf16_checkpoints: std::cell::OnceCell::new(),
+            history_snapshot_standalone_bytes: std::cell::OnceCell::new(),
+            history_document_snapshot: std::cell::OnceCell::new(),
         })
     }
 
@@ -851,6 +992,8 @@ impl DerivedStateCache {
             state_revision: self.state_revision,
             schema_fingerprint: &self.schema_fingerprint,
             canonical_artifact: &self.canonical_artifact,
+            block_branch_index: self.block_branch_index.as_deref(),
+            validation_certificate: &self.validation_certificate,
         }
     }
 }

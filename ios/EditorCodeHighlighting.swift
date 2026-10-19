@@ -15,6 +15,17 @@ struct NativeCodeHighlightConfiguration: Equatable {
 let editorCodeBlockAttribute = NSAttributedString.Key("com.apollohg.editor.codeBlock")
 private let editorSyntaxOwnedAttribute = NSAttributedString.Key("com.apollohg.editor.syntaxOwned")
 
+struct EditorCodeHighlightState: Equatable {
+    struct Block: Equatable {
+        let text: String
+        let language: String?
+        let syntaxRanges: [NSRange]
+    }
+
+    let configuration: NativeCodeHighlightConfiguration
+    let blocks: [Block]
+}
+
 final class EditorCodeBlockPresentation: NSObject {
     let language: String?
     init(language: String?) { self.language = language }
@@ -75,9 +86,55 @@ extension EditorTextView {
         }
         textStorage.endEditing()
         isApplyingRustState = wasApplying
+        appliedCodeHighlightState = nil
+        appliedCodeHighlightOutput = []
         invalidateAutoGrowHeightMeasurement()
         setNeedsLayout()
         setNeedsDisplay()
+    }
+
+    private func codeHighlightBlocks(in storage: NSAttributedString) -> [NativeCodeHighlightBlock] {
+        var blocks: [NativeCodeHighlightBlock] = []
+        let text = storage.string as NSString
+        storage.enumerateAttribute(editorCodeBlockAttribute, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+            guard let presentation = value as? EditorCodeBlockPresentation else { return }
+            var range = range
+            while range.length > 0, storage.attribute(RenderBridgeAttributes.syntheticPlaceholder, at: NSMaxRange(range) - 1, effectiveRange: nil) != nil { range.length -= 1 }
+            blocks.append(NativeCodeHighlightBlock(start: range.location, text: text.substring(with: range), language: presentation.language))
+        }
+        return blocks
+    }
+
+    func preservingCodeHighlighting(in rendered: NSAttributedString) -> NSAttributedString {
+        guard let configuration = codeHighlighting,
+              appliedCodeHighlightState?.configuration == configuration,
+              !appliedCodeHighlightOutput.isEmpty else { return rendered }
+        var highlighted: NSMutableAttributedString?
+        for block in codeHighlightBlocks(in: rendered) {
+            guard let cached = appliedCodeHighlightOutput.first(where: {
+                $0.block.text == block.text && $0.block.language == block.language
+            }), !cached.ranges.isEmpty else { continue }
+            if highlighted == nil { highlighted = NSMutableAttributedString(attributedString: rendered) }
+            if let highlighted {
+                NativeCodeHighlightPresentation.apply(cached.ranges, to: highlighted, offset: block.start, owned: true)
+            }
+        }
+        return highlighted ?? rendered
+    }
+
+    private func codeHighlightState(
+        of blocks: [NativeCodeHighlightBlock],
+        configuration: NativeCodeHighlightConfiguration
+    ) -> EditorCodeHighlightState {
+        EditorCodeHighlightState(configuration: configuration, blocks: blocks.map { block in
+            var syntaxRanges: [NSRange] = []
+            let blockRange = NSRange(location: block.start, length: (block.text as NSString).length)
+            textStorage.enumerateAttribute(editorSyntaxOwnedAttribute, in: blockRange) { value, range, _ in
+                guard value != nil else { return }
+                syntaxRanges.append(NSRange(location: range.location - block.start, length: range.length))
+            }
+            return EditorCodeHighlightState.Block(text: block.text, language: block.language, syntaxRanges: syntaxRanges)
+        })
     }
 
     func scheduleCodeHighlighting() {
@@ -85,17 +142,15 @@ extension EditorTextView {
         guard let configuration = codeHighlighting else { return }
         do { _ = try NativeCodeHighlightingRegistry.provider(id: configuration.provider) } catch { onCodeHighlightingError?(error); return }
         guard markedTextRange == nil, textStorage.length > 0 else { return }
-        restoreCodeHighlighting()
         let text = textStorage.string
+        let blocks = codeHighlightBlocks(in: textStorage)
+        guard codeHighlightState(of: blocks, configuration: configuration) != appliedCodeHighlightState else { return }
+        restoreCodeHighlighting()
         let binding = editorId
-        var blocks: [NativeCodeHighlightBlock] = []
-        textStorage.enumerateAttribute(editorCodeBlockAttribute, in: NSRange(location: 0, length: textStorage.length)) { value, range, _ in
-            guard let presentation = value as? EditorCodeBlockPresentation else { return }
-            var range = range
-            while range.length > 0, textStorage.attribute(RenderBridgeAttributes.syntheticPlaceholder, at: NSMaxRange(range) - 1, effectiveRange: nil) != nil { range.length -= 1 }
-            blocks.append(NativeCodeHighlightBlock(start: range.location, text: (text as NSString).substring(with: range), language: presentation.language))
+        guard !blocks.isEmpty else {
+            appliedCodeHighlightState = codeHighlightState(of: blocks, configuration: configuration)
+            return
         }
-        guard !blocks.isEmpty else { return }
         do {
             try codeHighlightingSession.update(provider: configuration.provider, theme: configuration.theme, blocks: blocks) { [weak self] result in
                 guard let self, self.codeHighlighting == configuration, self.editorId == binding,
@@ -109,6 +164,8 @@ extension EditorTextView {
                     for block in output { NativeCodeHighlightPresentation.apply(block.ranges, to: self.textStorage, offset: block.block.start, owned: true) }
                     self.textStorage.endEditing()
                     self.isApplyingRustState = wasApplying
+                    self.appliedCodeHighlightState = self.codeHighlightState(of: blocks, configuration: configuration)
+                    self.appliedCodeHighlightOutput = output
                     self.invalidateAutoGrowHeightMeasurement()
                     self.setNeedsLayout()
                     self.setNeedsDisplay()

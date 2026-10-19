@@ -1,6 +1,11 @@
 import UIKit
 
 extension EditorAccessoryToolbarView {
+    var constructedButtonBindings: [ButtonBinding] {
+        rebuildButtonsIfNeeded()
+        return buttonBindings
+    }
+
     func setNativeToolbarContentOffsetXForTesting(_ offsetX: CGFloat) {
         scrollView.contentOffset.x = offsetX
     }
@@ -10,27 +15,27 @@ extension EditorAccessoryToolbarView {
     }
 
     func buttonCountForTesting() -> Int {
-        buttonBindings.count
+        constructedButtonBindings.count
     }
 
     func buttonLabelForTesting(_ index: Int) -> String? {
-        buttonBindings.indices.contains(index) ? buttonBindings[index].button.accessibilityLabel : nil
+        constructedButtonBindings.indices.contains(index) ? constructedButtonBindings[index].button.accessibilityLabel : nil
     }
 
     func buttonIsEnabledForTesting(_ index: Int) -> Bool? {
-        buttonBindings.indices.contains(index) ? buttonBindings[index].button.isEnabled : nil
+        constructedButtonBindings.indices.contains(index) ? constructedButtonBindings[index].button.isEnabled : nil
     }
 
     func buttonTintColorForTesting(_ index: Int) -> UIColor? {
-        buttonBindings.indices.contains(index) ? buttonBindings[index].button.tintColor : nil
+        constructedButtonBindings.indices.contains(index) ? constructedButtonBindings[index].button.tintColor : nil
     }
 
     /// The foreground colour a configured button will actually paint for its
     /// current state, resolved through the configuration transformers rather
     /// than `tintColor`, which UIKit ignores for disabled configured buttons.
     func buttonPaintedForegroundColorForTesting(_ index: Int) -> UIColor? {
-        guard buttonBindings.indices.contains(index) else { return nil }
-        let button = buttonBindings[index].button
+        guard constructedButtonBindings.indices.contains(index) else { return nil }
+        let button = constructedButtonBindings[index].button
         guard #available(iOS 15.0, *), let configuration = button.configuration else {
             return button.titleColor(for: button.state)
         }
@@ -41,16 +46,16 @@ extension EditorAccessoryToolbarView {
     }
 
     func buttonFontSizeForTesting(_ index: Int) -> CGFloat? {
-        buttonBindings.indices.contains(index) ? buttonBindings[index].button.titleLabel?.font.pointSize : nil
+        constructedButtonBindings.indices.contains(index) ? constructedButtonBindings[index].button.titleLabel?.font.pointSize : nil
     }
 
     func buttonCornerRadiusForTesting(_ index: Int) -> CGFloat? {
-        buttonBindings.indices.contains(index) ? buttonBindings[index].button.layer.cornerRadius : nil
+        constructedButtonBindings.indices.contains(index) ? constructedButtonBindings[index].button.layer.cornerRadius : nil
     }
 
     func buttonBackgroundColorForTesting(_ index: Int) -> UIColor? {
-        guard buttonBindings.indices.contains(index) else { return nil }
-        let button = buttonBindings[index].button
+        guard constructedButtonBindings.indices.contains(index) else { return nil }
+        let button = constructedButtonBindings[index].button
         if #available(iOS 15.0, *) {
             return button.configuration?.background.backgroundColor
         }
@@ -58,6 +63,7 @@ extension EditorAccessoryToolbarView {
     }
 
     func buttonLabelsForPlacementForTesting(_ rawPlacement: String) -> [String] {
+        rebuildButtonsIfNeeded()
         guard let placement = ToolbarItemPlacement(rawValue: rawPlacement) else { return [] }
         switch placement {
         case .start:
@@ -78,8 +84,8 @@ extension EditorAccessoryToolbarView {
     /// How many distinct sources paint a background behind the button at
     /// `index`. More than one stacks shapes into a double halo.
     func buttonBackgroundSourceCountForTesting(_ index: Int) -> Int {
-        guard buttonBindings.indices.contains(index) else { return 0 }
-        let button = buttonBindings[index].button
+        guard constructedButtonBindings.indices.contains(index) else { return 0 }
+        let button = constructedButtonBindings[index].button
         var sources = 0
         if Self.paintsBackground(button.backgroundColor) {
             sources += 1
@@ -99,12 +105,12 @@ extension EditorAccessoryToolbarView {
     }
 
     func triggerButtonTapForTesting(_ index: Int) {
-        guard buttonBindings.indices.contains(index) else { return }
-        buttonBindings[index].button.sendActions(for: .touchUpInside)
+        guard constructedButtonBindings.indices.contains(index) else { return }
+        constructedButtonBindings[index].button.sendActions(for: .touchUpInside)
     }
 
     func firstButtonTitleColorForTesting(_ state: UIControl.State) -> UIColor? {
-        buttonBindings.first?.button.titleColor(for: state)
+        constructedButtonBindings.first?.button.titleColor(for: state)
     }
 
     func applyBoldStateForTesting(active: Bool, enabled: Bool) {

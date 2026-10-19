@@ -231,6 +231,172 @@ impl LocalizedTextLeafIndex {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn splice_root_window(
+        &self,
+        previous_document: &Document,
+        previous_position_map: &PositionMap,
+        previous_rendered_text: &str,
+        document: &Document,
+        position_map: &PositionMap,
+        rendered_text: &str,
+        validation: &DocumentValidationCertificate,
+        resource_limits: &ResourceLimits,
+        schema: &Schema,
+    ) -> Option<Self> {
+        if !position_map.has_effective_stored_bounds()
+            || !previous_position_map.has_effective_stored_bounds()
+        {
+            return None;
+        }
+        let window = super::RootChildWindow::between(previous_document.root(), document.root())?;
+        let child_bound = |child: usize| u32::try_from(child).ok();
+        let prefix_blocks = position_map
+            .block_range_for_root_children(0..child_bound(window.from())?)
+            .end;
+        let old_window_end = previous_position_map
+            .block_range_for_root_children(
+                child_bound(window.from())?..child_bound(window.old_to())?,
+            )
+            .end;
+        let new_window_end = position_map
+            .block_range_for_root_children(
+                child_bound(window.from())?..child_bound(window.new_to())?,
+            )
+            .end;
+        let suffix_blocks = previous_position_map
+            .block_count()
+            .checked_sub(old_window_end)?;
+        if previous_position_map
+            .block_range_for_root_children(0..child_bound(window.from())?)
+            .end
+            != prefix_blocks
+            || position_map.block_count().checked_sub(new_window_end)? != suffix_blocks
+        {
+            return None;
+        }
+        let prefix_leaves = self.partition_point(|leaf| leaf.block_index < prefix_blocks)?;
+        let suffix_leaves = self.partition_point(|leaf| leaf.block_index < old_window_end)?;
+        let cache_budget = resource_limits.max_input_bytes;
+        let path_capacity_bytes = validation
+            .stats
+            .max_depth
+            .checked_mul(std::mem::size_of::<u32>())?;
+        let window_start_scalar = match prefix_blocks.checked_sub(1) {
+            Some(last_prefix) => {
+                let block = position_map.block(last_prefix)?;
+                position_map
+                    .effective_scalar_start(last_prefix)
+                    .checked_add(block.scalar_prefix_len)?
+                    .checked_add(block.scalar_len)?
+            }
+            None => 0,
+        };
+        let (window_start_byte, window_start_utf16) =
+            crate::yrs_engine::scalar_offset_to_byte_and_utf16(rendered_text, window_start_scalar)?;
+        let mut rendered_cursor = RenderedCursor {
+            characters: rendered_text.get(window_start_byte..)?.chars(),
+            scalar: window_start_scalar,
+            utf16: window_start_utf16,
+        };
+        let mut window_leaves = Vec::new();
+        let mut window_retained_bytes = 0usize;
+        let mut path = Vec::new();
+        path.try_reserve_exact(validation.stats.max_depth).ok()?;
+        let mut next_block_index = prefix_blocks;
+        let root = document.root().content()?;
+        let mut child_doc_offset = root
+            .iter()
+            .take(window.from())
+            .try_fold(0u32, |offset, child| offset.checked_add(child.node_size()))?;
+        for (child_index, child) in root
+            .iter()
+            .enumerate()
+            .take(window.new_to())
+            .skip(window.from())
+        {
+            path.push(u32::try_from(child_index).ok()?);
+            collect_localized_index_streamed(
+                child,
+                &mut path,
+                position_map,
+                schema,
+                if child.is_element() {
+                    child_doc_offset.checked_add(1)?
+                } else {
+                    child_doc_offset
+                },
+                &mut next_block_index,
+                &mut window_leaves,
+                &mut rendered_cursor,
+                &mut window_retained_bytes,
+                cache_budget,
+                path_capacity_bytes,
+            )?;
+            path.pop()?;
+            child_doc_offset = child_doc_offset.checked_add(child.node_size())?;
+        }
+        if next_block_index != new_window_end {
+            return None;
+        }
+        let offsets = if suffix_leaves < self.leaf_count() {
+            let utf16_at = |text: &str, scalar: u32| {
+                crate::yrs_engine::scalar_offset_to_byte_and_utf16(text, scalar)
+                    .map(|(_, utf16)| i64::from(utf16))
+            };
+            let new_suffix = position_map.effective_scalar_start(new_window_end);
+            let old_suffix = previous_position_map.effective_scalar_start(old_window_end);
+            Some((
+                i64::try_from(new_window_end).ok()? - i64::try_from(old_window_end).ok()?,
+                i64::from(position_map.effective_doc_start(new_window_end))
+                    - i64::from(previous_position_map.effective_doc_start(old_window_end)),
+                i64::from(new_suffix) - i64::from(old_suffix),
+                utf16_at(rendered_text, new_suffix)?
+                    - utf16_at(previous_rendered_text, old_suffix)?,
+            ))
+        } else {
+            None
+        };
+        let leaf_count = prefix_leaves
+            .checked_add(window_leaves.len())?
+            .checked_add(self.leaf_count().checked_sub(suffix_leaves)?)?;
+        let mut leaves = Vec::new();
+        leaves.try_reserve_exact(leaf_count).ok()?;
+        let retained_bytes = leaves
+            .capacity()
+            .checked_mul(std::mem::size_of::<LocalizedTextLeafCertificate>())?;
+        if path_capacity_bytes.checked_add(retained_bytes)? > cache_budget {
+            return None;
+        }
+        self.copy_leaves(0..prefix_leaves, &mut leaves)?;
+        leaves.extend_from_slice(&window_leaves);
+        if let Some((blocks, document_shift, scalar_shift, utf16_shift)) = offsets {
+            let shift = |value: u32, delta: i64| u32::try_from(i64::from(value) + delta).ok();
+            for index in suffix_leaves..self.leaf_count() {
+                let mut leaf = self.leaf(index)?;
+                leaf.block_index =
+                    usize::try_from(i64::try_from(leaf.block_index).ok()? + blocks).ok()?;
+                leaf.doc_start = shift(leaf.doc_start, document_shift)?;
+                leaf.doc_end = shift(leaf.doc_end, document_shift)?;
+                leaf.scalar_start = shift(leaf.scalar_start, scalar_shift)?;
+                leaf.scalar_end = shift(leaf.scalar_end, scalar_shift)?;
+                leaf.utf16_start = shift(leaf.utf16_start, utf16_shift)?;
+                leaf.utf16_end = shift(leaf.utf16_end, utf16_shift)?;
+                leaves.push(leaf);
+            }
+        }
+        Some(Self {
+            leaves,
+            overlay: None,
+            schema_fingerprint: Arc::clone(&validation.schema_fingerprint),
+            canonical_artifact: validation.canonical_artifact.clone(),
+            canonical_fingerprint: validation.canonical_fingerprint,
+            canonical_fingerprint_materialized: validation.canonical_fingerprint_materialized,
+            document_revision: validation.document_revision,
+            retained_bytes,
+        })
+    }
+
     #[cfg(test)]
     pub(crate) fn take_carried_leaf_copies_for_test() -> usize {
         CARRIED_LEAF_COPIES.replace(0)
@@ -682,6 +848,121 @@ impl LocalizedTextLeafIndex {
             canonical_artifact: canonical_artifact.clone(),
             canonical_fingerprint: [0; 32],
             canonical_fingerprint_materialized: false,
+            document_revision: validation.document_revision,
+            retained_bytes,
+        })
+    }
+
+    pub(super) fn carry_after_textblock_marks(
+        &self,
+        base_validation: &DocumentValidationCertificate,
+        validation: &DocumentValidationCertificate,
+        block_index: usize,
+        base_block: &crate::model::Node,
+        block: &crate::model::Node,
+        position_map: &PositionMap,
+        cache_budget: usize,
+    ) -> Option<Self> {
+        #[cfg(test)]
+        if FORCE_LOCALIZED_INDEX_ALLOCATION_FAILURE.get() {
+            return None;
+        }
+        if !position_map.has_effective_stored_bounds()
+            || !self.matches(base_validation)
+            || self.retained_bytes > cache_budget
+        {
+            return None;
+        }
+        let range_slots = self.partition_point(|leaf| leaf.block_index < block_index)?
+            ..self.partition_point(|leaf| leaf.block_index <= block_index)?;
+        let block_leaves = block
+            .content()?
+            .iter()
+            .filter(|child| child.is_text())
+            .count();
+        let promoted_len = self
+            .leaf_count()
+            .checked_sub(range_slots.len())?
+            .checked_add(block_leaves)?;
+        let required_bytes =
+            promoted_len.checked_mul(std::mem::size_of::<LocalizedTextLeafCertificate>())?;
+        let available_bytes = cache_budget.checked_sub(self.retained_bytes)?;
+        if required_bytes > available_bytes {
+            return None;
+        }
+        let mut leaves = Vec::new();
+        leaves.try_reserve_exact(promoted_len).ok()?;
+        let retained_bytes = leaves
+            .capacity()
+            .checked_mul(std::mem::size_of::<LocalizedTextLeafCertificate>())?;
+        if retained_bytes > available_bytes {
+            return None;
+        }
+        self.copy_leaves(0..range_slots.start, &mut leaves)?;
+        let mapped = position_map.block(block_index)?;
+        let base_content = base_block.content()?;
+        let mut base_slot = range_slots.start;
+        let mut child_start = mapped.doc_start;
+        let mut child_scalar_start = mapped.scalar_start.checked_add(mapped.scalar_prefix_len)?;
+        for (child_index, child) in block.content()?.iter().enumerate() {
+            if let Some(text) = child.text_str() {
+                let doc_end = child_start.checked_add(child.node_size())?;
+                let scalar_end = child_scalar_start.checked_add(child.node_size())?;
+                while self.leaf(base_slot)?.doc_end <= child_start {
+                    base_slot = base_slot.checked_add(1)?;
+                }
+                let base_leaf = self.leaf(base_slot)?;
+                if base_slot >= range_slots.end
+                    || base_leaf.doc_start > child_start
+                    || base_leaf
+                        .scalar_start
+                        .checked_add(child_start - base_leaf.doc_start)?
+                        != child_scalar_start
+                {
+                    return None;
+                }
+                let base_text = base_content
+                    .child(usize::try_from(base_leaf.child_ordinal).ok()?)?
+                    .text_str()?;
+                let leading_utf16 = base_text
+                    .chars()
+                    .take(usize::try_from(child_start - base_leaf.doc_start).ok()?)
+                    .map(char::len_utf16)
+                    .sum::<usize>();
+                let utf16_start = base_leaf
+                    .utf16_start
+                    .checked_add(u32::try_from(leading_utf16).ok()?)?;
+                let text_utf16 = u32::try_from(text.encode_utf16().count()).ok()?;
+                leaves.push(LocalizedTextLeafCertificate {
+                    block_index,
+                    child_ordinal: u32::try_from(child_index).ok()?,
+                    doc_start: child_start,
+                    doc_end,
+                    scalar_start: child_scalar_start,
+                    scalar_end,
+                    utf16_start,
+                    utf16_end: utf16_start.checked_add(text_utf16)?,
+                    text_sha256: leaf_text_sha256(text),
+                    text_scalars: child.node_size(),
+                    text_utf16,
+                    text_utf8_bytes: text.len(),
+                    marks_sha256: canonical_marks_sha256(child.marks())?,
+                });
+                child_scalar_start = scalar_end;
+            } else if child.is_void() {
+                child_scalar_start =
+                    child_scalar_start.checked_add(position_map.inline_void_scalar_len(child)?)?;
+            }
+            child_start = child_start.checked_add(child.node_size())?;
+        }
+        self.copy_leaves(range_slots.end..self.leaf_count(), &mut leaves)?;
+        Some(Self {
+            leaves,
+            overlay: None,
+            schema_fingerprint: Arc::clone(&validation.schema_fingerprint),
+            canonical_artifact: validation.canonical_artifact.clone(),
+            canonical_fingerprint: validation.canonical_fingerprint,
+            canonical_fingerprint_materialized: validation.canonical_fingerprint_materialized,
             document_revision: validation.document_revision,
             retained_bytes,
         })

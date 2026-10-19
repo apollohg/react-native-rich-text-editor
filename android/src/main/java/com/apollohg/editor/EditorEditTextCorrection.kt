@@ -12,24 +12,21 @@ internal fun EditorEditText.handleCompositionCommitImpl(
     }
     val startedAt = System.nanoTime()
     if (!isEditable) {
-        recordImeTraceForTesting(
-            "handleCompositionCommitNoop",
+        recordImeTraceForTesting("handleCompositionCommitNoop") {
             "reason=notEditable textLength=${text.length}"
-        )
+        }
         return
     }
     if (isApplyingRustState) {
-        recordImeTraceForTesting(
-            "handleCompositionCommitNoop",
+        recordImeTraceForTesting("handleCompositionCommitNoop") {
             "reason=applyingRust textLength=${text.length}"
-        )
+        }
         return
     }
     if (!hasLiveEditor()) {
-        recordImeTraceForTesting(
-            "handleCompositionCommitNoop",
+        recordImeTraceForTesting("handleCompositionCommitNoop") {
             "reason=noLiveEditor textLength=${text.length}"
-        )
+        }
         return
     }
 
@@ -40,10 +37,9 @@ internal fun EditorEditText.handleCompositionCommitImpl(
         authorizedText
     )
     if (isCollapsedAtomBoundarySelection(startUtf16, endUtf16)) {
-        recordImeTraceForTesting(
-            "handleCompositionCommitNoop",
+        recordImeTraceForTesting("handleCompositionCommitNoop") {
             "reason=atomBoundary textLength=${text.length}"
-        )
+        }
         return
     }
     val scalarStart = PositionBridge.utf16ToScalar(startUtf16, authorizedText)
@@ -65,29 +61,26 @@ internal fun EditorEditText.handleCompositionCommitImpl(
             text,
             newCursorPosition
         ) ?: scalarEnd
-        recordImeTraceForTesting(
-            "handleCompositionCommitNoop",
+        recordImeTraceForTesting("handleCompositionCommitNoop") {
             "reason=alreadyAuthorized textLength=${text.length} requestedCursor=$requestedCursor range=$startUtf16..$endUtf16"
-        )
+        }
         restoreAuthorizedTextIfNeeded()
         applyRequestedCursorScalar(requestedCursor)
         return
     }
 
     if (text == "\n") {
-        recordImeTraceForTesting(
-            "handleCompositionCommit",
+        recordImeTraceForTesting("handleCompositionCommit") {
             "route=return textLength=${text.length} utf16Range=$startUtf16..$endUtf16 scalarRange=$scalarStart..$scalarEnd"
-        )
+        }
         if (scalarStart != scalarEnd) {
             deleteAndSplitInRust(scalarStart, scalarEnd)
         } else {
             splitBlockInRust(scalarStart)
         }
-        recordImeTraceForTesting(
-            "handleCompositionCommitDone",
+        recordImeTraceForTesting("handleCompositionCommitDone") {
             "route=return totalUs=${nanosToMicros(System.nanoTime() - startedAt)}"
-        )
+        }
         return
     }
 
@@ -98,20 +91,18 @@ internal fun EditorEditText.handleCompositionCommitImpl(
         text,
         newCursorPosition
     )
-    recordImeTraceForTesting(
-        "handleCompositionCommit",
+    recordImeTraceForTesting("handleCompositionCommit") {
         "textLength=${text.length} cursor=$newCursorPosition utf16Range=$startUtf16..$endUtf16 scalarRange=$scalarStart..$scalarEnd requestedCursor=$requestedCursor"
-    )
+    }
     insertPlainTextRangeInRust(
         scalarStart,
         scalarEnd,
         text,
         requestedCursorScalar = requestedCursor
     )
-    recordImeTraceForTesting(
-        "handleCompositionCommitDone",
+    recordImeTraceForTesting("handleCompositionCommitDone") {
         "textLength=${text.length} totalUs=${nanosToMicros(System.nanoTime() - startedAt)}"
-    )
+    }
 }
 
 internal fun EditorEditText.handleCorrectionCommitImpl(
@@ -127,24 +118,21 @@ internal fun EditorEditText.handleCorrectionCommitImpl(
 
     val authorizedText = lastAuthorizedText
     if (startUtf16 < 0 || endUtf16 < startUtf16) {
-        recordImeTraceForTesting(
-            "correctionExplicitNoop",
+        recordImeTraceForTesting("correctionExplicitNoop") {
             "reason=invalidRange range=$startUtf16..$endUtf16 oldLength=${renderedOldText.length} newLength=${newText.length}"
-        )
+        }
         return false
     }
     if (endUtf16 > authorizedText.length) {
-        recordImeTraceForTesting(
-            "correctionExplicitNoop",
+        recordImeTraceForTesting("correctionExplicitNoop") {
             "reason=outOfBounds range=$startUtf16..$endUtf16 authorizedLength=${authorizedText.length}"
-        )
+        }
         return false
     }
     if (authorizedText.substring(startUtf16, endUtf16) != renderedOldText) {
-        recordImeTraceForTesting(
-            "correctionExplicitNoop",
+        recordImeTraceForTesting("correctionExplicitNoop") {
             "reason=staleText range=$startUtf16..$endUtf16 oldLength=${renderedOldText.length} newLength=${newText.length}"
-        )
+        }
         return false
     }
 
@@ -158,26 +146,23 @@ internal fun EditorEditText.handleCorrectionCommitImpl(
         snappedEndUtf16 != endUtf16 ||
         snappedStartUtf16 > snappedEndUtf16
     ) {
-        recordImeTraceForTesting(
-            "correctionExplicitNoop",
+        recordImeTraceForTesting("correctionExplicitNoop") {
             "reason=unsnappedScalarBoundary range=$startUtf16..$endUtf16 snapped=$snappedStartUtf16..$snappedEndUtf16"
-        )
+        }
         return false
     }
 
     val scalarStart = PositionBridge.utf16ToScalar(snappedStartUtf16, authorizedText)
     val scalarEnd = PositionBridge.utf16ToScalar(snappedEndUtf16, authorizedText)
     if (inputScalarRange(scalarStart, scalarEnd) == null) {
-        recordImeTraceForTesting(
-            "correctionExplicitNoop",
+        recordImeTraceForTesting("correctionExplicitNoop") {
             "reason=unmappedRange range=$scalarStart..$scalarEnd"
-        )
+        }
         return false
     }
-    recordImeTraceForTesting(
-        "correctionExplicitApply",
+    recordImeTraceForTesting("correctionExplicitApply") {
         "range=$scalarStart..$scalarEnd newLength=${newText.length}"
-    )
+    }
     insertPlainTextRangeInRust(scalarStart, scalarEnd, newText)
     return true
 }
@@ -200,10 +185,9 @@ internal fun EditorEditText.handleMissingOldTextCorrectionCommitImpl(
         endUtf16 > authorizedText.length ||
         authorizedText.substring(startUtf16, endUtf16) != renderedOldText
     ) {
-        recordImeTraceForTesting(
-            "correctionInferredNoop",
+        recordImeTraceForTesting("correctionInferredNoop") {
             "reason=staleRange range=$startUtf16..$endUtf16 newLength=${newText.length}"
-        )
+        }
         return false
     }
 
@@ -213,26 +197,23 @@ internal fun EditorEditText.handleMissingOldTextCorrectionCommitImpl(
         authorizedText
     )
     if (snappedStartUtf16 >= snappedEndUtf16) {
-        recordImeTraceForTesting(
-            "correctionInferredNoop",
+        recordImeTraceForTesting("correctionInferredNoop") {
             "reason=emptySnappedRange token=$startUtf16..$endUtf16 snapped=$snappedStartUtf16..$snappedEndUtf16"
-        )
+        }
         return false
     }
 
     val scalarStart = PositionBridge.utf16ToScalar(snappedStartUtf16, authorizedText)
     val scalarEnd = PositionBridge.utf16ToScalar(snappedEndUtf16, authorizedText)
     if (inputScalarRange(scalarStart, scalarEnd) == null) {
-        recordImeTraceForTesting(
-            "correctionInferredNoop",
+        recordImeTraceForTesting("correctionInferredNoop") {
             "reason=unmappedRange range=$scalarStart..$scalarEnd"
-        )
+        }
         return false
     }
-    recordImeTraceForTesting(
-        "correctionInferredApply",
+    recordImeTraceForTesting("correctionInferredApply") {
         "range=$scalarStart..$scalarEnd utf16=$snappedStartUtf16..$snappedEndUtf16 newLength=${newText.length}"
-    )
+    }
     insertPlainTextRangeInRust(scalarStart, scalarEnd, newText)
     return true
 }

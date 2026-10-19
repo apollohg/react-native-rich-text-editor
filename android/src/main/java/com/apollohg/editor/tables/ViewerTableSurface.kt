@@ -15,6 +15,7 @@ import com.apollohg.editor.viewer.ProseLayoutKey
 import com.apollohg.editor.viewer.ViewerImageAttachment
 import com.apollohg.editor.viewer.cellSemanticSourceIndex
 import com.apollohg.editor.viewer.promotedCodeHighlightBlocks
+import java.util.Collections
 
 internal typealias TableCellPreparationWorker = (
     List<Pair<TableGridCell, Float>>,
@@ -911,10 +912,15 @@ internal class ViewerTableSurface private constructor(
         if (positionDependentCellCount == 0) return emptyList()
         var ordinal = offset
         val result = mutableListOf<ViewerImageAttachment>()
-        lateinit var appendSurface: (ViewerTableSurface, Int, Int) -> Unit
-        fun append(layout: PreparedProseLayout, originX: Int, originY: Int) {
-            val byId = layout.imageAttachments.associateBy { it.id }
+        class Cursor(val layout: PreparedProseLayout?, val originX: Int, val originY: Int) {
+            val byId = layout?.imageAttachments.orEmpty().associateBy { it.id }
             val emitted = mutableSetOf<String>()
+            val pendingBlocks = layout?.blocks.orEmpty().iterator()
+            lateinit var surface: ViewerTableSurface
+            var surfaceX = 0
+            var surfaceY = 0
+            var pendingCells: Iterator<PreparedViewerTableCell> = Collections.emptyIterator()
+
             fun emit(attachment: ViewerImageAttachment) {
                 if (!emitted.add(attachment.id)) return
                 result +=
@@ -925,26 +931,43 @@ internal class ViewerTableSurface private constructor(
                         }
                     )
             }
-            layout.blocks.forEach { block ->
-                block.imageAttachment?.let { byId[it.id]?.let(::emit) }
+
+            fun expand(nested: ViewerTableSurface, x: Int, y: Int) {
+                surface = nested
+                surfaceX = x
+                surfaceY = y
+                pendingCells = nested.cells.filter { it.hasImages }.iterator()
+            }
+        }
+        val root = Cursor(null, 0, 0)
+        root.expand(this, tableOrigin.left, tableOrigin.top)
+        val stack = ArrayDeque(listOf(root))
+        while (stack.isNotEmpty()) {
+            val cursor = stack.last()
+            if (cursor.pendingCells.hasNext()) {
+                val cell = cursor.pendingCells.next()
+                val frame = cursor.surface.frameOfCell(cell)
+                stack.addLast(
+                    Cursor(
+                        cell.content,
+                        cursor.surfaceX + frame.left.toInt() + cell.contentOrigin.first,
+                        cursor.surfaceY + frame.top.toInt() + cell.contentOrigin.second
+                    )
+                )
+                continue
+            }
+            if (cursor.pendingBlocks.hasNext()) {
+                val block = cursor.pendingBlocks.next()
+                block.imageAttachment?.let { cursor.byId[it.id]?.let(cursor::emit) }
                 block.tableSurface?.let { nested ->
                     val frame = block.tableBounds ?: block.bounds
-                    appendSurface(nested, originX + frame.left, originY + frame.top)
+                    cursor.expand(nested, cursor.originX + frame.left, cursor.originY + frame.top)
                 }
+                continue
             }
-            layout.imageAttachments.forEach(::emit)
+            cursor.layout?.imageAttachments?.forEach(cursor::emit)
+            stack.removeLast()
         }
-        appendSurface = { surface, originX, originY ->
-            surface.cells.filter { it.hasImages }.forEach { cell ->
-                val frame = surface.frameOfCell(cell)
-                append(
-                    cell.content,
-                    originX + frame.left.toInt() + cell.contentOrigin.first,
-                    originY + frame.top.toInt() + cell.contentOrigin.second
-                )
-            }
-        }
-        appendSurface.invoke(this, tableOrigin.left, tableOrigin.top)
         return result
     }
 
@@ -1269,13 +1292,23 @@ internal object ViewerTablePresentation {
 
     fun surfaces(root: PreparedProseLayout): List<ViewerTableSurface> {
         val surfaces = mutableListOf<ViewerTableSurface>()
-        fun visit(layout: PreparedProseLayout) {
-            layout.blocks.mapNotNull { it.tableSurface }.forEach { surface ->
+        class Cursor(layout: PreparedProseLayout) {
+            val pendingSurfaces = layout.blocks.mapNotNull { it.tableSurface }.iterator()
+            var pendingCells: Iterator<PreparedViewerTableCell> = Collections.emptyIterator()
+        }
+        val stack = ArrayDeque(listOf(Cursor(root)))
+        while (stack.isNotEmpty()) {
+            val cursor = stack.last()
+            if (cursor.pendingCells.hasNext()) {
+                stack.addLast(Cursor(cursor.pendingCells.next().content))
+            } else if (cursor.pendingSurfaces.hasNext()) {
+                val surface = cursor.pendingSurfaces.next()
                 surfaces += surface
-                surface.nestedTableCells.forEach { visit(it.content) }
+                cursor.pendingCells = surface.nestedTableCells.iterator()
+            } else {
+                stack.removeLast()
             }
         }
-        visit(root)
         return surfaces
     }
 
@@ -1326,7 +1359,7 @@ internal object ViewerTablePresentation {
         return owner.prepareCells { content ->
             val window = presentationWindow(viewport)
             tables.forEach { table ->
-                forEachPresentedCell(table, owner, window) { content(it.cell) }
+                presentedCells(table, owner, window).forEach { content(it.cell) }
             }
             tables.firstOrNull { it.surface.editorTableId == tableId }
         }
@@ -1362,12 +1395,11 @@ internal object ViewerTablePresentation {
             is ViewerTablePresentationViewport.Known -> viewport.window ?: Rect()
         }
 
-    private inline fun forEachPresentedCell(
+    private fun presentedCells(
         table: ViewerTablePresentedSurface,
         owner: ViewerTablePresentationOwner,
-        window: Rect?,
-        visit: (ViewerTablePresentedCell) -> Unit
-    ) {
+        window: Rect?
+    ): List<ViewerTablePresentedCell> {
         val surface = table.surface
         val contentX = table.bounds.left - owner.physicalOffset(surface)
         val contentY = table.bounds.top
@@ -1379,7 +1411,7 @@ internal object ViewerTablePresentation {
                 it.bottom - contentY
             )
         } ?: surface.cells
-        cells.forEach { visit(present(it, surface, contentX, contentY, table.clip)) }
+        return cells.map { present(it, surface, contentX, contentY, table.clip) }
     }
 
     private fun project(
@@ -1409,8 +1441,12 @@ internal object ViewerTablePresentation {
             rect.bottom + y
         )
 
-        fun appendLayout(layout: PreparedProseLayout, originX: Float, originY: Float, clip: RectF) {
-            layouts += ViewerTablePresentedLayout(layout, originX, originY, RectF(clip))
+        class Cursor(
+            val layout: PreparedProseLayout,
+            val originX: Float,
+            val originY: Float,
+            val clip: RectF
+        ) {
             val emittedInteractions = mutableSetOf<Int>()
             val emittedAccessibility = mutableSetOf<Int>()
             val interactionsByBlock = layout.interactions.indices.mapNotNull { index ->
@@ -1419,6 +1455,9 @@ internal object ViewerTablePresentation {
             val accessibilityByBlock = layout.accessibilityNodes.indices.mapNotNull { index ->
                 layout.accessibilityNodes[index].sourceBlockIndex?.let { it to index }
             }.groupBy({ it.first }, { it.second })
+            var nextBlock = 0
+            var tableClip = clip
+            var pendingCells: Iterator<ViewerTablePresentedCell> = Collections.emptyIterator()
 
             fun appendInteraction(index: Int) {
                 if (index !in layout.interactions.indices || !emittedInteractions.add(index)) return
@@ -1452,7 +1491,8 @@ internal object ViewerTablePresentation {
                 )
             }
 
-            layout.blocks.forEachIndexed { blockIndex, block ->
+            fun appendBlock(blockIndex: Int) {
+                val block = layout.blocks[blockIndex]
                 blocks += ViewerTablePresentedBlock(layout, block, originX, originY, RectF(clip))
                 block.imageAttachment?.let { attachment ->
                     if (emittedImages.add(attachment.id)) {
@@ -1484,35 +1524,61 @@ internal object ViewerTablePresentation {
                 interactionsByBlock[blockIndex].orEmpty().forEach(::appendInteraction)
                 accessibilityByBlock[blockIndex].orEmpty().forEach(::appendAccessibility)
 
-                val surface = block.tableSurface ?: return@forEachIndexed
-                val tableBounds = block.tableBounds ?: return@forEachIndexed
+                val surface = block.tableSurface ?: return
+                val tableBounds = block.tableBounds ?: return
                 val table = presentTable(surface, tableBounds, originX, originY, clip)
                 tables += table
-                forEachPresentedCell(table, owner, window) { presented ->
-                    cells += presented
-                    appendLayout(
+                tableClip = table.clip
+                pendingCells = presentedCells(table, owner, window).iterator()
+            }
+
+            fun finish() {
+                layout.imageAttachments.filter { emittedImages.add(it.id) }.forEach { attachment ->
+                    images += ViewerTablePresentedImage(
+                        canonicalAttachments[attachment.id] ?: attachment,
+                        "${layout.key.semanticKey}:image:${attachment.id}",
+                        shifted(attachment.bounds, originX, originY),
+                        RectF(clip),
+                        layout,
+                        null
+                    )
+                }
+                layout.interactions.indices.forEach(::appendInteraction)
+                layout.accessibilityNodes.indices.forEach(::appendAccessibility)
+            }
+        }
+
+        fun enter(
+            layout: PreparedProseLayout,
+            originX: Float,
+            originY: Float,
+            clip: RectF
+        ): Cursor {
+            layouts += ViewerTablePresentedLayout(layout, originX, originY, RectF(clip))
+            return Cursor(layout, originX, originY, clip)
+        }
+
+        val stack = ArrayDeque(listOf(enter(root, rootX, rootY, rootClip)))
+        while (stack.isNotEmpty()) {
+            val cursor = stack.last()
+            if (cursor.pendingCells.hasNext()) {
+                val presented = cursor.pendingCells.next()
+                cells += presented
+                stack.addLast(
+                    enter(
                         content(presented.cell),
                         presented.contentBounds.left,
                         presented.contentBounds.top,
-                        intersect(table.clip, presented.contentBounds)
+                        intersect(cursor.tableClip, presented.contentBounds)
                     )
-                }
-            }
-            layout.imageAttachments.filter { emittedImages.add(it.id) }.forEach { attachment ->
-                images += ViewerTablePresentedImage(
-                    canonicalAttachments[attachment.id] ?: attachment,
-                    "${layout.key.semanticKey}:image:${attachment.id}",
-                    shifted(attachment.bounds, originX, originY),
-                    RectF(clip),
-                    layout,
-                    null
                 )
+            } else if (cursor.nextBlock < cursor.layout.blocks.size) {
+                cursor.appendBlock(cursor.nextBlock++)
+            } else {
+                cursor.finish()
+                stack.removeLast()
             }
-            layout.interactions.indices.forEach(::appendInteraction)
-            layout.accessibilityNodes.indices.forEach(::appendAccessibility)
         }
-
-        appendLayout(root, rootX, rootY, rootClip)
         val mountedCells = window?.let { candidate ->
             cells.filter {
                 it.bounds.right > candidate.left && it.bounds.left < candidate.right &&

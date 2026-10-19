@@ -354,8 +354,7 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
     ).getJSONObject("selection").toString()
 
     private fun pressAfterPendingUpdates(view: NativeEditorExpoView, label: String) {
-        shadowOf(Looper.getMainLooper())
-            .idleFor(Duration.ofMillis(NativeEditorExpoView.EDITOR_UPDATE_EVENT_DEBOUNCE_MS))
+        shadowOf(Looper.getMainLooper()).idle()
         view.pressKeyboardToolbarButton(label)
     }
 
@@ -817,6 +816,10 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
                 "the action carries the exact settled native snapshot: $payload",
                 adapter.cachedAtomicRenderJson,
                 payload["updateJson"]
+            )
+            assertEquals(
+                ATOMIC_RENDER_SNAPSHOT_KEYS,
+                JSONObject(payload["updateJson"] as String).keys().asSequence().toSet()
             )
         }
 
@@ -1632,15 +1635,9 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
         }
         assertEquals(adapter.editorId, event["editorId"])
         assertEquals(adapter.baseDocumentRevision.toString(), event["documentRevision"])
-        assertEquals(snapshot, event["updateJson"])
+        assertEquals(requireNotNull(snapshot), event["updateJson"])
         val payload = JSONObject(event["updateJson"] as String)
-        for (key in listOf(
-            "tableRecords",
-            "tableAttributes",
-            "tableInputMappings"
-        )) {
-            assertFalse(key, payload.has(key))
-        }
+        assertEquals(ATOMIC_RENDER_SNAPSHOT_KEYS, payload.keys().asSequence().toSet())
     }
 
     @Test
@@ -1711,7 +1708,7 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
             val boundEpoch = input.tableCellPositionMap?.binding?.epoch
             val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
             input.setSelection(1)
-            assertNotEquals(boundEpoch, adapter.positionEpoch)
+            assertEquals(boundEpoch, adapter.positionEpoch)
             assertTrue(
                 "cell map=${input.tableCellPositionMap?.binding} adapter epoch=${adapter.positionEpoch}",
                 input.isAuthorizedForTableCellInput()

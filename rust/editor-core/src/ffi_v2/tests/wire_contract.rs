@@ -156,6 +156,7 @@ fn operation_errors_cross_session_conversion_with_frozen_codes_and_domains() {
                 limit: None,
                 actual: None,
                 details: None,
+                lowering_refusal: None,
             },
             failure_class,
         );
@@ -233,6 +234,7 @@ fn ffi_error_conversion_uses_decimal_request_ids_and_true_nullability() {
         limit: Some(256),
         actual: Some(257),
         details: Some(json!({ "field": "maxOperationsPerTransaction" })),
+        lowering_refusal: None,
     };
     let rich = FfiError::from(SessionError::from_operation(
         operation,
@@ -266,6 +268,7 @@ fn deterministic_limits_remap_but_allocation_failures_keep_resource_exhausted() 
         limit: Some(8),
         actual: Some(9),
         details: Some(json!({ "field": "work" })),
+        lowering_refusal: None,
     };
 
     let operation = SessionError::from_operation(

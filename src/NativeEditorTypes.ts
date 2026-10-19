@@ -190,21 +190,29 @@ export type NativeEditorAtomicRenderPayload =
     | { renderBlocks: RenderElement[][]; renderPatch: null }
     | { renderBlocks: null; renderPatch: RenderBlocksPatch };
 
+export interface NativeEditorRenderStateFields {
+    selection: Selection;
+    activeState: ActiveState;
+    historyState: HistoryState;
+    documentVersion: string;
+    stateRevision: string;
+    scalarLength: number;
+    /** The core's own answer for whether the document holds no content. */
+    documentIsEmpty: boolean;
+}
+
 export type NativeEditorAtomicRenderSnapshotShape =
-    NativeEditorAtomicRenderPayload & {
-        selection: Selection;
-        activeState: ActiveState;
-        historyState: HistoryState;
-        documentVersion: string;
-        stateRevision: string;
-        scalarLength: number;
-        /** The core's own answer for whether the document holds no content. */
-        documentIsEmpty: boolean;
-    };
+    NativeEditorAtomicRenderPayload & NativeEditorRenderStateFields;
 
 /** A recursively immutable view of the value frozen by renderUpdate(). */
 export type NativeEditorAtomicRenderSnapshot =
     DeepReadonly<NativeEditorAtomicRenderSnapshotShape>;
+
+export type NativeEditorAtomicRenderStateShape = NativeEditorRenderStateFields & {
+    voidBlocks: RenderElement[][];
+};
+
+export type NativeEditorAtomicRenderState = DeepReadonly<NativeEditorAtomicRenderStateShape>;
 
 /** One coherent view of the document after a change: what to draw, plus selection and state. */
 export interface EditorUpdate {

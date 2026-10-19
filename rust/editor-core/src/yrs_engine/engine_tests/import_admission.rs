@@ -1,6 +1,195 @@
 use super::*;
 
 #[test]
+fn html_replacement_retains_no_projected_json_and_serves_exact_canonical_output() {
+    use crate::yrs_engine::ReplacementHistory;
+
+    const REPLACEMENT_REQUEST: u64 = 65_470;
+    const REPLACEMENT_HTML: &str = concat!(
+        "<h2>Title <strong>bold</strong></h2>",
+        "<p>Plain <em>emphasis</em> <a href='https://example.com/?a=1&amp;b=\"q\"\\\\path'>link</a>",
+        " \"quoted\" caf\u{e9} 😀 tail</p>",
+        "<ul><li><p>one</p></li><li><p>two</p></li></ul>",
+        "<blockquote><p>quoted</p></blockquote>",
+    );
+    let mut engine = transaction_engine();
+    crate::yrs_engine::observability::take_node_json_projections_for_test();
+    crate::yrs_engine::observability::reset_full_pass_counts_for_test();
+    engine
+        .prepare_root_replacement_html_with_outbox(
+            REPLACEMENT_REQUEST,
+            REPLACEMENT_HTML,
+            &FromHtmlOptions::default(),
+            ReplacementHistory::UndoableBoundary,
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        crate::yrs_engine::observability::take_node_json_projections_for_test(),
+        0,
+        "HTML replacement must lower and measure its document without a JSON tree"
+    );
+    assert_eq!(
+        crate::yrs_engine::observability::take_full_pass_counts_for_test().canonical_projections,
+        0,
+        "the installed canonical artifact must not materialize JSON"
+    );
+
+    let json = engine.document_json().unwrap();
+    let serialized = engine.document_json_string().unwrap();
+    assert_eq!(
+        serialized,
+        serde_json::to_string(&json).unwrap(),
+        "streamed canonical JSON must match the projected tree byte for byte"
+    );
+    let revision = engine.revision();
+    let unchanged = engine
+        .import_json(&serialized, TransactionOrigin::DocumentImport)
+        .unwrap();
+    assert!(
+        !unchanged.changed,
+        "identical canonical JSON is a no-op import"
+    );
+    assert_eq!(engine.revision(), revision);
+
+    let mut edited = json.clone();
+    edited["content"][0]["attrs"]["level"] = serde_json::json!(3);
+    let changed = engine
+        .import_json(&edited.to_string(), TransactionOrigin::DocumentImport)
+        .unwrap();
+    assert!(changed.changed, "an attribute difference is a real import");
+    assert_eq!(engine.document_json().unwrap(), edited);
+}
+
+#[test]
+fn repeated_large_html_replacements_preserve_unchanged_content_and_remain_editable() {
+    use crate::yrs_engine::ReplacementHistory;
+
+    use crate::test_support::prose_corpus::{
+        ProseCorpus, MEDIUM_PROSE, PROSE_TITLE_PREFIX, PROSE_VARIANT_TITLE_PREFIX, VERY_LARGE_PROSE,
+    };
+
+    const COLD_LOAD_WARMUP_REPLACEMENTS: u64 = 5;
+    const COLD_LOAD_MEASURED_REPLACEMENTS: u64 = 30;
+    const HISTORY_REPLACEMENTS: u64 = 2;
+    const FIRST_REQUEST: u64 = 65_480;
+    const TYPED_TEXT: &str = "!";
+    const MAX_UNCHANGED_BODY_STATE_MULTIPLIER: usize = 2;
+    for (size, history, samples) in [
+        (
+            VERY_LARGE_PROSE,
+            ReplacementHistory::ResetAndClear,
+            COLD_LOAD_WARMUP_REPLACEMENTS + COLD_LOAD_MEASURED_REPLACEMENTS,
+        ),
+        (
+            MEDIUM_PROSE,
+            ReplacementHistory::UndoableBoundary,
+            HISTORY_REPLACEMENTS,
+        ),
+    ] {
+        let base = ProseCorpus::new(PROSE_TITLE_PREFIX, size);
+        let warm_variant = ProseCorpus::new(PROSE_VARIANT_TITLE_PREFIX, size);
+        let base_html = base.html();
+        let variant_html = warm_variant.html();
+        let mut engine = transaction_engine();
+        let options = FromHtmlOptions::default();
+        engine
+            .prepare_root_replacement_html_with_outbox(
+                FIRST_REQUEST,
+                &base_html,
+                &options,
+                history,
+                None,
+            )
+            .unwrap();
+        let expected_base = engine.document_json().unwrap();
+        let initial_state_bytes = engine.encoded_state().unwrap().len();
+        let mut expected_variant = expected_base.clone();
+        assert_eq!(expected_base["content"][0]["type"], "heading");
+        assert_eq!(
+            expected_base["content"][0]["content"][0]["text"],
+            base.title()
+        );
+        expected_variant["content"][0]["content"][0]["text"] =
+            serde_json::Value::from(warm_variant.title());
+        let expected = |variant: bool| {
+            if variant {
+                &expected_variant
+            } else {
+                &expected_base
+            }
+        };
+        for index in 0..samples {
+            let variant = index % 2 == 0;
+            let source = if variant { &variant_html } else { &base_html };
+            let request = FIRST_REQUEST + index + 1;
+            engine
+            .prepare_root_replacement_html_with_outbox(
+                request,
+                source,
+                &options,
+                history,
+                None,
+            )
+            .unwrap_or_else(|error| {
+                panic!("changed rich HTML replacement {index}/{samples} ({history:?}) failed: {error:?}")
+            });
+            assert_eq!(engine.document_json().as_ref(), Some(expected(variant)));
+            assert_eq!(engine.revision(), index + 2);
+        }
+        assert!(
+            engine.encoded_state().unwrap().len()
+                <= initial_state_bytes * MAX_UNCHANGED_BODY_STATE_MULTIPLIER,
+            "changing only the heading must retain the rich body once, not once per undo step"
+        );
+        if history == ReplacementHistory::ResetAndClear {
+            assert!(engine.undo(FIRST_REQUEST + samples + 1).unwrap().is_none());
+            let mut expected_typed = expected((samples - 1) % 2 == 0).clone();
+            let heading = expected_typed["content"][0]["content"][0]["text"]
+                .as_str()
+                .unwrap();
+            expected_typed["content"][0]["content"][0]["text"] =
+                serde_json::Value::String(format!("{TYPED_TEXT}{heading}"));
+            let outcome = engine
+                .apply_command(
+                    FIRST_REQUEST + samples + 2,
+                    TypedCommand::InsertText {
+                        text: TYPED_TEXT.into(),
+                    },
+                )
+                .unwrap()
+                .expect("typing after repeated imports must commit under the default limits");
+            assert!(outcome.changed);
+            assert_eq!(engine.document_json(), Some(expected_typed));
+            assert_eq!(engine.revision(), samples + 2);
+            continue;
+        }
+        for remaining in (0..samples).rev() {
+            assert!(engine
+                .undo(FIRST_REQUEST + samples * 2 - remaining)
+                .unwrap()
+                .is_some());
+            assert_eq!(
+                engine.document_json().as_ref(),
+                Some(expected(remaining % 2 == 1)),
+                "undo must preserve the complete imported rich body at step {remaining}"
+            );
+        }
+        for index in 0..samples {
+            assert!(engine
+                .redo(FIRST_REQUEST + samples * 2 + index + 1)
+                .unwrap()
+                .is_some());
+            assert_eq!(
+                engine.document_json().as_ref(),
+                Some(expected(index % 2 == 0)),
+                "redo must preserve the complete imported rich body at step {index}"
+            );
+        }
+    }
+}
+
+#[test]
 fn utf16_doc_preserves_fresh_client_ids_and_uses_utf16_offsets() {
     let first = utf16_doc();
     let second = utf16_doc();
@@ -44,8 +233,8 @@ fn validated_import_source_reuses_one_schema_ranked_canonical_result() {
     let artifact = validated.canonical_artifact.clone();
 
     assert_eq!(
-        validated.canonical_artifact.value(),
-        &json!({
+        validated.canonical_artifact.to_json_value(),
+        json!({
             "type": "doc",
             "content": [{
                 "type": "paragraph",
@@ -58,8 +247,8 @@ fn validated_import_source_reuses_one_schema_ranked_canonical_result() {
         })
     );
     assert_eq!(
-        validated.canonical_artifact.value(),
-        &crate::serialize::to_prosemirror_json(&validated.document, &schema)
+        validated.canonical_artifact.to_json_value(),
+        crate::serialize::to_prosemirror_json(&validated.document, &schema)
     );
     let candidate = engine
         .build_candidate_from_document(validated, TransactionOrigin::DocumentImport)
@@ -323,10 +512,51 @@ fn first_imported_deferred_insert_uses_two_serializations_two_hashes_once() {
     assert_eq!(passes.document_validations, 1);
     assert_eq!(passes.canonical_serializations, 2);
     assert_eq!(passes.canonical_hashes, 2);
-    assert_eq!(take_localized_lookup_counts_for_test(), (0, 1, 1));
+    assert_eq!(
+        take_localized_lookup_counts_for_test(),
+        (1, 1, 1),
+        "an unavailable seed hydrates with one live lookup build"
+    );
     let admission = take_prepared_admission_counts_for_test();
     assert_eq!(admission.staged_seed_preparations, 1);
     assert_eq!(admission.installed_base_seed_publications, 0);
+}
+
+#[test]
+fn first_imported_insert_consumes_the_installed_seed_with_one_hash() {
+    use crate::yrs_engine::mutation::{
+        reset_localized_lookup_counts_for_test, take_localized_lookup_counts_for_test,
+    };
+    use crate::yrs_engine::observability::{
+        reset_full_pass_counts_for_test, reset_prepared_admission_counts_for_test,
+        take_full_pass_counts_for_test, take_prepared_admission_counts_for_test,
+    };
+
+    let mut engine = import_document_with_installed_lookup_seed();
+    select_text(&mut engine, 65_199, 2, 2);
+    reset_full_pass_counts_for_test();
+    reset_prepared_admission_counts_for_test();
+    reset_localized_lookup_counts_for_test();
+
+    engine
+        .apply_command(65_200, TypedCommand::InsertText { text: "x".into() })
+        .unwrap()
+        .expect("strict-interior imported insert should apply");
+
+    let passes = take_full_pass_counts_for_test();
+    assert_eq!(passes.planner_simulations, 1);
+    assert_eq!(passes.document_validations, 1);
+    assert_eq!(passes.canonical_serializations, 2);
+    assert_eq!(passes.canonical_hashes, 1);
+    assert_eq!(
+        take_localized_lookup_counts_for_test(),
+        (0, 1, 1),
+        "the import's installed seed needs no live lookup build"
+    );
+    let admission = take_prepared_admission_counts_for_test();
+    assert_eq!(admission.staged_seed_preparations, 0);
+    assert_eq!(admission.installed_base_seed_publications, 0);
+    assert_eq!(root_text(&engine), "abxc");
 }
 
 #[test]
@@ -452,7 +682,11 @@ fn private_prepared_command_orchestrator_finalizes_deferred_admission_once() {
     assert_eq!(passes.document_validations, 1);
     assert_eq!(passes.canonical_serializations, 2);
     assert_eq!(passes.canonical_hashes, 2);
-    assert_eq!(take_localized_lookup_counts_for_test(), (0, 1, 1));
+    assert_eq!(
+        take_localized_lookup_counts_for_test(),
+        (1, 1, 1),
+        "an unavailable seed hydrates with one live lookup build"
+    );
     assert_eq!(admission.staged_seed_preparations, 1);
     assert_eq!(admission.staged_identity_materializations, 1);
     assert_eq!(admission.installed_base_seed_publications, 0);
@@ -518,8 +752,9 @@ fn first_imported_prepared_insert_reuses_the_before_history_charge() {
 
     assert_eq!(
         take_history_snapshot_retained_bytes_traversals_for_test(),
-        1,
-        "history admission reuses the before charge and traverses only the prepared after document"
+        0,
+        "history admission reuses the before charge and charges the after document by its \
+         structural difference from the before document, never by a whole-document traversal"
     );
 }
 
@@ -770,6 +1005,7 @@ fn private_prepared_history_error_precedes_staged_hydration_failure() {
             TransactionOrigin::DocumentImport,
         )
         .unwrap();
+    force_lookup_seed_unavailable(&mut engine);
     select_text(&mut engine, 65_265, 2, 2);
     engine.derived_state.as_mut().unwrap().canonical_artifact = engine
         .derived_state
@@ -902,8 +1138,11 @@ fn eager_non_insert_first_mutations_do_not_materialize_base_identity() {
         .unwrap();
     let toggle_passes = take_full_pass_counts_for_test();
     let toggle_admission = take_prepared_admission_counts_for_test();
-    assert_eq!(toggle_passes.canonical_serializations, 3);
-    assert_eq!(toggle_passes.canonical_hashes, 2);
+    assert_eq!(toggle_passes.canonical_serializations, 1);
+    assert_eq!(
+        toggle_passes.canonical_hashes, 0,
+        "formatting must not hash the base document for insertion-only admission"
+    );
     assert_eq!(toggle_admission.staged_identity_materializations, 0);
 
     let mut wrap = import_document_with_unavailable_lookup_seed();
@@ -921,7 +1160,10 @@ fn eager_non_insert_first_mutations_do_not_materialize_base_identity() {
     let wrap_passes = take_full_pass_counts_for_test();
     let wrap_admission = take_prepared_admission_counts_for_test();
     assert_eq!(wrap_passes.canonical_serializations, 3);
-    assert_eq!(wrap_passes.canonical_hashes, 2);
+    assert_eq!(
+        wrap_passes.canonical_hashes, 1,
+        "structural commands must not hash the base document for insertion-only admission"
+    );
     assert_eq!(wrap_admission.staged_identity_materializations, 0);
 
     let mut undo = import_document_with_unavailable_lookup_seed();
@@ -1255,8 +1497,8 @@ fn compact_root_json_admission_fits_a_small_stack() {
             .unwrap();
         assert_eq!(actual.document, oracle.document, "nesting {nesting}");
         assert_eq!(
-            actual.canonical_artifact.value(),
-            oracle.canonical_artifact.value(),
+            actual.canonical_artifact.projected_value(),
+            oracle.canonical_artifact.projected_value(),
             "canonical import at nesting {nesting}"
         );
     }
@@ -1488,6 +1730,7 @@ fn anchored_prepared_input_charges_marks_from_the_requested_caret_before_hydrati
                 TransactionOrigin::DocumentImport,
             )
             .unwrap();
+        force_lookup_seed_unavailable(&mut engine);
         select_text(&mut engine, REQUEST, OLD_SCALAR, OLD_SCALAR);
         engine
             .apply_command(

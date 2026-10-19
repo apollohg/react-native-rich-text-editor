@@ -109,29 +109,15 @@ final class CoreTextProseLayoutEngine {
         }
 
         func preassign(document: ViewerDocument) {
-            for (index, block) in document.blocks.enumerated() {
-                register(document: document, index: index, block: block)
-                guard let table = block.tableSurfaceSource, let tableKey = block.tableKey else { continue }
-                for cell in table.cells {
-                    guard let child = try? document.cellDocument(for: cell, in: tableKey) else { continue }
-                    preassign(document: child)
-                }
-            }
+            document.forEachBlockInSourceOrder(register(document:index:block:))
         }
 
         func scoped(to document: ViewerDocument) -> HighlightingScope {
             let scoped = HighlightingScope(configuration: configuration, generation: generation)
-            func collect(_ document: ViewerDocument) {
-                for (index, block) in document.blocks.enumerated() {
-                    let key = identifier(document: document, index: index)
-                    scoped.identifiers[key] = identifiers[key]
-                    guard let table = block.tableSurfaceSource, let tableKey = block.tableKey else { continue }
-                    for cell in table.cells {
-                        if let child = try? document.cellDocument(for: cell, in: tableKey) { collect(child) }
-                    }
-                }
+            document.forEachBlockInSourceOrder { document, index, _ in
+                let key = identifier(document: document, index: index)
+                scoped.identifiers[key] = identifiers[key]
             }
-            collect(document)
             return scoped
         }
 
@@ -335,7 +321,8 @@ final class CoreTextProseLayoutEngine {
                 document: child,
                 widthPixels: widthPixels,
                 theme: cellTheme,
-                key: childKey
+                key: childKey,
+                context: context
             )
             let bind: (PreparedCellShape, @escaping (PreparedProseLayout?) -> Void) -> Void = { shape, bound in
                 queue.prepare(self.makeBinding(
@@ -982,7 +969,7 @@ final class CoreTextProseLayoutEngine {
                 interactions: interactions,
                 accessibilityNodes: accessibility,
                 imageAttachments: blocks.compactMap(\.imageAttachment),
-                retainedBytes: local.retainedBytes,
+                retainedBytes: local.ownRetainedBytes + blocks.reduce(0) { $0 + ($1.tableSurface?.retainedBytes ?? 0) },
                 decorations: local.decorations,
                 highlightingRequest: nil,
                 highlightingResolved: local.highlightingResolved

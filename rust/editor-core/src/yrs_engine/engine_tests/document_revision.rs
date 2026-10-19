@@ -54,7 +54,17 @@ fn every_document_revision_records_exactly_one_scope() {
                 engine.revision(),
                 "{label}: document scope invalidated"
             );
-            assert_eq!(engine.last_change_scope, DocumentChangeScope::Document);
+            if matches!(label, "row insertion" | "import") {
+                assert!(
+                    matches!(
+                        engine.last_change_scope,
+                        DocumentChangeScope::RootWindow { .. }
+                    ),
+                    "{label}: a structural commit records its root window"
+                );
+            } else {
+                assert_eq!(engine.last_change_scope, DocumentChangeScope::Document);
+            }
         }
         let exact_bytes = engine.encoded_state().unwrap().len();
         if local || label == "row insertion" {

@@ -831,6 +831,26 @@ internal fun ViewerDocument.cellDocument(cell: TableSurfaceCell, tableId: String
     )
 }
 
+internal fun ViewerDocument.forEachBlockInSourceOrder(
+    visit: (ViewerDocument, Int, ViewerBlock) -> Unit,
+    finishing: (ViewerDocument) -> Unit = {}
+) {
+    val pending = ArrayDeque(listOf(this to 0))
+    while (pending.isNotEmpty()) {
+        val (document, index) = pending.removeLast()
+        val block = document.blocks.getOrNull(index)
+        if (block == null) {
+            finishing(document)
+            continue
+        }
+        visit(document, index, block)
+        pending.addLast(document to index + 1)
+        val table = block.tableSource() ?: continue
+        val children = table.cells.map { document.cellDocument(it, requireNotNull(block.tableKey)) }
+        children.asReversed().forEach { pending.addLast(it to 0) }
+    }
+}
+
 private val CONTAINER_BLOCKS = setOf(
     "doc",
     "blockquote",

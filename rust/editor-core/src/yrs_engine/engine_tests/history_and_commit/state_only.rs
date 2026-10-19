@@ -481,8 +481,13 @@ fn empty_skip_collapsed_text_prepares_one_forward_point_without_reverse_traversa
     ));
     assert_eq!(
         take_relative_position_traversal_counts_for_test(),
-        (0, 1, 0),
-        "collapsed exact inputs must share one admitted forward materialization"
+        (0, 0, 0),
+        "collapsed exact inputs must not walk the fragment from its root"
+    );
+    assert_eq!(
+        crate::yrs_engine::position::take_relative_block_traversals_for_test(),
+        1,
+        "collapsed exact inputs must share one block-local materialization"
     );
     assert_eq!(
         take_relative_selection_traversal_counts_for_test(),
@@ -903,5 +908,271 @@ fn empty_skip_fast_path_matches_full_compiler_for_selection_forms_and_local_stat
         } else {
             assert!(fast.stored_marks().is_none());
         }
+    }
+}
+
+const BLOCK_LOCAL_RICH_DOCUMENT: &str = r#"{"type":"doc","content":[
+    {"type":"h1","content":[{"type":"text","text":"Title 😀"}]},
+    {"type":"paragraph","content":[
+        {"type":"text","text":"a","marks":[{"type":"bold"}]},
+        {"type":"text","text":"b😀c"},
+        {"type":"hardBreak"},
+        {"type":"text","text":"d","marks":[{"type":"italic"}]}]},
+    {"type":"blockquote","content":[
+        {"type":"paragraph","content":[{"type":"text","text":"quoted"}]},
+        {"type":"paragraph"}]},
+    {"type":"bulletList","content":[
+        {"type":"listItem","content":[
+            {"type":"paragraph","content":[{"type":"text","text":"one"}]},
+            {"type":"bulletList","content":[{"type":"listItem","content":[
+                {"type":"paragraph","content":[{"type":"text","text":"nested 日本"}]}]}]}]},
+        {"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]},
+    {"type":"horizontalRule"},
+    {"type":"codeBlock","content":[{"type":"text","text":"let x = 1;\nfoo()"}]},
+    {"type":"orderedList","content":[{"type":"listItem","content":[
+        {"type":"paragraph","content":[{"type":"text","text":"first"}]}]}]},
+    {"type":"image","attrs":{"src":"https://example.com/a.png"}},
+    {"type":"paragraph"},
+    {"type":"paragraph","content":[{"type":"text","text":"tail"}]}
+]}"#;
+
+#[test]
+fn block_local_relative_points_match_the_fragment_walk_at_every_position() {
+    use crate::yrs_engine::position::{
+        admitted_doc_pos_to_relative_point, forward_doc_pos_to_sticky_index_for_test,
+        take_relative_block_traversals_for_test, RelativePoint,
+    };
+
+    let mut engine = transaction_engine();
+    engine
+        .import_json(BLOCK_LOCAL_RICH_DOCUMENT, TransactionOrigin::DocumentImport)
+        .unwrap();
+    let schema = engine.schema();
+    let document = engine.document().unwrap();
+    let position_map = engine.position_map().unwrap();
+    let block_branch_index = engine.block_branch_index().unwrap();
+    let in_textblock = |doc_pos: u32| {
+        (0..position_map.block_count()).any(|index| {
+            !position_map.block(index).unwrap().is_void_block
+                && (position_map.effective_doc_start(index)..=position_map.effective_doc_end(index))
+                    .contains(&doc_pos)
+        })
+    };
+    let affinities = [Affinity::Before, Affinity::After];
+    let mut indexed_positions = 0;
+    take_relative_block_traversals_for_test();
+    engine
+        .read_fragment_for_test(|txn, fragment| {
+            for doc_pos in 0..=document.content_size() {
+                for affinity in affinities {
+                    let assoc = affinity.into();
+                    let expected = forward_doc_pos_to_sticky_index_for_test(
+                        txn, fragment, doc_pos, assoc, schema,
+                    )
+                    .filter(|sticky| sticky.get_offset(txn).is_some() && sticky.assoc == assoc)
+                    .map(|sticky| RelativePoint { sticky, affinity });
+                    let actual = admitted_doc_pos_to_relative_point(
+                        txn,
+                        fragment,
+                        doc_pos,
+                        affinity,
+                        schema,
+                        Some((block_branch_index, position_map, document)),
+                    );
+                    assert_eq!(actual, expected, "doc position {doc_pos} with {affinity:?}");
+                    let indexed = take_relative_block_traversals_for_test() == 1;
+                    assert!(
+                        indexed || !in_textblock(doc_pos) || expected.is_none(),
+                        "textblock position {doc_pos} with {affinity:?} walked the fragment"
+                    );
+                    indexed_positions += usize::from(indexed);
+                }
+            }
+        })
+        .unwrap();
+    assert!(
+        indexed_positions > 0,
+        "no textblock position resolved through the block branch index"
+    );
+}
+
+#[test]
+fn collapsed_caret_at_the_end_of_a_long_document_sizes_only_its_block() {
+    use crate::yrs_engine::position::{
+        reset_relative_position_traversal_counts_for_test,
+        take_relative_block_traversals_for_test,
+        take_relative_position_traversal_counts_for_test, XML_SIZE_NODE_VISITS,
+    };
+    const PARAGRAPHS: usize = 2_000;
+    let paragraphs: Vec<_> = (0..PARAGRAPHS)
+        .map(|index| {
+            serde_json::json!({"type": "paragraph", "content": [
+                {"type": "text", "text": format!("paragraph {index} 😀 ")},
+                {"type": "text", "text": "marked", "marks": [{"type": "bold"}]}
+            ]})
+        })
+        .collect();
+    let mut engine = transaction_engine();
+    engine
+        .import_json(
+            &serde_json::json!({"type": "doc", "content": paragraphs}).to_string(),
+            TransactionOrigin::DocumentImport,
+        )
+        .unwrap();
+    let point = RevisionedPosition {
+        offset: engine.position_map().unwrap().total_scalars() - 3,
+        kind: EditorOffsetKind::Scalar,
+        affinity: Affinity::Before,
+    };
+    reset_relative_position_traversal_counts_for_test();
+    take_relative_block_traversals_for_test();
+    XML_SIZE_NODE_VISITS.set(0);
+
+    let result = engine
+        .apply_typed_transaction_with_result(TypedTransaction {
+            request_id: 760,
+            base_document_revision: engine.revision(),
+            origin: TransactionOrigin::LocalApi,
+            operations: vec![],
+            selection_intent: SelectionIntent::Set(SelectionInput::Text {
+                anchor: point,
+                head: point,
+            }),
+            history_policy: HistoryPolicy::Skip,
+        })
+        .unwrap();
+
+    assert!(matches!(
+        result.selection,
+        ResolvedSelection::Text { anchor, head } if anchor == head && anchor.scalar == point.offset
+    ));
+    let size_visits = XML_SIZE_NODE_VISITS.replace(0);
+    assert_eq!(take_relative_position_traversal_counts_for_test(), (0, 0, 0));
+    assert_eq!(take_relative_block_traversals_for_test(), 1);
+    assert!(
+        size_visits <= 8,
+        "a caret in the last of {PARAGRAPHS} paragraphs sized {size_visits} Yrs nodes"
+    );
+}
+
+#[test]
+fn collapsed_carets_anchor_in_their_own_block_when_yrs_children_do_not_match_derived_paths() {
+    use crate::yrs_engine::position::relative_point_to_doc_pos;
+    use crate::yrs_engine::RelativeSelection;
+    use yrs::types::xml::XmlElementPrelim;
+
+    let paragraph = |text: &str| XmlElementPrelim::new("paragraph", [XmlIn::from(XmlTextPrelim::new(text))]);
+    let layouts: [(&str, Vec<XmlIn>); 2] = [
+        (
+            "leading empty text",
+            vec![
+                XmlIn::from(XmlTextPrelim::new("")),
+                XmlIn::from(paragraph("a")),
+                XmlIn::from(paragraph("b")),
+            ],
+        ),
+        (
+            "nested fragment",
+            vec![
+                XmlIn::from(XmlFragmentPrelim::new::<_, XmlIn>([
+                    XmlIn::from(paragraph("a")),
+                    XmlIn::from(paragraph("b")),
+                ])),
+                XmlIn::from(paragraph("c")),
+            ],
+        ),
+    ];
+    for (layout, children) in layouts {
+        let source = utf16_doc();
+        {
+            let mut txn = source.transact_mut();
+            let fragment = txn.get_or_insert_xml_fragment("prosemirror");
+            for (index, child) in children.into_iter().enumerate() {
+                fragment.insert(&mut txn, index as u32, child);
+            }
+        }
+        let update = source
+            .transact()
+            .encode_state_as_update_v1(&StateVector::default());
+        let mut engine = transaction_engine_with_resource_limits_and_mode(
+            ResourceLimits::default(),
+            crate::yrs_engine::InitializationMode::AwaitRemote,
+        );
+        engine.apply_remote_update_v1(761, &update).unwrap();
+        let total_scalars = engine.position_map().unwrap().total_scalars();
+        for offset in 0..=total_scalars {
+            let point = RevisionedPosition {
+                offset,
+                kind: EditorOffsetKind::Scalar,
+                affinity: Affinity::Before,
+            };
+            let result = engine
+                .apply_typed_transaction_with_result(TypedTransaction {
+                    request_id: 762 + u64::from(offset),
+                    base_document_revision: engine.revision(),
+                    origin: TransactionOrigin::LocalApi,
+                    operations: vec![],
+                    selection_intent: SelectionIntent::Set(SelectionInput::Text {
+                        anchor: point,
+                        head: point,
+                    }),
+                    history_policy: HistoryPolicy::Skip,
+                })
+                .unwrap();
+            let ResolvedSelection::Text { anchor, .. } = result.selection else {
+                panic!("{layout}: scalar {offset} resolved to {:?}", result.selection)
+            };
+            let RelativeSelection::Text { anchor: relative, .. } =
+                engine.derived_state.as_ref().unwrap().relative_selection.clone()
+            else {
+                panic!("{layout}: scalar {offset} stored a non-text relative selection")
+            };
+            let stored = engine
+                .read_fragment_for_test(|txn, fragment| {
+                    relative_point_to_doc_pos(txn, fragment, &relative, engine.schema())
+                })
+                .unwrap();
+            assert_eq!(
+                stored,
+                Some(anchor.document),
+                "{layout}: caret at scalar {offset} must stay anchored at document {}",
+                anchor.document
+            );
+        }
+    }
+}
+
+#[test]
+fn indexed_rendered_utf16_offsets_match_the_full_scan_for_every_scalar() {
+    use crate::yrs_engine::position::scalar_offset_to_utf16;
+
+    let text: String = (0..1_700)
+        .map(|index| match index % 7 {
+            0 => "😀",
+            3 => "日",
+            5 => "\u{1F468}\u{200D}\u{1F469}",
+            _ => "a",
+        })
+        .collect();
+    let mut engine = transaction_engine();
+    engine
+        .import_json(
+            &serde_json::json!({"type": "doc", "content": [
+                {"type": "paragraph", "content": [{"type": "text", "text": text}]},
+                {"type": "paragraph", "content": [{"type": "text", "text": "😀 tail"}]}
+            ]})
+            .to_string(),
+            TransactionOrigin::DocumentImport,
+        )
+        .unwrap();
+    let derived = engine.derived_state.as_ref().unwrap();
+    let scalars = derived.rendered_text.chars().count() as u32;
+    assert!(scalars > 2 * 1024, "the fixture must span several checkpoints, got {scalars}");
+    for scalar in 0..=scalars + 2 {
+        assert_eq!(
+            derived.rendered_scalar_to_utf16(scalar),
+            scalar_offset_to_utf16(&derived.rendered_text, scalar),
+            "rendered scalar {scalar} of {scalars}"
+        );
     }
 }

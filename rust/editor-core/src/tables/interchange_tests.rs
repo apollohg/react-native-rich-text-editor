@@ -371,8 +371,8 @@ fn an_authored_replacement_normalizes_its_outer_tables_and_a_restore_keeps_them_
             .expect("the replacement commits");
         assert_eq!(
             crate::yrs_engine::observability::take_node_json_projections_for_test(),
-            usize::from(history == ReplacementHistory::UndoableBoundary),
-            "normalized replacement content must fall back to its own JSON projection",
+            0,
+            "replacement content lowers from model nodes without projecting a JSON tree",
         );
         let json = engine.document_json().expect("the engine is ready");
         let second_row = &json["content"][0]["content"][1];
@@ -596,7 +596,10 @@ fn a_stray_table_child_reports_an_unreadable_grid_to_the_host() {
         .expect("a table holding a stray paragraph is admitted by this schema");
 
     let document = engine.document().expect("the engine is ready");
-    assert_eq!(crate::render::rendered_text(document, &schema), "a\nb\nstray");
+    assert_eq!(
+        crate::render::rendered_text(document, &schema),
+        "a\nb\nstray"
+    );
     assert_eq!(engine.position_map().unwrap().total_scalars(), 9);
     let index = TableProjectionIndex::derive_or_fallback(document, &schema, &limits());
     let openings: Vec<u32> = index

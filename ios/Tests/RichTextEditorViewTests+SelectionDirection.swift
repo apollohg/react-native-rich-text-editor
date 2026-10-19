@@ -24,6 +24,40 @@ extension RichTextEditorViewTests {
         XCTAssertEqual(emittedUpdate["documentVersion"] as? String, update["documentVersion"] as? String)
     }
 
+    func testNativeCommitEventPayloadOmitsThePositionEpochOfABoundEditor() throws {
+        let editorId = makeV2Editor()
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let expoHost = NativeEditorExpoView()
+        defer { expoHost.setEditorId(0) }
+        expoHost.setEditorId(editorId)
+        XCTAssertTrue(expoHost.ownsNativeBinding(editorId: editorId))
+
+        var frames: [FfiNativeRenderFrame] = []
+        adapter.transformNativeFrameForTesting = { frame in
+            frames.append(frame)
+            return frame
+        }
+        defer { adapter.transformNativeFrameForTesting = nil }
+
+        let viewUpdateJSON = EditorV2Shadow.insertTextScalar(id: editorId, scalarPos: 0, text: "abc")
+        let frame = try XCTUnwrap(frames.last)
+        XCTAssertNotNil(frame.positionEpoch, "frame: \(frame.snapshotJson)")
+        XCTAssertEqual(frame.positionEpoch, adapter.positionEpoch.map(String.init))
+        XCTAssertEqual(adapter.cachedAtomicRenderJSON, frame.snapshotJson)
+
+        let event = try XCTUnwrap(
+            NativeEditorExpoView.nativeCommitEventPayload(
+                originatingEditorId: String(editorId),
+                updateJSON: viewUpdateJSON
+            )
+        )
+        let emittedUpdate = parseJSONObject(try XCTUnwrap(event["updateJson"] as? String))
+
+        XCTAssertEqual(Set(emittedUpdate.keys), EditorV2Adapter.atomicRenderSnapshotKeys, "emitted: \(emittedUpdate)")
+        XCTAssertEqual(emittedUpdate["documentIsEmpty"] as? Bool, false)
+    }
+
     func testNativeCommitEventPayloadPublishesTheCompleteAtomicSnapshot() throws {
         let editorId = makeV2Editor()
         defer { destroyV2Editor(id: editorId) }

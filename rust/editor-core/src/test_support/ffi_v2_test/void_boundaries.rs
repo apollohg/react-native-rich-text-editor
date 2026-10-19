@@ -425,8 +425,7 @@ fn forward_delete_before_first_blank_paragraph_does_not_remove_it() {
         { "type": "counterCard", "attrs": { "count": 7 } },
     ]);
     let id = create_handle(config);
-    let render = native_frame_snapshot(&id, "4");
-    let epoch = render["positionEpoch"].as_str().unwrap();
+    let (_, epoch) = native_frame(&id, "4");
 
     let outcome = ok_json(&v2::editor_v2_apply_native_intent(
         id.clone(),
@@ -761,4 +760,58 @@ fn backspace_in_empty_paragraph_preserves_protected_horizontal_rule() {
         );
         destroy_handle(&id);
     }
+}
+
+#[test]
+fn render_state_matches_the_render_update_without_its_render_payload() {
+    let mut config = terminal_custom_atom_config();
+    config["initialization"]["json"]["content"] = json!([
+        { "type": "paragraph", "content": [{ "type": "text", "text": "prefix" }] },
+        { "type": "counterCard", "attrs": { "count": 7 } },
+        { "type": "paragraph", "content": [{ "type": "text", "text": "after" }] },
+        { "type": "counterCard", "attrs": { "count": 9 } },
+    ]);
+    let id = create_handle(config);
+
+    for mirror in [None, Some((2, 4))] {
+        let (anchor, head) = mirror.unzip();
+        let mut update = ok_json(&v2_render::editor_v2_render_update(id.clone(), anchor, head));
+        let state = ok_json(&v2_render::editor_v2_render_state(id.clone(), anchor, head));
+        let expected_void_blocks: Vec<Value> = update["renderBlocks"]
+            .as_array()
+            .expect("an unowned render update carries full render blocks")
+            .iter()
+            .map(|block| {
+                Value::Array(
+                    block
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter(|element| element["type"] == "voidBlock")
+                        .cloned()
+                        .collect(),
+                )
+            })
+            .collect();
+        let update = update.as_object_mut().expect("render update is an object");
+        update.remove("renderBlocks");
+        update.remove("renderPatch");
+        update.insert("voidBlocks".to_owned(), Value::Array(expected_void_blocks));
+
+        assert_eq!(state, Value::Object(update.clone()), "mirror={mirror:?}");
+        assert!(
+            state["voidBlocks"][1][0]["atomId"].is_string(),
+            "void blocks keep their atom identity: {state}"
+        );
+    }
+
+    let state_error = v2_render::editor_v2_render_state(id.clone(), Some(1), None)
+        .error
+        .map(|error| error.code);
+    let update_error = v2_render::editor_v2_render_update(id.clone(), Some(1), None)
+        .error
+        .map(|error| error.code);
+    assert_eq!(state_error.as_deref(), Some("CONFIG_INVALID"));
+    assert_eq!(state_error, update_error);
+    destroy_handle(&id);
 }

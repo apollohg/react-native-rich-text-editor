@@ -1,4 +1,153 @@
 #[test]
+fn prepared_mark_planning_does_not_hash_ineligible_insert_admission() {
+    use crate::yrs_engine::observability::{
+        reset_full_pass_counts_for_test, take_full_pass_counts_for_test,
+    };
+
+    const REQUEST_ID: u64 = 70_030_050;
+    const PARAGRAPH_COUNT: usize = 32;
+    const BODY: &str = "a😀bc🦀def";
+    const MARK_START: u32 = 1;
+    const MARK_END: u32 = 7;
+    for command in [
+        TypedCommand::ToggleMark {
+            mark_type: "bold".into(),
+        },
+        TypedCommand::SetMark {
+            mark_type: "bold".into(),
+            attrs: Default::default(),
+        },
+        TypedCommand::UnsetMark {
+            mark_type: "bold".into(),
+        },
+    ] {
+        let starts_bold = matches!(command, TypedCommand::UnsetMark { .. });
+        let document = json!({
+            "type": "doc",
+            "content": (0..PARAGRAPH_COUNT).map(|index| json!({
+                "type": "paragraph",
+                "content": [{
+                    "type": "text", "text": format!("{BODY} {index}"),
+                    "marks": if starts_bold { vec![json!({"type":"bold"})] } else { vec![] }
+                }]
+            })).collect::<Vec<_>>()
+        });
+        let populated = || {
+            let mut engine = transaction_engine();
+            engine
+                .import_json(&document.to_string(), TransactionOrigin::DocumentImport)
+                .unwrap();
+            force_lookup_seed_unavailable(&mut engine);
+            select_text(&mut engine, REQUEST_ID, MARK_START, MARK_END);
+            assert!(engine
+                .derived_state
+                .as_ref()
+                .unwrap()
+                .mutation_lookup_seed
+                .is_unavailable());
+            engine
+        };
+        let mut prepared = populated();
+        let before_document = prepared.document_json().unwrap();
+        let before_selection = prepared.resolved_selection().unwrap().clone();
+        let preparation = std::cell::RefCell::new(None);
+        reset_full_pass_counts_for_test();
+        let plan = prepared
+            .plan_command_internal(REQUEST_ID + 1, command.clone(), Some(&preparation))
+            .unwrap();
+        let planning_counts = take_full_pass_counts_for_test();
+        let CommandPlan::Transaction(transaction) = plan else {
+            panic!("{command:?} must produce an admitted mark transaction");
+        };
+        assert_eq!(planning_counts.canonical_hashes, 0,
+            "{command:?}: formatting cannot use the insertion-only deferred path: {planning_counts:?}");
+        let proof = preparation.into_inner();
+        assert_eq!(proof.is_some(), !matches!(command, TypedCommand::SetMark { .. }),
+            "{command:?}: preserve the existing prepared add/remove versus generic replace-mark routes");
+        let prepared_result = if let Some(proof) = proof {
+            prepared
+                .apply_prepared_command_transaction(
+                    transaction,
+                    proof,
+                    None,
+                    true,
+                    &mut crate::yrs_engine::engine::OutboundUpdateSink::detached(),
+                )
+                .unwrap()
+                .1
+                .unwrap()
+        } else {
+            prepared
+                .apply_typed_transaction_with_result(transaction)
+                .unwrap()
+        };
+
+        let mut generic = populated();
+        let CommandPlan::Transaction(transaction) = generic
+            .plan_command(REQUEST_ID + 1, command.clone())
+            .unwrap()
+        else {
+            panic!("{command:?} must produce the public eager transaction");
+        };
+        let generic_result = generic
+            .apply_typed_transaction_with_result(transaction)
+            .unwrap();
+        assert_eq!(prepared_result, generic_result, "{command:?}");
+        let after_document = prepared.document_json().unwrap();
+        let mut expected_document = before_document.clone();
+        expected_document["content"][0]["content"] = if starts_bold {
+            json!([
+                {"type":"text", "text":"a", "marks":[{"type":"bold"}]},
+                {"type":"text", "text":"😀bc🦀de"},
+                {"type":"text", "text":"f 0", "marks":[{"type":"bold"}]}
+            ])
+        } else {
+            json!([
+                {"type":"text", "text":"a"},
+                {"type":"text", "text":"😀bc🦀de", "marks":[{"type":"bold"}]},
+                {"type":"text", "text":"f 0"}
+            ])
+        };
+        assert_eq!(
+            after_document, expected_document,
+            "{command:?}: exact Unicode mark boundaries"
+        );
+        assert_eq!(
+            prepared.document_json(),
+            generic.document_json(),
+            "{command:?}"
+        );
+        assert_eq!(
+            prepared.document_html(),
+            generic.document_html(),
+            "{command:?}"
+        );
+        assert_eq!(
+            prepared.resolved_selection().unwrap(),
+            &before_selection,
+            "{command:?}"
+        );
+        prepared.undo(REQUEST_ID + 2).unwrap().unwrap();
+        assert_eq!(
+            prepared.document_json().unwrap(),
+            before_document,
+            "{command:?}: undo"
+        );
+        prepared.redo(REQUEST_ID + 3).unwrap().unwrap();
+        assert_eq!(
+            prepared.document_json().unwrap(),
+            after_document,
+            "{command:?}: redo"
+        );
+        assert_eq!(
+            prepared.resolved_selection().unwrap(),
+            &before_selection,
+            "{command:?}: redo caret"
+        );
+    }
+}
+
+#[test]
 fn prepared_toggle_mark_uses_no_eager_whole_tree_collectors() {
     use crate::yrs_engine::mutation::{
         reset_localized_lookup_counts_for_test, reset_range_format_lowering_counts_for_test,
@@ -145,105 +294,75 @@ fn prepared_reverse_toggle_mark_matches_public_eager_transaction_result() {
 }
 
 #[test]
-fn toggle_mark_structural_ranges_reject_before_lowering_with_public_parity() {
+fn toggle_mark_over_an_inline_void_formats_both_sides_with_public_parity() {
     use crate::yrs_engine::mutation::{
         reset_range_format_lowering_counts_for_test, take_range_format_lowering_counts_for_test,
     };
 
-    let cases = [
-        (
-            "crossBlock",
-            json!({
-                "type": "doc",
-                "content": [
-                    { "type": "paragraph", "content": [{ "type": "text", "text": "ab" }] },
-                    { "type": "paragraph", "content": [{ "type": "text", "text": "cd" }] }
-                ]
-            }),
-            0,
-            5,
-            (0, 0, 0, 0),
-        ),
-        (
-            "inlineVoid",
-            json!({
-                "type": "doc",
-                "content": [{
-                    "type": "paragraph",
-                    "content": [
-                        { "type": "text", "text": "a" },
-                        { "type": "hardBreak" },
-                        { "type": "text", "text": "b" }
-                    ]
-                }]
-            }),
-            0,
-            3,
-            (1, 1, 0, 1),
-        ),
-    ];
-
-    for (case, document, anchor, head, expected_counts) in cases {
-        let populated = || {
-            let mut engine = transaction_engine();
-            engine
-                .import_json(&document.to_string(), TransactionOrigin::DocumentImport)
-                .unwrap();
-            select_text(&mut engine, 70_030_200, anchor, head);
-            engine
+    const PREPARED_LOWERING_COUNTS: (usize, usize, usize, usize) = (1, 1, 0, 1);
+    const PUBLIC_LOWERING_COUNTS: (usize, usize, usize, usize) = (1, 1, 0, 0);
+    let paragraph = |bold: bool| {
+        let run = |text: &str| {
+            if bold {
+                json!({ "type": "text", "text": text, "marks": [{ "type": "bold" }] })
+            } else {
+                json!({ "type": "text", "text": text })
+            }
         };
-        let command = TypedCommand::ToggleMark {
-            mark_type: "bold".into(),
-        };
+        json!({ "type": "doc", "content": [{
+            "type": "paragraph",
+            "content": [run("a"), { "type": "hardBreak" }, run("b")]
+        }] })
+    };
+    let populated = || {
+        let mut engine = transaction_engine();
+        engine
+            .import_json(&paragraph(false).to_string(), TransactionOrigin::DocumentImport)
+            .unwrap();
+        select_text(&mut engine, 70_030_200, 0, 3);
+        engine
+    };
+    let command = TypedCommand::ToggleMark {
+        mark_type: "bold".into(),
+    };
 
-        let mut prepared = populated();
-        let prepared_before = atomic_audit(&prepared);
-        reset_range_format_lowering_counts_for_test();
-        let prepared_error = prepared
-            .apply_command(70_030_201, command.clone())
-            .unwrap_err();
-        assert_eq!(
-            take_range_format_lowering_counts_for_test(),
-            expected_counts,
-            "{case}"
-        );
-        assert_eq!(atomic_audit(&prepared), prepared_before, "{case}");
+    let mut prepared = populated();
+    reset_range_format_lowering_counts_for_test();
+    let prepared_result = prepared
+        .apply_command(70_030_201, command.clone())
+        .unwrap()
+        .expect("bold over a hard break commits");
+    assert_eq!(
+        take_range_format_lowering_counts_for_test(),
+        PREPARED_LOWERING_COUNTS,
+        "prepared apply"
+    );
 
-        let mut generic = populated();
-        let generic_before = atomic_audit(&generic);
-        reset_range_format_lowering_counts_for_test();
-        let plan = generic.plan_command(70_030_201, command);
-        let generic_error = if case == "crossBlock" {
-            let error = plan.unwrap_err();
-            assert_eq!(
-                take_range_format_lowering_counts_for_test(),
-                (0, 0, 0, 0),
-                "{case} public plan"
-            );
-            error
-        } else {
-            let CommandPlan::Transaction(transaction) = plan.unwrap() else {
-                panic!("{case} must produce a public typed transaction")
-            };
-            assert_eq!(
-                take_range_format_lowering_counts_for_test(),
-                (0, 0, 0, 0),
-                "{case} public plan"
-            );
-            reset_range_format_lowering_counts_for_test();
-            let error = generic
-                .apply_typed_transaction_with_result(transaction)
-                .unwrap_err();
-            assert_eq!(
-                take_range_format_lowering_counts_for_test(),
-                (1, 1, 0, 0),
-                "{case} public apply"
-            );
-            error
-        };
-        assert_eq!(prepared_error, generic_error, "{case}");
-        assert_eq!(atomic_audit(&generic), generic_before, "{case}");
-    }
+    let mut generic = populated();
+    reset_range_format_lowering_counts_for_test();
+    let plan = generic.plan_command(70_030_201, command);
+    let CommandPlan::Transaction(transaction) = plan.unwrap() else {
+        panic!("bold over a hard break must produce a public typed transaction")
+    };
+    assert_eq!(
+        take_range_format_lowering_counts_for_test(),
+        (0, 0, 0, 0),
+        "public plan"
+    );
+    reset_range_format_lowering_counts_for_test();
+    let generic_result = generic
+        .apply_typed_transaction_with_result(transaction)
+        .unwrap();
+    assert_eq!(
+        take_range_format_lowering_counts_for_test(),
+        PUBLIC_LOWERING_COUNTS,
+        "public apply"
+    );
+
+    assert_eq!(prepared.document_json(), Some(paragraph(true)));
+    assert_eq!(generic.document_json(), prepared.document_json());
+    assert_eq!(generic_result.selection, prepared_result.selection);
+    assert_eq!(generic_result.active_state, prepared_result.active_state);
 }
 
 #[test]

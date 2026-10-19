@@ -6,8 +6,14 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.os.Bundle
+import android.os.Handler
+import android.os.HandlerThread
+import android.view.Choreographer
+import android.view.FrameMetrics
 import android.view.View
 import android.view.ViewGroup
+import android.view.Window
+import android.view.WindowManager
 import android.widget.FrameLayout
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -17,7 +23,11 @@ import com.apollohg.editor.viewer.PreparedProseInstrumentation
 import java.io.BufferedReader
 import java.io.File
 import java.security.MessageDigest
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.math.cos
+import kotlin.math.roundToInt
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -126,7 +136,7 @@ class NativeDevicePerformanceTest {
         val renderJson = NativePerformanceFixtureFactory.largeRenderJson()
 
         val stats = measureOperation("renderBridgeLargeDocument") {
-            val spannable = runOnMainSyncWithResult {
+            val spannable = instrumentation.runOnMainSyncWithResult {
                 RenderBridge.buildSpannable(
                     renderJson,
                     baseFontSize,
@@ -137,7 +147,7 @@ class NativeDevicePerformanceTest {
 
             assertTrue("rendered spannable should not be empty", spannable.isNotEmpty())
             if (spannable.isNotEmpty()) {
-                runOnMainSyncWithResult {
+                instrumentation.runOnMainSyncWithResult {
                     spannable.getSpans(0, minOf(spannable.length, 1), Any::class.java)
                 }
             }
@@ -150,13 +160,14 @@ class NativeDevicePerformanceTest {
     @Test
     fun performance_applyUpdateJsonLargeDocument() {
         val updateJson = NativePerformanceFixtureFactory.largeUpdateJson()
-        val editText = runOnMainSyncWithResult {
+        val editText = instrumentation.runOnMainSyncWithResult {
             EditorEditText(targetContext).apply {
                 layoutParams = ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT
                 )
                 setBaseStyle(baseFontSize, textColor, Color.WHITE)
+                captureApplyUpdateTraceForTesting = true
                 applyUpdateJSON(updateJson, notifyListener = false)
                 layoutView(
                     this,
@@ -166,9 +177,10 @@ class NativeDevicePerformanceTest {
                 )
             }
         }
+        val traces = mutableListOf<EditorEditText.ApplyUpdateTrace>()
 
         val stats = measureOperation("applyUpdateJsonLargeDocument") {
-            runOnMainSyncWithResult {
+            instrumentation.runOnMainSyncWithResult {
                 editText.applyUpdateJSON(updateJson, notifyListener = false)
                 layoutView(
                     editText,
@@ -176,6 +188,7 @@ class NativeDevicePerformanceTest {
                     heightPx = 2400,
                     heightMode = View.MeasureSpec.AT_MOST
                 )
+                editText.lastApplyUpdateTrace()?.let(traces::add)
             }
 
             assertFalse("edit text should contain rendered content", editText.text.isNullOrEmpty())
@@ -183,6 +196,7 @@ class NativeDevicePerformanceTest {
         }
 
         reportStats(stats)
+        reportTraceStats(stats.name, traces.takeLast(MEASURED_ITERATIONS))
         assertTrue("average applyUpdateJSON time should be positive", stats.averageMillis > 0.0)
     }
 
@@ -190,20 +204,22 @@ class NativeDevicePerformanceTest {
     fun performance_applyRenderPatchLargeDocument() {
         val initialUpdateJson = NativePerformanceFixtureFactory.largeUpdateJson()
         val patchedUpdateJson = NativePerformanceFixtureFactory.largePatchedUpdateJson()
-        val editText = runOnMainSyncWithResult {
+        val editText = instrumentation.runOnMainSyncWithResult {
             EditorEditText(targetContext).apply {
                 layoutParams = ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT
                 )
                 setBaseStyle(baseFontSize, textColor, Color.WHITE)
+                captureApplyUpdateTraceForTesting = true
             }
         }
+        val traces = mutableListOf<EditorEditText.ApplyUpdateTrace>()
 
         val stats = measureOperation(
             name = "applyRenderPatchLargeDocument",
             beforeEach = {
-                runOnMainSyncWithResult {
+                instrumentation.runOnMainSyncWithResult {
                     editText.applyUpdateJSON(initialUpdateJson, notifyListener = false)
                     layoutView(
                         editText,
@@ -214,7 +230,7 @@ class NativeDevicePerformanceTest {
                 }
             }
         ) {
-            runOnMainSyncWithResult {
+            instrumentation.runOnMainSyncWithResult {
                 editText.applyUpdateJSON(patchedUpdateJson, notifyListener = false)
                 layoutView(
                     editText,
@@ -222,12 +238,14 @@ class NativeDevicePerformanceTest {
                     heightPx = 2400,
                     heightMode = View.MeasureSpec.AT_MOST
                 )
+                editText.lastApplyUpdateTrace()?.let(traces::add)
             }
 
             assertFalse("edit text should contain rendered content", editText.text.isNullOrEmpty())
         }
 
         reportStats(stats)
+        reportTraceStats(stats.name, traces.takeLast(MEASURED_ITERATIONS))
         assertTrue("average patch apply time should be positive", stats.averageMillis > 0.0)
     }
 
@@ -236,13 +254,14 @@ class NativeDevicePerformanceTest {
         val (adapter, editorId) = createV2Editor()
         try {
             NativePerformanceFixtureFactory.loadLargeDocumentIntoEditor(adapter)
-            val editText = runOnMainSyncWithResult {
+            val editText = instrumentation.runOnMainSyncWithResult {
                 EditorEditText(targetContext).apply {
                     layoutParams = ViewGroup.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.WRAP_CONTENT
                     )
                     setBaseStyle(baseFontSize, textColor, Color.WHITE)
+                    captureApplyUpdateTraceForTesting = true
                     bindEditor(editorId)
                     layoutView(
                         this,
@@ -255,18 +274,41 @@ class NativeDevicePerformanceTest {
             val typingOffset = NativePerformanceFixtureFactory.typingCursorOffset(
                 editText.text ?: ""
             )
+            val originalText = editText.text.toString()
+            val traces = mutableListOf<EditorEditText.ApplyUpdateTrace>()
+            val layoutBuildCounts = mutableListOf<Int>()
 
             val stats = measureOperation("typingRoundTripLargeDocument") {
-                runOnMainSyncWithResult {
+                instrumentation.runOnMainSyncWithResult {
                     editText.setSelection(typingOffset)
+                    val beforeLayoutBuilds = editText.documentLayoutBuildCount
+                    val beforeRevision = adapter.baseDocumentRevision
                     editText.handleTextCommit("!")
+                    assertEquals(
+                        "typing must insert into the authoritative visible document",
+                        originalText.substring(0, typingOffset) + "!" +
+                            originalText.substring(typingOffset),
+                        editText.text.toString()
+                    )
+                    assertTrue(
+                        "typing must advance Rust revision",
+                        adapter.baseDocumentRevision > beforeRevision
+                    )
+                    editText.lastApplyUpdateTrace()?.let(traces::add)
                     editText.handleDelete(1, 0)
+                    assertEquals(
+                        "backspace must restore the original content",
+                        originalText,
+                        editText.text.toString()
+                    )
+                    editText.lastApplyUpdateTrace()?.let(traces::add)
                     layoutView(
                         editText,
                         widthPx = 1080,
                         heightPx = 2400,
                         heightMode = View.MeasureSpec.AT_MOST
                     )
+                    layoutBuildCounts.add(editText.documentLayoutBuildCount - beforeLayoutBuilds)
                 }
 
                 assertFalse(
@@ -277,6 +319,17 @@ class NativeDevicePerformanceTest {
             }
 
             reportStats(stats)
+            reportTraceStats(stats.name, traces.takeLast(MEASURED_ITERATIONS * TYPING_OPERATIONS))
+            val patch = JSONObject(requireNotNull(adapter.cachedViewUpdateJson))
+                .optJSONObject("renderPatch")
+            reportSummary(
+                "typingRoundTripLargeDocument layoutBuilds=${layoutBuildCounts.takeLast(
+                    MEASURED_ITERATIONS
+                )} " +
+                    "patchStart=${patch?.optInt("startIndex")} " +
+                    "patchDelete=${patch?.optInt("deleteCount")} " +
+                    "patchInsert=${patch?.optJSONArray("renderBlocks")?.length()}"
+            )
             assertTrue("average typing time should be positive", stats.averageMillis > 0.0)
         } finally {
             releasePairedV2TestEditor(editorId)
@@ -289,13 +342,14 @@ class NativeDevicePerformanceTest {
         try {
             val largeDocumentJson = NativePerformanceFixtureFactory.largeDocumentJson()
             NativePerformanceFixtureFactory.loadLargeDocumentIntoEditor(adapter)
-            val editText = runOnMainSyncWithResult {
+            val editText = instrumentation.runOnMainSyncWithResult {
                 EditorEditText(targetContext).apply {
                     layoutParams = ViewGroup.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.WRAP_CONTENT
                     )
                     setBaseStyle(baseFontSize, textColor, Color.WHITE)
+                    captureApplyUpdateTraceForTesting = true
                     bindEditor(editorId)
                     layoutView(
                         this,
@@ -305,14 +359,16 @@ class NativeDevicePerformanceTest {
                     )
                 }
             }
-            val splitOffset = NativePerformanceFixtureFactory.typingCursorOffset(
-                editText.text ?: ""
-            )
+            val splitOffset = NativePerformanceFixtureFactory.typingCursorOffset(editText.text)
+            val originalText = editText.text.toString()
+            val expectedSplitText = originalText.substring(0, splitOffset) + "\n" +
+                originalText.substring(splitOffset)
+            val traces = mutableListOf<EditorEditText.ApplyUpdateTrace>()
 
             val stats = measureOperation(
                 name = "paragraphSplitRoundTripLargeDocument",
                 beforeEach = {
-                    runOnMainSyncWithResult {
+                    instrumentation.runOnMainSyncWithResult {
                         adapter.setContentJson(largeDocumentJson)?.let { update ->
                             editText.applyUpdateJSON(update, notifyListener = false)
                         }
@@ -326,14 +382,49 @@ class NativeDevicePerformanceTest {
                     }
                 }
             ) {
-                runOnMainSyncWithResult {
+                instrumentation.runOnMainSyncWithResult {
+                    val beforeRevision = adapter.baseDocumentRevision
                     editText.handleTextCommit("\n")
+                    if (editText.text.toString() != expectedSplitText) {
+                        File(targetContext.filesDir, "editor-performance-split-document.json")
+                            .writeText(requireNotNull(adapter.documentJson()))
+                        File(targetContext.filesDir, "editor-performance-split-render.json")
+                            .writeText(requireNotNull(adapter.cachedAtomicRenderJson))
+                        File(targetContext.filesDir, "editor-performance-split-source.json")
+                            .writeText(largeDocumentJson)
+                        reportSummary(
+                            "split offset=$splitOffset " +
+                                "revision=$beforeRevision->${adapter.baseDocumentRevision} " +
+                                "selection=${editText.selectionStart}..${editText.selectionEnd} " +
+                                "trace=${editText.imeTraceSnapshotForTesting().takeLast(8)}"
+                        )
+                    }
+                    assertEquals(
+                        "return must split the midpoint paragraph and preserve all text",
+                        expectedSplitText,
+                        editText.text.toString()
+                    )
+                    assertEquals(
+                        "return must move the caret after the split",
+                        splitOffset + 1,
+                        editText.selectionStart
+                    )
+                    assertEquals(
+                        "return must leave a collapsed caret",
+                        editText.selectionStart,
+                        editText.selectionEnd
+                    )
+                    assertTrue(
+                        "return must advance Rust revision",
+                        adapter.baseDocumentRevision > beforeRevision
+                    )
                     layoutView(
                         editText,
                         widthPx = 1080,
                         heightPx = 2400,
                         heightMode = View.MeasureSpec.AT_MOST
                     )
+                    editText.lastApplyUpdateTrace()?.let(traces::add)
                 }
 
                 assertNotNull(
@@ -343,6 +434,7 @@ class NativeDevicePerformanceTest {
             }
 
             reportStats(stats)
+            reportTraceStats(stats.name, traces.takeLast(MEASURED_ITERATIONS))
             assertTrue("average paragraph split time should be positive", stats.averageMillis > 0.0)
         } finally {
             releasePairedV2TestEditor(editorId)
@@ -354,7 +446,7 @@ class NativeDevicePerformanceTest {
         val (adapter, editorId) = createV2Editor()
         try {
             NativePerformanceFixtureFactory.loadLargeDocumentIntoEditor(adapter)
-            val editText = runOnMainSyncWithResult {
+            val editText = instrumentation.runOnMainSyncWithResult {
                 EditorEditText(targetContext).apply {
                     layoutParams = ViewGroup.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
@@ -376,7 +468,7 @@ class NativeDevicePerformanceTest {
             )
 
             val stats = measureOperation("selectionScrubLargeDocument") {
-                runOnMainSyncWithResult {
+                instrumentation.runOnMainSyncWithResult {
                     for (offset in scrubOffsets) {
                         editText.setSelection(offset)
                     }
@@ -397,9 +489,150 @@ class NativeDevicePerformanceTest {
     }
 
     @Test
+    fun performance_hostedEditorLoadAndScrollLargeDocument() {
+        val document = JSONObject(NativePerformanceFixtureFactory.largeDocumentJson())
+        val coldLoads = mutableListOf<Long>()
+        val scrollFrames = mutableListOf<Long>()
+        val scrollDraws = mutableListOf<Long>()
+        val scrollLayouts = mutableListOf<Long>()
+        val completed = CountDownLatch(1)
+        val frameThread = HandlerThread("editor-performance-frames").apply { start() }
+        var token = 0L
+        var host: RichTextEditorView? = null
+        var window: Window? = null
+        var callback: Choreographer.FrameCallback? = null
+        var lastFrameTimestamp: Long? = null
+        val scrollStart = AtomicReference<Long?>(null)
+        val frameListener = Window.OnFrameMetricsAvailableListener { _, metrics, dropped ->
+            val start = scrollStart.get() ?: return@OnFrameMetricsAvailableListener
+            val timestamp = metrics.getMetric(FrameMetrics.VSYNC_TIMESTAMP)
+            if (timestamp < start) return@OnFrameMetricsAvailableListener
+            synchronized(scrollFrames) {
+                assertEquals("scroll frame metrics must not be dropped", 0, dropped)
+                lastFrameTimestamp?.let { previous ->
+                    if (timestamp > previous) scrollFrames.add(timestamp - previous)
+                }
+                lastFrameTimestamp = timestamp
+                scrollDraws.add(metrics.getMetric(FrameMetrics.DRAW_DURATION))
+                scrollLayouts.add(metrics.getMetric(FrameMetrics.LAYOUT_MEASURE_DURATION))
+            }
+        }
+        try {
+            ActivityScenario.launch(NativeEditorOutsideTapActivity::class.java).use { scenario ->
+                scenario.onActivity { activity ->
+                    window = activity.window
+                    activity.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    activity.window.addOnFrameMetricsAvailableListener(
+                        frameListener,
+                        Handler(frameThread.looper)
+                    )
+                    repeat(MEASURED_ITERATIONS) {
+                        host?.editorEditText?.unbindEditor()
+                        if (token != 0L) releasePairedV2TestEditor(token)
+                        token = createV2Editor().second
+                        val editor = RichTextEditorView(activity).apply {
+                            editorId = token
+                            configure(
+                                textSizePx = baseFontSize * resources.displayMetrics.density,
+                                textColor = textColor,
+                                backgroundColor = Color.WHITE
+                            )
+                        }
+                        host = editor
+                        activity.setContentView(editor)
+                        val width = PreparedProseRecyclerHarness.viewportWidthPx(activity)
+                        val height = PreparedProseRecyclerHarness.viewportHeightPx(activity)
+                        val startedAt = System.nanoTime()
+                        editor.setContent(document)
+                        layoutView(editor, width, height, View.MeasureSpec.EXACTLY)
+                        coldLoads.add(System.nanoTime() - startedAt)
+                        assertTrue(
+                            "cold load must produce the large document",
+                            editor.editorEditText.text.length > MINIMUM_LARGE_TEXT_LENGTH
+                        )
+                        assertTrue(
+                            "cold load must exceed the viewport",
+                            editor.editorScrollView.canScrollVertically(1)
+                        )
+                    }
+                }
+                instrumentation.waitForIdleSync()
+                reportStats(TimingStats("hostedEditorColdLoadLargeDocument", coldLoads))
+                val initialLayoutBuilds = instrumentation.runOnMainSyncWithResult {
+                    requireNotNull(host).editorEditText.documentLayoutBuildCount
+                }
+                instrumentation.runOnMainSync {
+                    val editor = requireNotNull(host)
+                    val scroll = editor.editorScrollView
+                    val range = scroll.getChildAt(0).height - scroll.height
+                    val startedAt = System.nanoTime()
+                    scrollStart.set(startedAt)
+                    val traversal = object : Choreographer.FrameCallback {
+                        override fun doFrame(frameTimeNanos: Long) {
+                            val elapsed = frameTimeNanos - startedAt
+                            val fraction =
+                                (
+                                    1.0 -
+                                        cos(
+                                            elapsed.toDouble() / SCROLL_TRAVERSAL_NANOS * 2.0 *
+                                                Math.PI
+                                        )
+                                    ) /
+                                    2.0
+                            scroll.scrollTo(0, (range * fraction).roundToInt())
+                            editor.invalidate()
+                            if (elapsed < SCROLL_TRAVERSAL_NANOS) {
+                                Choreographer.getInstance().postFrameCallback(this)
+                            } else {
+                                completed.countDown()
+                            }
+                        }
+                    }
+                    callback = traversal
+                    Choreographer.getInstance().postFrameCallback(traversal)
+                }
+                assertTrue(
+                    "hosted scrolling must complete",
+                    completed.await(SCROLL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                )
+                instrumentation.waitForIdleSync()
+                synchronized(scrollFrames) {
+                    assertTrue(
+                        "scroll must produce real frame evidence",
+                        scrollFrames.size >= MINIMUM_SCROLL_FRAMES
+                    )
+                    reportStats(
+                        TimingStats("hostedEditorScrollFrameIntervals", scrollFrames.toList())
+                    )
+                    reportStats(TimingStats("hostedEditorScrollDraw", scrollDraws.toList()))
+                    reportStats(TimingStats("hostedEditorScrollLayout", scrollLayouts.toList()))
+                }
+                instrumentation.runOnMainSyncWithResult {
+                    assertEquals(
+                        "scrolling must reuse the prepared document layout",
+                        initialLayoutBuilds,
+                        requireNotNull(host).editorEditText.documentLayoutBuildCount
+                    )
+                }
+            }
+        } finally {
+            instrumentation.runOnMainSync {
+                callback?.let { Choreographer.getInstance().removeFrameCallback(it) }
+                window?.removeOnFrameMetricsAvailableListener(frameListener)
+                window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                host?.editorEditText?.unbindEditor()
+                if (token != 0L) releasePairedV2TestEditor(token)
+            }
+            frameThread.quitSafely()
+            frameThread.join(TimeUnit.SECONDS.toMillis(SCROLL_TIMEOUT_SECONDS))
+            assertFalse("editor frame collector must close", frameThread.isAlive)
+        }
+    }
+
+    @Test
     fun performance_remoteSelectionOverlayRefreshMultiPeerLargeDocument() {
         val updateJson = NativePerformanceFixtureFactory.largeUpdateJson()
-        val richTextView = runOnMainSyncWithResult {
+        val richTextView = instrumentation.runOnMainSyncWithResult {
             RichTextEditorView(targetContext).apply {
                 configure(
                     textSizePx = baseFontSize,
@@ -424,7 +657,7 @@ class NativeDevicePerformanceTest {
             peerCount = 24,
             selectionWidth = 24
         )
-        runOnMainSyncWithResult {
+        instrumentation.runOnMainSyncWithResult {
             richTextView.setRemoteSelections(selections)
             layoutView(
                 richTextView,
@@ -438,7 +671,7 @@ class NativeDevicePerformanceTest {
         val canvas = Canvas(bitmap)
 
         val stats = measureOperation("remoteSelectionOverlayRefreshMultiPeerLargeDocument") {
-            val hasVisibleCaret = runOnMainSyncWithResult {
+            val hasVisibleCaret = instrumentation.runOnMainSyncWithResult {
                 bitmap.eraseColor(Color.TRANSPARENT)
                 richTextView.setRemoteSelections(selections)
                 layoutView(
@@ -466,19 +699,17 @@ class NativeDevicePerformanceTest {
         )
     }
 
-    private fun createV2Editor(): Pair<EditorV2Adapter, Long> = createPairedV2TestEditor()
-
-    private fun layoutView(view: View, widthPx: Int, heightPx: Int, heightMode: Int) {
-        val widthSpec = View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY)
-        val heightSpec = View.MeasureSpec.makeMeasureSpec(heightPx, heightMode)
-        view.measure(widthSpec, heightSpec)
-        view.layout(0, 0, view.measuredWidth, view.measuredHeight)
-    }
+    private fun createV2Editor(): Pair<EditorV2Adapter, Long> =
+        createPairedV2TestEditor().also { (adapter, _) ->
+            adapter.onAutonomousError = { failure ->
+                error("performance operation failed: ${failure.code}: ${failure.message}")
+            }
+        }
 
     private fun measureOperation(
         name: String,
-        warmupIterations: Int = 3,
-        measuredIterations: Int = 5,
+        warmupIterations: Int = WARMUP_ITERATIONS,
+        measuredIterations: Int = MEASURED_ITERATIONS,
         beforeEach: (() -> Unit)? = null,
         block: () -> Unit
     ): TimingStats {
@@ -498,12 +729,24 @@ class NativeDevicePerformanceTest {
     }
 
     private fun reportStats(stats: TimingStats) {
+        reportSummary(stats.summaryString(tag = "NativeDevicePerformanceTest"))
+    }
+
+    private fun reportTraceStats(name: String, traces: List<EditorEditText.ApplyUpdateTrace>) {
+        assertTrue("$name must capture update stage evidence", traces.isNotEmpty())
+        reportSummary(
+            ApplyUpdateTraceStats("$name.breakdown", traces)
+                .summaryString(tag = "NativeDevicePerformanceTest")
+        )
+    }
+
+    private fun reportSummary(summary: String) {
         instrumentation.sendStatus(
             0,
             Bundle().apply {
                 putString(
                     Instrumentation.REPORT_KEY_STREAMRESULT,
-                    stats.summaryString(tag = "NativeDevicePerformanceTest") + "\n"
+                    summary + "\n"
                 )
             }
         )
@@ -529,18 +772,13 @@ class NativeDevicePerformanceTest {
         )
     }
 
-    @Suppress("UNCHECKED_CAST")
-    private fun <T> runOnMainSyncWithResult(block: () -> T): T {
-        val result = AtomicReference<Any?>()
-        val error = AtomicReference<Throwable?>()
-        instrumentation.runOnMainSync {
-            try {
-                result.set(block())
-            } catch (throwable: Throwable) {
-                error.set(throwable)
-            }
-        }
-        error.get()?.let { throw it }
-        return result.get() as T
+    private companion object {
+        const val WARMUP_ITERATIONS = 3
+        const val MEASURED_ITERATIONS = 5
+        const val TYPING_OPERATIONS = 2
+        const val MINIMUM_LARGE_TEXT_LENGTH = 10_000
+        const val SCROLL_TRAVERSAL_NANOS = 5_000_000_000L
+        const val SCROLL_TIMEOUT_SECONDS = 15L
+        const val MINIMUM_SCROLL_FRAMES = 30
     }
 }

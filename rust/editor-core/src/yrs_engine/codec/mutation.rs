@@ -226,7 +226,7 @@ fn insert_json_node<P: XmlFragment>(
     budget: &mut ConversionBudget<'_>,
 ) -> YrsEngineResult<()> {
     let prepared = prepare_json_node(node, depth, budget)?;
-    insert_prepared_node(parent, txn, index, prepared);
+    insert_prepared_node(parent, txn, PreparedNodePosition::Index(index), prepared);
     Ok(())
 }
 

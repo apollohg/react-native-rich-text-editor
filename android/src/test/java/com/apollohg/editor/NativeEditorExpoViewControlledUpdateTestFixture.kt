@@ -23,6 +23,44 @@ import org.robolectric.annotation.Config
 
 internal abstract class NativeEditorExpoViewControlledUpdateTestFixture :
     NativeEditorExpoViewTestSupport() {
+    protected fun withFocusedViewForNativeInput(
+        initialHtml: String? = null,
+        block: (
+            Activity,
+            NativeEditorExpoView,
+            EditorV2Adapter,
+            MutableList<Map<String, Any>>
+        ) -> Unit
+    ) {
+        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        val expoContext = testExpoContext(activity)
+        val view = NativeEditorExpoView(expoContext.context, expoContext.appContext)
+        val backend = UniffiEditorV2Backend
+        val adapter = if (initialHtml == null) {
+            attachAdapterForViewTest(backend)
+        } else {
+            attachAdapterForViewTest(
+                backend,
+                JSONObject().put(
+                    "initialization",
+                    JSONObject().put("type", "localHtml").put("html", initialHtml)
+                ).toString()
+            )
+        }
+        val token = EditorV2Registry.register(adapter)
+        val payloads = mutableListOf<Map<String, Any>>()
+        try {
+            bindFocusedViewForTypingTest(activity, view, token, payloads)
+            block(activity, view, adapter, payloads)
+        } finally {
+            view.handleDetachedFromWindowForTesting()
+            EditorV2Registry.remove(adapter.editorId)
+            NativeEditorViewRegistry.unregister(token, view)
+            assertNull(backend.destroy(adapter.editorId))
+            activity.finish()
+        }
+    }
+
     protected fun bindFocusedViewForTypingTest(
         activity: Activity,
         view: NativeEditorExpoView,

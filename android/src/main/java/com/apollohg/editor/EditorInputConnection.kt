@@ -103,6 +103,8 @@ class EditorInputConnection(
     internal var extractedTextRequest: ExtractedTextRequest? = null
     internal var lastPublishedExtractedText: ExtractedText? = null
     internal var lastPublishedSelection: List<Int>? = null
+    internal var lastPublishedRawInputState: PublishedRawInputState? = null
+    internal var lastImeSelectionProjection: ImeSelectionProjection? = null
 
     override fun commitText(
         text: CharSequence,
@@ -191,6 +193,9 @@ class EditorInputConnection(
         closedForInput = true
         extractedTextRequest = null
         lastPublishedExtractedText = null
+        lastPublishedSelection = null
+        lastPublishedRawInputState = null
+        lastImeSelectionProjection = null
         super.closeConnection()
     }
 
@@ -210,34 +215,30 @@ class EditorInputConnection(
         if (!editorView.commitExternalTextCompositionBeforeInteractionIfNeeded()) return true
         if (!editorView.isEditable) return true
         if (editorView.isApplyingRustState) {
-            editorView.recordImeTraceForTesting(
-                "commitTextPassthrough",
+            editorView.recordImeTraceForTesting("commitTextPassthrough") {
                 "reason=applyingRust ${textTraceSummary(text)} cursor=$newCursorPosition"
-            )
+            }
             return super.commitText(text, newCursorPosition)
         }
         if (editorView.editorId == 0L) {
-            editorView.recordImeTraceForTesting(
-                "commitTextPassthrough",
+            editorView.recordImeTraceForTesting("commitTextPassthrough") {
                 "reason=noEditor ${textTraceSummary(text)} cursor=$newCursorPosition"
-            )
+            }
             return super.commitText(text, newCursorPosition)
         }
 
-        editorView.recordImeTraceForTesting(
-            "commitText",
+        editorView.recordImeTraceForTesting("commitText") {
             "${textTraceSummary(text)} cursor=$newCursorPosition"
-        )
+        }
         val committedText = text?.toString()
         if (consumePendingCompositionCorrectionCommitIfNeeded(committedText, newCursorPosition)) {
             return true
         }
         applyPendingCompositionCorrectionCommitIfNeeded("commitTextBeforePlain")
         if (consumePendingDuplicateCorrectionCommitIfNeeded(committedText)) {
-            editorView.recordImeTraceForTesting(
-                "commitTextDuplicateCorrectionIgnored",
+            editorView.recordImeTraceForTesting("commitTextDuplicateCorrectionIgnored") {
                 "textLength=${committedText?.length ?: 0}"
-            )
+            }
             return true
         }
         commitTextToEditor(committedText, newCursorPosition)
@@ -254,10 +255,9 @@ class EditorInputConnection(
         if (editorView.editorId == 0L) {
             return super.commitCompletion(text)
         }
-        editorView.recordImeTraceForTesting(
-            "commitCompletion",
+        editorView.recordImeTraceForTesting("commitCompletion") {
             textTraceSummary(text?.text)
-        )
+        }
         commitTextToEditor(text?.text?.toString(), 1)
         return true
     }
@@ -267,10 +267,9 @@ class EditorInputConnection(
         if (!isCurrentInputSession()) return baseCapsMode
         val capsMode = editorView.cursorCapsModeForEditor(reqModes, baseCapsMode)
         if (capsMode != baseCapsMode) {
-            editorView.recordImeTraceForTesting(
-                "getCursorCapsModeAdjusted",
+            editorView.recordImeTraceForTesting("getCursorCapsModeAdjusted") {
                 "req=$reqModes base=$baseCapsMode caps=$capsMode"
-            )
+            }
         }
         return capsMode
     }
@@ -325,15 +324,13 @@ class EditorInputConnection(
         }
         val newText = correctionInfo?.newText?.toString()
         if (newText == null) return true
-        editorView.recordImeTraceForTesting(
-            "commitCorrection",
+        editorView.recordImeTraceForTesting("commitCorrection") {
             "offset=${correctionInfo.offset} oldMissing=${correctionInfo.oldText == null} newLength=${newText.length}"
-        )
+        }
         if (trackedCompositionReplacementRange() != null) {
-            editorView.recordImeTraceForTesting(
-                "commitCorrectionComposition",
+            editorView.recordImeTraceForTesting("commitCorrectionComposition") {
                 "newLength=${newText.length}"
-            )
+            }
             rememberPendingCompositionCorrectionCommit(newText)
             return true
         }
@@ -343,7 +340,9 @@ class EditorInputConnection(
         }
         val oldText = correctionInfo.oldText?.toString()
         if (oldText?.isEmpty() == true) {
-            editorView.recordImeTraceForTesting("correctionExplicitNoop", "reason=emptyOldText")
+            editorView.recordImeTraceForTesting("correctionExplicitNoop") {
+                "reason=emptyOldText"
+            }
             return true
         }
         val imeOffset = correctionInfo.offset
@@ -381,10 +380,9 @@ class EditorInputConnection(
                     newText
                 )
             } else {
-                editorView.recordImeTraceForTesting(
-                    "correctionExplicitNoop",
+                editorView.recordImeTraceForTesting("correctionExplicitNoop") {
                     "reason=staleVisibleText offset=$imeOffset oldLength=${oldText.length}"
-                )
+                }
                 false
             }
         } else if (oldText == null) {
@@ -412,19 +410,17 @@ class EditorInputConnection(
                     newText
                 )
             } else {
-                editorView.recordImeTraceForTesting(
-                    "correctionInferredNoop",
+                editorView.recordImeTraceForTesting("correctionInferredNoop") {
                     "reason=noVisibleToken offset=$imeOffset newLength=${newText.length}"
-                )
+                }
                 false
             }
         } else {
             false
         }
-        editorView.recordImeTraceForTesting(
-            "commitCorrectionResult",
+        editorView.recordImeTraceForTesting("commitCorrectionResult") {
             "applied=$applied"
-        )
+        }
         if (applied) {
             rememberPendingDuplicateCorrectionCommit(newText)
         }
@@ -445,10 +441,9 @@ class EditorInputConnection(
             }
         }
         if (replacementRange != null) {
-            editorView.recordImeTraceForTesting(
-                "commitTextRoute",
+            editorView.recordImeTraceForTesting("commitTextRoute") {
                 "route=composition replacement=${replacementRange.first}..${replacementRange.second} visible=${visibleReplacementRange?.first}..${visibleReplacementRange?.second} textLength=${committedText?.length ?: 0}"
-            )
+            }
             clearCompositionTracking()
             editorView.runWithTransientInputMutationGuard {
                 super.finishComposingText()
@@ -487,29 +482,28 @@ class EditorInputConnection(
                     }
                 }
             } else {
-                editorView.restoreAuthorizedTextIfNeeded()
+                editorView.runWithDeferredRustUpdateApplication {
+                    editorView.restoreAuthorizedTextIfNeeded()
+                }
             }
         } else {
             if (consumeInvalidatedCompositionReplacementRangeAndRestore()) {
-                editorView.recordImeTraceForTesting(
-                    "commitTextRoute",
+                editorView.recordImeTraceForTesting("commitTextRoute") {
                     "route=restoreInvalidComposition textLength=${committedText?.length ?: 0}"
-                )
+                }
                 return
             }
             clearCompositionTracking()
-            editorView.recordImeTraceForTesting(
-                "commitTextRoute",
+            editorView.recordImeTraceForTesting("commitTextRoute") {
                 "route=plain textLength=${committedText?.length ?: 0}"
-            )
+            }
             committedText?.let { editorView.handleTextCommit(it, newCursorPosition) }
         }
-        editorView.recordImeTraceForTesting(
-            "commitTextRouteDone",
+        editorView.recordImeTraceForTesting("commitTextRouteDone") {
             "textLength=${committedText?.length ?: 0} totalUs=${nanosToMicros(
                 System.nanoTime() - startedAt
             )}"
-        )
+        }
     }
 
     /**
@@ -527,10 +521,9 @@ class EditorInputConnection(
         if (editorView.isApplyingRustState) {
             return super.deleteSurroundingText(beforeLength, afterLength)
         }
-        editorView.recordImeTraceForTesting(
-            "deleteSurroundingText",
+        editorView.recordImeTraceForTesting("deleteSurroundingText") {
             "before=$beforeLength after=$afterLength"
-        )
+        }
         if (
             editorView.hasInvalidatedCompositionReplacementRangeForEditor() &&
             isNoOpSurroundingDelete(beforeLength, afterLength)
@@ -547,8 +540,8 @@ class EditorInputConnection(
                 deleteInCodePoints = false
             )
         }
-        if (shouldDeferPlainSurroundingDelete(beforeLength, afterLength)) {
-            return performDeferredPlainSurroundingDelete(
+        if (shouldHandlePlainSurroundingDelete(beforeLength, afterLength)) {
+            return performPlainSurroundingDelete(
                 beforeLength = beforeLength,
                 afterLength = afterLength,
                 deleteInCodePoints = false
@@ -565,10 +558,9 @@ class EditorInputConnection(
         if (editorView.isApplyingRustState) {
             return super.deleteSurroundingTextInCodePoints(beforeLength, afterLength)
         }
-        editorView.recordImeTraceForTesting(
-            "deleteSurroundingTextInCodePoints",
+        editorView.recordImeTraceForTesting("deleteSurroundingTextInCodePoints") {
             "before=$beforeLength after=$afterLength"
-        )
+        }
         if (
             editorView.hasInvalidatedCompositionReplacementRangeForEditor() &&
             isNoOpSurroundingDelete(beforeLength, afterLength)
@@ -585,8 +577,8 @@ class EditorInputConnection(
                 deleteInCodePoints = true
             )
         }
-        if (shouldDeferPlainSurroundingDelete(beforeLength, afterLength)) {
-            return performDeferredPlainSurroundingDelete(
+        if (shouldHandlePlainSurroundingDelete(beforeLength, afterLength)) {
+            return performPlainSurroundingDelete(
                 beforeLength = beforeLength,
                 afterLength = afterLength,
                 deleteInCodePoints = true
@@ -633,12 +625,11 @@ class EditorInputConnection(
         val adjustedComposingText =
             editorView.samsungSentenceCapsComposingTextForEditor(composingText)
         val textForBaseConnection = adjustedComposingText ?: text
-        editorView.recordImeTraceForTesting(
-            "setComposingText",
+        editorView.recordImeTraceForTesting("setComposingText") {
             "${textTraceSummary(
                 text
             )} cursor=$newCursorPosition adjusted=${textForBaseConnection.toString() != text?.toString()}"
-        )
+        }
         editorView.setComposingTextForEditor(adjustedComposingText)
         val trackedRange = trackedCompositionReplacementRange()
         val currentText = editorView.text?.toString()
@@ -688,10 +679,9 @@ class EditorInputConnection(
         val contentRange = editorView.compositionContentRangeForEditor(requestedStart, requestedEnd)
         if (contentRange == null) {
             generatedCompositionAdjustment = null
-            editorView.recordImeTraceForTesting(
-                "setComposingRegionRejected",
+            editorView.recordImeTraceForTesting("setComposingRegionRejected") {
                 "range=$start..$end reason=generatedInterior"
-            )
+            }
             return true
         }
         if (editorView.isCurrentTextAuthorizedForEditor()) {
@@ -707,10 +697,9 @@ class EditorInputConnection(
         } else {
             null
         }
-        editorView.recordImeTraceForTesting(
-            "setComposingRegion",
+        editorView.recordImeTraceForTesting("setComposingRegion") {
             "range=$start..$end content=${contentRange.first}..${contentRange.second}"
-        )
+        }
         return editorView.runWithTransientInputMutationGuard {
             val result = super.setComposingRegion(contentRange.first, contentRange.second)
             if (result) {
@@ -813,10 +802,9 @@ class EditorInputConnection(
         } else {
             trackedReplacementRange ?: currentComposingSpanRange()
         }
-        editorView.recordImeTraceForTesting(
-            "finishComposingText",
+        editorView.recordImeTraceForTesting("finishComposingText") {
             "replacement=${replacementRange?.first}..${replacementRange?.second} composedLength=${composed?.length ?: 0} invalidated=$didInvalidateReplacementRange"
-        )
+        }
         clearCompositionTracking()
 
         // Prevent selection sync while the base connection commits the composed

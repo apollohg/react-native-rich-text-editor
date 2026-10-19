@@ -574,14 +574,13 @@ impl ImportLookupMaterializationCollector {
             "mapPublication",
             std::mem::size_of::<HashMap<BranchID, usize>>(),
         )?;
-        let path_parent_widths = Arc::new(self.path_parent_widths);
+        let path_parent_widths = LookupEntries::new(self.path_parent_widths);
         probe_lookup_seed_publication(
             self.request_id,
             "mapPublication",
             std::mem::size_of::<HashMap<BranchID, usize>>(),
         )?;
-        let target_materialization_work =
-            TargetMaterializationWork::new(self.target_materialization_work);
+        let target_materialization_work = LookupEntries::new(self.target_materialization_work);
         Ok(MutationLookupPayload {
             target_count: self.target_count,
             pending_traversal_work: self.pending_traversal_work,

@@ -617,6 +617,12 @@ mod result_meter_tests {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LoweringRefusal {
+    UnresolvedTextTarget,
+    CreatedTextBeforeStructuralEdit,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct OperationError {
@@ -631,6 +637,8 @@ pub struct OperationError {
     pub actual: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<serde_json::Value>,
+    #[serde(skip)]
+    pub(crate) lowering_refusal: Option<LoweringRefusal>,
 }
 
 impl OperationError {
@@ -790,7 +798,13 @@ impl OperationError {
             limit: None,
             actual: None,
             details: None,
+            lowering_refusal: None,
         }
+    }
+
+    pub(crate) fn refused_by_lowering(mut self, refusal: LoweringRefusal) -> Self {
+        self.lowering_refusal = Some(refusal);
+        self
     }
 
     fn position_invalid_at(

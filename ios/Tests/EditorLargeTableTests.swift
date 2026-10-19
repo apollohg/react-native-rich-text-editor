@@ -146,6 +146,64 @@ final class EditorLargeTableTests: XCTestCase {
         }
     }
 
+    private func plainParagraphDocument() throws -> String {
+        let data = try JSONSerialization.data(withJSONObject: [
+            "type": PlainTable.document,
+            "content": [["type": PlainTable.paragraph, "content": [["type": PlainTable.text, "text": PlainTable.cellText(row: 0, column: 0)]]]]
+        ])
+        return try XCTUnwrap(String(data: data, encoding: .utf8))
+    }
+
+    func testViewportObservationsExistOnlyWhileATableIsPresented() throws {
+        let editorId = makeV2Editor(configJson: TableInputTestSchema.tableConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let view = RichTextEditorView(frame: CGRect(origin: .zero, size: Window.viewport))
+        let window = hostEditorView(view, size: Window.viewport)
+        defer { window.isHidden = true }
+        view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        let surface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
+        let drawing = try XCTUnwrap(surface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
+        var geometryChanges = 0
+        view.onTableSelectionGeometryMayChange = { geometryChanges += 1 }
+
+        func apply(_ document: String, _ phase: String) throws {
+            let update = try XCTUnwrap(adapter.setContentJson(document), "\(phase): \(adapter.debugNotes)")
+            XCTAssertTrue(view.textView.applyUpdateJSON(update), "\(phase): the render applies")
+            view.layoutIfNeeded()
+        }
+
+        func moveHostAndCountGeometryChanges() -> Int {
+            geometryChanges = 0
+            view.frame.origin.y += 1
+            view.frame.origin.y -= 1
+            return geometryChanges
+        }
+
+        func ancestorChainLength() -> Int {
+            sequence(first: drawing as UIView, next: \.superview).reduce(0) { count, _ in count + 1 }
+        }
+
+        try apply(try plainParagraphDocument(), "plain")
+        XCTAssertEqual(drawing.observedViewportViewCountForTesting, 0, "A table-free document must not observe the ancestor chain")
+        XCTAssertEqual(moveHostAndCountGeometryChanges(), 0, "Moving the host of a table-free document must not reach table geometry")
+
+        try apply(try plainTableDocument(rows: EditedTable.rows, columns: EditedTable.columns), "table arrives")
+        XCTAssertNotNil(drawing.mountedTablePresentation()?.tables.first, "The arriving table must be presented")
+        XCTAssertEqual(drawing.observedViewportViewCountForTesting, ancestorChainLength(),
+            "A presented table must observe every ancestor so viewport moves refresh it")
+        XCTAssertGreaterThan(moveHostAndCountGeometryChanges(), 0, "Moving the host must refresh the arriving table's geometry")
+
+        try apply(try plainParagraphDocument(), "table removed")
+        XCTAssertNil(drawing.mountedTablePresentation()?.tables.first, "The removed table must no longer be presented")
+        XCTAssertEqual(drawing.observedViewportViewCountForTesting, 0, "Removing the last table must release the ancestor observations")
+        XCTAssertEqual(moveHostAndCountGeometryChanges(), 0, "Moving the host after the table left must not reach table geometry")
+
+        try apply(try plainTableDocument(rows: EditedTable.rows, columns: EditedTable.columns), "table returns")
+        XCTAssertEqual(drawing.observedViewportViewCountForTesting, ancestorChainLength(), "A returning table must observe the ancestor chain again")
+        XCTAssertGreaterThan(moveHostAndCountGeometryChanges(), 0, "Moving the host must refresh the returning table's geometry")
+    }
+
     func testColdLayoutRetainsOnlyWindowLayouts() throws {
         try withMountedTable(rows: 1000, columns: 20) { _, _, drawing in
             let table = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface)
@@ -975,6 +1033,50 @@ final class EditorLargeTableTests: XCTestCase {
             view.layoutIfNeeded()
             drawing.layer.displayIfNeeded()
             try assertLayeredMatchesSinglePass(drawing)
+        }
+    }
+
+    func testDeepNestedTableWidthRelayoutPreparesEachCellAtMostOnce() throws {
+        let hardMaximumDocumentDepth = 1_024
+        let admittedNestedTableDepth = 340
+        let maximumPreparationsPerCell = 1
+        let widthChange: CGFloat = 40
+        var config = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(TableInputTestSchema.tableConfig.utf8)) as? [String: Any])
+        config["limits"] = ["resource": ["maxDocumentDepth": hardMaximumDocumentDepth]]
+        let configJSON = try XCTUnwrap(String(data: try JSONSerialization.data(withJSONObject: config), encoding: .utf8))
+        for depth in [40, 45, admittedNestedTableDepth] {
+            let editorId = makeV2Editor(configJson: configJSON)
+            defer { destroyV2Editor(id: editorId) }
+            let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+            let view = RichTextEditorView(frame: CGRect(origin: .zero, size: Window.viewport))
+            let window = hostEditorView(view, size: Window.viewport)
+            defer { window.isHidden = true }
+            view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+            let leaf = try XCTUnwrap(String(data: try JSONSerialization.data(withJSONObject: [
+                "type": PlainTable.paragraph,
+                "content": [["type": PlainTable.text, "text": "deep"]]
+            ]), encoding: .utf8))
+            let document = nestedTablesDocumentSource(depth: depth, leafSource: leaf)
+            let replaced = editorV2ReplaceDocument(
+                editorId: adapter.editorId,
+                requestJson: #"{"version":1,"requestId":"1","history":"resetAndClear","setJson":"# + document + "}"
+            )
+            XCTAssertNil(replaced.error, "depth \(depth): \(String(describing: replaced.error))")
+            XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.refreshFromRustState(mirrorSelection: nil))))
+            view.layoutIfNeeded()
+            let surface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
+            var preparedKeys: [String] = []
+            surface.onTableCellPreparedForTesting = { _, contentKey in preparedKeys.append(contentKey) }
+            view.frame.size.width -= widthChange
+            view.setNeedsLayout()
+            view.layoutIfNeeded()
+            print("depth \(depth) width re-layout prepared \(preparedKeys.count) cells, \(Set(preparedKeys).count) distinct")
+            XCTAssertLessThanOrEqual(
+                preparedKeys.count,
+                maximumPreparationsPerCell * depth,
+                "depth \(depth): \(preparedKeys.count) cell preparations for \(depth) cells"
+            )
+            XCTAssertEqual(Set(preparedKeys).count, preparedKeys.count, "depth \(depth): a cell was prepared twice")
         }
     }
 

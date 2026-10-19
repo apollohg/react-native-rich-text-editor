@@ -45,17 +45,34 @@ pub(super) fn plan(
 ) -> OperationResult<CommandPlan> {
     let selection = selection(&context);
     let semantic = match command {
-        TypedCommand::ApplyListType { list_type } => crate::command_planner::plan_apply_list_type(
-            context.document,
-            context.schema,
-            &selection,
-            &list_type,
-            context.resource_limits,
-        ),
+        TypedCommand::ApplyListType { list_type } => {
+            if !context.structural_command_is_available(
+                &selection,
+                crate::editor_state::StructuralCommand::ApplyListType(&list_type),
+            ) {
+                return Ok(CommandPlan::NotApplicable);
+            }
+            crate::command_planner::plan_apply_list_type(
+                context.document,
+                context.schema,
+                &selection,
+                &list_type,
+                context.resource_limits,
+            )
+        }
         TypedCommand::WrapInList {
             list_type,
             item_type,
         } => {
+            if !context.structural_command_is_available(
+                &selection,
+                crate::editor_state::StructuralCommand::WrapInList {
+                    list_type: &list_type,
+                    item_type: &item_type,
+                },
+            ) {
+                return Ok(CommandPlan::NotApplicable);
+            }
             let admitted = crate::command_planner::plan_wrap_in_list_admitted(
                 context.document,
                 context.schema,
@@ -100,6 +117,17 @@ pub(super) fn plan(
                 position,
                 context.resource_limits,
             )
+        }
+        TypedCommand::InsertNode { node_type }
+            if !crate::editor_state::insertable_nodes_for_selection(
+                context.document,
+                context.schema,
+                &selection,
+                context.resource_limits,
+            )
+            .contains(&node_type) =>
+        {
+            return Ok(CommandPlan::NotApplicable);
         }
         TypedCommand::InsertNode { node_type } => crate::command_planner::plan_insert_node(
             context.document,

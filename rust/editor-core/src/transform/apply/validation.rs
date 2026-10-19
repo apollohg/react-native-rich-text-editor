@@ -64,6 +64,19 @@ impl DocumentValidator {
         Ok(state.report(&budget, work_limit, 0))
     }
 
+    pub(crate) fn validate_node_itself_report(
+        node: &Node,
+        schema: &Schema,
+        limits: &ResourceLimits,
+        depth: usize,
+    ) -> BoundaryResult<DocumentValidationReport> {
+        let work_limit = document_validation_work_limit(limits);
+        let budget = WorkBudget::new(work_limit);
+        let mut state = DocumentValidationState::new(limits, work_limit);
+        validate_node_itself(node, schema, limits, depth, &mut state, &budget, work_limit)?;
+        Ok(state.report(&budget, work_limit, 0))
+    }
+
     pub(crate) fn validate_with_budget(
         doc: &Document,
         schema: &Schema,
@@ -345,76 +358,91 @@ fn validate_node(
 ) -> BoundaryResult<()> {
     let mut pending = vec![(node, depth)];
     while let Some((node, depth)) = pending.pop() {
-        consume_document_work(budget, work_limit, 1)?;
-        state.stats.node_count = state.stats.node_count.saturating_add(1);
-        state.stats.max_depth = state.stats.max_depth.max(depth);
-        if state.stats.node_count > limits.max_document_nodes {
-            return Err(BoundaryError::limit(
-                "DOCUMENT_LIMIT_EXCEEDED",
-                limits.max_document_nodes,
-                state.stats.node_count,
-            ));
+        if let Some(content) =
+            validate_node_itself(node, schema, limits, depth, state, budget, work_limit)?
+        {
+            let child_depth = depth.saturating_add(1);
+            pending.extend(content.iter().rev().map(|child| (child, child_depth)));
         }
-        if depth > limits.max_document_depth {
-            return Err(BoundaryError::limit(
-                "DOCUMENT_LIMIT_EXCEEDED",
-                limits.max_document_depth,
-                depth,
-            ));
-        }
-
-        if node.is_text() {
-            if schema.node(node.node_type()).is_none() {
-                return Err(BoundaryError::new(
-                    "DOCUMENT_INVALID",
-                    "text node is not in the schema",
-                ));
-            }
-            validate_marks(node, schema, budget, work_limit)?;
-            continue;
-        }
-
-        if node.node_type() == "__opaque" || node.node_type() == "__opaque_json" {
-            validate_opaque(node, schema, budget, work_limit, &mut state.metadata_meter)?;
-            continue;
-        }
-
-        let spec = schema.node(node.node_type()).ok_or_else(|| {
-            BoundaryError::new(
-                "DOCUMENT_INVALID",
-                format!("unknown node '{}'", node.node_type()),
-            )
-        })?;
-        validate_attrs(
-            node.attrs(),
-            &spec.attrs,
-            spec.allow_undeclared_attrs,
-            node.node_type(),
-            budget,
-            work_limit,
-        )?;
-
-        if matches!(spec.role, crate::schema::NodeRole::List { ordered: true }) {
-            validate_ordered_list_start(node)?;
-        }
-
-        if node.is_void() {
-            continue;
-        }
-
-        let content = node.content().ok_or_else(|| {
-            BoundaryError::new("DOCUMENT_INVALID", "non-void schema node has no content")
-        })?;
-        let allowed_transient_empty_table =
-            spec.table_role == Some(crate::tables::TableRole::Table) && node.child_count() == 0;
-        if !allowed_transient_empty_table {
-            validate_declared_content(node, content, spec, schema, budget, work_limit)?;
-        }
-
-        let child_depth = depth.saturating_add(1);
-        pending.extend(content.iter().rev().map(|child| (child, child_depth)));
     }
     Ok(())
+}
+
+fn validate_node_itself<'node>(
+    node: &'node Node,
+    schema: &Schema,
+    limits: &ResourceLimits,
+    depth: usize,
+    state: &mut DocumentValidationState,
+    budget: &WorkBudget,
+    work_limit: usize,
+) -> BoundaryResult<Option<&'node Fragment>> {
+    consume_document_work(budget, work_limit, 1)?;
+    state.stats.node_count = state.stats.node_count.saturating_add(1);
+    state.stats.max_depth = state.stats.max_depth.max(depth);
+    if state.stats.node_count > limits.max_document_nodes {
+        return Err(BoundaryError::limit(
+            "DOCUMENT_LIMIT_EXCEEDED",
+            limits.max_document_nodes,
+            state.stats.node_count,
+        ));
+    }
+    if depth > limits.max_document_depth {
+        return Err(BoundaryError::limit(
+            "DOCUMENT_LIMIT_EXCEEDED",
+            limits.max_document_depth,
+            depth,
+        ));
+    }
+
+    if node.is_text() {
+        if schema.node(node.node_type()).is_none() {
+            return Err(BoundaryError::new(
+                "DOCUMENT_INVALID",
+                "text node is not in the schema",
+            ));
+        }
+        validate_marks(node, schema, budget, work_limit)?;
+        return Ok(None);
+    }
+
+    if node.node_type() == "__opaque" || node.node_type() == "__opaque_json" {
+        validate_opaque(node, schema, budget, work_limit, &mut state.metadata_meter)?;
+        return Ok(None);
+    }
+
+    let spec = schema.node(node.node_type()).ok_or_else(|| {
+        BoundaryError::new(
+            "DOCUMENT_INVALID",
+            format!("unknown node '{}'", node.node_type()),
+        )
+    })?;
+    validate_attrs(
+        node.attrs(),
+        &spec.attrs,
+        spec.allow_undeclared_attrs,
+        node.node_type(),
+        budget,
+        work_limit,
+    )?;
+
+    if matches!(spec.role, crate::schema::NodeRole::List { ordered: true }) {
+        validate_ordered_list_start(node)?;
+    }
+
+    if node.is_void() {
+        return Ok(None);
+    }
+
+    let content = node.content().ok_or_else(|| {
+        BoundaryError::new("DOCUMENT_INVALID", "non-void schema node has no content")
+    })?;
+    let allowed_transient_empty_table =
+        spec.table_role == Some(crate::tables::TableRole::Table) && node.child_count() == 0;
+    if !allowed_transient_empty_table {
+        validate_declared_content(node, content, spec, schema, budget, work_limit)?;
+    }
+    Ok(Some(content))
 }
 
 fn validate_ordered_list_start(node: &Node) -> BoundaryResult<()> {
@@ -448,8 +476,9 @@ fn validate_declared_content(
     let children = content.children();
     let matches = spec
         .content
-        .matches_with_budget(
+        .matches_keyed_with_budget(
             children,
+            child_match_key,
             |child, symbol| child_matches_group(child, symbol, schema),
             budget,
         )
@@ -742,21 +771,30 @@ fn map_opaque_metadata_limit(error: JsonMeterError) -> BoundaryError {
     boundary
 }
 
+fn opaque_placement(child: &Node) -> Option<Option<&str>> {
+    matches!(child.node_type(), "__opaque" | "__opaque_json").then(|| {
+        child
+            .attrs()
+            .get("opaque_placement")
+            .and_then(|value| value.as_str())
+    })
+}
+
 /// Check if a child node matches a content group name.
 ///
 /// A child matches if:
 /// - Its node_type equals the group name exactly, OR
 /// - Its schema spec belongs to the named group
-fn child_matches_group(child: &Node, group: &str, schema: &Schema) -> bool {
-    if matches!(child.node_type(), "__opaque" | "__opaque_json") {
-        let placement = child
-            .attrs()
-            .get("opaque_placement")
-            .and_then(|value| value.as_str());
-        return placement
-            .is_some_and(|placement| schema.symbol_accepts_opaque_placement(group, placement));
+pub(crate) fn child_matches_group(child: &Node, group: &str, schema: &Schema) -> bool {
+    match opaque_placement(child) {
+        Some(placement) => placement
+            .is_some_and(|placement| schema.symbol_accepts_opaque_placement(group, placement)),
+        None => schema.node_matches_symbol(child.node_type(), group),
     }
-    schema.node_matches_symbol(child.node_type(), group)
+}
+
+pub(crate) fn child_match_key(child: &Node) -> (&str, Option<Option<&str>>) {
+    (child.node_type(), opaque_placement(child))
 }
 
 #[cfg(test)]

@@ -31,12 +31,66 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 import org.robolectric.util.ReflectionHelpers
 import org.robolectric.util.ReflectionHelpers.ClassParameter
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 internal class RichTextEditorViewCaretGeometryTest : RichTextEditorViewTestFixture() {
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `caret geometry is recomputed for every caret layout and width change`() {
+        val editor = EditorEditText(RuntimeEnvironment.getApplication())
+        editor.setText("alpha beta gamma\ndelta")
+        fun place(width: Int) {
+            editor.measure(
+                View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(240, View.MeasureSpec.EXACTLY)
+            )
+            editor.layout(0, 0, width, 240)
+        }
+        fun assertMatchesFreshGeometry(step: String): android.graphics.RectF {
+            val cached = requireNotNull(editor.nativeCursorDrawRect()) { step }
+            editor.caretGeometryKey = null
+            assertEquals(step, editor.nativeCursorDrawRect(), cached)
+            return cached
+        }
+        place(600)
+        editor.setSelection(3)
+        val first = assertMatchesFreshGeometry("initial caret")
+        requireNotNull(editor.nativeCursorDrawRect()).offset(50f, 50f)
+        assertEquals(
+            "callers cannot mutate the cached geometry",
+            first,
+            editor.nativeCursorDrawRect()
+        )
+
+        editor.setSelection(8)
+        val moved = assertMatchesFreshGeometry("moved caret")
+        assertTrue("caret moved right: $first -> $moved", moved.left > first.left)
+
+        editor.text.insert(0, "xx")
+        val shifted = assertMatchesFreshGeometry("text inserted before the caret")
+        assertTrue("caret follows inserted text: $moved -> $shifted", shifted.left > moved.left)
+
+        editor.text.setSpan(
+            android.text.style.AbsoluteSizeSpan(64),
+            0,
+            2,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+        val restyled = assertMatchesFreshGeometry("restyled prefix")
+        assertTrue(
+            "caret follows wider prefix: $shifted -> $restyled",
+            restyled.left > shifted.left
+        )
+
+        place(120)
+        val wrapped = assertMatchesFreshGeometry("narrow width")
+        assertTrue("caret wraps to a later line: $restyled -> $wrapped", wrapped.top > restyled.top)
+    }
+
     @Test
     @Config(qualifiers = "xxhdpi")
     fun `caret horizontal bounds match native cursor placement`() {

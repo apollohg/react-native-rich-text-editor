@@ -7,7 +7,7 @@ use crate::yrs_engine::compiler::input_limits::{
 };
 #[cfg(test)]
 use crate::yrs_engine::compiler::observability::{check_atomic_failpoint, AtomicFailpoint};
-use crate::yrs_engine::compiler::positions::resolve_range;
+use crate::yrs_engine::compiler::positions::{resolve_position, resolve_range};
 use crate::yrs_engine::compiler::preview::try_localized_semantic_compilation;
 use crate::yrs_engine::compiler::selection::planned_relative_selection;
 use crate::yrs_engine::compiler::semantic::compile_transaction_impl;
@@ -19,7 +19,8 @@ use crate::yrs_engine::compiler::{
 use crate::yrs_engine::mutation::{
     crdt_envelope, preflight_mutation_plan_with_read_scope, LocalizedFormatCompiler,
     LocalizedFormatLocator, LocalizedInsertCompiler, LocalizedInsertLocator,
-    LocalizedRootWindowCompiler, LocalizedRootWindowLocator, MutationCompiler,
+    LocalizedRootWindowCompiler, LocalizedRootWindowLocator, LocalizedSplitCompiler,
+    LocalizedSplitLocator, MutationCompiler, YrsMutationPlan,
 };
 use crate::yrs_engine::{
     OperationError, OperationResult, SelectionIntent, TypedOperation, TypedTransaction,
@@ -453,16 +454,14 @@ pub(super) fn compile_transaction_with_yrs_impl<T: yrs::ReadTxn>(
             }
         }
     }
-    if let (Some(prepared), Some(view), [TypedOperation::ReplaceStructure(replacement)]) = (
-        prepared_semantics,
-        engine_view,
-        transaction.operations.as_slice(),
-    ) {
+    if let (Some(view), [TypedOperation::ReplaceStructure(replacement)]) =
+        (engine_view, transaction.operations.as_slice())
+    {
         if let Ok(authority_lookup_seed) = view.authority.lookup_seed(request_id) {
             if let Some(locator) = LocalizedRootWindowLocator::mint(
                 request_id,
                 context.document,
-                prepared.expected_preview,
+                prepared_semantics.map(|prepared| prepared.expected_preview),
                 replacement,
                 authority_lookup_seed.as_ref(),
                 txn,
@@ -485,6 +484,44 @@ pub(super) fn compile_transaction_with_yrs_impl<T: yrs::ReadTxn>(
                     locator,
                 )?;
             }
+        }
+    }
+    let mut localized_split_compiler = None;
+    if let (Some(view), [TypedOperation::SplitBlock { at, .. }]) =
+        (engine_view, transaction.operations.as_slice())
+    {
+        if let (Ok(position), Ok(authority_lookup_seed)) = (
+            resolve_position(
+                request_id,
+                Some(0),
+                "at",
+                *at,
+                view.cached.rendered_text,
+                view.cached.position_map,
+                context.document,
+            ),
+            view.authority.lookup_seed(request_id),
+        ) {
+            localized_split_compiler = LocalizedSplitCompiler::try_new(
+                request_id,
+                txn,
+                fragment,
+                context.schema,
+                action_limit,
+                context.resource_limits.max_input_bytes,
+                charged_scan_work,
+                LocalizedSplitLocator {
+                    document: context.document,
+                    position,
+                },
+                authority_lookup_seed.as_ref(),
+                context.resource_limits,
+                context.editing_limits,
+                context.max_length,
+                view.schema_fingerprint,
+                view.yrs_state_epoch,
+                context.document_revision,
+            )?;
         }
     }
     let localized_semantic = if localized_compiler.is_some() {
@@ -526,6 +563,8 @@ pub(super) fn compile_transaction_with_yrs_impl<T: yrs::ReadTxn>(
         TransactionMutationLowering::LocalizedFormat(Box::new(localized))
     } else if let Some(localized) = localized_root_window_compiler {
         TransactionMutationLowering::LocalizedRootWindow(Box::new(localized))
+    } else if let Some(localized) = localized_split_compiler {
+        TransactionMutationLowering::LocalizedSplit(Box::new(localized))
     } else {
         #[cfg(test)]
         if localized_format_candidate {
@@ -534,6 +573,14 @@ pub(super) fn compile_transaction_with_yrs_impl<T: yrs::ReadTxn>(
         #[cfg(test)]
         if localized_root_window_candidate {
             yrs_engine::mutation::record_root_window_eager_fallback_for_test();
+        }
+        #[cfg(test)]
+        if matches!(
+            transaction.operations.as_slice(),
+            [TypedOperation::SplitBlock { .. }]
+        ) && engine_view.is_some()
+        {
+            yrs_engine::mutation::record_split_eager_fallback_for_test();
         }
         TransactionMutationLowering::Eager(Box::new(MutationCompiler::new(
             request_id,
@@ -545,13 +592,15 @@ pub(super) fn compile_transaction_with_yrs_impl<T: yrs::ReadTxn>(
             charged_scan_work,
         )?))
     };
-    let mut load_crdt_envelope = |mutation_scan_work: usize| {
+    let mut load_crdt_envelope = |plan: &YrsMutationPlan| {
         let envelope = crdt_envelope(
             request_id,
             txn,
+            plan,
             context.resource_limits.max_encoded_state_bytes,
         )?;
-        let reconciled = mutation_scan_work
+        let reconciled = plan
+            .scan_work
             .checked_add(envelope.scan_work)
             .ok_or_else(|| {
                 input_limit_error(

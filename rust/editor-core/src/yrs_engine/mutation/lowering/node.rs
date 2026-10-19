@@ -44,6 +44,7 @@ impl MutationCompiler {
                 "semantic structural parent has no tracked Yrs branch",
             )
         })?;
+        self.ensure_no_created_text(operation_index, "at", &target.parent.id())?;
         let insertion = self
             .current_storage_insertion(
                 content.iter(),
@@ -143,6 +144,7 @@ impl MutationCompiler {
             .ok_or_else(|| work_overflow(self.request_id, operation_index, self.action_limit))?;
         self.charge_operation_work(operation_index, work)?;
         let split_storage = split_virtual.is_some();
+        self.drop_text_gaps_from(&target.parent.id(), child_index + u32::from(!split_storage));
         if let Some(action) = split_action {
             let slot = self.push_action(action);
             let (target_id, storage_index, local_scalar, delete_index_utf16, delete_len_utf16) =
@@ -192,8 +194,7 @@ impl MutationCompiler {
                 return Err(invalid_action_range(self.request_id, operation_index));
             };
             *scalar_len = local_scalar;
-            delete_prepared_run_range(runs, delete_index_utf16, delete_len_utf16)
-                .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+            runs.clone_from(&self.targets[target_index].current_runs);
         }
         let semantic_index = semantic_insertion_index(content, resolved.parent_offset)
             .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
@@ -503,6 +504,8 @@ fn materialize_text<T: ReadTxn>(
     target: &XmlTextRef,
     txn: &T,
 ) -> OperationResult<MaterializedText> {
+    #[cfg(test)]
+    MATERIALIZED_YRS_TEXT_COUNT.set(MATERIALIZED_YRS_TEXT_COUNT.get().saturating_add(1));
     let mut text = String::new();
     let mut signature_runs = Vec::<TextSignatureRun>::new();
     let mut prepared_runs = Vec::new();

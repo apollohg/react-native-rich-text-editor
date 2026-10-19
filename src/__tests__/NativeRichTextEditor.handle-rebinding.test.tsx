@@ -49,22 +49,23 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
             ref.current!.toggleMark('bold');
         });
 
-        let view = getByTestId('native-editor-view');
-        expect(typeof view.props.editorUpdateJson).toBe('string');
+        const pushedNotice = () => JSON.parse(
+            getByTestId('native-editor-view').props.editorUpdateJson as string
+        ) as unknown;
+        const engineNotice = () => {
+            const engine = handle.bridge.renderUpdate();
 
-        let pushed = JSON.parse(view.props.editorUpdateJson as string) as {
-            activeState: { marks: Record<string, boolean> };
+            return { documentVersion: engine.documentVersion, stateRevision: engine.stateRevision };
+        };
+        const presentedActiveState = () => onActiveStateChange.mock.calls.at(-1)![0] as {
+            marks: Record<string, boolean>;
         };
 
-        expect(pushed.activeState.marks.bold).toBe(false);
+        const view = getByTestId('native-editor-view');
+        expect(pushedNotice()).toEqual(engineNotice());
+        expect(presentedActiveState().marks.bold).toBe(false);
         expect(view.props.editorUpdateRevision).toBeGreaterThan(0);
         expect(view.props.editorUpdateEditorId).toBe(handle.editorId);
-        expect(onActiveStateChange).toHaveBeenCalled();
-
-        expect(
-            (onActiveStateChange.mock.calls.at(-1)![0] as { marks: Record<string, boolean> }).marks
-                .bold
-        ).toBe(false);
 
         const mirror = handle.bridge.renderUpdate({ anchor: 0, head: 0 });
 
@@ -78,18 +79,17 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
             ref.current!.toggleMark('bold');
         });
 
-        view = getByTestId('native-editor-view');
-        pushed = JSON.parse(view.props.editorUpdateJson as string);
-        expect(pushed.activeState.marks.bold).toBe(true);
+        expect(pushedNotice()).toEqual(engineNotice());
+        expect(presentedActiveState().marks.bold).toBe(true);
 
         act(() => {
             ref.current!.setLink('https://example.test/stored');
             ref.current!.toggleHeading(2);
         });
 
-        pushed = JSON.parse(getByTestId('native-editor-view').props.editorUpdateJson as string);
+        expect(pushedNotice()).toEqual(engineNotice());
 
-        expect(pushed.activeState).toMatchObject({
+        expect(presentedActiveState()).toMatchObject({
             marks: { bold: true, link: true },
             markAttrs: { link: { href: 'https://example.test/stored' } },
             nodes: { 'heading:2': true },
@@ -156,7 +156,12 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
 
         expect(view.props.editorUpdateEditorId).toBe(handleB.editorId);
 
-        expect(JSON.parse(view.props.editorUpdateJson as string).selection).toEqual({
+        expect(JSON.parse(view.props.editorUpdateJson as string)).toEqual({
+            documentVersion: handleB.bridge.getState().documentRevision,
+            stateRevision: handleB.bridge.getState().stateRevision,
+        });
+
+        expect(handleB.bridge.renderUpdate().selection).toEqual({
             type: 'text',
             anchor: 5,
             anchorScalar: 4,
@@ -398,9 +403,9 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         act(() => {
         });
 
-        const renderAUpdate = handleA.bridge.renderUpdate.bind(handleA.bridge);
+        const renderAState = handleA.bridge.renderState.bind(handleA.bridge);
 
-        const renderUpdate = jest.spyOn(handleA.bridge, 'renderUpdate').mockImplementation(() => {
+        const renderState = jest.spyOn(handleA.bridge, 'renderState').mockImplementation(() => {
             act(() => {
                 rerender(
                     <NativeRichTextEditor
@@ -412,7 +417,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 );
             });
 
-            return renderAUpdate();
+            return renderAState();
         });
 
         onActiveStateChange.mockClear();
@@ -422,8 +427,9 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         expect(view.props.editorId).toBe(handleB.editorId);
         expect(view.props.editorUpdateJson).toBeUndefined();
         expect(view.props.editorUpdateEditorId).toBeUndefined();
-        expect(renderUpdate).toHaveBeenCalledTimes(1);
-        expect(onActiveStateChange).not.toHaveBeenCalled();
+        const stateB = handleB.bridge.renderState();
+        expect(renderState).toHaveBeenCalledTimes(1);
+        expect(onActiveStateChange.mock.calls).toEqual([ [ stateB.activeState ] ]);
 
         act(() => {
             view.props.onToolbarAction({
@@ -432,10 +438,10 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         });
 
         expect(onRequestLink).toHaveBeenCalledWith(
-            expect.objectContaining({ selection: { type: 'text', anchor: 0, head: 0 } })
+            expect.objectContaining({ selection: stateB.selection })
         );
 
-        renderUpdate.mockRestore();
+        renderState.mockRestore();
         handleA.destroy();
         handleB.destroy();
     });

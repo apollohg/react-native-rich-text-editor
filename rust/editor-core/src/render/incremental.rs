@@ -340,6 +340,13 @@ struct CachedRenderBlock {
     element_count: usize,
     position_element_indices: Arc<Vec<usize>>,
     cell_output_bytes: std::sync::OnceLock<usize>,
+    history_snapshot_retained_bytes: std::sync::OnceLock<Option<CachedBlockRetainedBytes>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CachedBlockRetainedBytes {
+    node: usize,
+    structure: usize,
 }
 
 impl Drop for CachedRenderBlock {
@@ -659,7 +666,7 @@ fn generate_block_inner(
             elements.push(RenderElement::VoidInline {
                 node_type: node.node_type().to_string(),
                 doc_pos: *pos,
-                attrs: node.attrs().clone(),
+                attrs: Box::new(node.attrs().clone()),
             });
             *pos += node.node_size();
         }
@@ -724,7 +731,7 @@ fn generate_block_inner(
                     .and_then(serde_json::Value::as_str)
                     .map(str::to_owned),
                 depth,
-                list_context,
+                list_context: list_context.map(Box::new),
             });
             *pos += 1;
             for j in 0..node.child_count() {
@@ -784,7 +791,7 @@ fn generate_block_inner(
             elements.push(RenderElement::VoidBlock {
                 node_type: node.node_type().to_string(),
                 doc_pos: *pos,
-                attrs: node.attrs().clone(),
+                attrs: Box::new(node.attrs().clone()),
             });
             *pos += node.node_size();
         }
@@ -820,10 +827,11 @@ fn generate_block_inner(
         Some(NodeRole::Inline) if node.is_void() => {
             elements.push(RenderElement::OpaqueInlineAtom {
                 node_type: node.node_type().to_string(),
-                label: inline_atom_label(node.node_type(), node.attrs()),
+                label: inline_atom_label(node.node_type(), node.attrs()).into(),
                 doc_pos: *pos,
-                attrs: node.attrs().clone(),
-                mention_theme: inline_atom_mention_theme(node.node_type(), node.attrs()),
+                attrs: Box::new(node.attrs().clone()),
+                mention_theme: inline_atom_mention_theme(node.node_type(), node.attrs())
+                    .map(Box::new),
             });
             *pos += node.node_size();
         }
@@ -846,17 +854,18 @@ fn generate_block_inner(
                 if is_inline {
                     elements.push(RenderElement::OpaqueInlineAtom {
                         node_type: node.node_type().to_string(),
-                        label: inline_atom_label(node.node_type(), node.attrs()),
+                        label: inline_atom_label(node.node_type(), node.attrs()).into(),
                         doc_pos: *pos,
-                        attrs: node.attrs().clone(),
-                        mention_theme: inline_atom_mention_theme(node.node_type(), node.attrs()),
+                        attrs: Box::new(node.attrs().clone()),
+                        mention_theme: inline_atom_mention_theme(node.node_type(), node.attrs())
+                            .map(Box::new),
                     });
                 } else {
                     elements.push(RenderElement::OpaqueBlockAtom {
                         node_type: node.node_type().to_string(),
-                        label: inline_atom_label(node.node_type(), node.attrs()),
+                        label: inline_atom_label(node.node_type(), node.attrs()).into(),
                         doc_pos: *pos,
-                        attrs: node.attrs().clone(),
+                        attrs: Box::new(node.attrs().clone()),
                     });
                 }
                 *pos += node.node_size();

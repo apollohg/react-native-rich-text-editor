@@ -621,7 +621,7 @@ fn every_ordered_rich_node_pair_can_be_inserted_edited_removed_and_replaced() {
 }
 
 #[test]
-fn a_selection_ending_inside_a_table_keeps_the_cell_boundary_refusal() {
+fn a_selection_ending_inside_a_table_clears_each_side_without_joining_the_cell() {
     let corpus = corpus();
     let mut engine = engine_with(
         Schema::from_json(&corpus["config"]["schema"]).unwrap(),
@@ -632,7 +632,7 @@ fn a_selection_ending_inside_a_table_keeps_the_cell_boundary_refusal() {
         }] }] }),
         ],
     );
-    let before = engine.document_json().unwrap();
+    let mut expected = engine.document_json().unwrap();
     let opening = crate::tables::commands_tests::cell_openings(&engine)[0];
     let end = opening + CELL_TEXT_OFFSET + "cell".len() as u32;
     select(
@@ -641,11 +641,22 @@ fn a_selection_ending_inside_a_table_keeps_the_cell_boundary_refusal() {
         end,
         "partial table selection",
     );
-    let error = engine
+    engine
         .apply_command(REQUEST_ID, TypedCommand::DeleteBackward)
-        .expect_err("an endpoint inside a cell must not be promoted outside its table");
-    assert_eq!(error.details.unwrap()["field"], "tableCellBoundary");
-    assert_eq!(engine.document_json().unwrap(), before);
+        .expect("a selection reaching into a cell deletes the covered content on each side");
+    expected["content"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("content");
+    expected["content"][1]["content"][0]["content"][0]["content"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("content");
+    assert_eq!(
+        engine.document_json().unwrap(),
+        expected,
+        "the paragraph and the cell keep their own blocks and the table survives"
+    );
 }
 
 #[test]

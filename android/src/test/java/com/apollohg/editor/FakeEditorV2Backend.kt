@@ -772,24 +772,16 @@ internal class FakeEditorV2Backend : EditorV2Backend {
         if (rendered is EditorV2CallResult.Err) return rendered
         val json = (rendered as EditorV2CallResult.Ok).value
         val base = ownerId?.let { session.nativeCursors[it] }
-        val snapshot = if (ownerId == null) {
-            json
-        } else {
-            val epoch = session.nextPositionEpoch++.toString()
-            session.positionEpochs[ownerId] = epoch
-            session.positionEpochTexts[ownerId] = session.text.toString()
-            session.nativeCursors[ownerId] = session.revision.toString()
-            try {
-                JSONObject(json).put("positionEpoch", epoch).toString()
-            } catch (
-                _: org.json.JSONException
-            ) {
-                json
-            }
+        val epoch = ownerId?.let {
+            val next = session.nextPositionEpoch++.toString()
+            session.positionEpochs[it] = next
+            session.positionEpochTexts[it] = session.text.toString()
+            session.nativeCursors[it] = session.revision.toString()
+            next
         }
         return EditorV2CallResult.Ok(
             uniffi.editor_core.FfiNativeRenderFrame(
-                snapshot,
+                json,
                 uniffi.editor_core.FfiTableFrame(
                     if (base ==
                         null
@@ -805,7 +797,8 @@ internal class FakeEditorV2Backend : EditorV2Backend {
                     emptyList(),
                     emptyList(),
                     emptyList()
-                )
+                ),
+                epoch
             )
         )
     }

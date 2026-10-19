@@ -216,6 +216,10 @@ struct EditorStyleBox {
         return UIEdgeInsets(top: number("borderTopWidth", fallback: width), left: number("borderLeftWidth", fallback: width), bottom: number("borderBottomWidth", fallback: width), right: number("borderRightWidth", fallback: width))
     }
     var inset: UIEdgeInsets { padding.adding(borders) }
+    var paintsDecoration: Bool {
+        let edges = borders
+        return color("backgroundColor") != nil || edges.top > 0 || edges.left > 0 || edges.bottom > 0 || edges.right > 0
+    }
     var outerInsets: UIEdgeInsets { inset.adding(margin) }
     var mentionInsets: UIEdgeInsets {
         UIEdgeInsets(
@@ -385,6 +389,34 @@ final class EditorRenderedBox: NSObject {
     }
 }
 
+final class EditorRenderedBoxStack: NSObject {
+    let boxes: [EditorRenderedBox]
+    private let identityHash: Int
+
+    init(boxes: [EditorRenderedBox]) {
+        self.boxes = boxes
+        var hasher = Hasher()
+        hasher.combine(boxes.count)
+        // Margin collapse changes insets without changing descriptor identities.
+        for box in boxes { hasher.combine(ObjectIdentifier(box)) }
+        identityHash = hasher.finalize()
+    }
+
+    @objc var renderedBoxes: NSArray { boxes as NSArray }
+
+    override var hash: Int { identityHash }
+
+    override func isEqual(_ object: Any?) -> Bool {
+        guard let other = object as? EditorRenderedBoxStack, boxes.count == other.boxes.count else { return false }
+        return self === other || zip(boxes, other.boxes).allSatisfy { $0 === $1 }
+    }
+}
+
+func renderedStyleBoxes(from value: Any?) -> [EditorRenderedBox]? {
+    if let stack = value as? EditorRenderedBoxStack { return stack.boxes }
+    return value as? [EditorRenderedBox]
+}
+
 private struct EditorStyledSpan {
     let box: EditorRenderedBox
     let parent: ObjectIdentifier?
@@ -411,9 +443,9 @@ extension RenderBridge {
         let box = EditorStyleBox(values)
         let descriptor = EditorRenderedBox(box: box, depth: ancestors.count, leading: outer.left + box.margin.left, trailing: outer.right + box.margin.right)
         result.enumerateAttribute(editorStyleBoxesAttribute, in: range) { value, subrange, _ in
-            var boxes = value as? [EditorRenderedBox] ?? []
+            var boxes = renderedStyleBoxes(from: value) ?? []
             boxes.insert(descriptor, at: 0)
-            result.addAttribute(editorStyleBoxesAttribute, value: boxes, range: subrange)
+            result.addAttribute(editorStyleBoxesAttribute, value: EditorRenderedBoxStack(boxes: boxes), range: subrange)
         }
         let nsString = result.string as NSString
         let first = NSIntersectionRange(nsString.paragraphRange(for: NSRange(location: start, length: 0)), range)
@@ -433,15 +465,30 @@ extension RenderBridge {
         }
     }
 
-    static func collapseStyledSiblingMargins(in result: NSMutableAttributedString) {
+    static func collapseStyledSiblingMargins(
+        in result: NSMutableAttributedString, onParagraphStyleChange: ((Any, NSRange) -> Void)? = nil
+    ) {
         var spans: [ObjectIdentifier: EditorStyledSpan] = [:]
-        result.enumerateAttributes(in: NSRange(location: 0, length: result.length)) { attributes, range, _ in
-            var boxes = attributes[editorStyleBoxesAttribute] as? [EditorRenderedBox] ?? []
-            if let spacingBox = attributes[editorBlockSpacingBoxAttribute] as? EditorRenderedBox { boxes.append(spacingBox) }
+
+        func recordStyledSpan(_ box: EditorRenderedBox, parent: ObjectIdentifier?, range: NSRange) {
+            let identity = ObjectIdentifier(box)
+            spans[identity] = EditorStyledSpan(box: box, parent: parent,
+                range: spans[identity].map { NSUnionRange($0.range, range) } ?? range)
+        }
+
+        let fullRange = NSRange(location: 0, length: result.length)
+        result.enumerateAttribute(editorStyleBoxesAttribute, in: fullRange) { value, range, _ in
+            let boxes = renderedStyleBoxes(from: value) ?? []
             for (index, box) in boxes.enumerated() {
-                let identity = ObjectIdentifier(box)
                 let parent = index > 0 ? ObjectIdentifier(boxes[index - 1]) : nil
-                spans[identity] = EditorStyledSpan(box: box, parent: parent, range: spans[identity].map { NSUnionRange($0.range, range) } ?? range)
+                recordStyledSpan(box, parent: parent, range: range)
+            }
+        }
+        result.enumerateAttribute(editorBlockSpacingBoxAttribute, in: fullRange) { value, range, _ in
+            guard let box = value as? EditorRenderedBox else { return }
+            result.enumerateAttribute(editorStyleBoxesAttribute, in: range) { value, subrange, _ in
+                let parent = renderedStyleBoxes(from: value)?.last
+                recordStyledSpan(box, parent: parent.map(ObjectIdentifier.init), range: subrange)
             }
         }
         let text = result.string as NSString
@@ -472,12 +519,17 @@ extension RenderBridge {
                       style.paragraphSpacingBefore != spacing.value else { return }
                 style.paragraphSpacingBefore = spacing.value
                 result.addAttribute(.paragraphStyle, value: style, range: range)
+                onParagraphStyleChange?(style, range)
             }
         }
         if result.length > 1 {
             result.enumerateAttribute(RenderBridgeAttributes.blockBoundary, in: NSRange(location: 1, length: result.length - 1)) { value, range, _ in
                 guard value != nil, let style = result.attribute(.paragraphStyle, at: range.location - 1, effectiveRange: nil) else { return }
-                result.addAttribute(.paragraphStyle, value: style, range: range)
+                result.enumerateAttribute(.paragraphStyle, in: range) { current, target, _ in
+                    if let current = current as? NSObject, current.isEqual(style) { return }
+                    result.addAttribute(.paragraphStyle, value: style, range: target)
+                    onParagraphStyleChange?(style, target)
+                }
             }
         }
     }
@@ -524,7 +576,12 @@ extension UIView {
 }
 
 final class EditorStyleBoxView: UIView {
-    var box: EditorStyleBox? { didSet { setNeedsDisplay() } }
+    var box: EditorStyleBox? {
+        didSet {
+            updateDocumentViewport()
+            setNeedsDisplay()
+        }
+    }
     var documentBounds: CGRect? {
         didSet {
             updateDocumentViewport()
@@ -547,7 +604,8 @@ final class EditorStyleBoxView: UIView {
     func updateDocumentViewport() {
         refreshViewportObservations()
         guard let documentBounds else { return }
-        let visible = superview?.editorVisibleRectInWindow?.intersection(documentBounds)
+        let visible = box?.paintsDecoration == true
+            ? superview?.editorVisibleRectInWindow?.intersection(documentBounds) : nil
         let nextFrame = visible.flatMap { $0.isNull || $0.isEmpty ? nil : $0 } ?? .zero
         if frame != nextFrame {
             frame = nextFrame
@@ -557,7 +615,7 @@ final class EditorStyleBoxView: UIView {
 
     private func refreshViewportObservations() {
         var ancestors: [UIView] = []
-        if documentBounds != nil, window != nil {
+        if documentBounds != nil, window != nil, box?.paintsDecoration == true {
             var current = superview
             while let view = current {
                 ancestors.append(view)

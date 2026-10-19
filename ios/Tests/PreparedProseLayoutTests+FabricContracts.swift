@@ -90,23 +90,15 @@ extension PreparedProseLayoutTests {
     }
 
     func testFabricLeaseHandleBridgeStaticContract() throws {
-        let root = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        func source(_ path: String) throws -> String {
-            try String(contentsOf: root.appendingPathComponent(path), encoding: .utf8)
-        }
-
-        let state = try source("common/cpp/react/renderer/components/PreparedProseViewer/PreparedProseViewerState.h")
-        let shadow = try source("common/cpp/react/renderer/components/PreparedProseViewer/PreparedProseViewerShadowNode.cpp")
-        let manager = try source("ios/Viewer/Fabric/PreparedProseMeasurementsManager.mm")
-        let registry = try source("ios/Viewer/PreparedProseLayoutRegistry.swift")
-            + source("ios/Viewer/PreparedProseLayoutRegistry+Fabric.swift")
-            + source("ios/Viewer/PreparedProseLayoutRegistry+FabricOwnership.swift")
-        let component = try source("ios/Viewer/Fabric/PREPPreparedProseViewerComponentView.mm")
-        let cache = try source("ios/Viewer/PreparedProseLayoutCache.swift")
-        let android = try source("android/src/main/jni/PreparedProseViewerMeasurementsManager.cpp")
+        let state = try repositorySourceText("common/cpp/react/renderer/components/PreparedProseViewer/PreparedProseViewerState.h")
+        let shadow = try repositorySourceText("common/cpp/react/renderer/components/PreparedProseViewer/PreparedProseViewerShadowNode.cpp")
+        let manager = try repositorySourceText("ios/Viewer/Fabric/PreparedProseMeasurementsManager.mm")
+        let registry = try repositorySourceText("ios/Viewer/PreparedProseLayoutRegistry.swift")
+            + repositorySourceText("ios/Viewer/PreparedProseLayoutRegistry+Fabric.swift")
+            + repositorySourceText("ios/Viewer/PreparedProseLayoutRegistry+FabricOwnership.swift")
+        let component = try repositorySourceText("ios/Viewer/Fabric/PREPPreparedProseViewerComponentView.mm")
+        let cache = try repositorySourceText("ios/Viewer/PreparedProseLayoutCache.swift")
+        let android = try repositorySourceText("android/src/main/jni/PreparedProseViewerMeasurementsManager.cpp")
 
         XCTAssertTrue(state.contains("uint64_t leaseHandle{0}"))
         XCTAssertTrue(state.contains("previousState.leaseHandle"))
@@ -153,18 +145,8 @@ extension PreparedProseLayoutTests {
     }
 
     func testFabricStateLifecycleUsesOneHandleAcrossOrdinaryRevisionsStaticContract() throws {
-        let root = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let component = try String(
-            contentsOf: root.appendingPathComponent("ios/Viewer/Fabric/PREPPreparedProseViewerComponentView.mm"),
-            encoding: .utf8
-        )
-        let shadow = try String(
-            contentsOf: root.appendingPathComponent("common/cpp/react/renderer/components/PreparedProseViewer/PreparedProseViewerShadowNode.cpp"),
-            encoding: .utf8
-        )
+        let component = try repositorySourceText("ios/Viewer/Fabric/PREPPreparedProseViewerComponentView.mm")
+        let shadow = try repositorySourceText("common/cpp/react/renderer/components/PreparedProseViewer/PreparedProseViewerShadowNode.cpp")
         XCTAssertTrue(component.contains("beginNewGenerationTerminatingCurrentLease:NO"))
         XCTAssertTrue(component.contains("leaseChanged"))
         XCTAssertTrue(component.contains("beginNewGenerationTerminatingCurrentLease:leaseChanged"))
@@ -177,14 +159,7 @@ extension PreparedProseLayoutTests {
     }
 
     func testFabricComponentRetriesInstallationAfterWindowAttachmentStaticContract() throws {
-        let root = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let component = try String(
-            contentsOf: root.appendingPathComponent("ios/Viewer/Fabric/PREPPreparedProseViewerComponentView.mm"),
-            encoding: .utf8
-        )
+        let component = try repositorySourceText("ios/Viewer/Fabric/PREPPreparedProseViewerComponentView.mm")
         let callback = try XCTUnwrap(component.range(of: "- (void)didMoveToWindow"))
         let installGate = try XCTUnwrap(
             component.range(
@@ -197,40 +172,17 @@ extension PreparedProseLayoutTests {
     }
 
     func testNeverMountedFabricStateBindsExactTerminalCleanupStaticContract() throws {
-        let root = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let state = try String(
-            contentsOf: root.appendingPathComponent("common/cpp/react/renderer/components/PreparedProseViewer/PreparedProseViewerState.h"),
-            encoding: .utf8
-        )
-        let bridge = try String(
-            contentsOf: root.appendingPathComponent("ios/Viewer/Fabric/PreparedProseMeasurementsManager.mm"),
-            encoding: .utf8
-        )
+        let state = try repositorySourceText("common/cpp/react/renderer/components/PreparedProseViewer/PreparedProseViewerState.h")
+        let bridge = try repositorySourceText("ios/Viewer/Fabric/PreparedProseMeasurementsManager.mm")
         XCTAssertTrue(state.contains("final snapshot dies"))
         XCTAssertTrue(bridge.contains("releaseFabricLeaseSurfaceId"))
         XCTAssertTrue(bridge.contains("leaseLifecycle->bindTerminalCleanup"))
     }
 
     func testAndroidNativeStateKeepsExactLeaseHandleStaticContract() throws {
-        let root = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let manager = try String(
-            contentsOf: root.appendingPathComponent("android/src/main/java/com/apollohg/editor/viewer/PreparedProseViewerManager.kt"),
-            encoding: .utf8
-        )
-        let cache = try String(
-            contentsOf: root.appendingPathComponent("android/src/main/java/com/apollohg/editor/viewer/PreparedProseLayoutCache.kt"),
-            encoding: .utf8
-        )
-        let jni = try String(
-            contentsOf: root.appendingPathComponent("android/src/main/jni/PreparedProseViewerMeasurementsManager.cpp"),
-            encoding: .utf8
-        )
+        let manager = try repositorySourceText("android/src/main/java/com/apollohg/editor/viewer/PreparedProseViewerManager.kt")
+        let cache = try repositorySourceText("android/src/main/java/com/apollohg/editor/viewer/PreparedProseLayoutCache.kt")
+        let jni = try repositorySourceText("android/src/main/jni/PreparedProseViewerMeasurementsManager.cpp")
         XCTAssertTrue(manager.contains("stringOrNull(\"leaseHandle\")?.toLongOrNull()"))
         XCTAssertTrue(manager.contains("FabricLeaseHandleBridge.currentHandle()"))
         XCTAssertTrue(cache.contains("pendingLeases"))

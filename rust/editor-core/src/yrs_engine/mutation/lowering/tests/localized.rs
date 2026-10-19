@@ -250,4 +250,6 @@ mod localized_insert_tests {
     include!("localized/format.rs");
 
     include!("localized/seed_context.rs");
+
+    include!("localized/split.rs");
 }

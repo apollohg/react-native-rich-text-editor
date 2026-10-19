@@ -1,4 +1,5 @@
 use super::localized_index::LocalizedTextLeafIndex;
+use super::localized_marks::{LocalizedMarkCandidate, LocalizedMarkEvidence};
 use super::observability::{
     record_preview_position_map_derivation, record_preview_rendered_text_derivation,
 };
@@ -27,6 +28,7 @@ pub(crate) struct PreparedCandidateValidation {
     pub(super) schema_fingerprint: Arc<str>,
     pub(super) derivations: CompiledDocumentDerivations,
     render_blocks: Option<Arc<crate::render::incremental::CachedRenderBlocks>>,
+    localized_marks: Option<LocalizedMarkEvidence>,
 }
 
 #[derive(Debug)]
@@ -59,7 +61,7 @@ pub(super) struct PreparedPositionEvidence {
 
 #[derive(Debug)]
 pub(super) struct PreparedRenderEvidence {
-    pub(super) rendered_text: String,
+    pub(super) rendered_text: Arc<str>,
     pub(super) rendered_scalars: u32,
     pub(super) identity: Arc<()>,
 }
@@ -172,7 +174,7 @@ impl PreparedCandidateEvidence {
             },
             position_identity_seal,
             render: PreparedRenderEvidence {
-                rendered_text,
+                rendered_text: rendered_text.into(),
                 rendered_scalars,
                 identity: Arc::clone(&render_identity_seal),
             },
@@ -334,6 +336,7 @@ impl PreparedCandidateEvidence {
         };
         Some(PreparedCandidateValidation {
             render_blocks: None,
+            localized_marks: None,
             document: self.document,
             canonical_artifact: canonical_artifact.clone(),
             validation,
@@ -413,7 +416,7 @@ impl PreparedCandidateEvidence {
                 };
             }
             "render" => {
-                let mut rendered_text = self.render.rendered_text.clone();
+                let mut rendered_text = self.render.rendered_text.to_string();
                 let first = rendered_text
                     .chars()
                     .next()
@@ -425,7 +428,7 @@ impl PreparedCandidateEvidence {
                 rendered_text
                     .replace_range(0..first.len_utf8(), if first == 'z' { "y" } else { "z" });
                 self.render = PreparedRenderEvidence {
-                    rendered_text,
+                    rendered_text: rendered_text.into(),
                     rendered_scalars: self.render.rendered_scalars,
                     identity: Arc::new(()),
                 };
@@ -478,7 +481,7 @@ impl PreparedCandidateValidation {
         let derivations = CompiledDocumentDerivations {
             identity_seal: Arc::new(()),
             position_map,
-            rendered_text,
+            rendered_text: rendered_text.into(),
             rendered_scalars,
             document_text_bytes: canonical_artifact.text_utf8_bytes(),
             document_node_count: validation.stats.node_count,
@@ -493,6 +496,59 @@ impl PreparedCandidateValidation {
             schema_fingerprint: schema_fingerprint.into(),
             derivations,
             render_blocks,
+            localized_marks: None,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::yrs_engine) fn prepare_localized_marks(
+        _authority: &yrs_engine::compiler::CandidateValidationAuthority,
+        document: &Document,
+        candidate: LocalizedMarkCandidate,
+        resource_limits: &ResourceLimits,
+        editing_limits: &yrs_engine::EditingLimits,
+        max_length: Option<u32>,
+        schema_fingerprint: &str,
+    ) -> Option<Self> {
+        let LocalizedMarkCandidate {
+            canonical_artifact,
+            position_map,
+            rendered_text,
+            rendered_scalars,
+            render_blocks,
+            evidence,
+        } = candidate;
+        let stats = evidence.validation_certificate().stats;
+        if canonical_artifact.schema_fingerprint() != schema_fingerprint
+            || !canonical_artifact.matches_exact_source_document(document)
+            || stats.node_count > resource_limits.max_document_nodes
+            || stats.max_depth > resource_limits.max_document_depth
+            || max_length
+                .is_some_and(|limit| canonical_artifact.text_scalar_len() > u64::from(limit))
+            || !render_blocks.matches_identity(document, schema_fingerprint)
+            || rendered_scalars != position_map.total_scalars()
+        {
+            return None;
+        }
+        let derivations = CompiledDocumentDerivations {
+            identity_seal: Arc::new(()),
+            position_map,
+            rendered_text,
+            rendered_scalars,
+            document_text_bytes: canonical_artifact.text_utf8_bytes(),
+            document_node_count: stats.node_count,
+        };
+        Some(Self {
+            document: document.clone(),
+            validation: evidence.validation_certificate().report(),
+            canonical_artifact,
+            resource_limits: resource_limits.clone(),
+            editing_limits: editing_limits.clone(),
+            max_length,
+            schema_fingerprint: schema_fingerprint.into(),
+            derivations,
+            render_blocks: Some(render_blocks),
+            localized_marks: Some(evidence),
         })
     }
 
@@ -524,6 +580,15 @@ impl PreparedCandidateValidation {
 
     pub(crate) fn render_blocks(&self) -> Option<&crate::render::incremental::CachedRenderBlocks> {
         self.render_blocks.as_deref()
+    }
+
+    pub(crate) fn localized_render_update(
+        &self,
+        current_render_blocks: &Arc<crate::render::incremental::CachedRenderBlocks>,
+    ) -> Option<crate::render::incremental::CachedRenderTransitionUpdate> {
+        self.localized_marks
+            .as_ref()?
+            .render_update_from(current_render_blocks)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -562,6 +627,7 @@ impl PreparedCandidateValidation {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn finalize(
         self,
+        installed: &DerivedStateCache,
         document: &Document,
         canonical_artifact: &CanonicalArtifact,
         derivations: &CompiledDocumentDerivations,
@@ -596,7 +662,16 @@ impl PreparedCandidateValidation {
         {
             return None;
         }
-        let validation_certificate = if self.render_blocks.is_some() {
+        let localized_marks = self
+            .localized_marks
+            .filter(|evidence| evidence.derives_from(installed));
+        let validation_certificate = if let Some(evidence) = localized_marks.as_ref() {
+            evidence.validation_certificate().clone().resealed(
+                document_revision,
+                state_revision,
+                yrs_state_epoch,
+            )
+        } else if self.render_blocks.is_some() {
             let mut certificate = DocumentValidationCertificate::from_report(
                 document,
                 self.validation,
@@ -631,14 +706,25 @@ impl PreparedCandidateValidation {
                 yrs_state_epoch,
             }
         };
-        let localized_text_index = LocalizedTextLeafIndex::build(
-            document,
-            &derivations.position_map,
-            &derivations.rendered_text,
-            &validation_certificate,
-            resource_limits,
-            schema,
-        );
+        let localized_text_index = localized_marks
+            .and_then(|evidence| {
+                evidence.carry_localized_text_index(
+                    installed,
+                    document,
+                    &validation_certificate,
+                    &derivations.position_map,
+                )
+            })
+            .or_else(|| {
+                LocalizedTextLeafIndex::build(
+                    document,
+                    &derivations.position_map,
+                    &derivations.rendered_text,
+                    &validation_certificate,
+                    resource_limits,
+                    schema,
+                )
+            });
         Some(FinalizedDerivedEvidence {
             validation_certificate,
             localized_text_index,

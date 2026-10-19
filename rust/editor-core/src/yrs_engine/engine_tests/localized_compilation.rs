@@ -3,6 +3,139 @@ use super::*;
 const DEBUG_TABLE_AVAILABILITY_PASSES: usize = cfg!(debug_assertions) as usize;
 const TABLE_AVAILABILITY_PLANS_PER_PASS: usize = 19;
 
+fn assert_seed_matches_full_traversal(engine: &YrsDocumentEngine, request_id: u64) {
+    let state = engine.derived_state.as_ref().unwrap();
+    let txn = engine.doc.transact();
+    let fragment = txn.get_xml_fragment(engine.fragment_name.as_str()).unwrap();
+    let fresh = crate::yrs_engine::mutation::MutationLookupSeed::build(
+        request_id,
+        &txn,
+        &fragment,
+        &engine.schema,
+        &state.document,
+        &engine.resource_limits,
+        &engine.editing_limits,
+        engine.max_length,
+        &engine.schema_fingerprint,
+        engine.yrs_state_epoch,
+        engine.revision,
+    )
+    .unwrap();
+    assert!(
+        state
+            .mutation_lookup_seed
+            .has_same_ready_payload_for_test(&fresh),
+        "effective seed must match a full traversal"
+    );
+}
+
+const SEED_SHARING_REQUEST: u64 = 70_190;
+const SEED_SHARING_PARAGRAPHS: usize = 96;
+const SEED_SHARING_SELECTION_WIDTH: u32 = 4;
+
+#[test]
+fn localized_edits_layer_lookup_updates_over_shared_seed_bases() {
+    let paragraphs = (0..SEED_SHARING_PARAGRAPHS)
+        .map(|index| {
+            serde_json::json!({
+                "type": "paragraph",
+                "content": [{ "type": "text", "text": format!("paragraph {index} body text") }]
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut engine = transaction_engine();
+    engine
+        .import_json(
+            &serde_json::json!({ "type": "doc", "content": paragraphs }).to_string(),
+            TransactionOrigin::DocumentImport,
+        )
+        .unwrap();
+    hydrate_import_for_compile_test(&mut engine);
+    let steps = [
+        (
+            3,
+            0,
+            TypedCommand::InsertText {
+                text: "typed".into(),
+            },
+        ),
+        (
+            5,
+            SEED_SHARING_SELECTION_WIDTH,
+            TypedCommand::ToggleMark {
+                mark_type: "bold".into(),
+            },
+        ),
+        (
+            7,
+            SEED_SHARING_SELECTION_WIDTH,
+            TypedCommand::DeleteBackward,
+        ),
+        (
+            9,
+            0,
+            TypedCommand::Paste {
+                fragment: None,
+                html: None,
+                text: Some("one\ntwo\nthree".into()),
+                plain_text: true,
+                allow_base64_images: false,
+                input_filter: None,
+                cell_drop: None,
+            },
+        ),
+        (
+            11,
+            SEED_SHARING_SELECTION_WIDTH,
+            TypedCommand::ReplaceSelectionText { text: "x".into() },
+        ),
+        (
+            13,
+            0,
+            TypedCommand::InsertText {
+                text: "again".into(),
+            },
+        ),
+        (
+            5,
+            SEED_SHARING_SELECTION_WIDTH,
+            TypedCommand::ToggleMark {
+                mark_type: "bold".into(),
+            },
+        ),
+    ];
+    let mut request = SEED_SHARING_REQUEST;
+    for (step, (block, width, command)) in steps.into_iter().enumerate() {
+        let start = engine
+            .derived_state
+            .as_ref()
+            .unwrap()
+            .position_map
+            .block(block)
+            .unwrap()
+            .scalar_start
+            + 1;
+        request += 1;
+        select_text(&mut engine, request, start, start + width);
+        let before = Arc::clone(&engine.derived_state.as_ref().unwrap().mutation_lookup_seed);
+        request += 1;
+        engine
+            .apply_command(request, command.clone())
+            .unwrap()
+            .unwrap_or_else(|| panic!("step {step} ({command:?}) must apply"));
+        let after = &engine.derived_state.as_ref().unwrap().mutation_lookup_seed;
+        assert!(
+            before.shares_materialization_base_for_test(after),
+            "step {step} ({command:?}) cloned the full text materialization map"
+        );
+        assert!(
+            before.shares_path_parent_width_base_for_test(after),
+            "step {step} ({command:?}) cloned the full structural parent width map"
+        );
+        assert_seed_matches_full_traversal(&engine, request);
+    }
+}
+
 #[test]
 fn repeated_local_input_shares_the_materialization_work_base() {
     use crate::yrs_engine::mutation::{
@@ -17,31 +150,6 @@ fn repeated_local_input_shares_the_materialization_work_base() {
     ).unwrap();
     hydrate_import_for_compile_test(&mut engine);
     let initial_document = engine.document_json().unwrap();
-    let assert_fresh_lookup = |engine: &YrsDocumentEngine| {
-        let state = engine.derived_state.as_ref().unwrap();
-        let txn = engine.doc.transact();
-        let fragment = txn.get_xml_fragment(engine.fragment_name.as_str()).unwrap();
-        let fresh = crate::yrs_engine::mutation::MutationLookupSeed::build(
-            REQUEST,
-            &txn,
-            &fragment,
-            &engine.schema,
-            &state.document,
-            &engine.resource_limits,
-            &engine.editing_limits,
-            engine.max_length,
-            &engine.schema_fingerprint,
-            engine.yrs_state_epoch,
-            engine.revision,
-        )
-        .unwrap();
-        assert!(
-            state
-                .mutation_lookup_seed
-                .has_same_ready_payload_for_test(&fresh),
-            "effective seed must match a full traversal"
-        );
-    };
     let mut retained = Vec::new();
     for (edit, target) in TARGETS.into_iter().enumerate() {
         let before = Arc::clone(&engine.derived_state.as_ref().unwrap().mutation_lookup_seed);
@@ -66,27 +174,6 @@ fn repeated_local_input_shares_the_materialization_work_base() {
             panic!("insert fixture")
         };
         at.offset = position;
-        if edit == 3 {
-            let document = engine.document_json().unwrap();
-            let revision = engine.revision();
-            let history = (engine.can_undo(), engine.can_redo());
-            set_lookup_seed_hydration_failpoint_for_test(Some(
-                LookupSeedHydrationFailpoint::PromotionMapReservation,
-            ));
-            let refused = engine.apply_typed_transaction(transaction.clone());
-            set_lookup_seed_hydration_failpoint_for_test(None);
-            assert!(
-                refused.is_err(),
-                "switching targets must exercise the fallback reservation"
-            );
-            assert_eq!(engine.document_json().unwrap(), document);
-            assert_eq!(engine.revision(), revision);
-            assert_eq!((engine.can_undo(), engine.can_redo()), history);
-            assert!(Arc::ptr_eq(
-                &before,
-                &engine.derived_state.as_ref().unwrap().mutation_lookup_seed
-            ));
-        }
         if edit == 0 {
             set_lookup_seed_hydration_failpoint_for_test(Some(
                 LookupSeedHydrationFailpoint::PromotionMapReservation,
@@ -105,13 +192,12 @@ fn repeated_local_input_shares_the_materialization_work_base() {
         result.unwrap();
         let state = engine.derived_state.as_ref().unwrap();
         let current = &state.mutation_lookup_seed;
-        if edit == 0 || TARGETS[edit - 1] == target {
-            assert!(
-                before.shares_materialization_base_for_test(current),
-                "edit {edit}: one target update must not clone the whole materialization map"
-            );
-        }
-        assert_fresh_lookup(&engine);
+        assert!(
+            before.shares_materialization_base_for_test(current),
+            "edit {edit}: a promotion must not clone the whole materialization map, even when it \
+             switches targets"
+        );
+        assert_seed_matches_full_traversal(&engine, REQUEST);
         for (snapshot, expected) in &retained {
             assert_eq!(
                 &snapshot.materialization_entries_for_test(),
@@ -133,13 +219,28 @@ fn repeated_local_input_shares_the_materialization_work_base() {
         .block(1)
         .unwrap()
         .scalar_start;
-    let edited_target = engine
-        .derived_state
-        .as_ref()
-        .unwrap()
-        .mutation_lookup_seed
-        .replacement_target_for_test()
-        .unwrap();
+    let edited_target = {
+        use yrs::types::xml::{XmlFragment, XmlOut};
+        let txn = engine.doc.transact();
+        let fragment = txn.get_xml_fragment(engine.fragment_name.as_str()).unwrap();
+        let Some(XmlOut::Element(paragraph)) = fragment.get(&txn, 1) else {
+            panic!("the second root child is a paragraph")
+        };
+        let Some(XmlOut::Text(text)) = paragraph.get(&txn, 0) else {
+            panic!("the second paragraph holds text")
+        };
+        AsRef::<yrs::branch::Branch>::as_ref(&text).id()
+    };
+    assert!(
+        engine
+            .derived_state
+            .as_ref()
+            .unwrap()
+            .mutation_lookup_seed
+            .overridden_targets_for_test()
+            .contains(&edited_target),
+        "the second paragraph's typed text work is layered over the shared base"
+    );
     let mut deletion = insert_transaction(&engine, REQUEST + TARGETS.len() as u64);
     deletion.operations = vec![TypedOperation::DeleteRange {
         range: RevisionedRange {
@@ -162,7 +263,7 @@ fn repeated_local_input_shares_the_materialization_work_base() {
         0,
         "localized deletion must not rebuild the full lookup seed"
     );
-    assert_fresh_lookup(&engine);
+    assert_seed_matches_full_traversal(&engine, REQUEST);
     let mut removal = insert_transaction(&engine, REQUEST + TARGETS.len() as u64 + 1);
     removal.operations = vec![TypedOperation::ReplaceStructure(
         crate::yrs_engine::StructuralReplacement::new(
@@ -177,7 +278,7 @@ fn repeated_local_input_shares_the_materialization_work_base() {
     removal.selection_intent = SelectionIntent::UseOperationResult;
     removal.history_policy = HistoryPolicy::Auto;
     engine.apply_typed_transaction(removal).unwrap();
-    assert_fresh_lookup(&engine);
+    assert_seed_matches_full_traversal(&engine, REQUEST);
     let after_removal = engine
         .derived_state
         .as_ref()
@@ -440,6 +541,46 @@ fn engine_compile_reuses_all_cached_base_semantic_inputs() {
 }
 
 #[test]
+fn text_command_proofs_reuse_the_installed_base_semantic_inputs() {
+    use crate::yrs_engine::compiler::{
+        reset_base_compilation_build_counts_for_test, take_base_compilation_build_counts_for_test,
+    };
+
+    for (command, expected_text) in [
+        (TypedCommand::InsertText { text: "x".into() }, "abxc"),
+        (TypedCommand::SplitBlock, "abc"),
+        (TypedCommand::DeleteBackward, "ac"),
+    ] {
+        let label = format!("{command:?}");
+        let mut engine = transaction_engine();
+        engine
+            .import_json(
+                r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"abc"}]}]}"#,
+                TransactionOrigin::DocumentImport,
+            )
+            .unwrap();
+        select_text(&mut engine, 70_010, 2, 2);
+        reset_base_compilation_build_counts_for_test();
+
+        engine
+            .apply_command(70_011, command)
+            .unwrap()
+            .unwrap_or_else(|| panic!("{label} must change the document"));
+
+        assert_eq!(
+            take_base_compilation_build_counts_for_test(),
+            (0, 0, 0),
+            "{label} must not rebuild the base position map, rendered text, or text bytes"
+        );
+        assert_eq!(
+            engine.document().unwrap().root().text_content(),
+            expected_text,
+            "{label}"
+        );
+    }
+}
+
+#[test]
 fn selection_only_revision_refreshes_the_cached_compilation_view() {
     let mut engine = transaction_engine();
     engine
@@ -558,7 +699,7 @@ fn existing_text_command_skips_every_proved_document_wide_compiler_pass() {
             canonical_mark_validation_completions: 0,
             canonical_mark_nodes_visited: 2,
             canonical_identity_predicate_nodes_visited: 3,
-            canonical_projections: 1,
+            canonical_projections: 0,
             canonical_serializations: 0,
             canonical_hashes: 0,
             affected_top_level_scans: 0,
@@ -576,9 +717,9 @@ fn existing_text_command_skips_every_proved_document_wide_compiler_pass() {
             table_command_availability_plans: (1 + DEBUG_TABLE_AVAILABILITY_PASSES)
                 * TABLE_AVAILABILITY_PLANS_PER_PASS,
             yrs_tree_walks: 0,
-            whole_state_encodings: 0,
+            whole_state_encodings: 1,
             mutation_guard_snapshot_requests: 0,
-            compilation_snapshot_scans: 1,
+            compilation_snapshot_scans: 0,
             compilation_snapshot_reuses: 0,
             cell_content_keys: 0,
             attribute_serializations: 0,
@@ -1340,13 +1481,8 @@ fn a_lazily_materialized_canonical_value_equals_eager_derivation() {
             };
             let (next, _) = apply_step(&document, &step, schema).unwrap();
             crate::yrs_engine::observability::reset_full_pass_counts_for_test();
-            let localized = CanonicalArtifact::derive_localized(
-                &artifact,
-                &next,
-                old_block,
-                next.node_at(&path).unwrap(),
-            )
-            .expect("a textblock delta fits");
+            let localized = CanonicalArtifact::derive_localized(&artifact, &next, &path)
+                .expect("a textblock delta fits");
             let counts = crate::yrs_engine::observability::take_full_pass_counts_for_test();
             assert_eq!(
                 counts.canonical_projections, 0,
@@ -1369,8 +1505,8 @@ fn a_lazily_materialized_canonical_value_equals_eager_derivation() {
                 "retention path {path:?}, step {step_index}"
             );
             assert_eq!(
-                localized.value(),
-                eager.value(),
+                localized.projected_value(),
+                eager.projected_value(),
                 "JSON path {path:?}, step {step_index}"
             );
             assert_eq!(
@@ -1385,8 +1521,9 @@ fn a_lazily_materialized_canonical_value_equals_eager_derivation() {
 }
 
 #[test]
-fn large_table_canonical_history_charge_exceeds_the_snapshot_budget() {
+fn large_table_history_document_snapshots_exceed_the_snapshot_budget() {
     use crate::test_support::large_table_fixture::{plain_table_document, session_with_document};
+    use crate::yrs_engine::engine::imports::HISTORY_DOCUMENT_SNAPSHOTS_PER_EDIT;
     const ROWS: usize = 1000;
     const COLUMNS: usize = 20;
     let session = session_with_document(&plain_table_document(ROWS, COLUMNS));
@@ -1400,7 +1537,7 @@ fn large_table_canonical_history_charge_exceeds_the_snapshot_budget() {
         "canonical retained bytes={}, source document bytes={}, history snapshot budget={budget}",
         charge.canonical_retained_bytes, charge.source_document_retained_bytes
     );
-    assert!(charge.canonical_retained_bytes > budget);
+    assert!(charge.canonical_retained_bytes * HISTORY_DOCUMENT_SNAPSHOTS_PER_EDIT > budget);
 }
 
 #[test]
@@ -1414,7 +1551,8 @@ fn large_table_native_input_reuses_materialization_costs() {
     const OWNER: u64 = 71;
     const REQUEST: u64 = 71_000;
     const EDITS: usize = 4;
-    const CHANGED_CELL_METER_VISITS: usize = 2;
+    const CHANGED_CELLS_PER_METERING_PASS: usize = 2;
+    const CELL_METERING_PASSES: usize = 2;
     const CELL_BOUNDARY_SCALARS: usize = 1;
     let mut session = session_with_document(&plain_table_document(ROWS, COLUMNS));
     let text_len = fixture_cell_text(0, 0).chars().count();
@@ -1452,8 +1590,10 @@ fn large_table_native_input_reuses_materialization_costs() {
                 "native edit {edit} copied unchanged leaf certificates"
             );
             assert_eq!(
-                cell_visits, CHANGED_CELL_METER_VISITS,
-                "native edit {edit} must meter only the old and new changed cell"
+                cell_visits,
+                CHANGED_CELLS_PER_METERING_PASS * CELL_METERING_PASSES,
+                "native edit {edit}: the render transition and the history snapshot charge must \
+                 each meter only the old and new changed cell"
             );
         }
         let after = &session

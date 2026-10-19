@@ -1,12 +1,17 @@
 package com.apollohg.editor
 
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
+import android.text.NoCopySpan
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.TextPaint
+import android.text.style.AbsoluteSizeSpan
+import android.text.style.CharacterStyle
+import android.text.style.ForegroundColorSpan
 import android.text.style.ReplacementSpan
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -22,6 +27,96 @@ import org.robolectric.annotation.GraphicsMode
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class EditorDocumentLayoutTest {
     private fun paint() = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 20f }
+
+    @Test
+    @Config(sdk = [24, 26, 27, 28, 34])
+    @GraphicsMode(GraphicsMode.Mode.LEGACY)
+    fun `paragraph copies retain overlapping color and size application order`() {
+        val text = "abcdef\nnext\nlast"
+        val paragraphEnd = text.indexOf('\n')
+        val spanCount = 8
+        for (colorSpans in listOf(true, false)) {
+            val source = SpannableStringBuilder(text)
+            for (ordinal in (0 until spanCount).reversed()) {
+                val start = ordinal % (text.length + 1)
+                val end = if (ordinal % 3 == 0) start else text.length
+                val span = if (colorSpans) {
+                    ForegroundColorSpan(Color.RED + ordinal)
+                } else {
+                    AbsoluteSizeSpan(20 + ordinal)
+                }
+                val priority = (ordinal % 3) shl Spanned.SPAN_PRIORITY_SHIFT
+                source.setSpan(span, start, end, Spanned.SPAN_MARK_MARK or priority)
+            }
+            val expectedRoot = SpannableStringBuilder(source)
+            val layout = EditorDocumentLayout(source, paint(), 240)
+            val expected = SpannableStringBuilder(expectedRoot, 0, paragraphEnd)
+            val actual = SpannableStringBuilder(layout.text, 0, paragraphEnd)
+            for (start in 0 until paragraphEnd) {
+                val expectedPaint = paint()
+                val actualPaint = paint()
+                val expectedStyles = expected.getSpans(start, start + 1, CharacterStyle::class.java)
+                val actualStyles = actual.getSpans(start, start + 1, CharacterStyle::class.java)
+                expectedStyles.forEach { it.updateDrawState(expectedPaint) }
+                actualStyles.forEach { it.updateDrawState(actualPaint) }
+                val context = "run=$start colorSpans=$colorSpans"
+                assertEquals("$context color", expectedPaint.color, actualPaint.color)
+                assertEquals("$context size", expectedPaint.textSize, actualPaint.textSize, 0f)
+                assertEquals("$context order", expectedStyles.toList(), actualStyles.toList())
+            }
+            assertEquals(
+                "paragraph insertion order colorSpans=$colorSpans",
+                expected.getSpans(0, expected.length, CharacterStyle::class.java).toList(),
+                actual.getSpans(0, actual.length, CharacterStyle::class.java).toList()
+            )
+        }
+    }
+
+    @Test
+    fun `layout retains detached text and span ordering without native watcher ownership`() {
+        val source = SpannableStringBuilder("first\nsecond")
+        val later = Any()
+        val earlier = Any()
+        val priority = Any()
+        val empty = Any()
+        val watcher = NoCopySpan.Concrete()
+        source.setSpan(later, 6, source.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        source.setSpan(earlier, 0, 5, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        source.setSpan(
+            priority,
+            0,
+            source.length,
+            Spanned.SPAN_INCLUSIVE_INCLUSIVE or Spanned.SPAN_PRIORITY
+        )
+        source.setSpan(empty, 5, 5, Spanned.SPAN_MARK_MARK)
+        source.setSpan(watcher, 0, source.length, Spanned.SPAN_INCLUSIVE_INCLUSIVE)
+        val expected = source.getSpans(0, source.length, Any::class.java)
+            .filterNot { it is NoCopySpan }
+        val ranges = expected.map {
+            listOf(source.getSpanStart(it), source.getSpanEnd(it), source.getSpanFlags(it))
+        }
+        val layout = EditorDocumentLayout(source, paint(), 240)
+        val captured = layout.text as Spanned
+        val height = layout.height
+        source.clearSpans()
+        source.replace(0, source.length, "changed")
+
+        assertEquals("first\nsecond", captured.toString())
+        assertEquals(expected, captured.getSpans(0, captured.length, Any::class.java).toList())
+        assertEquals(
+            ranges,
+            expected.map {
+                listOf(
+                    captured.getSpanStart(it),
+                    captured.getSpanEnd(it),
+                    captured.getSpanFlags(it)
+                )
+            }
+        )
+        assertEquals(-1, captured.getSpanStart(watcher))
+        assertEquals(height, layout.height)
+        assertEquals(6, layout.getLineStart(1))
+    }
     private fun box(
         text: SpannableStringBuilder,
         start: Int,
@@ -455,6 +550,24 @@ class EditorDocumentLayoutTest {
         }
         println(
             "EditorDocumentLayout 500 paragraphs/${text.length} UTF16: cold=${cold / 1_000_000.0}ms, edited=${incremental / 1_000_000.0}ms, reused=${edited.reusedFragmentCount}"
+        )
+    }
+
+    @Test
+    fun `reuse keys share shaped paragraph text instead of retaining a second copy`() {
+        val text = SpannableStringBuilder("First paragraph\nSecond paragraph\nThird paragraph")
+        val first = EditorDocumentLayout(text, paint(), 260)
+        text.insert(text.indexOf("Second"), "Edited ")
+        val edited = EditorDocumentLayout(text, paint(), 260, previous = first)
+
+        assertEquals(2, edited.reusedFragmentCount)
+        assertTrue(
+            "cold layout keys must share shaped text",
+            first.fragmentKeysShareLayoutTextForTesting
+        )
+        assertTrue(
+            "edited layout keys must share shaped text",
+            edited.fragmentKeysShareLayoutTextForTesting
         )
     }
 

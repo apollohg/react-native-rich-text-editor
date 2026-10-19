@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 61202f6fea1273ddbe5a7a94d4fa438c10c9558f7f936bcdc577b6d8859a3465 # shrinks to document = Object {"content": Array [Object {"content": Array [Object {"content": Array [Object {"content": Array [Object {"text": String("wxyz"), "type": String("text")}], "type": String("paragraph")}], "type": String("listItem")}], "type": String("orderedList")}, Object {"content": Array [Object {"content": Array [], "type": String("paragraph")}, Object {"content": Array [Object {"content": Array [], "type": String("paragraph")}], "type": String("blockquote")}], "type": String("blockquote")}, Object {"type": String("horizontalRule")}], "type": String("doc")}, through_html = false, paste_at_start = false, whole_document = false, anchor = 1826129928, head = 2017080625

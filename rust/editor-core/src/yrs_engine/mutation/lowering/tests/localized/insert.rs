@@ -225,6 +225,42 @@ fn localized_empty_textblock_insert_creates_the_eager_text_target() {
 }
 
 #[test]
+fn localized_insert_at_xml_text_boundaries_matches_eager() {
+    let schema = tiptap_schema();
+    let source = json!({
+        "type": "doc",
+        "content": [{
+            "type": "paragraph",
+            "content": [
+                { "type": "text", "text": "ab", "marks": [{ "type": "bold" }] },
+                { "type": "text", "text": "😀c" },
+                { "type": "text", "text": "de", "marks": [{ "type": "italic" }] },
+                {
+                    "type": "text",
+                    "text": "fg",
+                    "marks": [{ "type": "link", "attrs": { "href": "https://example.com/a" } }]
+                },
+                {
+                    "type": "text",
+                    "text": "hi",
+                    "marks": [{ "type": "link", "attrs": { "href": "https://example.com/b" } }]
+                }
+            ]
+        }]
+    });
+    for block_offset in [0, 2, 4, 6, 8, 10] {
+        let (_doc, eager, localized, mode) =
+            compile_pair_at_block_offset(&source, &schema, 0, block_offset, "Z");
+        assert_eq!(
+            mode,
+            MutationCompilerBuild::Localized,
+            "run edge at block offset {block_offset}"
+        );
+        assert_plans_equal(&eager, &localized);
+    }
+}
+
+#[test]
 fn localized_textblock_eligibility_respects_atom_gaps_and_block_boundaries() {
     let schema = tiptap_schema();
     let cases = [
@@ -269,7 +305,7 @@ fn localized_textblock_eligibility_respects_atom_gaps_and_block_boundaries() {
             }),
             0,
             2,
-            MutationCompilerBuild::EagerFallback,
+            MutationCompilerBuild::Localized,
         ),
     ];
     for (source, block_index, extra_position, expected) in cases {

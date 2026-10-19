@@ -41,6 +41,81 @@ class EditorTextSurfaceTest {
     }
 
     @Test
+    fun `edited documents relayout only changed paragraphs with fresh layout geometry`() {
+        val editor = EditorEditText(RuntimeEnvironment.getApplication())
+        editor.setText(
+            (0 until PARAGRAPHS).joinToString("\n") {
+                "Paragraph $it carries enough words to wrap at a narrow width."
+            }
+        )
+        editor.measure(
+            View.MeasureSpec.makeMeasureSpec(LAYOUT_WIDTH, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(LAYOUT_HEIGHT, View.MeasureSpec.AT_MOST)
+        )
+        editor.layout(0, 0, editor.measuredWidth, editor.measuredHeight)
+        editor.layout
+        val random = java.util.Random(EDIT_SEED)
+        repeat(EDIT_ROUNDS) { round ->
+            val text = editor.text
+            val at = random.nextInt(text.length + 1)
+            when (round % EDIT_KINDS) {
+                0 -> text.insert(at, "inserted words ")
+
+                1 -> text.insert(at, "\n")
+
+                2 -> text.delete(at, minOf(text.length, at + random.nextInt(MAX_DELETE)))
+
+                else -> text.setSpan(
+                    android.text.style.AbsoluteSizeSpan(LARGE_TEXT_PX),
+                    at,
+                    minOf(text.length, at + random.nextInt(MAX_DELETE)),
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+            }
+            val incremental = editor.layout as EditorDocumentLayout
+            val fresh = EditorDocumentLayout(
+                text,
+                editor.paint,
+                incremental.width,
+                editor.includeFontPadding,
+                editor.lineSpacingMultiplier,
+                editor.lineSpacingExtra
+            )
+            val step = "round $round at $at"
+            assertEquals(step, fresh.lineCount, incremental.lineCount)
+            assertEquals(step, fresh.height, incremental.height)
+            for (line in 0 until fresh.lineCount) {
+                assertEquals(
+                    "$step line $line start",
+                    fresh.getLineStart(line),
+                    incremental.getLineStart(line)
+                )
+                assertEquals(
+                    "$step line $line end",
+                    fresh.getLineEnd(line),
+                    incremental.getLineEnd(line)
+                )
+                assertEquals(
+                    "$step line $line top",
+                    fresh.getLineTop(line),
+                    incremental.getLineTop(line)
+                )
+                assertEquals(
+                    "$step line $line baseline",
+                    fresh.getLineBaseline(line),
+                    incremental.getLineBaseline(line)
+                )
+            }
+            if (round % EDIT_KINDS == 0) {
+                assertTrue(
+                    "$step retained ${incremental.retainedParagraphCount} of ${incremental.lineCount} lines",
+                    incremental.retainedParagraphCount >= PARAGRAPHS - 2
+                )
+            }
+        }
+    }
+
+    @Test
     fun `direct editable changes retain watchers selection and composing span identity`() {
         val editor = EditorEditText(RuntimeEnvironment.getApplication())
         editor.setText("first")
@@ -318,5 +393,16 @@ class EditorTextSurfaceTest {
         )
         editor.layout(0, 0, editor.measuredWidth, editor.measuredHeight)
         return editor
+    }
+
+    private companion object {
+        const val PARAGRAPHS = 60
+        const val LAYOUT_WIDTH = 260
+        const val LAYOUT_HEIGHT = 100_000
+        const val EDIT_SEED = 1016L
+        const val EDIT_ROUNDS = 40
+        const val EDIT_KINDS = 4
+        const val MAX_DELETE = 30
+        const val LARGE_TEXT_PX = 34
     }
 }

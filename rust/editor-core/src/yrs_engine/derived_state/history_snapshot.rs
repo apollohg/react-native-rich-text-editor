@@ -24,7 +24,7 @@ pub(crate) struct HistoryDocumentSnapshot {
     pub(super) document: Document,
     pub(super) canonical_artifact: CanonicalArtifact,
     pub(super) position_map: PositionMap,
-    pub(super) rendered_text: String,
+    pub(super) rendered_text: Arc<str>,
     pub(super) rendered_scalars: u32,
     pub(super) document_text_bytes: usize,
     pub(super) document_node_count: usize,
@@ -36,7 +36,7 @@ pub(crate) struct HistoryDocumentSnapshot {
     pub(super) schema_fingerprint: Arc<str>,
     pub(super) fragment_name: Arc<str>,
     pub(super) scope: Option<yrs_engine::DocumentScope>,
-    pub(super) retained_bytes: usize,
+    pub(super) retained_bytes: HistoryDocumentSnapshotRetainedBytes,
 }
 
 /// One exact decoded history-candidate read plus an optional pure admission
@@ -309,12 +309,41 @@ impl AdmittedHistoryMutationLookupProof {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct HistoryDocumentSnapshotRetainedBytes(usize);
+pub(crate) struct HistoryDocumentSnapshotRetainedBytes {
+    charge: usize,
+    standalone: usize,
+}
 
 impl HistoryDocumentSnapshotRetainedBytes {
-    pub(crate) fn get(self) -> usize {
-        self.0
+    fn standalone(bytes: usize) -> Self {
+        Self {
+            charge: bytes,
+            standalone: bytes,
+        }
     }
+
+    pub(crate) fn beyond_retained_base(charge: usize, standalone: usize) -> Self {
+        Self { charge, standalone }
+    }
+
+    pub(crate) fn get(self) -> usize {
+        self.charge
+    }
+
+    pub(crate) fn standalone_bytes(self) -> usize {
+        self.standalone
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct HistorySnapshotParts<'a> {
+    pub(crate) document: &'a Document,
+    pub(crate) canonical_artifact: Option<&'a CanonicalArtifact>,
+    pub(crate) artifact_document: &'a Document,
+    pub(crate) position_map: &'a PositionMap,
+    pub(crate) rendered_text: &'a Arc<str>,
+    pub(crate) render_blocks: &'a crate::render::incremental::CachedRenderBlocks,
+    pub(crate) validation_depth_slots: usize,
 }
 
 #[cfg(test)]
@@ -322,7 +351,7 @@ pub(crate) struct HistoryDocumentSnapshotRetainedInput<'a> {
     pub document: &'a Document,
     pub canonical_artifact: &'a CanonicalArtifact,
     pub position_map: &'a PositionMap,
-    pub rendered_text: &'a String,
+    pub rendered_text: &'a str,
     pub render_blocks: &'a crate::render::incremental::CachedRenderBlocks,
     pub schema_fingerprint: &'a str,
     pub fragment_name: &'a str,
@@ -349,7 +378,7 @@ pub(crate) fn history_document_snapshot_retained_bytes(
         .canonical_artifact
         .history_snapshot_retained_charge()?;
     history_document_snapshot_retained_bytes_with_precomputed_document_charge(
-        retained_charge.source_document_retained_bytes,
+        0,
         retained_charge.canonical_retained_bytes,
         DocumentValidationCertificate::subtree_depth_counts(
             input.document.root(),
@@ -366,28 +395,104 @@ pub(crate) fn history_document_snapshot_retained_bytes(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[cfg(test)]
-pub(crate) fn history_document_snapshot_retained_bytes_with_canonical_charge(
-    document: &Document,
+pub(crate) fn history_document_snapshot_retained_bytes_with_precomputed_document_charge(
+    distinct_document_retained_bytes: usize,
     canonical_retained_bytes: usize,
+    validation_depth_slots: usize,
     position_map: &PositionMap,
-    rendered_text: &String,
+    rendered_text: &str,
     render_blocks: &crate::render::incremental::CachedRenderBlocks,
     schema_fingerprint: &str,
     fragment_name: &str,
     scope: Option<&yrs_engine::DocumentScope>,
 ) -> Option<HistoryDocumentSnapshotRetainedBytes> {
-    history_document_snapshot_retained_bytes_with_precomputed_document_charge(
-        document.history_snapshot_retained_bytes()?,
-        canonical_retained_bytes,
-        DocumentValidationCertificate::subtree_depth_counts(
-            document.root(),
-            crate::transform::DOCUMENT_ROOT_DEPTH,
-        )
-        .len(),
+    snapshot_retained_bytes_from_parts(
+        distinct_document_retained_bytes.checked_add(canonical_retained_bytes)?,
+        render_blocks.history_snapshot_retained_bytes_beyond_document()?,
+        arc_allocation_bound(rendered_text.len())?,
+        validation_depth_slots,
         position_map,
-        rendered_text,
-        render_blocks,
+        schema_fingerprint,
+        fragment_name,
+        scope,
+    )
+    .map(HistoryDocumentSnapshotRetainedBytes::standalone)
+}
+
+pub(crate) fn history_document_snapshot_standalone_retained_bytes(
+    parts: &HistorySnapshotParts<'_>,
+    schema_fingerprint: &str,
+    fragment_name: &str,
+    scope: Option<&yrs_engine::DocumentScope>,
+) -> Option<usize> {
+    let canonical_retained_bytes = match parts.canonical_artifact {
+        Some(artifact) => {
+            artifact
+                .history_snapshot_retained_charge()?
+                .canonical_retained_bytes
+        }
+        None => {
+            CanonicalArtifact::history_snapshot_retained_bytes_of_source(parts.artifact_document)?
+        }
+    };
+    let distinct_document_retained_bytes = if parts
+        .document
+        .shares_root_storage_with(parts.artifact_document)
+    {
+        0
+    } else {
+        parts.document.history_snapshot_retained_bytes()?
+    };
+    history_document_snapshot_retained_bytes_with_precomputed_document_charge(
+        distinct_document_retained_bytes,
+        canonical_retained_bytes,
+        parts.validation_depth_slots,
+        parts.position_map,
+        parts.rendered_text,
+        parts.render_blocks,
+        schema_fingerprint,
+        fragment_name,
+        scope,
+    )
+    .map(HistoryDocumentSnapshotRetainedBytes::standalone_bytes)
+}
+
+pub(crate) fn history_document_snapshot_retained_bytes_beyond(
+    parts: &HistorySnapshotParts<'_>,
+    base: &HistorySnapshotParts<'_>,
+    schema_fingerprint: &str,
+    fragment_name: &str,
+    scope: Option<&yrs_engine::DocumentScope>,
+) -> Option<usize> {
+    let artifact_bytes = CanonicalArtifact::history_snapshot_retained_bytes_beyond(
+        parts.canonical_artifact,
+        parts.artifact_document,
+        base.canonical_artifact,
+        base.artifact_document,
+    )?;
+    let distinct_document_bytes = if parts
+        .document
+        .shares_root_storage_with(parts.artifact_document)
+    {
+        0
+    } else {
+        parts
+            .document
+            .history_snapshot_retained_bytes_beyond(base.document)?
+    };
+    let rendered_text_bytes = if Arc::ptr_eq(parts.rendered_text, base.rendered_text) {
+        0
+    } else {
+        arc_allocation_bound(parts.rendered_text.len())?
+    };
+    snapshot_retained_bytes_from_parts(
+        artifact_bytes.checked_add(distinct_document_bytes)?,
+        parts
+            .render_blocks
+            .history_snapshot_retained_bytes_beyond_document_relative_to(base.render_blocks)?,
+        rendered_text_bytes,
+        parts.validation_depth_slots,
+        parts.position_map,
         schema_fingerprint,
         fragment_name,
         scope,
@@ -395,20 +500,17 @@ pub(crate) fn history_document_snapshot_retained_bytes_with_canonical_charge(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn history_document_snapshot_retained_bytes_with_precomputed_document_charge(
-    document_retained_bytes: usize,
-    canonical_retained_bytes: usize,
+fn snapshot_retained_bytes_from_parts(
+    document_bytes: usize,
+    render_blocks_bytes: usize,
+    rendered_text_bytes: usize,
     validation_depth_slots: usize,
     position_map: &PositionMap,
-    rendered_text: &String,
-    render_blocks: &crate::render::incremental::CachedRenderBlocks,
     schema_fingerprint: &str,
     fragment_name: &str,
     scope: Option<&yrs_engine::DocumentScope>,
-) -> Option<HistoryDocumentSnapshotRetainedBytes> {
-    let shared_payload_bytes = document_retained_bytes
-        .checked_add(canonical_retained_bytes)?
-        .checked_add(render_blocks.history_snapshot_retained_bytes()?)?;
+) -> Option<usize> {
+    let shared_payload_bytes = document_bytes.checked_add(render_blocks_bytes)?;
 
     let snapshot_allocation_bytes =
         arc_allocation_bound(std::mem::size_of::<HistoryDocumentSnapshot>())?;
@@ -425,7 +527,7 @@ pub(crate) fn history_document_snapshot_retained_bytes_with_precomputed_document
 
     snapshot_allocation_bytes
         .checked_add(position_map_bytes)?
-        .checked_add(rendered_text.capacity())?
+        .checked_add(rendered_text_bytes)?
         .checked_add(schema_arc_bytes)?
         .checked_add(validation_schema_arc_bytes)?
         .checked_add(arc_allocation_bound(
@@ -434,12 +536,27 @@ pub(crate) fn history_document_snapshot_retained_bytes_with_precomputed_document
         .checked_add(fragment_arc_bytes)?
         .checked_add(scope_string_bytes)?
         .checked_add(shared_payload_bytes)
-        .map(HistoryDocumentSnapshotRetainedBytes)
 }
 
 impl HistoryDocumentSnapshot {
     pub(crate) fn retained_bytes(&self) -> usize {
-        self.retained_bytes
+        self.retained_bytes.get()
+    }
+
+    pub(crate) fn standalone_retained_bytes(&self) -> usize {
+        self.retained_bytes.standalone_bytes()
+    }
+
+    pub(crate) fn parts(&self) -> HistorySnapshotParts<'_> {
+        HistorySnapshotParts {
+            document: &self.document,
+            canonical_artifact: Some(&self.canonical_artifact),
+            artifact_document: self.canonical_artifact.source_document(),
+            position_map: &self.position_map,
+            rendered_text: &self.rendered_text,
+            render_blocks: &self.render_blocks,
+            validation_depth_slots: self.validation_certificate.depth_slots(),
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -459,12 +576,10 @@ impl HistoryDocumentSnapshot {
         if FORCE_HISTORY_DOCUMENT_SNAPSHOT_FALLBACK.get() {
             return false;
         }
-        crate::boundary::json_values_equal_stack_safe(
-            self.canonical_artifact.value(),
-            candidate_json,
-        ) && self
-            .canonical_artifact
-            .matches_exact_source_document(&self.document)
+        self.canonical_artifact.matches_json(candidate_json)
+            && self
+                .canonical_artifact
+                .matches_exact_source_document(&self.document)
             && self.canonical_artifact.schema_fingerprint() == schema_fingerprint
             && self.canonical_artifact.format_version()
                 == yrs_engine::canonical::CANONICAL_ARTIFACT_FORMAT_VERSION
@@ -582,30 +697,29 @@ pub(crate) fn prepare_history_candidate_read_for_test<T: ReadTxn>(
     let json = YrsDocumentCodec::new(schema, resource_limits)
         .read_json(fragment, txn)
         .map_err(|error| history_candidate_read_error(request_id, error))?;
-    let admission =
-        if crate::boundary::json_values_equal_stack_safe(canonical_artifact.value(), &json)
-            && canonical_artifact.matches_exact_source_document(source_document)
-            && canonical_artifact.schema_fingerprint() == schema_fingerprint
-            && canonical_artifact.format_version()
-                == yrs_engine::canonical::CANONICAL_ARTIFACT_FORMAT_VERSION
-            && crate::schema::schema_fingerprint(schema) == schema_fingerprint
-        {
-            Some(AdmittedHistoryCandidateRead {
-                request_id,
-                source_document: source_document.clone(),
-                canonical_artifact: canonical_artifact.clone(),
-                resource_limits: resource_limits.clone(),
-                editing_limits: editing_limits.clone(),
-                max_length,
-                store_token: txn.store() as *const _ as usize,
-                fragment_id: AsRef::<Branch>::as_ref(fragment).id(),
-                schema_fingerprint: Arc::from(schema_fingerprint),
-                yrs_state_epoch,
-                document_revision,
-            })
-        } else {
-            None
-        };
+    let admission = if canonical_artifact.matches_json(&json)
+        && canonical_artifact.matches_exact_source_document(source_document)
+        && canonical_artifact.schema_fingerprint() == schema_fingerprint
+        && canonical_artifact.format_version()
+            == yrs_engine::canonical::CANONICAL_ARTIFACT_FORMAT_VERSION
+        && crate::schema::schema_fingerprint(schema) == schema_fingerprint
+    {
+        Some(AdmittedHistoryCandidateRead {
+            request_id,
+            source_document: source_document.clone(),
+            canonical_artifact: canonical_artifact.clone(),
+            resource_limits: resource_limits.clone(),
+            editing_limits: editing_limits.clone(),
+            max_length,
+            store_token: txn.store() as *const _ as usize,
+            fragment_id: AsRef::<Branch>::as_ref(fragment).id(),
+            schema_fingerprint: Arc::from(schema_fingerprint),
+            yrs_state_epoch,
+            document_revision,
+        })
+    } else {
+        None
+    };
     Ok(PreparedHistoryCandidateRead { json, admission })
 }
 
@@ -633,6 +747,54 @@ pub(super) fn history_candidate_read_error(
 
 impl DerivedStateCache {
     #[allow(clippy::too_many_arguments)]
+    pub(crate) fn history_snapshot_parts(&self) -> HistorySnapshotParts<'_> {
+        HistorySnapshotParts {
+            document: &self.document,
+            canonical_artifact: Some(&self.canonical_artifact),
+            artifact_document: self.canonical_artifact.source_document(),
+            position_map: &self.position_map,
+            rendered_text: &self.rendered_text,
+            render_blocks: &self.render_blocks,
+            validation_depth_slots: self.validation_certificate.depth_slots(),
+        }
+    }
+
+    pub(crate) fn history_snapshot_standalone_bytes(
+        &self,
+        compute: impl FnOnce() -> Option<usize>,
+    ) -> Option<usize> {
+        if let Some(bytes) = self.history_snapshot_standalone_bytes.get() {
+            return Some(*bytes);
+        }
+        let bytes = compute()?;
+        Some(*self.history_snapshot_standalone_bytes.get_or_init(|| bytes))
+    }
+
+    pub(crate) fn remember_history_snapshot_standalone_bytes(&self, bytes: usize) {
+        self.history_snapshot_standalone_bytes.get_or_init(|| bytes);
+    }
+
+    pub(crate) fn captured_history_document_snapshot(
+        &self,
+        resource_limits: &ResourceLimits,
+        editing_limits: &yrs_engine::EditingLimits,
+        max_length: Option<u32>,
+        fragment_name: &str,
+        scope: Option<&yrs_engine::DocumentScope>,
+    ) -> Option<&Arc<HistoryDocumentSnapshot>> {
+        self.history_document_snapshot.get().filter(|captured| {
+            captured.canonical_artifact.ptr_eq(&self.canonical_artifact)
+                && captured.document.shares_root_storage_with(&self.document)
+                && Arc::ptr_eq(&captured.render_blocks, &self.render_blocks)
+                && captured.schema_fingerprint.as_ref() == self.schema_fingerprint
+                && captured.resource_limits == *resource_limits
+                && captured.editing_limits == *editing_limits
+                && captured.max_length == max_length
+                && captured.fragment_name.as_ref() == fragment_name
+                && captured.scope.as_ref() == scope
+        })
+    }
+
     pub(crate) fn capture_history_document_snapshot(
         &self,
         resource_limits: &ResourceLimits,
@@ -642,24 +804,37 @@ impl DerivedStateCache {
         scope: Option<&yrs_engine::DocumentScope>,
         retained_bytes: HistoryDocumentSnapshotRetainedBytes,
     ) -> Arc<HistoryDocumentSnapshot> {
-        Arc::new(HistoryDocumentSnapshot {
-            document: self.document.clone(),
-            canonical_artifact: self.canonical_artifact.clone(),
-            position_map: self.position_map.clone(),
-            rendered_text: self.rendered_text.clone(),
-            rendered_scalars: self.rendered_scalars,
-            document_text_bytes: self.document_text_bytes,
-            document_node_count: self.document_node_count,
-            render_blocks: Arc::clone(&self.render_blocks),
-            validation_certificate: self.validation_certificate.clone(),
-            resource_limits: resource_limits.clone(),
-            editing_limits: editing_limits.clone(),
+        let capture = || {
+            Arc::new(HistoryDocumentSnapshot {
+                document: self.document.clone(),
+                canonical_artifact: self.canonical_artifact.clone(),
+                position_map: self.position_map.clone(),
+                rendered_text: self.rendered_text.clone(),
+                rendered_scalars: self.rendered_scalars,
+                document_text_bytes: self.document_text_bytes,
+                document_node_count: self.document_node_count,
+                render_blocks: Arc::clone(&self.render_blocks),
+                validation_certificate: self.validation_certificate.clone(),
+                resource_limits: resource_limits.clone(),
+                editing_limits: editing_limits.clone(),
+                max_length,
+                schema_fingerprint: Arc::from(self.schema_fingerprint.as_str()),
+                fragment_name: Arc::from(fragment_name),
+                scope: scope.cloned(),
+                retained_bytes,
+            })
+        };
+        self.history_document_snapshot.get_or_init(capture);
+        match self.captured_history_document_snapshot(
+            resource_limits,
+            editing_limits,
             max_length,
-            schema_fingerprint: Arc::from(self.schema_fingerprint.as_str()),
-            fragment_name: Arc::from(fragment_name),
-            scope: scope.cloned(),
-            retained_bytes: retained_bytes.get(),
-        })
+            fragment_name,
+            scope,
+        ) {
+            Some(captured) if captured.retained_bytes == retained_bytes => Arc::clone(captured),
+            _ => capture(),
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -796,6 +971,9 @@ impl DerivedStateCache {
             active_state_certificate: None,
             table_command_availability: std::cell::RefCell::new(None),
             render_active_state: std::cell::OnceCell::new(),
+            rendered_utf16_checkpoints: std::cell::OnceCell::new(),
+            history_snapshot_standalone_bytes: std::cell::OnceCell::new(),
+            history_document_snapshot: std::cell::OnceCell::new(),
         };
         Ok(Some(RestoredHistoryDocumentState {
             state,

@@ -106,13 +106,8 @@ impl YrsDocumentEngine {
                 let (position_map, rendered_text) = compiled
                     .preview_derivations
                     .as_ref()
-                    .map(|derivations| {
-                        (
-                            &derivations.position_map,
-                            derivations.rendered_text.as_str(),
-                        )
-                    })
-                    .unwrap_or((&current.position_map, current.rendered_text.as_str()));
+                    .map(|derivations| (&derivations.position_map, &*derivations.rendered_text))
+                    .unwrap_or((&current.position_map, &*current.rendered_text));
                 yrs_engine::derived_state::resolved_from_legacy_with_view(
                     &compiled.preview,
                     selection,
@@ -616,12 +611,16 @@ impl YrsDocumentEngine {
                         })
             }) {
                 return Ok(crate::render::incremental::CachedRenderTransition {
-                    update: current.render_blocks.classify_transition_to(
-                        &current.document,
-                        &compiled.preview,
-                        cache,
-                        &compiled.affected_top_level_blocks,
-                    ),
+                    update: validation
+                        .localized_render_update(&current.render_blocks)
+                        .unwrap_or_else(|| {
+                            current.render_blocks.classify_transition_to(
+                                &current.document,
+                                &compiled.preview,
+                                cache,
+                                &compiled.affected_top_level_blocks,
+                            )
+                        }),
                     rerendered_new_blocks: compiled.preview.root().child_count(),
                     cache: cache.clone(),
                 });

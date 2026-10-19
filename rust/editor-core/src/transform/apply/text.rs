@@ -123,6 +123,7 @@ fn apply_delete_range(
     doc: &Document,
     from: u32,
     to: u32,
+    schema: &Schema,
 ) -> Result<(Document, StepMap), TransformError> {
     if from > to {
         return Err(TransformError::InvalidRange(format!(
@@ -157,7 +158,7 @@ fn apply_delete_range(
     // the same grandparent. Delete content from `from` to end of first
     // block, remove all intermediate blocks, delete content from start
     // of last block to `to`, then join the first and last blocks.
-    apply_cross_parent_delete(doc, from, to, &resolved_from, &resolved_to)
+    apply_cross_parent_delete(doc, from, to, &resolved_from, &resolved_to, schema)
 }
 
 /// Delete content in a parent node's children between `from_offset` and

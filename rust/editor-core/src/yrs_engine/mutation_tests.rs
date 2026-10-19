@@ -98,6 +98,7 @@ fn compile_and_execute(
                 editing_limits: &editing_limits,
                 document_revision: 0,
                 max_length: None,
+                validation_certificate: None,
             },
             TypedTransaction {
                 request_id: 71,
@@ -261,6 +262,7 @@ pub(super) fn compile_operations_with_schema(
                 editing_limits: &editing_limits,
                 document_revision: 0,
                 max_length: None,
+                validation_certificate: None,
             },
             TypedTransaction {
                 request_id: 122,
@@ -298,6 +300,7 @@ fn compile_operations_with_undo_limit(
             editing_limits: &editing_limits,
             document_revision: 0,
             max_length: None,
+            validation_certificate: None,
         },
         TypedTransaction {
             request_id: 123,

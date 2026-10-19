@@ -120,6 +120,71 @@ private data class PreparedMarker(
 
 internal const val PREPARED_LIST_MARKER_GAP_DP = 6f
 
+internal sealed interface PreparationStep {
+    class Complete(val layout: PreparedProseLayout?) : PreparationStep
+    class Pending(val work: (PreparationQueue, () -> Unit) -> Unit) : PreparationStep
+}
+
+internal typealias Preparation = Iterator<PreparationStep>
+
+internal class PreparationQueue {
+    private val pending = ArrayDeque<() -> Unit>()
+
+    fun prepare(preparation: Preparation, completion: (PreparedProseLayout?) -> Unit) {
+        pending.addLast {
+            when (val step = preparation.next()) {
+                is PreparationStep.Complete -> completion(step.layout)
+                is PreparationStep.Pending -> step.work(this) { prepare(preparation, completion) }
+            }
+        }
+    }
+
+    fun run() {
+        while (pending.isNotEmpty()) pending.removeLast().invoke()
+    }
+}
+
+internal fun completedPreparation(layout: PreparedProseLayout?): Preparation =
+    listOf<PreparationStep>(PreparationStep.Complete(layout)).iterator()
+
+internal fun Preparation.runToCompletion(): PreparedProseLayout? {
+    val queue = PreparationQueue()
+    var result: PreparedProseLayout? = null
+    queue.prepare(this) { result = it }
+    queue.run()
+    return result
+}
+
+internal suspend fun SequenceScope<PreparationStep>.await(
+    preparation: Preparation
+): PreparedProseLayout? {
+    var result: PreparedProseLayout? = null
+    yield(
+        PreparationStep.Pending { queue, resume ->
+            queue.prepare(preparation) {
+                result = it
+                resume()
+            }
+        }
+    )
+    return result
+}
+
+private class NestedCellLayouts {
+    private val layouts = mutableMapOf<Int, Pair<Float, PreparedProseLayout>>()
+
+    fun put(
+        cell: com.apollohg.editor.tables.TableGridCell,
+        width: Float,
+        layout: PreparedProseLayout
+    ) {
+        layouts[cell.sourceIndex] = width to layout
+    }
+
+    fun take(cell: com.apollohg.editor.tables.TableGridCell, width: Float): PreparedProseLayout? =
+        layouts.remove(cell.sourceIndex)?.takeIf { it.first == width }?.second
+}
+
 internal data class PreparedMarkerInk(val ascentPx: Int, val heightPx: Int)
 
 internal fun preparedMarkerInk(
@@ -210,6 +275,8 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
     companion object {
         const val MAX_TABLE_PREPARATION_WORKERS = 2
         private const val PHYSICAL_PIXEL_LAYOUT_SCALE = 1f
+        private const val MINIMUM_CELL_CONTENT_WIDTH_PX = 1
+        private const val BOUND_TABLE_GEOMETRY_TOLERANCE_PX = 1f
     }
     internal var tablePreparationWorkerLimit = MAX_TABLE_PREPARATION_WORKERS
     internal var tableCellMeasurementEnabled = false
@@ -347,7 +414,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
         density,
         collapsesWhenEmpty,
         semanticGenerationIdentity,
-        false
+        null
     )
 
     override fun prepare(
@@ -359,19 +426,21 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
         collapsesWhenEmpty: Boolean,
         semanticGenerationIdentity: String,
         cellShapeContext: PreparedCellShapeBuildContext?
-    ): PreparedProseLayout = prepare(
-        document,
-        key,
-        theme,
-        widthPx,
-        density,
-        collapsesWhenEmpty,
-        semanticGenerationIdentity,
-        false,
-        cellShapeContext
+    ): PreparedProseLayout = requireNotNull(
+        preparation(
+            document,
+            key,
+            theme,
+            widthPx,
+            density,
+            collapsesWhenEmpty,
+            semanticGenerationIdentity,
+            false,
+            cellShapeContext
+        ).runToCompletion()
     )
 
-    private fun prepare(
+    private fun preparation(
         document: ViewerDocument,
         key: ProseLayoutKey,
         theme: PreparedProseTheme,
@@ -380,7 +449,60 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
         collapsesWhenEmpty: Boolean,
         semanticGenerationIdentity: String,
         cellMode: Boolean,
-        cellShapeContext: PreparedCellShapeBuildContext? = null
+        cellShapeContext: PreparedCellShapeBuildContext?
+    ): Preparation = iterator {
+        yield(
+            PreparationStep.Complete(
+                prepareLayout(
+                    document,
+                    key,
+                    theme,
+                    widthPx,
+                    density,
+                    collapsesWhenEmpty,
+                    semanticGenerationIdentity,
+                    cellMode,
+                    cellShapeContext
+                )
+            )
+        )
+    }
+
+    private suspend fun SequenceScope<PreparationStep>.prepareNestedCells(
+        source: com.apollohg.editor.tables.TableSurfaceSource,
+        record: () -> TableGridRecord,
+        viewportWidth: Float,
+        style: com.apollohg.editor.tables.TableStyle,
+        excluded: Set<Int>,
+        request: (com.apollohg.editor.tables.TableGridCell, Float) -> Preparation
+    ): NestedCellLayouts {
+        val nested = NestedCellLayouts()
+        if (source.cells.none { cell ->
+                cell.elements.any { it is uniffi.editor_core.FfiViewerElement.Table }
+            }
+        ) {
+            return nested
+        }
+        com.apollohg.editor.tables.TableGridLayout(PHYSICAL_PIXEL_LAYOUT_SCALE)
+            .measurementInputs(record(), viewportWidth, style)
+            .forEach { (cell, pixels) ->
+                if (cell.sourceIndex in excluded) return@forEach
+                val width = pixels / PHYSICAL_PIXEL_LAYOUT_SCALE
+                nested.put(cell, width, requireNotNull(await(request(cell, width))))
+            }
+        return nested
+    }
+
+    private suspend fun SequenceScope<PreparationStep>.prepareLayout(
+        document: ViewerDocument,
+        key: ProseLayoutKey,
+        theme: PreparedProseTheme,
+        widthPx: Int,
+        density: Float,
+        collapsesWhenEmpty: Boolean,
+        semanticGenerationIdentity: String,
+        cellMode: Boolean,
+        cellShapeContext: PreparedCellShapeBuildContext?
     ): PreparedProseLayout {
         val tableViewportHeight =
             key.tableMeasurementViewportHeightPx.takeIf { it > 0 }
@@ -580,6 +702,26 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                         key.fontEnvironmentRevision
                     )
                 }
+                fun cellBuild(
+                    cell: com.apollohg.editor.tables.TableGridCell,
+                    child: () -> ViewerDocument,
+                    childKey: ProseLayoutKey,
+                    engine: StaticLayoutAndroidProseLayoutEngine,
+                    context: PreparedCellShapeBuildContext?
+                ): Preparation = iterator {
+                    engine.tableCellPreparationObserver?.invoke(cell.sourceIndex, cell.contentKey)
+                    val prepared = await(
+                        engine.preparation(
+                            child(), childKey, childTheme, childKey.widthPx, density, false,
+                            warningSemanticGeneration, true, context
+                        )
+                    )
+                    engine.tableCellLayoutObserverForTesting?.invoke(
+                        cell.sourceIndex,
+                        requireNotNull(prepared)
+                    )
+                    yield(PreparationStep.Complete(prepared))
+                }
                 fun cellBuilder(
                     cell: com.apollohg.editor.tables.TableGridCell,
                     child: () -> ViewerDocument,
@@ -587,38 +729,38 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                     engine: StaticLayoutAndroidProseLayoutEngine,
                     context: PreparedCellShapeBuildContext?
                 ): () -> PreparedProseLayout = {
-                    engine.tableCellPreparationObserver?.invoke(cell.sourceIndex, cell.contentKey)
-                    engine.prepare(
-                        child(), childKey, childTheme, childKey.widthPx, density, false,
-                        warningSemanticGeneration, true, context
+                    requireNotNull(
+                        cellBuild(cell, child, childKey, engine, context).runToCompletion()
                     )
-                        .also {
-                            engine.tableCellLayoutObserverForTesting?.invoke(cell.sourceIndex, it)
-                        }
                 }
-                fun prepareCell(
+                fun cellPreparation(
                     cell: com.apollohg.editor.tables.TableGridCell,
                     cellWidth: Float,
                     worker: StaticLayoutAndroidProseLayoutEngine? = null,
                     workerContext: PreparedCellShapeBuildContext? = null,
                     retainShape: Boolean = true
-                ): PreparedProseLayout {
-                    val engine = worker ?: this
+                ): Preparation = iterator {
+                    val engine = worker ?: this@StaticLayoutAndroidProseLayoutEngine
                     val context = if (worker == null) cellShapeContext else workerContext
                     val source = surfaceSource.cells.getOrNull(cell.sourceIndex)
-                    val childWidth = cellWidth.toInt().coerceAtLeast(1)
+                    val childWidth = cellWidth.toInt().coerceAtLeast(MINIMUM_CELL_CONTENT_WIDTH_PX)
                     val child = source?.let { document.cellDocument(it, tableKey) }
                     if (child == null) {
-                        return PreparedProseLayout.error(
-                            key,
-                            cellWidth.toInt(),
-                            ProseViewerError.layout("Invalid table cell.")
+                        yield(
+                            PreparationStep.Complete(
+                                PreparedProseLayout.error(
+                                    key,
+                                    cellWidth.toInt(),
+                                    ProseViewerError.layout("Invalid table cell.")
+                                )
+                            )
                         )
+                        return@iterator
                     }
                     val childKey = key.copy(semanticKey = child.semanticKey, widthPx = childWidth)
-                    val build = cellBuilder(cell, { child }, childKey, engine, context)
+                    val build = { cellBuild(cell, { child }, childKey, engine, context) }
                     val prepared = if (context == null || theme.codeHighlighting != null) {
-                        build()
+                        await(build())
                     } else {
                         val shapeKey =
                             cellShapeKey(
@@ -627,27 +769,44 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                                 childWidth,
                                 childTheme,
                                 density,
-                                shapeStyleDigest
-                            )
-                        context.resolve(shapeKey, build, retainShape = retainShape) { shape ->
-                            engine.bindCellShape(
-                                shape,
-                                child,
-                                childKey,
-                                childTheme,
-                                childWidth,
-                                density,
-                                warningSemanticGeneration,
+                                shapeStyleDigest,
                                 context
                             )
-                        }
+                        await(
+                            context.resolution(shapeKey, build, retainShape) { shape ->
+                                engine.cellShapeBinding(
+                                    shape,
+                                    child,
+                                    childKey,
+                                    childTheme,
+                                    childWidth,
+                                    density,
+                                    warningSemanticGeneration,
+                                    context
+                                )
+                            }
+                        )
                     }
-                    return prepared.copy(
-                        cellPreparation = cellBuilder(cell, {
-                            child
-                        }, childKey, this, null)
+                    yield(
+                        PreparationStep.Complete(
+                            requireNotNull(prepared).copy(
+                                cellPreparation = cellBuilder(cell, {
+                                    child
+                                }, childKey, this@StaticLayoutAndroidProseLayoutEngine, null)
+                            )
+                        )
                     )
                 }
+                fun prepareCell(
+                    cell: com.apollohg.editor.tables.TableGridCell,
+                    cellWidth: Float,
+                    worker: StaticLayoutAndroidProseLayoutEngine? = null,
+                    workerContext: PreparedCellShapeBuildContext? = null,
+                    retainShape: Boolean = true
+                ): PreparedProseLayout = requireNotNull(
+                    cellPreparation(cell, cellWidth, worker, workerContext, retainShape)
+                        .runToCompletion()
+                )
                 val record by lazy {
                     tableGridConversionObserverForTesting?.invoke()
                     TableGridRecord.from(surfaceSource, document.semanticKey).physical(density)
@@ -726,14 +885,16 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                                         if (text != null) {
                                             val childKey = key.copy(
                                                 semanticKey = detached.semanticKey,
-                                                widthPx = width.toInt().coerceAtLeast(1)
+                                                widthPx = width.toInt().coerceAtLeast(
+                                                    MINIMUM_CELL_CONTENT_WIDTH_PX
+                                                )
                                             )
                                             val build =
                                                 cellBuilder(
                                                     cell,
                                                     detached::materialize,
                                                     childKey,
-                                                    this,
+                                                    this@StaticLayoutAndroidProseLayoutEngine,
                                                     null
                                                 )
                                             capture(
@@ -778,13 +939,21 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                                             )
                                         )
                                     } else {
-                                        val childWidth = width.toInt().coerceAtLeast(1)
+                                        val childWidth = width.toInt().coerceAtLeast(
+                                            MINIMUM_CELL_CONTENT_WIDTH_PX
+                                        )
                                         val childKey = key.copy(
                                             semanticKey = child.semanticKey,
                                             widthPx = childWidth
                                         )
                                         val build =
-                                            cellBuilder(cell, { child }, childKey, this, null)
+                                            cellBuilder(
+                                                cell,
+                                                { child },
+                                                childKey,
+                                                this@StaticLayoutAndroidProseLayoutEngine,
+                                                null
+                                            )
                                         if (!cellMode && tableViewportHeight > 0) {
                                             capture(
                                                 cell,
@@ -808,10 +977,11 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                                                     childWidth,
                                                     childTheme,
                                                     density,
-                                                    shapeStyleDigest
+                                                    shapeStyleDigest,
+                                                    context
                                                 )
                                             ) { shape ->
-                                                worker.bindCellShape(
+                                                worker.cellShapeBinding(
                                                     shape,
                                                     child,
                                                     childKey,
@@ -820,7 +990,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                                                     density,
                                                     warningSemanticGeneration,
                                                     context
-                                                )
+                                                ).runToCompletion()
                                             }
                                             if (cached !=
                                                 null
@@ -858,6 +1028,42 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                                 }
                             }
                         }
+                    val reuseCell: (
+                        (
+                            com.apollohg.editor.tables.TableGridCell,
+                            Float
+                        ) -> com.apollohg.editor.tables.PreparedViewerTableCell?
+                    )? = if (cellMode) {
+                        null
+                    } else {
+                        reusableTableCell?.let { reuse ->
+                            { cell, width ->
+                                surfaceSource.cells.getOrNull(cell.sourceIndex)?.let {
+                                    reuse(
+                                        it,
+                                        width.toInt().coerceAtLeast(MINIMUM_CELL_CONTENT_WIDTH_PX)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    val nestedCells = if (reuseCell == null) {
+                        prepareNestedCells(
+                            surfaceSource,
+                            { record },
+                            tableWidth.toFloat(),
+                            tableStyle,
+                            workers.indices
+                        ) { cell, width ->
+                            cellPreparation(
+                                cell,
+                                width,
+                                retainShape = cell.sourceIndex !in workers.transientIndices
+                            )
+                        }
+                    } else {
+                        NestedCellLayouts()
+                    }
                     try {
                         ViewerTableSurface(
                             document.tablePresentationIdentity(
@@ -873,22 +1079,12 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
 
                             editorTableId = tableKey, sourceAttributes = document.tableAttributes,
                             layoutStore = tableLayoutStore,
-                            reuseCell = if (cellMode) {
-                                null
-                            } else {
-                                reusableTableCell?.let { reuse ->
-                                    { cell, width ->
-                                        surfaceSource.cells.getOrNull(cell.sourceIndex)?.let {
-                                            reuse(it, width.toInt().coerceAtLeast(1))
-                                        }
-                                    }
-                                }
-                            },
+                            reuseCell = reuseCell,
                             prepareCellWorkers = workers.prepare,
                             parallelCellIndices = workers.indices,
                             transientCellIndices = workers.transientIndices
                         ) { cell, width ->
-                            prepareCell(
+                            nestedCells.take(cell, width) ?: prepareCell(
                                 cell,
                                 width,
                                 retainShape =
@@ -1216,8 +1412,34 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
         )
     }
 
+    private fun cellShapeBinding(
+        shape: PreparedCellShape,
+        document: ViewerDocument,
+        key: ProseLayoutKey,
+        theme: PreparedProseTheme,
+        widthPx: Int,
+        density: Float,
+        warningSemanticGeneration: String,
+        context: PreparedCellShapeBuildContext
+    ): Preparation = iterator {
+        yield(
+            PreparationStep.Complete(
+                bindCellShape(
+                    shape,
+                    document,
+                    key,
+                    theme,
+                    widthPx,
+                    density,
+                    warningSemanticGeneration,
+                    context
+                )
+            )
+        )
+    }
+
     /** Rebinds only source-qualified metadata; all local StaticLayouts stay in the shape. */
-    private fun bindCellShape(
+    private suspend fun SequenceScope<PreparationStep>.bindCellShape(
         shape: PreparedCellShape,
         document: ViewerDocument,
         key: ProseLayoutKey,
@@ -1270,11 +1492,80 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                         key.fontEnvironmentRevision
                     )
                 }
+                fun boundCell(
+                    cell: com.apollohg.editor.tables.TableGridCell,
+                    cellWidth: Float
+                ): Preparation = iterator {
+                    val source = surfaceSource.cells.getOrNull(cell.sourceIndex)
+                    if (source == null) {
+                        yield(
+                            PreparationStep.Complete(
+                                PreparedProseLayout.error(
+                                    key,
+                                    cellWidth.toInt(),
+                                    ProseViewerError.layout("Invalid table cell.")
+                                )
+                            )
+                        )
+                        return@iterator
+                    }
+                    val child = document.cellDocument(source, tableKey)
+                    val childWidth = cellWidth.toInt().coerceAtLeast(MINIMUM_CELL_CONTENT_WIDTH_PX)
+                    val childKey = key.copy(semanticKey = child.semanticKey, widthPx = childWidth)
+                    val childShapeKey =
+                        cellShapeKey(
+                            cell.contentKey,
+                            child,
+                            childWidth,
+                            childTheme,
+                            density,
+                            shapeStyleDigest,
+                            context
+                        )
+                    val build = {
+                        iterator {
+                            tableCellPreparationObserver?.invoke(cell.sourceIndex, cell.contentKey)
+                            val prepared = await(
+                                preparation(
+                                    child, childKey, childTheme, childWidth, density, false,
+                                    warningSemanticGeneration, true, context
+                                )
+                            )
+                            yield(PreparationStep.Complete(prepared))
+                        }
+                    }
+                    val prepared = await(
+                        context.resolution(childShapeKey, build) { nestedShape ->
+                            cellShapeBinding(
+                                nestedShape,
+                                child,
+                                childKey,
+                                childTheme,
+                                childWidth,
+                                density,
+                                warningSemanticGeneration,
+                                context
+                            )
+                        }
+                    )
+                    yield(PreparationStep.Complete(prepared))
+                }
+                val record = TableGridRecord.from(surfaceSource, document.semanticKey)
+                    .physical(density)
+                val tableStyle = theme.tableStyle.physical(density)
+                val nestedCells = prepareNestedCells(
+                    surfaceSource,
+                    { record },
+                    tableBounds.width().toFloat(),
+                    tableStyle,
+                    emptySet(),
+                    ::boundCell
+                )
                 val surface = ViewerTableSurface(
                     document.tablePresentationIdentity(tableKey),
-                    TableGridRecord.from(surfaceSource, document.semanticKey).physical(density),
+                    record,
                     tableBounds.width().toFloat(),
-                    theme.tableStyle.physical(density),
+                    tableStyle,
                     TableLayoutDirection.isRightToLeft(
                         surfaceSource.direction,
                         theme.tableDirection
@@ -1284,52 +1575,19 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                     editorTableId = tableKey,
                     sourceAttributes = document.tableAttributes
                 ) { cell, cellWidth ->
-                    val source =
-                        surfaceSource.cells.getOrNull(cell.sourceIndex)
-                            ?: return@ViewerTableSurface PreparedProseLayout.error(
-                                key,
-                                cellWidth.toInt(),
-                                ProseViewerError.layout("Invalid table cell.")
-                            )
-                    val child = document.cellDocument(source, tableKey)
-                    val childWidth = cellWidth.toInt().coerceAtLeast(1)
-                    val childKey = key.copy(semanticKey = child.semanticKey, widthPx = childWidth)
-                    val childShapeKey =
-                        cellShapeKey(
-                            cell.contentKey,
-                            child,
-                            childWidth,
-                            childTheme,
-                            density,
-                            shapeStyleDigest
-                        )
-                    context.resolve(childShapeKey, {
-                        tableCellPreparationObserver?.invoke(cell.sourceIndex, cell.contentKey)
-                        prepare(
-                            child, childKey, childTheme, childWidth, density, false,
-                            warningSemanticGeneration, true, context
-                        )
-                    }) { nestedShape ->
-                        bindCellShape(
-                            nestedShape,
-                            child,
-                            childKey,
-                            childTheme,
-                            childWidth,
-                            density,
-                            warningSemanticGeneration,
-                            context
-                        )
-                    }
+                    nestedCells.take(cell, cellWidth)
+                        ?: requireNotNull(boundCell(cell, cellWidth).runToCompletion())
                 }
-                if (kotlin.math.abs(surface.layout.contentWidth - tableBounds.width()) > 1f ||
-                    kotlin.math.abs(surface.layout.contentHeight - tableBounds.height()) > 1f
+                if (kotlin.math.abs(surface.layout.contentWidth - tableBounds.width()) >
+                    BOUND_TABLE_GEOMETRY_TOLERANCE_PX ||
+                    kotlin.math.abs(surface.layout.contentHeight - tableBounds.height()) >
+                    BOUND_TABLE_GEOMETRY_TOLERANCE_PX
                 ) {
                     return null
                 }
                 surface
             }
-            if ((current.table == null) != (localBlock.tableBounds == null)) return null
+            if ((current.tableKey == null) != (localBlock.tableBounds == null)) return null
             val attachment = ViewerImageAttachment.sourceAndDeclaredSize(
                 current
             )?.let { (id, source, declared) ->
@@ -1400,6 +1658,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                 interaction.sourceBlockIndex
             )
         }
+        val boundTableBytes = boundBlocks.sumOf { it.tableSurface?.retainedBytes ?: 0L }
         return local.copy(
             key = key,
             widthPx = widthPx,
@@ -1408,8 +1667,9 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
             accessibilityNodes = nodes,
             imageAttachments = attachments,
             viewerAtoms = boundAtoms,
-            retainedBytes = local.retainedBytes + nodes.sumOf { it.retainedBytes },
-            cellShape = null
+            retainedBytes = local.ownRetainedBytes + boundTableBytes,
+            cellShape = null,
+            tableRetainedBytesAtPreparation = boundTableBytes
         )
     }
 

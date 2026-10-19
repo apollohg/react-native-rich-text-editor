@@ -1,3 +1,5 @@
+const JOINED_BOUNDARY_TOKENS: u32 = 2;
+
 fn empty_list_unwrap_pos(
     document: &Document,
     map: &PositionMap,
@@ -78,8 +80,17 @@ fn marker_backspace_action(
         // removes exactly two tokens — the previous item's close and this
         // item's open — and the paragraph boundary sits after both.
         let item_boundary = node_delete_start(document, &resolved.node_path[..=depth])?;
-        let paragraph_boundary =
-            node_delete_start(document, &resolved.node_path)?.checked_sub(2)?;
+        if !is_text_block(schema, previous_tail) {
+            return Some(SemanticCommandPlan {
+                operations: vec![SemanticOperation::JoinBlocks { pos: item_boundary }],
+                selection_after: Some(Selection::cursor(
+                    doc_to.checked_sub(JOINED_BOUNDARY_TOKENS)?,
+                )),
+                history: SemanticCommandHistory::InputBoundary,
+            });
+        }
+        let paragraph_boundary = node_delete_start(document, &resolved.node_path)?
+            .checked_sub(JOINED_BOUNDARY_TOKENS)?;
         let joined_text_boundary = paragraph_boundary.checked_sub(1)?;
         return Some(SemanticCommandPlan {
             operations: vec![
@@ -171,7 +182,9 @@ fn move_into_previous_blockquote_action(
     scalar_to: u32,
     doc_to: u32,
 ) -> Option<SemanticCommandPlan> {
-    if scalar_from >= scalar_to || map.doc_to_scalar(doc_to, document) != scalar_to {
+    if scalar_from.checked_add(1) != Some(scalar_to)
+        || map.doc_to_scalar(doc_to, document) != scalar_to
+    {
         return None;
     }
     let resolved = document.resolve(doc_to).ok()?;
@@ -288,7 +301,20 @@ fn join_with_previous_block_action(
         parent = parent.child(ancestor as usize)?;
     }
     let previous = parent.content()?.child(usize::try_from(index).ok()? - 1)?;
-    if !is_text_block(schema, previous) {
+    let joined = previous
+        .content()?
+        .iter()
+        .chain(block.content()?.iter())
+        .map(crate::model::Node::node_type)
+        .collect::<Vec<_>>();
+    if !is_text_block(schema, previous)
+        || !schema
+            .node(previous.node_type())?
+            .content
+            .matches(&joined, |child, symbol| {
+                schema.node_matches_symbol(child, symbol)
+            })
+    {
         return None;
     }
 

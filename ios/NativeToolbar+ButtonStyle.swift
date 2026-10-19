@@ -90,6 +90,12 @@ extension EditorAccessoryToolbarView {
         enabled: Bool,
         active: Bool
     ) {
+        let batchConfigurationUpdates: Bool
+        if #available(iOS 15.0, *) {
+            batchConfigurationUpdates = button.configuration != nil && button.configurationUpdateHandler == nil
+        } else {
+            batchConfigurationUpdates = false
+        }
         let buttonStyle = item.buttonStyle
         let tintColor: UIColor
         if !enabled {
@@ -108,7 +114,7 @@ extension EditorAccessoryToolbarView {
                 ?? (resolvedAppearance == .native ? self.tintColor : .secondaryLabel)
         }
 
-        applyButtonForeground(to: button, color: tintColor)
+        applyButtonForeground(to: button, color: tintColor, batchConfigurationUpdates: batchConfigurationUpdates)
         button.tintAdjustmentMode = enabled ? .automatic : .normal
         button.alpha = enabled || resolvedAppearance == .native ? 1 : 0.7
         let inactiveBackgroundColor = buttonStyle?.backgroundColor
@@ -135,40 +141,70 @@ extension EditorAccessoryToolbarView {
         applyButtonBackground(
             to: button,
             color: backgroundColor,
-            cornerRadius: cornerRadius
+            cornerRadius: cornerRadius,
+            batchConfigurationUpdates: batchConfigurationUpdates
         )
-        applyButtonIconStyle(to: button, item: item, color: tintColor)
+        applyButtonIconStyle(
+            to: button,
+            item: item,
+            color: tintColor,
+            backgroundColor: backgroundColor,
+            cornerRadius: cornerRadius,
+            batchConfigurationUpdates: batchConfigurationUpdates
+        )
     }
 
     /// A configured `UIButton` paints disabled content in its own system gray,
     /// ignoring `tintColor`, so the colour must be forced through the
     /// configuration's transformers as well.
-    private func applyButtonForeground(to button: UIButton, color: UIColor) {
+    private func applyButtonForeground(
+        to button: UIButton,
+        color: UIColor,
+        batchConfigurationUpdates: Bool
+    ) {
         button.tintColor = color
         button.setTitleColor(color, for: .normal)
         button.setTitleColor(color, for: .disabled)
-        guard #available(iOS 15.0, *), var configuration = button.configuration else { return }
+        guard !batchConfigurationUpdates,
+              #available(iOS 15.0, *), var configuration = button.configuration else { return }
+        applyButtonForeground(to: &configuration, color: color)
+        button.configuration = configuration
+    }
+
+    @available(iOS 15.0, *)
+    private func applyButtonForeground(to configuration: inout UIButton.Configuration, color: UIColor) {
         configuration.baseForegroundColor = color
         configuration.imageColorTransformer = UIConfigurationColorTransformer { _ in color }
-        button.configuration = configuration
     }
 
     /// Own the configured background to avoid stacking it with UIButton state fills.
     private func applyButtonBackground(
         to button: UIButton,
         color: UIColor,
-        cornerRadius: CGFloat
+        cornerRadius: CGFloat,
+        batchConfigurationUpdates: Bool
     ) {
         guard #available(iOS 15.0, *), var configuration = button.configuration else {
             button.backgroundColor = color
             return
         }
+        if !batchConfigurationUpdates {
+            applyButtonBackground(to: &configuration, color: color, cornerRadius: cornerRadius)
+            button.configuration = configuration
+        }
+        button.backgroundColor = .clear
+    }
+
+    @available(iOS 15.0, *)
+    private func applyButtonBackground(
+        to configuration: inout UIButton.Configuration,
+        color: UIColor,
+        cornerRadius: CGFloat
+    ) {
         var background = UIBackgroundConfiguration.clear()
         background.backgroundColor = color
         background.cornerRadius = cornerRadius
         configuration.background = background
-        button.configuration = configuration
-        button.backgroundColor = .clear
     }
 
     func resolvedButtonBorderRadius(for item: NativeToolbarItem) -> CGFloat {
@@ -186,10 +222,21 @@ extension EditorAccessoryToolbarView {
         return min(requestedSize, resolvedButtonSize)
     }
 
-    private func applyButtonIconStyle(to button: UIButton, item: NativeToolbarItem, color: UIColor) {
+    private func applyButtonIconStyle(
+        to button: UIButton,
+        item: NativeToolbarItem,
+        color: UIColor,
+        backgroundColor: UIColor,
+        cornerRadius: CGFloat,
+        batchConfigurationUpdates: Bool
+    ) {
         let iconSize = resolvedButtonIconSize(for: item)
         let font = UIFont.systemFont(ofSize: iconSize, weight: .semibold)
         if #available(iOS 15.0, *), var configuration = button.configuration {
+            if batchConfigurationUpdates {
+                applyButtonForeground(to: &configuration, color: color)
+                applyButtonBackground(to: &configuration, color: backgroundColor, cornerRadius: cornerRadius)
+            }
             configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
                 var outgoing = incoming
                 outgoing.font = font

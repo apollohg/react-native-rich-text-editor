@@ -29,7 +29,7 @@ import org.json.JSONObject
  * Multiple marks are combined on the same range.
  */
 internal fun RenderBridge.appendStyledText(
-    builder: SpannableStringBuilder,
+    builder: RenderTextBuilder,
     text: String,
     marks: List<Any>, // String or JSONObject for link marks
     baseFontSize: Float,
@@ -249,7 +249,7 @@ internal fun RenderBridge.appendStyledText(
  * are rendered as the object replacement character.
  */
 internal fun RenderBridge.appendVoidInline(
-    builder: SpannableStringBuilder,
+    builder: RenderTextBuilder,
     nodeType: String,
     baseFontSize: Float,
     textColor: Int,
@@ -300,7 +300,7 @@ internal fun RenderBridge.appendVoidInline(
  * with a [HorizontalRuleSpan] that draws a separator line.
  */
 internal fun RenderBridge.appendVoidBlock(
-    builder: SpannableStringBuilder,
+    builder: RenderTextBuilder,
     nodeType: String,
     attrs: JSONObject?,
     baseFontSize: Float,
@@ -345,7 +345,7 @@ internal fun RenderBridge.appendVoidBlock(
             Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
         )
         builder.setSpan(
-            Annotation("nativeDocPos", docPos.toUInt().toString()),
+            RenderMetadataAnnotation(NATIVE_DOC_POS_ANNOTATION, docPos.toUInt().toString()),
             start,
             end,
             Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
@@ -472,7 +472,7 @@ internal fun RenderBridge.appendVoidBlock(
 }
 
 internal fun RenderBridge.appendOpaqueInlineAtom(
-    builder: SpannableStringBuilder,
+    builder: RenderTextBuilder,
     nodeType: String,
     label: String,
     docPos: Long,
@@ -522,7 +522,7 @@ internal fun RenderBridge.appendOpaqueInlineAtom(
             Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
         )
         builder.setSpan(
-            Annotation("nativeDocPos", docPos.toString()),
+            RenderMetadataAnnotation(NATIVE_DOC_POS_ANNOTATION, docPos.toString()),
             start,
             end,
             Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
@@ -587,7 +587,7 @@ internal fun RenderBridge.appendOpaqueInlineAtom(
         Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
     )
     builder.setSpan(
-        Annotation("nativeDocPos", docPos.toString()),
+        RenderMetadataAnnotation(NATIVE_DOC_POS_ANNOTATION, docPos.toString()),
         start,
         end,
         Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
@@ -605,7 +605,7 @@ internal fun RenderBridge.appendOpaqueInlineAtom(
 }
 
 internal fun RenderBridge.appendOpaqueBlockAtom(
-    builder: SpannableStringBuilder,
+    builder: RenderTextBuilder,
     nodeType: String,
     label: String,
     docPos: Long,
@@ -638,7 +638,7 @@ internal fun RenderBridge.appendOpaqueBlockAtom(
         Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
     )
     builder.setSpan(
-        Annotation("nativeDocPos", docPos.toString()),
+        RenderMetadataAnnotation(NATIVE_DOC_POS_ANNOTATION, docPos.toString()),
         start,
         end,
         Spanned.SPAN_EXCLUSIVE_EXCLUSIVE

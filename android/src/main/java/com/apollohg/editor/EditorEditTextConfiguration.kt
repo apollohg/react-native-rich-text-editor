@@ -9,11 +9,7 @@ import android.util.TypedValue
  * @param id The editor session public ID.
  * @param initialHTML Optional HTML to set as initial content.
  */
-internal fun EditorEditText.bindEditorImpl(
-    id: Long,
-    initialHTML: String? = null,
-    notifyListener: Boolean = true
-) {
+internal fun EditorEditText.bindEditorImpl(id: Long, initialHTML: String? = null) {
     val wasTableCellInput = isTableCellInput
     if (id != 0L && NativeEditorViewRegistry.isDestroyed(id)) {
         discardTransientNativeInputForEditorRebind()
@@ -43,11 +39,11 @@ internal fun EditorEditText.bindEditorImpl(
         } else {
             val initial =
                 if (driver is EditorV2Adapter) {
-                    driver.initialUpdateJson()
+                    driver.recoverNativeRender()
                 } else {
                     driver.currentStateJson()
                 }
-            initial?.let { applyUpdateJSON(it, notifyListener = notifyListener) }
+            initial?.let { applyUpdateJSON(it, notifyListener = false) }
         }
         return
     }
@@ -183,9 +179,9 @@ internal fun EditorEditText.applyAtomRenderConfigurationImpl(
         return true
     }
 
-    val renderBlocks = currentRenderBlocksJson ?: return true
+    val renderBlocks = currentRenderBlocks ?: return true
     val spannable = RenderBridge.buildSpannableFromBlocks(
-        renderBlocks,
+        ResolvedRenderBlocks.retained(renderBlocks).toJsonArray(),
         baseFontSize = baseFontSize,
         textColor = baseTextColor,
         theme = theme,

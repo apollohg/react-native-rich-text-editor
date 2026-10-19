@@ -49,7 +49,6 @@ extension EditorTextView {
         textStorage.endEditing()
         guard changed else { return }
         layoutManager.invalidateLayout(forCharacterRange: fullRange, actualCharacterRange: nil)
-        lastAuthorizedTextStorage.setString(textStorage.string)
         lastAuthorizedAttributedTextStorage.setAttributedString(textStorage)
         PositionBridge.invalidateCache(for: self)
     }
@@ -159,20 +158,18 @@ extension EditorTextView {
         usedPatch: Bool,
         positionCacheUpdate: PositionCacheUpdate = .scan,
         authorizedReplaceRange: NSRange? = nil,
-        authorizedReplacementText: String? = nil,
-        authorizedReplacementAttributedText: NSAttributedString? = nil
+        authorizedReplacementAttributedText: NSAttributedString? = nil,
+        allowsEmptyNativeTextReplacement: Bool = false
     ) -> ApplyRenderTrace {
         if tableCellPositionMap != nil { inputRerendersForTesting += 1 }
         let totalStartedAt = DispatchTime.now().uptimeNanoseconds
         let replaceUtf16Length = replaceRange?.length ?? textStorage.length
         let replacementUtf16Length = attrStr.length
         let shouldUseSmallPatchTextMutation =
-            replaceRange != nil && shouldUseSmallPatchTextMutation(for: attrStr, replaceRange: replaceRange)
+            replaceRange != nil && shouldUseSmallPatchTextMutation(for: attrStr, replaceRange: replaceRange,
+                allowsEmptyNativeTextReplacement: allowsEmptyNativeTextReplacement)
         isApplyingRustState = true
         let textMutationStartedAt = DispatchTime.now().uptimeNanoseconds
-        let beginEditingStartedAt = DispatchTime.now().uptimeNanoseconds
-        textStorage.beginEditing()
-        let beginEditingNanos = DispatchTime.now().uptimeNanoseconds - beginEditingStartedAt
         var stringMutationNanos: UInt64 = 0
         var attributeMutationNanos: UInt64 = 0
         let previousTextStorageDelegate = textStorage.delegate
@@ -182,26 +179,39 @@ extension EditorTextView {
             textStorage.delegate = previousTextStorageDelegate
             ensureInternalTextViewDelegate()
         }
+        let nativeTextReplacementApplied: Bool
+        if shouldUseSmallPatchTextMutation, let replaceRange {
+            let stringMutationStartedAt = DispatchTime.now().uptimeNanoseconds
+            nativeTextReplacementApplied = applyNativeTextReplacementIfPossible(replacing: replaceRange, with: attrStr)
+            stringMutationNanos = DispatchTime.now().uptimeNanoseconds - stringMutationStartedAt
+        } else {
+            nativeTextReplacementApplied = false
+        }
+        let displayedRender = preservingCodeHighlighting(in: attrStr)
+        let beginEditingStartedAt = DispatchTime.now().uptimeNanoseconds
+        textStorage.beginEditing()
+        let beginEditingNanos = DispatchTime.now().uptimeNanoseconds - beginEditingStartedAt
         if let replaceRange {
             if shouldUseSmallPatchTextMutation {
-                let stringMutationStartedAt = DispatchTime.now().uptimeNanoseconds
-                textStorage.replaceCharacters(in: replaceRange, with: attrStr.string)
-                stringMutationNanos =
-                    DispatchTime.now().uptimeNanoseconds - stringMutationStartedAt
+                if !nativeTextReplacementApplied {
+                    let stringMutationStartedAt = DispatchTime.now().uptimeNanoseconds
+                    textStorage.replaceCharacters(in: replaceRange, with: attrStr.string)
+                    stringMutationNanos += DispatchTime.now().uptimeNanoseconds - stringMutationStartedAt
+                }
                 let destinationRange = NSRange(location: replaceRange.location, length: attrStr.length)
                 let attributeMutationStartedAt = DispatchTime.now().uptimeNanoseconds
-                applyAttributes(from: attrStr, to: destinationRange)
+                applyAttributes(from: displayedRender, to: destinationRange)
                 attributeMutationNanos =
                     DispatchTime.now().uptimeNanoseconds - attributeMutationStartedAt
             } else {
                 let stringMutationStartedAt = DispatchTime.now().uptimeNanoseconds
-                textStorage.replaceCharacters(in: replaceRange, with: attrStr)
+                textStorage.replaceCharacters(in: replaceRange, with: displayedRender)
                 stringMutationNanos =
                     DispatchTime.now().uptimeNanoseconds - stringMutationStartedAt
             }
         } else {
             let stringMutationStartedAt = DispatchTime.now().uptimeNanoseconds
-            textStorage.setAttributedString(attrStr)
+            textStorage.setAttributedString(displayedRender)
             stringMutationNanos =
                 DispatchTime.now().uptimeNanoseconds - stringMutationStartedAt
         }
@@ -212,21 +222,15 @@ extension EditorTextView {
         let textMutationNanos = DispatchTime.now().uptimeNanoseconds - textMutationStartedAt
         let authorizedTextStartedAt = DispatchTime.now().uptimeNanoseconds
         let snapshotReplaceRange = authorizedReplaceRange ?? replaceRange
-        let snapshotReplacementText = authorizedReplacementText ?? attrStr.string
         let snapshotReplacementAttributedText = authorizedReplacementAttributedText ?? attrStr
         if let snapshotReplaceRange,
            snapshotReplaceRange.location >= 0,
-           snapshotReplaceRange.location + snapshotReplaceRange.length <= lastAuthorizedTextStorage.length {
-            lastAuthorizedTextStorage.replaceCharacters(
-                in: snapshotReplaceRange,
-                with: snapshotReplacementText
-            )
+           snapshotReplaceRange.location + snapshotReplaceRange.length <= lastAuthorizedAttributedTextStorage.length {
             lastAuthorizedAttributedTextStorage.replaceCharacters(
                 in: snapshotReplaceRange,
                 with: snapshotReplacementAttributedText
             )
         } else {
-            lastAuthorizedTextStorage.setString(replaceRange == nil ? snapshotReplacementText : textStorage.string)
             let fallbackAttributedSnapshot = replaceRange == nil
                 ? snapshotReplacementAttributedText
                 : NSAttributedString(attributedString: textStorage)
@@ -328,9 +332,9 @@ extension EditorTextView {
         ensureInternalTextViewDelegate()
         let totalStartedAt = DispatchTime.now().uptimeNanoseconds
         let parseStartedAt = totalStartedAt
-        guard let data = updateJSON.data(using: .utf8),
-              let update = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return false }
+        guard let update = EditorV2Adapter.viewUpdateObject(
+            updateJSON, adoptedBy: EditorV2Registry.adapter(forLegacyId: editorId)
+        ) else { return false }
         let parseNanos = DispatchTime.now().uptimeNanoseconds - parseStartedAt
         resetPendingNativeTextMutationState()
 
@@ -372,13 +376,23 @@ extension EditorTextView {
         }
         let currentHasRootTableMarkers = PositionBridge.hasRootTableScalarExtents(in: self)
 
-        let derivedRenderPatch: DerivedRenderPatch? =
-            if let currentRenderBlocks,
-            let resolvedRenderBlocks {
-                deriveRenderPatch(from: currentRenderBlocks, to: resolvedRenderBlocks)
-            } else {
-                nil
-            }
+        let canSkipPatchDerivation = if let explicitRenderPatch {
+            patchMatchesCurrentRenderBlocks(explicitRenderPatch, updateDocumentVersion: updateDocumentVersion)
+                && (explicitRenderPatch.deleteCount > 0 || !explicitRenderPatch.renderBlocks.isEmpty)
+                && incomingRootTableIDs.isEmpty && !currentHasRootTableMarkers
+        } else {
+            false
+        }
+        let derivedRenderPatch: DerivedRenderPatch?
+        let deriveRenderPatchNanos: UInt64
+        if !canSkipPatchDerivation, let currentRenderBlocks, let resolvedRenderBlocks {
+            let startedAt = DispatchTime.now().uptimeNanoseconds
+            derivedRenderPatch = deriveRenderPatch(from: currentRenderBlocks, to: resolvedRenderBlocks)
+            deriveRenderPatchNanos = DispatchTime.now().uptimeNanoseconds - startedAt
+        } else {
+            derivedRenderPatch = nil
+            deriveRenderPatchNanos = 0
+        }
         let renderPatch: ParsedRenderPatch? = if let explicitRenderPatch {
             explicitRenderPatch
         } else if case let .patch(derivedPatch)? = derivedRenderPatch {
@@ -387,7 +401,7 @@ extension EditorTextView {
             nil
         }
         let shouldSkipRender = if case .unchanged? = derivedRenderPatch {
-            textStorage.string == lastAuthorizedText
+            textStorageMatchesAuthorizedText()
                 && lastAppliedRenderAppearanceRevision == renderAppearanceRevision
         } else {
             false
@@ -433,7 +447,7 @@ extension EditorTextView {
         let patchTrace: PatchApplyTrace? = if !shouldSkipRender
             && rootTableScalarExtents.isEmpty
             && !currentHasRootTableMarkers
-            && textStorage.string == lastAuthorizedText
+            && textStorageMatchesAuthorizedText()
             && lastAppliedRenderAppearanceRevision == renderAppearanceRevision {
             renderPatch.map(applyRenderPatchIfPossible)
         } else {
@@ -528,6 +542,7 @@ extension EditorTextView {
             )
             lastAppliedRenderAppearanceRevision = renderAppearanceRevision
         }
+        let retainedMetadataStartedAt = DispatchTime.now().uptimeNanoseconds
         if appliedPatch,
            let renderPatch,
            let resolvedRenderBlocks,
@@ -535,11 +550,17 @@ extension EditorTextView {
                startingAt: renderPatch.startIndex + renderPatch.renderBlocks.count,
                updatedRenderBlocks: resolvedRenderBlocks
            ) {
-            // The preflight is deliberately conservative: a partial metadata
-            // refresh must never leave a retained atom targeting stale state.
-            // The next update will take the full safe path after cache reset.
             currentTopLevelChildMetadata = nil
+            invalidateCurrentRenderBlocks()
+            var recovery = update
+            recovery["renderBlocks"] = resolvedRenderBlocks
+            recovery["renderPatch"] = NSNull()
+            guard let recoveryData = try? JSONSerialization.data(withJSONObject: recovery),
+                  let recoveryJSON = String(data: recoveryData, encoding: .utf8)
+            else { return false }
+            return applyUpdateJSON(recoveryJSON, notifyDelegate: notifyDelegate)
         }
+        let retainedMetadataNanos = DispatchTime.now().uptimeNanoseconds - retainedMetadataStartedAt
 
         PositionBridge.setRootTablePositionMap(nextRootMap, in: self)
 
@@ -591,7 +612,7 @@ extension EditorTextView {
                 resolveRenderBlocksNanos: resolveRenderBlocksNanos + rootMapNanos,
                 patchEligibilityNanos: patchTrace?.eligibilityNanos ?? 0,
                 patchTrimNanos: patchTrace?.trimNanos ?? 0,
-                patchMetadataNanos: patchTrace?.metadataNanos ?? 0,
+                patchMetadataNanos: (patchTrace?.metadataNanos ?? 0) + retainedMetadataNanos,
                 buildRenderNanos: buildRenderNanos,
                 applyRenderNanos: applyRenderNanos,
                 selectionNanos: selectionTrace.totalNanos,
@@ -616,7 +637,9 @@ extension EditorTextView {
                 postApplyHeightNotifyContentSizeNanos: postApplyTrace.heightNotifyContentSizeNanos,
                 postApplyHeightNotifySizeThatFitsNanos: postApplyTrace.heightNotifySizeThatFitsNanos,
                 postApplySelectionOrContentCallbackNanos:
-                postApplyTrace.selectionOrContentCallbackNanos
+                postApplyTrace.selectionOrContentCallbackNanos,
+                selectionPositionNanos: selectionTrace.positionNanos,
+                deriveRenderPatchNanos: deriveRenderPatchNanos
             )
         }
         recordAuthorizedSelectionIfPossible()
@@ -650,13 +673,13 @@ extension EditorTextView {
     }
 
     private func rootTableIDs(
-        renderBlocks: [[[String: Any]]]?,
+        renderBlocks: [[NSDictionary]]?,
         renderElements: [[String: Any]]?
     ) -> Set<String> {
-        let elements = renderBlocks?.flatMap { $0 } ?? renderElements ?? []
-        return Set(elements.compactMap { element in
-            element["type"] as? String == "table" ? element["tableId"] as? String : nil
-        })
+        if let renderBlocks {
+            return Set(renderBlocks.joined().compactMap(RenderBridge.rootTableID(of:)))
+        }
+        return Set((renderElements ?? []).compactMap { RenderBridge.rootTableID(of: $0 as NSDictionary) })
     }
 
     private func rootSelectionIsRepresentable(_ selection: [String: Any]) -> Bool {

@@ -68,7 +68,7 @@ pub(crate) struct EditorSession {
     position_epochs: crate::position_epoch::PositionEpochStore,
     latest_epoch_snapshot: Option<std::sync::Arc<crate::position_epoch::EpochSnapshot>>,
     native_request_ledgers: std::collections::BTreeMap<u64, NativeRequestLedger>,
-    native_render_cursors: std::collections::BTreeMap<u64, NativeRenderCursor>,
+    native_render_cursors: std::collections::BTreeMap<u64, std::sync::Arc<NativeRenderCursor>>,
 }
 
 const NATIVE_REQUEST_CACHE_LIMIT: usize = 256;
@@ -80,11 +80,11 @@ struct NativeRequestLedger {
     order: std::collections::VecDeque<u64>,
 }
 
-#[derive(Clone)]
 pub(crate) struct NativeRenderCursor {
     pub(crate) schema_fingerprint: String,
     pub(crate) table_keys: std::collections::BTreeMap<u32, String>,
-    pub(crate) root_projection: Vec<serde_json::Value>,
+    // Drop projection Weak handles before the cache's final guarded payload drain.
+    pub(crate) root_projection: std::sync::Arc<Vec<crate::ffi_v2::render::RootRenderBlock>>,
     pub(crate) document_revision: u64,
     pub(crate) render_blocks: std::sync::Arc<crate::render::incremental::CachedRenderBlocks>,
 }

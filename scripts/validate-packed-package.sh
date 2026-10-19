@@ -233,7 +233,7 @@ validate_android_library() {
     x86_64) [[ "$file_output" == *"ELF 64-bit"* && "$file_output" == *"x86-64"* ]] ;;
     *) fail "unknown Android ABI: $abi" ;;
   esac || fail "Android $abi library has the wrong machine type: $file_output"
-  nm_output="$(nm -D -g "$library_path" 2>&1)" || fail "Android $abi library has no readable dynamic symbol table: $nm_output"
+  nm_output="$(nm -D -g "$library_path")" || fail "Android $abi library has no readable dynamic symbol table"
   validate_symbol_text "Android $abi library" "$nm_output"
   ruby "$repo_root/scripts/validate-uniffi-checksum-values.rb" \
     --manifest "$manifest_path" \
@@ -249,11 +249,11 @@ validate_archive_architectures() {
   local architecture_info actual_architectures normalized_architectures architecture thin_archive
   local extracted_objects_dir
   local load_commands
-  local architecture_nm_output architecture_nm_status unexpected_nm_lines
+  local architecture_nm_output architecture_nm_errors architecture_nm_status unexpected_nm_lines
 
   [[ -s "$archive_path" ]] || fail "$label archive is missing or empty"
   architecture_info="$(lipo -info "$archive_path" 2>&1)" || fail "$label is not a valid Mach-O archive: $architecture_info"
-  actual_architectures="$(lipo -archs "$archive_path" 2>&1)" || fail "$label architectures cannot be read: $architecture_info"
+  actual_architectures="$(lipo -archs "$archive_path")" || fail "$label architectures cannot be read: $architecture_info"
   normalized_architectures="$(printf '%s\n' "$actual_architectures" | tr ' ' '\n' | sed '/^$/d' | sort | tr '\n' ' ' | sed 's/ $//')"
   [[ "$normalized_architectures" == "$expected_architectures" ]] || fail "$label must contain exactly [$expected_architectures], found [$normalized_architectures]"
 
@@ -277,7 +277,7 @@ validate_archive_architectures() {
       # Apple nm can reject Rust objects whose embedded bitcode is newer than
       # its LLVM reader. otool still proves each member has a Mach-O header.
       for object in ./*.o; do
-        otool -hv "$object" 2>&1 | grep -q "Mach header" || exit 1
+        otool -hv "$object" | grep -q "Mach header" || exit 1
       done
     ) || fail "$label $architecture archive contains an unreadable Mach-O object member"
     load_commands="$work_dir/${label//[^[:alnum:]]/_}-$architecture-load-commands.txt"
@@ -317,13 +317,14 @@ validate_archive_architectures() {
       abort "#{label} object #{missing.first} has no iOS deployment load command" unless missing.empty?
     ' "$deployment_target" "$label $architecture" "$load_commands" \
       || fail "$label $architecture archive deployment target validation failed"
+    architecture_nm_errors="$work_dir/${label//[^[:alnum:]]/_}-$architecture-nm-errors.txt"
     architecture_nm_status=0
-    architecture_nm_output="$(nm -gU "$thin_archive" 2>&1)" || architecture_nm_status=$?
+    architecture_nm_output="$(nm -gU "$thin_archive" 2>"$architecture_nm_errors")" || architecture_nm_status=$?
     if [[ "$architecture_nm_status" -ne 0 ]]; then
       # Tolerate only the documented producer/reader skew and no-symbol notes;
       # all other Apple nm errors invalidate the archive.
-      unexpected_nm_lines="$(printf '%s\n' "$architecture_nm_output" | grep -E '(nm: error: |: no symbols$)' | grep -v 'Unknown attribute kind' | grep -v ': no symbols$' || true)"
-      [[ -z "$unexpected_nm_lines" ]] || fail "$label $architecture archive symbols cannot be read: $architecture_nm_output"
+      unexpected_nm_lines="$(grep -E '(nm: error: |: no symbols$)' "$architecture_nm_errors" | grep -v 'Unknown attribute kind' | grep -v ': no symbols$' || true)"
+      [[ -z "$unexpected_nm_lines" ]] || fail "$label $architecture archive symbols cannot be read: $unexpected_nm_lines"
     fi
     validate_symbol_text "$label $architecture archive" "$architecture_nm_output"
   done

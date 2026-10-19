@@ -8,6 +8,7 @@ use crate::schema::Schema;
 use crate::tables::commands::{NODE_CLOSING_TOKENS, NODE_OPENING_TOKENS};
 use smallvec::SmallVec;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::ops::Range;
 use std::sync::Arc;
 use yrs::branch::{Branch, BranchID, BranchPtr};
 use yrs::types::xml::{XmlElementRef, XmlFragment, XmlFragmentRef, XmlOut};
@@ -71,7 +72,11 @@ struct BlockBranchIndexBuilder {
 
 impl BlockBranchIndexBuilder {
     fn new(position_map: &PositionMap) -> Self {
-        let starts: HashMap<_, _> = (0..position_map.block_count())
+        Self::for_blocks(position_map, 0..position_map.block_count())
+    }
+
+    fn for_blocks(position_map: &PositionMap, blocks: Range<usize>) -> Self {
+        let starts: HashMap<_, _> = blocks
             .map(|index| {
                 let block = position_map.block(index).unwrap();
                 (
@@ -116,21 +121,14 @@ impl BlockBranchIndexBuilder {
 
     fn finish(self) -> Option<BlockBranchIndex> {
         let blocks: Vec<_> = self.blocks.into_iter().collect::<Option<_>>()?;
-        let mut by_branch = HashMap::new();
-        for (index, block) in blocks.iter().enumerate() {
-            for branch in std::iter::once(&block.element).chain(&block.texts) {
-                if by_branch.insert(branch.clone(), index).is_some() {
-                    return None;
-                }
-            }
-        }
-        Some(BlockBranchIndex {
-            blocks,
-            by_branch,
-            table_keys: self.table_keys,
-            atom_ids: self.atom_ids,
-        })
+        BlockBranchIndex::from_parts(blocks, self.table_keys, self.atom_ids)
     }
+}
+
+pub(crate) struct RootWindowBranches {
+    blocks: Vec<BlockBranches>,
+    table_keys: BTreeMap<Vec<u32>, String>,
+    atom_ids: BTreeMap<Vec<u32>, String>,
 }
 
 pub(crate) struct BlockBranchIndexCapture {
@@ -138,6 +136,7 @@ pub(crate) struct BlockBranchIndexCapture {
     position: u32,
     path: Vec<u32>,
     block: Option<(usize, usize)>,
+    root_ordinal_offset: u32,
 }
 
 impl BlockBranchIndexCapture {
@@ -147,6 +146,22 @@ impl BlockBranchIndexCapture {
             position: 0,
             path: Vec::new(),
             block: None,
+            root_ordinal_offset: 0,
+        }
+    }
+
+    pub(crate) fn for_root_window(
+        map: &PositionMap,
+        blocks: Range<usize>,
+        first_child: u32,
+        start_position: u32,
+    ) -> Self {
+        Self {
+            builder: Some(BlockBranchIndexBuilder::for_blocks(map, blocks)),
+            position: start_position,
+            path: Vec::new(),
+            block: None,
+            root_ordinal_offset: first_child,
         }
     }
 
@@ -165,7 +180,13 @@ impl BlockBranchIndexCapture {
         let Some(builder) = self.builder.as_mut() else {
             return true;
         };
-        let Some(ordinal) = u32::try_from(ordinal).ok() else {
+        let Some(ordinal) = u32::try_from(ordinal).ok().and_then(|ordinal| {
+            if self.path.is_empty() {
+                ordinal.checked_add(self.root_ordinal_offset)
+            } else {
+                Some(ordinal)
+            }
+        }) else {
             self.builder = None;
             return true;
         };
@@ -224,9 +245,107 @@ impl BlockBranchIndexCapture {
     pub(crate) fn finish(self) -> Option<BlockBranchIndex> {
         self.builder?.finish()
     }
+
+    pub(crate) fn finish_root_window(self, blocks: Range<usize>) -> Option<RootWindowBranches> {
+        let builder = self.builder?;
+        let mut captured = builder.blocks;
+        if captured[..blocks.start]
+            .iter()
+            .chain(&captured[blocks.end..])
+            .any(Option::is_some)
+        {
+            return None;
+        }
+        let blocks = captured.drain(blocks).collect::<Option<Vec<_>>>()?;
+        Some(RootWindowBranches {
+            blocks,
+            table_keys: builder.table_keys,
+            atom_ids: builder.atom_ids,
+        })
+    }
 }
 
 impl BlockBranchIndex {
+    fn from_parts(
+        blocks: Vec<BlockBranches>,
+        table_keys: BTreeMap<Vec<u32>, String>,
+        atom_ids: BTreeMap<Vec<u32>, String>,
+    ) -> Option<Self> {
+        let mut by_branch = HashMap::new();
+        for (index, block) in blocks.iter().enumerate() {
+            for branch in std::iter::once(&block.element).chain(&block.texts) {
+                if by_branch.insert(branch.clone(), index).is_some() {
+                    return None;
+                }
+            }
+        }
+        Some(Self {
+            blocks,
+            by_branch,
+            table_keys,
+            atom_ids,
+        })
+    }
+
+    pub(crate) fn with_root_window_replaced(
+        &self,
+        old_blocks: Range<usize>,
+        window: &super::derived_state::RootChildWindow,
+        branches: RootWindowBranches,
+    ) -> Option<Self> {
+        let replaced_children = u32::try_from(window.old_to() - window.from()).ok()?;
+        let inserted_children = u32::try_from(window.new_to() - window.from()).ok()?;
+        let first_child = u32::try_from(window.from()).ok()?;
+        let old_end_child = first_child.checked_add(replaced_children)?;
+        let shift_path = |path: &Vec<u32>| -> Option<Option<Vec<u32>>> {
+            let first = *path.first()?;
+            if first < first_child {
+                return Some(Some(path.clone()));
+            }
+            if first < old_end_child {
+                return Some(None);
+            }
+            let mut shifted = path.clone();
+            shifted[0] = first
+                .checked_sub(replaced_children)?
+                .checked_add(inserted_children)?;
+            Some(Some(shifted))
+        };
+        let mut table_keys = branches.table_keys;
+        for (path, key) in &self.table_keys {
+            if let Some(path) = shift_path(path)? {
+                if table_keys.insert(path, key.clone()).is_some() {
+                    return None;
+                }
+            }
+        }
+        let mut seen_table_keys = HashSet::new();
+        if !table_keys.values().all(|key| seen_table_keys.insert(key)) {
+            return None;
+        }
+        let mut atom_ids = branches.atom_ids;
+        for (path, id) in &self.atom_ids {
+            if let Some(path) = shift_path(path)? {
+                if atom_ids.insert(path, id.clone()).is_some() {
+                    return None;
+                }
+            }
+        }
+        let mut blocks = Vec::new();
+        blocks
+            .try_reserve_exact(
+                self.blocks
+                    .len()
+                    .checked_sub(old_blocks.len())?
+                    .checked_add(branches.blocks.len())?,
+            )
+            .ok()?;
+        blocks.extend_from_slice(self.blocks.get(..old_blocks.start)?);
+        blocks.extend(branches.blocks);
+        blocks.extend_from_slice(self.blocks.get(old_blocks.end..)?);
+        Self::from_parts(blocks, table_keys, atom_ids)
+    }
+
     #[cfg(test)]
     pub(crate) fn assert_same_allocations_for_test(&self, other: &Self) {
         assert_eq!(self, other);
@@ -373,6 +492,10 @@ impl BlockBranchIndex {
         self.blocks.get(block_index)
     }
 
+    pub(crate) fn block_index_for_branch(&self, branch: &BranchID) -> Option<usize> {
+        self.by_branch.get(branch).copied()
+    }
+
     pub(crate) fn doc_pos_of_offset<T: ReadTxn>(
         &self,
         txn: &T,
@@ -380,7 +503,7 @@ impl BlockBranchIndex {
         position_map: &PositionMap,
         document: &Document,
     ) -> Option<u32> {
-        let block_index = *self.by_branch.get(&offset.branch.id())?;
+        let block_index = self.block_index_for_branch(&offset.branch.id())?;
         if !supports_inline_index(position_map, document, block_index) {
             return None;
         }

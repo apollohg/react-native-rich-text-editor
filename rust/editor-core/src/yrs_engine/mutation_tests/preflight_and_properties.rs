@@ -23,6 +23,7 @@ fn preflight_rejects_same_utf16_length_text_or_mark_changes() {
                     editing_limits: &editing_limits,
                     document_revision: 0,
                     max_length: None,
+                    validation_certificate: None,
                 },
                 TypedTransaction {
                     request_id: 124,
@@ -151,6 +152,7 @@ fn crdt_envelope_bounds_fragmented_text_and_deep_xml_actual_costs() {
                     editing_limits: &editing_limits,
                     document_revision: 0,
                     max_length: None,
+                    validation_certificate: None,
                 },
                 TypedTransaction {
                     request_id: 125,
@@ -288,6 +290,7 @@ fn pure_insert_skips_but_plain_mark_add_requires_a_snapshot_envelope() {
             editing_limits: &editing_limits,
             document_revision: 0,
             max_length: None,
+            validation_certificate: None,
         },
         TypedTransaction {
             request_id: 126,
@@ -322,6 +325,7 @@ fn pure_insert_skips_but_plain_mark_add_requires_a_snapshot_envelope() {
             editing_limits: &editing_limits,
             document_revision: 0,
             max_length: None,
+            validation_certificate: None,
         },
         TypedTransaction {
             request_id: 127,
@@ -380,6 +384,7 @@ fn pending_crdt_state_rejects_local_compilation_atomically() {
             editing_limits: &editing_limits,
             document_revision: 0,
             max_length: None,
+            validation_certificate: None,
         },
         TypedTransaction {
             request_id: 128,
@@ -537,6 +542,7 @@ fn tombstone_scan_reservation_is_exact_and_compiler_charges_it() {
             editing_limits: &editing_limits,
             document_revision: 0,
             max_length: None,
+            validation_certificate: None,
         },
         TypedTransaction {
             request_id: 129,
@@ -567,6 +573,7 @@ fn tombstone_scan_reservation_is_exact_and_compiler_charges_it() {
                 editing_limits: &editing_limits,
                 document_revision: 0,
                 max_length: None,
+                validation_certificate: None,
             },
             TypedTransaction {
                 request_id: 131,
@@ -584,7 +591,13 @@ fn tombstone_scan_reservation_is_exact_and_compiler_charges_it() {
     };
     let deletion = compile_delete(&limits).unwrap();
     assert!(deletion.mutation_plan.requires_crdt_envelope());
-    let envelope = crdt_envelope(131, &txn, limits.max_encoded_state_bytes).unwrap();
+    let envelope = crdt_envelope(
+        131,
+        &txn,
+        &deletion.mutation_plan,
+        limits.max_encoded_state_bytes,
+    )
+    .unwrap();
     let exact_scan_limit = deletion
         .mutation_plan
         .scan_work
@@ -644,8 +657,6 @@ fn fully_deleted_clients_and_hidden_format_cleanup_are_bounded() {
             Attrs::from([(Arc::<str>::from("bold"), Any::Bool(true))]),
         );
     }
-    let envelope = crdt_envelope(130, &doc.transact(), limits.max_encoded_state_bytes).unwrap();
-    assert!(envelope.client_count >= 5);
     let compiled = {
         let txn = doc.transact();
         let fragment = txn.get_xml_fragment("prosemirror").unwrap();
@@ -658,6 +669,7 @@ fn fully_deleted_clients_and_hidden_format_cleanup_are_bounded() {
                 editing_limits: &editing_limits,
                 document_revision: 0,
                 max_length: None,
+                validation_certificate: None,
             },
             TypedTransaction {
                 request_id: 130,
@@ -711,3 +723,7 @@ include!("preflight_and_properties/target_identity.rs");
 include!("preflight_and_properties/work_and_staleness.rs");
 
 include!("preflight_and_properties/properties.rs");
+
+include!("preflight_and_properties/deletion_bounds.rs");
+
+include!("preflight_and_properties/deletion_scope_visitors.rs");

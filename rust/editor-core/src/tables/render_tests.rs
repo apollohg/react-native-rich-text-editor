@@ -298,8 +298,8 @@ fn admitted_projection_reuses_only_the_exact_root_schema_and_limits() {
             "{label}: projection including failures"
         );
         assert_eq!(
-            reused.history_snapshot_retained_bytes(),
-            fresh.history_snapshot_retained_bytes(),
+            reused.history_snapshot_retained_bytes_beyond_document(),
+            fresh.history_snapshot_retained_bytes_beyond_document(),
             "{label}: retained charge"
         );
     }
@@ -765,28 +765,68 @@ fn structural_failure_keeps_the_real_table_extent_without_inventing_cells() {
 #[test]
 fn unrepresentable_table_sources_keep_text_order_without_exporting_cells() {
     let schema = crate::tables::interchange_tests::schema_admitting_a_stray_table_child();
-    let paragraph = |text: &str| json!({ "type": "paragraph", "content": [{ "type": "text", "text": text }] });
+    let paragraph =
+        |text: &str| json!({ "type": "paragraph", "content": [{ "type": "text", "text": text }] });
     let row = |cells: Vec<serde_json::Value>| json!({ "type": "table_row", "content": cells });
     let nested = json!({ "type": "table_cell", "content": [{ "type": "table", "content": [row(vec![cell("nested🙂")])] }] });
     for (children, expected) in [
         (vec![paragraph("before"), row(vec![cell("a")])], "before\na"),
-        (vec![row(vec![cell("a")]), paragraph("between"), row(vec![cell("b")])], "a\nbetween\nb"),
-        (vec![row(vec![cell("a"), paragraph("inside🙂"), cell("b")])], "a\ninside🙂\nb"),
-        (vec![paragraph("before"), row(vec![nested])], "before\nnested🙂"),
+        (
+            vec![
+                row(vec![cell("a")]),
+                paragraph("between"),
+                row(vec![cell("b")]),
+            ],
+            "a\nbetween\nb",
+        ),
+        (
+            vec![row(vec![cell("a"), paragraph("inside🙂"), cell("b")])],
+            "a\ninside🙂\nb",
+        ),
+        (
+            vec![paragraph("before"), row(vec![nested])],
+            "before\nnested🙂",
+        ),
     ] {
-        let source = json!({ "type": "doc", "content": [{ "type": "table", "content": children }] });
-        let document = crate::serialize::from_prosemirror_json(&source, &schema,
-            crate::serialize::UnknownTypeMode::Error).unwrap();
+        let source =
+            json!({ "type": "doc", "content": [{ "type": "table", "content": children }] });
+        let document = crate::serialize::from_prosemirror_json(
+            &source,
+            &schema,
+            crate::serialize::UnknownTypeMode::Error,
+        )
+        .unwrap();
         let canonical = crate::serialize::to_prosemirror_json(&document, &schema);
-        let cache = CachedRenderBlocks::build(&document, &schema, &ResourceLimits::default()).unwrap();
-        assert_eq!(cache.rendered_text(&schema), expected, "source order: {source}");
+        let cache =
+            CachedRenderBlocks::build(&document, &schema, &ResourceLimits::default()).unwrap();
+        assert_eq!(
+            cache.rendered_text(&schema),
+            expected,
+            "source order: {source}"
+        );
         assert_eq!(crate::render::rendered_text(&document, &schema), expected);
-        assert_eq!(crate::serialize::to_prosemirror_json(&document, &schema), canonical);
+        assert_eq!(
+            crate::serialize::to_prosemirror_json(&document, &schema),
+            canonical
+        );
         let (_, records) = crate::viewer::lower_cached_tables_for_test(&cache);
-        assert_eq!(records.len(), 1, "source-only descendants must not export orphan nested tables");
-        assert_eq!(records[0].failure, Some(crate::tables::render::TableRenderFailure::InvalidStructure));
-        assert!(records[0].cells.is_empty(), "an unreadable grid must not invent native cells");
-        assert_eq!(records[0].source_end, document.root().child(0).unwrap().node_size());
+        assert_eq!(
+            records.len(),
+            1,
+            "source-only descendants must not export orphan nested tables"
+        );
+        assert_eq!(
+            records[0].failure,
+            Some(crate::tables::render::TableRenderFailure::InvalidStructure)
+        );
+        assert!(
+            records[0].cells.is_empty(),
+            "an unreadable grid must not invent native cells"
+        );
+        assert_eq!(
+            records[0].source_end,
+            document.root().child(0).unwrap().node_size()
+        );
     }
 }
 
@@ -879,7 +919,10 @@ fn table_final_owners_release_deep_atom_payloads_on_a_small_stack() {
         let elements = Arc::new(vec![RenderElement::VoidInline {
             node_type: "deep_atom".into(),
             doc_pos: 0,
-            attrs: std::collections::HashMap::from([(PAYLOAD_KEY.into(), payload)]),
+            attrs: Box::new(std::collections::HashMap::from([(
+                PAYLOAD_KEY.into(),
+                payload,
+            )])),
         }]);
         let table = if fallback {
             let mut structure = template.structure.clone();

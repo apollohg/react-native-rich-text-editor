@@ -77,26 +77,27 @@ fn the_history_retention_boundary_decides_full_candidate_derivation() {
             .unwrap();
         crate::yrs_engine::observability::reset_full_pass_counts_for_test();
         engine.undo_with_result(request_id + 1).unwrap().unwrap();
+        let passes = crate::yrs_engine::observability::take_full_pass_counts_for_test();
         assert_eq!(
             engine.document_json().unwrap(),
             serde_json::from_str::<serde_json::Value>(EMPTY_DOCUMENT_JSON).unwrap(),
             "undo must restore the document at every budget the boundary admits"
         );
-        crate::yrs_engine::observability::take_full_pass_counts_for_test()
+        passes
     };
 
     let retained = run(retention_boundary, 108_004);
     assert_eq!(
-        retained.canonical_projections, 0,
+        (retained.canonical_projections, retained.canonical_serializations),
+        (0, 0),
         "at the retention boundary the optional snapshots are kept and nothing is re-derived"
     );
 
     let full_passes = run(retention_boundary - 1, 108_006);
     assert!(
-        full_passes.canonical_projections > 0,
+        full_passes.canonical_serializations > 0,
         "one byte under the retention boundary must fall back to full candidate derivation"
     );
-    assert!(full_passes.canonical_serializations > 0);
     assert!(full_passes.canonical_hashes > 0);
 }
 
@@ -206,13 +207,17 @@ fn deep_wide_history_snapshot_budget_accounts_for_spilled_position_paths() {
 
     let exact_passes = run(exact_budget, 108_007);
     assert_eq!(
-        exact_passes.canonical_projections, 0,
+        (
+            exact_passes.canonical_projections,
+            exact_passes.canonical_serializations
+        ),
+        (0, 0),
         "the exact retained bound should admit the optional snapshots"
     );
 
     let full_passes = run(exact_budget - 1, 108_009);
     assert!(
-        full_passes.canonical_projections > 0,
+        full_passes.canonical_serializations > 0,
         "one under the retained bound must omit only the optional snapshots"
     );
 }
@@ -303,7 +308,7 @@ fn history_snapshot_charge_tracks_spare_node_string_capacity() {
         crate::yrs_engine::observability::reset_full_pass_counts_for_test();
         engine.undo_with_result(request_id + 1).unwrap().unwrap();
         let passes = crate::yrs_engine::observability::take_full_pass_counts_for_test();
-        assert_eq!(passes.canonical_projections == 0, expect_fast);
+        assert_eq!(passes.canonical_serializations == 0, expect_fast);
     }
 }
 

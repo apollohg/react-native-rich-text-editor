@@ -42,8 +42,7 @@ use candidate::{CandidateDocument, EngineDocumentState};
 use candidate_cache::{encode_state_bounded, PreparedCandidateCache};
 #[cfg(test)]
 use candidate_cache::{
-    equivalent_private_candidate_doc, fresh_utf16_doc_excluding, fresh_utf16_doc_excluding_with,
-    prepare_import_candidate_cache, retained_import_state_charge, seal_candidate_state_vector,
+    fresh_utf16_doc_excluding, fresh_utf16_doc_excluding_with, seal_candidate_state_vector,
     utf16_doc,
 };
 #[cfg(test)]
@@ -61,16 +60,15 @@ use std::sync::Arc;
 #[cfg(test)]
 use test_hooks::{
     check_compiled_commit_preparation_stage_for_test, mark_compiled_commit_durable_write_for_test,
-    reset_encoded_state_reuse_counts_for_test, reset_history_replay_guard_encodings_for_test,
-    reset_import_receipt_sha256_counts_for_test, reset_import_receipt_state_decodings_for_test,
-    reset_import_state_encoding_counts_for_test, reset_prepared_candidate_cache_counts_for_test,
-    set_compiled_commit_stage_failpoint_for_test, set_outbound_staging_copy_failure_for_test,
+    reset_commit_state_encodings_for_test, reset_history_replay_guard_encodings_for_test,
+    reset_import_receipt_sha256_counts_for_test, reset_import_state_encoding_counts_for_test,
+    reset_prepared_candidate_cache_counts_for_test, set_compiled_commit_stage_failpoint_for_test,
+    set_outbound_staging_copy_failure_for_test,
     set_quarantined_update_reservation_failure_for_test,
-    set_replay_candidate_perturbation_for_test, take_compiled_commit_authority_counts_for_test,
-    take_encoded_state_reuse_counts_for_test, take_history_replay_guard_encodings_for_test,
-    take_import_receipt_sha256_counts_for_test, take_import_receipt_state_decodings_for_test,
-    take_import_state_encoding_counts_for_test, take_prepared_candidate_cache_counts_for_test,
-    CompiledCommitPreparationStage,
+    set_replay_candidate_perturbation_for_test, take_commit_state_encodings_for_test,
+    take_compiled_commit_authority_counts_for_test, take_history_replay_guard_encodings_for_test,
+    take_import_receipt_sha256_counts_for_test, take_import_state_encoding_counts_for_test,
+    take_prepared_candidate_cache_counts_for_test, CompiledCommitPreparationStage,
 };
 use yrs::sync::time::{Clock, SystemClock};
 use yrs::Doc;
@@ -106,10 +104,67 @@ pub struct EngineCommit {
 }
 
 const DOCUMENT_CHANGE_SCOPE_LOG_CAPACITY: usize = 64;
+const ROOT_WINDOW_REBUILT_NEIGHBORS: usize = 1;
+
+fn first_block_of_root_child(map: &PositionMap, child: usize) -> usize {
+    map.block_partition_point(|block| {
+        block
+            .node_path
+            .first()
+            .is_some_and(|first| (*first as usize) < child)
+    })
+}
+
+#[derive(Clone, Copy)]
+enum EpochChunkSource {
+    Reuse(usize),
+    RebuildBlock(usize),
+    RebuildWindow,
+}
+
+pub(super) fn root_window_change_scope(
+    previous: &DerivedStateCache,
+    next: &DerivedStateCache,
+) -> Option<DocumentChangeScope> {
+    let window = super::derived_state::RootChildWindow::between(
+        previous.document.root(),
+        next.document.root(),
+    )?;
+    let first_child = window.from().saturating_sub(ROOT_WINDOW_REBUILT_NEIGHBORS);
+    let previous_end_child = window
+        .old_to()
+        .saturating_add(ROOT_WINDOW_REBUILT_NEIGHBORS)
+        .min(previous.document.root().child_count());
+    let next_end_child = window
+        .new_to()
+        .saturating_add(ROOT_WINDOW_REBUILT_NEIGHBORS)
+        .min(next.document.root().child_count());
+    let first_block = first_block_of_root_child(&previous.position_map, first_child);
+    (first_block == first_block_of_root_child(&next.position_map, first_child)).then_some(
+        DocumentChangeScope::RootWindow {
+            first_block,
+            previous_end_block: first_block_of_root_child(
+                &previous.position_map,
+                previous_end_child,
+            ),
+            next_end_block: first_block_of_root_child(&next.position_map, next_end_child),
+        },
+    )
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DocumentChangeScope {
-    Textblock { block_index: usize },
+    Textblock {
+        block_index: usize,
+    },
+    FormattedTextblock {
+        block_index: usize,
+    },
+    RootWindow {
+        first_block: usize,
+        previous_end_block: usize,
+        next_end_block: usize,
+    },
     Document,
 }
 
@@ -288,7 +343,7 @@ impl YrsDocumentEngine {
             self.change_scopes.pop_front();
         }
         self.change_scopes.push_back((self.revision, scope));
-        if scope == DocumentChangeScope::Document {
+        if !matches!(scope, DocumentChangeScope::Textblock { .. }) {
             self.document_scope_revision = self.revision;
         }
         #[cfg(test)]
@@ -494,19 +549,20 @@ impl YrsDocumentEngine {
 
     pub fn document_json(&self) -> Option<serde_json::Value> {
         self.debug_assert_derived_revision_keys();
-        self.derived_state.as_ref().map(|state| {
-            crate::boundary::clone_json_value_stack_safe(state.canonical_artifact.value())
-        })
+        self.derived_state
+            .as_ref()
+            .map(|state| state.canonical_artifact.to_json_value())
     }
 
     pub(crate) fn document_json_string(&self) -> Option<String> {
         self.debug_assert_derived_revision_keys();
         self.derived_state.as_ref().map(|state| {
-            String::from_utf8(crate::boundary::serialize_json_value_stack_safe(
-                state.canonical_artifact.value(),
-                state.canonical_artifact.serialized_len(),
-            ))
-            .expect("serialized JSON is UTF-8")
+            let mut serialized = Vec::with_capacity(state.canonical_artifact.serialized_len());
+            state
+                .canonical_artifact
+                .write_canonical_json(&mut serialized)
+                .expect("canonical nodes always serialize to an in-memory buffer");
+            String::from_utf8(serialized).expect("serialized JSON is UTF-8")
         })
     }
 
@@ -557,7 +613,7 @@ impl YrsDocumentEngine {
             return None;
         }
         crate::availability_audit::freeze_json(
-            state.canonical_artifact.value(),
+            state.canonical_artifact.projected_value().as_value(),
             crate::availability_audit::MAX_BYTES,
         )
     }
@@ -631,6 +687,146 @@ impl YrsDocumentEngine {
         )
     }
 
+    pub(crate) fn prepare_position_epoch_splice(
+        &self,
+        previous: &crate::position_epoch::EpochSnapshot,
+    ) -> Option<crate::position_epoch::EpochSnapshot> {
+        use yrs::types::xml::XmlElementRef;
+        let state = self.derived_state.as_ref()?;
+        if !previous.cells.is_empty() || state.table_projection_index.len() != 0 {
+            return None;
+        }
+        let scopes = self.change_scopes_since(previous.document_revision)?;
+        if !scopes
+            .iter()
+            .any(|scope| matches!(scope, DocumentChangeScope::RootWindow { .. }))
+        {
+            return None;
+        }
+        let mut sources: Vec<EpochChunkSource> = (0..previous.chunks.len())
+            .map(EpochChunkSource::Reuse)
+            .collect();
+        for scope in scopes {
+            match scope {
+                DocumentChangeScope::Textblock { block_index }
+                | DocumentChangeScope::FormattedTextblock { block_index } => {
+                    let source = sources.get_mut(block_index)?;
+                    if let EpochChunkSource::Reuse(previous_index) = *source {
+                        *source = EpochChunkSource::RebuildBlock(previous_index);
+                    }
+                }
+                DocumentChangeScope::RootWindow {
+                    first_block,
+                    previous_end_block,
+                    next_end_block,
+                } => {
+                    if first_block > previous_end_block
+                        || first_block > next_end_block
+                        || previous_end_block > sources.len()
+                    {
+                        return None;
+                    }
+                    sources.splice(
+                        first_block..previous_end_block,
+                        std::iter::repeat_n(
+                            EpochChunkSource::RebuildWindow,
+                            next_end_block - first_block,
+                        ),
+                    );
+                }
+                DocumentChangeScope::Document => return None,
+            }
+        }
+        if sources.len() != state.position_map.block_count() {
+            return None;
+        }
+        let txn = self.doc.transact();
+        let fragment = txn.get_xml_fragment(self.fragment_name.as_str())?;
+        let branches = state.block_branch_index.as_ref()?;
+        let root_children = state.document.root().content()?.children();
+        let mut chunks = Vec::with_capacity(sources.len());
+        let mut index = 0;
+        while index < sources.len() {
+            match sources[index] {
+                EpochChunkSource::Reuse(previous_index) => {
+                    chunks.push(Arc::clone(previous.chunks.get(previous_index)?));
+                    index += 1;
+                }
+                EpochChunkSource::RebuildBlock(previous_index) => {
+                    let positions = state
+                        .position_map
+                        .block_doc_positions(index, &state.document)?;
+                    let previous_chunk = previous.chunks.get(previous_index)?;
+                    chunks.push(if state.position_map.block(index)?.is_void_block {
+                        Arc::new(crate::position_epoch::EpochBlockChunk::new(
+                            previous_chunk.anchors.to_dense(),
+                        )?)
+                    } else {
+                        let block = branches.block_branches(index)?;
+                        let element = XmlElementRef::from(block.element.get_branch(&txn)?);
+                        super::position::boundary_chunk_for_block(
+                            &txn,
+                            &element,
+                            state.position_map.effective_doc_start(index),
+                            positions,
+                            &self.schema,
+                            previous_chunk.ancestor(),
+                        )?
+                    });
+                    #[cfg(test)]
+                    super::observability::record_epoch_block_rebuild();
+                    index += 1;
+                }
+                EpochChunkSource::RebuildWindow => {
+                    let end = sources[index..]
+                        .iter()
+                        .position(|source| !matches!(source, EpochChunkSource::RebuildWindow))
+                        .map_or(sources.len(), |offset| index + offset);
+                    let first_child = *state.position_map.block_path(index)?.first()?;
+                    let end_child = state
+                        .position_map
+                        .block_path(end - 1)?
+                        .first()?
+                        .checked_add(1)?;
+                    let start = root_children
+                        .get(..usize::try_from(first_child).ok()?)?
+                        .iter()
+                        .try_fold(0u32, |total, child| total.checked_add(child.node_size()))?;
+                    let positions = (index..end)
+                        .map(|block| {
+                            state
+                                .position_map
+                                .block_doc_positions(block, &state.document)
+                        })
+                        .collect::<Option<Vec<_>>>()?;
+                    let rebuilt = super::position::boundary_chunks_in_root_window(
+                        &txn,
+                        &fragment,
+                        first_child..end_child,
+                        start,
+                        &positions,
+                        &self.schema,
+                    )?;
+                    if rebuilt.len() != end - index {
+                        return None;
+                    }
+                    #[cfg(test)]
+                    rebuilt
+                        .iter()
+                        .for_each(|_| super::observability::record_epoch_block_rebuild());
+                    chunks.extend(rebuilt);
+                    index = end;
+                }
+            }
+        }
+        crate::position_epoch::EpochSnapshot::new(
+            self.yrs_state_epoch,
+            self.revision,
+            chunks,
+            Vec::new(),
+        )
+    }
+
     pub(crate) fn prepare_position_epoch_update(
         &self,
         previous: &crate::position_epoch::EpochSnapshot,
@@ -648,8 +844,12 @@ impl YrsDocumentEngine {
         let mut blocks = BTreeSet::new();
         let mut cells = BTreeSet::new();
         for scope in scopes {
-            let DocumentChangeScope::Textblock { block_index } = scope else {
-                return None;
+            let block_index = match scope {
+                DocumentChangeScope::Textblock { block_index }
+                | DocumentChangeScope::FormattedTextblock { block_index } => block_index,
+                DocumentChangeScope::RootWindow { .. } | DocumentChangeScope::Document => {
+                    return None
+                }
             };
             let path = state.position_map.block_path(block_index)?;
             let outer = (1..path.len()).find_map(|depth| {

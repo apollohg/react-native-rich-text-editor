@@ -50,7 +50,7 @@ pub(crate) fn render_element_bytes(element: &RenderElement) -> usize {
             .saturating_add(4)
             .saturating_add(1)
             .saturating_add(attrs_bytes(attrs))
-            .saturating_add(mention_theme.as_ref().map_or(0, attrs_bytes)),
+            .saturating_add(mention_theme.as_deref().map_or(0, attrs_bytes)),
         RenderElement::OpaqueBlockAtom {
             node_type,
             label,

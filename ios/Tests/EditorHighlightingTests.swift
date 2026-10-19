@@ -37,12 +37,14 @@ final class EditorHighlightingTests: XCTestCase {
     }
 }
 
-private final class EditorHighlightingFixtureProvider: NativeCodeHighlightingProvider {
+final class EditorHighlightingFixtureProvider: NativeCodeHighlightingProvider {
     let id = "editor-styles-fixture"
     let version = 1
     var language: String?
+    var highlightCount = 0
     func highlight(text: String, language: String?, theme: String) throws -> [NativeCodeHighlightRange] {
         self.language = language
+        highlightCount += 1
         XCTAssertFalse(Thread.isMainThread)
         return text.isEmpty ? [] : [NativeCodeHighlightRange(start: 0, length: min(3, text.utf16.count), color: 0xff0000ff, fontStyle: 1)]
     }

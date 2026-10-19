@@ -36,6 +36,8 @@ pub(in crate::yrs_engine) struct ValidatedImportDocument {
     pub(in crate::yrs_engine) carry_import_encoded_state_receipt: bool,
 }
 
+pub(super) const HISTORY_DOCUMENT_SNAPSHOTS_PER_EDIT: usize = 2;
+
 impl ValidatedImportDocument {
     pub(super) fn new(
         document: Document,
@@ -154,10 +156,7 @@ impl YrsDocumentEngine {
         origin: TransactionOrigin,
     ) -> YrsEngineResult<EngineCommit> {
         if let Some(state) = &self.derived_state {
-            if crate::boundary::json_values_equal_stack_safe(
-                state.canonical_artifact.value(),
-                value,
-            ) {
+            if state.canonical_artifact.matches_json(value) {
                 self.quarantined_remote_update = None;
                 self.reset_history_binding();
                 return Ok(EngineCommit {
@@ -352,7 +351,7 @@ impl YrsDocumentEngine {
         })
     }
 
-    /// The sealed whole-root `ReplaceStructure` transaction for an admitted
+    /// The sealed root-window `ReplaceStructure` transaction for an admitted
     /// replacement document, shared by the commit path and the probe so the
     /// probed conservative bound is the bound the commit reserves.
     fn root_replacement_transaction(
@@ -375,6 +374,30 @@ impl YrsDocumentEngine {
             ))
         })?;
         let content = self.authored_replacement_content(request_id, source, history)?;
+        let previous = current
+            .root()
+            .content()
+            .map(crate::model::Fragment::children)
+            .unwrap_or(&[]);
+        let next = content.children();
+        let mut start = 0usize;
+        while start < previous.len() && start < next.len() && previous[start] == next[start] {
+            start += 1;
+        }
+        let mut previous_end = root_children as usize;
+        let mut next_end = next.len();
+        while previous_end > start
+            && next_end > start
+            && previous[previous_end - 1] == next[next_end - 1]
+        {
+            previous_end -= 1;
+            next_end -= 1;
+        }
+        let content = if start == 0 && next_end == next.len() {
+            content
+        } else {
+            crate::model::Fragment::from(next[start..next_end].to_vec())
+        };
         let history_policy = match history {
             yrs_engine::ReplacementHistory::UndoableBoundary => yrs_engine::HistoryPolicy::Boundary,
             yrs_engine::ReplacementHistory::ResetAndClear => yrs_engine::HistoryPolicy::Skip,
@@ -386,8 +409,8 @@ impl YrsDocumentEngine {
             operations: vec![yrs_engine::TypedOperation::ReplaceStructure(
                 yrs_engine::StructuralReplacement::new(
                     Vec::new(),
-                    0,
-                    root_children,
+                    start as u32,
+                    previous_end as u32,
                     content,
                     Selection::cursor(0),
                 ),
@@ -450,7 +473,7 @@ impl YrsDocumentEngine {
         Ok(raw(&authored))
     }
 
-    /// Lower an admitted replacement document to one sealed whole-root
+    /// Lower an admitted replacement document to one sealed root-window
     /// `ReplaceStructure` transaction and apply the requested history class.
     fn commit_root_replacement(
         &mut self,
@@ -473,7 +496,7 @@ impl YrsDocumentEngine {
                 .is_none_or(|charge| {
                     charge
                         .canonical_retained_bytes
-                        .saturating_add(charge.source_document_retained_bytes)
+                        .saturating_mul(HISTORY_DOCUMENT_SNAPSHOTS_PER_EDIT)
                         > self.editing_limits.max_derived_output_bytes
                 })
             {
@@ -558,6 +581,7 @@ impl YrsDocumentEngine {
             )
         }
         .map_err(RootReplacementError::Transaction)?;
+        self.prepared_candidate_cache = None;
         if history == yrs_engine::ReplacementHistory::ResetAndClear {
             self.reset_history_binding();
         }

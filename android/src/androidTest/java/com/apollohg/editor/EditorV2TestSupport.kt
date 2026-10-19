@@ -31,3 +31,7 @@ internal fun releasePairedV2TestEditor(viewToken: Long) {
         EditorV2Registry.dropPair(handle)
     }
 }
+
+internal fun requestImeTraceRecording() {
+    System.setProperty(BuildConfig.IME_TRACE_RECORDING_PROPERTY, true.toString())
+}

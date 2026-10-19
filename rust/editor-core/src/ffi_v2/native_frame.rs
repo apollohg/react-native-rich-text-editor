@@ -394,17 +394,26 @@ pub(crate) fn build_native_frame(
             }
         }
     }
-    let snapshot_json = super::render::root_snapshot_json(session, editor_id, owner_id, mirror)?;
+    let (snapshot_json, root_projection) =
+        super::render::root_snapshot(session, editor_id, owner_id, mirror)?;
+    let position_epoch = owner_id
+        .map(|owner| {
+            session
+                .pin_position_epoch(owner, revision)
+                .map(|epoch| epoch.to_string())
+        })
+        .transpose()?;
     if let Some(owner) = owner_id.filter(|_| {
         !previous
             .as_ref()
             .is_some_and(|cursor| cursor.document_revision == revision)
     }) {
-        session.retain_native_render_cursor(owner, revision, current);
+        session.retain_native_render_cursor(owner, revision, current, root_projection);
     }
     Ok(FfiNativeRenderFrame {
         snapshot_json,
         tables,
+        position_epoch,
     })
 }
 
@@ -445,6 +454,8 @@ pub fn editor_v2_render_native_frame(
             build_native_frame(session, &editor_id, owner, mirror)
         })
     })();
+    #[cfg(target_os = "android")]
+    crate::android_allocator::release_pending_thread_memory();
     match result {
         Ok(frame) => FfiNativeRenderFrameResult {
             frame: Some(frame),

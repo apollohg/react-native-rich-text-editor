@@ -48,6 +48,7 @@ fn split_block_directly_preserves_left_marked_unicode_storage() {
                 editing_limits: &editing_limits,
                 document_revision: 0,
                 max_length: None,
+                validation_certificate: None,
             },
             TypedTransaction {
                 request_id: 120,
@@ -317,6 +318,7 @@ fn split_block_then_update_attrs_mutates_the_prepared_right_block() {
                 editing_limits: &editing_limits,
                 document_revision: 0,
                 max_length: None,
+                validation_certificate: None,
             },
             TypedTransaction {
                 request_id: 121,
@@ -775,3 +777,7 @@ include!("block_structure/cross_parent.rs");
 include!("block_structure/folded_splits.rs");
 
 include!("block_structure/join_and_replace.rs");
+
+include!("block_structure/boundary_splits.rs");
+
+include!("block_structure/transaction_compositions.rs");

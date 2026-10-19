@@ -216,16 +216,16 @@ extension EditorTextView {
         allowAfterBlur: Bool,
         allowWhileIntercepting: Bool
     ) -> NativeTextMutationDrainResult {
-        if reconciliationWorkScheduled, textStorage.string != lastAuthorizedText {
+        if reconciliationWorkScheduled, !textStorageMatchesAuthorizedText() {
             let adoptedUpdateJSON = restoreRejectedNativeTextMutation()
             return NativeTextMutationDrainResult(
-                ready: textStorage.string == lastAuthorizedText,
+                ready: textStorageMatchesAuthorizedText(),
                 adoptedUpdateJSON: adoptedUpdateJSON
             )
         }
         guard nativeTextMutationCommitScheduled
             || pendingNativeTextMutation != nil
-            || (!isComposing && markedTextRange == nil && textStorage.string != lastAuthorizedText)
+            || (!isComposing && markedTextRange == nil && !textStorageMatchesAuthorizedText())
         else {
             return NativeTextMutationDrainResult(ready: true, adoptedUpdateJSON: nil)
         }
@@ -258,7 +258,7 @@ extension EditorTextView {
             pendingNativeTextMutation = nil
             let adoptedUpdateJSON = restoreRejectedNativeTextMutation()
             return NativeTextMutationDrainResult(
-                ready: textStorage.string == lastAuthorizedText,
+                ready: textStorageMatchesAuthorizedText(),
                 adoptedUpdateJSON: adoptedUpdateJSON
             )
         case .deferred:
@@ -268,7 +268,7 @@ extension EditorTextView {
     }
 
     private func restoreRejectedNativeTextMutation() -> String? {
-        guard editorId != 0, textStorage.string != lastAuthorizedText else { return nil }
+        guard editorId != 0, !textStorageMatchesAuthorizedText() else { return nil }
         reconciliationWorkScheduled = false
         let updateJSON = EditorV2Shadow.getCurrentState(id: editorId)
         return applyUpdateJSON(updateJSON) ? updateJSON : nil
@@ -306,7 +306,7 @@ extension EditorTextView {
         }
 
         guard shouldAdoptNativeTextStorageMutation(mutation, allowAfterBlur: allowAfterBlur) else {
-            if textStorage.string != lastAuthorizedText {
+            if !textStorageMatchesAuthorizedText() {
                 scheduleReconciliationFromRust()
             }
             return .rejected

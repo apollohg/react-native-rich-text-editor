@@ -10,6 +10,7 @@ import {
     type Selection,
 } from './NativeEditorBridge';
 import { nativeEditorV2U32, normalizeNativeEditorResolvedSelectionFrame } from './NativeEditorResultNormalization';
+import { normalizeRenderSelection } from './NativeEditorRenderNormalization';
 import { atomSelected, type AtomInstance } from './atomInstances';
 import { type EditorToolbarFrame, type EditorToolbarGroupChildItem, type EditorToolbarItem } from './EditorToolbar';
 import { IMAGE_NODE_NAME } from './schemas';
@@ -78,6 +79,15 @@ export interface AtomRenderState {
     hasOnlyStableAtomKeys: boolean;
 }
 
+export function serializeRenderNotice(
+    snapshot: Pick<NativeEditorAtomicRenderSnapshot, 'documentVersion' | 'stateRevision'>
+): string {
+    return JSON.stringify({
+        documentVersion: snapshot.documentVersion,
+        stateRevision: snapshot.stateRevision,
+    });
+}
+
 export function selectedAtomKeys(
     selection: Selection,
     instances: readonly AtomInstance[]
@@ -118,6 +128,11 @@ export function parseSelectionFromUpdate(value: unknown): Selection | null {
         return null;
     }
 
+    if ((value.type === 'text' && ('anchorScalar' in value || 'headScalar' in value)) ||
+        (value.type === 'node' && 'posScalar' in value)) {
+        return normalizeRenderSelection(value);
+    }
+
     if (value.type === 'all') {
         return { type: 'all' };
     }
@@ -142,6 +157,12 @@ export function parseSelectionFromUpdate(value: unknown): Selection | null {
     }
 
     return null;
+}
+
+export function publicSelection(selection: Selection): Selection {
+    const { anchorScalar: _anchorScalar, headScalar: _headScalar, posScalar: _posScalar, ...visible } = selection;
+
+    return visible;
 }
 
 export function stringArray(value: unknown): string[] {
@@ -319,9 +340,11 @@ export function serializeRemoteSelections(
 
     const normalized = remoteSelections.map(({ cellRectangle, resolvedAt, ...selection }) => {
         const frame = resolvedAt === undefined ? undefined : normalizeNativeEditorResolvedSelectionFrame(resolvedAt);
+
         if (frame === null) {
             throw new Error('NativeRichTextEditor: remote resolvedAt must contain canonical decimal editorId and documentRevision');
         }
+
         const clientId = normalizeNativeEditorV2DecimalId(selection.clientId);
 
         if (clientId == null) {

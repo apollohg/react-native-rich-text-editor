@@ -4,6 +4,7 @@ import XCTest
 enum NativePerformanceFixtureFactory {
     private static let blockCount = 96
     private static let paragraphCharacterCount = 180
+    private static let maximumHostedHeightLayoutPasses = 4
 
     struct ParagraphSplitSession {
         let editorId: UInt64
@@ -80,21 +81,19 @@ enum NativePerformanceFixtureFactory {
         }
     }
 
-    static func hostedParagraphSplitSessions(count: Int) -> [HostedParagraphSplitSession] {
+    static func hostedParagraphSplitSessions(count: Int, autoGrow: Bool = true) -> [HostedParagraphSplitSession] {
         (0..<count).map { _ in
             let editorId = makeV2Editor()
 
             let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 390, height: 0))
             let window = hostEditorView(view, size: CGSize(width: 390, height: 844))
-            view.heightBehavior = .autoGrow
+            view.heightBehavior = autoGrow ? .autoGrow : .fixed
             view.textView.captureApplyUpdateTraceForTesting = true
             view.editorId = editorId
             view.setContent(json: largeDocumentJSONString())
             flushMainQueue()
 
-            let measuredHeight = ceil(view.intrinsicContentSize.height)
-            view.frame.size.height = measuredHeight
-            view.layoutIfNeeded()
+            layoutHostedEditor(view, autoGrow: autoGrow)
 
             return HostedParagraphSplitSession(
                 editorId: editorId,
@@ -104,6 +103,18 @@ enum NativePerformanceFixtureFactory {
                 initialTextLength: view.textView.attributedText.length
             )
         }
+    }
+
+    static func layoutHostedEditor(_ view: RichTextEditorView, autoGrow: Bool) {
+        view.layoutIfNeeded()
+        guard autoGrow else { return }
+        for _ in 0..<maximumHostedHeightLayoutPasses {
+            view.frame.size.height = ceil(view.intrinsicContentSize.height)
+            view.layoutIfNeeded()
+            flushMainQueue()
+            if abs(view.frame.height - ceil(view.intrinsicContentSize.height)) <= 1 { return }
+        }
+        XCTFail("Hosted editor height did not settle: frame=\(view.frame.height), intrinsic=\(view.intrinsicContentSize.height)")
     }
 
     static func selectionScrubOffsets(in textView: UITextView, points: Int) -> [Int] {
@@ -131,7 +142,7 @@ enum NativePerformanceFixtureFactory {
         return paragraphOffsets[min(32, paragraphOffsets.count - 1)]
     }
 
-    private static func largeDocumentJSONString() -> String {
+    static func largeDocumentJSONString() -> String {
         let jsonObject: [String: Any] = [
             "type": "doc",
             "content": largeDocumentContent()
@@ -332,7 +343,7 @@ func setSelection(in textView: UITextView, utf16Range: NSRange) {
     textView.selectedTextRange = range
 }
 
-func hostEditorView(_ view: RichTextEditorView, size: CGSize) -> UIWindow {
+func hostEditorView(_ view: UIView, size: CGSize) -> UIWindow {
     let window = makeTestWindow(frame: CGRect(origin: .zero, size: size))
     let viewController = UIViewController()
     window.rootViewController = viewController

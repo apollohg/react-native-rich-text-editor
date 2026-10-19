@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use serde_json::{json, Value};
+use serde_json::json;
 
 use super::large_table_fixture::{
     ffi_empty_editor, ffi_replace_request, ffi_value, fixture_cell_text, keystroke_cell,
@@ -96,7 +96,7 @@ fn median_ms(mut samples: Vec<f64>) -> f64 {
     samples[samples.len() / 2]
 }
 
-fn probe_render(editor_id: &str) -> (Value, f64) {
+fn probe_render(editor_id: &str) -> (String, f64) {
     let start = Instant::now();
     let result = crate::ffi_v2::native_frame::editor_v2_render_native_frame(
         editor_id.to_owned(),
@@ -108,14 +108,12 @@ fn probe_render(editor_id: &str) -> (Value, f64) {
     let frame = result
         .frame
         .unwrap_or_else(|| panic!("native frame: {:?}", result.error));
-    (serde_json::from_str(&frame.snapshot_json).unwrap(), elapsed)
-}
-
-fn position_epoch(render: &Value) -> String {
-    render["positionEpoch"]
-        .as_str()
-        .expect("a native render publishes its position epoch")
-        .to_owned()
+    (
+        frame
+            .position_epoch
+            .expect("a native render publishes its position epoch"),
+        elapsed,
+    )
 }
 
 #[test]
@@ -138,7 +136,7 @@ fn large_table_keystroke_budget_probe() {
             ));
         }
 
-        let (render, first_frame_ms) = probe_render(&editor_id);
+        let (first_epoch, first_frame_ms) = probe_render(&editor_id);
         println!("PROBE {fixture} first_frame {first_frame_ms:.3}");
         if first_frame_ms > COLD_FRAME_BUDGET_MS {
             violations.push(format!(
@@ -149,7 +147,7 @@ fn large_table_keystroke_budget_probe() {
         let cell_scalars = fixture_cell_text(0, 0).chars().count();
         let content_end =
             keystroke_cell(rows, columns) * (cell_scalars + CELL_BOUNDARY_SCALARS) + cell_scalars;
-        let mut epoch = position_epoch(&render);
+        let mut epoch = first_epoch;
         let mut apply_samples = Vec::with_capacity(PROBE_MEASURED_KEYSTROKES);
         let mut frame_samples = Vec::with_capacity(PROBE_MEASURED_KEYSTROKES);
         for keystroke in 0..PROBE_KEYSTROKES {
@@ -171,8 +169,8 @@ fn large_table_keystroke_budget_probe() {
             let applied = v2::editor_v2_apply_native_intent(editor_id.clone(), intent);
             let apply_ms = elapsed_ms(start);
             ffi_value(&applied);
-            let (render, frame_ms) = probe_render(&editor_id);
-            epoch = position_epoch(&render);
+            let (next_epoch, frame_ms) = probe_render(&editor_id);
+            epoch = next_epoch;
             if keystroke >= PROBE_WARMUP_KEYSTROKES {
                 apply_samples.push(apply_ms);
                 frame_samples.push(frame_ms);

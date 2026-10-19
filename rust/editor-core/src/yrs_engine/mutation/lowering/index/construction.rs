@@ -68,6 +68,389 @@ impl MutationCompiler {
         Ok(node)
     }
 
+    fn drop_text_gaps_from(&mut self, parent_id: &BranchID, first_dropped_gap: u32) {
+        self.targets.retain(|candidate| {
+            !matches!(&candidate.kind,
+                ResolvedTargetKind::Missing { parent, child_index: gap, .. }
+                    if AsRef::<Branch>::as_ref(parent).id() == *parent_id && *gap >= first_dropped_gap
+            )
+        });
+    }
+
+    fn ensure_no_created_text(
+        &self,
+        operation_index: usize,
+        field: &'static str,
+        parent_id: &BranchID,
+    ) -> OperationResult<()> {
+        let has_created_text = self.targets.iter().any(|candidate| {
+            matches!(
+                &candidate.kind,
+                ResolvedTargetKind::Missing {
+                    parent,
+                    create_action: Some(_),
+                    ..
+                } if AsRef::<Branch>::as_ref(parent).id() == *parent_id
+            )
+        });
+        if has_created_text {
+            return Err(OperationError::operation_invalid(
+                self.request_id,
+                operation_index,
+                field,
+                "a structural edit cannot follow text created in the same block within one transaction",
+            )
+            .refused_by_lowering(LoweringRefusal::CreatedTextBeforeStructuralEdit));
+        }
+        Ok(())
+    }
+
+    fn current_storage_text_len(&self, child: &StorageChildKind) -> Option<u32> {
+        let StorageChildKind::Text {
+            scalar_len, target, ..
+        } = child
+        else {
+            return None;
+        };
+        let id = AsRef::<Branch>::as_ref(target).id();
+        Some(
+            self.targets
+                .iter()
+                .find_map(|candidate| match &candidate.kind {
+                    ResolvedTargetKind::Existing { target, .. }
+                        if AsRef::<Branch>::as_ref(target).id() == id =>
+                    {
+                        Some(candidate.scalar_len)
+                    }
+                    _ => None,
+                })
+                .unwrap_or(*scalar_len),
+        )
+    }
+
+    fn foldable_pending_insert(
+        &self,
+        parent: &XmlParentRef,
+        child_index: u32,
+        semantic_parent_path: &[u32],
+        following_semantic_index: u32,
+    ) -> Option<usize> {
+        let parent_id = parent.id();
+        let (insert_id, position) =
+            self.actions
+                .iter()
+                .enumerate()
+                .rev()
+                .find_map(|(position, slot)| match slot {
+                    ActionSlot::PreparedInsert(insert_id) => {
+                        let insert = self.prepared_inserts.get(*insert_id)?.as_ref()?;
+                        (insert.parent.id() == parent_id).then_some((*insert_id, position))
+                    }
+                    ActionSlot::Concrete(_) | ActionSlot::Tombstone => None,
+                })?;
+        let insert = self.prepared_inserts.get(insert_id)?.as_ref()?;
+        let child_list_untouched = self.actions[position + 1..].iter().all(|slot| match slot {
+            ActionSlot::Concrete(action) => match action.as_ref() {
+                YrsMutationAction::DeleteXmlChildren { parent, .. }
+                | YrsMutationAction::InsertXmlChildren { parent, .. } => parent.id() != parent_id,
+                YrsMutationAction::CreateText { parent, .. } => {
+                    AsRef::<Branch>::as_ref(parent).id() != parent_id
+                }
+                _ => true,
+            },
+            ActionSlot::PreparedInsert(_) | ActionSlot::Tombstone => true,
+        });
+        (child_list_untouched
+            && insert.child_index == child_index
+            && insert.semantic_parent_path == semantic_parent_path
+            && insert.first_semantic_index == following_semantic_index)
+            .then_some(insert_id)
+    }
+
+    fn prepend_prepared_nodes(
+        &mut self,
+        operation_index: usize,
+        insert_id: usize,
+        nodes: Vec<PreparedXmlChild>,
+        first_semantic_index: u32,
+    ) -> OperationResult<()> {
+        let request_id = self.request_id;
+        let insert = self
+            .prepared_inserts
+            .get_mut(insert_id)
+            .and_then(Option::as_mut)
+            .ok_or_else(|| invalid_action_range(request_id, operation_index))?;
+        insert.nodes.splice(0..0, nodes);
+        insert.first_semantic_index = first_semantic_index;
+        for (ordinal, child) in insert.nodes.iter_mut().enumerate() {
+            child.index = u32::try_from(ordinal)
+                .ok()
+                .and_then(|ordinal| insert.child_index.checked_add(ordinal))
+                .ok_or_else(|| invalid_action_range(request_id, operation_index))?;
+        }
+        self.prepared_elements
+            .retain(|_, handle| handle.insert_id != insert_id);
+        self.targets.retain(|target| {
+            !matches!(&target.kind, ResolvedTargetKind::Prepared { handle } if handle.insert_id == insert_id)
+        });
+        Ok(())
+    }
+
+    fn replace_prepared_element_from_after(
+        &mut self,
+        operation_index: usize,
+        handle: &PreparedHandle,
+        path: &[u32],
+        after: &Document,
+        schema: &Schema,
+        limits: &ResourceLimits,
+    ) -> OperationResult<()> {
+        let retained = after
+            .node_at(path)
+            .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+        let insert_id = self.replace_prepared_element_from_preview(
+            operation_index,
+            handle,
+            std::slice::from_ref(retained),
+            path.len().saturating_add(1),
+            schema,
+            limits,
+        )?;
+        self.register_prepared_insert_state(operation_index, insert_id, after)
+    }
+
+    fn replace_prepared_element_from_preview(
+        &mut self,
+        operation_index: usize,
+        handle: &PreparedHandle,
+        replacement: &[Node],
+        depth: usize,
+        schema: &Schema,
+        limits: &ResourceLimits,
+    ) -> OperationResult<usize> {
+        let mut batch =
+            crate::yrs_engine::codec::prepare_model_nodes(replacement, schema, limits, depth)
+                .map_err(|error| {
+                    map_prepared_node_error(self.request_id, operation_index, error)
+                })?;
+        let empty_text_work = materialize_empty_prepared_textblocks(&mut batch.nodes, schema);
+        let insert_id = handle.insert_id;
+        self.replace_prepared_element_with_children(operation_index, handle, batch.nodes)?;
+        self.prepared_elements
+            .retain(|_, candidate| candidate.insert_id != insert_id);
+        self.targets.retain(|target| {
+            !matches!(&target.kind, ResolvedTargetKind::Prepared { handle } if handle.insert_id == insert_id)
+        });
+        self.charge_operation_work(
+            operation_index,
+            batch.work.checked_add(empty_text_work).ok_or_else(|| {
+                work_overflow(self.request_id, operation_index, self.action_limit)
+            })?,
+        )?;
+        Ok(insert_id)
+    }
+
+    fn release_prepared_storage_suffix(
+        &mut self,
+        operation_index: usize,
+        block_path: &[u32],
+        storage_start: usize,
+    ) -> OperationResult<u32> {
+        let request_id = self.request_id;
+        let invalid = || invalid_action_range(request_id, operation_index);
+        let block = self
+            .structural_parents
+            .get(block_path)
+            .ok_or_else(invalid)?;
+        let mut existing = 0u32;
+        let mut released = HashMap::<usize, Vec<usize>>::new();
+        for child in block
+            .storage_children
+            .get(storage_start..)
+            .ok_or_else(invalid)?
+        {
+            match child {
+                StorageChildKind::Text { .. } | StorageChildKind::Element { .. } => {
+                    existing = existing.checked_add(1).ok_or_else(invalid)?;
+                }
+                StorageChildKind::PreparedChild { handle, .. } => {
+                    let ordinal = *handle.ordinal_path.first().ok_or_else(invalid)?;
+                    released.entry(handle.insert_id).or_default().push(ordinal);
+                }
+                StorageChildKind::PreparedElement => return Err(invalid()),
+            }
+        }
+        for (insert_id, mut ordinals) in released {
+            ordinals.sort_unstable();
+            let insert = self
+                .prepared_inserts
+                .get_mut(insert_id)
+                .and_then(Option::as_mut)
+                .ok_or_else(invalid)?;
+            let kept = ordinals[0];
+            if !ordinals.iter().copied().eq(kept..insert.nodes.len()) {
+                return Err(invalid());
+            }
+            let original_len = u32::try_from(insert.nodes.len()).map_err(|_| invalid())?;
+            let following_index = insert
+                .child_index
+                .checked_add(original_len)
+                .ok_or_else(invalid)?;
+            let removed = u32::try_from(insert.nodes.len() - kept).map_err(|_| invalid())?;
+            insert.nodes.truncate(kept);
+            self.shift_child_actions_after_insert(
+                operation_index,
+                insert_id,
+                following_index,
+                removed,
+                0,
+            )?;
+            if kept == 0 {
+                for slot in &mut self.actions {
+                    if matches!(slot, ActionSlot::PreparedInsert(id) if *id == insert_id) {
+                        *slot = ActionSlot::Tombstone;
+                    }
+                }
+                self.prepared_inserts[insert_id] = None;
+            }
+            let released_handle = |handle: &PreparedHandle| {
+                handle.insert_id == insert_id
+                    && handle
+                        .ordinal_path
+                        .first()
+                        .is_some_and(|ordinal| *ordinal >= kept)
+            };
+            self.prepared_elements
+                .retain(|_, handle| !released_handle(handle));
+            for target in &mut self.targets {
+                if matches!(&target.kind, ResolvedTargetKind::Prepared { handle } if released_handle(handle))
+                {
+                    for slot in std::mem::take(&mut target.action_slots) {
+                        self.actions[slot] = ActionSlot::Tombstone;
+                    }
+                }
+            }
+            self.targets.retain(|target| {
+                !matches!(&target.kind, ResolvedTargetKind::Prepared { handle } if released_handle(handle))
+            });
+        }
+        Ok(existing)
+    }
+
+    fn shift_child_actions_after_insert(
+        &mut self,
+        operation_index: usize,
+        insert_id: usize,
+        following_index: u32,
+        removed: u32,
+        added: u32,
+    ) -> OperationResult<()> {
+        if removed == added {
+            return Ok(());
+        }
+        let request_id = self.request_id;
+        let invalid = || invalid_action_range(request_id, operation_index);
+        let shift = |index: u32| -> OperationResult<u32> {
+            index
+                .checked_add(added)
+                .and_then(|index| index.checked_sub(removed))
+                .ok_or_else(invalid)
+        };
+        let renumber = |nodes: &mut [PreparedXmlChild], child_index: u32| -> OperationResult<()> {
+            for (ordinal, child) in nodes.iter_mut().enumerate() {
+                child.index = u32::try_from(ordinal)
+                    .ok()
+                    .and_then(|ordinal| child_index.checked_add(ordinal))
+                    .ok_or_else(invalid)?;
+            }
+            Ok(())
+        };
+        let parent_id = self
+            .prepared_inserts
+            .get(insert_id)
+            .and_then(Option::as_ref)
+            .ok_or_else(invalid)?
+            .parent
+            .id();
+        let position = self
+            .actions
+            .iter()
+            .position(|slot| matches!(slot, ActionSlot::PreparedInsert(id) if *id == insert_id))
+            .ok_or_else(invalid)?;
+        let mut following = following_index;
+        for slot in position + 1..self.actions.len() {
+            match &mut self.actions[slot] {
+                ActionSlot::Concrete(action) => match action.as_mut() {
+                    YrsMutationAction::DeleteXmlChildren {
+                        parent,
+                        child_index,
+                        child_count,
+                        ..
+                    } if parent.id() == parent_id => {
+                        let end = child_index.checked_add(*child_count).ok_or_else(invalid)?;
+                        if *child_index < following && end >= following {
+                            return Err(invalid());
+                        }
+                        if end < following {
+                            following = following.checked_sub(*child_count).ok_or_else(invalid)?;
+                        } else {
+                            *child_index = shift(*child_index)?;
+                        }
+                    }
+                    YrsMutationAction::InsertXmlChildren {
+                        parent,
+                        child_index,
+                        nodes,
+                        ..
+                    } if parent.id() == parent_id => {
+                        if *child_index < following {
+                            following = u32::try_from(nodes.len())
+                                .ok()
+                                .and_then(|count| following.checked_add(count))
+                                .ok_or_else(invalid)?;
+                        } else {
+                            *child_index = shift(*child_index)?;
+                            renumber(nodes, *child_index)?;
+                        }
+                    }
+                    YrsMutationAction::CreateText {
+                        parent,
+                        child_index,
+                        ..
+                    } if AsRef::<Branch>::as_ref(parent).id() == parent_id => {
+                        if *child_index < following {
+                            following = following.checked_add(1).ok_or_else(invalid)?;
+                        } else {
+                            *child_index = shift(*child_index)?;
+                        }
+                    }
+                    _ => {}
+                },
+                ActionSlot::PreparedInsert(other) => {
+                    let other = *other;
+                    let insert = self
+                        .prepared_inserts
+                        .get_mut(other)
+                        .and_then(Option::as_mut)
+                        .ok_or_else(invalid)?;
+                    if insert.parent.id() == parent_id {
+                        if insert.child_index < following {
+                            following = u32::try_from(insert.nodes.len())
+                                .ok()
+                                .and_then(|count| following.checked_add(count))
+                                .ok_or_else(invalid)?;
+                        } else {
+                            insert.child_index = shift(insert.child_index)?;
+                            renumber(&mut insert.nodes, insert.child_index)?;
+                        }
+                    }
+                }
+                ActionSlot::Tombstone => {}
+            }
+        }
+        Ok(())
+    }
+
     fn replace_prepared_element_with_children(
         &mut self,
         operation_index: usize,
@@ -86,6 +469,12 @@ impl MutationCompiler {
             if root_ordinal >= insert.nodes.len() {
                 return Err(invalid_action_range(self.request_id, operation_index));
             }
+            let following_index = u32::try_from(root_ordinal)
+                .ok()
+                .and_then(|ordinal| insert.child_index.checked_add(ordinal))
+                .and_then(|index| index.checked_add(1))
+                .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
+            let replacement_len = replacement.len();
             insert
                 .nodes
                 .splice(root_ordinal..=root_ordinal, replacement);
@@ -98,7 +487,14 @@ impl MutationCompiler {
                     )
                     .ok_or_else(|| invalid_action_range(self.request_id, operation_index))?;
             }
-            return Ok(());
+            return self.shift_child_actions_after_insert(
+                operation_index,
+                handle.insert_id,
+                following_index,
+                REPLACED_PREPARED_NODES,
+                u32::try_from(replacement_len)
+                    .map_err(|_| invalid_action_range(self.request_id, operation_index))?,
+            );
         }
         let mut node = &mut insert
             .nodes
@@ -335,96 +731,7 @@ impl MutationCompiler {
             &materialized_texts,
             &mut structural_parents,
         )?;
-        let mut targets = Vec::with_capacity(located.len());
-        let text_runs = structural_parents
-            .values()
-            .flat_map(|parent| parent.storage_children.iter())
-            .filter_map(|child| match child {
-                StorageChildKind::Text { target, runs, .. } => {
-                    Some((AsRef::<Branch>::as_ref(target).id(), runs.clone()))
-                }
-                StorageChildKind::Element { .. }
-                | StorageChildKind::PreparedElement
-                | StorageChildKind::PreparedChild { .. } => None,
-            })
-            .collect::<HashMap<_, _>>();
-        let mut previous_end = 0u32;
-        for located in located {
-            let (start, scalar_len) = match &located {
-                LocatedTarget::Existing {
-                    start, scalar_len, ..
-                } => (*start, *scalar_len),
-                LocatedTarget::Missing { start, .. } => (*start, 0),
-            };
-            let gap_before = start.checked_sub(previous_end).ok_or_else(|| {
-                OperationError::engine_invariant_failed(
-                    request_id,
-                    None,
-                    "Yrs text targets overlap in document order",
-                )
-            })?;
-            previous_end = start.checked_add(scalar_len).ok_or_else(|| {
-                OperationError::engine_invariant_failed(
-                    request_id,
-                    None,
-                    "Yrs text target position overflow",
-                )
-            })?;
-            let target = match located {
-                LocatedTarget::Existing {
-                    target,
-                    text,
-                    signature,
-                    ..
-                } => ResolvedText {
-                    base_runs: text_runs
-                        .get(&AsRef::<Branch>::as_ref(&target).id())
-                        .cloned()
-                        .unwrap_or_else(|| {
-                            vec![PreparedTextRun {
-                                index_utf16: 0,
-                                text: text.clone(),
-                                attrs: Attrs::default(),
-                            }]
-                        }),
-                    current_runs: text_runs
-                        .get(&AsRef::<Branch>::as_ref(&target).id())
-                        .cloned()
-                        .unwrap_or_else(|| {
-                            vec![PreparedTextRun {
-                                index_utf16: 0,
-                                text: text.clone(),
-                                attrs: Attrs::default(),
-                            }]
-                        }),
-                    action_slots: Vec::new(),
-                    kind: ResolvedTargetKind::Existing { signature, target },
-                    gap_before,
-                    text,
-                    scalar_len,
-                },
-                LocatedTarget::Missing {
-                    parent,
-                    child_index,
-                    signature,
-                    ..
-                } => ResolvedText {
-                    base_runs: Vec::new(),
-                    current_runs: Vec::new(),
-                    action_slots: Vec::new(),
-                    kind: ResolvedTargetKind::Missing {
-                        signature,
-                        parent,
-                        child_index,
-                        create_action: None,
-                    },
-                    gap_before,
-                    text: String::new(),
-                    scalar_len: 0,
-                },
-            };
-            targets.push(target);
-        }
+        let targets = resolve_located_targets(request_id, located, &structural_parents)?;
         Ok(Self {
             request_id,
             document_guard,
@@ -437,6 +744,7 @@ impl MutationCompiler {
             pending_traversal_work: traversal_work,
             localized_position_target_count: None,
             explicit_path_parent_widths: None,
+            structural_window_complement: None,
             action_limit,
             scan_work,
             scan_limit,
@@ -502,6 +810,7 @@ impl MutationCompiler {
             pending_traversal_work: eager.pending_traversal_work,
             localized_position_target_count: Some(eager.targets.len()),
             explicit_path_parent_widths: Some(path_parent_widths),
+            structural_window_complement: None,
             action_limit,
             scan_work,
             scan_limit,
@@ -515,4 +824,102 @@ impl MutationCompiler {
         };
         Ok((localized, MutationCompilerBuild::Localized))
     }
+}
+
+fn resolve_located_targets(
+    request_id: u64,
+    located: Vec<LocatedTarget>,
+    structural_parents: &HashMap<Vec<u32>, StructuralParentTarget>,
+) -> OperationResult<Vec<ResolvedText>> {
+    let mut targets = Vec::with_capacity(located.len());
+    let text_runs = structural_parents
+        .values()
+        .flat_map(|parent| parent.storage_children.iter())
+        .filter_map(|child| match child {
+            StorageChildKind::Text { target, runs, .. } => {
+                Some((AsRef::<Branch>::as_ref(target).id(), runs.clone()))
+            }
+            StorageChildKind::Element { .. }
+            | StorageChildKind::PreparedElement
+            | StorageChildKind::PreparedChild { .. } => None,
+        })
+        .collect::<HashMap<_, _>>();
+    let mut previous_end = 0u32;
+    for located in located {
+        let (start, scalar_len) = match &located {
+            LocatedTarget::Existing {
+                start, scalar_len, ..
+            } => (*start, *scalar_len),
+            LocatedTarget::Missing { start, .. } => (*start, 0),
+        };
+        let gap_before = start.checked_sub(previous_end).ok_or_else(|| {
+            OperationError::engine_invariant_failed(
+                request_id,
+                None,
+                "Yrs text targets overlap in document order",
+            )
+        })?;
+        previous_end = start.checked_add(scalar_len).ok_or_else(|| {
+            OperationError::engine_invariant_failed(
+                request_id,
+                None,
+                "Yrs text target position overflow",
+            )
+        })?;
+        let target = match located {
+            LocatedTarget::Existing {
+                target,
+                text,
+                signature,
+                ..
+            } => ResolvedText {
+                base_runs: text_runs
+                    .get(&AsRef::<Branch>::as_ref(&target).id())
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        vec![PreparedTextRun {
+                            index_utf16: 0,
+                            text: text.clone(),
+                            attrs: Attrs::default(),
+                        }]
+                    }),
+                current_runs: text_runs
+                    .get(&AsRef::<Branch>::as_ref(&target).id())
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        vec![PreparedTextRun {
+                            index_utf16: 0,
+                            text: text.clone(),
+                            attrs: Attrs::default(),
+                        }]
+                    }),
+                action_slots: Vec::new(),
+                kind: ResolvedTargetKind::Existing { signature, target },
+                gap_before,
+                text,
+                scalar_len,
+            },
+            LocatedTarget::Missing {
+                parent,
+                child_index,
+                signature,
+                ..
+            } => ResolvedText {
+                base_runs: Vec::new(),
+                current_runs: Vec::new(),
+                action_slots: Vec::new(),
+                kind: ResolvedTargetKind::Missing {
+                    signature,
+                    parent,
+                    child_index,
+                    create_action: None,
+                },
+                gap_before,
+                text: String::new(),
+                scalar_len: 0,
+            },
+        };
+        targets.push(target);
+    }
+    Ok(targets)
 }

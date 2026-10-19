@@ -88,6 +88,18 @@ fn block_visible_text(elements: &[RenderElement]) -> String {
         .collect()
 }
 
+const RENDER_ELEMENT_EXTRA_WORDS: usize = 2;
+
+#[test]
+fn render_elements_stay_within_two_words_of_a_text_run() {
+    let text_run_payload = std::mem::size_of::<(String, Vec<RenderMark>)>();
+    let element = std::mem::size_of::<RenderElement>();
+    assert!(
+        element <= text_run_payload + RENDER_ELEMENT_EXTRA_WORDS * std::mem::size_of::<usize>(),
+        "every cached paragraph element pays the largest variant: {element} bytes against a {text_run_payload}-byte text run"
+    );
+}
+
 // Test 1: Plain paragraph
 // <p>Hello</p> -> [BlockStart("paragraph"), TextRun("Hello", []), BlockEnd]
 #[test]
@@ -320,7 +332,7 @@ fn test_bullet_list_two_items() {
                 node_type: "listItem".to_string(),
                 language: None,
                 depth: 0,
-                list_context: Some(ListContext {
+                list_context: Some(Box::new(ListContext {
                     ordered: false,
                     index: 1,
                     total: 2,
@@ -329,7 +341,7 @@ fn test_bullet_list_two_items() {
                     is_last: false,
                     kind: None,
                     checked: None,
-                }),
+                })),
             },
             RenderElement::BlockStart {
                 node_type: "paragraph".to_string(),
@@ -348,7 +360,7 @@ fn test_bullet_list_two_items() {
                 node_type: "listItem".to_string(),
                 language: None,
                 depth: 0,
-                list_context: Some(ListContext {
+                list_context: Some(Box::new(ListContext {
                     ordered: false,
                     index: 2,
                     total: 2,
@@ -357,7 +369,7 @@ fn test_bullet_list_two_items() {
                     is_last: true,
                     kind: None,
                     checked: None,
-                }),
+                })),
             },
             RenderElement::BlockStart {
                 node_type: "paragraph".to_string(),
@@ -398,7 +410,7 @@ fn test_ordered_list_start_3() {
             node_type: "listItem".to_string(),
             language: None,
             depth: 0,
-            list_context: Some(ListContext {
+            list_context: Some(Box::new(ListContext {
                 ordered: true,
                 index: 3,
                 total: 2,
@@ -407,7 +419,7 @@ fn test_ordered_list_start_3() {
                 is_last: false,
                 kind: None,
                 checked: None,
-            }),
+            })),
         },
         "First item in ordered list starting at 3 should have index=3"
     );
@@ -434,7 +446,7 @@ fn test_ordered_list_start_3() {
             node_type: "listItem".to_string(),
             language: None,
             depth: 0,
-            list_context: Some(ListContext {
+            list_context: Some(Box::new(ListContext {
                 ordered: true,
                 index: 4,
                 total: 2,
@@ -443,7 +455,7 @@ fn test_ordered_list_start_3() {
                 is_last: true,
                 kind: None,
                 checked: None,
-            }),
+            })),
         },
         "Second item in ordered list starting at 3 should have index=4"
     );
@@ -464,7 +476,7 @@ fn test_ordered_list_start_requires_exact_u32() {
             node_type: "listItem".to_string(),
             language: None,
             depth: 0,
-            list_context: Some(ListContext {
+            list_context: Some(Box::new(ListContext {
                 ordered: true,
                 index: u32::MAX,
                 total: 1,
@@ -473,7 +485,7 @@ fn test_ordered_list_start_requires_exact_u32() {
                 is_last: true,
                 kind: None,
                 checked: None,
-            }),
+            })),
         },
         "u32::MAX must remain exact in ordered-list render output"
     );
@@ -516,7 +528,7 @@ fn test_hard_break_in_paragraph() {
             RenderElement::VoidInline {
                 node_type: "hardBreak".to_string(),
                 doc_pos: 3, // after paragraph open (1) + "He" (2)
-                attrs: HashMap::new(),
+                attrs: Box::new(HashMap::new()),
             },
             RenderElement::TextRun {
                 text: "llo".to_string(),
@@ -558,7 +570,7 @@ fn test_horizontal_rule_between_paragraphs() {
             RenderElement::VoidBlock {
                 node_type: "horizontalRule".to_string(),
                 doc_pos: 7, // after paragraph (1+5+1 = 7 tokens)
-                attrs: HashMap::new(),
+                attrs: Box::new(HashMap::new()),
             },
             RenderElement::BlockStart {
                 node_type: "paragraph".to_string(),
@@ -721,7 +733,7 @@ fn test_list_item_paragraph_depth() {
             node_type: "listItem".to_string(),
             language: None,
             depth: 0,
-            list_context: Some(ListContext {
+            list_context: Some(Box::new(ListContext {
                 ordered: false,
                 index: 1,
                 total: 1,
@@ -730,7 +742,7 @@ fn test_list_item_paragraph_depth() {
                 is_last: true,
                 kind: None,
                 checked: None,
-            }),
+            })),
         },
         "listItem should be at depth 0"
     );
@@ -773,7 +785,7 @@ fn test_void_block_doc_pos_accuracy() {
         RenderElement::VoidBlock {
             node_type: "horizontalRule".to_string(),
             doc_pos: 8,
-            attrs: HashMap::new(),
+            attrs: Box::new(HashMap::new()),
         },
         "HorizontalRule should be at doc_pos 8 (after two 4-token paragraphs)"
     );
@@ -800,7 +812,7 @@ fn test_void_inline_doc_pos_accuracy() {
         RenderElement::VoidInline {
             node_type: "hardBreak".to_string(),
             doc_pos: 4,
-            attrs: HashMap::new(),
+            attrs: Box::new(HashMap::new()),
         },
         "HardBreak should be at doc_pos 4 (paragraph open=1 + 'ABC'=3)"
     );
@@ -851,7 +863,7 @@ fn test_ordered_list_default_start() {
             node_type: "listItem".to_string(),
             language: None,
             depth: 0,
-            list_context: Some(ListContext {
+            list_context: Some(Box::new(ListContext {
                 ordered: true,
                 index: 1,
                 total: 1,
@@ -860,7 +872,7 @@ fn test_ordered_list_default_start() {
                 is_last: true,
                 kind: None,
                 checked: None,
-            }),
+            })),
         },
         "Ordered list with no start attr should default start to 1"
     );

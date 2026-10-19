@@ -1,11 +1,11 @@
 package com.apollohg.editor
 
 import android.graphics.RectF
+import android.os.Message
 import android.view.View
 import android.view.ViewTreeObserver
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
-import com.apollohg.editor.NativeEditorExpoView.Companion.EDITOR_UPDATE_EVENT_DEBOUNCE_MS
 import com.apollohg.editor.NativeEditorExpoView.Companion.nanosToMicros
 import com.apollohg.editor.NativeEditorExpoView.NativeCommitKey
 import com.apollohg.editor.NativeEditorExpoView.PendingEditorUpdateEvent
@@ -123,9 +123,9 @@ internal fun NativeEditorExpoView.noteDocumentVersionFromUpdateJSON(updateJSON: 
     }
 }
 
-internal fun NativeEditorExpoView.isSupersededEditorUpdate(updateJson: String): Boolean {
+internal fun NativeEditorExpoView.isSupersededEditorUpdate(documentVersion: String?): Boolean {
     val rendered = renderedDocumentRevision?.toULongOrNull() ?: return false
-    val incoming = documentVersionFromUpdateJSON(updateJson)?.toULongOrNull() ?: return false
+    val incoming = documentVersion?.toULongOrNull() ?: return false
     return incoming < rendered
 }
 
@@ -162,13 +162,14 @@ internal fun NativeEditorExpoView.pendingEditorUpdateEventCountForTestingImpl():
     pendingEditorUpdateEvents.size
 
 internal fun NativeEditorExpoView.schedulePendingEditorUpdateDispatch() {
+    if (pendingEditorUpdateDispatchScheduled) return
     pendingEditorUpdateDispatchScheduled = true
-    val generation = ++pendingEditorUpdateDispatchGeneration
-    mainHandler.postDelayed({
-        if (generation != pendingEditorUpdateDispatchGeneration) return@postDelayed
+    val dispatch = Message.obtain(mainHandler) {
         pendingEditorUpdateDispatchScheduled = false
         drainPendingEditorUpdateEvents()
-    }, EDITOR_UPDATE_EVENT_DEBOUNCE_MS)
+    }
+    dispatch.isAsynchronous = true
+    dispatch.sendToTarget()
 }
 
 internal fun NativeEditorExpoView.drainPendingEditorUpdateEvents() {
@@ -179,22 +180,22 @@ internal fun NativeEditorExpoView.drainPendingEditorUpdateEvents() {
         val event = pendingEditorUpdateEvents.removeFirst()
         pendingEditorUpdateKeys.remove(NativeCommitKey(event.editorId, event.documentRevision))
         if (event.editorId != eventEditorId(richTextView.editorId)) {
-            richTextView.editorEditText.recordImeTraceForTesting(
-                "nativeViewEditorUpdateSkipped",
+            richTextView.editorEditText.recordImeTraceForTesting("nativeViewEditorUpdateSkipped") {
                 "reason=staleEditor queuedEditor=${event.editorId} currentEditor=${eventEditorId(
                     richTextView.editorId
                 )}"
-            )
+            }
             continue
         }
-        val isCurrentRevision = event.documentRevision == renderedDocumentRevision
-        dispatchEditorUpdate(event, emitToJS = true, applyViewState = isCurrentRevision)
+        val isCurrentState = event.documentRevision == renderedDocumentRevision &&
+            event.stateRevision ==
+            (richTextView.editorEditText.v2Driver as? EditorV2Adapter)?.stateRevision
+        dispatchEditorUpdate(event, emitToJS = true, applyViewState = isCurrentState)
         drainedCount += 1
     }
-    richTextView.editorEditText.recordImeTraceForTesting(
-        "nativeViewEditorUpdateDrained",
+    richTextView.editorEditText.recordImeTraceForTesting("nativeViewEditorUpdateDrained") {
         "count=$drainedCount totalUs=${nanosToMicros(System.nanoTime() - startedAt)}"
-    )
+    }
 }
 
 internal fun NativeEditorExpoView.dispatchEditorUpdate(
@@ -212,8 +213,7 @@ internal fun NativeEditorExpoView.dispatchEditorUpdate(
             updateJSON,
             richTextView.editorEditText.v2Driver as? EditorV2Adapter
         )?.let { state ->
-            toolbarState = state
-            keyboardToolbarView.applyState(state)
+            presentToolbarState(state)
         }
     }
     val toolbarNanos = System.nanoTime() - toolbarStartedAt
@@ -243,8 +243,7 @@ internal fun NativeEditorExpoView.dispatchEditorUpdate(
         onEditorUpdateForTesting?.invoke(payload) ?: onEditorUpdate(payload)
     }
     val totalNanos = System.nanoTime() - startedAt
-    richTextView.editorEditText.recordImeTraceForTesting(
-        "nativeViewEditorUpdateDispatch",
+    richTextView.editorEditText.recordImeTraceForTesting("nativeViewEditorUpdateDispatch") {
         "emitToJS=$emitToJS jsonLength=${updateJSON.length} noteUs=${nanosToMicros(
             noteNanos
         )} toolbarUs=${nanosToMicros(
@@ -256,5 +255,5 @@ internal fun NativeEditorExpoView.dispatchEditorUpdate(
         )} emitUs=${nanosToMicros(
             System.nanoTime() - emitStartedAt
         )} totalUs=${nanosToMicros(totalNanos)}"
-    )
+    }
 }

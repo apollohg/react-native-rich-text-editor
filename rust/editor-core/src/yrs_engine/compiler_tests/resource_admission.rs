@@ -56,8 +56,9 @@ fn operation_count_and_aggregate_input_enforce_exact_boundaries() {
         editing_limits: engine.editing_limits(),
         document_revision: engine.revision(),
         max_length: None,
+        validation_certificate: None,
     };
-    super::compile_transaction(
+    super::compile_transaction_with_view(
         context,
         transaction(
             &engine,
@@ -66,10 +67,10 @@ fn operation_count_and_aggregate_input_enforce_exact_boundaries() {
                 text: "abc".into(),
                 marks: vec![],
             }],
-        ),
+        ), None,
     )
     .unwrap();
-    let error = super::compile_transaction(
+    let error = super::compile_transaction_with_view(
         context,
         transaction(
             &engine,
@@ -85,7 +86,7 @@ fn operation_count_and_aggregate_input_enforce_exact_boundaries() {
                     marks: vec![],
                 },
             ],
-        ),
+        ), None,
     )
     .unwrap_err();
     assert_eq!(error.code, "OPERATION_LIMIT_EXCEEDED");
@@ -149,8 +150,9 @@ fn aggregate_output_and_undo_work_accept_exact_and_reject_one_over() {
             editing_limits: &limits,
             document_revision: engine.revision(),
             max_length: None,
+            validation_certificate: None,
         };
-        let result = super::compile_transaction(context, transaction(&engine, operations.clone()));
+        let result = super::compile_transaction_with_view(context, transaction(&engine, operations.clone()), None);
         if accepted {
             result.unwrap();
         } else {
@@ -176,8 +178,9 @@ fn aggregate_output_and_undo_work_accept_exact_and_reject_one_over() {
             editing_limits: &limits,
             document_revision: engine.revision(),
             max_length: None,
+            validation_certificate: None,
         };
-        let result = super::compile_transaction(
+        let result = super::compile_transaction_with_view(
             context,
             transaction(
                 &engine,
@@ -186,7 +189,7 @@ fn aggregate_output_and_undo_work_accept_exact_and_reject_one_over() {
                     text: text.into(),
                     marks: vec![],
                 }],
-            ),
+            ), None,
         );
         if accepted {
             assert_eq!(result.unwrap().undo_units_bound, 1);
@@ -211,6 +214,7 @@ fn aggregate_output_and_undo_work_accept_exact_and_reject_one_over() {
         editing_limits: &limits,
         document_revision: engine.revision(),
         max_length: None,
+        validation_certificate: None,
     };
     let mut skipped = transaction(
         &engine,
@@ -221,7 +225,7 @@ fn aggregate_output_and_undo_work_accept_exact_and_reject_one_over() {
         }],
     );
     skipped.history_policy = HistoryPolicy::Skip;
-    let compiled = super::compile_transaction(context, skipped).unwrap();
+    let compiled = super::compile_transaction_with_view(context, skipped, None).unwrap();
     assert_eq!(compiled.undo_units_bound, 0);
     assert_eq!(compiled.history_class, HistoryClass::Skip);
 
@@ -248,8 +252,9 @@ fn aggregate_output_and_undo_work_accept_exact_and_reject_one_over() {
             editing_limits: &limits,
             document_revision: engine.revision(),
             max_length: None,
+            validation_certificate: None,
         };
-        let result = super::compile_transaction(
+        let result = super::compile_transaction_with_view(
             context,
             transaction(
                 &engine,
@@ -257,7 +262,7 @@ fn aggregate_output_and_undo_work_accept_exact_and_reject_one_over() {
                     range,
                     mark: Mark::new("bold".into(), HashMap::new()),
                 }],
-            ),
+            ), None,
         );
         if accepted {
             assert_eq!(result.unwrap().undo_units_bound, 1);
@@ -494,9 +499,10 @@ fn no_op_marks_do_not_consume_undo_or_rewrite_unrelated_text_nodes() {
             editing_limits: &limits,
             document_revision: bold_engine.revision(),
             max_length: None,
+            validation_certificate: None,
         };
         let compiled =
-            super::compile_transaction(context, transaction(&bold_engine, vec![operation]))
+            super::compile_transaction_with_view(context, transaction(&bold_engine, vec![operation]), None)
                 .unwrap();
         assert_eq!(compiled.preview, *bold_engine.document().unwrap());
         assert_eq!(compiled.undo_units_bound, 0);
@@ -526,8 +532,9 @@ fn no_op_marks_do_not_consume_undo_or_rewrite_unrelated_text_nodes() {
         editing_limits: &editing_limits,
         document_revision: 0,
         max_length: None,
+        validation_certificate: None,
     };
-    let compiled = super::compile_transaction(
+    let compiled = super::compile_transaction_with_view(
         context,
         TypedTransaction {
             request_id: 8,
@@ -539,7 +546,7 @@ fn no_op_marks_do_not_consume_undo_or_rewrite_unrelated_text_nodes() {
             }],
             selection_intent: SelectionIntent::Preserve,
             history_policy: HistoryPolicy::Auto,
-        },
+        }, None,
     )
     .unwrap();
     assert_eq!(compiled.preview, document);
@@ -563,6 +570,7 @@ fn final_semantic_no_ops_discard_provisional_undo_work() {
         editing_limits: &limits,
         document_revision: engine.revision(),
         max_length: None,
+        validation_certificate: None,
     };
 
     let mut identical_replace = transaction(
@@ -573,7 +581,7 @@ fn final_semantic_no_ops_discard_provisional_undo_work() {
         }],
     );
     identical_replace.selection_intent = SelectionIntent::Preserve;
-    let compiled = super::compile_transaction(context, identical_replace).unwrap();
+    let compiled = super::compile_transaction_with_view(context, identical_replace, None).unwrap();
     assert_eq!(compiled.preview, *engine.document().unwrap());
     assert_eq!(compiled.history_class, HistoryClass::Skip);
     assert_eq!(compiled.undo_units_bound, 0);
@@ -591,7 +599,7 @@ fn final_semantic_no_ops_discard_provisional_undo_work() {
         ],
     );
     cancelling.selection_intent = SelectionIntent::Preserve;
-    let compiled = super::compile_transaction(context, cancelling).unwrap();
+    let compiled = super::compile_transaction_with_view(context, cancelling, None).unwrap();
     assert_eq!(compiled.preview, *engine.document().unwrap());
     assert_eq!(compiled.history_class, HistoryClass::Skip);
     assert_eq!(compiled.undo_units_bound, 0);
@@ -608,7 +616,7 @@ fn final_semantic_no_ops_discard_provisional_undo_work() {
             },
         ],
     );
-    let error = super::compile_transaction(context, changed).unwrap_err();
+    let error = super::compile_transaction_with_view(context, changed, None).unwrap_err();
     assert_eq!(error.code, "OPERATION_LIMIT_EXCEEDED");
     assert_eq!(error.operation_index, Some(1));
     assert_eq!(error.limit, Some(1));

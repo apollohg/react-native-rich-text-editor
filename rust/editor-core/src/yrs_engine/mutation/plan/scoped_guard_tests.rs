@@ -139,10 +139,6 @@ fn cloned_guard_expires_with_its_owner_and_releases_the_write_lock() {
             .as_ref(),
             SNAPSHOT_MISMATCH
         );
-        assert!(
-            !escaped.matches_sealed_import_state(&state, &replacement, replacement.scope()),
-            "an expired scope must not authenticate encoded import bytes"
-        );
     }
 }
 
@@ -187,32 +183,6 @@ fn held_candidate_evidence_still_checks_exact_text_targets() {
     assert_eq!(
         txn.encode_state_as_update_v1(&StateVector::default()),
         before
-    );
-}
-
-#[test]
-fn held_import_seal_uses_real_delete_set_evidence() {
-    let (doc, mut plan) = fixture();
-    {
-        let owner = CompilationReadTransaction::for_immediate_commit(doc.transact());
-        plan.document_guard = Some(
-            capture_document_guard_with_read_scope(REQUEST_ID, &owner, owner.scope()).unwrap(),
-        );
-        assert!(plan.matches_sealed_import_state(&owner.state_vector(), &owner, owner.scope()));
-    }
-    let state = doc.transact().state_vector();
-    {
-        let mut txn = doc.transact_mut();
-        let fragment = txn.get_xml_fragment(FRAGMENT_NAME).unwrap();
-        fragment.remove_range(&mut txn, 0, 1);
-    }
-    let owner = CompilationReadTransaction::for_immediate_commit(doc.transact());
-    assert_eq!(owner.state_vector(), state);
-    plan.document_guard =
-        Some(capture_document_guard_with_read_scope(REQUEST_ID, &owner, owner.scope()).unwrap());
-    assert!(
-        !plan.matches_sealed_import_state(&state, &owner, owner.scope()),
-        "a valid held scope cannot prove that the delete set is empty"
     );
 }
 

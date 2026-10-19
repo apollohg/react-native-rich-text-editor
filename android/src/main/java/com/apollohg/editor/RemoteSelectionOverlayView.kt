@@ -202,7 +202,7 @@ class RemoteSelectionOverlayView @JvmOverloads constructor(
     private fun currentSelections(): List<RemoteSelectionDecoration> {
         val frame = installedFrame()
         val presentedRevision =
-            editorView?.editorTableSurface?.presentedDocumentRevision?.toString()
+            editorView?.existingTableSurface?.presentedDocumentRevision?.toString()
         val hasTables = editorView?.let { view ->
             EditorV2Registry.adapterForViewToken(
                 resolvedEditorId(view)
@@ -255,7 +255,8 @@ class RemoteSelectionOverlayView @JvmOverloads constructor(
             }
         }
         cellSelectionClientIds = drawable.map { it.first }.toSet()
-        editorView.editorTableSurface.presentRemoteCellSelections(drawable.map { it.second })
+        val tableSelections = drawable.map { it.second }
+        editorView.tableSurfaceForDocument()?.presentRemoteCellSelections(tableSelections)
     }
 
     fun hasSelectionsOrCachedGeometry(): Boolean =

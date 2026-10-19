@@ -152,22 +152,31 @@ internal fun Collection<PreparedProseLayout>.forEachRetainedLayout(
     val layouts = Collections.newSetFromMap(IdentityHashMap<PreparedProseLayout, Boolean>())
     val stores = Collections.newSetFromMap(IdentityHashMap<TableCellLayoutStore, Boolean>())
     val surfaces = Collections.newSetFromMap(IdentityHashMap<ViewerTableSurface, Boolean>())
-    fun walk(layout: PreparedProseLayout) {
-        if (!layouts.add(layout)) return
-        visit(layout)
-        layout.blocks.forEach { block ->
-            block.tableSurface?.let { surface ->
-                if (surfaces.add(surface)) table(surface)
-                if (stores.add(
-                        surface.layoutStore
-                    )
-                ) {
-                    surface.layoutStore.residentLayouts.forEach(::walk)
-                }
+    class Cursor(
+        val pendingBlocks: Iterator<PreparedProseBlock>,
+        var pendingLayouts: Iterator<PreparedProseLayout>
+    )
+    val stack = ArrayDeque(listOf(Cursor(Collections.emptyIterator(), iterator())))
+    while (stack.isNotEmpty()) {
+        val cursor = stack.last()
+        if (cursor.pendingLayouts.hasNext()) {
+            val layout = cursor.pendingLayouts.next()
+            if (layouts.add(layout)) {
+                visit(layout)
+                stack.addLast(Cursor(layout.blocks.iterator(), Collections.emptyIterator()))
             }
+            continue
+        }
+        if (!cursor.pendingBlocks.hasNext()) {
+            stack.removeLast()
+            continue
+        }
+        val surface = cursor.pendingBlocks.next().tableSurface ?: continue
+        if (surfaces.add(surface)) table(surface)
+        if (stores.add(surface.layoutStore)) {
+            cursor.pendingLayouts = surface.layoutStore.residentLayouts.iterator()
         }
     }
-    forEach(::walk)
 }
 
 /** A fully prepared artifact. StaticLayout construction is complete before publication. */
@@ -195,15 +204,15 @@ internal data class PreparedProseLayout(
     }
 ) {
     internal val hasTableSurfaces: Boolean = blocks.any { it.tableSurface != null }
-    internal val nonTableRetainedBytes: Long get() = retainedBytes - tableRetainedBytesAtPreparation
+    internal val ownRetainedBytes: Long get() = retainedBytes - tableRetainedBytesAtPreparation
 
     internal val currentRetainedBytes: Long
         get() {
-            if (!hasTableSurfaces) return nonTableRetainedBytes
+            if (!hasTableSurfaces) return ownRetainedBytes
             var bytes = 0L
             forEachRetainedLayout(
                 {
-                    bytes += it.retainedBytes - it.tableRetainedBytesAtPreparation
+                    bytes += it.ownRetainedBytes
                 },
                 { bytes += it.metadataRetainedBytes }
             )

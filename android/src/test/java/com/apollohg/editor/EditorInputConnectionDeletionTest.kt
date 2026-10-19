@@ -25,6 +25,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -55,17 +56,77 @@ internal class EditorInputConnectionDeletionTest : EditorInputConnectionTestFixt
     }
 
     @Test
-    fun `ordinary character backspace keeps deferred optimistic path`() {
+    fun `backspace that empties a paragraph patches only that paragraph`() {
+        for (html in listOf(
+            "<p>x</p><p>Beta</p>",
+            "<p>Alpha</p><p>x</p><p>Beta</p>",
+            "<p>Alpha</p><p>x</p>"
+        )) {
+            val harness = structuredDeleteHarness(html)
+            try {
+                val editText = harness.editText
+                editText.captureApplyUpdateTraceForTesting = true
+                editText.setSelection(editText.text.toString().indexOf(EMPTIED_TEXT) + 1)
+                val inputConnection = editText.onCreateInputConnection(EditorInfo())!!
+
+                assertTrue(inputConnection.deleteSurroundingText(1, 0))
+
+                assertEquals(html, harness.expectedText(), editText.text.toString())
+                assertTrue(
+                    "$html: emptying a paragraph must patch it, not rebuild the document",
+                    requireNotNull(editText.lastApplyUpdateTrace()).usedPatch
+                )
+                assertSame(html, inputConnection, editText.activeInputConnection)
+
+                assertTrue(inputConnection.commitText(REFILLED_TEXT, 1))
+
+                assertEquals(html, harness.expectedText(), editText.text.toString())
+                assertTrue(
+                    "$html: refilled text keeps the rendered paragraph",
+                    editText.text.toString().contains(REFILLED_TEXT)
+                )
+            } finally {
+                harness.adapter.destroy()
+            }
+        }
+    }
+
+    @Test
+    fun `ordinary backspace applies its accepted render and preserves the input session`() {
         val harness = structuredDeleteHarness("<p>Alpha</p>")
         try {
+            val listener = RecordingEditorListener()
+            val renderingListener = requireNotNull(harness.editText.editorListener)
+            harness.editText.editorListener =
+                object : EditorEditText.EditorListener by renderingListener {
+                    override fun onEditorUpdate(updateJSON: String) {
+                        renderingListener.onEditorUpdate(updateJSON)
+                        listener.onEditorUpdate(updateJSON)
+                    }
+                }
             harness.editText.setSelection(5)
             val inputConnection = harness.editText.onCreateInputConnection(EditorInfo())!!
 
             assertTrue(inputConnection.deleteSurroundingText(1, 0))
 
-            assertTrue(harness.editText.hasDeferredRustUpdateApplicationForTesting())
+            assertFalse(harness.editText.hasDeferredRustUpdateApplicationForTesting())
             assertEquals("Alph", harness.editText.text.toString())
             assertEquals("Alph", harness.editText.authorizedTextForTesting())
+            assertEquals(harness.expectedText(), harness.editText.text.toString())
+            assertEquals(1, listener.receivedUpdates.size)
+            assertSame(inputConnection, harness.editText.activeInputConnection)
+
+            assertTrue(inputConnection.commitText("a", 1))
+
+            assertEquals("Alpha", harness.editText.text.toString())
+            assertEquals("Alpha", harness.editText.authorizedTextForTesting())
+            assertEquals(harness.expectedText(), harness.editText.text.toString())
+            assertEquals(5, harness.editText.selectionStart)
+            assertEquals(5, harness.editText.selectionEnd)
+            assertEquals(2, listener.receivedUpdates.size)
+            assertSame(inputConnection, harness.editText.activeInputConnection)
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(2, listener.receivedUpdates.size)
         } finally {
             harness.adapter.destroy()
         }
@@ -363,5 +424,10 @@ internal class EditorInputConnectionDeletionTest : EditorInputConnectionTestFixt
 
         assertEquals("\u200B", editText.text.toString())
         assertEquals(1, editText.selectionStart)
+    }
+
+    private companion object {
+        const val EMPTIED_TEXT = "x"
+        const val REFILLED_TEXT = "y"
     }
 }

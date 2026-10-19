@@ -169,6 +169,31 @@ fn build_lookup_seed_payload_with_branch_index<T: ReadTxn>(
     Ok((payload, branch_index.map(|index| index.finish())))
 }
 
+fn root_window_lookup_payload<T: ReadTxn>(
+    request_id: u64,
+    txn: &T,
+    fragment: &XmlFragmentRef,
+    first_child: usize,
+    child_count: usize,
+    schema: &Schema,
+    branch_index: &mut Option<crate::yrs_engine::block_branch_index::BlockBranchIndexCapture>,
+) -> OperationResult<MutationLookupPayload> {
+    let mut collector = ImportLookupMaterializationCollector::for_subtree(
+        request_id,
+        AsRef::<Branch>::as_ref(fragment).id(),
+        0,
+        child_count,
+    );
+    drive_lookup_materialization_collector(
+        txn,
+        schema,
+        fragment.children(txn).skip(first_child).take(child_count),
+        &mut collector,
+        branch_index,
+    );
+    collector.finish_payload()
+}
+
 include!("legacy_lookup.rs");
 
 #[cfg(test)]
@@ -598,8 +623,8 @@ pub(crate) fn assert_lookup_and_branch_index_parity_for_test<T: ReadTxn>(
         combined.target_materialization_work
     );
     assert_eq!(
-        ordinary.path_parent_widths.capacity(),
-        combined.path_parent_widths.capacity()
+        ordinary.path_parent_widths.base.capacity(),
+        combined.path_parent_widths.base.capacity()
     );
     if let Some(expected) = expected_capture {
         assert_eq!(

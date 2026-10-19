@@ -88,10 +88,9 @@ internal fun EditorEditText.insertPlainTextRangeInRust(
     requestedCursorScalar: Int? = null
 ) {
     if (!hasLiveEditor()) return
-    recordImeTraceForTesting(
-        "rustPlainTextRoute",
+    recordImeTraceForTesting("rustPlainTextRoute") {
         "range=$scalarFrom..$scalarTo textLength=${text.length} requestedCursor=$requestedCursorScalar"
-    )
+    }
     if (text.isEmpty()) {
         if (scalarFrom != scalarTo) {
             deleteRangeInRust(scalarFrom, scalarTo)
@@ -100,8 +99,86 @@ internal fun EditorEditText.insertPlainTextRangeInRust(
         return
     }
     if (text.indexOf('\n') >= 0 || text.indexOf('\r') >= 0) {
+        val driver = v2Driver
+        val adapter = driver as? EditorV2Adapter
+        val boundEditor = editorId
+        val generation = inputConnectionGeneration
+        val boundCellMap = tableCellPositionMap
+        val boundIsTableCell = isTableCellInput
+        val consumer = tableCellUpdateConsumer
+        val authority = tableCellInputAuthority
+        val authorizedRevision = lastAuthorizedTextRevision
+        val documentRevision = adapter?.baseDocumentRevision
+        val stateRevision = adapter?.stateRevision
+        val authoritativeSelection = adapter?.cachedAuthoritativeScalarSelection?.copyOf()
+        val localSelection = authoritativeSelection?.takeIf {
+            adapter?.cachedAtomicRenderDocumentRevision == documentRevision
+        }?.let { localScalarSelection(it[0], it[1]) }
+        val fallback = localSelection?.let {
+            captureAuthoritativeInputSnapshotForEditor().copy(
+                selectionStart = PositionBridge.scalarToUtf16(it.first, lastAuthorizedText),
+                selectionEnd = PositionBridge.scalarToUtf16(it.second, lastAuthorizedText)
+            )
+        }
+        fun stillBound(): Boolean = editorId == boundEditor && v2Driver === driver &&
+            inputConnectionGeneration == generation && isEditable && hasLiveEditor() &&
+            tableCellPositionMap === boundCellMap && tableCellUpdateConsumer === consumer &&
+            isTableCellInput == boundIsTableCell && tableCellInputAuthority === authority &&
+            (!isTableCellInput || authority?.invoke() == true)
+
         if (!replaceTextRangeInRust(scalarFrom, scalarTo, text)) {
-            restoreAuthorizedTextSnapshotForEditor()
+            if (!stillBound()) return
+            while (true) {
+                val acceptedUpdate = deferredRustUpdateJSON ?: break
+                val lineBoundarySource = deferredRustUpdateLineBoundaryRefreshSource
+                if (!applyUpdateJSON(acceptedUpdate) || !stillBound()) return
+                lineBoundarySource?.let(::scheduleLineBoundaryInputRefreshForEditor)
+                if (!stillBound()) return
+            }
+            val recovered = driver?.refreshFromRustState(null)
+            if (!stillBound()) return
+            if (recovered != null) {
+                currentRenderBlocksNeedFullApply = currentRenderBlocks != null
+                if (applyUpdateJSON(recovered, notifyListener = false)) return
+            }
+            if (stillBound() && fallback != null &&
+                documentRevision != null && stateRevision != null &&
+                lastAuthorizedTextRevision == authorizedRevision &&
+                adapter.baseDocumentRevision == documentRevision &&
+                adapter.stateRevision == stateRevision &&
+                adapter.cachedAuthoritativeScalarSelection?.contentEquals(authoritativeSelection) ==
+                true
+            ) {
+                val freshState = when (val result = adapter.backend.getState(adapter.editorId)) {
+                    is EditorV2CallResult.Err -> {
+                        adapter.emit(result.error)
+                        return
+                    }
+
+                    is EditorV2CallResult.Ok -> try {
+                        JSONObject(result.value)
+                    } catch (_: org.json.JSONException) {
+                        adapter.emit(
+                            EditorV2Adapter.contractError("v2 fallback state is malformed")
+                        )
+                        return
+                    }
+                }
+                if (!stillBound() ||
+                    ulongField(freshState, "documentRevision") != documentRevision ||
+                    ulongField(freshState, "stateRevision") != stateRevision ||
+                    lastAuthorizedTextRevision != authorizedRevision ||
+                    adapter.baseDocumentRevision != documentRevision ||
+                    adapter.stateRevision != stateRevision ||
+                    adapter.cachedAuthoritativeScalarSelection?.contentEquals(
+                        authoritativeSelection
+                    ) !=
+                    true
+                ) {
+                    return
+                }
+                restoreAuthoritativeInputForEditor(fallback)
+            }
             return
         }
         applyRequestedCursorScalar(requestedCursorScalar)

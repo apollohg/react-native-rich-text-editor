@@ -66,10 +66,9 @@ internal fun EditorInputConnection.isCurrentInputSessionFor(event: String): Bool
         ) {
             abandonCompositionForRejectedRootInput()
         }
-        editorView.recordImeTraceForTesting(
-            "${event}Ignored",
+        editorView.recordImeTraceForTesting("${event}Ignored") {
             "reason=stale boundEditor=$boundEditorId boundGen=$boundGeneration"
-        )
+        }
     }
     return isCurrent
 }

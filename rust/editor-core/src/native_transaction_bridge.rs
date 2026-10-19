@@ -105,6 +105,7 @@ impl<'session> NativeTransactionBridge<'session> {
             .total_scalars();
         let selection = scalar_selection(resolved.anchor, resolved.head, scalar_limit);
         let request_id = envelope.request_id;
+        let selection_only = matches!(envelope.intent, NativeIntentEnvelope::SetSelection { .. });
         let document_revision_before = self.session.engine.revision();
         let outcome = match envelope.intent {
             NativeIntentEnvelope::SetSelection { .. } => {
@@ -282,13 +283,36 @@ impl<'session> NativeTransactionBridge<'session> {
         if document_changed {
             self.session.engine.mark_document_origin_native_view();
         }
-        let serialized = serialize_native_outcome(outcome, resolved.fallback, document_changed);
+        let serialized =
+            serialize_native_outcome(&outcome, resolved.fallback, document_changed, None);
         self.session.retain_native_request_outcome(
             envelope.owner_id,
             request_id,
             serialized.clone(),
         );
-        Ok(serialized)
+        if !selection_only
+            || document_changed
+            || resolved.fallback
+            || !self.owner_render_is_current(envelope.owner_id)
+        {
+            return Ok(serialized);
+        }
+        let selection_state = crate::ffi_v2::render::native_selection_state(&self.session.engine)?;
+        Ok(serialize_native_outcome(
+            &outcome,
+            resolved.fallback,
+            document_changed,
+            Some(selection_state),
+        ))
+    }
+
+    fn owner_render_is_current(&self, owner_id: u64) -> bool {
+        self.session
+            .native_render_cursor(owner_id)
+            .is_some_and(|cursor| {
+                cursor.document_revision == self.session.engine.revision()
+                    && cursor.schema_fingerprint == self.session.engine.schema_fingerprint()
+            })
     }
 
     /// Composition/typing commit: exactly one typed local-input transaction
@@ -657,11 +681,12 @@ fn lower_native_intent(
 }
 
 pub(crate) fn serialize_native_outcome(
-    outcome: NativeBridgeOutcome,
+    outcome: &NativeBridgeOutcome,
     position_fallback: bool,
     document_changed: bool,
+    selection_state: Option<serde_json::Value>,
 ) -> String {
-    match outcome {
+    let mut serialized = match outcome {
         NativeBridgeOutcome::Transaction(result) => serde_json::json!({
             "type": "transaction",
             "changed": result.changed,
@@ -671,22 +696,23 @@ pub(crate) fn serialize_native_outcome(
             "canUndo": result.history_state.can_undo,
             "canRedo": result.history_state.can_redo,
             "positionFallback": position_fallback,
-        })
-        .to_string(),
+        }),
         NativeBridgeOutcome::NotApplicable => serde_json::json!({
             "type": "notApplicable",
             "positionFallback": position_fallback,
-        })
-        .to_string(),
+        }),
         NativeBridgeOutcome::Replacement(commit) => serde_json::json!({
             "type": "replacement",
             "changed": commit.changed,
             "documentChanged": document_changed,
             "documentRevision": commit.document_revision.to_string(),
             "positionFallback": position_fallback,
-        })
-        .to_string(),
+        }),
+    };
+    if let Some(selection_state) = selection_state {
+        serialized["selectionState"] = selection_state;
     }
+    serialized.to_string()
 }
 
 /// Bounded-size admission plus data-only parse, both before any

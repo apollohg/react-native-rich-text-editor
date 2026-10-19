@@ -8,6 +8,9 @@ use crate::transform::Step;
 
 use super::{SemanticCommandHistory, SemanticCommandPlan, SemanticOperation};
 
+const WRAPPING_LIST_AND_ITEM_OPENING_TOKENS: u32 = 2;
+const WRAPPING_ITEM_BOUNDARY_TOKENS: u32 = 2;
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct StructuralDiff {
     pub parent_path: Vec<u32>,
@@ -162,6 +165,34 @@ fn admitted_plan(
         .then_some(AdmittedSemanticCommandPlan { plan, simulated })
 }
 
+fn wrapped_block_selection(
+    selection: &Selection,
+    replace_from: u32,
+    blocks: &[Node],
+) -> Option<Selection> {
+    let wrapped = |position: u32| {
+        if position < replace_from {
+            return position;
+        }
+        let mut block_start = replace_from;
+        let mut shift = WRAPPING_LIST_AND_ITEM_OPENING_TOKENS;
+        for block in blocks {
+            let block_end = block_start + block.node_size();
+            if position < block_end {
+                return position + shift;
+            }
+            block_start = block_end;
+            shift += WRAPPING_ITEM_BOUNDARY_TOKENS;
+        }
+        position + shift
+    };
+    match selection {
+        Selection::Text { anchor, head } => Some(Selection::text(wrapped(*anchor), wrapped(*head))),
+        Selection::Node { pos } => Some(Selection::node(wrapped(*pos))),
+        Selection::Cell { .. } | Selection::All => None,
+    }
+}
+
 fn list_attrs_for_type(
     schema: &Schema,
     list_type: &str,
@@ -192,12 +223,8 @@ pub(crate) fn plan_wrap_in_list_admitted(
 ) -> Option<AdmittedSemanticCommandPlan> {
     let (parent_path, replace_from, replace_to, selected) =
         selected_block_range(document, schema, selection)?;
-    let in_blockquote = (!parent_path.is_empty())
-        .then(|| document.node_at(&parent_path))
-        .flatten()
-        .and_then(|node| schema.node(node.node_type()))
-        .is_some_and(|spec| spec.html_tag.as_deref() == Some("blockquote"));
-    let plan = if in_blockquote {
+    let plan = if !parent_path.is_empty() {
+        let selection_after = wrapped_block_selection(selection, replace_from, &selected);
         let items = selected
             .into_iter()
             .map(|block| {
@@ -218,7 +245,7 @@ pub(crate) fn plan_wrap_in_list_admitted(
                     Fragment::from(items),
                 )]),
             }],
-            selection_after: None,
+            selection_after,
             history: SemanticCommandHistory::InputBoundary,
         }
     } else {
@@ -253,48 +280,49 @@ pub(crate) fn plan_apply_list_type(
         matches!(role, NodeRole::List { .. })
     }) {
         let list = document.node_at(&path)?;
-        if list.node_type() != list_type {
-            let from = node_delete_start(document, &path)?;
-            let item_type = schema.list_item_type_for(list_type)?;
-            let items = list
-                .content()?
-                .iter()
-                .map(|item| {
-                    if item.node_type() == item_type {
-                        return Some(item.clone());
-                    }
-                    schema
-                        .node(item.node_type())
-                        .filter(|spec| matches!(spec.role, NodeRole::ListItem))?;
-                    Some(Node::element(
-                        item_type.clone(),
-                        compatible_declared_attrs(schema, &item_type, item.attrs())?,
-                        item.content().cloned().unwrap_or_else(Fragment::empty),
-                    ))
-                })
-                .collect::<Option<Vec<_>>>()?;
-            let replacement = Node::element(
-                list_type.to_string(),
-                list_attrs_for_type(schema, list_type, list.attrs())?,
-                Fragment::from(items),
-            );
-            return admitted_plan(
-                document,
-                schema,
-                selection,
-                SemanticCommandPlan {
-                    operations: vec![SemanticOperation::ReplaceRange {
-                        from,
-                        to: from.checked_add(list.node_size())?,
-                        content: Fragment::from(vec![replacement]),
-                    }],
-                    selection_after: None,
-                    history: SemanticCommandHistory::FormatBoundary,
-                },
-                limits,
-            )
-            .map(|admitted| admitted.plan);
+        if list.node_type() == list_type {
+            return plan_unwrap_from_list(document, schema, selection, limits);
         }
+        let from = node_delete_start(document, &path)?;
+        let item_type = schema.list_item_type_for(list_type)?;
+        let items = list
+            .content()?
+            .iter()
+            .map(|item| {
+                if item.node_type() == item_type {
+                    return Some(item.clone());
+                }
+                schema
+                    .node(item.node_type())
+                    .filter(|spec| matches!(spec.role, NodeRole::ListItem))?;
+                Some(Node::element(
+                    item_type.clone(),
+                    compatible_declared_attrs(schema, &item_type, item.attrs())?,
+                    item.content().cloned().unwrap_or_else(Fragment::empty),
+                ))
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let replacement = Node::element(
+            list_type.to_string(),
+            list_attrs_for_type(schema, list_type, list.attrs())?,
+            Fragment::from(items),
+        );
+        return admitted_plan(
+            document,
+            schema,
+            selection,
+            SemanticCommandPlan {
+                operations: vec![SemanticOperation::ReplaceRange {
+                    from,
+                    to: from.checked_add(list.node_size())?,
+                    content: Fragment::from(vec![replacement]),
+                }],
+                selection_after: None,
+                history: SemanticCommandHistory::FormatBoundary,
+            },
+            limits,
+        )
+        .map(|admitted| admitted.plan);
     }
     let item_type = schema.list_item_type_for(list_type)?;
     plan_wrap_in_list(document, schema, selection, list_type, &item_type, limits)
@@ -549,23 +577,47 @@ pub(crate) fn plan_move_selection(
     } else {
         destination
     };
-    let cursor = mapped_destination.checked_add(fragment.size())?;
-    let plan = SemanticCommandPlan {
-        operations: vec![
-            SemanticOperation::ReplaceRange {
-                from,
-                to,
-                content: Fragment::empty(),
-            },
-            SemanticOperation::ReplaceRange {
-                from: mapped_destination,
-                to: mapped_destination,
-                content: fragment,
-            },
-        ],
-        selection_after: Some(Selection::cursor(cursor)),
-        history: SemanticCommandHistory::InputBoundary,
+    let deletion = SemanticOperation::ReplaceRange {
+        from,
+        to,
+        content: Fragment::empty(),
     };
+    let after_deletion =
+        super::text::apply_operations(document, schema, std::slice::from_ref(&deletion)).ok()?;
+    let moved = |position: u32, content: Fragment, cursor_inset: u32| {
+        let cursor = position
+            .checked_add(content.size())?
+            .checked_sub(cursor_inset)?;
+        Some(SemanticCommandPlan {
+            operations: vec![
+                deletion.clone(),
+                SemanticOperation::ReplaceRange {
+                    from: position,
+                    to: position,
+                    content,
+                },
+            ],
+            selection_after: Some(Selection::cursor(cursor)),
+            history: SemanticCommandHistory::InputBoundary,
+        })
+    };
+    let blocks = super::text::inline_runs_wrapped_in_text_blocks(schema, fragment.children())?;
+    let blocks_cursor_inset = u32::from(
+        blocks
+            .last()
+            .is_some_and(|block| schema.is_text_block(block.node_type())),
+    );
+    let blocks = Fragment::from(blocks);
+    let plan = std::iter::once(moved(mapped_destination, fragment, 0))
+        .chain(
+            super::text::block_insertion_points(&after_deletion, schema, mapped_destination)
+                .into_iter()
+                .map(|point| moved(point, blocks.clone(), blocks_cursor_inset)),
+        )
+        .flatten()
+        .find(|plan| {
+            super::text::produces_valid_document(document, schema, &plan.operations, limits)
+        })?;
     admitted_plan(document, schema, selection, plan, limits).map(|admitted| admitted.plan)
 }
 
@@ -600,6 +652,25 @@ pub(crate) fn plan_insert_node(
     let node = Node::void(node_type.to_string(), attrs);
     let from = selection.from(document)?;
     let to = selection.to(document)?;
+    let inline = matches!(spec.role, NodeRole::Inline | NodeRole::HardBreak);
+    if from < to
+        && (crate::tables::mutation_guard::range_crosses_cell_boundary(document, schema, from, to)
+            || (inline && !super::text::within_one_textblock(document, schema, from, to)))
+    {
+        let Ok(plan) = super::text::plan_replacement_after_deletion(
+            document,
+            schema,
+            from,
+            to,
+            limits,
+            |preview, cursor| {
+                Ok::<_, std::convert::Infallible>(plan_insert_node(
+                    preview, schema, cursor, node_type, limits,
+                ))
+            },
+        );
+        return plan;
+    }
     let plan = match spec.role {
         NodeRole::Inline | NodeRole::HardBreak => {
             let resolved = document.resolve(from).ok()?;
@@ -623,31 +694,47 @@ pub(crate) fn plan_insert_node(
         }
         NodeRole::Block => {
             let insert = resolve_block_insert_pos(document, schema, from);
-            if matches!(node_type, "horizontalRule" | "horizontal_rule") {
-                let (replace_from, replace_to) =
-                    empty_text_block_range(document, schema, from).unwrap_or((insert, insert));
-                let text_spec = schema.preferred_text_block()?;
-                let text_block = Node::element(
-                    text_spec.name.clone(),
-                    default_attrs(schema, &text_spec.name)?,
-                    Fragment::empty(),
-                );
-                SemanticCommandPlan {
-                    operations: vec![SemanticOperation::ReplaceRange {
-                        from: replace_from,
-                        to: replace_to,
-                        content: Fragment::from(vec![node, text_block]),
+            let separates_blocks = matches!(node_type, "horizontalRule" | "horizontal_rule");
+            let block_plan = |replace_from: u32, replace_to: u32| -> Option<SemanticCommandPlan> {
+                if separates_blocks {
+                    let text_spec = schema.preferred_text_block()?;
+                    let text_block = Node::element(
+                        text_spec.name.clone(),
+                        default_attrs(schema, &text_spec.name)?,
+                        Fragment::empty(),
+                    );
+                    return Some(SemanticCommandPlan {
+                        operations: vec![SemanticOperation::ReplaceRange {
+                            from: replace_from,
+                            to: replace_to,
+                            content: Fragment::from(vec![node.clone(), text_block]),
+                        }],
+                        selection_after: Some(Selection::cursor(replace_from.checked_add(2)?)),
+                        history: SemanticCommandHistory::InputBoundary,
+                    });
+                }
+                Some(SemanticCommandPlan {
+                    operations: vec![SemanticOperation::InsertNode {
+                        pos: replace_from,
+                        node: node.clone(),
                     }],
-                    selection_after: Some(Selection::cursor(replace_from.checked_add(2)?)),
+                    selection_after: Some(Selection::cursor(replace_from.checked_add(1)?)),
                     history: SemanticCommandHistory::InputBoundary,
-                }
-            } else {
-                SemanticCommandPlan {
-                    operations: vec![SemanticOperation::InsertNode { pos: insert, node }],
-                    selection_after: Some(Selection::cursor(insert.checked_add(1)?)),
-                    history: SemanticCommandHistory::InputBoundary,
-                }
-            }
+                })
+            };
+            let (replace_from, replace_to) = empty_text_block_range(document, schema, from)
+                .filter(|_| separates_blocks)
+                .unwrap_or((insert, insert));
+            std::iter::once((replace_from, replace_to))
+                .chain(
+                    super::text::block_insertion_points(document, schema, from)
+                        .into_iter()
+                        .map(|point| (point, point)),
+                )
+                .filter_map(|(replace_from, replace_to)| block_plan(replace_from, replace_to))
+                .find(|plan| {
+                    super::text::produces_valid_document(document, schema, &plan.operations, limits)
+                })?
         }
         _ => return None,
     };

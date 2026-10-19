@@ -19,6 +19,23 @@ pub(crate) const CLIPBOARD_UNSUPPORTED_KEY: &str = "unsupported";
 pub(crate) const CLIPBOARD_UNSUPPORTED_CELL_SELECTION: &str = "cellSelection";
 pub(crate) const CLIPBOARD_UNSUPPORTED_TABLE_GRID: &str = "tableGrid";
 pub(crate) const CLOSED_FRAGMENT_DEPTH: usize = 0;
+impl ClipboardSlice {
+    pub(crate) fn with_tables_flattened(self, schema: &Schema) -> Self {
+        let root = self.document.root();
+        let blocks = crate::tables::mutation_guard::tables_flattened_into_blocks(
+            root.content()
+                .map(|content| content.children())
+                .unwrap_or_default(),
+            schema,
+        );
+        Self {
+            document: Document::new(copy_element(root, blocks)),
+            ..self
+        }
+    }
+}
+
+pub(crate) const OPEN_TEXTBLOCK_DEPTH: usize = 1;
 pub(crate) const LINE_BREAK: char = '\n';
 pub(crate) const LINE_BREAK_TEXT: &str = "\n";
 const HARD_BREAK_HTML_TAG: &str = "br";

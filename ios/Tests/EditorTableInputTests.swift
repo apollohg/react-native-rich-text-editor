@@ -2927,12 +2927,8 @@ final class EditorTableInputTests: XCTestCase {
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
-        let accuracy: CGFloat = 0.001
-        let matches = actual.count == expected.count && zip(actual, expected).allSatisfy { lhs, rhs in
-            abs(lhs.minX - rhs.minX) <= accuracy && abs(lhs.minY - rhs.minY) <= accuracy
-                && abs(lhs.width - rhs.width) <= accuracy && abs(lhs.height - rhs.height) <= accuracy
-        }
-        XCTAssertTrue(matches, "\(message) actual \(actual) expected \(expected)", file: file, line: line)
+        XCTAssertTrue(layoutRectsMatch(actual, expected), "\(message) actual \(actual) expected \(expected)",
+            file: file, line: line)
     }
 
     private func waitForGeometryFrame() {
@@ -3586,24 +3582,47 @@ final class EditorTableInputTests: XCTestCase {
             input.selectedRange = NSRange(location: 0, length: input.textStorage.length)
             input.textViewDidChangeSelection(input)
             try input.pressAccessoryToolbarButton(labeled: TableToolbarTestItems.strongLabel)
-
-            let document = try XCTUnwrap(JSONSerialization.jsonObject(
-                with: Data(try XCTUnwrap(fixture.adapter.documentJson()).utf8)
-            ) as? [String: Any])
-            let table = try XCTUnwrap((document["content"] as? [[String: Any]])?.first)
-            let row = try XCTUnwrap((table["content"] as? [[String: Any]])?.first)
-            let cells = try XCTUnwrap(row["content"] as? [[String: Any]])
-            func runs(_ cell: [String: Any]) -> [[String: Any]] {
-                ((cell["content"] as? [[String: Any]])?.first?["content"] as? [[String: Any]]) ?? []
-            }
-            XCTAssertEqual(runs(cells[1]).map { $0["text"] as? String }, ["two"], "\(cells[1])")
-            XCTAssertEqual(
-                runs(cells[1]).first?["marks"] as? [[String: String]],
-                [["type": TableToolbarTestItems.strongMark]],
-                "the toolbar marks the focused cell's text: \(cells[1])"
-            )
-            XCTAssertNil(runs(cells[0]).first?["marks"], "the root's former caret cell is untouched: \(cells[0])")
+            try assertOnlySecondCellIsStrong(fixture.adapter)
         }
+    }
+
+    func testKeyboardToolbarItemsReplacedWhileACellIsFocusedArePressableImmediately() throws {
+        try withExpoTableGeometry(
+            configJson: TableInputTestSchema.strongMarkTableConfig,
+            document: fourCellDocument
+        ) { fixture in
+            let input = try fixture.activateCell(1)
+            fixture.host.setToolbarButtonsJson(TableToolbarTestItems.strongJson)
+            input.selectedRange = NSRange(location: 0, length: input.textStorage.length)
+            input.textViewDidChangeSelection(input)
+            try input.pressAccessoryToolbarButton(labeled: TableToolbarTestItems.strongLabel)
+            try assertOnlySecondCellIsStrong(fixture.adapter)
+        }
+    }
+
+    private func assertOnlySecondCellIsStrong(
+        _ adapter: EditorV2Adapter,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        let document = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: Data(try XCTUnwrap(adapter.documentJson()).utf8)
+        ) as? [String: Any])
+        let table = try XCTUnwrap((document["content"] as? [[String: Any]])?.first)
+        let row = try XCTUnwrap((table["content"] as? [[String: Any]])?.first)
+        let cells = try XCTUnwrap(row["content"] as? [[String: Any]])
+        func runs(_ cell: [String: Any]) -> [[String: Any]] {
+            ((cell["content"] as? [[String: Any]])?.first?["content"] as? [[String: Any]]) ?? []
+        }
+        XCTAssertEqual(runs(cells[1]).map { $0["text"] as? String }, ["two"], "\(cells[1])", file: file, line: line)
+        XCTAssertEqual(
+            runs(cells[1]).first?["marks"] as? [[String: String]],
+            [["type": TableToolbarTestItems.strongMark]],
+            "the toolbar marks the focused cell's text: \(cells[1])",
+            file: file,
+            line: line
+        )
+        XCTAssertNil(runs(cells[0]).first?["marks"], "the root's former caret cell is untouched: \(cells[0])", file: file, line: line)
     }
 
     private func authoritativeSelection(_ adapter: EditorV2Adapter) throws -> [String: Any] {
@@ -5060,5 +5079,5 @@ final class EditorTableInputTests: XCTestCase {
 }
 
 private extension EditorTableInputTests {
-    static let selectionStateKeys: Set<String> = ["documentVersion", "selection", "activeState", "historyState"]
+    static let selectionStateKeys: Set<String> = ["documentVersion", "stateRevision", "selection", "activeState", "historyState"]
 }

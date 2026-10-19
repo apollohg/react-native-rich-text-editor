@@ -3,6 +3,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Rect
+import android.text.Annotation
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.StaticLayout
@@ -22,6 +23,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -104,11 +106,11 @@ internal class RichTextEditorViewRenderPatchesTest : RichTextEditorViewTestFixtu
         )
 
         assertEquals("Alpha\nBeta\n\u200B\nGamma", editText.text?.toString())
-        assertFalse(editText.lastRenderAppliedPatch())
+        assertTrue(editText.lastRenderAppliedPatch())
     }
 
     @Test
-    fun `count changing patch falls back before later indexed patch`() {
+    fun `count changing patch retains indexed suffix before later patch`() {
         val editText = EditorEditText(RuntimeEnvironment.getApplication())
         val initialBlocks = JSONArray().apply {
             put(paragraphRenderBlock("Alpha"))
@@ -130,7 +132,7 @@ internal class RichTextEditorViewRenderPatchesTest : RichTextEditorViewTestFixtu
         )
 
         assertEquals("Extra\nAlpha\nBeta", editText.text?.toString())
-        assertFalse(editText.lastRenderAppliedPatch())
+        assertTrue(editText.lastRenderAppliedPatch())
 
         val replacePatch = JSONObject()
             .put("startIndex", 1)
@@ -147,6 +149,200 @@ internal class RichTextEditorViewRenderPatchesTest : RichTextEditorViewTestFixtu
 
         assertEquals("Extra\nUpdated\nBeta", editText.text?.toString())
         assertTrue(editText.lastRenderAppliedPatch())
+    }
+
+    @Test
+    fun `positional suffix retains rich spans and synchronizes opaque and stable atoms`() {
+        val editor = EditorEditText(RuntimeEnvironment.getApplication())
+        assertTrue(
+            editor.applyAtomRenderConfiguration(
+                AtomRenderConfiguration.fromJson(
+                    """{"nodeTypes":["counterCard"],"estimatedHeights":{"counterCard":120}}"""
+                )
+            )
+        )
+        fun blocks(first: String, mentionPosition: Int, atomPosition: Int): JSONArray {
+            val rich = paragraphRenderBlock("Retained 😀")
+            rich.getJSONObject(1).put("marks", JSONArray().put("bold"))
+            rich.put(
+                rich.length() - 1,
+                JSONObject().put("type", "opaqueInlineAtom")
+                    .put(
+                        "nodeType",
+                        "mention"
+                    ).put("label", "@person").put("docPos", mentionPosition)
+            )
+            rich.put(JSONObject().put("type", "blockEnd"))
+            return JSONArray().put(paragraphRenderBlock(first)).put(rich).put(
+                JSONArray().put(
+                    JSONObject().put("type", "voidBlock").put("nodeType", "counterCard")
+                        .put("atomId", "retained-counter").put("docPos", atomPosition)
+                )
+            ).put(paragraphRenderBlock("Last"))
+        }
+        val initial = blocks("Before", 24, 25)
+        editor.applyUpdateJSON(renderUpdateJson(initial), notifyListener = false)
+        val before = editor.text as Spanned
+        val retainedStyle = before.getSpans(
+            0,
+            before.length,
+            android.text.style.StyleSpan::class.java
+        ).single()
+        val retainedAtom = before.getSpans(0, before.length, AtomBlockSpan::class.java).single()
+        val updated = blocks("Before 😀!", 27, 28)
+        editor.applyUpdateJSON(
+            renderUpdateJson(
+                JSONArray(),
+                includeFullRenderBlocks = false,
+                renderPatch = JSONObject().put("startIndex", 0).put("deleteCount", initial.length())
+                    .put("renderBlocks", updated)
+            ),
+            notifyListener = false
+        )
+        val after = editor.text as Spanned
+        assertTrue("wire positional suffix must use visual patch", editor.lastRenderAppliedPatch())
+        assertSame(
+            "unchanged rich style must be retained",
+            retainedStyle,
+            after.getSpans(0, after.length, android.text.style.StyleSpan::class.java).single()
+        )
+        assertSame(
+            "unchanged stable atom must retain its presentation",
+            retainedAtom,
+            after.getSpans(0, after.length, AtomBlockSpan::class.java).single()
+        )
+        assertEquals(28, retainedAtom.docPos)
+        assertEquals(
+            listOf("27", "28"),
+            after.getSpans(0, after.length, Annotation::class.java)
+                .filter {
+                    it.key == RenderBridge.NATIVE_DOC_POS_ANNOTATION
+                }.sortedBy(after::getSpanStart).map { it.value }
+        )
+        assertEquals(
+            RenderBridge.buildSpannableFromBlocks(
+                updated,
+                baseFontSize = 16f,
+                textColor = Color.BLACK,
+                atomConfiguration = editor.atomRenderConfiguration
+            ).toString(),
+            editor.text.toString()
+        )
+        editor.setSelection("Before 😀!".length)
+        val authorized = editor.captureAuthoritativeInputSnapshotForEditor()
+        editor.runWithTransientInputMutationGuard {
+            editor.text.delete(editor.selectionStart - 1, editor.selectionStart)
+            true
+        }
+        editor.restoreAuthoritativeInputForEditor(authorized, recoveryUpdateJson = null)
+        val restored = editor.text as Spanned
+        assertEquals(
+            "rollback must retain current authoritative positional metadata",
+            listOf("27", "28"),
+            restored.getSpans(0, restored.length, Annotation::class.java)
+                .filter { it.key == RenderBridge.NATIVE_DOC_POS_ANNOTATION }
+                .sortedBy(restored::getSpanStart).map { it.value }
+        )
+        assertEquals(
+            28,
+            restored.getSpans(0, restored.length, AtomBlockSpan::class.java).single().docPos
+        )
+    }
+
+    @Test
+    fun `structural insertion and deletion at document edges match full render`() {
+        val editor = EditorEditText(RuntimeEnvironment.getApplication())
+        val initial = JSONArray().put(paragraphRenderBlock("First 😀"))
+            .put(paragraphRenderBlock("Middle")).put(paragraphRenderBlock("Last"))
+        val changes = listOf(
+            Triple(0, 0, JSONArray().put(paragraphRenderBlock("Front"))),
+            Triple(1, 0, JSONArray().put(paragraphRenderBlock("Inserted"))),
+            Triple(3, 0, JSONArray().put(paragraphRenderBlock("Appended"))),
+            Triple(0, 1, JSONArray()),
+            Triple(1, 1, JSONArray()),
+            Triple(2, 1, JSONArray())
+        )
+        for ((start, deleted, inserted) in changes) {
+            editor.applyUpdateJSON(renderUpdateJson(initial), notifyListener = false)
+            val patch = editor.parseRenderPatch(
+                JSONObject().put("startIndex", start)
+                    .put("deleteCount", deleted).put("renderBlocks", inserted)
+            )!!
+            val expected = requireNotNull(
+                ResolvedRenderBlocks.merge(
+                    requireNotNull(ResolvedRenderBlocks.from(initial)).blocks,
+                    patch
+                )
+            ).toJsonArray()
+            editor.applyUpdateJSON(
+                renderUpdateJson(
+                    JSONArray(),
+                    includeFullRenderBlocks = false,
+                    renderPatch = JSONObject().put("startIndex", start).put("deleteCount", deleted)
+                        .put("renderBlocks", inserted)
+                ),
+                notifyListener = false
+            )
+            assertTrue(
+                "start=$start deleted=$deleted must apply incrementally",
+                editor.lastRenderAppliedPatch()
+            )
+            assertEquals(
+                "start=$start deleted=$deleted exact rendered content",
+                RenderBridge.buildSpannableFromBlocks(
+                    expected,
+                    baseFontSize = 16f,
+                    textColor = Color.BLACK
+                ).toString(),
+                editor.text.toString()
+            )
+            val authorized = editor.captureAuthoritativeInputSnapshotForEditor()
+            editor.runWithTransientInputMutationGuard {
+                editor.text.insert(0, "!")
+                true
+            }
+            editor.restoreAuthoritativeInputForEditor(authorized, recoveryUpdateJson = null)
+            val content = editor.text as Spanned
+            assertEquals(
+                "rollback must retain all current child indexes",
+                (
+                    0 until
+                        expected.length()
+                    ).toSet(),
+                content.getSpans(0, content.length, Annotation::class.java)
+                    .filter { it.key == RenderBridge.NATIVE_TOP_LEVEL_CHILD_INDEX_ANNOTATION }
+                    .map { it.value.toInt() }.toSet()
+            )
+        }
+    }
+
+    @Test
+    fun `unchanged wire patch retains authorized snapshot and prepared layout`() {
+        val editor = EditorEditText(RuntimeEnvironment.getApplication())
+        val initial = JSONArray().put(paragraphRenderBlock("First"))
+            .put(paragraphRenderBlock("Second"))
+        editor.applyUpdateJSON(renderUpdateJson(initial), notifyListener = false)
+        editor.measure(
+            View.MeasureSpec.makeMeasureSpec(320, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(400, View.MeasureSpec.EXACTLY)
+        )
+        editor.layout(0, 0, editor.measuredWidth, editor.measuredHeight)
+        val authorized = editor.lastAuthorizedRenderedText
+        val layout = editor.layout
+        val builds = editor.documentLayoutBuildCount
+        editor.applyUpdateJSON(
+            renderUpdateJson(
+                JSONArray(),
+                includeFullRenderBlocks = false,
+                renderPatch = JSONObject().put("startIndex", 0).put("deleteCount", 0)
+                    .put("renderBlocks", JSONArray())
+            ),
+            notifyListener = false,
+            refreshInputConnectionForExternalUpdate = true
+        )
+        assertSame(authorized, editor.lastAuthorizedRenderedText)
+        assertSame(layout, editor.layout)
+        assertEquals(builds, editor.documentLayoutBuildCount)
     }
 
     @Test

@@ -41,7 +41,7 @@ impl<'a> LocalizedRootWindowLocator<'a> {
     pub(crate) fn mint<T: ReadTxn>(
         request_id: u64,
         document: &'a Document,
-        expected_preview: &'a Document,
+        expected_preview: Option<&'a Document>,
         replacement: &super::super::StructuralReplacement,
         seed: &'a MutationLookupSeed,
         txn: &T,
@@ -61,7 +61,7 @@ impl<'a> LocalizedRootWindowLocator<'a> {
             return Ok(None);
         };
         if !replacement.parent_path().is_empty()
-            || from_child >= to_child
+            || from_child > to_child
             || to_child > root_len
             || !seed.matches(
                 txn,

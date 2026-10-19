@@ -231,6 +231,27 @@ pub(super) fn prepare_command_contract_oracle(
     }
 }
 
+fn admit_max_length(
+    request_id: u64,
+    max_length: Option<u32>,
+    actual: impl FnOnce() -> u64,
+) -> OperationResult<()> {
+    let Some(limit) = max_length else {
+        return Ok(());
+    };
+    let actual = actual();
+    if actual > u64::from(limit) {
+        return Err(OperationError::document_limit_exceeded(
+            request_id,
+            None,
+            "maxLength",
+            u64::from(limit),
+            actual,
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn finalize_deferred_admission(
     staged: &yrs_engine::prepared_admission::StagedDerivedStateAuthority<'_>,
     deferred: yrs_engine::prepared_admission::DeferredCommandAdmission,
@@ -435,18 +456,9 @@ impl PreparedSemanticAdmission {
                 .map_err(|error| {
                     OperationError::document_invalid(request_id, None, "command", error.to_string())
                 })?;
-        if let Some(limit) = max_length {
-            let actual = expected_document.root().text_content().chars().count();
-            if actual > limit as usize {
-                return Err(OperationError::document_limit_exceeded(
-                    request_id,
-                    None,
-                    "maxLength",
-                    u64::from(limit),
-                    actual as u64,
-                ));
-            }
-        }
+        admit_max_length(request_id, max_length, || {
+            expected_document.root().text_content().chars().count() as u64
+        })?;
         let command_contract_oracle = prepare_command_contract_oracle(
             request_id,
             transaction,
@@ -472,6 +484,62 @@ impl PreparedSemanticAdmission {
             undo_units,
             command_contract_oracle,
         )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::yrs_engine) fn prepare_localized_marks(
+        request_id: u64,
+        document_revision: u64,
+        state_revision: u64,
+        yrs_state_epoch: u64,
+        canonical_schema: &CanonicalSchemaContext,
+        resource_limits: &ResourceLimits,
+        editing_limits: &EditingLimits,
+        max_length: Option<u32>,
+        transaction: &TypedTransaction,
+        expected_document: &Document,
+        candidate: yrs_engine::derived_state::LocalizedMarkCandidate,
+        undo_units: u64,
+    ) -> OperationResult<Self> {
+        admit_max_length(request_id, max_length, || {
+            candidate.canonical_artifact.text_scalar_len()
+        })?;
+        let canonical_artifact = candidate.canonical_artifact.clone();
+        let candidate_validation =
+            yrs_engine::derived_state::PreparedCandidateValidation::prepare_localized_marks(
+                &CandidateValidationAuthority(()),
+                expected_document,
+                candidate,
+                resource_limits,
+                editing_limits,
+                max_length,
+                canonical_schema.schema_fingerprint(),
+            )
+            .ok_or_else(|| {
+                OperationError::engine_invariant_failed(
+                    request_id,
+                    Some(0),
+                    "prepared command candidate validation could not be sealed",
+                )
+            })?;
+        Ok(Self::from_post_validation_construction(
+            PreparedSemanticConstruction {
+                request_id,
+                document_revision,
+                state_revision,
+                yrs_state_epoch,
+                schema_fingerprint: canonical_schema.schema_fingerprint().into(),
+                transaction: transaction.clone(),
+                expected_document: expected_document.clone(),
+                canonical_artifact,
+                candidate_validation: Some(candidate_validation),
+                resource_limits: resource_limits.clone(),
+                editing_limits: editing_limits.clone(),
+                max_length,
+                undo_units,
+                command_contract_oracle: PreparedCommandContractOracle::None,
+            },
+        ))
     }
 
     #[allow(clippy::too_many_arguments)]

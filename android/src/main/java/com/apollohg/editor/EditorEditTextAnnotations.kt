@@ -43,7 +43,7 @@ internal fun EditorEditText.mentionHitAtImpl(x: Float, y: Float): MentionHit? {
     val mentionAnnotation = annotations.firstOrNull {
         it.key == RenderBridge.NATIVE_VOID_NODE_TYPE_ANNOTATION && it.value == "mention"
     } ?: return null
-    val docPos = annotations.firstOrNull { it.key == "nativeDocPos" }
+    val docPos = annotations.firstOrNull { it.key == RenderBridge.NATIVE_DOC_POS_ANNOTATION }
         ?.value
         ?.viewerMentionDocPos() ?: return null
     val start = spannable.getSpanStart(mentionAnnotation)
@@ -100,7 +100,7 @@ internal fun EditorEditText.accessibleAnnotationsImpl(): List<AccessibleAnnotati
             annotation.key == RenderBridge.NATIVE_VOID_NODE_TYPE_ANNOTATION &&
                 annotation.value == "mention" -> {
                 val docPos = annotations.firstOrNull { candidate ->
-                    candidate.key == "nativeDocPos" &&
+                    candidate.key == RenderBridge.NATIVE_DOC_POS_ANNOTATION &&
                         spannable.getSpanStart(candidate) == start &&
                         spannable.getSpanEnd(candidate) == end
                 }?.value?.viewerMentionDocPos() ?: return@forEach
@@ -148,7 +148,7 @@ internal fun EditorEditText.interactiveAnnotationHitAtImpl(
     val label = spannable.subSequence(start, end).toString()
     val target = if (annotation === mentionAnnotation) {
         val docPos = annotations.firstOrNull {
-            it.key == "nativeDocPos" &&
+            it.key == RenderBridge.NATIVE_DOC_POS_ANNOTATION &&
                 spannable.getSpanStart(it) == start &&
                 spannable.getSpanEnd(it) == end
         }?.value?.viewerMentionDocPos() ?: return null

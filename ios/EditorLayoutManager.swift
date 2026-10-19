@@ -5,6 +5,24 @@ import UIKit
 /// editable text storage. This keeps UIKit paragraph-start behaviors, such as
 /// sentence auto-capitalization, working naturally inside list items.
 final class EditorLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
+    private weak var cachedStyledBoxStorage: NSTextStorage?
+    private var cachedStyledBoxDrawGroups: [StyledBoxDrawGroup]?
+    private var styledBoxEditGeneration: UInt64 = 0
+
+    override func processEditing(
+        for textStorage: NSTextStorage,
+        edited editMask: NSTextStorage.EditActions,
+        range newCharRange: NSRange,
+        changeInLength delta: Int,
+        invalidatedRange invalidatedCharRange: NSRange
+    ) {
+        styledBoxEditGeneration &+= 1
+        cachedStyledBoxStorage = nil
+        cachedStyledBoxDrawGroups = nil
+        super.processEditing(for: textStorage, edited: editMask, range: newCharRange,
+            changeInLength: delta, invalidatedRange: invalidatedCharRange)
+    }
+
     override init() {
         super.init()
         delegate = self
@@ -21,6 +39,7 @@ final class EditorLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         var properties = Array(UnsafeBufferPointer(start: props, count: glyphRange.length))
         var changed = false
         for index in 0..<glyphRange.length {
+            guard storage.attribute(editorMentionBoxAttribute, at: characterIndexes[index], effectiveRange: nil) is EditorMentionRenderedBox else { continue }
             var range = NSRange()
             guard storage.attribute(editorMentionBoxAttribute, at: characterIndexes[index], longestEffectiveRange: &range, in: NSRange(location: 0, length: storage.length)) is EditorMentionRenderedBox else { continue }
             properties[index] = characterIndexes[index] == range.location && (index == 0 || characterIndexes[index - 1] != range.location) ? .controlCharacter : .null
@@ -41,7 +60,9 @@ final class EditorLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
     }
 
     func layoutManager(_ layoutManager: NSLayoutManager, shouldBreakLineByWordBeforeCharacterAt charIndex: Int) -> Bool {
-        guard let storage = textStorage, charIndex < storage.length else { return true }
+        guard let storage = textStorage, charIndex < storage.length,
+              storage.attribute(editorMentionBoxAttribute, at: charIndex, effectiveRange: nil) is EditorMentionRenderedBox
+        else { return true }
         var range = NSRange()
         guard storage.attribute(editorMentionBoxAttribute, at: charIndex, longestEffectiveRange: &range, in: NSRange(location: 0, length: storage.length)) is EditorMentionRenderedBox else { return true }
         return charIndex == range.location
@@ -51,12 +72,12 @@ final class EditorLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         guard let storage = textStorage, storage.length > 0 else { return false }
         let characters = characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
         var height = lineFragmentUsedRect.pointee.height
-        storage.enumerateAttribute(editorInlineLineHeightAttribute, in: characters) { value, _, _ in
+        storage.enumerateAttribute(editorInlineLineHeightAttribute, in: characters, options: [.longestEffectiveRangeNotRequired]) { value, _, _ in
             height = max(height, EditorTheme.cgFloat(value) ?? 0)
         }
         var ascent = baselineOffset.pointee + (height - lineFragmentUsedRect.pointee.height) / 2
         var descent = height - ascent
-        storage.enumerateAttribute(editorMentionBoxAttribute, in: characters) { value, _, _ in
+        storage.enumerateAttribute(editorMentionBoxAttribute, in: characters, options: [.longestEffectiveRangeNotRequired]) { value, _, _ in
             guard let chip = value as? EditorMentionRenderedBox else { return }
             ascent = max(ascent, chip.baselineOffset)
             descent = max(descent, chip.size.height - chip.baselineOffset)
@@ -247,17 +268,60 @@ final class EditorLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         }
     }
 
+    private struct StyledBoxDrawGroup {
+        let descriptor: EditorRenderedBox
+        let range: NSRange
+        let order: Int
+    }
+
+    private func styledBoxDrawGroups(in storage: NSTextStorage) -> [StyledBoxDrawGroup] {
+        if cachedStyledBoxStorage !== storage {
+            cachedStyledBoxStorage = nil
+            cachedStyledBoxDrawGroups = nil
+        }
+        if storage.editedMask.isEmpty, let cachedStyledBoxDrawGroups {
+            return cachedStyledBoxDrawGroups
+        }
+        let generation = styledBoxEditGeneration
+        var cacheable = true
+        let startedAt = PreparedProseInstrumentation.tableStageObserverForTesting == nil
+            ? 0 : PreparedProseInstrumentation.now()
+        defer { PreparedProseInstrumentation.recordTableStage(.editorStyledBoxGrouping, start: startedAt) }
+        var groups: [ObjectIdentifier: StyledBoxDrawGroup] = [:]
+        storage.enumerateAttribute(editorStyleBoxesAttribute, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+            if value != nil, !(value is EditorRenderedBoxStack) { cacheable = false }
+            for box in renderedStyleBoxes(from: value) ?? [] {
+                let id = ObjectIdentifier(box)
+                let previous = groups[id]
+                groups[id] = StyledBoxDrawGroup(descriptor: box,
+                    range: previous.map { NSUnionRange($0.range, range) } ?? range,
+                    order: previous?.order ?? groups.count)
+            }
+        }
+        let ordered = groups.values.sorted { lhs, rhs in
+            if lhs.descriptor.depth != rhs.descriptor.depth {
+                return lhs.descriptor.depth < rhs.descriptor.depth
+            }
+            if lhs.range.location != rhs.range.location {
+                return lhs.range.location < rhs.range.location
+            }
+            return lhs.order < rhs.order
+        }
+        if cacheable, storage.editedMask.isEmpty, generation == styledBoxEditGeneration {
+            cachedStyledBoxStorage = storage
+            cachedStyledBoxDrawGroups = ordered
+        }
+        return ordered
+    }
+
     private func drawStyleBoxes(in storage: NSTextStorage, glyphsToShow: NSRange, origin: CGPoint) {
         guard let context = UIGraphicsGetCurrentContext(), let container = textContainers.first else { return }
         let visible = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
-        var groups: [ObjectIdentifier: (EditorRenderedBox, NSRange)] = [:]
-        storage.enumerateAttribute(editorStyleBoxesAttribute, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
-            for box in value as? [EditorRenderedBox] ?? [] {
-                let id = ObjectIdentifier(box)
-                groups[id] = (box, groups[id].map { NSUnionRange($0.1, range) } ?? range)
-            }
-        }
-        for (descriptor, range) in groups.values.sorted(by: { $0.0.depth < $1.0.depth }) where NSIntersectionRange(range, visible).length > 0 {
+        let ordered = styledBoxDrawGroups(in: storage)
+        for group in ordered where NSIntersectionRange(group.range, visible).length > 0 {
+            let descriptor = group.descriptor
+            let range = group.range
+            guard descriptor.box.paintsDecoration else { continue }
             let glyphs = glyphRange(forCharacterRange: range, actualCharacterRange: nil)
             var union = CGRect.null
             enumerateLineFragments(forGlyphRange: glyphs) { line, used, _, _, _ in

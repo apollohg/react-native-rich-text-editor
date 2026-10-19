@@ -122,10 +122,9 @@ internal fun EditorEditText.drainNativeTextMutationIfNeeded(
         )
         return true
     }
-    recordImeTraceForTesting(
-        "nativeMutationNoop",
+    recordImeTraceForTesting("nativeMutationNoop") {
         "reason=${if (mutation == null) "noDiffRange" else "notAdoptable"} allowAfterBlur=$allowAfterBlur currentLength=${currentText.length} authorizedLength=${lastAuthorizedText.length}"
-    )
+    }
     return false
 }
 
@@ -193,10 +192,9 @@ internal fun EditorEditText.commitNativeTextMutation(
     if (!hasLiveEditor()) return
     val startedAt = System.nanoTime()
     if ((text?.toString() ?: "") != mutation.resultingText) {
-        recordImeTraceForTesting(
-            "nativeMutationNoop",
+        recordImeTraceForTesting("nativeMutationNoop") {
             "reason=staleResult range=${mutation.scalarFrom}..${mutation.scalarTo} replacementLength=${mutation.replacementText.length}"
-        )
+        }
         return
     }
     val shouldRestartInput = hasFocus()
@@ -208,10 +206,9 @@ internal fun EditorEditText.commitNativeTextMutation(
     nativeTextMutationAfterBlurWindow?.didAdoptMutation = true
     clearNativeTextMutationAfterBlurWindow()
 
-    recordImeTraceForTesting(
-        "nativeMutationApply",
+    recordImeTraceForTesting("nativeMutationApply") {
         "range=${mutation.scalarFrom}..${mutation.scalarTo} replacementLength=${mutation.replacementText.length} restartInput=$shouldRestartInput preserveInputConnection=$preserveInputConnectionForExternalUpdate"
-    )
+    }
     if (mutation.replacementText.isEmpty()) {
         deleteRangeInRust(mutation.scalarFrom, mutation.scalarTo)
     } else {
@@ -227,10 +224,9 @@ internal fun EditorEditText.commitNativeTextMutation(
             if (preserveInputConnectionForExternalUpdate) "externalUpdatePreflight" else "explicit"
         )
     }
-    recordImeTraceForTesting(
-        "nativeMutationApplyDone",
+    recordImeTraceForTesting("nativeMutationApplyDone") {
         "totalUs=${nanosToMicros(System.nanoTime() - startedAt)} restartInput=$shouldRestartInput"
-    )
+    }
 }
 
 internal fun EditorEditText.restoreSelectionAfterNativeTextMutation(mutation: NativeTextMutation) {

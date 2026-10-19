@@ -252,14 +252,14 @@ extension EditorTextView {
 
     func restoreAuthorizedTextAfterCancelledCompositionIfNeeded() {
         guard editorId != 0 else { return }
-        guard textStorage.string != lastAuthorizedText else { return }
+        guard !textStorageMatchesAuthorizedText() else { return }
 
         let stateJSON = EditorV2Shadow.getCurrentState(id: editorId)
         applyUpdateJSON(stateJSON)
     }
 
     func restoreAuthorizedTextSnapshot() {
-        guard textStorage.string != lastAuthorizedText else { return }
+        guard !textStorageMatchesAuthorizedText() else { return }
         _ = applyAttributedRender(
             NSAttributedString(attributedString: lastAuthorizedAttributedTextStorage),
             usedPatch: false,

@@ -43,7 +43,7 @@ extension EditorTextView: UITextInteractionDelegate {
 
     @objc
     func handleCaretPlacementTap(_ recognizer: UITapGestureRecognizer) {
-        guard recognizer.state == .ended else { return }
+        guard recognizer.state == .ended, selectedRange.length == 0 else { return }
         // UIKit single taps otherwise snap to word boundaries.
         _ = placeCaret(at: recognizer.location(in: self))
     }
@@ -141,7 +141,7 @@ extension EditorTextView: UITextInteractionDelegate {
         }
         let currentText = textStorage.string
         guard currentText.utf16.count == lastAuthorizedTextStorage.length,
-              currentText == lastAuthorizedText
+              textStorageMatchesAuthorizedText()
         else {
             return
         }
@@ -626,10 +626,14 @@ extension EditorTextView: UITextInteractionDelegate {
             let resolveNanos = DispatchTime.now().uptimeNanoseconds - resolveStartedAt
 
             let assignmentStartedAt = DispatchTime.now().uptimeNanoseconds
+            var positionNanos: UInt64 = 0
             logicalSelectionScalarRange = (anchor: anchorScalar, head: headScalar)
             if anchorScalar == headScalar {
+                let positionStartedAt = DispatchTime.now().uptimeNanoseconds
                 let endPos = position(from: beginningOfDocument, offset: endUtf16) ?? endOfDocument
-                if let adjustedPosition = autocapitalizationFriendlyEmptyBlockPosition(for: endPos) {
+                let adjustedPosition = autocapitalizationFriendlyEmptyBlockPosition(for: endPos)
+                positionNanos = DispatchTime.now().uptimeNanoseconds - positionStartedAt
+                if let adjustedPosition {
                     let adjustedOffset = offset(from: beginningOfDocument, to: adjustedPosition)
                     let adjustedRange = NSRange(location: adjustedOffset, length: 0)
                     if selectedRange != adjustedRange {
@@ -662,7 +666,8 @@ extension EditorTextView: UITextInteractionDelegate {
                 totalNanos: DispatchTime.now().uptimeNanoseconds - totalStartedAt,
                 resolveNanos: resolveNanos,
                 assignmentNanos: assignmentNanos,
-                chromeNanos: chromeNanos
+                chromeNanos: chromeNanos,
+                positionNanos: positionNanos
             )
 
         case "node":

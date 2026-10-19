@@ -73,7 +73,7 @@ internal fun withMountedEditorView(
         assertEquals(
             "admission=$applied trace=${view.editorEditText.imeTraceSnapshotForTesting()} " +
                 "extents=${adapter.tableIndex.rootExtents} scalar=${adapter.cachedScalarLength} " +
-                "blocks=${adapter.cachedSemanticRenderBlocks}",
+                "blocks=${adapter.cachedSemanticBlockTableIds}",
             JSONObject(snapshot).getString("documentVersion"),
             view.editorEditText.lastAppliedDocumentVersion
         )
@@ -85,6 +85,34 @@ internal fun withMountedEditorView(
         activity?.pause()?.stop()?.destroy()
     }
 }
+
+internal const val MOUNTED_TABLE_EDITOR_CONFIG =
+    """{"schema":{"nodes":[{"name":"doc","content":"block+",""" +
+        """"role":"doc"},{"name":"paragraph","content":"inline*",""" +
+        """"group":"block","role":"textBlock"},{"name":"text",""" +
+        """"content":"","group":"inline","role":"text"},""" +
+        """{"name":"table","content":"table_row+","group":"block",""" +
+        """"role":"block","tableRole":"table"},""" +
+        """{"name":"table_row","content":"(table_cell | """ +
+        """table_header)*","role":"block","tableRole":"row"},""" +
+        """{"name":"table_cell","content":"block+","role":"block",""" +
+        """"tableRole":"cell","attrs":{"colspan":{"type":"number",""" +
+        """"default":1,"min":1},"rowspan":{"type":"number",""" +
+        """"default":1,"min":1},"colwidth":{"default":null}}},""" +
+        """{"name":"table_header","content":"block+",""" +
+        """"role":"block","tableRole":"header_cell",""" +
+        """"attrs":{"colspan":{"type":"number","default":1,""" +
+        """"min":1},"rowspan":{"type":"number","default":1,""" +
+        """"min":1},"colwidth":{"default":null}}}],"marks":[]},""" +
+        """"initialization":{"type":"localEmpty"}}"""
+
+internal const val MOUNTED_TABLE_DOCUMENT = """{"type":"doc","content":[{"type":"table",""" +
+    """"content":[{"type":"table_row",""" +
+    """"content":[{"type":"table_cell",""" +
+    """"content":[{"type":"paragraph",""" +
+    """"content":[{"type":"text","text":"Cell text"}]}]}]}]},""" +
+    """{"type":"paragraph","content":[{"type":"text",""" +
+    """"text":"after"}]}]}"""
 
 private const val EDITOR_WIDTH = 600
 private const val EDITOR_HEIGHT = 500

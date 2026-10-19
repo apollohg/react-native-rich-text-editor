@@ -40,7 +40,7 @@ extension RenderBridgeTests {
         ]]
 
         let result = RenderBridge.renderBlocks(
-            fromArray: blocks,
+            fromArray: blocks as [[NSDictionary]],
             baseFont: baseFont,
             textColor: textColor
         )
@@ -263,7 +263,7 @@ extension RenderBridgeTests {
         ]]
 
         let result = RenderBridge.renderBlocks(
-            fromArray: blocks,
+            fromArray: blocks as [[NSDictionary]],
             startIndex: 3,
             includeLeadingInterBlockSeparator: true,
             baseFont: baseFont,

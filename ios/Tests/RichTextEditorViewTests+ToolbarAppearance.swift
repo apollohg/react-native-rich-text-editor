@@ -270,4 +270,96 @@ extension RichTextEditorViewTests {
         }
     }
 
+    private func visibleToolbarSignature(_ toolbar: EditorAccessoryToolbarView) -> [String] {
+        toolbar.rebuildButtonsIfNeeded()
+        return toolbar.buttonBindings.map { binding in
+            let button = binding.button
+            return [
+                binding.item.type.rawValue,
+                button.accessibilityLabel ?? "-",
+                button.currentImage == nil ? "no-image" : "image",
+                button.currentTitle ?? "-",
+                "enabled=\(button.isEnabled)",
+                "selected=\(button.isSelected)",
+                "alpha=\(button.alpha)",
+                "tint=\(button.tintColor.map { String(describing: $0) } ?? "-")",
+                "superview=\(button.superview.map { String(describing: type(of: $0)) } ?? "-")"
+            ].joined(separator: "|")
+        } + ["separators=\(toolbar.separators.count)"]
+    }
+
+    func testFreshEditorViewToolbarShowsTheSameDefaultButtonsAsAnExplicitDefaultItemsBuild() {
+        let view = NativeEditorExpoView()
+        let reference = EditorAccessoryToolbarView(frame: .zero)
+        reference.setItems(NativeToolbarItem.defaults)
+        reference.apply(state: view.toolbarState)
+
+        let actual = visibleToolbarSignature(view.accessoryToolbar)
+        let expected = visibleToolbarSignature(reference)
+        XCTAssertEqual(actual.count, NativeToolbarItem.defaults.filter { $0.type != .separator }.count + 1,
+            "fresh toolbar: \(actual)")
+        XCTAssertEqual(actual, expected,
+            "A fresh editor view must show the default toolbar exactly as an explicit default-items build does")
+    }
+
+    private func toolbarArrangedSubviews(_ toolbar: EditorAccessoryToolbarView) -> [UIView] {
+        [toolbar.startPinnedStackView, toolbar.stackView, toolbar.endPinnedStackView].flatMap(\.arrangedSubviews)
+    }
+
+    func testAccessoryToolbarDefersButtonConstructionUntilLaidOutWithStateAppliedMeanwhile() {
+        let toolbar = EditorAccessoryToolbarView(frame: .zero)
+        toolbar.setItems(NativeToolbarItem.defaults)
+        toolbar.apply(theme: EditorToolbarTheme(dictionary: ["appearance": "native"]))
+        toolbar.applyBoldStateForTesting(active: true, enabled: true)
+        XCTAssertTrue(toolbarArrangedSubviews(toolbar).isEmpty,
+            "an unlaid-out toolbar must not construct buttons: \(toolbarArrangedSubviews(toolbar))")
+
+        let host = Self.attachToFixedWidthHost(toolbar, width: 390)
+        host.layoutIfNeeded()
+
+        let buttonCount = NativeToolbarItem.defaults.filter { $0.type != .separator }.count
+        let separatorCount = NativeToolbarItem.defaults.count - buttonCount
+        XCTAssertEqual(toolbarArrangedSubviews(toolbar).count, buttonCount + separatorCount,
+            "layout must construct every default item: \(toolbarArrangedSubviews(toolbar))")
+        XCTAssertEqual(toolbar.buttonBindings.count, buttonCount)
+        XCTAssertEqual(toolbar.selectedButtonCountForTesting, 1,
+            "state applied before construction must reach the built buttons")
+        XCTAssertTrue(toolbar.usesNativeAppearanceForTesting)
+    }
+
+    func testHiddenEditorToolbarNeverConstructsButtonsWhileFocusedAndConstructsThemOnceShown() throws {
+        let editorId = makeV2Editor()
+        defer { destroyV2Editor(id: editorId) }
+        let view = NativeEditorExpoView()
+        let window = hostNativeEditorExpoView(view)
+        view.frame = window.bounds
+        let input = view.richTextView.textView
+        defer {
+            _ = input.resignFirstResponder()
+            view.setEditorId(0)
+            view.removeFromSuperview()
+            window.isHidden = true
+        }
+        view.setEditorId(editorId)
+        view.setShowToolbar(false)
+        view.richTextView.setContent(html: "<p>Hidden toolbar</p>")
+        input.inputView = UIView(frame: .zero)
+        XCTAssertTrue(input.becomeFirstResponder())
+        window.layoutIfNeeded()
+        XCTAssertTrue(view.isUsingAccessoryPlaceholderForTesting())
+        XCTAssertTrue(toolbarArrangedSubviews(view.accessoryToolbar).isEmpty,
+            "a hidden toolbar must not construct buttons: \(toolbarArrangedSubviews(view.accessoryToolbar))")
+
+        view.setShowToolbar(true)
+        let accessoryMounted = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            input.isFirstResponder && view.accessoryToolbar.window != nil
+        }, object: view.accessoryToolbar)
+        wait(for: [accessoryMounted], timeout: MountedEditorTestFixture.releaseTimeout)
+        view.accessoryToolbar.layoutIfNeeded()
+        XCTAssertTrue(view.isUsingAccessoryToolbarForTesting())
+        XCTAssertEqual(view.accessoryToolbar.buttonBindings.count,
+            NativeToolbarItem.defaults.filter { $0.type != .separator }.count,
+            "a shown toolbar must construct its buttons: \(toolbarArrangedSubviews(view.accessoryToolbar))")
+    }
+
 }

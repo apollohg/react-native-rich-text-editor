@@ -1,23 +1,18 @@
 #[cfg(test)]
 use super::test_hooks::{
-    CANDIDATE_BOUNDED_STATE_ENCODINGS, IMPORT_CANDIDATE_STATE_ENCODINGS,
-    IMPORT_RECEIPT_SHA256_MATCHES, IMPORT_RECEIPT_SHA256_MINTS, IMPORT_RECEIPT_STATE_DECODINGS,
+    CANDIDATE_BOUNDED_STATE_ENCODINGS, IMPORT_RECEIPT_SHA256_MATCHES, IMPORT_RECEIPT_SHA256_MINTS,
 };
 use crate::boundary::ResourceLimits;
 use crate::model::Document;
 use crate::schema::Schema;
 use crate::yrs_engine;
 use crate::yrs_engine::canonical::CanonicalArtifact;
-use crate::yrs_engine::mutation::YrsMutationPlan;
 use crate::yrs_engine::{EditingLimits, YrsEngineError, YrsEngineResult};
 use serde_json::json;
 use sha2::Digest;
 use std::collections::HashSet;
-use std::sync::Arc;
 use yrs::branch::{Branch, BranchID};
-use yrs::types::xml::XmlFragmentRef;
-use yrs::updates::decoder::Decode;
-use yrs::{ClientID, Doc, OffsetKind, Options, ReadTxn, StateVector, Transact, Update, Uuid};
+use yrs::{ClientID, Doc, OffsetKind, Options, ReadTxn, StateVector, Transact, Uuid};
 
 /// A one-owner capability proving that these exact standard update-v1 bytes
 /// were produced from the validated import candidate after its codec
@@ -33,7 +28,6 @@ pub(super) struct ImportEncodedStateReceipt {
     pub(super) skip_gc: bool,
     pub(super) delete_set_is_empty: bool,
     pub(super) lookup_materialization: Option<ImportLookupMaterializationReceipt>,
-    pub(super) lookup_state_verified: bool,
 }
 
 pub(super) struct ImportLookupMaterializationReceipt {
@@ -105,7 +99,6 @@ impl ImportEncodedStateReceipt {
             skip_gc: source.skip_gc(),
             delete_set_is_empty,
             lookup_materialization,
-            lookup_state_verified: false,
         })
     }
 
@@ -155,9 +148,6 @@ impl ImportEncodedStateReceipt {
             // its full projection again on this import-only path.
             && receipt.schema_token == schema as *const _ as usize
             && receipt.canonical_artifact.schema_fingerprint() == schema_fingerprint;
-        if exact {
-            self.lookup_state_verified = true;
-        }
         exact.then_some(FinalizedImportLookupMaterialization {
             materialization: receipt.materialization,
             source_document: receipt.source_document,
@@ -169,105 +159,16 @@ impl ImportEncodedStateReceipt {
             yrs_state_epoch,
         })
     }
-
-    fn into_matching(
-        self,
-        source: &Doc,
-        fragment_name: &str,
-        max_encoded_state_bytes: usize,
-    ) -> Option<(Vec<u8>, StateVector, BranchID, bool)> {
-        if self.encoded_state.len() > max_encoded_state_bytes {
-            return None;
-        }
-        let txn = source.transact();
-        let fragment = txn.get_xml_fragment(fragment_name)?;
-        let fragment_id = AsRef::<Branch>::as_ref(&fragment).id();
-        let metadata_matches = !txn.has_missing_updates()
-            && txn.state_vector() == self.state_vector
-            && fragment_id == self.fragment_id
-            && source.client_id() == self.client_id
-            && source.guid() == self.guid
-            && source.offset_kind() == self.offset_kind
-            && source.skip_gc() == self.skip_gc;
-        if !metadata_matches {
-            return None;
-        }
-        let encoded_hash_matches = self.lookup_state_verified || {
-            #[cfg(test)]
-            IMPORT_RECEIPT_SHA256_MATCHES
-                .set(IMPORT_RECEIPT_SHA256_MATCHES.get().saturating_add(1));
-            let encoded_state_sha256: [u8; 32] = sha2::Sha256::digest(&self.encoded_state).into();
-            encoded_state_sha256 == self.encoded_state_sha256
-        };
-        encoded_hash_matches.then_some((
-            self.encoded_state,
-            self.state_vector,
-            self.fragment_id,
-            self.delete_set_is_empty,
-        ))
-    }
 }
 
 pub(super) struct PreparedCandidateCache {
     pub(super) doc: Doc,
     pub(super) state_vector: StateVector,
-    pub(super) staged_lookup_seed: Option<Arc<yrs_engine::mutation::MutationLookupSeed>>,
-    pub(super) document_revision: u64,
-    pub(super) yrs_state_epoch: u64,
-    pub(super) encoded_state_seal: Option<EncodedStateSeal>,
-}
-
-pub(super) struct EncodedStateSeal {
-    pub(super) encoded_state: Vec<u8>,
-    pub(super) fragment_id: BranchID,
-    pub(super) client_id: ClientID,
-    pub(super) guid: Uuid,
-    pub(super) offset_kind: OffsetKind,
-    pub(super) skip_gc: bool,
     pub(super) document_revision: u64,
     pub(super) yrs_state_epoch: u64,
 }
 
 impl PreparedCandidateCache {
-    pub(super) fn take_matching_encoded_state<T: yrs::ReadTxn>(
-        &mut self,
-        live_doc: &Doc,
-        live_fragment: &XmlFragmentRef,
-        mutation_plan: &YrsMutationPlan,
-        live_txn: &T,
-        live_scope: Option<crate::yrs_engine::compiler::CompilationReadScope<'_>>,
-        document_revision: u64,
-        yrs_state_epoch: u64,
-        max_encoded_state_bytes: usize,
-    ) -> Option<Vec<u8>> {
-        // A seal is one-shot even when it has gone stale. Keeping rejected
-        // bytes would retain an untrusted optimization across another commit.
-        let seal = self.encoded_state_seal.take()?;
-        let within_current_ceiling =
-            retained_import_state_charge(seal.encoded_state.len(), seal.encoded_state.capacity())
-                .is_some_and(|retained| retained <= max_encoded_state_bytes);
-        let live_fragment_id = AsRef::<Branch>::as_ref(live_fragment).id();
-        let candidate_txn = self.doc.transact();
-        let candidate_fragment_id = seal.fragment_id.get_branch(&candidate_txn)?.id();
-        let matches = within_current_ceiling
-            && self.document_revision == document_revision
-            && self.yrs_state_epoch == yrs_state_epoch
-            && seal.document_revision == document_revision
-            && seal.yrs_state_epoch == yrs_state_epoch
-            && seal.client_id == live_doc.client_id()
-            && seal.guid == live_doc.guid()
-            && seal.offset_kind == live_doc.offset_kind()
-            && seal.skip_gc == live_doc.skip_gc()
-            && seal.client_id == self.doc.client_id()
-            && seal.guid == self.doc.guid()
-            && seal.offset_kind == self.doc.offset_kind()
-            && seal.skip_gc == self.doc.skip_gc()
-            && seal.fragment_id == live_fragment_id
-            && seal.fragment_id == candidate_fragment_id
-            && mutation_plan.matches_sealed_import_state(&self.state_vector, live_txn, live_scope);
-        matches.then_some(seal.encoded_state)
-    }
-
     pub(super) fn into_matching_doc(
         self,
         document_revision: u64,
@@ -284,13 +185,6 @@ impl PreparedCandidateCache {
         let txn = self.doc.transact();
         txn.store() as *const _ as usize
     }
-}
-
-pub(super) fn retained_import_state_charge(
-    encoded_len: usize,
-    encoded_capacity: usize,
-) -> Option<usize> {
-    encoded_len.checked_mul(2)?.checked_add(encoded_capacity)
 }
 
 pub(super) fn seal_candidate_state_vector(
@@ -410,141 +304,5 @@ pub(super) fn encode_candidate_state_bounded(
         } else {
             error
         }
-    })
-}
-
-pub(super) fn equivalent_private_candidate_doc(source: &Doc) -> Doc {
-    Doc::with_options(Options {
-        client_id: source.client_id(),
-        guid: source.guid(),
-        offset_kind: source.offset_kind(),
-        skip_gc: source.skip_gc(),
-        ..Options::default()
-    })
-}
-
-pub(super) fn prepare_import_candidate_cache(
-    source: &Doc,
-    fragment_name: &str,
-    resource_limits: &ResourceLimits,
-    import_encoded_state_receipt: Option<ImportEncodedStateReceipt>,
-    staged_lookup_seed: Option<Arc<yrs_engine::mutation::MutationLookupSeed>>,
-    document_revision: u64,
-    yrs_state_epoch: u64,
-) -> Option<PreparedCandidateCache> {
-    let admitted_receipt = import_encoded_state_receipt
-        .and_then(|receipt| {
-            receipt.into_matching(
-                source,
-                fragment_name,
-                resource_limits.max_encoded_state_bytes,
-            )
-        })
-        .and_then(
-            |(encoded, state_vector, fragment_id, delete_set_is_empty)| {
-                // Receipt bytes are attacker-adjacent private state. Preserve
-                // the public import boundary's size-before-decode ordering if
-                // that state is ever corrupted internally.
-                if encoded.len() > resource_limits.max_encoded_state_bytes {
-                    return None;
-                }
-                let update = if encoded.is_empty() {
-                    None
-                } else {
-                    #[cfg(test)]
-                    IMPORT_RECEIPT_STATE_DECODINGS
-                        .set(IMPORT_RECEIPT_STATE_DECODINGS.get().saturating_add(1));
-                    Some(Update::decode_v1(&encoded).ok()?)
-                };
-                let actual_delete_set_is_empty = update
-                    .as_ref()
-                    .is_none_or(|update| update.delete_set().is_empty());
-                (actual_delete_set_is_empty == delete_set_is_empty).then_some((
-                    encoded,
-                    state_vector,
-                    fragment_id,
-                    update,
-                    delete_set_is_empty,
-                ))
-            },
-        );
-    let (encoded, source_state_vector, source_fragment_id, update, source_delete_set_is_empty) =
-        if let Some(receipt) = admitted_receipt {
-            receipt
-        } else {
-            #[cfg(test)]
-            IMPORT_CANDIDATE_STATE_ENCODINGS
-                .set(IMPORT_CANDIDATE_STATE_ENCODINGS.get().saturating_add(1));
-            let source_txn = source.transact();
-            let source_state_vector = source_txn.state_vector();
-            let encoded = if source_state_vector.is_empty() {
-                Vec::new()
-            } else {
-                #[cfg(test)]
-                crate::yrs_engine::observability::record_whole_state_encoding();
-                source_txn.encode_state_as_update_v1(&StateVector::default())
-            };
-            let source_fragment = source_txn.get_xml_fragment(fragment_name)?;
-            let source_fragment_id = AsRef::<Branch>::as_ref(&source_fragment).id();
-            drop(source_txn);
-            let update = if encoded.is_empty() {
-                None
-            } else {
-                Some(Update::decode_v1(&encoded).ok()?)
-            };
-            let source_delete_set_is_empty = update
-                .as_ref()
-                .is_none_or(|update| update.delete_set().is_empty());
-            (
-                encoded,
-                source_state_vector,
-                source_fragment_id,
-                update,
-                source_delete_set_is_empty,
-            )
-        };
-    if encoded.len() > resource_limits.max_encoded_state_bytes {
-        return None;
-    }
-    // Account for the authoritative store plus its one private replica under
-    // the existing configurable encoded-state ceiling. Documents above half
-    // that ceiling remain fully supported and simply use the exact fallback.
-    if encoded.len().checked_mul(2)? > resource_limits.max_encoded_state_bytes {
-        return None;
-    }
-    let doc = equivalent_private_candidate_doc(source);
-    doc.get_or_insert_xml_fragment(fragment_name);
-    if let Some(update) = update {
-        doc.transact_mut().apply_update(update).ok()?;
-    }
-    let txn = doc.transact();
-    let fragment = txn.get_xml_fragment(fragment_name)?;
-    if txn.has_missing_updates()
-        || txn.state_vector() != source_state_vector
-        || AsRef::<Branch>::as_ref(&fragment).id() != source_fragment_id
-    {
-        return None;
-    }
-    drop(txn);
-    let retain_encoded_state = source_delete_set_is_empty
-        && retained_import_state_charge(encoded.len(), encoded.capacity())
-            .is_some_and(|retained| retained <= resource_limits.max_encoded_state_bytes);
-    let encoded_state_seal = retain_encoded_state.then(|| EncodedStateSeal {
-        encoded_state: encoded,
-        fragment_id: source_fragment_id,
-        client_id: source.client_id(),
-        guid: source.guid(),
-        offset_kind: source.offset_kind(),
-        skip_gc: source.skip_gc(),
-        document_revision,
-        yrs_state_epoch,
-    });
-    Some(PreparedCandidateCache {
-        doc,
-        state_vector: source_state_vector,
-        staged_lookup_seed,
-        document_revision,
-        yrs_state_epoch,
-        encoded_state_seal,
     })
 }

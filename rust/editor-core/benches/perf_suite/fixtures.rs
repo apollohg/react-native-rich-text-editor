@@ -67,15 +67,27 @@ fn yrs_selection_transaction(
 }
 
 fn build_pure_insert_document(doc: &Value, text: &str, count: usize) -> Value {
+    build_pure_replace_document(
+        doc,
+        &text.repeat(count),
+        EDITING_CURSOR_SCALAR,
+        EDITING_CURSOR_SCALAR,
+    )
+}
+
+fn build_pure_replace_document(doc: &Value, text: &str, anchor: u32, head: u32) -> Value {
     let mut expected = doc.clone();
-    let offset = first_article_paragraph_scalar_offset(&expected, EDITING_CURSOR_SCALAR);
+    let from = first_article_paragraph_scalar_offset(&expected, anchor);
+    let to = first_article_paragraph_scalar_offset(&expected, head);
     let target = first_article_paragraph_text_mut(&mut expected);
-    let byte_offset = target
-        .char_indices()
-        .nth(offset)
-        .map(|(index, _)| index)
-        .unwrap_or(target.len());
-    target.insert_str(byte_offset, &text.repeat(count));
+    let byte_offset = |offset| {
+        target
+            .char_indices()
+            .nth(offset)
+            .map(|(index, _)| index)
+            .unwrap_or(target.len())
+    };
+    target.replace_range(byte_offset(from)..byte_offset(to), text);
     expected
 }
 

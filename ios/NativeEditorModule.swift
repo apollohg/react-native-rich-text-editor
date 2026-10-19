@@ -156,6 +156,24 @@ func v2CanonicalUInt64String(_ raw: String) -> String? {
 }
 
 /// Native-only conversion after canonical syntax and range verification.
+private func v2MirroredRenderResultDictionary(
+    editorId: String,
+    mirrorScalarAnchor: Double?,
+    mirrorScalarHead: Double?,
+    render: (String, UInt32?, UInt32?) -> FfiJsonResult
+) -> [String: Any] {
+    let anchor = mirrorScalarAnchor.flatMap { v2ExactUInt32(NSNumber(value: $0)) }
+    let head = mirrorScalarHead.flatMap { v2ExactUInt32(NSNumber(value: $0)) }
+    if (mirrorScalarAnchor != nil && anchor == nil) || (mirrorScalarHead != nil && head == nil) {
+        return v2InvalidResultDictionary("invalid render scalar position")
+    }
+    return v2JsonResultDictionary(
+        performEditorV2JsonOperation(editorId: editorId) {
+            render(editorId, anchor, head)
+        }
+    )
+}
+
 private func v2UInt64Argument(_ raw: String) -> UInt64? {
     guard let canonical = v2CanonicalUInt64String(raw) else { return nil }
     return UInt64(canonical)
@@ -653,22 +671,19 @@ public class NativeEditorModule: BaseModule, @preconcurrency AnyModule {
             )
         }
         Function("editorV2RenderUpdate") { (editorId: String, mirrorScalarAnchor: Double?, mirrorScalarHead: Double?) -> [String: Any] in
-            // The render accessor for the interactive component: after a
-            // JS-driven engine change the component fetches the current
-            // render update here and pushes it to the bound view.
-            let anchor = mirrorScalarAnchor.flatMap { v2ExactUInt32(NSNumber(value: $0)) }
-            let head = mirrorScalarHead.flatMap { v2ExactUInt32(NSNumber(value: $0)) }
-            if (mirrorScalarAnchor != nil && anchor == nil) || (mirrorScalarHead != nil && head == nil) {
-                return v2InvalidResultDictionary("invalid render scalar position")
-            }
-            return v2JsonResultDictionary(
-                performEditorV2JsonOperation(editorId: editorId) {
-                    editorV2RenderUpdate(
-                        editorId: editorId,
-                        mirrorScalarAnchor: anchor,
-                        mirrorScalarHead: head
-                    )
-                }
+            v2MirroredRenderResultDictionary(
+                editorId: editorId,
+                mirrorScalarAnchor: mirrorScalarAnchor,
+                mirrorScalarHead: mirrorScalarHead,
+                render: editorV2RenderUpdate
+            )
+        }
+        Function("editorV2RenderState") { (editorId: String, mirrorScalarAnchor: Double?, mirrorScalarHead: Double?) -> [String: Any] in
+            v2MirroredRenderResultDictionary(
+                editorId: editorId,
+                mirrorScalarAnchor: mirrorScalarAnchor,
+                mirrorScalarHead: mirrorScalarHead,
+                render: editorV2RenderState
             )
         }
         Function("editorV2CollaborationConfigureTransport") { (editorId: String, configJsonOrNull: String?) -> [String: Any] in

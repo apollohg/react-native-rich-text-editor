@@ -7,6 +7,8 @@ import {
     type HistoryState,
     type NativeEditorAtomicRenderSnapshot,
     type NativeEditorAtomicRenderPayload,
+    type NativeEditorAtomicRenderState,
+    type NativeEditorRenderStateFields,
     type DocumentJSON,
     type ContentSnapshot,
 } from './NativeEditorTypes';
@@ -372,37 +374,19 @@ export function deepFreezeV2Value<T>(value: T): T {
     return value;
 }
 
-/** Validate and freeze the one complete render/state snapshot. */
-export function normalizeNativeEditorV2RenderUpdateValue(
-    value: unknown,
-): NativeEditorAtomicRenderSnapshot | null {
-    const parsed = parseNativeEditorV2JsonValue(value);
+const RENDER_STATE_FIELD_KEYS = [
+    'selection',
+    'activeState',
+    'historyState',
+    'documentVersion',
+    'stateRevision',
+    'scalarLength',
+    'documentIsEmpty',
+] as const;
 
-    if (!isPlainRecord(parsed)) {
-        return null;
-    }
-
-    if (
-        !hasExactOwnKeys(parsed, [
-            'renderBlocks',
-            'renderPatch',
-            'selection',
-            'activeState',
-            'historyState',
-            'documentVersion',
-            'stateRevision',
-            'scalarLength',
-            'documentIsEmpty',
-        ])
-    ) {
-        return null;
-    }
-
-    const renderBlocks =
-        parsed.renderBlocks === null
-            ? null
-            : normalizeRenderBlocks(parsed.renderBlocks);
-    const renderPatch = normalizeRenderPatch(parsed.renderPatch);
+function normalizeRenderStateFields(
+    parsed: Record<string, unknown>,
+): NativeEditorRenderStateFields | null {
     const selection = normalizeRenderSelection(parsed.selection);
     const activeState = normalizeRenderActiveState(parsed.activeState);
     const historyState = normalizeRenderHistoryState(parsed.historyState);
@@ -412,7 +396,6 @@ export function normalizeNativeEditorV2RenderUpdateValue(
     const documentIsEmpty = parsed.documentIsEmpty;
 
     if (
-        renderPatch === undefined ||
         selection == null ||
         activeState == null ||
         historyState == null ||
@@ -421,6 +404,41 @@ export function normalizeNativeEditorV2RenderUpdateValue(
         scalarLength == null ||
         typeof documentIsEmpty !== 'boolean'
     ) {
+        return null;
+    }
+
+    return {
+        selection,
+        activeState,
+        historyState,
+        documentVersion,
+        stateRevision,
+        scalarLength,
+        documentIsEmpty,
+    };
+}
+
+/** Validate and freeze the one complete render/state snapshot. */
+export function normalizeNativeEditorV2RenderUpdateValue(
+    value: unknown,
+): NativeEditorAtomicRenderSnapshot | null {
+    const parsed = parseNativeEditorV2JsonValue(value);
+
+    if (
+        !isPlainRecord(parsed) ||
+        !hasExactOwnKeys(parsed, ['renderBlocks', 'renderPatch', ...RENDER_STATE_FIELD_KEYS])
+    ) {
+        return null;
+    }
+
+    const renderBlocks =
+        parsed.renderBlocks === null
+            ? null
+            : normalizeRenderBlocks(parsed.renderBlocks);
+    const renderPatch = normalizeRenderPatch(parsed.renderPatch);
+    const state = normalizeRenderStateFields(parsed);
+
+    if (renderPatch === undefined || state == null) {
         return null;
     }
 
@@ -440,16 +458,33 @@ export function normalizeNativeEditorV2RenderUpdateValue(
         renderPayload = { renderBlocks, renderPatch: null };
     }
 
-    return deepFreezeV2Value({
-        ...renderPayload,
-        selection,
-        activeState,
-        historyState,
-        documentVersion,
-        stateRevision,
-        scalarLength,
-        documentIsEmpty,
-    });
+    return deepFreezeV2Value({ ...renderPayload, ...state });
+}
+
+export function normalizeNativeEditorV2RenderStateValue(
+    value: unknown,
+): NativeEditorAtomicRenderState | null {
+    const parsed = parseNativeEditorV2JsonValue(value);
+
+    if (
+        !isPlainRecord(parsed) ||
+        !hasExactOwnKeys(parsed, ['voidBlocks', ...RENDER_STATE_FIELD_KEYS])
+    ) {
+        return null;
+    }
+
+    const voidBlocks = normalizeRenderBlocks(parsed.voidBlocks);
+    const state = normalizeRenderStateFields(parsed);
+
+    if (
+        voidBlocks == null ||
+        !voidBlocks.every(block => block.every(element => element.type === 'voidBlock')) ||
+        state == null
+    ) {
+        return null;
+    }
+
+    return deepFreezeV2Value({ voidBlocks, ...state });
 }
 
 export function normalizeNativeEditorV2DocumentJsonValue(

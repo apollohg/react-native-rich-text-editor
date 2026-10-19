@@ -84,7 +84,9 @@ internal fun NativeEditorExpoView.syncKeyboardToolbarMentionSuggestions(
     suggestions: List<NativeMentionSuggestion>,
     trigger: String = addons.mentions?.trigger ?: "@"
 ) {
+    val hadSuggestions = keyboardToolbarView.isShowingMentionSuggestions
     keyboardToolbarView.setMentionSuggestions(suggestions, trigger)
+    if (!hadSuggestions && suggestions.isEmpty()) return
     keyboardToolbarView.requestLayout()
     post {
         updateKeyboardToolbarLayout()

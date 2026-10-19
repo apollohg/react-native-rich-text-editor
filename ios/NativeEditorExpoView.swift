@@ -61,6 +61,7 @@ class NativeEditorExpoView: ExpoView, EditorTextViewDelegate, UIGestureRecognize
     var lastEmittedFocus: (editorId: UInt64, isFocused: Bool)?
     var didApplyAutoFocus = false
     var toolbarState = NativeToolbarState.empty
+    let selectionEventActiveState = SelectionEventActiveStateChannel()
     var toolbarItems: [NativeToolbarItem] = NativeToolbarItem.defaults
     var showsToolbar = true
     var toolbarPlacement = "keyboard"

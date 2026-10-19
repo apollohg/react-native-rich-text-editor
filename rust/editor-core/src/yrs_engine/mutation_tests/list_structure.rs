@@ -114,7 +114,7 @@ fn direct_root_wrap_oracle_metrics_match_the_public_lowering_matrix() {
             action => panic!("case {case_index} unexpected first action: {action:?}"),
         };
         let txn = doc.transact();
-        let envelope = crdt_envelope(122, &txn, usize::MAX).unwrap();
+        let envelope = crdt_envelope(122, &txn, &compiled.mutation_plan, usize::MAX).unwrap();
         assert_eq!(
             direct_xml_replacement_growth(
                 122,

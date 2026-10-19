@@ -506,6 +506,7 @@ fn history_restoration_resolves_only_the_popped_selection_without_a_default_roun
         } else {
             engine.redo_with_result(request_id).unwrap().unwrap();
         }
+        let full_passes = crate::yrs_engine::observability::take_full_pass_counts_for_test();
 
         let (expected_json, expected_selection, expected_marks) = if undoing {
             (&before_json, &before_selection, &before_marks)
@@ -524,7 +525,6 @@ fn history_restoration_resolves_only_the_popped_selection_without_a_default_roun
             (1, 1),
             "history restoration should materialize only the exact popped selection"
         );
-        let full_passes = crate::yrs_engine::observability::take_full_pass_counts_for_test();
         // The document-scoped history snapshot is admitted by exact
         // candidate JSON equality, so no canonical projection,
         // serialization, or hash pass is repeated during the pop.
@@ -535,6 +535,8 @@ fn history_restoration_resolves_only_the_popped_selection_without_a_default_roun
 }
 
 include!("history_and_commit/snapshot_metadata.rs");
+
+include!("history_and_commit/snapshot_charges.rs");
 
 include!("history_and_commit/snapshot_fallback.rs");
 
@@ -547,3 +549,7 @@ include!("history_and_commit/state_only.rs");
 include!("history_and_commit/plain_text_replacement.rs");
 
 include!("history_and_commit/clipboard.rs");
+
+include!("history_and_commit/history_transcripts.rs");
+
+include!("history_and_commit/history_depth.rs");

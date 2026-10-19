@@ -11,6 +11,7 @@ LIB_NAME="libeditor_core.a"
 IOS_DEPLOYMENT_TARGET="16.4"
 
 source "$SCRIPT_DIR/toolchain.sh"
+source "$SCRIPT_DIR/release-profile.sh"
 TARGET_DIR="${CARGO_TARGET_DIR:-$CRATE_DIR/target}"
 
 IOS_TARGETS=(
@@ -24,8 +25,8 @@ echo "==> Building editor-core for iOS targets..."
 for target in "${IOS_TARGETS[@]}"; do
     echo "  -> $target"
     IPHONEOS_DEPLOYMENT_TARGET="$IOS_DEPLOYMENT_TARGET" \
-        "$RUST_TOOLCHAIN_CARGO" build --manifest-path "$CRATE_DIR/Cargo.toml" --release \
-        --target "$target" --target-dir "$TARGET_DIR"
+        "$RUST_TOOLCHAIN_CARGO" rustc --manifest-path "$CRATE_DIR/Cargo.toml" --release \
+        --target "$target" --target-dir "$TARGET_DIR" --crate-type staticlib
 done
 
 echo "==> Verifying v2 symbols in every slice..."

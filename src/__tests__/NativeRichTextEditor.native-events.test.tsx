@@ -7,12 +7,18 @@ import {
     createV2LocalHandle,
     renderUpdateValue,
 } from './helpers/NativeRichTextEditorFixture';
-import { createRef } from 'react';
+import { createRef, Profiler } from 'react';
 
 import { render, act } from '@testing-library/react-native';
 import { NativeRichTextEditor, type NativeRichTextEditorRef } from '../NativeRichTextEditor';
 
 import { NativeEditorNonRetryableError } from '../NativeEditorBoundaryError';
+
+const capturedSelection = require('./helpers/nativeQueuedSelectionProof.json') as {
+    newerSelectionStateJson: string;
+    newerSelectionPayload: { anchor: number; head: number; editorId: string; documentVersion: string; stateJson: string };
+    selectionStateRevision: string;
+};
 
 describe('NativeRichTextEditor (v2 document mode)', () => {
     it('binds the native view to the session editor id and is editable by default', () => {
@@ -236,6 +242,202 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         act(() => reboundABinding(errorA));
         expect(receivedA).toHaveLength(2);
         handleB.destroy();
+    });
+
+    it('moves the caret without re-rendering the editor until the active formatting changes', () => {
+        const handle = createV2LocalHandle(V2_INITIAL_DOC);
+        const onSelectionChange = jest.fn();
+        const onActiveStateChange = jest.fn();
+        const committedRenders: string[] = [];
+
+        const { getByTestId, getByLabelText } = render(
+            <Profiler id={'editor'} onRender={(_id, phase) => committedRenders.push(phase)}>
+                <NativeRichTextEditor documentHandle={handle} toolbarPlacement={'inline'}
+                    onSelectionChange={onSelectionChange} onActiveStateChange={onActiveStateChange}
+                />
+            </Profiler>
+        );
+
+        const projection = JSON.parse(capturedSelection.newerSelectionStateJson) as {
+            selection: Record<string, unknown>;
+            activeState: { marks: Record<string, boolean> };
+        };
+
+        let stateRevision = BigInt(capturedSelection.selectionStateRevision);
+
+        const moveCaret = (offset: number, activeState = projection.activeState) => {
+            stateRevision += 1n;
+            act(() => {
+                getByTestId('native-editor-view').props.onSelectionChange({ nativeEvent: {
+                    ...capturedSelection.newerSelectionPayload,
+                    editorId: handle.editorId,
+                    anchor: offset,
+                    head: offset,
+                    stateJson: JSON.stringify({ ...projection, stateRevision: String(stateRevision), activeState,
+                        selection: { ...projection.selection, anchor: offset, head: offset,
+                            anchorScalar: offset - 1, headScalar: offset - 1 } }),
+                } });
+            });
+        };
+
+        moveCaret(2);
+        const rendersAfterFirstPlainCaret = committedRenders.length;
+        onActiveStateChange.mockClear();
+
+        for (const offset of [ 3, 4, 5 ]) {
+            moveCaret(offset);
+            expect(onSelectionChange).toHaveBeenLastCalledWith(expect.objectContaining({ anchor: offset, head: offset }));
+        }
+
+        expect({ plainCaretMoveRenders: committedRenders.slice(rendersAfterFirstPlainCaret) }).toEqual({ plainCaretMoveRenders: [] });
+        expect(onActiveStateChange).not.toHaveBeenCalled();
+        expect(getByLabelText('Bold').props.accessibilityState.selected).toBe(false);
+
+        moveCaret(6, { ...projection.activeState, marks: { ...projection.activeState.marks, bold: true } });
+        expect(committedRenders.length).toBeGreaterThan(rendersAfterFirstPlainCaret);
+        expect(onActiveStateChange).toHaveBeenCalledTimes(1);
+        expect(getByLabelText('Bold').props.accessibilityState.selected).toBe(true);
+
+        moveCaret(7);
+        expect(onActiveStateChange).toHaveBeenCalledTimes(2);
+        expect(getByLabelText('Bold').props.accessibilityState.selected).toBe(false);
+        handle.destroy();
+    });
+
+    describe('selection events that omit an unchanged active state', () => {
+        const projection = JSON.parse(capturedSelection.newerSelectionStateJson) as {
+            selection: Record<string, unknown>;
+            activeState: { marks: Record<string, boolean> };
+        };
+        const boldState = { ...projection.activeState, marks: { ...projection.activeState.marks, bold: true } };
+
+        const renderEditor = () => {
+            const handle = createV2LocalHandle(V2_INITIAL_DOC);
+            const ref = createRef<NativeRichTextEditorRef>();
+            const onSelectionChange = jest.fn();
+            const onActiveStateChange = jest.fn();
+            const rendered = render(
+                <NativeRichTextEditor ref={ref} documentHandle={handle} toolbarPlacement={'inline'}
+                    onSelectionChange={onSelectionChange} onActiveStateChange={onActiveStateChange}
+                />
+            );
+            let stateRevision = BigInt(capturedSelection.selectionStateRevision);
+            const moveCaret = (offset: number, active: { activeState: unknown } | { activeStateRevision: string }) => {
+                stateRevision += 1n;
+                const revision = String(stateRevision);
+                act(() => {
+                    rendered.getByTestId('native-editor-view').props.onSelectionChange({ nativeEvent: {
+                        ...capturedSelection.newerSelectionPayload,
+                        editorId: handle.editorId,
+                        anchor: offset,
+                        head: offset,
+                        stateJson: JSON.stringify({ ...projection, activeState: undefined, ...active,
+                            stateRevision: revision,
+                            selection: { ...projection.selection, anchor: offset, head: offset,
+                                anchorScalar: offset - 1, headScalar: offset - 1 } }),
+                    } });
+                });
+                return revision;
+            };
+            const boldSelected = () => rendered.getByLabelText('Bold').props.accessibilityState.selected as boolean;
+            return { handle, ref, rendered, onSelectionChange, onActiveStateChange, moveCaret, boldSelected };
+        };
+
+        it('keeps the last emitted active state when a caret move omits it', () => {
+            const editor = renderEditor();
+            const renderState = jest.spyOn(editor.handle.bridge, 'renderState');
+            const boldRevision = editor.moveCaret(2, { activeState: boldState });
+            expect(editor.boldSelected()).toBe(true);
+            editor.onActiveStateChange.mockClear();
+            renderState.mockClear();
+
+            for (const offset of [ 3, 4, 5 ]) {
+                editor.moveCaret(offset, { activeStateRevision: boldRevision });
+                expect(editor.onSelectionChange).toHaveBeenLastCalledWith(
+                    expect.objectContaining({ anchor: offset, head: offset }));
+            }
+
+            expect({ refetches: renderState.mock.calls.length, activeStateChanges: editor.onActiveStateChange.mock.calls })
+                .toEqual({ refetches: 0, activeStateChanges: [] });
+            expect(editor.boldSelected()).toBe(true);
+            editor.moveCaret(6, { activeState: projection.activeState });
+            expect(editor.boldSelected()).toBe(false);
+            editor.handle.destroy();
+        });
+
+        it('refetches the engine active state when the omitted revision was never received', () => {
+            const editor = renderEditor();
+            const renderState = jest.spyOn(editor.handle.bridge, 'renderState');
+
+            editor.moveCaret(3, { activeStateRevision: capturedSelection.selectionStateRevision });
+
+            expect(renderState).toHaveBeenCalledTimes(1);
+            expect(editor.onSelectionChange).toHaveBeenLastCalledWith(expect.objectContaining({ anchor: 3, head: 3 }));
+            expect(editor.boldSelected()).toBe(
+                editor.handle.bridge.renderState().activeState.marks.bold === true);
+            editor.handle.destroy();
+        });
+
+        it.each([
+            [ 'toggleMark', (ref: NativeRichTextEditorRef) => ref.toggleMark('bold') ],
+            [ 'setContent', (ref: NativeRichTextEditorRef) => ref.setContent('<p>Replaced</p>') ],
+        ])('forgets the emitted active state once %s pushes an update to the view', (_, update) => {
+            const editor = renderEditor();
+            const boldRevision = editor.moveCaret(2, { activeState: boldState });
+            act(() => update(editor.ref.current!));
+            const renderState = jest.spyOn(editor.handle.bridge, 'renderState');
+
+            editor.moveCaret(3, { activeStateRevision: boldRevision });
+
+            expect(renderState).toHaveBeenCalledTimes(1);
+            expect(editor.boldSelected()).toBe(
+                editor.handle.bridge.renderState().activeState.marks.bold === true);
+            editor.handle.destroy();
+        });
+
+        it('forgets the emitted active state when the view rebinds to another document', () => {
+            const editor = renderEditor();
+            const other = createV2LocalHandle(V2_INITIAL_DOC);
+            const boldRevision = editor.moveCaret(2, { activeState: boldState });
+            editor.rendered.rerender(
+                <NativeRichTextEditor ref={editor.ref} documentHandle={other} toolbarPlacement={'inline'} />
+            );
+            editor.rendered.rerender(
+                <NativeRichTextEditor ref={editor.ref} documentHandle={editor.handle} toolbarPlacement={'inline'}
+                    onSelectionChange={editor.onSelectionChange}
+                />
+            );
+            const renderState = jest.spyOn(editor.handle.bridge, 'renderState');
+
+            editor.moveCaret(3, { activeStateRevision: boldRevision });
+
+            expect(renderState).toHaveBeenCalledTimes(1);
+            expect(editor.onSelectionChange).toHaveBeenLastCalledWith(expect.objectContaining({ anchor: 3, head: 3 }));
+            editor.handle.destroy();
+            other.destroy();
+        });
+    });
+
+    it('enables the image button when a localEmpty editor is focused without any native state event', () => {
+        const handle = createV2LocalHandle();
+        const engineState = handle.bridge.renderState();
+
+        const { getByTestId, getByLabelText } = render(
+            <NativeRichTextEditor documentHandle={handle} toolbarPlacement={'inline'}
+                toolbarItems={[ { type: 'image', label: 'Image', icon: { type: 'default', id: 'image' } } ]}
+                onRequestImage={jest.fn()}
+            />
+        );
+
+        act(() => getByTestId('native-editor-view').props.onFocusChange({ nativeEvent: {
+            editorId: handle.editorId, isFocused: true,
+        } }));
+
+        expect(engineState.activeState.insertableNodes).toContain('image');
+        expect(getByLabelText('Image').props.accessibilityState).toEqual(
+            expect.objectContaining({ disabled: false })
+        );
+        handle.destroy();
     });
 
     it('respects editable={false} on the native view', () => {

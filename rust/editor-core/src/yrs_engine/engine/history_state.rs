@@ -67,104 +67,123 @@ pub(super) struct HistoryDocumentSnapshotRetainedPair {
     pub(super) after: yrs_engine::derived_state::HistoryDocumentSnapshotRetainedBytes,
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn history_document_snapshots_fit(
-    before: &DerivedStateCache,
-    after_document: &crate::model::Document,
-    after_canonical_artifact: &CanonicalArtifact,
-    after_validation_depth_slots: Option<usize>,
-    after_derivations: &yrs_engine::compiler::CompiledDocumentDerivations,
-    after_render_blocks: &crate::render::incremental::CachedRenderBlocks,
-    after_stored_marks: Option<&[crate::model::Mark]>,
-    schema_fingerprint: &str,
-    fragment_name: &str,
-    scope: Option<&DocumentScope>,
-    metadata_limit: usize,
-) -> Option<HistoryDocumentSnapshotRetainedPair> {
-    let charge = after_canonical_artifact.history_snapshot_retained_charge()?;
-    let document_retained_bytes =
-        if after_canonical_artifact.matches_exact_source_document(after_document) {
-            charge.source_document_retained_bytes
-        } else {
-            after_document.history_snapshot_retained_bytes()?
-        };
-    history_document_snapshots_fit_with_precomputed_after_charge(
-        before,
-        charge.canonical_retained_bytes,
-        document_retained_bytes,
-        after_validation_depth_slots.unwrap_or_else(|| {
-            yrs_engine::derived_state::DocumentValidationCertificate::subtree_depth_counts(
-                after_document.root(),
-                crate::transform::DOCUMENT_ROOT_DEPTH,
-            )
-            .len()
-        }),
-        after_derivations,
-        after_render_blocks,
-        after_stored_marks,
-        schema_fingerprint,
-        fragment_name,
-        scope,
-        metadata_limit,
-    )
+pub(super) struct HistorySnapshotAdmission<'a> {
+    pub(super) resource_limits: &'a ResourceLimits,
+    pub(super) editing_limits: &'a yrs_engine::EditingLimits,
+    pub(super) max_length: Option<u32>,
+    pub(super) schema_fingerprint: &'a str,
+    pub(super) fragment_name: &'a str,
+    pub(super) scope: Option<&'a DocumentScope>,
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn history_document_snapshots_fit_with_precomputed_after_charge(
+pub(super) struct HistorySnapshotsFit {
+    pub(super) retained: Option<HistoryDocumentSnapshotRetainedPair>,
+    pub(super) after_standalone: Option<usize>,
+}
+
+pub(super) fn history_document_snapshots_fit(
     before: &DerivedStateCache,
-    after_canonical_retained_bytes: usize,
-    after_document_retained_bytes: usize,
-    after_validation_depth_slots: usize,
-    after_derivations: &yrs_engine::compiler::CompiledDocumentDerivations,
-    after_render_blocks: &crate::render::incremental::CachedRenderBlocks,
+    after: &yrs_engine::derived_state::HistorySnapshotParts<'_>,
     after_stored_marks: Option<&[crate::model::Mark]>,
-    schema_fingerprint: &str,
-    fragment_name: &str,
-    scope: Option<&DocumentScope>,
-    metadata_limit: usize,
-) -> Option<HistoryDocumentSnapshotRetainedPair> {
-    let before_charge = before
-        .canonical_artifact
-        .history_snapshot_retained_charge()?;
-    let document_charges = before_charge
-        .canonical_retained_bytes
-        .checked_add(before_charge.source_document_retained_bytes)?
-        .checked_add(after_canonical_retained_bytes)?
-        .checked_add(after_document_retained_bytes)?;
-    if document_charges > metadata_limit {
-        return None;
-    }
-    let before_retained = yrs_engine::derived_state::history_document_snapshot_retained_bytes_with_precomputed_document_charge(
-        before_charge.source_document_retained_bytes,
-        before_charge.canonical_retained_bytes,
-        before.validation_certificate.depth_slots(),
-        &before.position_map,
-        &before.rendered_text,
-        &before.render_blocks,
+    group_before: Option<&yrs_engine::derived_state::HistoryDocumentSnapshot>,
+    admission: &HistorySnapshotAdmission<'_>,
+) -> HistorySnapshotsFit {
+    let unavailable = HistorySnapshotsFit {
+        retained: None,
+        after_standalone: None,
+    };
+    let HistorySnapshotAdmission {
+        resource_limits,
+        editing_limits,
+        max_length,
         schema_fingerprint,
         fragment_name,
         scope,
-    )?;
-    let after_retained =
-        yrs_engine::derived_state::history_document_snapshot_retained_bytes_with_precomputed_document_charge(
-            after_document_retained_bytes,
-            after_canonical_retained_bytes,
-            after_validation_depth_slots,
-            &after_derivations.position_map,
-            &after_derivations.rendered_text,
-            after_render_blocks,
+    } = *admission;
+    let Some(stored_marks_bytes) =
+        history_metadata_bytes(before.stored_marks.as_deref(), fragment_name)
+            .checked_add(history_metadata_bytes(after_stored_marks, fragment_name))
+    else {
+        return unavailable;
+    };
+    let before_parts = before.history_snapshot_parts();
+    let captured = before.captured_history_document_snapshot(
+        resource_limits,
+        editing_limits,
+        max_length,
+        fragment_name,
+        scope,
+    );
+    let before_standalone = match captured {
+        Some(captured) => Some(captured.standalone_retained_bytes()),
+        None => before.history_snapshot_standalone_bytes(|| {
+            let document_charge = before
+                .canonical_artifact
+                .history_snapshot_retained_charge()?
+                .canonical_retained_bytes;
+            if stored_marks_bytes.checked_add(document_charge)?
+                > editing_limits.max_derived_output_bytes
+            {
+                return None;
+            }
+            yrs_engine::derived_state::history_document_snapshot_standalone_retained_bytes(
+                &before_parts,
+                schema_fingerprint,
+                fragment_name,
+                scope,
+            )
+        }),
+    };
+    let Some(before_standalone) = before_standalone else {
+        return unavailable;
+    };
+    let before_charge = captured.map_or(before_standalone, |captured| captured.retained_bytes());
+    let beyond = |parts, base| {
+        yrs_engine::derived_state::history_document_snapshot_retained_bytes_beyond(
+            parts,
+            base,
             schema_fingerprint,
             fragment_name,
             scope,
-        )?;
-    let total = history_metadata_bytes(before.stored_marks.as_deref(), fragment_name)
-        .checked_add(history_metadata_bytes(after_stored_marks, fragment_name))
-        .and_then(|bytes| bytes.checked_add(before_retained.get()))
-        .and_then(|bytes| bytes.checked_add(after_retained.get()))?;
-    (total <= metadata_limit).then_some(HistoryDocumentSnapshotRetainedPair {
-        before: before_retained,
-        after: after_retained,
-    })
+        )
+    };
+    let Some(after_beyond_before) = beyond(after, &before_parts) else {
+        return unavailable;
+    };
+    let after_standalone = beyond(&before_parts, after).and_then(|before_beyond_after| {
+        before_standalone
+            .checked_add(after_beyond_before)?
+            .checked_sub(before_beyond_after)
+    });
+    let after_charge = match group_before {
+        Some(group_before) => beyond(after, &group_before.parts())
+            .map(|group_beyond| after_beyond_before.max(group_beyond)),
+        None => Some(after_beyond_before),
+    };
+    let retained = after_standalone
+        .zip(after_charge)
+        .filter(|(_, after_charge)| {
+            stored_marks_bytes
+                .checked_add(before_standalone)
+                .and_then(|bytes| bytes.checked_add(*after_charge))
+                .is_some_and(|total| total <= editing_limits.max_derived_output_bytes)
+        })
+        .map(|(after_standalone, after_charge)| HistoryDocumentSnapshotRetainedPair {
+            before:
+                yrs_engine::derived_state::HistoryDocumentSnapshotRetainedBytes::beyond_retained_base(
+                    before_charge,
+                    before_standalone,
+                ),
+            after:
+                yrs_engine::derived_state::HistoryDocumentSnapshotRetainedBytes::beyond_retained_base(
+                    after_charge,
+                    after_standalone,
+                ),
+        });
+    HistorySnapshotsFit {
+        retained,
+        after_standalone,
+    }
 }
 
 pub(super) fn history_snapshot_template(
@@ -259,5 +278,18 @@ pub(super) fn history_operation_error(
         )
     } else {
         yrs_engine::OperationError::engine_invariant_failed(request_id, None, error.message)
+    }
+}
+
+impl super::YrsDocumentEngine {
+    pub(super) fn history_snapshot_admission(&self) -> HistorySnapshotAdmission<'_> {
+        HistorySnapshotAdmission {
+            resource_limits: &self.resource_limits,
+            editing_limits: &self.editing_limits,
+            max_length: self.max_length,
+            schema_fingerprint: &self.schema_fingerprint,
+            fragment_name: &self.fragment_name,
+            scope: self.scope.as_ref(),
+        }
     }
 }

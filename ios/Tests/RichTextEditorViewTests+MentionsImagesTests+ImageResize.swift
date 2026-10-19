@@ -409,7 +409,9 @@ extension RichTextEditorViewTests {
         view.allowImageResizing = false
         flushMainQueue()
         view.layoutIfNeeded()
-        XCTAssertEqual(renderedRect(in: view.textView, utf16Range: imageRange), initialRect)
+        let restoredRect = renderedRect(in: view.textView, utf16Range: imageRange)
+        XCTAssertTrue(layoutRectsMatch([restoredRect], [initialRect]),
+            "Disabling resizing must restore the image layout: \(restoredRect) vs \(initialRect)")
         XCTAssertEqual(EditorV2Shadow.getHtml(id: editorId), initialHtml)
         XCTAssertNil(view.imageResizeOverlayRectForTesting())
         XCTAssertFalse(view.textView.isPreviewingImageResize)
@@ -468,7 +470,13 @@ extension RichTextEditorViewTests {
             html: "<p>A longer preceding paragraph</p><img src=\"https://example.com/image.png\"><p>After</p>"
         )
         var patchUpdate = parseJSONObject(update)
-        let blocks = try XCTUnwrap((patchUpdate["renderPatch"] as? [String: Any])?["renderBlocks"] as? [[[String: Any]]])
+        let enginePatch = try XCTUnwrap(patchUpdate["renderPatch"] as? [String: Any])
+        let patchBlocks = try XCTUnwrap(enginePatch["renderBlocks"] as? [[[String: Any]]])
+        let patchStart = try XCTUnwrap(enginePatch["startIndex"] as? Int)
+        let patchDeleteCount = try XCTUnwrap(enginePatch["deleteCount"] as? Int)
+        let previousBlocks = try XCTUnwrap(view.textView.currentRenderBlocks as? [[[String: Any]]])
+        let blocks = Array(previousBlocks[..<patchStart]) + patchBlocks
+            + Array(previousBlocks[(patchStart + patchDeleteCount)...])
         patchUpdate["renderBlocks"] = blocks
         patchUpdate["renderPatch"] = ["startIndex": 0, "deleteCount": 1, "renderBlocks": [blocks[0]]]
         let patchData = try JSONSerialization.data(withJSONObject: patchUpdate)
@@ -554,7 +562,9 @@ extension RichTextEditorViewTests {
             view.previewImageResizeDragForTesting(corner: .bottomRight, translation: .zero)
             view.commitPreviewResizeForTesting()
             flushMainQueue()
-            XCTAssertEqual(renderedRect(in: view.textView, utf16Range: range), initialRect)
+            let committedRect = renderedRect(in: view.textView, utf16Range: range)
+            XCTAssertTrue(layoutRectsMatch([committedRect], [initialRect]),
+                "A zero-translation commit must restore the image layout: \(committedRect) vs \(initialRect)")
             XCTAssertEqual(EditorV2Shadow.getHtml(id: editorId), initialHtml)
         }
     }

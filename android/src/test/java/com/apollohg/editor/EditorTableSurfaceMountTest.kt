@@ -66,37 +66,17 @@ internal fun replaceTableDocumentExternallyForTest(
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 internal class EditorTableSurfaceMountTest {
-    private val config = """{"schema":{"nodes":[{"name":"doc","content":"block+",""" +
-        """"role":"doc"},{"name":"paragraph","content":"inline*",""" +
-        """"group":"block","role":"textBlock"},{"name":"text",""" +
-        """"content":"","group":"inline","role":"text"},""" +
-        """{"name":"table","content":"table_row+","group":"block",""" +
-        """"role":"block","tableRole":"table"},""" +
-        """{"name":"table_row","content":"(table_cell | """ +
-        """table_header)*","role":"block","tableRole":"row"},""" +
-        """{"name":"table_cell","content":"block+","role":"block",""" +
-        """"tableRole":"cell","attrs":{"colspan":{"type":"number",""" +
-        """"default":1,"min":1},"rowspan":{"type":"number",""" +
-        """"default":1,"min":1},"colwidth":{"default":null}}},""" +
-        """{"name":"table_header","content":"block+",""" +
-        """"role":"block","tableRole":"header_cell",""" +
-        """"attrs":{"colspan":{"type":"number","default":1,""" +
-        """"min":1},"rowspan":{"type":"number","default":1,""" +
-        """"min":1},"colwidth":{"default":null}}}],"marks":[]},""" +
-        """"initialization":{"type":"localEmpty"}}"""
+    private val config = MOUNTED_TABLE_EDITOR_CONFIG
     private val gridDocument = PlainTableFixture.document(GRID_ROWS, GRID_COLUMNS, GRID_TEXT)
-    private val tableDocument = """{"type":"doc","content":[{"type":"table",""" +
-        """"content":[{"type":"table_row",""" +
-        """"content":[{"type":"table_cell",""" +
-        """"content":[{"type":"paragraph",""" +
-        """"content":[{"type":"text","text":"Cell text"}]}]}]}]},""" +
-        """{"type":"paragraph","content":[{"type":"text",""" +
-        """"text":"after"}]}]}"""
+    private val tableDocument = MOUNTED_TABLE_DOCUMENT
     internal companion object {
         private const val GRID_ROWS = 10
         private const val GRID_COLUMNS = 4
         private const val GRID_CELLS = GRID_ROWS * GRID_COLUMNS
         private const val GRID_TEXT = "Cell text"
+        private const val SHALLOW_NESTED_TABLE_DEPTH = 2
+        private const val MAXIMUM_PREPARATIONS_PER_CELL = 1
+        private val RELAYOUT_NESTED_TABLE_DEPTHS = listOf(40, 45, ADMITTED_NESTED_TABLE_DEPTH)
         private const val TYPED = "X"
         private const val UNIQUE_GRID_SHAPES = 1
         const val TABLE_HOST_WIDTH = 600
@@ -526,7 +506,7 @@ internal class EditorTableSurfaceMountTest {
                 original.cells[0].accessibilityText
             )
             assertTrue(
-                view.editorEditText.applyUpdateJSON(requireNotNull(adapter.initialUpdateJson()))
+                view.editorEditText.applyUpdateJSON(requireNotNull(adapter.recoverNativeRender()))
             )
             measure(view, TABLE_HOST_WIDTH)
             val current =
@@ -650,6 +630,86 @@ internal class EditorTableSurfaceMountTest {
             assertEquals(beforeDocument, adapter.documentJson())
             assertEquals(beforeRevision, adapter.baseDocumentRevision)
         }
+
+    @Test
+    fun `hard maximum depth editor table preparation keeps a flat stack`() {
+        val depthConfig = configWithMaxDocumentDepth(config, HARD_MAXIMUM_DOCUMENT_DEPTH)
+        fun preparationStackFrames(depth: Int): Int {
+            var deepestFrames = 0
+            withMountedView(configJSON = depthConfig) { view, adapter, _ ->
+                val update =
+                    replaceTableDocumentExternallyForTest(adapter, nestedTablesSource(depth))
+                val prepared = mutableListOf<Int>()
+                view.editorTableSurface.onTableCellPreparedForTesting = { index, _ ->
+                    prepared += index
+                    deepestFrames = maxOf(deepestFrames, Thread.currentThread().stackTrace.size)
+                }
+                assertTrue(view.editorEditText.applyUpdateJSON(update))
+                var layout = requireNotNull(drawing(view)?.preparedLayout)
+                var surfaces = 0
+                while (true) {
+                    val surface = layout.blocks.firstNotNullOfOrNull { it.tableSurface } ?: break
+                    surfaces += 1
+                    layout = surface.cells.single().content
+                }
+                assertEquals("every nested editor surface must be prepared", depth, surfaces)
+                assertEquals("every nested editor cell must be prepared once", depth, prepared.size)
+            }
+            return deepestFrames
+        }
+        val shallowFrames = preparationStackFrames(SHALLOW_NESTED_TABLE_DEPTH)
+        val deepFrames = preparationStackFrames(ADMITTED_NESTED_TABLE_DEPTH)
+        assertEquals(
+            "editor table preparation must not add stack frames per nesting level " +
+                "(depth $SHALLOW_NESTED_TABLE_DEPTH: $shallowFrames frames, " +
+                "depth $ADMITTED_NESTED_TABLE_DEPTH: $deepFrames frames)",
+            shallowFrames,
+            deepFrames
+        )
+    }
+
+    @Test
+    fun `deep nested editor re-layout prepares each cell at most once`() {
+        val depthConfig = configWithMaxDocumentDepth(config, HARD_MAXIMUM_DOCUMENT_DEPTH)
+        for (depth in RELAYOUT_NESTED_TABLE_DEPTHS) {
+            withMountedView(configJSON = depthConfig) { view, adapter, _ ->
+                val update =
+                    replaceTableDocumentExternallyForTest(adapter, nestedTablesSource(depth))
+                assertTrue(view.editorEditText.applyUpdateJSON(update))
+                val budget = MAXIMUM_PREPARATIONS_PER_CELL * depth
+                val prepared = mutableListOf<String>()
+                view.editorTableSurface.onTableCellPreparedForTesting = { _, contentKey ->
+                    prepared += contentKey
+                    if (prepared.size > budget) {
+                        throw AssertionError(
+                            "depth $depth re-layout exceeded $budget cell preparations"
+                        )
+                    }
+                }
+                measure(view, REFLOW_WIDTH)
+                val preparedByReLayout = prepared.size
+                var layout = requireNotNull(drawing(view)?.preparedLayout)
+                var evicted = 0
+                while (true) {
+                    val surface = layout.blocks.firstNotNullOfOrNull { it.tableSurface } ?: break
+                    val cell = surface.cells.single()
+                    if (cell.cachedContent == null) evicted += 1
+                    layout = cell.content
+                }
+                assertEquals("depth $depth re-layout evicted nested cell contents", 0, evicted)
+                assertEquals(
+                    "depth $depth nested cells were rebuilt lazily after the re-layout",
+                    preparedByReLayout,
+                    prepared.size
+                )
+                val repeated = prepared.groupingBy { it }.eachCount().filterValues { it > 1 }
+                assertTrue(
+                    "depth $depth re-layout prepared cells more than once: $repeated",
+                    repeated.isEmpty()
+                )
+            }
+        }
+    }
 
     private fun heightSpan(view: RichTextEditorView): RootTableHeightSpan {
         val text = view.editorEditText.text
@@ -1591,7 +1651,7 @@ internal class EditorTableSurfaceMountTest {
                     0
                 }
             )
-            assertNotEquals(epochBeforeCaretMove, adapter.positionEpoch)
+            assertEquals(epochBeforeCaretMove, adapter.positionEpoch)
             assertTrue(
                 "selection-only epoch must rebind",
                 mountedInput.isAuthorizedForTableCellInput()

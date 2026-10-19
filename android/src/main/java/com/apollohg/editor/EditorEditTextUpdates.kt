@@ -22,21 +22,10 @@ private fun containsRootTableElement(update: JSONObject): Boolean {
 private fun EditorEditText.rootTableRenderForUpdate(
     updateJSON: String,
     update: JSONObject,
-    blocks: org.json.JSONArray?
+    blocks: ResolvedRenderBlocks?
 ): RootTableRender? {
     val tableIds = buildSet {
-        if (blocks != null) {
-            for (blockIndex in 0 until blocks.length()) {
-                val block = blocks.optJSONArray(blockIndex) ?: continue
-                for (elementIndex in 0 until block.length()) {
-                    val element = block.optJSONObject(elementIndex) ?: continue
-                    if (element.optString("type") == "table") {
-                        val id = element.opt("tableId") as? String ?: return null
-                        add(id)
-                    }
-                }
-            }
-        }
+        blocks?.blocks?.forEach { block -> addAll(block.tableIds ?: return null) }
     }
     if (tableIds.isEmpty()) {
         val elements = update.optJSONArray("renderElements")
@@ -106,10 +95,9 @@ internal fun EditorEditText.applyUpdateJSONImpl(
     val update = try {
         (v2Driver as? EditorV2Adapter).readOnlyParsedUpdate(updateJSON)
     } catch (error: Exception) {
-        recordImeTraceForTesting(
-            "applyUpdateJSONNoop",
+        recordImeTraceForTesting("applyUpdateJSONNoop") {
             "reason=parseError jsonLength=${updateJSON.length} error=${error.javaClass.simpleName}"
-        )
+        }
         return false
     }
     val textSelectionMenuShowing = selectionActionMode?.tag === TextSelectionActionMode
@@ -131,15 +119,17 @@ internal fun EditorEditText.applyUpdateJSONImpl(
     val renderElements = update.optJSONArray("renderElements")
     val renderBlocks = update.optJSONArray("renderBlocks")
     val renderPatch = parseRenderPatch(update.optJSONObject("renderPatch"))
-    val resolvedRenderBlocks = renderBlocks
+    val resolvedRenderBlocks = renderBlocks?.let(ResolvedRenderBlocks::from)
         ?: renderPatch
             ?.takeIf { patchMatchesCurrentRenderBlocks(it, updateDocumentVersion) }
             ?.let { patch ->
-                currentRenderBlocksJson?.let { mergeRenderBlocks(it, patch) }
+                currentRenderBlocks?.let { ResolvedRenderBlocks.merge(it, patch) }
             }
     val rootRender = rootTableRenderForUpdate(updateJSON, update, resolvedRenderBlocks)
         ?: run {
-            recordImeTraceForTesting("rootTableRenderRejected", "admission")
+            recordImeTraceForTesting("rootTableRenderRejected") {
+                "admission"
+            }
             return false
         }
     val hasRootTable = rootRender.tableIds.isNotEmpty()
@@ -149,15 +139,13 @@ internal fun EditorEditText.applyUpdateJSONImpl(
         !currentRenderBlocksNeedFullApply &&
         !authorizedVisibleTextNeedsRebuild &&
         resolvedRenderBlocks != null &&
-        currentRenderBlocksJson?.let { current ->
-            renderBlocksEqual(current, resolvedRenderBlocks)
-        } == true &&
+        currentRenderBlocks?.let(resolvedRenderBlocks::contentEquals) == true &&
         text?.toString() == lastAuthorizedText &&
         lastAppliedRenderAppearanceRevision == renderAppearanceRevision
     val prebuiltRootRender = if (hasRootTable && !shouldSkipRender) {
         val blocks = resolvedRenderBlocks ?: return false
         RenderBridge.buildSpannableFromBlocks(
-            blocks,
+            blocks.toJsonArray(),
             baseFontSize = baseFontSize,
             textColor = baseTextColor,
             theme = theme,
@@ -177,7 +165,9 @@ internal fun EditorEditText.applyUpdateJSONImpl(
             rootRender.scalarLength
         )
             ?: run {
-                recordImeTraceForTesting("rootTableRenderRejected", "coordinates")
+                recordImeTraceForTesting("rootTableRenderRejected") {
+                    "coordinates"
+                }
                 return false
             }
     } else {
@@ -213,7 +203,11 @@ internal fun EditorEditText.applyUpdateJSONImpl(
         resolvedRenderBlocks != null &&
         lastAppliedRenderAppearanceRevision == renderAppearanceRevision
     ) {
-        applyRenderPatchIfPossible(renderPatch, refreshInputConnectionForExternalUpdate)
+        applyRenderPatchIfPossible(
+            renderPatch,
+            refreshInputConnectionForExternalUpdate,
+            resolvedRenderBlocks
+        )
     } else {
         null
     }
@@ -246,7 +240,7 @@ internal fun EditorEditText.applyUpdateJSONImpl(
             prebuiltRootRender
         } else if (resolvedRenderBlocks != null) {
             RenderBridge.buildSpannableFromBlocks(
-                resolvedRenderBlocks,
+                resolvedRenderBlocks.toJsonArray(),
                 baseFontSize = baseFontSize,
                 textColor = baseTextColor,
                 theme = theme,
@@ -265,10 +259,9 @@ internal fun EditorEditText.applyUpdateJSONImpl(
                 atomRenderConfiguration
             )
         } else {
-            recordImeTraceForTesting(
-                "applyUpdateJSONNoop",
+            recordImeTraceForTesting("applyUpdateJSONNoop") {
                 "reason=noRenderPayload jsonLength=${updateJSON.length}"
-            )
+            }
             return false
         }
         buildRenderNanos = System.nanoTime() - buildStartedAt
@@ -345,8 +338,7 @@ internal fun EditorEditText.applyUpdateJSONImpl(
     val postApplyNanos = System.nanoTime() - postApplyStartedAt
 
     val totalNanos = System.nanoTime() - totalStartedAt
-    recordImeTraceForTesting(
-        "applyUpdateJSON",
+    recordImeTraceForTesting("applyUpdateJSON") {
         "notify=$notifyListener skippedRender=$shouldSkipRender " +
             "attemptedPatch=${renderPatch != null} jsonLength=${updateJSON.length} " +
             "parseUs=${nanosToMicros(
@@ -360,7 +352,7 @@ internal fun EditorEditText.applyUpdateJSONImpl(
             )} selectionUs=${nanosToMicros(
                 selectionNanos
             )} postUs=${nanosToMicros(postApplyNanos)} totalUs=${nanosToMicros(totalNanos)}"
-    )
+    }
 
     if (captureApplyUpdateTraceForTesting) {
         lastApplyUpdateTraceForTesting = ApplyUpdateTrace(

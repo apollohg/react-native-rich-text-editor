@@ -1,3 +1,4 @@
+mod attrs;
 pub mod fragment;
 pub mod mark;
 pub mod node;
@@ -39,14 +40,6 @@ pub(crate) fn hash_table_retained_bytes<K, V>(capacity: usize) -> Option<usize> 
         .checked_mul(std::mem::size_of::<(K, V)>().checked_add(std::mem::size_of::<usize>())?)
 }
 
-pub(crate) fn json_value_retained_bytes(value: &serde_json::Value) -> Option<usize> {
-    json_value_storage_bytes(value, false)
-}
-
-pub(crate) fn cloned_json_value_retained_bytes(value: &serde_json::Value) -> Option<usize> {
-    json_value_storage_bytes(value, true)
-}
-
 pub(crate) fn json_object_retained_bytes(entries: usize) -> Option<usize> {
     // Charge a full BTreeMap node per entry, including sparse nodes.
     let btree_node = std::mem::size_of::<(String, serde_json::Value)>()
@@ -56,7 +49,7 @@ pub(crate) fn json_object_retained_bytes(entries: usize) -> Option<usize> {
     entries.checked_mul(btree_node)
 }
 
-fn json_value_storage_bytes(value: &serde_json::Value, cloned: bool) -> Option<usize> {
+pub(crate) fn json_value_retained_bytes(value: &serde_json::Value) -> Option<usize> {
     let mut total = 0usize;
     let mut pending = vec![value];
     while let Some(value) = pending.pop() {
@@ -64,27 +57,20 @@ fn json_value_storage_bytes(value: &serde_json::Value, cloned: bool) -> Option<u
             serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {
             }
             serde_json::Value::String(value) => {
-                total = total.checked_add(if cloned {
-                    value.len()
-                } else {
-                    value.capacity()
-                })?;
+                total = total.checked_add(value.capacity())?;
             }
             serde_json::Value::Array(values) => {
                 total = total.checked_add(
-                    (if cloned {
-                        values.len()
-                    } else {
-                        values.capacity()
-                    })
-                    .checked_mul(std::mem::size_of::<serde_json::Value>())?,
+                    values
+                        .capacity()
+                        .checked_mul(std::mem::size_of::<serde_json::Value>())?,
                 )?;
                 pending.extend(values);
             }
             serde_json::Value::Object(values) => {
                 total = total.checked_add(json_object_retained_bytes(values.len())?)?;
                 for (key, value) in values {
-                    total = total.checked_add(if cloned { key.len() } else { key.capacity() })?;
+                    total = total.checked_add(key.capacity())?;
                     pending.push(value);
                 }
             }
@@ -134,6 +120,10 @@ impl Document {
 
     pub(crate) fn shares_root_storage_with(&self, other: &Self) -> bool {
         self.root.shares_storage_with(&other.root)
+    }
+
+    pub(crate) fn history_snapshot_retained_bytes_beyond(&self, base: &Self) -> Option<usize> {
+        self.root.history_snapshot_retained_bytes_beyond(&base.root)
     }
 
     pub(crate) fn history_snapshot_retained_bytes(&self) -> Option<usize> {
@@ -191,4 +181,23 @@ impl Document {
         }
         Some(node)
     }
+}
+
+pub(crate) fn unshared_window<T>(
+    items: &[T],
+    base: &[T],
+    shared: impl Fn(&T, &T) -> bool,
+) -> std::ops::Range<usize> {
+    let prefix = items
+        .iter()
+        .zip(base)
+        .take_while(|(item, base)| shared(item, base))
+        .count();
+    let suffix = items[prefix..]
+        .iter()
+        .rev()
+        .zip(base[prefix..].iter().rev())
+        .take_while(|(item, base)| shared(item, base))
+        .count();
+    prefix..items.len() - suffix
 }

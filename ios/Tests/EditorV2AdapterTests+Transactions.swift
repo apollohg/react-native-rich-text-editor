@@ -2,6 +2,67 @@ import UIKit
 import XCTest
 
 extension EditorV2AdapterTests {
+    func testNativeSelectionProjectionCarriesPairedStateRevisionWithoutChangingDocument() throws {
+        let adapter = makeAdapter()
+        let markedText = "bold 👩‍💻 e\u{301}"
+        let plainText = " plain"
+        XCTAssertNotNil(adapter.setContentHtml("<p><strong>\(markedText)</strong>\(plainText)</p>"))
+        let owner = UUID()
+        adapter.claimNativeBindingIfUnowned(token: owner)
+        defer { adapter.releaseNativeBindingOwner(token: owner) }
+        XCTAssertNotNil(adapter.initialUpdateJSON())
+        let documentBefore = try XCTUnwrap(adapter.documentJson())
+        let documentRevisionBefore = adapter.baseDocumentRevision
+        let markedCaret: UInt32 = 1
+        let plainCaret = try XCTUnwrap(UInt32(exactly: markedText.unicodeScalars.count + 2))
+        XCTAssertNotEqual(markedText.utf16.count, markedText.unicodeScalars.count,
+            "The native scalar caret fixture must exercise Unicode rather than ASCII-only offsets")
+        XCTAssertNotNil(adapter.syncSelection(anchor: markedCaret, head: markedCaret))
+        let earlierSnapshot = parseObject(try XCTUnwrap(adapter.atomicRenderJSON(
+            matchingDocumentRevision: documentRevisionBefore)))
+        let earlierStateRevision = try XCTUnwrap(earlierSnapshot["stateRevision"] as? String)
+        let earlierMarks = try XCTUnwrap((earlierSnapshot["activeState"] as? [String: Any])?["marks"] as? [String: Any])
+        XCTAssertEqual(earlierMarks["bold"] as? Bool, true,
+            "The older same-document commit must represent the previous bold caret")
+
+        let synced = try XCTUnwrap(adapter.syncSelection(anchor: plainCaret, head: plainCaret))
+        let frameFetchCount = adapter.renderUpdateCallCountForTesting
+        let projected = try XCTUnwrap(adapter.currentSelectionState()).update
+        XCTAssertEqual(adapter.renderUpdateCallCountForTesting, frameFetchCount,
+            "A current selection projection must reuse its paired render cache without another frame fetch")
+        let authoritativeResult = editorV2RenderUpdate(editorId: adapter.editorId,
+            mirrorScalarAnchor: nil, mirrorScalarHead: nil)
+        XCTAssertNil(authoritativeResult.error)
+        let authoritative = parseObject(try XCTUnwrap(authoritativeResult.value))
+        let selection = try XCTUnwrap(projected["selection"] as? [String: Any])
+        XCTAssertEqual(selection["type"] as? String, "text")
+        XCTAssertEqual((selection["anchorScalar"] as? NSNumber)?.uint32Value, plainCaret)
+        XCTAssertEqual((selection["headScalar"] as? NSNumber)?.uint32Value, plainCaret)
+        XCTAssertEqual((selection["anchor"] as? NSNumber)?.uint32Value, synced.docAnchor)
+        XCTAssertEqual((selection["head"] as? NSNumber)?.uint32Value, synced.docHead)
+        XCTAssertEqual(projected["selection"] as? NSDictionary, authoritative["selection"] as? NSDictionary)
+        XCTAssertEqual(projected["activeState"] as? NSDictionary, authoritative["activeState"] as? NSDictionary)
+        XCTAssertEqual(projected["historyState"] as? NSDictionary, authoritative["historyState"] as? NSDictionary)
+        let currentMarks = try XCTUnwrap((projected["activeState"] as? [String: Any])?["marks"] as? [String: Any])
+        XCTAssertEqual(currentMarks["bold"] as? Bool, false,
+            "The newer caret must leave the bold run without formatting the document")
+        XCTAssertEqual(adapter.baseDocumentRevision, documentRevisionBefore)
+        XCTAssertEqual(projected["documentVersion"] as? String, earlierSnapshot["documentVersion"] as? String)
+        XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), documentBefore,
+            "Selection state projection must preserve every Unicode character and mark")
+        XCTAssertNil(projected["positionEpoch"])
+        XCTAssertNil(selection["positionEpoch"], "Private native position state must not enter the minimal public projection")
+        let authoritativeStateRevision = try XCTUnwrap(authoritative["stateRevision"] as? String)
+        XCTAssertGreaterThan(try XCTUnwrap(UInt64(authoritativeStateRevision)), try XCTUnwrap(UInt64(earlierStateRevision)),
+            "Same-document native selection must advance state revision even when document version is unchanged")
+        XCTAssertEqual(String(adapter.stateRevision), authoritativeStateRevision,
+            "The adapter must already own the revision paired with its cached selection and toolbar state")
+        let projectedStateRevision = try XCTUnwrap(projected["stateRevision"] as? String,
+            "The minimal native selection projection must carry its paired stateRevision to order same-document events")
+        XCTAssertEqual(projectedStateRevision, authoritativeStateRevision)
+        XCTAssertEqual(Set(projected.keys), ["documentVersion", "stateRevision", "selection", "activeState", "historyState"])
+    }
+
     func testNativeKeystrokeAdoptsOneCellDelta() throws {
         let adapter = makeAdapter(configJson: TableInputTestSchema.tableConfig)
         XCTAssertNotNil(adapter.setContentJson(TableInputTestSchema.twoCellDocument))
@@ -459,7 +520,8 @@ extension EditorV2AdapterTests {
         let render = try XCTUnwrap(
             editorV2RenderUpdate(editorId: adapter.editorId, mirrorScalarAnchor: nil, mirrorScalarHead: nil).value
         )
-        XCTAssertNotNil(adapter.adoptExternalRender(render))
+        XCTAssertNotNil(adapter.externalRenderNotice(render))
+        XCTAssertNotNil(adapter.adoptExternalRender())
     }
 
     private func isCellPresence(_ selection: [String: Any]?, _ anchor: UInt32, _ head: UInt32) -> Bool {
@@ -477,7 +539,8 @@ extension EditorV2AdapterTests {
         let render = try XCTUnwrap(
             editorV2RenderUpdate(editorId: adapter.editorId, mirrorScalarAnchor: nil, mirrorScalarHead: nil).value
         )
-        XCTAssertNotNil(adapter.adoptExternalRender(render))
+        XCTAssertNotNil(adapter.externalRenderNotice(render))
+        XCTAssertNotNil(adapter.adoptExternalRender())
 
         XCTAssertEqual(recorder.selections.count, 1, "cell presence publishes once per change: \(recorder.selections)")
         XCTAssertTrue(isCellPresence(recorder.selections.first, openings[0], openings[1]), "\(recorder.selections)")

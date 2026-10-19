@@ -6,6 +6,16 @@ private final class PendingCaretTapRecognizer: CaretPlacementTapRecognizer {
     var point: CGPoint?
     var pointReadCount = 0
     var pointReadLimit = Int.max
+    var completed = false
+
+    override var state: UIGestureRecognizer.State {
+        get { completed ? .ended : super.state }
+        set { super.state = newValue }
+    }
+
+    override func location(in view: UIView?) -> CGPoint {
+        point ?? super.location(in: view)
+    }
 
     override var pendingCaretPoint: CGPoint? {
         pointReadCount += 1
@@ -206,6 +216,8 @@ extension RichTextEditorViewTests {
         }
         textView.selectedRange = nativeSelection
         textView.textViewDidChangeSelection(textView)
+        recognizer.completed = true
+        textView.handleCaretPlacementTap(recognizer)
         flushMainQueue()
         XCTAssertEqual(textView.selectedRange, expectedSelection)
         XCTAssertFalse(publishedSelections.isEmpty)
@@ -416,4 +428,168 @@ extension RichTextEditorViewTests {
         XCTAssertEqual((selection["head"] as? NSNumber)?.uint32Value, expectedDoc)
     }
 
+}
+
+private enum SelectionEventActiveStateFixture {
+    static let initialHTML = "<p>al<strong>pha b</strong>eta gamma</p>"
+    static let replacedHTML = "<p>replaced paragraph text</p>"
+    static let boldWord = "pha"
+    static let plainWord = "gamma"
+    static let replacedWord = "paragraph"
+    static let wordInteriorOffset = 1
+    static let nextCaretDistance = 2
+}
+
+private enum EmptyDocumentToolbarFixture {
+    static let insertableNodesKey = "insertableNodes"
+    static let imageNode = "image"
+}
+
+private final class SelectionEventStateRecorder {
+    private(set) var states: [[String: Any]] = []
+
+    init(_ host: NativeEditorExpoView) {
+        host.onSelectionChangeForTesting = { [unowned self] event in
+            let stateJSON = event["stateJson"] as? String ?? ""
+            let state = try? JSONSerialization.jsonObject(with: Data(stateJSON.utf8)) as? [String: Any]
+            states.append(state ?? [:])
+        }
+    }
+}
+
+extension RichTextEditorViewTests {
+    func testSelectionEventsOmitAnUnchangedActiveStateUntilItChanges() throws {
+        try withSelectionEventHost { host, recorder in
+            let plain = try caretOffset(in: host, word: SelectionEventActiveStateFixture.plainWord)
+            let bold = try caretOffset(in: host, word: SelectionEventActiveStateFixture.boldWord)
+            let nextPlain = plain + SelectionEventActiveStateFixture.nextCaretDistance
+
+            let first = try moveCaret(host, recorder, to: plain)
+            let unchanged = try moveCaret(host, recorder, to: nextPlain)
+            let boldState = try moveCaret(host, recorder, to: bold)
+            let plainAgain = try moveCaret(host, recorder, to: plain)
+            let repeated = try moveCaret(host, recorder, to: nextPlain)
+
+            XCTAssertNotNil(first[EditorSelectionState.activeStateKey], "the first event carries the active state: \(first)")
+            XCTAssertNil(unchanged[EditorSelectionState.activeStateKey], "an unchanged active state is omitted: \(unchanged)")
+            XCTAssertEqual(
+                unchanged[EditorSelectionState.activeStateRevisionKey] as? String,
+                first["stateRevision"] as? String,
+                "the omission names the revision that carried the active state"
+            )
+            let boldMarks = (boldState[EditorSelectionState.activeStateKey] as? [String: Any])?["marks"] as? [String: Any]
+            XCTAssertEqual(boldMarks?["bold"] as? Bool, true, "a changed active state is sent again: \(boldState)")
+            XCTAssertNotNil(plainAgain[EditorSelectionState.activeStateKey], "leaving bold sends the plain state: \(plainAgain)")
+            XCTAssertNil(repeated[EditorSelectionState.activeStateKey], "\(repeated)")
+            XCTAssertEqual(
+                repeated[EditorSelectionState.activeStateRevisionKey] as? String,
+                plainAgain["stateRevision"] as? String
+            )
+            XCTAssertNotEqual(host.toolbarState.marks["bold"], true, "the toolbar follows the final plain caret")
+        }
+    }
+
+    func testDocumentReplacementFromJSAndRebindingResendTheActiveState() throws {
+        try withSelectionEventHost { host, recorder in
+            let editorId = host.richTextView.editorId
+            let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+            let plain = try caretOffset(in: host, word: SelectionEventActiveStateFixture.plainWord)
+            _ = try moveCaret(host, recorder, to: plain)
+            let omitted = try moveCaret(host, recorder, to: plain + SelectionEventActiveStateFixture.nextCaretDistance)
+            XCTAssertNil(omitted[EditorSelectionState.activeStateKey], "\(omitted)")
+
+            let replaced = adapter.callWithEnvelope(
+                ["setHtml": SelectionEventActiveStateFixture.replacedHTML, "history": "undoableBoundary"],
+                includeBaseRevision: false
+            ) {
+                editorV2ReplaceDocument(editorId: adapter.editorId, requestJson: $0)
+            }
+            let revision = try XCTUnwrap(parseJSONObject(replaced.value)["documentRevision"] as? String, "\(replaced)")
+            XCTAssertTrue(host.applyEditorUpdate(#"{"documentVersion":"\#(revision)"}"#))
+            flushMainQueue()
+            let replacedCaret = try caretOffset(in: host, word: SelectionEventActiveStateFixture.replacedWord)
+            let afterReplace = try moveCaret(host, recorder, to: replacedCaret)
+            XCTAssertNotNil(afterReplace[EditorSelectionState.activeStateKey], "a JS replacement resets the channel: \(afterReplace)")
+
+            host.setEditorId(0)
+            host.setEditorId(editorId)
+            flushMainQueue()
+            let afterRebind = try moveCaret(
+                host,
+                recorder,
+                to: replacedCaret + SelectionEventActiveStateFixture.nextCaretDistance
+            )
+            XCTAssertNotNil(afterRebind[EditorSelectionState.activeStateKey], "rebinding resets the channel: \(afterRebind)")
+        }
+    }
+
+    func testFocusingALocalEmptyEditorKeepsAnActiveStateThatCanInsertAnImage() throws {
+        let editorId = makeV2Editor()
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let window = makeTestWindow(frame: UIScreen.main.bounds)
+        let host = NativeEditorExpoView()
+        host.frame = window.bounds
+        let recorder = SelectionEventStateRecorder(host)
+        window.addSubview(host)
+        window.makeKeyAndVisible()
+        defer {
+            host.blur()
+            host.setEditorId(0)
+            window.isHidden = true
+        }
+        host.setEditorId(editorId)
+        flushMainQueue()
+
+        host.focus()
+        flushMainQueue()
+
+        XCTAssertTrue(host.richTextView.activeTextInput.isFirstResponder, "focus reaches the editor")
+        let renderState = parseJSONObject(
+            editorV2RenderState(editorId: adapter.editorId, mirrorScalarAnchor: nil, mirrorScalarHead: nil).value
+        )
+        let activeState = try XCTUnwrap(
+            renderState[EditorSelectionState.activeStateKey] as? [String: Any],
+            "the render state JS seeds from: \(renderState)"
+        )
+        XCTAssertTrue(
+            (activeState[EmptyDocumentToolbarFixture.insertableNodesKey] as? [String] ?? [])
+                .contains(EmptyDocumentToolbarFixture.imageNode),
+            "JS must be able to seed an image-capable state; focus published \(recorder.states)"
+        )
+        XCTAssertTrue(
+            host.toolbarState.insertableNodes.contains(EmptyDocumentToolbarFixture.imageNode),
+            "native toolbar state after focus: \(host.toolbarState.insertableNodes)"
+        )
+    }
+
+    private func withSelectionEventHost(
+        _ body: (NativeEditorExpoView, SelectionEventStateRecorder) throws -> Void
+    ) throws {
+        let editorId = makeV2Editor()
+        defer { destroyV2Editor(id: editorId) }
+        _ = EditorV2Shadow.setHtml(id: editorId, html: SelectionEventActiveStateFixture.initialHTML)
+        let host = NativeEditorExpoView()
+        defer { host.setEditorId(0) }
+        host.setEditorId(editorId)
+        try body(host, SelectionEventStateRecorder(host))
+    }
+
+    private func caretOffset(in host: NativeEditorExpoView, word: String) throws -> Int {
+        let location = (host.richTextView.textView.attributedText.string as NSString).range(of: word).location
+        XCTAssertNotEqual(location, NSNotFound, "\(word) is rendered")
+        return location + SelectionEventActiveStateFixture.wordInteriorOffset
+    }
+
+    private func moveCaret(
+        _ host: NativeEditorExpoView,
+        _ recorder: SelectionEventStateRecorder,
+        to utf16Offset: Int
+    ) throws -> [String: Any] {
+        let before = recorder.states.count
+        setCollapsedSelection(in: host.richTextView.textView, utf16Offset: utf16Offset)
+        flushMainQueue()
+        XCTAssertGreaterThan(recorder.states.count, before, "caret \(utf16Offset) publishes a selection event")
+        return try XCTUnwrap(recorder.states.last)
+    }
 }

@@ -1,6 +1,188 @@
 import XCTest
 
 final class AtomMountingTests: XCTestCase {
+    private static let lookupViewport = CGSize(width: 320, height: 240)
+    private static let lookupWiderViewportWidth: CGFloat = 400
+    private static let lookupParagraphCount = 32
+
+    func testScrollingRichDocumentWithoutAtomsDoesNotRepeatAttachmentEnumeration() throws {
+        let editorId = makeV2Editor()
+        let editor = RichTextEditorView(frame: CGRect(origin: .zero, size: Self.lookupViewport))
+        let window = hostEditorView(editor, size: Self.lookupViewport)
+        defer {
+            editor.editorId = 0
+            destroyV2Editor(id: editorId)
+            editor.removeFromSuperview()
+            window.isHidden = true
+        }
+        editor.editorId = editorId
+        editor.setContent(html: (0..<Self.lookupParagraphCount).map {
+            #"<p><strong>Paragraph \#($0) 👩‍💻</strong> <em>é</em> <a href="https://example.com">linked text</a> fills the scrolling fixture.</p>"#
+        }.joined())
+        editor.layoutIfNeeded()
+        editor.textView.layoutManager.ensureLayout(for: editor.textView.textContainer)
+        flushMainQueue()
+        XCTAssertTrue(editor.atomLayoutPositions().isEmpty)
+        let snapshot = NSAttributedString(attributedString: editor.textView.textStorage)
+        let caret = editor.textView.selectedRange
+        let height = editor.textView.contentSize.height
+        let travel = height - editor.textView.bounds.height
+        XCTAssertGreaterThan(travel, editor.textView.bounds.height,
+            "The real editor must overflow its viewport before scroll work is measured")
+        var scanCount = 0
+        var emittedWidths: [CGFloat] = []
+        let previousObserver = PreparedProseInstrumentation.tableStageObserverForTesting
+        PreparedProseInstrumentation.tableStageObserverForTesting = { stage, start, end in
+            if stage == .atomAttachmentEnumeration { scanCount += 1 }
+            previousObserver?(stage, start, end)
+        }
+        defer { PreparedProseInstrumentation.tableStageObserverForTesting = previousObserver }
+        editor.onAtomContentWidthChange = { emittedWidths.append($0) }
+
+        for fraction in [CGFloat(0.25), 0.5, 0.75, 1] {
+            let target = CGPoint(x: 0, y: travel * fraction)
+            editor.textView.contentOffset = target
+            XCTAssertEqual(editor.textView.contentOffset.x, target.x)
+            XCTAssertEqual(editor.textView.contentOffset.y, target.y, accuracy: 1 / window.screen.scale)
+            XCTAssertTrue(editor.atomLayoutPositions().isEmpty)
+            XCTAssertEqual(editor.textView.contentSize.height, height,
+                "Scrolling an unchanged fully laid-out document must preserve its content height")
+        }
+        editor.frame.size.width = Self.lookupWiderViewportWidth
+        editor.setNeedsLayout()
+        editor.layoutIfNeeded()
+
+        XCTAssertGreaterThan(emittedWidths.count, 0, "Actual viewport changes must still publish atom layout width")
+        XCTAssertGreaterThan(try XCTUnwrap(emittedWidths.last), try XCTUnwrap(emittedWidths.first),
+            "The final width change must still reach atom layout subscribers without an attachment scan")
+        XCTAssertEqual(scanCount, 0,
+            "Unchanged rich text without atoms must not rescan all attributed runs for each viewport callback; scans=\(scanCount), UTF16=\(snapshot.length)")
+        XCTAssertTrue(snapshot.isEqual(to: editor.textView.textStorage), "Scrolling must preserve every rendered attribute")
+        XCTAssertEqual(editor.textView.selectedRange, caret)
+        XCTAssertTrue(editor.atomLayoutPositions().isEmpty)
+    }
+
+    func testAttachmentLookupTracksAttributeOnlyEditsWithoutDelegateAndMutableHeights() throws {
+        let editor = RichTextEditorView(frame: CGRect(origin: .zero, size: Self.lookupViewport))
+        let originalText = LayoutConstants.objectReplacementCharacter + " ordinary text"
+        editor.textView.textStorage.setAttributedString(NSAttributedString(string: originalText))
+        editor.layoutIfNeeded()
+        XCTAssertTrue(editor.atomLayoutPositions().isEmpty)
+        let attachment = AtomBlockAttachment(atomKey: "counter:live", nodeType: "counter", docPos: 1, reservedHeight: 40)
+        let previousDelegate = editor.textView.textStorage.delegate
+        editor.textView.textStorage.delegate = nil
+        defer { editor.textView.textStorage.delegate = previousDelegate }
+        let atomRange = NSRange(location: 0, length: 1)
+        editor.textView.textStorage.addAttribute(.attachment, value: attachment, range: atomRange)
+
+        let initial = try XCTUnwrap(editor.atomLayoutPositions().first)
+        XCTAssertEqual(initial["key"], attachment.atomKey,
+            "Attribute-only attachment edits must invalidate an empty lookup even when the Rust render path disables the storage delegate")
+        XCTAssertEqual(initial["height"], Double(attachment.reservedHeight))
+        XCTAssertEqual(editor.textView.textStorage.string, originalText,
+            "An attribute-only attachment update must not alter the live characters")
+        attachment.reservedHeight = 90
+        XCTAssertEqual(try XCTUnwrap(editor.atomLayoutPositions().first)["height"], 90.0,
+            "Lookup reuse must retain the live attachment reference rather than cache its mutable height")
+
+        editor.textView.textStorage.removeAttribute(.attachment, range: atomRange)
+        XCTAssertTrue(editor.atomLayoutPositions().isEmpty, "Removing the last attachment must clear its cached range")
+        editor.textView.textStorage.replaceCharacters(in: NSRange(location: 0, length: 0),
+            with: NSAttributedString(attachment: attachment))
+        XCTAssertEqual(try XCTUnwrap(editor.atomLayoutPositions().first)["key"], attachment.atomKey)
+        editor.textView.textStorage.setAttributedString(NSAttributedString(string: "replaced document"))
+        XCTAssertTrue(editor.atomLayoutPositions().isEmpty, "A whole-document replacement must discard the old attachment")
+    }
+
+    func testAttachmentLookupPreservesMixedRenderRangesAndDuplicateKeyBehavior() throws {
+        let editor = RichTextEditorView(frame: CGRect(origin: .zero, size: Self.lookupViewport))
+        let tableKey = "lookup-table"
+        let rendered = RenderBridge.renderElements(fromArray: [
+            ["type": "blockStart", "nodeType": "paragraph", "depth": 0],
+            ["type": "textRun", "text": "Before ", "marks": []],
+            ["type": "opaqueInlineAtom", "nodeType": "mention", "label": "@Alice", "docPos": 8],
+            ["type": "blockEnd"],
+            ["type": "opaqueBlockAtom", "nodeType": "card", "label": "Card", "docPos": 10],
+            ["type": "voidBlock", "nodeType": "image", "docPos": 11,
+                "attrs": ["src": "", "width": 140, "height": 80]],
+            ["type": "voidBlock", "nodeType": "horizontal_rule", "docPos": 12],
+            ["type": "table", "tableId": tableKey]
+        ], baseFont: editor.textView.baseFont, textColor: .label, theme: nil, rootTableIDs: [tableKey])
+        editor.textView.textStorage.setAttributedString(rendered)
+        XCTAssertTrue(editor.atomLayoutPositions().isEmpty,
+            "Opaque labels, images, rules and root table anchors are not React atom host attachments")
+        let first = AtomBlockAttachment(atomKey: "counter:duplicate", nodeType: "counter", docPos: 13, reservedHeight: 40)
+        let last = AtomBlockAttachment(atomKey: first.atomKey, nodeType: first.nodeType, docPos: 14, reservedHeight: 70)
+        let value = NSMutableAttributedString(attributedString: rendered)
+        value.append(NSAttributedString(attachment: first))
+        value.append(NSAttributedString(string: "\n"))
+        let lastOffset = value.length
+        value.append(NSAttributedString(attachment: last))
+        editor.textView.textStorage.setAttributedString(value)
+        editor.layoutIfNeeded()
+        XCTAssertEqual(editor.atomLayoutPositions().count, 1,
+            "The full attachment dictionary must retain its existing last-key-wins contract")
+        XCTAssertEqual(try XCTUnwrap(editor.atomLayoutPositions().first)["height"], Double(last.reservedHeight))
+        editor.setAtomHeight(key: first.atomKey, height: 90)
+        XCTAssertEqual(first.reservedHeight, 90,
+            "The single attachment lookup must continue selecting the first matching key")
+        XCTAssertEqual(last.reservedHeight, 70)
+        XCTAssertEqual(try XCTUnwrap(editor.atomLayoutPositions().first)["height"], Double(last.reservedHeight))
+
+        let prefix = "Added 👩‍💻\n"
+        editor.textView.layoutManager.ensureLayout(for: editor.textView.textContainer)
+        let beforePrefix = NSAttributedString(attributedString: editor.textView.textStorage)
+        editor.textView.textStorage.replaceCharacters(in: NSRange(location: 0, length: 0), with: prefix)
+        let shiftedOffset = lastOffset + prefix.utf16.count
+        let shiftedRange = NSRange(location: shiftedOffset, length: 1)
+        editor.textView.layoutManager.ensureLayout(forCharacterRange: shiftedRange)
+        let glyphs = editor.textView.layoutManager.glyphRange(forCharacterRange: shiftedRange, actualCharacterRange: nil)
+        let expectedRect = editor.textView.layoutManager.boundingRect(forGlyphRange: glyphs, in: editor.textView.textContainer)
+        let shifted = try XCTUnwrap(editor.atomLayoutPositions().first)
+        XCTAssertEqual(shifted["y"] as? Double, Double(editor.textView.textContainerInset.top + expectedRect.minY),
+            "Retained atom positions must be recomputed from their updated live range after a structural prefix edit")
+        let retained = editor.textView.textStorage.attributedSubstring(from: NSRange(location: prefix.utf16.count, length: rendered.length))
+        XCTAssertEqual(retained.string, rendered.string)
+        XCTAssertTrue(editor.textView.textStorage.attributedSubstring(from:
+            NSRange(location: prefix.utf16.count, length: beforePrefix.length)).isEqual(to: beforePrefix),
+            "The retained mixed suffix must preserve every opaque label, image, rule, table marker and attributed style")
+        XCTAssertTrue((editor.textView.textStorage.attribute(.attachment, at: shiftedOffset, effectiveRange: nil) as? AtomBlockAttachment) === last)
+        XCTAssertEqual(retained.attribute(RenderBridgeAttributes.rootTableMarker, at: rendered.length - 1, effectiveRange: nil) as? String, tableKey)
+    }
+
+    func testAttachmentLookupObservesEveryPendingStorageEditInsideOneBatch() throws {
+        let editor = RichTextEditorView(frame: CGRect(origin: .zero, size: Self.lookupViewport))
+        let original = installAtom(key: "counter:batch", height: 40, in: editor)
+        let initial = try XCTUnwrap(editor.atomAttachmentEntries()[original.atomKey])
+        XCTAssertTrue(initial.0 === original)
+        XCTAssertEqual(initial.1, NSRange(location: 0, length: 1))
+        let prefix = "Pending 👩‍💻\n"
+        let expectedRange = NSRange(location: prefix.utf16.count, length: 1)
+        let replacement = AtomBlockAttachment(atomKey: original.atomKey, nodeType: original.nodeType,
+            docPos: original.docPos, reservedHeight: 90)
+        do {
+            editor.textView.textStorage.beginEditing()
+            defer { editor.textView.textStorage.endEditing() }
+            editor.textView.textStorage.replaceCharacters(in: NSRange(location: 0, length: 0),
+                with: NSAttributedString(string: prefix, attributes: [.font: editor.textView.baseFont]))
+            let shifted = try XCTUnwrap(editor.atomAttachmentEntries()[original.atomKey])
+            XCTAssertTrue(shifted.0 === original)
+            XCTAssertEqual(shifted.1, expectedRange,
+                "Reads during a pending edit must see the current UTF16 attachment range before editing notifications are delivered")
+            editor.textView.textStorage.removeAttribute(.attachment, range: expectedRange)
+            XCTAssertTrue(editor.atomAttachmentEntries().isEmpty,
+                "A second edit in the same open batch must not reuse the preceding lookup")
+            editor.textView.textStorage.addAttribute(.attachment, value: replacement, range: expectedRange)
+            let reattached = try XCTUnwrap(editor.atomAttachmentEntries()[replacement.atomKey])
+            XCTAssertTrue(reattached.0 === replacement)
+            XCTAssertEqual(reattached.1, expectedRange)
+        }
+        let final = try XCTUnwrap(editor.atomAttachmentEntries()[replacement.atomKey])
+        XCTAssertTrue(final.0 === replacement)
+        XCTAssertEqual(final.1, expectedRange)
+        XCTAssertEqual(try XCTUnwrap(editor.atomLayoutPositions().first)["height"], Double(replacement.reservedHeight))
+    }
+
     func testFabricMountIndexesIgnoreAtomAndInternalSubviews() {
         let editor = NativeEditorExpoView()
         let first = UIView()

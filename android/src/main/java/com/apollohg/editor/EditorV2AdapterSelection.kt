@@ -262,7 +262,7 @@ internal fun EditorV2Adapter.ensureSelection(anchor: Int, head: Int): SelectionS
 
 internal fun EditorV2Adapter.textDocumentSelection(updateJson: String): IntArray? {
     return try {
-        val selection = JSONObject(updateJson).getJSONObject("selection")
+        val selection = readOnlyParsedUpdate(updateJson).getJSONObject("selection")
         if (selection.optString("type") != "text") return null
         intArrayOf(
             scalarField(selection, "anchor") ?: return null,

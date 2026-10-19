@@ -86,7 +86,6 @@ interface V2EngineView {
     documentRevision: string | null;
     documentOrigin: NativeEditorDocumentOrigin | null;
     historyState: HistoryState;
-    contentKey: string | null;
 }
 
 /**
@@ -129,12 +128,20 @@ export function useNativeEditorDocument(
         documentRevision: null,
         documentOrigin: null,
         historyState: DEFAULT_V2_HISTORY_STATE,
-        contentKey: null,
     });
+
+    const engineViewRef = useRef(engineView);
 
     const currentEditorIdRef = useRef(editorId);
     currentEditorIdRef.current = editorId;
     const readyRef = useRef({ editorId, ready: false });
+
+    const contentSnapshotRef = useRef<{
+        editorId: string;
+        documentRevision: string;
+        snapshot: { json: DocumentJSON; html?: string };
+        contentKey: string;
+    } | null>(null);
 
     const emittedRef = useRef({
         editorId,
@@ -168,7 +175,33 @@ export function useNativeEditorDocument(
         pendingControlledEchoesRef.current = { editorId, keys: [] };
         ignoredControlledEchoRef.current = null;
         lastControlledContentKeyRef.current = null;
+        contentSnapshotRef.current = null;
     }
+
+    const readContentSnapshot = useCallback((documentRevision: string) => {
+        const cached = contentSnapshotRef.current;
+        const needsHtml = controlledKindRef.current === 'html' || onContentChangeRef.current != null;
+
+        if (cached?.editorId === handle.editorId && cached.documentRevision === documentRevision &&
+            (!needsHtml || cached.snapshot.html != null)) {
+            return cached;
+        }
+
+        const snapshot = needsHtml
+            ? handle.bridge.getContentSnapshot()
+            : { json: handle.bridge.getDocumentJson(), html: undefined };
+
+        const nextSnapshot = {
+            editorId: handle.editorId,
+            documentRevision,
+            snapshot,
+            contentKey: JSON.stringify(snapshot.json),
+        };
+
+        contentSnapshotRef.current = nextSnapshot;
+
+        return nextSnapshot;
+    }, [ handle ]);
 
     const refresh = useCallback(
         (emitContentCallbacks: boolean) => {
@@ -184,11 +217,16 @@ export function useNativeEditorDocument(
             let snapshotHtml: string | null = null;
             let snapshotJson: DocumentJSON | null = null;
 
-            if (ready) {
-                const snapshot = handle.bridge.getContentSnapshot();
-                snapshotHtml = snapshot.html;
+            const needsContent = controlledKindRef.current != null ||
+                onContentChangeRef.current != null || onContentChangeJSONRef.current != null;
+
+            if (ready && state.documentRevision != null && needsContent) {
+                const { snapshot, contentKey: snapshotKey } = readContentSnapshot(state.documentRevision);
+                snapshotHtml = snapshot.html ?? null;
                 snapshotJson = snapshot.json;
-                contentKey = JSON.stringify(snapshot.json);
+                contentKey = snapshotKey;
+            } else {
+                contentSnapshotRef.current = null;
             }
 
             if (currentEditorIdRef.current !== refreshedEditorId) {
@@ -202,39 +240,64 @@ export function useNativeEditorDocument(
 
             readyRef.current = { editorId: refreshedEditorId, ready };
 
-            setEngineView({
-                editorId: refreshedEditorId,
-                ready,
-                documentState: state.documentState,
-                documentRevision: state.documentRevision,
-                documentOrigin: state.documentOrigin,
-                historyState,
-                contentKey,
-            });
+            const previous = engineViewRef.current;
+
+            if (previous.editorId !== refreshedEditorId || previous.ready !== ready ||
+                previous.documentState !== state.documentState ||
+                previous.documentRevision !== state.documentRevision ||
+                previous.documentOrigin !== state.documentOrigin ||
+                previous.historyState.canUndo !== historyState.canUndo ||
+                previous.historyState.canRedo !== historyState.canRedo) {
+                const nextView = {
+                    editorId: refreshedEditorId,
+                    ready,
+                    documentState: state.documentState,
+                    documentRevision: state.documentRevision,
+                    documentOrigin: state.documentOrigin,
+                    historyState,
+                };
+
+                engineViewRef.current = nextView;
+                setEngineView(nextView);
+            }
 
             const historyKey = `${state.canUndo}/${state.canRedo}`;
             const emitted = emittedRef.current;
 
-            if (
-                currentEditorIdRef.current !== refreshedEditorId ||
-                emitted.editorId !== refreshedEditorId
-            ) {
+            if (handle.isDestroyed || currentEditorIdRef.current !== refreshedEditorId ||
+                emitted.editorId !== refreshedEditorId) {
                 return;
             }
+
+            const lastRevision = emitted.lastRevision;
+            const lastContentKey = emitted.lastContentKey;
+
+            if (ready) {
+                emitted.lastRevision = state.documentRevision;
+                emitted.lastContentKey = contentKey;
+            }
+
+            const admittedRevision = emitted.lastRevision;
+
+            const isCurrentRefresh = () => !handle.isDestroyed &&
+                currentEditorIdRef.current === refreshedEditorId && emittedRef.current === emitted &&
+                emitted.lastRevision === admittedRevision;
 
             if (historyKey !== emitted.lastHistoryKey) {
                 emitted.lastHistoryKey = historyKey;
                 onHistoryStateChangeRef.current?.(historyState);
             }
 
-            if (ready) {
-                const lastRevision = emitted.lastRevision;
+            if (!isCurrentRefresh()) {
+                return;
+            }
 
+            if (ready) {
                 if (
                     emitContentCallbacks &&
                     lastRevision != null &&
                     lastRevision !== state.documentRevision &&
-                    emitted.lastContentKey !== contentKey
+                    lastContentKey !== contentKey
                 ) {
                     if (snapshotHtml != null) {
                         if (
@@ -250,6 +313,10 @@ export function useNativeEditorDocument(
                         }
 
                         onContentChangeRef.current?.(snapshotHtml);
+                    }
+
+                    if (!isCurrentRefresh()) {
+                        return;
                     }
 
                     if (snapshotJson != null) {
@@ -268,12 +335,9 @@ export function useNativeEditorDocument(
                         onContentChangeJSONRef.current?.(snapshotJson);
                     }
                 }
-
-                emitted.lastRevision = state.documentRevision;
-                emitted.lastContentKey = contentKey;
             }
         },
-        [ handle ]
+        [ handle, readContentSnapshot ]
     );
 
     useEffect(() => {
@@ -328,13 +392,12 @@ export function useNativeEditorDocument(
             return;
         }
 
-        const snapshot = handle.bridge.getContentSnapshot();
+        const snapshotRevision = handle.bridge.getState().documentRevision ?? engineView.documentRevision;
+        const { snapshot, contentKey: currentJsonKey } = readContentSnapshot(snapshotRevision);
 
         if (currentEditorIdRef.current !== editorId || emittedRef.current.editorId !== editorId) {
             return;
         }
-
-        const currentJsonKey = JSON.stringify(snapshot.json);
 
         if (wantsHtml && snapshot.html === value) {
             const echoIndex = pendingControlledEchoesRef.current.keys.indexOf(controlledContentKey);
@@ -409,6 +472,7 @@ export function useNativeEditorDocument(
         engineView.ready,
         engineView.documentRevision,
         refresh,
+        readContentSnapshot,
     ]);
 
     const mutate = useCallback(
@@ -518,7 +582,7 @@ export function useNativeEditorDocument(
             return true;
         }
 
-        return handle.bridge.renderUpdate().documentIsEmpty;
+        return handle.bridge.renderState().documentIsEmpty;
     }, [ handle ]);
 
     const getTextContent = useCallback((): string => {
@@ -568,7 +632,6 @@ export function useNativeEditorDocument(
                 documentRevision: null,
                 documentOrigin: null,
                 historyState: DEFAULT_V2_HISTORY_STATE,
-                contentKey: null,
             };
         } else {
             const state = handle.bridge.getState();
@@ -580,7 +643,6 @@ export function useNativeEditorDocument(
                 documentRevision: state.documentRevision,
                 documentOrigin: state.documentOrigin,
                 historyState: { canUndo: state.canUndo, canRedo: state.canRedo },
-                contentKey: null,
             };
         }
 

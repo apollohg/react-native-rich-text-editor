@@ -61,7 +61,9 @@ extension EditorV2Adapter {
             }
             let combinedOutcome = NativeIntentOutcome(
                 changed: mutationOutcome.changed || selectionOutcome.changed,
-                documentChanged: mutationOutcome.documentChanged
+                documentChanged: mutationOutcome.documentChanged,
+                selectionState: selectionOutcome.selectionState,
+                unappliedSelection: selectionOutcome.unappliedSelection
             )
             guard let stateRender = renderNativeIntentOutcome(combinedOutcome) else {
                 if combinedOutcome.changed {
