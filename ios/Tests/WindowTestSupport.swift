@@ -28,6 +28,16 @@ func testWindowScene() -> UIWindowScene {
     return scenes[0]
 }
 
+let subpixelLayoutTolerance: CGFloat = 0.001
+
+func layoutRectsMatch(_ actual: [CGRect], _ expected: [CGRect]) -> Bool {
+    actual.count == expected.count && zip(actual, expected).allSatisfy { lhs, rhs in
+        abs(lhs.minX - rhs.minX) <= subpixelLayoutTolerance && abs(lhs.minY - rhs.minY) <= subpixelLayoutTolerance
+            && abs(lhs.width - rhs.width) <= subpixelLayoutTolerance
+            && abs(lhs.height - rhs.height) <= subpixelLayoutTolerance
+    }
+}
+
 func makeTestWindow(frame: CGRect) -> UIWindow {
     let window = UIWindow(windowScene: testWindowScene())
     window.frame = frame

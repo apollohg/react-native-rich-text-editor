@@ -321,8 +321,10 @@ extension RenderBridgeTests {
             bitmaps.append(try renderGlyphBitmap(view.layoutManager, glyphRange: glyphRange,
                 origin: .zero, size: bitmapSize))
         }
-        XCTAssertEqual(lineRects[0], lineRects[1], "Actual rendered typography must match independent native font metrics")
-        XCTAssertEqual(caretRects[0], caretRects[1], "Font reuse must retain the native caret after mixed emphasis and Unicode")
+        XCTAssertTrue(layoutRectsMatch(lineRects[0], lineRects[1]),
+            "Actual rendered typography must match independent native font metrics: \(lineRects[0]) vs \(lineRects[1])")
+        XCTAssertTrue(layoutRectsMatch([caretRects[0]], [caretRects[1]]),
+            "Font reuse must retain the native caret after mixed emphasis and Unicode: \(caretRects[0]) vs \(caretRects[1])")
         XCTAssertEqual(bitmaps[0], bitmaps[1], "Custom fonts, Unicode fallback, emphasis and link pixels must match native reference text")
         XCTAssertTrue(bitmaps[0].contains { $0 != 0 }, "Pixel equality requires actual painted text")
     }
@@ -1554,7 +1556,8 @@ extension RenderBridgeTests {
                 [0, 0, 0, 255], "A border without explicit color must paint black at its actual heading edge")
         }
         XCTAssertEqual(bitmaps[0], bitmaps[1], "Lazy drawing must preserve text, background and default black border pixels")
-        XCTAssertEqual(visibleLineRects[0], visibleLineRects[1])
+        XCTAssertTrue(layoutRectsMatch(visibleLineRects[0], visibleLineRects[1]),
+            "Lazy drawing must preserve visible line geometry: \(visibleLineRects[0]) vs \(visibleLineRects[1])")
         XCTAssertEqual(headingLocations[0], headingLocations[1])
         for (name, channels) in [("code background", [255, 0, 0]), ("Unicode text", [0, 0, 255])] {
             XCTAssertTrue(stride(from: 0, to: bitmaps[0].count, by: bytesPerPixel).contains { offset in

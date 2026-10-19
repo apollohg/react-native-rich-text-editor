@@ -2927,12 +2927,8 @@ final class EditorTableInputTests: XCTestCase {
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
-        let accuracy: CGFloat = 0.001
-        let matches = actual.count == expected.count && zip(actual, expected).allSatisfy { lhs, rhs in
-            abs(lhs.minX - rhs.minX) <= accuracy && abs(lhs.minY - rhs.minY) <= accuracy
-                && abs(lhs.width - rhs.width) <= accuracy && abs(lhs.height - rhs.height) <= accuracy
-        }
-        XCTAssertTrue(matches, "\(message) actual \(actual) expected \(expected)", file: file, line: line)
+        XCTAssertTrue(layoutRectsMatch(actual, expected), "\(message) actual \(actual) expected \(expected)",
+            file: file, line: line)
     }
 
     private func waitForGeometryFrame() {

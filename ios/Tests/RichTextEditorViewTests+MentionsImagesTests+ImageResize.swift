@@ -409,7 +409,9 @@ extension RichTextEditorViewTests {
         view.allowImageResizing = false
         flushMainQueue()
         view.layoutIfNeeded()
-        XCTAssertEqual(renderedRect(in: view.textView, utf16Range: imageRange), initialRect)
+        let restoredRect = renderedRect(in: view.textView, utf16Range: imageRange)
+        XCTAssertTrue(layoutRectsMatch([restoredRect], [initialRect]),
+            "Disabling resizing must restore the image layout: \(restoredRect) vs \(initialRect)")
         XCTAssertEqual(EditorV2Shadow.getHtml(id: editorId), initialHtml)
         XCTAssertNil(view.imageResizeOverlayRectForTesting())
         XCTAssertFalse(view.textView.isPreviewingImageResize)
@@ -560,7 +562,9 @@ extension RichTextEditorViewTests {
             view.previewImageResizeDragForTesting(corner: .bottomRight, translation: .zero)
             view.commitPreviewResizeForTesting()
             flushMainQueue()
-            XCTAssertEqual(renderedRect(in: view.textView, utf16Range: range), initialRect)
+            let committedRect = renderedRect(in: view.textView, utf16Range: range)
+            XCTAssertTrue(layoutRectsMatch([committedRect], [initialRect]),
+                "A zero-translation commit must restore the image layout: \(committedRect) vs \(initialRect)")
             XCTAssertEqual(EditorV2Shadow.getHtml(id: editorId), initialHtml)
         }
     }

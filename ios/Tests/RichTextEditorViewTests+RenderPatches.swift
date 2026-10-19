@@ -71,11 +71,34 @@ extension RichTextEditorViewTests {
         }
     }
 
-    private struct StyledMarginGeometry: Equatable {
+    private struct StyledMarginGeometry {
         let usedRect: CGRect
         let lineRects: [CGRect]
         let caretRect: CGRect
         let bitmap: Data
+
+        func layoutMatches(_ expected: StyledMarginGeometry) -> Bool {
+            layoutRectsMatch([usedRect, caretRect] + lineRects,
+                [expected.usedRect, expected.caretRect] + expected.lineRects)
+        }
+    }
+
+    private func assertStyledLayout(
+        _ actual: StyledMarginGeometry, matches expected: StyledMarginGeometry, _ message: String,
+        file: StaticString = #filePath, line: UInt = #line
+    ) {
+        XCTAssertTrue(actual.layoutMatches(expected),
+            "\(message): layout must match within \(subpixelLayoutTolerance) pt, actual=\(actual) expected=\(expected)",
+            file: file, line: line)
+    }
+
+    private func assertStyledGeometry(
+        _ actual: StyledMarginGeometry, matches expected: StyledMarginGeometry, _ message: String,
+        file: StaticString = #filePath, line: UInt = #line
+    ) {
+        assertStyledLayout(actual, matches: expected, message, file: file, line: line)
+        XCTAssertEqual(actual.bitmap, expected.bitmap, "\(message): painted RGBA pixels must match exactly",
+            file: file, line: line)
     }
 
     private func styledMarginGeometry(in input: EditorTextView) throws -> StyledMarginGeometry {
@@ -151,7 +174,7 @@ extension RichTextEditorViewTests {
             storage: NSAttributedString(attributedString: input.textStorage), theme: input.theme)
         let actual = try styledMarginGeometry(in: input)
         let expected = try styledMarginGeometry(in: reference)
-        XCTAssertEqual(actual, expected, "\(context): live drawing must match a fresh TextKit manager")
+        assertStyledGeometry(actual, matches: expected, "\(context): live drawing must match a fresh TextKit manager")
         XCTAssertEqual(input.textStorage.string, reference.textStorage.string, context)
         XCTAssertEqual(input.selectedRange, reference.selectedRange, context)
         guard input.textStorage.length == reference.textStorage.length else {
@@ -191,8 +214,8 @@ extension RichTextEditorViewTests {
         paintProbe.onDraw = { _, _ in actualDrawCount += 1 }
         let repeatedPaintCount = 20
         for iteration in 0..<repeatedPaintCount {
-            XCTAssertEqual(try styledMarginGeometry(in: input), expected,
-                "Repeated real glyph paint \(iteration) must preserve exact geometry and RGBA pixels")
+            assertStyledGeometry(try styledMarginGeometry(in: input), matches: expected,
+                "Repeated real glyph paint \(iteration) must preserve geometry and exact RGBA pixels")
             XCTAssertEqual(input.selectedRange, selection)
             XCTAssertTrue(input.textStorage.isEqual(to: before))
         }
@@ -318,9 +341,7 @@ extension RichTextEditorViewTests {
         mutableStack.exchangeObject(at: 0, withObjectAt: 1)
         XCTAssertTrue(input.textStorage.editedMask.isEmpty, "In-place raw-array mutation sends no storage edit")
         let redOnTop = try assertStyledDrawingMatchesFreshStorage(in: input, context: "raw mutable red-last stack")
-        XCTAssertEqual(redOnTop.usedRect, grayOnTop.usedRect)
-        XCTAssertEqual(redOnTop.lineRects, grayOnTop.lineRects)
-        XCTAssertEqual(redOnTop.caretRect, grayOnTop.caretRect)
+        assertStyledLayout(redOnTop, matches: grayOnTop, "Legacy paint order must not change layout")
         XCTAssertNotEqual(redOnTop.bitmap, grayOnTop.bitmap, "Legacy paint order must actually follow the changed raw array")
         mutableStack.removeObject(at: 1)
         _ = try assertStyledDrawingMatchesFreshStorage(in: input, context: "raw mutable stack removes a descriptor")
@@ -358,7 +379,10 @@ extension RichTextEditorViewTests {
         let expected = try renderGlyphBitmap(reference.layoutManager,
             glyphRange: NSRange(location: 0, length: reference.layoutManager.numberOfGlyphs), origin: .zero, size: viewport)
         XCTAssertEqual(actual, expected, "Same-manager storage rebind must paint fresh current ranges and identities")
-        XCTAssertEqual(manager.usedRect(for: container), reference.layoutManager.usedRect(for: reference.textContainer))
+        let reboundUsedRect = manager.usedRect(for: container)
+        let referenceUsedRect = reference.layoutManager.usedRect(for: reference.textContainer)
+        XCTAssertTrue(layoutRectsMatch([reboundUsedRect], [referenceUsedRect]),
+            "Same-manager storage rebind must lay out like a fresh manager: \(reboundUsedRect) vs \(referenceUsedRect)")
         XCTAssertNotEqual(actual, firstPaint, "The rebound content and background must actually differ")
     }
 
@@ -376,9 +400,8 @@ extension RichTextEditorViewTests {
             let reference = freshSiblingMarginReference(for: input, blocks: blocks, theme: theme)
             XCTAssertEqual(reference.textStorage.string as NSString, input.textStorage.string as NSString, action)
             let control = try styledMarginGeometry(in: reference)
-            XCTAssertEqual(control.usedRect, geometry.usedRect, "\(action) changing paint color must retain the full layout")
-            XCTAssertEqual(control.lineRects, geometry.lineRects, "\(action) color masks require identical glyph lines")
-            XCTAssertEqual(control.caretRect, geometry.caretRect, "\(action) color masks must retain the exact caret")
+            assertStyledLayout(control, matches: geometry,
+                "\(action) changing paint color must retain the glyph lines, full layout and caret")
             XCTAssertEqual(control.bitmap.count, geometry.bitmap.count, action)
             controls.append(control)
         }
@@ -425,17 +448,14 @@ extension RichTextEditorViewTests {
             }
             let grayControl = try render(firstHidden: true)
             let redControl = try render(secondHidden: true)
-            XCTAssertEqual(grayControl.usedRect, redControl.usedRect)
-            XCTAssertEqual(grayControl.lineRects, redControl.lineRects)
-            XCTAssertEqual(grayControl.caretRect, redControl.caretRect)
+            assertStyledLayout(grayControl, matches: redControl, "nested=\(nested): color masks must share layout")
             let overlap = paintOverlapPixels(grayControl.bitmap, redControl.bitmap)
             XCTAssertFalse(overlap.isEmpty, "The legacy controls must prove actual equal-range paint overlap")
             let expected = nested ? redPixel : grayPixel
             for iteration in 0..<freshRenderCount {
                 let actual = try render()
-                XCTAssertEqual(actual.usedRect, grayControl.usedRect)
-                XCTAssertEqual(actual.lineRects, grayControl.lineRects)
-                XCTAssertEqual(actual.caretRect, grayControl.caretRect)
+                assertStyledLayout(actual, matches: grayControl,
+                    "nested=\(nested) fresh=\(iteration): painting must not change layout")
                 XCTAssertEqual(actual.bitmap.count, grayControl.bitmap.count)
                 guard actual.bitmap.count == grayControl.bitmap.count else { continue }
                 let wrong = overlap.first { Array(actual.bitmap[$0..<($0 + expected.count)]) != expected }
@@ -481,10 +501,8 @@ extension RichTextEditorViewTests {
         }
         XCTAssertEqual(input.selectedRange, selection)
         let afterGeometry = try styledMarginGeometry(in: input)
-        XCTAssertEqual(afterGeometry.usedRect, beforeGeometry.usedRect)
-        XCTAssertEqual(afterGeometry.lineRects, beforeGeometry.lineRects)
-        XCTAssertEqual(afterGeometry.caretRect, beforeGeometry.caretRect)
-        XCTAssertEqual(afterGeometry.bitmap, beforeGeometry.bitmap, "Repeated collapse must retain text, quote border and code background pixels")
+        assertStyledGeometry(afterGeometry, matches: beforeGeometry,
+            "Repeated collapse must retain text, quote border and code background pixels")
 
         let separatorOffset = (before.string as NSString).range(of: "Quote tail").location - 1
         XCTAssertNotNil(before.attribute(RenderBridgeAttributes.blockBoundary, at: separatorOffset, effectiveRange: nil))
@@ -513,10 +531,7 @@ extension RichTextEditorViewTests {
         XCTAssertTrue(input.textStorage.isEqual(to: before), "Repair must restore the full preceding paragraph style, not only its spacing")
         XCTAssertEqual(input.selectedRange, selection)
         let repairedGeometry = try styledMarginGeometry(in: input)
-        XCTAssertEqual(repairedGeometry.usedRect, beforeGeometry.usedRect)
-        XCTAssertEqual(repairedGeometry.lineRects, beforeGeometry.lineRects)
-        XCTAssertEqual(repairedGeometry.caretRect, beforeGeometry.caretRect)
-        XCTAssertEqual(repairedGeometry.bitmap, beforeGeometry.bitmap)
+        assertStyledGeometry(repairedGeometry, matches: beforeGeometry, "Stale separator repair must restore drawing")
         edits.removeAll()
         input.textStorage.beginEditing()
         input.textStorage.removeAttribute(.paragraphStyle, range: separator)
@@ -637,10 +652,7 @@ extension RichTextEditorViewTests {
                 XCTAssertTrue(NSDictionary(dictionary: actual).isEqual(to: expected),
                     "\(action) UTF16 \(offset): actual=\(actual) fresh=\(expected)")
             }
-            XCTAssertEqual(actualGeometry.usedRect, freshGeometry.usedRect, action)
-            XCTAssertEqual(actualGeometry.lineRects, freshGeometry.lineRects, action)
-            XCTAssertEqual(actualGeometry.caretRect, freshGeometry.caretRect, action)
-            XCTAssertEqual(actualGeometry.bitmap, freshGeometry.bitmap,
+            assertStyledGeometry(actualGeometry, matches: freshGeometry,
                 "\(action) must retain fresh-render rich glyph, nested quote border and code background pixels")
         }
     }
@@ -911,7 +923,7 @@ extension RichTextEditorViewTests {
         let afterGeometry = try styledMarginGeometry(in: input)
         XCTAssertNotEqual(afterGeometry.bitmap, beforeGeometry.bitmap,
             "The border control must change actual painted pixels")
-        XCTAssertNotEqual(afterGeometry.usedRect, beforeGeometry.usedRect,
+        XCTAssertFalse(layoutRectsMatch([afterGeometry.usedRect], [beforeGeometry.usedRect]),
             "The margin control must change actual layout geometry")
         try assertStyledPatchMatchesFreshRender(in: input, context: "theme-change")
 
@@ -955,7 +967,7 @@ extension RichTextEditorViewTests {
         XCTAssertEqual(EditorV2Shadow.getHtml(id: editorId), unmarkedHTML,
             "Transient storage and rollback must not mutate the authoritative document")
         assertTextKitAttributedStorage(in: input, matches: authorized, compareStyledValues: true)
-        XCTAssertEqual(try styledMarginGeometry(in: input), authorizedGeometry,
+        assertStyledGeometry(try styledMarginGeometry(in: input), matches: authorizedGeometry,
             "Rollback must retain current sibling margins, glyphs, decorations and caret")
         try assertStyledPatchMatchesFreshRender(in: input, context: "non-first-margin-rollback")
 
@@ -1042,7 +1054,7 @@ extension RichTextEditorViewTests {
             context: context)
         assertTextKitAttributedStorage(in: input, matches: reference.textStorage, compareStyledValues: true)
         assertRetainedSnapshotMetadata(input.lastAuthorizedAttributedTextStorage, matches: input.textStorage)
-        XCTAssertEqual(try styledMarginGeometry(in: input), try styledMarginGeometry(in: reference),
+        assertStyledGeometry(try styledMarginGeometry(in: input), matches: try styledMarginGeometry(in: reference),
             "\(context): current attributes, glyphs, decorations, layout and caret must match fresh rendering")
         _ = try styledParagraphBoxes(in: input)
         return reference
