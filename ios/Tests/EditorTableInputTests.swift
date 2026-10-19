@@ -2931,8 +2931,26 @@ final class EditorTableInputTests: XCTestCase {
             file: file, line: line)
     }
 
-    private func waitForGeometryFrame() {
-        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+    private static let geometryPublishTimeout: TimeInterval = 5
+
+    private func waitForGeometryPublish(
+        _ fixture: ExpoGeometryFixture,
+        payloadCount: Int,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let publisher = fixture.host.tableSelectionGeometryPublisher
+        let deadline = Date().addingTimeInterval(Self.geometryPublishTimeout)
+        repeat {
+            RunLoop.main.run(until: Date().addingTimeInterval(TableTestFrameClock.runLoopSlice))
+        } while (fixture.recorder.payloads.count < payloadCount || publisher.hasScheduledFlushForTesting)
+            && Date() < deadline
+        XCTAssertFalse(
+            publisher.hasScheduledFlushForTesting,
+            "a geometry flush is still pending after \(Self.geometryPublishTimeout)s: \(fixture.recorder.payloads)",
+            file: file,
+            line: line
+        )
     }
 
     private func withExpoTableGeometry(
@@ -2970,15 +2988,16 @@ final class EditorTableInputTests: XCTestCase {
         let positions = try adapter.tableCellPositions()
         let surface = try XCTUnwrap(host.richTextView.subviews.compactMap { $0 as? EditorTableSurface }.first)
         let drawing = try XCTUnwrap(surface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
-        waitForGeometryFrame()
-        try body(ExpoGeometryFixture(
+        let fixture = ExpoGeometryFixture(
             host: host,
             adapter: adapter,
             tableID: tableID,
             positions: positions,
             drawing: drawing,
             recorder: recorder
-        ))
+        )
+        waitForGeometryPublish(fixture, payloadCount: 0)
+        try body(fixture)
     }
 
     func testCellSelectionPublishesWindowSpaceGeometryOnTheNextFrame() throws {
@@ -2986,7 +3005,7 @@ final class EditorTableInputTests: XCTestCase {
             XCTAssertTrue(fixture.recorder.payloads.isEmpty, "a caret selection has no geometry: \(fixture.recorder.payloads)")
             try fixture.selectCells(anchor: 0, head: 3)
             XCTAssertTrue(fixture.recorder.payloads.isEmpty, "emission waits for the next display frame")
-            waitForGeometryFrame()
+            waitForGeometryPublish(fixture, payloadCount: 1)
 
             XCTAssertEqual(fixture.recorder.payloads.count, 1, "\(fixture.recorder.payloads)")
             let payload = try XCTUnwrap(fixture.recorder.payloads.first)
@@ -3034,7 +3053,6 @@ final class EditorTableInputTests: XCTestCase {
     func testNativeCellEditMenuVisibilityIsRepublishedForTheToolbarToYield() throws {
         try withExpoTableGeometry(document: fourCellDocument) { fixture in
             let surface = try XCTUnwrap(fixture.host.richTextView.subviews.compactMap { $0 as? EditorTableSurface }.first)
-            let geometryTimeout: TimeInterval = 3
             let selectedGeometry = expectation(description: "cell selection geometry arrives with the menu hidden")
             let presentedGeometry = expectation(description: "presented menu geometry arrives with the menu visible")
             let dismissedGeometry = expectation(description: "dismissed menu geometry arrives with the menu hidden")
@@ -3054,14 +3072,14 @@ final class EditorTableInputTests: XCTestCase {
                 fixture.host.onTableSelectionGeometryForTesting = originalGeometryDelivered
             }
             try fixture.selectCells(anchor: 0, head: 3)
-            wait(for: [selectedGeometry], timeout: geometryTimeout)
+            wait(for: [selectedGeometry], timeout: Self.geometryPublishTimeout)
             XCTAssertEqual(fixture.recorder.payloads.last?["editMenuVisible"] as? Bool, false)
 
             expectedGeometry = presentedGeometry
             expectedMenuVisibility = true
             surface.presentCellEditMenu()
             XCTAssertTrue(surface.isCellEditMenuVisible, "the menu presents over the focused cell selection")
-            wait(for: [presentedGeometry], timeout: geometryTimeout)
+            wait(for: [presentedGeometry], timeout: Self.geometryPublishTimeout)
             XCTAssertEqual(fixture.recorder.payloads.count, 2, "showing the menu republishes once: \(fixture.recorder.payloads)")
             XCTAssertEqual(fixture.recorder.payloads.last?["editMenuVisible"] as? Bool, true)
             assertRects(
@@ -3073,7 +3091,7 @@ final class EditorTableInputTests: XCTestCase {
             expectedGeometry = dismissedGeometry
             expectedMenuVisibility = false
             surface.dismissCellEditMenu()
-            wait(for: [dismissedGeometry], timeout: geometryTimeout)
+            wait(for: [dismissedGeometry], timeout: Self.geometryPublishTimeout)
             XCTAssertEqual(fixture.recorder.payloads.count, 3, "\(fixture.recorder.payloads)")
             XCTAssertEqual(
                 fixture.recorder.payloads.last?["editMenuVisible"] as? Bool,
@@ -3086,7 +3104,7 @@ final class EditorTableInputTests: XCTestCase {
     func testHorizontalTableScrollMovesPublishedRectsAtMostOncePerFrame() throws {
         try withExpoTableGeometry(document: wideTwoCellDocument) { fixture in
             try fixture.selectCells(anchor: 0, head: 1)
-            waitForGeometryFrame()
+            waitForGeometryPublish(fixture, payloadCount: 1)
             XCTAssertEqual(fixture.recorder.payloads.count, 1, "\(fixture.recorder.payloads)")
             let before = try fixture.recorder.rects(at: 0)
             let table = try XCTUnwrap(fixture.drawing.mountedTablePresentation()?.tables.first {
@@ -3098,7 +3116,7 @@ final class EditorTableInputTests: XCTestCase {
             }
             XCTAssertEqual(fixture.drawing.tableLogicalOffset(for: fixture.tableID), 300)
             XCTAssertEqual(fixture.recorder.payloads.count, 1, "scroll steps inside one frame stay queued")
-            waitForGeometryFrame()
+            waitForGeometryPublish(fixture, payloadCount: 2)
 
             XCTAssertEqual(fixture.recorder.payloads.count, 2, "three scroll steps coalesce into one event")
             let after = try fixture.recorder.rects(at: 1)
@@ -3121,7 +3139,7 @@ final class EditorTableInputTests: XCTestCase {
     func testParentMovingTheHostRepublishesShiftedRectsOnce() throws {
         try withExpoTableGeometry(document: fourCellDocument) { fixture in
             try fixture.selectCells(anchor: 0, head: 3)
-            waitForGeometryFrame()
+            waitForGeometryPublish(fixture, payloadCount: 1)
             XCTAssertEqual(fixture.recorder.payloads.count, 1)
             let before = try fixture.recorder.rects(at: 0)
             let shift: CGFloat = 40
@@ -3132,7 +3150,7 @@ final class EditorTableInputTests: XCTestCase {
                 "moving the host schedules a geometry frame"
             )
             XCTAssertEqual(fixture.recorder.payloads.count, 1, "the move is published on the next frame")
-            waitForGeometryFrame()
+            waitForGeometryPublish(fixture, payloadCount: 2)
 
             XCTAssertEqual(fixture.recorder.payloads.count, 2, "\(fixture.recorder.payloads)")
             let after = try fixture.recorder.rects(at: 1)
@@ -3146,14 +3164,14 @@ final class EditorTableInputTests: XCTestCase {
     func testUnchangedGeometryIsNeverPublishedTwice() throws {
         try withExpoTableGeometry(document: fourCellDocument) { fixture in
             try fixture.selectCells(anchor: 0, head: 1)
-            waitForGeometryFrame()
+            waitForGeometryPublish(fixture, payloadCount: 1)
             XCTAssertEqual(fixture.recorder.payloads.count, 1)
 
             fixture.host.tableSelectionGeometryPublisher.flush()
             fixture.host.richTextView.setNeedsLayout()
             fixture.host.richTextView.layoutIfNeeded()
             fixture.host.tableSelectionGeometryPublisher.scheduleFlush()
-            waitForGeometryFrame()
+            waitForGeometryPublish(fixture, payloadCount: 1)
 
             XCTAssertEqual(fixture.recorder.payloads.count, 1, "\(fixture.recorder.payloads)")
         }
@@ -3204,7 +3222,7 @@ final class EditorTableInputTests: XCTestCase {
             let stub = StubKeyboardGuide(in: fixture.host, window: try XCTUnwrap(fixture.host.window), frame: restingBand)
             fixture.host.trackKeyboardOcclusion(of: stub.guide)
             try fixture.selectCells(anchor: 0, head: 3)
-            waitForGeometryFrame()
+            waitForGeometryPublish(fixture, payloadCount: 1)
 
             let payload = try XCTUnwrap(fixture.recorder.payloads.last)
             XCTAssertNil(payload["keyboard"], "a guide resting at the editor's bottom edge is no keyboard: \(payload)")
@@ -3245,11 +3263,11 @@ final class EditorTableInputTests: XCTestCase {
             let stub = StubKeyboardGuide(in: fixture.host, window: try XCTUnwrap(fixture.host.window), frame: docked)
             fixture.host.trackKeyboardOcclusion(of: stub.guide)
             try fixture.selectCells(anchor: 0, head: 3)
-            waitForGeometryFrame()
+            waitForGeometryPublish(fixture, payloadCount: 1)
             let published = fixture.recorder.payloads.count
 
             stub.move(to: CGRect(x: 60, y: 40, width: 120, height: 100))
-            waitForGeometryFrame()
+            waitForGeometryPublish(fixture, payloadCount: published + 1)
 
             XCTAssertEqual(fixture.recorder.payloads.count, published + 1, "\(fixture.recorder.payloads)")
             let payload = try XCTUnwrap(fixture.recorder.payloads.last)
@@ -3268,7 +3286,7 @@ final class EditorTableInputTests: XCTestCase {
         let clip = CGRect(x: 0, y: 120, width: 400, height: 150)
         try withExpoTableGeometry(document: fourCellDocument, clippingAncestor: clip) { fixture in
             try fixture.selectCells(anchor: 0, head: 3)
-            waitForGeometryFrame()
+            waitForGeometryPublish(fixture, payloadCount: 1)
             let payload = try XCTUnwrap(fixture.recorder.payloads.last)
             let viewport = try GeometryRecorder.rect(try XCTUnwrap(payload["viewport"] as? [String: Double]))
             let hostInWindow = try XCTUnwrap(fixture.host.superview).convert(fixture.host.frame, to: nil)
@@ -3286,7 +3304,6 @@ final class EditorTableInputTests: XCTestCase {
 
     func testBlurClearsGeometryAndSuppressesItUntilRefocus() throws {
         try withExpoTableGeometry(document: wideTwoCellDocument) { fixture in
-            let geometryTimeout: TimeInterval = 3
             let selectedGeometry = expectation(description: "selected cell geometry arrives before blur")
             let refocusedGeometry = expectation(description: "selected cell geometry returns after refocus")
             selectedGeometry.assertForOverFulfill = true
@@ -3304,7 +3321,7 @@ final class EditorTableInputTests: XCTestCase {
             }
             defer { fixture.host.onTableSelectionGeometryForTesting = originalGeometryDelivered }
             try fixture.selectCells(anchor: 0, head: 1)
-            wait(for: [selectedGeometry], timeout: geometryTimeout)
+            wait(for: [selectedGeometry], timeout: Self.geometryPublishTimeout)
             XCTAssertEqual(fixture.recorder.payloads.count, 1)
 
             expectedGeometry = nil
@@ -3315,12 +3332,12 @@ final class EditorTableInputTests: XCTestCase {
                 $0.surface.identity == fixture.tableID
             })
             fixture.drawing.scrollTables(in: [table.surface.scrollIdentity], by: -120)
-            waitForGeometryFrame()
+            waitForGeometryPublish(fixture, payloadCount: 2)
             XCTAssertEqual(fixture.recorder.payloads.count, 2, "a blurred editor publishes no geometry")
 
             expectedGeometry = refocusedGeometry
             XCTAssertTrue(fixture.host.richTextView.textView.becomeFirstResponder())
-            wait(for: [refocusedGeometry], timeout: geometryTimeout)
+            wait(for: [refocusedGeometry], timeout: Self.geometryPublishTimeout)
             XCTAssertTrue(fixture.host.richTextView.textView.isFirstResponder, "refocus keeps the geometry's input focused")
             XCTAssertEqual(fixture.recorder.payloads.count, 3,
                 "refocus republishes once: scheduled=\(fixture.host.tableSelectionGeometryPublisher.hasScheduledFlushForTesting), payloads=\(fixture.recorder.payloads)")
@@ -3331,7 +3348,7 @@ final class EditorTableInputTests: XCTestCase {
     func testBindingChangeClearsGeometryUnderThePreviousEditor() throws {
         try withExpoTableGeometry(document: fourCellDocument) { fixture in
             try fixture.selectCells(anchor: 0, head: 3)
-            waitForGeometryFrame()
+            waitForGeometryPublish(fixture, payloadCount: 1)
             XCTAssertEqual(fixture.recorder.payloads.count, 1)
 
             fixture.host.setEditorId(0)
@@ -3345,14 +3362,14 @@ final class EditorTableInputTests: XCTestCase {
     func testEditorDestructionClearsGeometry() throws {
         try withExpoTableGeometry(document: fourCellDocument) { fixture in
             try fixture.selectCells(anchor: 1, head: 2)
-            waitForGeometryFrame()
+            waitForGeometryPublish(fixture, payloadCount: 1)
             XCTAssertEqual(fixture.recorder.payloads.count, 1)
 
             fixture.host.handleEditorDestroyed(fixture.host.richTextView.editorId)
 
             XCTAssertEqual(fixture.recorder.payloads.count, 2)
             XCTAssertEqual(fixture.recorder.payloads[1] as? [String: String], ["editorId": fixture.adapter.editorId])
-            waitForGeometryFrame()
+            waitForGeometryPublish(fixture, payloadCount: 2)
             XCTAssertEqual(fixture.recorder.payloads.count, 2)
         }
     }
@@ -3360,15 +3377,15 @@ final class EditorTableInputTests: XCTestCase {
     func testTextSelectionsPublishNoGeometryAndEndACellSelectionsGeometry() throws {
         try withExpoTableGeometry(document: proseThenFixedWidthTableDocument) { fixture in
             try fixture.selectText(anchor: 1, head: 4)
-            waitForGeometryFrame()
+            waitForGeometryPublish(fixture, payloadCount: 0)
             XCTAssertTrue(fixture.recorder.payloads.isEmpty, "\(fixture.recorder.payloads)")
 
             try fixture.selectCells(anchor: 0, head: 1)
-            waitForGeometryFrame()
+            waitForGeometryPublish(fixture, payloadCount: 1)
             XCTAssertEqual(fixture.recorder.payloads.count, 1)
 
             try fixture.selectText(anchor: 2, head: 2)
-            waitForGeometryFrame()
+            waitForGeometryPublish(fixture, payloadCount: 2)
             XCTAssertEqual(fixture.recorder.payloads.count, 2, "\(fixture.recorder.payloads)")
             XCTAssertEqual(fixture.recorder.payloads[1] as? [String: String], ["editorId": fixture.adapter.editorId])
         }
@@ -3395,7 +3412,7 @@ final class EditorTableInputTests: XCTestCase {
             let input = try fixture.activateCell(1)
             XCTAssertEqual(input.selectedRange.length, 0, "activation leaves a caret")
             XCTAssertTrue(fixture.drawing.selectedTableCellSourceIndices.isEmpty, "a caret draws no cell rectangle")
-            waitForGeometryFrame()
+            waitForGeometryPublish(fixture, payloadCount: 1)
 
             XCTAssertEqual(fixture.recorder.payloads.count, 1, "\(fixture.recorder.payloads)")
             let payload = try XCTUnwrap(fixture.recorder.payloads.first)
@@ -3412,7 +3429,7 @@ final class EditorTableInputTests: XCTestCase {
             )
 
             fixture.host.richTextView.invalidateTableCellBinding()
-            waitForGeometryFrame()
+            waitForGeometryPublish(fixture, payloadCount: 2)
             XCTAssertEqual(fixture.recorder.payloads.count, 2, "\(fixture.recorder.payloads)")
             XCTAssertEqual(
                 fixture.recorder.payloads[1] as? [String: String],
@@ -3514,7 +3531,7 @@ final class EditorTableInputTests: XCTestCase {
     func testRowSelectedFromAFocusedCellKeepsFocusAndPublishesTheRectangle() throws {
         try withExpoTableGeometry(document: fourCellDocument) { fixture in
             let input = try fixture.activateCell(0)
-            waitForGeometryFrame()
+            waitForGeometryPublish(fixture, payloadCount: 1)
             var focusEvents: [[String: Any]] = []
             fixture.host.onFocusChangeForTesting = { focusEvents.append($0) }
             let before = fixture.recorder.payloads.count
@@ -3534,7 +3551,7 @@ final class EditorTableInputTests: XCTestCase {
                 fixture.drawing.selectedTableCellSourceIndices[fixture.tableID],
                 Set([0, 1])
             )
-            waitForGeometryFrame()
+            waitForGeometryPublish(fixture, payloadCount: before + 1)
             XCTAssertGreaterThan(fixture.recorder.payloads.count, before, "\(fixture.recorder.payloads)")
             assertRects(
                 try fixture.recorder.rects(at: fixture.recorder.payloads.count - 1),
@@ -3560,14 +3577,14 @@ final class EditorTableInputTests: XCTestCase {
     func testBlurClearsTheActiveCellGeometry() throws {
         try withExpoTableGeometry(document: fourCellDocument) { fixture in
             let input = try fixture.activateCell(1)
-            waitForGeometryFrame()
+            waitForGeometryPublish(fixture, payloadCount: 1)
             XCTAssertEqual(fixture.recorder.payloads.count, 1, "\(fixture.recorder.payloads)")
             fixture.host.blur()
             XCTAssertFalse(input.isFirstResponder)
             XCTAssertEqual(fixture.recorder.payloads.count, 2, "blur clears synchronously: \(fixture.recorder.payloads)")
             XCTAssertEqual(fixture.recorder.payloads[1] as? [String: String], ["editorId": fixture.adapter.editorId])
             XCTAssertTrue(fixture.host.richTextView.activeTextInput === input, "blur keeps the cell bound")
-            waitForGeometryFrame()
+            waitForGeometryPublish(fixture, payloadCount: 2)
             XCTAssertEqual(fixture.recorder.payloads.count, 2, "a blurred cell publishes no geometry")
         }
     }
