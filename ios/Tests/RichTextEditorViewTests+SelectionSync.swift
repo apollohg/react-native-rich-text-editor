@@ -6,6 +6,16 @@ private final class PendingCaretTapRecognizer: CaretPlacementTapRecognizer {
     var point: CGPoint?
     var pointReadCount = 0
     var pointReadLimit = Int.max
+    var completed = false
+
+    override var state: UIGestureRecognizer.State {
+        get { completed ? .ended : super.state }
+        set { super.state = newValue }
+    }
+
+    override func location(in view: UIView?) -> CGPoint {
+        point ?? super.location(in: view)
+    }
 
     override var pendingCaretPoint: CGPoint? {
         pointReadCount += 1
@@ -206,6 +216,8 @@ extension RichTextEditorViewTests {
         }
         textView.selectedRange = nativeSelection
         textView.textViewDidChangeSelection(textView)
+        recognizer.completed = true
+        textView.handleCaretPlacementTap(recognizer)
         flushMainQueue()
         XCTAssertEqual(textView.selectedRange, expectedSelection)
         XCTAssertFalse(publishedSelections.isEmpty)

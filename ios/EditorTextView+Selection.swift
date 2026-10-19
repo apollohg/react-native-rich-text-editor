@@ -43,7 +43,7 @@ extension EditorTextView: UITextInteractionDelegate {
 
     @objc
     func handleCaretPlacementTap(_ recognizer: UITapGestureRecognizer) {
-        guard recognizer.state == .ended else { return }
+        guard recognizer.state == .ended, selectedRange.length == 0 else { return }
         // UIKit single taps otherwise snap to word boundaries.
         _ = placeCaret(at: recognizer.location(in: self))
     }
