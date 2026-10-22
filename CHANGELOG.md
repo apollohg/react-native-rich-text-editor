@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.3] - 2026-10-22
+
+### Fixed
+
+- Fixed iOS text being clipped or disappearing after switching headings, paragraphs, or lists without typing (#11).
+- Fixed the Android keyboard toolbar not appearing when the editor is inside a React Native modal (#15).
+
 ## [2.1.2] - 2026-10-19
 
 ### Changed
@@ -765,6 +772,7 @@ This is a hard cutover to shared native document, collaboration, and viewer boun
 - Controlled and uncontrolled content modes (HTML and JSON).
 - Undo/redo history.
 
+[2.1.3]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.1.2...2.1.3
 [2.1.2]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.1.1...2.1.2
 [2.1.1]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.1.0...2.1.1
 [2.1.0]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.12...2.1.0
