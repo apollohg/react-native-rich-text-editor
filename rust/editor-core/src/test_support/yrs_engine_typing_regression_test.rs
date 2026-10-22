@@ -25,8 +25,12 @@ use crate::yrs_engine::{
 };
 
 fn engine() -> YrsDocumentEngine {
+    engine_with_schema(tiptap_schema())
+}
+
+fn engine_with_schema(schema: crate::schema::Schema) -> YrsDocumentEngine {
     YrsDocumentEngine::new(YrsEngineConfig {
-        schema: tiptap_schema(),
+        schema,
         fragment_name: "prosemirror".into(),
         initialization_mode: InitializationMode::LocalEmpty,
         resource_limits: ResourceLimits::default(),
@@ -523,3 +527,5 @@ const START_OF_QUOTE_AFTER_PARAGRAPH: u32 = 5;
 const START_OF_SECOND_QUOTE_LINE: u32 = 3;
 
 include!("yrs_engine_typing_regression_test/structural_typing.rs");
+
+include!("yrs_engine_typing_regression_test/link_typing.rs");

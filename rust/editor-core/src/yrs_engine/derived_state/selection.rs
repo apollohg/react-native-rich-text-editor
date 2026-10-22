@@ -276,8 +276,8 @@ pub(super) fn insert_mark_ranked(marks: &mut Vec<Mark>, mark: Mark, schema: &Sch
     marks.insert(index, mark);
 }
 
-pub(crate) fn marks_at_position(document: &Document, position: u32) -> Vec<Mark> {
-    crate::editor_state::marks_at_position(document, position)
+pub(crate) fn marks_at_position(document: &Document, schema: &Schema, position: u32) -> Vec<Mark> {
+    crate::editor_state::marks_at_position(document, schema, position)
 }
 
 pub(super) fn preserve_with_mapped_fallback<T: ReadTxn>(

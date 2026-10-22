@@ -66,7 +66,7 @@ fn active_state_impl(
         Some(from) => from,
         None => selection.anchor(document),
     };
-    let marks_at = effective_marks_for_selection(document, selection, stored_marks);
+    let marks_at = effective_marks_for_selection(document, schema, selection, stored_marks);
     let nodes_at = nodes_at_position(document, pos);
 
     let mut marks = HashMap::new();
@@ -594,32 +594,67 @@ fn list_attrs_for_type(
     }
 }
 
-pub(crate) fn marks_at_position(document: &Document, position: u32) -> Vec<Mark> {
+fn inline_nodes_at_position(document: &Document, position: u32) -> (Option<&Node>, Option<&Node>) {
     let Ok(resolved) = document.resolve(position) else {
-        return Vec::new();
+        return (None, None);
     };
     let Some(content) = resolved.parent(document).content() else {
-        return Vec::new();
+        return (None, None);
     };
     let mut offset = 0u32;
+    let mut before = None;
+    let mut after = None;
     for child in content.iter() {
-        let child_size = child.node_size();
-        if child.is_text()
-            && offset <= resolved.parent_offset
-            && resolved.parent_offset <= offset.saturating_add(child_size)
-        {
-            return child.marks().to_vec();
+        let end = offset.saturating_add(child.node_size());
+        if offset < resolved.parent_offset && resolved.parent_offset < end {
+            return (Some(child), Some(child));
         }
-        offset = offset.saturating_add(child_size);
+        if end == resolved.parent_offset {
+            before = Some(child);
+        }
+        if offset == resolved.parent_offset {
+            after = Some(child);
+            break;
+        }
+        offset = end;
     }
-    if resolved.parent_offset == offset {
-        return content
+    (before, after)
+}
+
+pub(crate) fn marks_at_position(document: &Document, schema: &Schema, position: u32) -> Vec<Mark> {
+    let (before, after) = inline_nodes_at_position(document, position);
+    let (main, other) = if let Some(before) = before {
+        (Some(before), after)
+    } else {
+        (after, None)
+    };
+    boundary_marks(schema, main, other)
+}
+
+pub(crate) fn marks_across_range(
+    document: &Document,
+    schema: &Schema,
+    from: u32,
+    to: u32,
+) -> Vec<Mark> {
+    let (_, start) = inline_nodes_at_position(document, from);
+    let (_, end) = inline_nodes_at_position(document, to);
+    boundary_marks(schema, start, end)
+}
+
+fn boundary_marks(schema: &Schema, main: Option<&Node>, other: Option<&Node>) -> Vec<Mark> {
+    main.map_or_else(Vec::new, |node| {
+        node.marks()
             .iter()
-            .rev()
-            .find(|child| child.is_text())
-            .map_or_else(Vec::new, |child| child.marks().to_vec());
-    }
-    Vec::new()
+            .filter(|mark| {
+                schema
+                    .mark(mark.mark_type())
+                    .is_none_or(|spec| spec.inclusive)
+                    || other.is_some_and(|node| node.marks().contains(mark))
+            })
+            .cloned()
+            .collect()
+    })
 }
 
 pub(crate) fn range_mark_coverage(
@@ -738,6 +773,7 @@ pub(crate) fn nodes_at_position(document: &Document, position: u32) -> Vec<Strin
 
 fn effective_marks_for_selection(
     document: &Document,
+    schema: &Schema,
     selection: &Selection,
     stored_marks: Option<&[Mark]>,
 ) -> Vec<Mark> {
@@ -749,14 +785,14 @@ fn effective_marks_for_selection(
     if anchor == head {
         return stored_marks
             .map(<[Mark]>::to_vec)
-            .unwrap_or_else(|| marks_at_position(document, *anchor));
+            .unwrap_or_else(|| marks_at_position(document, schema, *anchor));
     }
     let from = (*anchor).min(*head);
     let to = (*anchor).max(*head);
     let mut overlapping = Vec::new();
     collect_text_marks(document.root(), 0, from, to, &mut overlapping, true);
     let Some(mut common) = overlapping.first().cloned() else {
-        return marks_at_position(document, from);
+        return marks_at_position(document, schema, from);
     };
     for marks in overlapping.iter().skip(1) {
         common.retain(|mark| marks.contains(mark));

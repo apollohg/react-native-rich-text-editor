@@ -76,8 +76,11 @@ impl OperationCompiler<'_> {
                 )?;
                 stored_marks_input = Some((from, to));
                 if from == to {
-                    inherited_marks =
-                        Some(yrs_engine::derived_state::marks_at_position(&preview, from));
+                    inherited_marks = Some(yrs_engine::derived_state::marks_at_position(
+                        &preview,
+                        context.schema,
+                        from,
+                    ));
                 }
                 if add_mark_conflicts_with_existing_attrs(&preview, from, to, mark) {
                     return Err(OperationError::operation_invalid(
@@ -175,8 +178,11 @@ impl OperationCompiler<'_> {
                 )?;
                 stored_marks_input = Some((from, to));
                 if from == to {
-                    inherited_marks =
-                        Some(yrs_engine::derived_state::marks_at_position(&preview, from));
+                    inherited_marks = Some(yrs_engine::derived_state::marks_at_position(
+                        &preview,
+                        context.schema,
+                        from,
+                    ));
                 }
                 let step = Step::RemoveMark {
                     from,
@@ -276,8 +282,11 @@ impl OperationCompiler<'_> {
                 )?;
                 stored_marks_input = Some((from, to));
                 if from == to {
-                    inherited_marks =
-                        Some(yrs_engine::derived_state::marks_at_position(&preview, from));
+                    inherited_marks = Some(yrs_engine::derived_state::marks_at_position(
+                        &preview,
+                        context.schema,
+                        from,
+                    ));
                 }
                 let remove = Step::RemoveMark {
                     from,

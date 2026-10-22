@@ -219,6 +219,7 @@ function canonicalMark(mark: MarkSpec): CanonicalObject {
         [ 'htmlTag', mark.htmlTag ?? null ],
         [ 'attrs', canonicalAttrs(mark.attrs) ],
         [ 'excludes', mark.excludes ?? null ],
+        ...(mark.inclusive === false ? ([ [ 'inclusive', false ] ] as const) : []),
         [ 'allowUndeclaredAttrs', mark.allowUndeclaredAttrs ?? false ],
     ]);
 }

@@ -17,6 +17,64 @@ fn document(children: Vec<Node>) -> Document {
     Document::new(element("doc", children))
 }
 
+#[test]
+fn non_inclusive_marks_only_survive_inside_the_same_mark() {
+    let schema = Schema::from_json(&serde_json::json!({
+        "nodes": [
+            {"name":"doc", "content":"paragraph+", "role":"doc"},
+            {"name":"paragraph", "content":"text*", "role":"textBlock"},
+            {"name":"text", "role":"text"}
+        ],
+        "marks": [{"name":"link", "inclusive":false, "attrs":{"href":{}}}, {"name":"bold"}]
+    }))
+    .unwrap();
+    let link = Mark::new(
+        "link".into(),
+        HashMap::from([("href".into(), serde_json::json!("first"))]),
+    );
+    let other_link = Mark::new(
+        "link".into(),
+        HashMap::from([("href".into(), serde_json::json!("second"))]),
+    );
+    let bold = Mark::new("bold".into(), HashMap::new());
+    let document = document(vec![element(
+        "paragraph",
+        vec![
+            Node::text("ab".into(), vec![link.clone()]),
+            Node::text("cd".into(), vec![link.clone(), bold.clone()]),
+            Node::text("ef".into(), vec![other_link.clone()]),
+        ],
+    )]);
+    for (position, expected) in [
+        (1, vec![]),
+        (2, vec![link.clone()]),
+        (3, vec![link.clone()]),
+        (4, vec![link.clone(), bold.clone()]),
+        (5, vec![bold.clone()]),
+        (6, vec![other_link]),
+        (7, vec![]),
+    ] {
+        let state = active_state(
+            &document,
+            &schema,
+            &Selection::cursor(position),
+            None,
+            HashMap::new(),
+            &ResourceLimits::default(),
+        );
+        assert_eq!(
+            state.marks["link"],
+            expected.iter().any(|mark| mark.mark_type() == "link"),
+            "link toolbar state at document position {position}"
+        );
+        assert_eq!(
+            effective_marks_for_selection(&document, &schema, &Selection::cursor(position), None),
+            expected,
+            "inherited marks at document position {position}"
+        );
+    }
+}
+
 fn assert_structural_preflights_match_oracle(
     document: &Document,
     schema: &Schema,

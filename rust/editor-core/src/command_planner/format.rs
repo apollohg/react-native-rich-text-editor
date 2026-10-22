@@ -21,7 +21,7 @@ fn stored_marks_at(
     super::canonical_marks(
         &stored_marks
             .map(<[_]>::to_vec)
-            .unwrap_or_else(|| crate::editor_state::marks_at_position(document, position)),
+            .unwrap_or_else(|| crate::editor_state::marks_at_position(document, schema, position)),
         schema,
     )
 }

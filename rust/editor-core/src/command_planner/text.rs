@@ -14,14 +14,14 @@ fn insertion_marks(
     schema: &Schema,
     position: u32,
     stored_marks: Option<&[crate::model::Mark]>,
-    collapsed: bool,
+    end: u32,
 ) -> Vec<crate::model::Mark> {
-    let marks = if collapsed {
+    let marks = if position == end {
         stored_marks
             .map(<[_]>::to_vec)
-            .unwrap_or_else(|| crate::editor_state::marks_at_position(document, position))
+            .unwrap_or_else(|| crate::editor_state::marks_at_position(document, schema, position))
     } else {
-        crate::editor_state::marks_at_position(document, position)
+        crate::editor_state::marks_across_range(document, schema, position, end)
     };
     super::canonical_marks(&marks, schema)
 }
@@ -42,7 +42,7 @@ pub(crate) fn plan_insert_text(
     if is_block_void_at_position(document, schema, *anchor) {
         return None;
     }
-    let marks = insertion_marks(document, schema, *anchor, stored_marks, true);
+    let marks = insertion_marks(document, schema, *anchor, stored_marks, *anchor);
     Some(SemanticCommandPlan::one(SemanticOperation::InsertText {
         pos: *anchor,
         text: text.to_string(),
@@ -193,7 +193,7 @@ pub(crate) fn plan_replace_selection_text(
         text
     };
     let multiline = !is_code && text.contains('\n');
-    let marks = insertion_marks(document, schema, from, stored_marks, from == to);
+    let marks = insertion_marks(document, schema, from, stored_marks, to);
     match plan_textblock_text_replacement(
         document,
         schema,

@@ -88,6 +88,8 @@ export interface MarkSpec {
     attrs?: Record<string, AttrSpec>;
     /** Mark names that cannot coexist with this one on the same text range. */
     excludes?: string;
+    /** Whether typing at the mark's edge inherits it. Defaults to `true`. */
+    inclusive?: boolean;
     /**
      * Serializer tag for a custom mark. Native accepts only the inert allowlist:
      * span, strong, em, u, s, code, a, sub, sup, mark.
@@ -137,6 +139,8 @@ export interface SchemaNodeSpec {
 export interface SchemaMarkSpec {
     attrs?: Record<string, AttrSpec>;
     excludes?: string;
+    /** Whether typing at the mark's edge inherits it. Defaults to `true`. */
+    inclusive?: boolean;
     parseDOM?: readonly ParseDOMRule[];
     toDOM?: DOMOutputSpec;
     allowUndeclaredAttrs?: boolean;
@@ -446,6 +450,7 @@ export function defineSchema(spec: SchemaSpec): SchemaDefinition {
             name,
             ...(mark.attrs == null ? {} : { attrs: mark.attrs }),
             ...(mark.excludes == null ? {} : { excludes: mark.excludes }),
+            ...(mark.inclusive == null ? {} : { inclusive: mark.inclusive }),
             ...(normalizedTag == null ? {} : { htmlTag: normalizedTag as MarkSpec['htmlTag'] }),
             ...(mark.allowUndeclaredAttrs == null
                 ? {}

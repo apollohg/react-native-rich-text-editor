@@ -709,6 +709,7 @@ fn schema_with_ten_marks() -> Schema {
             html_tag: None,
             attrs: HashMap::new(),
             excludes: None,
+            inclusive: true,
             allow_undeclared_attrs: false,
         })
         .collect();

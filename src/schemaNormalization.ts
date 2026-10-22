@@ -485,6 +485,7 @@ export function normalizeSchemaDefinition(
             name: rawMark.name,
             ...(Object.keys(attrs).length > 0 ? { attrs } : {}),
             ...(typeof raw.excludes === 'string' ? { excludes: raw.excludes } : {}),
+            ...(typeof raw.inclusive === 'boolean' ? { inclusive: raw.inclusive } : {}),
             ...(htmlTag == null ? {} : { htmlTag: htmlTag as MarkSpec['htmlTag'] }),
             ...(typeof raw.allowUndeclaredAttrs === 'boolean'
                 ? { allowUndeclaredAttrs: raw.allowUndeclaredAttrs }

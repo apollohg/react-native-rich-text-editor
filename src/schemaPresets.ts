@@ -236,7 +236,7 @@ export const tiptapCompatibleSchemaSpec: SchemaSpec = {
         underline: { parseDOM: [ { tag: 'u' } ], toDOM: [ 'u', 0 ] },
         strike: { parseDOM: [ { tag: 's' } ], toDOM: [ 's', 0 ] },
         code: { parseDOM: [ { tag: 'code' } ], toDOM: [ 'code', 0 ] },
-        link: { attrs: { href: {} }, parseDOM: [ { tag: 'a' } ], toDOM: [ 'a', 0 ] },
+        link: { attrs: { href: {} }, inclusive: false, parseDOM: [ { tag: 'a' } ], toDOM: [ 'a', 0 ] },
     },
 };
 

@@ -482,6 +482,7 @@ fn build_schema_parts(convention: &NamingConvention) -> (Vec<NodeSpec>, Vec<Mark
             html_tag: Some("strong".to_string()),
             attrs: HashMap::new(),
             excludes: None,
+            inclusive: true,
             allow_undeclared_attrs: false,
         },
         MarkSpec {
@@ -489,6 +490,7 @@ fn build_schema_parts(convention: &NamingConvention) -> (Vec<NodeSpec>, Vec<Mark
             html_tag: Some("em".to_string()),
             attrs: HashMap::new(),
             excludes: None,
+            inclusive: true,
             allow_undeclared_attrs: false,
         },
         MarkSpec {
@@ -496,6 +498,7 @@ fn build_schema_parts(convention: &NamingConvention) -> (Vec<NodeSpec>, Vec<Mark
             html_tag: Some("u".to_string()),
             attrs: HashMap::new(),
             excludes: None,
+            inclusive: true,
             allow_undeclared_attrs: false,
         },
         MarkSpec {
@@ -503,6 +506,7 @@ fn build_schema_parts(convention: &NamingConvention) -> (Vec<NodeSpec>, Vec<Mark
             html_tag: Some("s".to_string()),
             attrs: HashMap::new(),
             excludes: None,
+            inclusive: true,
             allow_undeclared_attrs: false,
         },
         MarkSpec {
@@ -510,6 +514,7 @@ fn build_schema_parts(convention: &NamingConvention) -> (Vec<NodeSpec>, Vec<Mark
             html_tag: Some("code".to_string()),
             attrs: HashMap::new(),
             excludes: None,
+            inclusive: true,
             allow_undeclared_attrs: false,
         },
         MarkSpec {
@@ -528,6 +533,7 @@ fn build_schema_parts(convention: &NamingConvention) -> (Vec<NodeSpec>, Vec<Mark
                 attrs
             },
             excludes: None,
+            inclusive: false,
             allow_undeclared_attrs: false,
         },
     ];
