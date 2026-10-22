@@ -39,8 +39,11 @@ internal fun NativeEditorExpoView.presentToolbarState(state: NativeToolbarState)
     if (keyboardToolbarView.parent != null) keyboardToolbarView.applyState(state)
 }
 
+private fun NativeEditorExpoView.resolveKeyboardToolbarHost(): ViewGroup? =
+    rootView.findViewById(android.R.id.content)
+
 internal fun NativeEditorExpoView.ensureKeyboardToolbarAttached() {
-    val host = resolveActivity(context)?.findViewById<ViewGroup>(android.R.id.content) ?: return
+    val host = resolveKeyboardToolbarHost() ?: return
     pendingKeyboardToolbarDetachGeneration += 1
     if (keyboardToolbarView.parent === host) {
         updateKeyboardToolbarLayout()
@@ -129,11 +132,7 @@ internal fun NativeEditorExpoView.updateEditorViewportInset(forceMeasureToolbar:
         return
     }
 
-    val hostWidth = (
-        resolveActivity(context)?.findViewById<ViewGroup>(android.R.id.content)?.width
-            ?: width
-        )
-        .coerceAtLeast(0)
+    val hostWidth = (resolveKeyboardToolbarHost()?.width ?: width).coerceAtLeast(0)
     val toolbarTheme = richTextView.editorEditText.theme?.toolbar
     val density = resources.displayMetrics.density
     val horizontalInsetPx = ((toolbarTheme?.resolvedHorizontalInset() ?: 0f) * density).toInt()
@@ -163,8 +162,7 @@ internal fun NativeEditorExpoView.resolveToolbarTopOnScreenPx(
     toolbarHeight: Int,
     keyboardOffsetPx: Int
 ): Int? {
-    val host = resolveActivity(context)?.findViewById<ViewGroup>(android.R.id.content)
-        ?: return null
+    val host = resolveKeyboardToolbarHost() ?: return null
     if (host.height <= 0) return null
     val hostLocation = IntArray(2)
     host.getLocationOnScreen(hostLocation)
