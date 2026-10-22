@@ -776,8 +776,23 @@ fn direct_selection_input(
         let scalar = context
             .position_map
             .doc_to_scalar(position, context.document);
+        let mut encoded = point(scalar);
+        // A text block's end has no following Yrs item for After affinity.
+        if context
+            .position_map
+            .find_block_for_doc_pos(position)
+            .is_some_and(|index| {
+                context.position_map.effective_doc_end(index) == position
+                    && context
+                        .position_map
+                        .block(index)
+                        .is_some_and(|block| !block.is_void_block)
+            })
+        {
+            encoded.affinity = Affinity::Before;
+        }
         (context.position_map.scalar_to_doc(scalar, context.document) == position)
-            .then_some(point(scalar))
+            .then_some(encoded)
     };
     Some(match selection {
         crate::selection::Selection::Text { anchor, head } => SelectionInput::Text {
