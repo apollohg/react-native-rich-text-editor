@@ -452,6 +452,69 @@ proptest! {
 }
 
 #[test]
+fn ranged_deletion_across_a_nested_table_keeps_selection_representable() {
+    let document = json!({ "type": "doc", "content": [
+        { "type": "blockquote", "content": [
+            { "type": "blockquote", "content": [{ "type": "horizontalRule" }] }
+        ] }
+    ] });
+    let table = json!({ "type": "table", "content": [
+        { "type": "tableRow", "content": [
+            { "type": "tableCell", "content": [paragraph(json!([plain("c")]))] },
+            { "type": "tableCell", "content": [paragraph(json!([plain("d")]))] }
+        ] }
+    ] });
+    let mut expected = document.clone();
+    expected["content"][0]["content"][0]["content"] = json!([table, { "type": "horizontalRule" }]);
+    let cases = [
+        ((8, 3), "deleteBackward"),
+        ((3, 8), "deleteBackward"),
+        ((8, 3), "deleteForward"),
+        ((3, 8), "deleteForward"),
+    ];
+    for (selection, deletion) in cases {
+        let mut session = session_with_document(&document).unwrap();
+        let steps = [
+            (
+                (0, 0),
+                json!({ "type": "insertContentHtml", "html":
+                "<table><tr><td>c</td><td>d</td></tr></table>" }),
+            ),
+            (
+                (4, 4),
+                json!({ "type": "insertContentJson", "json": {
+                "type": "doc", "content": [{ "type": "image", "attrs": { "src": "x.png" } }]
+            } }),
+            ),
+            (selection, json!({ "type": deletion })),
+        ];
+        for (index, (selection, intent)) in steps.iter().enumerate() {
+            let request_id = FIRST_STEP_REQUEST + REQUESTS_PER_STEP * index as u64;
+            native_intent(&mut session, request_id, *selection, intent).unwrap_or_else(|error| {
+                panic!(
+                    "step {index}: {intent} at {selection:?}: {}: {}",
+                    error.code, error.message
+                )
+            });
+            assert_document_consistent(&session, &format!("step {index}: {intent}"));
+        }
+        assert_eq!(session.engine.document_json().unwrap(), expected,
+            "{deletion} at {selection:?} must remove the selected image and empty paragraph while retaining the table");
+        let Some(crate::yrs_engine::ResolvedSelection::Text { anchor, head }) =
+            session.engine.resolved_selection()
+        else {
+            panic!("{deletion} at {selection:?} must leave a text caret");
+        };
+        let expected_caret = selection.0.min(selection.1);
+        assert_eq!(
+            (anchor.scalar, head.scalar),
+            (expected_caret, expected_caret),
+            "{deletion} at {selection:?} must collapse at the start of the deleted range"
+        );
+    }
+}
+
+#[test]
 fn inline_content_pasted_at_a_mark_boundary_inside_one_yrs_text_splits_that_text() {
     let mut session = session_with_document(&json!({ "type": "doc", "content": [
         { "type": "paragraph", "content": [
