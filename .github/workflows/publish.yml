@@ -7,7 +7,7 @@ on:
     workflow_dispatch:
     push:
         branches: [main, v1]
-        paths:
+        paths: &release-paths
             - 'packages/**'
             - 'src/EditorAddon.ts'
             - 'ios/NativeCodeHighlighting.swift'
@@ -15,15 +15,11 @@ on:
             - '.github/workflows/publish.yml'
             - '.github/actions/**'
             - 'scripts/release-packages.mjs'
+            - '!**/*.md'
+            - '!**/*.mdx'
+            - '!**/docs/**'
     pull_request:
-        paths:
-            - 'packages/**'
-            - 'src/EditorAddon.ts'
-            - 'ios/NativeCodeHighlighting.swift'
-            - 'android/src/main/java/com/apollohg/editor/CodeHighlighting.kt'
-            - '.github/workflows/publish.yml'
-            - '.github/actions/**'
-            - 'scripts/release-packages.mjs'
+        paths: *release-paths
 
 permissions:
     contents: read

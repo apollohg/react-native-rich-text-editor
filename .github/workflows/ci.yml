@@ -4,7 +4,20 @@ on:
   push:
     branches:
       - v1
+    paths-ignore: &non-release-paths
+      - '**/*.md'
+      - '**/*.mdx'
+      - '**/docs/**'
+      - 'plans/**'
+      - 'specs/**'
+      - 'wiki'
+      - 'wiki/**'
+      - 'assets/**'
+      - '.editorconfig'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/FUNDING.yml'
   pull_request:
+    paths-ignore: *non-release-paths
 
 env:
   GRADLE_OPTS: -Dorg.gradle.caching=true
@@ -50,7 +63,7 @@ jobs:
 
       # editor-core owns the document model, CRDT convergence, awareness,
       # and the transport state machine. Its suite is the primary gate on
-      # this package's correctness and must run on every change.
+      # this package's correctness and must run on every CI-triggering change.
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@1.95.0
         with:
