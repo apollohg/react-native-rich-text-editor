@@ -11,6 +11,132 @@ extension RichTextEditorViewTests {
     private enum OriginalFontControl: CaseIterable {
         case absent, differentFont
     }
+
+    func testBlockFormattingImmediatelyMatchesFreshLayoutWithoutTyping() throws {
+        let editorId = makeV2Editor()
+        defer { destroyV2Editor(id: editorId) }
+        let view = NativeEditorExpoView()
+        view.frame = CGRect(x: 0, y: 0, width: 320, height: 240)
+        let window = hostNativeEditorExpoView(view)
+        let modal = UIViewController()
+        modal.modalPresentationStyle = .fullScreen
+        let presented = expectation(description: "full-screen editor modal presented")
+        window.rootViewController?.present(modal, animated: false) { presented.fulfill() }
+        wait(for: [presented], timeout: 1)
+        modal.view.addSubview(view)
+        let input = view.richTextView.textView
+        defer {
+            _ = input.resignFirstResponder()
+            view.removeFromSuperview()
+            window.isHidden = true
+        }
+        let headingSize: CGFloat = 28
+        let styles: [String: [String: Any]] = [
+            "text": ["fontSize": 16],
+            "h1": ["fontSize": headingSize, "fontWeight": "700"],
+            "h2": ["fontSize": 24, "fontWeight": "700"]
+        ]
+        let theme = EditorTheme(dictionary: ["version": 1, "styles": styles])
+        XCTAssertTrue(view.richTextView.applyTheme(theme))
+        view.setEditorId(editorId)
+        view.setHeightBehavior("fixed")
+        view.setShowToolbar(false)
+        XCTAssertTrue(input.becomeFirstResponder())
+        input.showsVerticalScrollIndicator = false
+        input.showsHorizontalScrollIndicator = false
+        let firstParagraph = "Body text with descenders gjpqy"
+        let secondParagraph = "Second paragraph with descenders gjpqy"
+        for character in "\(firstParagraph)\n\(secondParagraph)" {
+            input.insertText(String(character))
+            flushMainQueue()
+        }
+        setCollapsedSelection(in: input, utf16Offset: input.textStorage.length)
+        flushMainQueue()
+        let originalText = input.textStorage.string
+        input.scrollRangeToVisible(input.selectedRange)
+        let frameClock = TableTestFrameClock()
+        defer { frameClock.close() }
+        func waitForDisplayFrames() {
+            let displayed = expectation(description: "editor update reaches the display")
+            let displayFrameCount = 2
+            displayed.expectedFulfillmentCount = displayFrameCount
+            var framesRemaining = displayFrameCount
+            frameClock.onTick = { _ in
+                guard framesRemaining > 0 else { return }
+                framesRemaining -= 1
+                displayed.fulfill()
+            }
+            defer { frameClock.onTick = nil }
+            wait(for: [displayed], timeout: 3)
+        }
+        input.tintColor = .clear
+        func snapshot(_ textView: EditorTextView) -> UIImage {
+            let renderer = UIGraphicsImageRenderer(size: textView.bounds.size)
+            return renderer.image { context in
+                context.cgContext.translateBy(x: -textView.bounds.minX, y: -textView.bounds.minY)
+                textView.layer.render(in: context.cgContext)
+            }
+        }
+        waitForDisplayFrames()
+        var previousDisplay = snapshot(input).pngData()
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let commands: [([String: Any], String)] = [
+            (["type": "toggleHeading", "level": 1], "<h1>\(secondParagraph)</h1>"),
+            (["type": "toggleHeading", "level": 2], "<h2>\(secondParagraph)</h2>"),
+            (["type": "toggleHeading", "level": 2], "<p>\(secondParagraph)</p>"),
+            (["type": "wrapInList", "listType": "ordered_list", "itemType": "list_item"],
+                "<ol><li><p>\(secondParagraph)</p></li></ol>"),
+            (["type": "unwrapFromList"], "<p>\(secondParagraph)</p>")
+        ]
+        let toggleCycles = 8
+        for cycle in 0..<toggleCycles {
+            for (command, expectedHTML) in commands {
+                let name = "cycle \(cycle): \(command)"
+                let result = adapter.callWithEnvelope(["command": command]) {
+                    editorV2ApplyCommand(editorId: adapter.editorId, requestJson: $0)
+                }
+                XCTAssertNil(result.error, "\(name): \(String(describing: result.error))")
+                let outcome = parseJSONObject(try XCTUnwrap(result.value))
+                let revision = try XCTUnwrap(outcome["documentRevision"] as? String)
+                XCTAssertTrue(view.applyEditorUpdate(#"{"documentVersion":"\#(revision)"}"#))
+                waitForDisplayFrames()
+                XCTAssertTrue(EditorV2Shadow.getHtml(id: editorId).hasSuffix(expectedHTML), name)
+                XCTAssertEqual(input.textStorage.string, originalText, "\(name) must only change formatting")
+                let displayed = snapshot(input)
+                let displayedBounds = input.bounds
+                let reference = styledDrawingReference(for: input,
+                    storage: NSAttributedString(attributedString: input.textStorage), theme: theme)
+                reference.tintColor = .clear
+                reference.showsVerticalScrollIndicator = false
+                reference.showsHorizontalScrollIndicator = false
+                reference.contentInsetAdjustmentBehavior = input.contentInsetAdjustmentBehavior
+                reference.contentInset = input.contentInset
+                reference.frame = input.frame
+                input.superview?.addSubview(reference)
+                reference.layoutIfNeeded()
+                reference.contentOffset = displayedBounds.origin
+                reference.layoutIfNeeded()
+                XCTAssertEqual(reference.bounds, displayedBounds, "\(name): reference must show the same viewport")
+                waitForDisplayFrames()
+                let freshlyDisplayed = snapshot(reference)
+                reference.removeFromSuperview()
+                let displayedData = try XCTUnwrap(displayed.pngData())
+                XCTAssertNotEqual(displayedData, previousDisplay, "\(name) must visibly change the displayed text")
+                previousDisplay = displayedData
+                let displayMatches = displayedData == freshlyDisplayed.pngData()
+                if !displayMatches {
+                    for (label, image) in [("live", displayed), ("fresh", freshlyDisplayed)] {
+                        let attachment = XCTAttachment(image: image)
+                        attachment.name = "\(name)-\(label)"
+                        attachment.lifetime = .keepAlways
+                        add(attachment)
+                    }
+                }
+                XCTAssertTrue(displayMatches, "\(name): the displayed text must match a fresh view before forcing TextKit layout")
+            }
+        }
+    }
+
     private static let overlappingSiblingMarginHTML = #"""
     <h2>Heading 東京</h2><p><strong>Before café é</strong> <em>italic</em></p><blockquote><p>Quote café <a href="https://example.com/margins">link</a></p><blockquote><p><strong>Nested 👩‍💻 text</strong></p></blockquote><p>Quote tail</p></blockquote><pre><code>Code first
     Code second</code></pre><p>After 😀</p>

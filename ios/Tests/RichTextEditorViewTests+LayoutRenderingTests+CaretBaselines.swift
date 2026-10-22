@@ -69,6 +69,41 @@ extension RichTextEditorViewTests {
         XCTAssertLessThan(textView.layoutManager.firstUnlaidCharacterIndex(), textView.textStorage.length / 2)
     }
 
+    func testFormattingAndTypingNearDocumentStartLeaveDistantLayoutLazy() throws {
+        let editorId = makeV2Editor()
+        defer { destroyV2Editor(id: editorId) }
+        let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
+        let window = hostEditorView(view)
+        let textView = view.textView
+        defer {
+            _ = textView.resignFirstResponder()
+            view.removeFromSuperview()
+            window.isHidden = true
+        }
+        let paragraphCount = 2_000
+        let paragraph = "Paragraph with enough text to wrap onto another line."
+        view.editorId = editorId
+        view.setContent(html: String(repeating: "<p>\(paragraph)</p>", count: paragraphCount))
+        XCTAssertTrue(textView.becomeFirstResponder())
+        setCollapsedSelection(in: textView, utf16Offset: 4)
+        textView.layoutManager.invalidateLayout(
+            forCharacterRange: NSRange(location: 0, length: textView.textStorage.length),
+            actualCharacterRange: nil)
+
+        textView.performToolbarToggleHeading(1)
+        textView.layoutIfNeeded()
+        XCTAssertTrue(EditorV2Shadow.getHtml(id: editorId).hasPrefix("<h1>\(paragraph)</h1>"))
+        XCTAssertTrue(textView.layoutManager.allowsNonContiguousLayout)
+        XCTAssertLessThan(textView.layoutManager.firstUnlaidCharacterIndex(), textView.textStorage.length / 2,
+            "Formatting near the start must not lay out the distant document")
+
+        textView.insertText("x")
+        textView.layoutIfNeeded()
+        XCTAssertTrue(textView.textStorage.string.hasPrefix("Paraxgraph"))
+        XCTAssertLessThan(textView.layoutManager.firstUnlaidCharacterIndex(), textView.textStorage.length / 2,
+            "Typing after formatting must preserve lazy layout")
+    }
+
     func testCaretRectInTallLineHeightListItemUsesResolvedGlyphBaseline() {
         let theme = EditorTheme(dictionary: [
             "paragraph": [

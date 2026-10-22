@@ -191,6 +191,7 @@ class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegat
     var onAuthoritativeRenderApplied: ((String) -> Void)?
     var onFirstResponderResigned: (() -> Void)?
     weak var tableCellDropHandler: TableCellDropHandling?
+    var needsVisibleTextDisplayRefresh = false
     var renderAppearanceRevision: UInt64 = 1
     var lastAppliedRenderAppearanceRevision: UInt64 = 0
 
@@ -421,6 +422,14 @@ class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegat
     override func layoutSubviews() {
         super.layoutSubviews()
         updateKeyboardInset()
+        if needsVisibleTextDisplayRefresh {
+            needsVisibleTextDisplayRefresh = false
+            // Refresh after all render batches so UIKit does not reuse the old block's drawing clip.
+            let visibleTextRect = bounds.offsetBy(dx: -textContainerInset.left, dy: -textContainerInset.top)
+            layoutManager.ensureLayout(forBoundingRect: visibleTextRect, in: textContainer)
+            let visibleGlyphRange = layoutManager.glyphRange(forBoundingRect: visibleTextRect, in: textContainer)
+            layoutManager.invalidateDisplay(forGlyphRange: visibleGlyphRange)
+        }
         styleContentView.documentBounds = CGRect(x: 0, y: 0, width: bounds.width, height: max(bounds.height, contentSize.height))
         let placeholderX = textContainerInset.left + textContainer.lineFragmentPadding
         let placeholderY = textContainerInset.top
