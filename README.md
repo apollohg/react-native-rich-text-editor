@@ -2,7 +2,7 @@
 
 `@apollohg/react-native-rich-text-editor` is a native rich text editor for React Native. It combines a Rust document core with native iOS and Android editing, a React toolbar and theme API, a Fabric prose viewer, and Yjs collaboration.
 
-See the [documentation](https://github.com/apollohg/react-native-rich-text-editor/wiki) for guides and API references. The package is under active development; review the [changelog](./CHANGELOG.md) before upgrading between major versions.
+See the [documentation](https://github.com/apollohg/react-native-rich-text-editor/wiki) for guides and API references.
 
 <a href="./assets/github-demo-banner.mp4"><img src="./assets/github-demo-banner.gif" alt="Native iOS editor demo with rich text, nested lists, a code block, and image resizing" width="100%" /></a>
 
@@ -171,7 +171,6 @@ See the [example app](./example) to try the editor and viewer, and the [Developm
 - [Mentions](https://github.com/apollohg/react-native-rich-text-editor/wiki/Mentions)
 - [Styling](https://github.com/apollohg/react-native-rich-text-editor/wiki/Styling)
 - [Production limits and errors](https://github.com/apollohg/react-native-rich-text-editor/wiki/Production-Limits-and-Errors)
-- [Migration guide](https://github.com/apollohg/react-native-rich-text-editor/wiki/Migration-Guide)
 - [Changelog](./CHANGELOG.md)
 
 ## License
