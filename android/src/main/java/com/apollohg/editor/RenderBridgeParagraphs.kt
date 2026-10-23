@@ -12,7 +12,9 @@ internal fun RenderBridge.resolveTextStyle(
     nodeType: String,
     theme: EditorTheme?,
     inBlockquote: Boolean = false
-): EditorTextStyle = theme?.effectiveTextStyle(nodeType, inBlockquote) ?: EditorTextStyle()
+): EditorTextStyle = theme?.effectiveTextStyle(nodeType, inBlockquote)
+    ?: EditorTextStyle.defaultHeadingStyles[nodeType]
+    ?: EditorTextStyle()
 
 internal fun RenderBridge.resolveInlineTextStyle(
     blockStack: List<BlockContext>,

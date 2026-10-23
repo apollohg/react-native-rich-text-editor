@@ -106,9 +106,7 @@ struct EditorStyleSheet {
     func textStyle(_ element: String, ancestors: [String] = [], semantic: EditorTextStyle? = nil) -> EditorTextStyle {
         var style = EditorTextStyle(dictionary: self["text"])
         let name = Self.element(element)
-        if let level = Int(name.dropFirst()), name.first == "h", (1...6).contains(level) {
-            style = style.merged(with: EditorTextStyle(fontSize: [32, 28, 24, 21, 19, 17][level - 1], fontWeight: "700"))
-        }
+        style = style.merged(with: EditorTextStyle.defaultHeadingStyles[name])
         if name == "codeBlock" { style = style.merged(with: EditorTextStyle(fontFamily: "monospace")) }
         style = style.merged(with: semantic)
         for ancestor in ancestors { style = style.merged(with: EditorTextStyle(dictionary: self[ancestor])) }

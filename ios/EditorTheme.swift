@@ -1,6 +1,10 @@
 import UIKit
 
 struct EditorTextStyle {
+    static let defaultHeadingStyles: [String: EditorTextStyle] = [
+        "h1": CGFloat(32), "h2": 28, "h3": 24, "h4": 21, "h5": 19, "h6": 17
+    ].mapValues { EditorTextStyle(fontSize: $0, fontWeight: "700") }
+
     var fontFamily: String?
     var fontSize: CGFloat?
     var fontWeight: String?
@@ -508,7 +512,7 @@ struct EditorTheme {
         if let styleSheet {
             return styleSheet.textStyle(nodeType, ancestors: inBlockquote ? ["blockquote"] : [], semantic: defaultStyle)
         }
-        var style = text ?? EditorTextStyle()
+        var style = (text ?? EditorTextStyle()).merged(with: EditorTextStyle.defaultHeadingStyles[nodeType])
         style = style.merged(with: inBlockquote ? blockquote?.text : nil)
         if nodeType == "paragraph" {
             style = style.merged(with: paragraph)

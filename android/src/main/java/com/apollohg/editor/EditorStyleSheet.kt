@@ -473,13 +473,7 @@ internal fun canonicalMark(name: String): String = when (name) {
 }
 
 internal fun semanticText(name: String): EditorTextStyle = when (name) {
-    "h1", "h2", "h3", "h4", "h5", "h6" -> EditorTextStyle(
-        fontSize = listOf(32f, 28f, 24f, 21f, 19f, 17f)[
-            name.last().digitToInt() -
-                1
-        ],
-        fontWeight = "700"
-    )
+    "h1", "h2", "h3", "h4", "h5", "h6" -> EditorTextStyle.defaultHeadingStyles.getValue(name)
 
     "codeBlock" -> EditorTextStyle(fontFamily = "monospace")
 

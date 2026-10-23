@@ -217,23 +217,8 @@ internal data class PreparedProseTheme(
                     text.lineHeightPx,
                     text.spacingAfterPx
                 )
-            val headings = listOf(
-                "h1" to 32f,
-                "h2" to 28f,
-                "h3" to 24f,
-                "h4" to 21f,
-                "h5" to 19f,
-                "h6" to 17f
-            ).associate { (name, size) ->
-                name to
-                    paint(
-                        EditorTextStyle(
-                            fontSize = size,
-                            fontWeight = "700",
-                            spacingAfter = 10f
-                        ).mergedWith(theme.headings[name]),
-                        paragraph
-                    )
+            val headings = EditorTextStyle.defaultHeadingStyles.mapValues { (name, style) ->
+                paint(style.copy(spacingAfter = 10f).mergedWith(theme.headings[name]), paragraph)
             }
             val listItemSpacingPx = px(theme.list?.itemSpacing ?: 4f, 4f)
             return PreparedProseTheme(

@@ -37,6 +37,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -286,6 +287,121 @@ internal class RenderBridgeParsingTest : RenderBridgeTestFixture() {
             expectedIndent,
             actualIndent
         )
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `render - default heading typography without explicit heading styles`() {
+        val themes = listOf(
+            "absent" to null,
+            "empty" to EditorTheme.fromJson("{}"),
+            "partial" to EditorTheme.fromJson("""{"text":{"fontSize":15,"color":"#112233"}}"""),
+            "stylesheet" to EditorTheme.fromJson("""{"version":1,"styles":{}}""")
+        )
+        val headingSizes = listOf(32f, 28f, 24f, 21f, 19f, 17f)
+        val density = 2f
+        for ((name, theme) in themes) {
+            for (quoted in listOf(false, true)) {
+                for ((index, size) in headingSizes.withIndex()) {
+                    val nodeType = "h${index + 1}"
+                    val result = RenderBridge.buildSpannable(
+                        headingTypographyJson(nodeType, quoted),
+                        baseFontSize,
+                        textColor,
+                        theme,
+                        density
+                    )
+                    val paint = headingTypographyPaint(result)
+                    val context = "$name $nodeType, quoted=$quoted"
+                    assertEquals(context, size * density, paint.textSize, 0.1f)
+                    assertTrue(context, paint.typeface.isBold)
+                }
+            }
+            val paragraph = RenderBridge.buildSpannable(
+                headingTypographyJson("paragraph"),
+                baseFontSize,
+                textColor,
+                theme,
+                density
+            )
+            val paint = headingTypographyPaint(paragraph)
+            assertEquals(
+                name,
+                if (name ==
+                    "partial"
+                ) {
+                    15f * density
+                } else {
+                    baseFontSize
+                },
+                paint.textSize,
+                0.1f
+            )
+            assertFalse(name, paint.typeface.isBold)
+        }
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `render - heading size and weight overrides remain independent`() {
+        val overrides = """{"h2":{"fontSize":35},"h3":{"fontWeight":"400"}}"""
+        val themes = listOf(
+            EditorTheme.fromJson("""{"headings":$overrides}"""),
+            EditorTheme.fromJson("""{"version":1,"styles":$overrides}""")
+        )
+        for (theme in themes) {
+            for ((nodeType, size, bold) in listOf(
+                Triple("h2", 35f, true),
+                Triple("h3", 24f, false)
+            )) {
+                val result = RenderBridge.buildSpannable(
+                    headingTypographyJson(nodeType),
+                    baseFontSize,
+                    textColor,
+                    theme,
+                    1f
+                )
+                val paint = headingTypographyPaint(result)
+                assertEquals(nodeType, size, paint.textSize, 0.1f)
+                assertEquals(nodeType, bold, paint.typeface.isBold)
+            }
+        }
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `render - empty heading placeholder retains typography`() {
+        val headingSizes = listOf(32f, 28f, 24f, 21f, 19f, 17f)
+        for ((index, size) in headingSizes.withIndex()) {
+            val nodeType = "h${index + 1}"
+            val json = headingTypographyJson(nodeType)
+                .replace("Heading typography", EditorEditText.EMPTY_BLOCK_PLACEHOLDER.toString())
+            val result = RenderBridge.buildSpannable(json, baseFontSize, textColor)
+            val paint = headingTypographyPaint(result)
+            assertEquals(nodeType, size, paint.textSize, 0.1f)
+            assertTrue(nodeType, paint.typeface.isBold)
+        }
+    }
+
+    private fun headingTypographyJson(nodeType: String, quoted: Boolean = false): String {
+        val block = """
+            {"type":"blockStart","nodeType":"$nodeType","depth":${if (quoted) 1 else 0}},
+            {"type":"textRun","text":"Heading typography","marks":[]},
+            {"type":"blockEnd"}
+        """.trimIndent()
+        return if (quoted) {
+            """[{"type":"blockStart","nodeType":"blockquote","depth":0},$block,{"type":"blockEnd"}]"""
+        } else {
+            "[$block]"
+        }
+    }
+
+    private fun headingTypographyPaint(result: Spanned): TextPaint = TextPaint().apply {
+        textSize = baseFontSize
+        typeface = Typeface.DEFAULT
+        result.getSpans(0, 1, android.text.style.MetricAffectingSpan::class.java).forEach {
+            it.updateMeasureState(this)
+        }
     }
 
     @Test
