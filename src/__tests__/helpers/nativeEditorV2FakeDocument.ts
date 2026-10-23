@@ -483,3 +483,17 @@ export function fakeScalarDocumentMap(doc: DocumentJSON): FakeScalarDocumentMap 
         scalarLength, clampDocumentOffset, scalarToDocument, documentToScalar, activeStateAt,
     };
 }
+
+export function fakeTextForDoc(doc: DocumentJSON): string {
+    const pending: Record<string, unknown>[] = [doc];
+    const text: string[] = [];
+    while (pending.length > 0) {
+        const node = pending.pop()!;
+        if (typeof node.text === 'string') {
+            text.push(node.text);
+        } else if (Array.isArray(node.content)) {
+            pending.push(...[...node.content].reverse());
+        }
+    }
+    return text.join('');
+}

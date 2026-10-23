@@ -607,6 +607,16 @@ public class NativeEditorModule: BaseModule, @preconcurrency AnyModule {
                 editorV2GetDocumentHtml(editorId: editorId)
             })
         }
+        Function("editorV2GetDocumentText") { (editorId: String) -> [String: Any] in
+            v2JsonResultDictionary(performEditorV2JsonOperation(editorId: editorId) {
+                editorV2GetDocumentText(editorId: editorId)
+            })
+        }
+        Function("editorV2GetDocumentIsEmpty") { (editorId: String) -> [String: Any] in
+            v2JsonResultDictionary(performEditorV2JsonOperation(editorId: editorId) {
+                editorV2GetDocumentIsEmpty(editorId: editorId)
+            })
+        }
         Function("editorV2GetDocumentMarkdown") { (editorId: String, flavor: String?) -> [String: Any] in
             v2JsonResultDictionary(performEditorV2JsonOperation(editorId: editorId) {
                 editorV2GetDocumentMarkdown(editorId: editorId, flavor: flavor)

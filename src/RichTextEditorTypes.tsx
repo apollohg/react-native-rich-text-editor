@@ -1,3 +1,4 @@
+import { type NativeEditorDocumentChangeEvent } from './useNativeEditor';
 import { type NativeEditorResolvedSelectionFrame } from './NativeEditorTypes';
 import {
     type DocumentJSON,
@@ -178,6 +179,8 @@ export interface RichTextEditorProps {
     imageLoadingPolicy?: EditorImageLoadingPolicy;
     /** Whether selected images show native resize handles. */
     allowImageResizing?: boolean;
+    /** Revision notification without exporting content. Not emitted on initial readiness. */
+    onDocumentChange?: (event: NativeEditorDocumentChangeEvent) => void;
     /** Called when content changes with the current HTML. */
     onContentChange?: (html: string) => void;
     /** Called when content changes with the current ProseMirror JSON. */
@@ -289,7 +292,7 @@ export interface RichTextEditorRef {
     getContentMarkdown(options?: MarkdownExportOptions): string;
     /** Ask the Rust editor core whether the current document is empty. */
     getIsEmpty(): boolean;
-    /** Get the plain text content (no markup). */
+    /** Concatenated text nodes, without markup, atom labels, or added block separators. */
     getTextContent(): string;
     /** Get the current caret rectangle in editor-local layout coordinates. */
     getCaretRect(): Promise<RichTextEditorCaretRect | null>;

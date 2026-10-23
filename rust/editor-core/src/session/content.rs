@@ -13,6 +13,19 @@ impl EditorSession {
         self.engine.document_html().ok_or_else(engine_not_ready)
     }
 
+    pub(crate) fn get_text(&self) -> Result<String, SessionError> {
+        let document = self.engine.document().ok_or_else(engine_not_ready)?;
+        Ok(document.root().text_content())
+    }
+
+    pub(crate) fn get_is_empty(&self) -> Result<bool, SessionError> {
+        let document = self.engine.document().ok_or_else(engine_not_ready)?;
+        Ok(crate::editor_state::document_is_empty(
+            document,
+            self.engine.schema(),
+        ))
+    }
+
     pub(crate) fn get_markdown(
         &self,
         flavor: crate::serialize::MarkdownFlavor,
@@ -21,7 +34,9 @@ impl EditorSession {
         let markdown = crate::serialize::to_markdown(document, self.engine.schema(), flavor);
         let limit = self.engine.editing_limits().max_derived_output_bytes;
         if markdown.len() > limit {
-            return Err(BoundaryError::limit("DOCUMENT_LIMIT_EXCEEDED", limit, markdown.len()).into());
+            return Err(
+                BoundaryError::limit("DOCUMENT_LIMIT_EXCEEDED", limit, markdown.len()).into(),
+            );
         }
         Ok(markdown)
     }
