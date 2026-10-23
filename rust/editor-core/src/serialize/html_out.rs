@@ -201,6 +201,19 @@ fn serialize_html_rules_node_open(
         let rendered = scalar_attribute(value).unwrap_or_else(|| json_value_string(value));
         attrs.push((html_attr.as_str(), rendered));
     }
+    if crate::alignment::eligible(spec) {
+        if let Some(align) = crate::alignment::value(node) {
+            let declaration = format!("text-align:{}", align.as_str());
+            if let Some((_, style)) = attrs.iter_mut().find(|(name, _)| *name == "style") {
+                if !style.is_empty() && !style.ends_with(';') {
+                    style.push(';');
+                }
+                style.push_str(&declaration);
+            } else {
+                attrs.push(("style", declaration));
+            }
+        }
+    }
     if super::is_tiptap_task_item(spec) {
         attrs.sort_by(|left, right| left.0.cmp(right.0));
     }
@@ -220,9 +233,19 @@ fn serialize_node_attrs(
     buf: &mut String,
     output: HtmlOutput,
 ) {
+    if crate::alignment::eligible(spec) {
+        if let Some(align) = crate::alignment::value(node) {
+            buf.push_str(" style=\"text-align:");
+            buf.push_str(align.as_str());
+            buf.push('"');
+        }
+    }
     let mut keys = spec.attrs.keys().collect::<Vec<_>>();
     keys.sort_unstable();
     for key in keys {
+        if key == crate::alignment::TEXT_ALIGN_ATTR {
+            continue;
+        }
         let Some(value) = node.attrs().get(key) else {
             continue;
         };

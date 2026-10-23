@@ -12,6 +12,8 @@ use std::time::{Duration, Instant};
 // them directly via `#[path]` — the same files the shipped crate compiles —
 // rather than through the crate API. Expectations below are derived from the
 // same render/position/active-state paths the v2 render accessor uses.
+#[path = "../src/alignment.rs"]
+mod alignment;
 #[path = "../src/boundary.rs"]
 mod boundary;
 #[path = "../src/clipboard.rs"]

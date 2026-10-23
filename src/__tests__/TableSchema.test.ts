@@ -14,8 +14,8 @@ import { defaultSchema, prosemirrorSchema, tiptapCompatibleSchema } from '../sch
 import { resolveDocumentSchema } from '../schemaResolution';
 
 const TABLES_FREE_CANONICAL_SHA256: Readonly<Record<string, string>> = {
-    prosemirror: '2c567a02f9cf91ee609f030b2cda4b076c81a482a18ce49e1bd318fc47b64a19',
-    tiptap: 'd85e78a3d241be45fc4b0715216bebd6d1d66c433c2066ae24560b3bf31bf59a',
+    prosemirror: '8f25018bd7fc12ae1122ae0443cce23e0d8cf91414e7d6ee58abfe0ecc8ad0c1',
+    tiptap: '6b65fa34758d85df2bebb24eadfeca6852f34bf570b2d4e0c19ad665138701a8',
 };
 
 const TABLES_FREE_PRESETS: ReadonlyArray<[string, SchemaDefinition]> = [

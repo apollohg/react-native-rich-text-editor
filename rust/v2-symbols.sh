@@ -47,6 +47,7 @@ VIEWER_METHODS=(
     elements
     is_empty
     preferred_text_block_name
+    text_block_names
     trailing_empty_text_block_count
     retained_bytes_decimal
     table_attributes

@@ -322,3 +322,32 @@ extension RichTextEditorViewTests {
     }
 
 }
+
+extension RichTextEditorViewTests {
+    func testParagraphNodeSelectionHighlightsWholeBlockAndSurvivesAlignmentAndNativeSync() throws {
+        let editorId = makeV2Editor()
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let textView = EditorTextView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
+        textView.bindEditor(id: editorId, initialHTML: "<p>A😀<br>tail</p><p>next</p>")
+        let selectedText = "A😀\ntail"
+        let expectedRange = NSRange(location: 0, length: (selectedText as NSString).length)
+        let sync = try XCTUnwrap(adapter.syncNodeSelection(docPos: 0))
+        XCTAssertTrue(textView.applyUpdateJSON(try XCTUnwrap(sync.refreshedUpdateJSON), notifyDelegate: false))
+        XCTAssertEqual(textView.selectedRange, expectedRange)
+        XCTAssertEqual((textView.textStorage.string as NSString).substring(with: textView.selectedRange), selectedText)
+        textView.syncSelectionImmediately()
+        XCTAssertEqual(adapter.cachedAtomicRenderSelection()?["type"] as? String, "node")
+        textView.performToolbarTextAlign("center")
+        XCTAssertEqual(adapter.cachedAtomicRenderSelection()?["type"] as? String, "node")
+        XCTAssertEqual(textView.selectedRange, expectedRange)
+        let paragraphStyle = try XCTUnwrap(textView.textStorage.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle)
+        XCTAssertEqual(paragraphStyle.alignment, .center)
+        let nextOffset = (textView.textStorage.string as NSString).range(of: "next").location
+        let nextStyle = try XCTUnwrap(textView.textStorage.attribute(.paragraphStyle, at: nextOffset, effectiveRange: nil) as? NSParagraphStyle)
+        XCTAssertEqual(nextStyle.alignment, .natural)
+        textView.selectedRange = NSRange(location: 0, length: 1)
+        textView.syncSelectionImmediately()
+        XCTAssertEqual(adapter.cachedAtomicRenderSelection()?["type"] as? String, "text")
+    }
+}

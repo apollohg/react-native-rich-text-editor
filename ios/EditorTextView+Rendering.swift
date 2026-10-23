@@ -710,16 +710,14 @@ extension EditorTextView {
                 in: self
             )
         case "node":
-            guard let scalar = v2ExactUInt32(selection["posScalar"] as? NSNumber),
-                  scalar < UInt32.max
-            else { return false }
+            guard let bounds = EditorNodeSelection.scalarRange(selection) else { return false }
             return PositionBridge.isScalarRangeRepresentable(
-                from: scalar,
-                to: scalar + 1,
+                from: bounds.start,
+                to: bounds.end,
                 in: self
             ) && PositionBridge.isRootTextInputRangeSafe(
-                from: scalar,
-                to: scalar + 1,
+                from: bounds.start,
+                to: bounds.end,
                 in: self
             )
         default:

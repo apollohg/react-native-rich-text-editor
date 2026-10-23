@@ -55,7 +55,13 @@ fn document_validation_preserves_nested_empty_and_opaque_work_metrics() {
     assert_eq!(report.stats.node_count, 11);
     assert_eq!(report.stats.max_depth, 5);
     assert!(report.metrics.metadata_bytes > 0);
-    assert_eq!(report.metrics.validation_work, 104);
+    const VALIDATION_WORK_WITHOUT_ALIGNMENT: usize = 104;
+    const PARAGRAPH_COUNT: usize = 3;
+    const ALIGNMENT_ATTRIBUTE_WORK: usize = 2;
+    assert_eq!(
+        report.metrics.validation_work,
+        VALIDATION_WORK_WITHOUT_ALIGNMENT + PARAGRAPH_COUNT * ALIGNMENT_ATTRIBUTE_WORK
+    );
 }
 
 #[test]

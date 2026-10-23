@@ -61,10 +61,12 @@ pub(crate) fn render_element_bytes(element: &RenderElement) -> usize {
             .saturating_add(4)
             .saturating_add(attrs_bytes(attrs)),
         RenderElement::BlockStart {
+            text_align,
             node_type,
             list_context,
             ..
         } => string_bytes(node_type)
+            .saturating_add(text_align.map_or(0, |align| string_bytes(align.as_str())))
             .saturating_add(2)
             .saturating_add(1)
             .saturating_add(list_context.as_ref().map_or(0, |context| {

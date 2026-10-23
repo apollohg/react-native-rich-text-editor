@@ -12,6 +12,11 @@ extension EditorAccessoryToolbarView {
                 enabled: state.allowedMarks.contains(mark),
                 active: state.marks[mark] == true
             )
+        case .textAlign:
+            return (
+                enabled: state.commands[item.textAlign == nil ? "unsetTextAlign" : "setTextAlign"] == true,
+                active: state.commands["setTextAlign"] == true && state.textAlign == item.textAlign
+            )
         case .heading:
             let level = item.headingLevel ?? 0
             let headingType = "h\(level)"

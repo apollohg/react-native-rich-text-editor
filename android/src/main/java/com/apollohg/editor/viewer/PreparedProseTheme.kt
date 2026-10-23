@@ -193,7 +193,8 @@ internal data class PreparedProseTheme(
                         }
                             ?: base.lineHeightPx,
                     spacingAfterPx =
-                        style?.spacingAfter?.let { fontPx(it, 0f).toInt() } ?: base.spacingAfterPx
+                        style?.spacingAfter?.let { fontPx(it, 0f).toInt() } ?: base.spacingAfterPx,
+                    textAlign = style?.textAlign ?: base.textAlign
                 )
             }
             val text = paint(theme.text)
@@ -302,18 +303,20 @@ internal data class PreparedProseTheme(
             val ancestors = block.containers.map {
                 it.nodeType
             }.ifEmpty { if (block.inBlockquote) listOf("blockquote") else emptyList() }
+            val style = sheet.resolveText(block.nodeType, ancestors)
             return text.withStyle(
-                sheet.resolveText(block.nodeType, ancestors),
+                style,
                 fontDensity,
                 "stylesheet"
-            ).copy(spacingAfterPx = 0)
+            ).copy(spacingAfterPx = 0, textAlign = block.textAlign ?: style.textAlign)
         }
-        return when {
+        val resolved = when {
             block.nodeType == "codeBlock" -> code
             headings.containsKey(block.nodeType) -> headings.getValue(block.nodeType)
             block.inBlockquote -> blockquote
             else -> paragraph
         }
+        return if (block.textAlign == null) resolved else resolved.copy(textAlign = block.textAlign)
     }
 
     val retainedBytes: Long get() = 3_072L + headings.size * 384L +

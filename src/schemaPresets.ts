@@ -1,3 +1,4 @@
+import { TEXT_ALIGN_VALUES } from './TextAlignment';
 import type { DocumentJSON } from './NativeEditorBridge';
 import { type EditorResourceLimits } from './ResourceLimits';
 import {
@@ -141,6 +142,7 @@ export const tiptapCompatibleSchemaSpec: SchemaSpec = {
             content: 'inline*',
             group: 'block',
             role: 'textBlock',
+            attrs: { textAlign: { default: null, enum: [null, ...TEXT_ALIGN_VALUES] } },
             parseDOM: [ { tag: 'p' } ],
             toDOM: [ 'p', 0 ],
         },
@@ -148,7 +150,7 @@ export const tiptapCompatibleSchemaSpec: SchemaSpec = {
             content: 'inline*',
             group: 'block',
             role: 'heading',
-            attrs: { level: { default: 1 } },
+            attrs: { level: { default: 1 }, textAlign: { default: null, enum: [null, ...TEXT_ALIGN_VALUES] } },
             parseDOM: HEADING_LEVELS.map(level => ({
                 tag: `h${level}`,
                 attrs: { level },

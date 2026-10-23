@@ -3033,8 +3033,8 @@ class ViewerTableTest {
     @Test
     fun backgroundCellEligibilityPreservesLoweringAndScansPlainElementsOnce() {
         val document = ViewerDocument("eligibility", emptyList(), true, 0L)
-        val paragraph = FfiViewerElement.BlockStart("paragraph", null, 0u, null)
-        val image = FfiViewerElement.BlockStart("image", null, 0u, null)
+        val paragraph = FfiViewerElement.BlockStart("paragraph", null, 0u, null, null)
+        val image = FfiViewerElement.BlockStart("image", null, 0u, null, null)
         val text = FfiViewerElement.TextRun("café 🦀 العربية", emptyList())
         val variants = listOf(
             "empty" to emptyList(), "plain" to listOf(paragraph, text, FfiViewerElement.BlockEnd),

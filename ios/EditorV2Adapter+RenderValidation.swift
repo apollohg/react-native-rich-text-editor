@@ -200,12 +200,13 @@ extension EditorV2Adapter {
             }
             return marks.allSatisfy(isValidRenderMark)
         case "blockStart":
-            guard hasOnlyKeys(object, ["type", "nodeType", "language", "depth", "listContext"]),
+            guard hasOnlyKeys(object, ["type", "nodeType", "language", "depth", "listContext", "textAlign"]),
                   object["nodeType"] is String,
                   uint32Field(object, "depth") != nil
             else {
                 return false
             }
+            if let align = object["textAlign"], !(align is NSNull), !EditorTextAlignment.isValid(align) { return false }
             if let language = object["language"], !(language is NSNull), !(language is String) { return false }
             return object["listContext"].map(isValidListContext) ?? true
         case "blockEnd":
@@ -336,7 +337,8 @@ extension EditorV2Adapter {
 
     private static func isValidActiveState(_ value: Any) -> Bool {
         guard let object = value as? [String: Any],
-              Set(object.keys) == activeStateKeys,
+              Set(object.keys).union(["textAlign"]) == activeStateKeys,
+              object["textAlign"] == nil || object["textAlign"] is NSNull || EditorTextAlignment.isValid(object["textAlign"]) || object["textAlign"] as? String == "mixed",
               isBooleanRecord(object["marks"]),
               let markAttrs = object["markAttrs"] as? [String: Any],
               markAttrs.values.allSatisfy({ $0 is [String: Any] }),
@@ -368,9 +370,10 @@ extension EditorV2Adapter {
             }
             return (anchor, head)
         case "node":
-            guard Set(selection.keys) == ["type", "pos", "posScalar"],
+            guard Set(selection.keys).subtracting(["endScalar"]) == ["type", "pos", "posScalar"],
                   uint32Field(selection, "pos") != nil,
-                  uint32Field(selection, "posScalar") != nil
+                  uint32Field(selection, "posScalar") != nil,
+                  EditorNodeSelection.scalarRange(selection) != nil
             else {
                 return nil
             }
@@ -392,9 +395,10 @@ extension EditorV2Adapter {
         case "text":
             return scalarSelection(from: selection) != nil
         case "node":
-            return Set(selection.keys) == ["type", "pos", "posScalar"]
+            return Set(selection.keys).subtracting(["endScalar"]) == ["type", "pos", "posScalar"]
                 && uint32Field(selection, "pos") != nil
                 && uint32Field(selection, "posScalar") != nil
+                && EditorNodeSelection.scalarRange(selection) != nil
         case "all":
             return Set(selection.keys) == ["type"]
         case "cell":

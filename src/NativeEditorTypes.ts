@@ -1,3 +1,4 @@
+import type { TextAlign } from './TextAlignment';
 import type { SerializedEditorMentionTheme } from './EditorMentionThemeNormalization';
 import { type SchemaDefinition } from './schemas';
 import {
@@ -30,6 +31,8 @@ export interface Selection {
     headScalar?: number;
     /** `pos` in Unicode scalars. */
     posScalar?: number;
+    /** Exclusive end of the selected node in Unicode scalars. */
+    endScalar?: number;
     anchorCell?: number;
     headCell?: number;
 }
@@ -123,6 +126,7 @@ interface RenderElementFields {
     mentionTheme?: SerializedEditorMentionTheme;
     listContext?: ListContext;
     language?: string;
+    textAlign?: TextAlign | null;
 }
 
 /** One piece of the flattened render stream the engine produces for a document. */
@@ -156,6 +160,8 @@ export interface RenderBlocksPatch {
 
 /** What the current selection can do : the state a toolbar renders from. */
 export interface ActiveState {
+    /** Explicit alignment, inherited (null), or mixed across eligible blocks. */
+    textAlign?: TextAlign | 'mixed' | null;
     /** Marks active at the selection, keyed by mark name. */
     marks: Record<string, boolean>;
     /** Attributes of each active mark, e.g. `{ link: { href } }`. */
@@ -385,11 +391,13 @@ export interface NativeEditorPositionEnvelope {
     affinity?: NativeEditorPositionAffinity;
 }
 
-export interface NativeEditorCellPositionEnvelope {
+export interface NativeEditorStructuralPositionEnvelope {
     offset: number;
     kind: NativeEditorOffsetKind | 'document';
     affinity?: NativeEditorPositionAffinity;
 }
+
+export type NativeEditorCellPositionEnvelope = NativeEditorStructuralPositionEnvelope;
 
 export type NativeEditorSelectionEnvelope =
     | {
@@ -397,7 +405,7 @@ export type NativeEditorSelectionEnvelope =
           anchor: NativeEditorPositionEnvelope;
           head: NativeEditorPositionEnvelope;
       }
-    | { type: 'node'; at: NativeEditorPositionEnvelope }
+    | { type: 'node'; at: NativeEditorStructuralPositionEnvelope }
     | {
           type: 'cell';
           anchorCell: NativeEditorCellPositionEnvelope;

@@ -25,6 +25,9 @@ export const DEFAULT_EDITOR_TOOLBAR_ITEMS: readonly EditorToolbarItem[] = [
     { type: 'mark', mark: 'italic', label: 'Italic', icon: defaultIcon('italic') },
     { type: 'mark', mark: 'underline', label: 'Underline', icon: defaultIcon('underline') },
     { type: 'mark', mark: 'strike', label: 'Strikethrough', icon: defaultIcon('strike') },
+    { type: 'textAlign', align: 'left', label: 'Align Left', icon: defaultIcon('alignLeft') },
+    { type: 'textAlign', align: 'center', label: 'Align Center', icon: defaultIcon('alignCenter') },
+    { type: 'textAlign', align: 'right', label: 'Align Right', icon: defaultIcon('alignRight') },
     { type: 'blockquote', label: 'Blockquote', icon: defaultIcon('blockquote') },
     { type: 'separator' },
     {

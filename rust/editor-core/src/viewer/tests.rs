@@ -994,3 +994,21 @@ fn compact_viewer_json_preserves_complete_output_and_error_precedence() {
         }
     }
 }
+
+#[test]
+fn compiled_viewer_exposes_custom_text_block_roles_for_empty_leaves() {
+    let config = serde_json::json!({"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"body","content":"inline*","group":"block","role":"textBlock","htmlTag":"p"},{"name":"customTitle","content":"inline*","group":"block","role":"textBlock","htmlTag":"h2"},{"name":"quote","content":"block+","group":"block","role":"block","htmlTag":"blockquote"},{"name":"text","group":"inline","role":"text"}],"marks":[]},"initialization":{"type":"localEmpty"}});
+    let result = viewer_compile(FfiViewerCompileRequest {
+        source_kind: FfiViewerSourceKind::Html,
+        source: "<h2></h2>".into(),
+        config_json: config.to_string(),
+        images_enabled: true,
+        mention_prefix: None,
+    });
+    let document = result.value.expect("custom text-block schema compiles");
+    assert_eq!(
+        document.text_block_names(),
+        vec!["body", "customTitle"],
+        "only schema-declared text blocks identify empty leaves"
+    );
+}

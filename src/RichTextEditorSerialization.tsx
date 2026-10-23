@@ -1,3 +1,4 @@
+import { isTextAlignState } from './TextAlignment';
 import { NativeEditorErrorBase, NativeEditorOperationError } from './NativeEditorBoundaryError';
 import { type EditorMentionTheme } from './EditorTheme';
 import {
@@ -61,6 +62,7 @@ export function allocateToolbarFrameOwnerId(): number {
 }
 
 export const EMPTY_ACTIVE_STATE: ActiveState = {
+    textAlign: null,
     marks: {},
     markAttrs: {},
     nodes: {},
@@ -160,7 +162,7 @@ export function parseSelectionFromUpdate(value: unknown): Selection | null {
 }
 
 export function publicSelection(selection: Selection): Selection {
-    const { anchorScalar: _anchorScalar, headScalar: _headScalar, posScalar: _posScalar, ...visible } = selection;
+    const { anchorScalar: _anchorScalar, headScalar: _headScalar, posScalar: _posScalar, endScalar: _endScalar, ...visible } = selection;
 
     return visible;
 }
@@ -193,6 +195,7 @@ export function parseActiveStateFromUpdate(value: unknown): ActiveState | null {
     }
 
     return {
+        textAlign: isTextAlignState(value.textAlign) ? value.textAlign : null,
         marks: booleanMap(value.marks),
         markAttrs: isRecord(value.markAttrs)
             ? (value.markAttrs as Record<string, Record<string, unknown>>)

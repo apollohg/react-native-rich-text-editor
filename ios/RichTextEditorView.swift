@@ -644,8 +644,7 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
             else { return nil }
             return (min(anchor, head), max(anchor, head))
         case "node":
-            guard let position = v2ExactUInt32(selection["posScalar"] as? NSNumber), position < UInt32.max else { return nil }
-            return (position, position + 1)
+            return EditorNodeSelection.scalarRange(selection)
         default:
             return nil
         }

@@ -51,3 +51,21 @@ test('rejects mixed enum types and non-JSON attribute values', () => {
     circular.self = circular;
     expect(() => validateAttributeSpec({ default: circular }, 'value')).toThrow();
 });
+
+test('supports nullable enums without accepting mixed non-null types', () => {
+    const spec = { default: null, enum: [null, 'left', 'center', 'right'] };
+    expect(() => validateAttributeSpec(spec, 'textAlign')).not.toThrow();
+    for (const value of spec.enum) {
+        expect(() => validateAttribute(value, spec, 'textAlign')).not.toThrow();
+    }
+    expect(() => validateAttribute('justify', spec, 'textAlign')).toThrow();
+    expect(() => validateAttributeSpec({ enum: [null, 'left', 1] }, 'textAlign')).toThrow();
+});
+
+test('validates nullable enums after native-create normalization removes array prototypes', () => {
+    const values = Object.setPrototypeOf([null, 'left', 'center', 'right'], null);
+    const spec = { default: null, enum: values };
+    expect(() => validateAttributeSpec(spec, 'textAlign')).not.toThrow();
+    expect(() => validateAttribute('center', spec, 'textAlign')).not.toThrow();
+    expect(() => validateAttribute('justify', spec, 'textAlign')).toThrow();
+});

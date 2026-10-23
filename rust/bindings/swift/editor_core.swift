@@ -532,6 +532,8 @@ public protocol ViewerCompiledDocumentProtocol: AnyObject, Sendable {
 
     func tableRecords()  -> [FfiViewerTable]
 
+    func textBlockNames()  -> [String]
+
     func trailingEmptyTextBlockCount()  -> UInt32
 
 }
@@ -632,6 +634,13 @@ open func tableAttributes() -> [String: String]  {
 open func tableRecords() -> [FfiViewerTable]  {
     return try!  FfiConverterSequenceTypeFfiViewerTable.lift(try! rustCall() {
     uniffi_editor_core_fn_method_viewercompileddocument_table_records(self.uniffiClonePointer(),$0
+    )
+})
+}
+
+open func textBlockNames() -> [String]  {
+    return try!  FfiConverterSequenceString.lift(try! rustCall() {
+    uniffi_editor_core_fn_method_viewercompileddocument_text_block_names(self.uniffiClonePointer(),$0
     )
 })
 }
@@ -3244,7 +3253,7 @@ public enum FfiViewerElement {
     )
     case blockAtom(nodeType: String, docPos: UInt32, attrsJson: String, label: String
     )
-    case blockStart(nodeType: String, language: String?, depth: UInt16, listContextJson: String?
+    case blockStart(nodeType: String, language: String?, depth: UInt16, listContextJson: String?, textAlign: String?
     )
     case blockEnd
 }
@@ -3276,7 +3285,7 @@ public struct FfiConverterTypeFfiViewerElement: FfiConverterRustBuffer {
         case 4: return .blockAtom(nodeType: try FfiConverterString.read(from: &buf), docPos: try FfiConverterUInt32.read(from: &buf), attrsJson: try FfiConverterString.read(from: &buf), label: try FfiConverterString.read(from: &buf)
         )
 
-        case 5: return .blockStart(nodeType: try FfiConverterString.read(from: &buf), language: try FfiConverterOptionString.read(from: &buf), depth: try FfiConverterUInt16.read(from: &buf), listContextJson: try FfiConverterOptionString.read(from: &buf)
+        case 5: return .blockStart(nodeType: try FfiConverterString.read(from: &buf), language: try FfiConverterOptionString.read(from: &buf), depth: try FfiConverterUInt16.read(from: &buf), listContextJson: try FfiConverterOptionString.read(from: &buf), textAlign: try FfiConverterOptionString.read(from: &buf)
         )
 
         case 6: return .blockEnd
@@ -3316,12 +3325,13 @@ public struct FfiConverterTypeFfiViewerElement: FfiConverterRustBuffer {
             FfiConverterString.write(label, into: &buf)
 
 
-        case let .blockStart(nodeType,language,depth,listContextJson):
+        case let .blockStart(nodeType,language,depth,listContextJson,textAlign):
             writeInt(&buf, Int32(5))
             FfiConverterString.write(nodeType, into: &buf)
             FfiConverterOptionString.write(language, into: &buf)
             FfiConverterUInt16.write(depth, into: &buf)
             FfiConverterOptionString.write(listContextJson, into: &buf)
+            FfiConverterOptionString.write(textAlign, into: &buf)
 
 
         case .blockEnd:
@@ -4925,6 +4935,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_editor_core_checksum_method_viewercompileddocument_table_records() != 27911) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_editor_core_checksum_method_viewercompileddocument_text_block_names() != 7294) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_editor_core_checksum_method_viewercompileddocument_trailing_empty_text_block_count() != 11698) {

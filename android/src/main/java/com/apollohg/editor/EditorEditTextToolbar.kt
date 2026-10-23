@@ -45,6 +45,21 @@ internal fun EditorEditText.performToolbarToggleBlockquoteImpl() {
     }
 }
 
+internal fun EditorEditText.performToolbarTextAlignImpl(align: String?) {
+    if (align != null && EditorTextAlignment.fromWireValue(align) == null) return
+    if (!prepareForToolbarCommandWithExternalOwner()) return
+    val selection =
+        currentScalarSelection()?.let { inputScalarSelection(it.first, it.second) } ?: return
+    v2Driver?.let { driver ->
+        val update = if (align == null) {
+            driver.unsetTextAlign(selection.first, selection.second)
+        } else {
+            driver.setTextAlign(align, selection.first, selection.second)
+        }
+        update?.let { applyUpdateJSON(it) }
+    }
+}
+
 internal fun EditorEditText.performToolbarToggleHeadingImpl(level: Int) {
     if (!prepareForToolbarCommandWithExternalOwner()) return
     if (level !in 1..6) return

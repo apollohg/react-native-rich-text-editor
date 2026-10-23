@@ -200,6 +200,16 @@ enum EditorV2Shadow {
         adapter(for: id)?.toggleCodeBlock(anchor: scalarAnchor, head: scalarHead) ?? "{}"
     }
 
+    static func setTextAlign(id: UInt64, alignment: String?) -> String {
+        guard let adapter = adapter(for: id) else { return "{}" }
+        let selection = currentScalarSelection(adapter)
+        return adapter.setTextAlign(alignment, anchor: selection.anchor, head: selection.head) ?? "{}"
+    }
+
+    static func setTextAlignAtSelectionScalar(id: UInt64, scalarAnchor: UInt32, scalarHead: UInt32, alignment: String?) -> String {
+        adapter(for: id)?.setTextAlign(alignment, anchor: scalarAnchor, head: scalarHead) ?? "{}"
+    }
+
     static func toggleHeadingAtSelectionScalar(id: UInt64, scalarAnchor: UInt32, scalarHead: UInt32, level: UInt8) -> String {
         adapter(for: id)?.toggleHeading(level: level, anchor: scalarAnchor, head: scalarHead) ?? "{}"
     }

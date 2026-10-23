@@ -263,12 +263,7 @@ internal class EditorDocumentLayout(
                     EditorParagraphAlignmentSpan::class.java
                 ).lastOrNull()?.value
                 val rtl = TextDirectionHeuristics.FIRSTSTRONG_LTR.isRtl(local, 0, local.length)
-                val alignment = when (requestedAlignment) {
-                    "left" -> if (rtl) Alignment.ALIGN_OPPOSITE else Alignment.ALIGN_NORMAL
-                    "right" -> if (rtl) Alignment.ALIGN_NORMAL else Alignment.ALIGN_OPPOSITE
-                    "center" -> Alignment.ALIGN_CENTER
-                    else -> Alignment.ALIGN_NORMAL
-                }
+                val alignment = physicalTextAlignment(requestedAlignment, rtl)
                 if (requestedAlignment !=
                     null
                 ) {

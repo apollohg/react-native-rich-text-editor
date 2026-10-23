@@ -1,3 +1,4 @@
+import type { TextAlign } from './TextAlignment';
 import type { HistoryState, ReadonlyActiveState } from './NativeEditorBridge';
 import type { EditorToolbarTheme } from './EditorTheme';
 
@@ -25,6 +26,10 @@ export type EditorToolbarItemPlacement = 'start' | 'scroll' | 'end';
 
 /** Icons the package draws itself, on both platforms. */
 export type EditorToolbarDefaultIconId =
+    | 'alignLeft'
+    | 'alignCenter'
+    | 'alignRight'
+    | 'alignReset'
     | 'bold'
     | 'italic'
     | 'underline'
@@ -134,6 +139,14 @@ export type EditorToolbarLeafItem = (
       }
     | {
           type: 'image';
+          label: string;
+          icon: EditorToolbarIcon;
+          key?: string;
+          placement?: EditorToolbarItemPlacement;
+      }
+    | {
+          type: 'textAlign';
+          align: TextAlign | null;
           label: string;
           icon: EditorToolbarIcon;
           key?: string;
@@ -302,6 +315,8 @@ export interface EditorToolbarProps {
     onToggleListType?: (listType: EditorToolbarListType) => void;
     /** Generic heading toggle handler used by configurable heading buttons. */
     onToggleHeading?: (level: EditorToolbarHeadingLevel) => void;
+    /** Null restores alignment inherited from the theme. */
+    onSetTextAlign?: (align: TextAlign | null) => void;
     /** Generic node insertion handler used by configurable node buttons. */
     onInsertNodeType?: (nodeType: string) => void;
     /** Generic command handler used by configurable command buttons. */

@@ -1655,3 +1655,119 @@ extension RenderBridgeTests {
         }
     }
 }
+
+extension RenderBridgeTests {
+    func testDocumentAlignmentOverridesThemeAndResetRebuildsParagraphStyle() throws {
+        let theme = try XCTUnwrap(EditorTheme.from(json: """
+        {"version":1,"styles":{"paragraph":{"textAlign":"center","paddingLeft":9},"h2":{"textAlign":"center"}}}
+        """))
+        for nodeType in ["paragraph", "h2"] {
+            for text in ["שלום", ""] {
+                for (alignment, expected) in [("left", NSTextAlignment.left), ("center", .center), ("right", .right)] {
+                    let elements: [[String: Any]] = [
+                        ["type": "blockStart", "nodeType": nodeType, "depth": 0, "textAlign": alignment],
+                        ["type": "textRun", "text": text, "marks": []], ["type": "blockEnd"]
+                    ]
+                    let rendered = RenderBridge.renderElements(fromArray: elements, baseFont: baseFont, textColor: textColor, theme: theme)
+                    let style = try XCTUnwrap(rendered.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle)
+                    XCTAssertEqual(style.alignment, expected, "\(nodeType) text=\(text) alignment=\(alignment)")
+                    if nodeType == "paragraph" { XCTAssertEqual(style.headIndent, 9) }
+                    var reset = elements
+                    reset[0]["textAlign"] = NSNull()
+                    let inherited = RenderBridge.renderElements(fromArray: reset, baseFont: baseFont, textColor: textColor, theme: theme)
+                    XCTAssertEqual((inherited.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle)?.alignment, .center)
+                }
+            }
+        }
+    }
+}
+
+extension RenderBridgeTests {
+    func testPhysicalAlignmentMovesRTLTextKitLayoutWithoutTheme() throws {
+        var origins: [CGFloat] = []
+        for alignment in ["left", "center", "right"] {
+            let rendered = RenderBridge.renderElements(fromArray: [
+                ["type": "blockStart", "nodeType": "paragraph", "depth": 0, "textAlign": alignment],
+                ["type": "textRun", "text": "שלום", "marks": []], ["type": "blockEnd"]
+            ], baseFont: baseFont, textColor: textColor)
+            let storage = NSTextStorage(attributedString: rendered)
+            let manager = EditorLayoutManager()
+            let container = NSTextContainer(size: CGSize(width: 300, height: 1_000))
+            container.lineFragmentPadding = 0
+            manager.addTextContainer(container)
+            storage.addLayoutManager(manager)
+            manager.ensureLayout(for: container)
+            origins.append(manager.lineFragmentUsedRect(forGlyphAt: 0, effectiveRange: nil).minX)
+        }
+        XCTAssertLessThan(origins[0], origins[1])
+        XCTAssertLessThan(origins[1], origins[2])
+    }
+}
+
+extension RenderBridgeTests {
+    func testAlignedTextKitCaretAndHitTestingFollowRebuiltEmptyParagraphs() throws {
+        for text in ["abc", ""] {
+            var caretOrigins: [CGFloat] = []
+            for alignment in ["left", "center", "right"] {
+                let rendered = RenderBridge.renderElements(fromArray: [
+                    ["type": "blockStart", "nodeType": "paragraph", "depth": 0, "textAlign": alignment],
+                    ["type": "textRun", "text": text, "marks": []], ["type": "blockEnd"]
+                ], baseFont: baseFont, textColor: textColor)
+                let view = UITextView(frame: CGRect(x: 0, y: 0, width: 300, height: 100))
+                view.textContainerInset = .zero
+                view.textContainer.lineFragmentPadding = 0
+                view.attributedText = rendered
+                view.layoutIfNeeded()
+                let caret = view.caretRect(for: view.beginningOfDocument)
+                caretOrigins.append(caret.minX)
+                if !text.isEmpty {
+                    let hit = try XCTUnwrap(view.closestPosition(to: CGPoint(x: caret.minX, y: caret.midY)))
+                    XCTAssertEqual(view.offset(from: view.beginningOfDocument, to: hit), 0, alignment)
+                }
+            }
+            XCTAssertLessThan(caretOrigins[0], caretOrigins[1], text)
+            XCTAssertLessThan(caretOrigins[1], caretOrigins[2], text)
+        }
+    }
+}
+
+extension RenderBridgeTests {
+    func testAdjacentDocumentAlignmentsRenderIndependentlyAndCaptureNativeView() throws {
+        struct BlockCase {
+            let nodeType: String
+            let text: String
+            let alignment: String
+            let expected: NSTextAlignment
+        }
+        let blocks: [BlockCase] = [
+            .init(nodeType: "h2", text: "Left aligned heading", alignment: "left", expected: .left),
+            .init(nodeType: "paragraph", text: "Physical left: Hello שלום", alignment: "left", expected: .left),
+            .init(nodeType: "h2", text: "Centred heading", alignment: "center", expected: .center),
+            .init(nodeType: "paragraph", text: "Centre: Hello שלום", alignment: "center", expected: .center),
+            .init(nodeType: "h2", text: "Right aligned heading", alignment: "right", expected: .right),
+            .init(nodeType: "paragraph", text: "Physical right: Hello שלום", alignment: "right", expected: .right)
+        ]
+        let elements: [[String: Any]] = blocks.flatMap { block in [
+            ["type": "blockStart", "nodeType": block.nodeType, "depth": 0, "textAlign": block.alignment],
+            ["type": "textRun", "text": block.text, "marks": []], ["type": "blockEnd"]
+        ] }
+        let rendered = RenderBridge.renderElements(fromArray: elements, baseFont: baseFont, textColor: .black)
+        for block in blocks {
+            let offset = (rendered.string as NSString).range(of: block.text).location
+            let style = try XCTUnwrap(rendered.attribute(.paragraphStyle, at: offset, effectiveRange: nil) as? NSParagraphStyle)
+            XCTAssertEqual(style.alignment, block.expected, block.text)
+        }
+        let view = UITextView(frame: CGRect(x: 0, y: 0, width: 390, height: 360))
+        view.backgroundColor = .white
+        view.textContainerInset = UIEdgeInsets(top: 20, left: 16, bottom: 20, right: 16)
+        view.attributedText = rendered
+        view.layoutIfNeeded()
+        let image = UIGraphicsImageRenderer(bounds: view.bounds).image { context in
+            view.layer.render(in: context.cgContext)
+        }
+        let attachment = XCTAttachment(image: image)
+        attachment.name = "iOS paragraph and heading physical alignment"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+}

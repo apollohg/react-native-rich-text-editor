@@ -5098,3 +5098,59 @@ final class EditorTableInputTests: XCTestCase {
 private extension EditorTableInputTests {
     static let selectionStateKeys: Set<String> = ["documentVersion", "stateRevision", "selection", "activeState", "historyState"]
 }
+
+extension EditorTableInputTests {
+    func testAlignmentToolbarPreservesCellRectangleAndFormatsOnlySelectedCells() throws {
+        try withMountedTable(document: fourCellDocument, configJSON: TableInputTestSchema.textAlignTableConfig, cellSelection: (0, 1)) { fixture in
+            let before = try XCTUnwrap(fixture.adapter.cachedAtomicRenderSelection())
+            fixture.view.textView.performToolbarTextAlign("right")
+            let after = try XCTUnwrap(fixture.adapter.cachedAtomicRenderSelection())
+            XCTAssertEqual(after["type"] as? String, "cell")
+            XCTAssertEqual(EditorCellSelection.endpointPositions(after)?.anchor, EditorCellSelection.endpointPositions(before)?.anchor)
+            XCTAssertEqual(EditorCellSelection.endpointPositions(after)?.head, EditorCellSelection.endpointPositions(before)?.head)
+            func alignments() throws -> [String?] {
+                let json = try XCTUnwrap(fixture.adapter.documentJson())
+                let doc = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+                let table = try XCTUnwrap((doc["content"] as? [[String: Any]])?.first)
+                let rows = try XCTUnwrap(table["content"] as? [[String: Any]])
+                return try rows.flatMap { row -> [String?] in
+                    let cells = try XCTUnwrap(row["content"] as? [[String: Any]])
+                    return try cells.map { cell in
+                        let paragraph = try XCTUnwrap((cell["content"] as? [[String: Any]])?.first)
+                        return (paragraph["attrs"] as? [String: Any])?["textAlign"] as? String
+                    }
+                }
+            }
+            XCTAssertEqual(try alignments(), ["right", "right", nil, nil])
+            fixture.view.textView.performToolbarTextAlign(nil)
+            XCTAssertEqual(try alignments(), [nil, nil, nil, nil])
+            XCTAssertEqual(fixture.adapter.cachedAtomicRenderSelection()?["type"] as? String, "cell")
+            XCTAssertEqual(try fixture.adapter.tableCellTexts(), [["one", "two"], ["three", "four"]])
+        }
+    }
+}
+
+extension EditorTableInputTests {
+    func testParagraphNodeSelectionKeepsWholeTableCellInputRangeAfterAlignment() throws {
+        let firstParagraphOpening: UInt32 = 3
+        try withMountedTable(document: TableInputTestSchema.twoCellDocument,
+            configJSON: TableInputTestSchema.textAlignTableConfig, cellSelection: nil) { fixture in
+            XCTAssertTrue(fixture.view.textView.becomeFirstResponder())
+            let sync = try XCTUnwrap(fixture.adapter.syncNodeSelection(docPos: firstParagraphOpening))
+            XCTAssertTrue(fixture.view.textView.applyUpdateJSON(try XCTUnwrap(sync.refreshedUpdateJSON)))
+            fixture.view.layoutIfNeeded()
+            let input = fixture.view.activeTextInput
+            XCTAssertFalse(input === fixture.view.textView)
+            XCTAssertEqual(input.tableCellPositionMap?.binding.cellIndex, 0)
+            let expectedRange = NSRange(location: 0, length: ("one" as NSString).length)
+            XCTAssertEqual(input.selectedRange, expectedRange)
+            input.performToolbarTextAlign("right")
+            XCTAssertTrue(fixture.view.activeTextInput === input)
+            XCTAssertEqual(input.selectedRange, expectedRange)
+            XCTAssertEqual(fixture.adapter.cachedAtomicRenderSelection()?["type"] as? String, "node")
+            let style = try XCTUnwrap(input.textStorage.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle)
+            XCTAssertEqual(style.alignment, .right)
+            XCTAssertEqual(try fixture.adapter.tableCellTexts(), [["one", "two"]])
+        }
+    }
+}

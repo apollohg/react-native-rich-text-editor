@@ -11,7 +11,7 @@ use crate::tables::selection::{cell_pair_is_usable, CellSelectionOrigin};
 use crate::transform::StepMap;
 use crate::yrs_engine;
 use crate::yrs_engine::compiler::{
-    map_position, selectable_void_at, CompiledTransaction, SelectionPlan, StoredMarksPlan,
+    map_position, node_selection_position, CompiledTransaction, SelectionPlan, StoredMarksPlan,
 };
 use crate::yrs_engine::{
     surviving_relative_point_to_doc_pos, RelativePoint, RelativeSelection, TransactionOrigin,
@@ -416,7 +416,14 @@ pub(super) fn affinity_aware_mapped_selection(
         (
             crate::selection::Selection::Node { pos },
             yrs_engine::RelativeSelection::Node { point },
-        ) => crate::selection::Selection::node(map_position(map, *pos, point.affinity)),
+        ) => {
+            let mapped = map_position(map, *pos, point.affinity);
+            if map.map_node_pos(*pos).is_some() {
+                crate::selection::Selection::node(mapped)
+            } else {
+                crate::selection::Selection::cursor(mapped)
+            }
+        }
         (
             crate::selection::Selection::Cell { anchor, head },
             yrs_engine::RelativeSelection::Cell {
@@ -465,10 +472,11 @@ pub(super) fn affinity_aware_mapped_selection(
     };
     let normalized = mapped.normalized(preview, position_map);
     match normalized {
-        crate::selection::Selection::Node { pos }
-            if !selectable_void_at(preview.root(), pos, 0, schema) =>
-        {
-            crate::selection::Selection::cursor(pos).normalized(preview, position_map)
+        crate::selection::Selection::Node { pos } => {
+            match node_selection_position(preview, schema, pos) {
+                Some(opening) => crate::selection::Selection::node(opening),
+                None => crate::selection::Selection::cursor(pos).normalized(preview, position_map),
+            }
         }
         selection => selection,
     }

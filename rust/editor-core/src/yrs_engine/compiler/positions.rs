@@ -453,7 +453,7 @@ pub(super) fn resolve_join_target_position(
     Ok(position)
 }
 
-pub(super) fn direct_attribute_target(document: &Document, position: u32) -> Option<&Node> {
+pub(crate) fn direct_attribute_target(document: &Document, position: u32) -> Option<&Node> {
     let resolved = document.resolve(position).ok()?;
     let parent = resolved.parent(document);
     let mut offset = 0u32;

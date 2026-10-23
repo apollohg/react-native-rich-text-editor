@@ -2,6 +2,19 @@ import os
 import UIKit
 
 extension EditorTextView {
+    func performToolbarTextAlign(_ alignment: String?) {
+        guard prepareForToolbarCommand() else { return }
+        if authoritativeCellSelectionActive {
+            guard canMutateSelectedTableCells() else { return }
+            applyUpdateJSON(EditorV2Shadow.setTextAlign(id: editorId, alignment: alignment))
+            return
+        }
+        guard let selection = currentScalarSelection() else { return }
+        performInterceptedInput {
+            applyUpdateJSON(EditorV2Shadow.setTextAlignAtSelectionScalar(id: editorId, scalarAnchor: selection.anchor, scalarHead: selection.head, alignment: alignment))
+        }
+    }
+
     func performToolbarToggleMark(_ markName: String) {
         guard prepareForToolbarCommand() else { return }
         guard let selection = currentScalarSelection() else { return }

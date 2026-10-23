@@ -814,6 +814,8 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
 // For large crates we prevent `MethodTooLargeException` (see #2340)
 // N.B. the name of the extension is very misleading, since it is
 // rather `InterfaceTooLargeException`, caused by too many methods
@@ -929,6 +931,8 @@ fun uniffi_editor_core_checksum_method_viewercompileddocument_table_attributes(
 ): Short
 fun uniffi_editor_core_checksum_method_viewercompileddocument_table_records(
 ): Short
+fun uniffi_editor_core_checksum_method_viewercompileddocument_text_block_names(
+): Short
 fun uniffi_editor_core_checksum_method_viewercompileddocument_trailing_empty_text_block_count(
 ): Short
 fun ffi_editor_core_uniffi_contract_version(
@@ -997,6 +1001,8 @@ fun uniffi_editor_core_fn_method_viewercompileddocument_semantic_key(`ptr`: Poin
 fun uniffi_editor_core_fn_method_viewercompileddocument_table_attributes(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
 fun uniffi_editor_core_fn_method_viewercompileddocument_table_records(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+fun uniffi_editor_core_fn_method_viewercompileddocument_text_block_names(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
 fun uniffi_editor_core_fn_method_viewercompileddocument_trailing_empty_text_block_count(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus,
 ): Int
@@ -1360,6 +1366,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_editor_core_checksum_method_viewercompileddocument_table_records() != 27911.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_editor_core_checksum_method_viewercompileddocument_text_block_names() != 7294.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_editor_core_checksum_method_viewercompileddocument_trailing_empty_text_block_count() != 11698.toShort()) {
@@ -1778,6 +1787,8 @@ public interface ViewerCompiledDocumentInterface {
 
     fun `tableRecords`(): List<FfiViewerTable>
 
+    fun `textBlockNames`(): List<kotlin.String>
+
     fun `trailingEmptyTextBlockCount`(): kotlin.UInt
 
     companion object
@@ -1942,6 +1953,18 @@ open class ViewerCompiledDocument: Disposable, AutoCloseable, ViewerCompiledDocu
     callWithPointer {
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_editor_core_fn_method_viewercompileddocument_table_records(
+        it, _status)
+}
+    }
+    )
+    }
+
+
+    override fun `textBlockNames`(): List<kotlin.String> {
+            return FfiConverterSequenceString.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_editor_core_fn_method_viewercompileddocument_text_block_names(
         it, _status)
 }
     }
@@ -3240,7 +3263,8 @@ sealed class FfiViewerElement {
         val `nodeType`: kotlin.String,
         val `language`: kotlin.String?,
         val `depth`: kotlin.UShort,
-        val `listContextJson`: kotlin.String?) : FfiViewerElement() {
+        val `listContextJson`: kotlin.String?,
+        val `textAlign`: kotlin.String?) : FfiViewerElement() {
         companion object
     }
 
@@ -3281,6 +3305,7 @@ public object FfiConverterTypeFfiViewerElement : FfiConverterRustBuffer<FfiViewe
                 FfiConverterString.read(buf),
                 FfiConverterOptionalString.read(buf),
                 FfiConverterUShort.read(buf),
+                FfiConverterOptionalString.read(buf),
                 FfiConverterOptionalString.read(buf),
                 )
             6 -> FfiViewerElement.BlockEnd
@@ -3332,6 +3357,7 @@ public object FfiConverterTypeFfiViewerElement : FfiConverterRustBuffer<FfiViewe
                 + FfiConverterOptionalString.allocationSize(value.`language`)
                 + FfiConverterUShort.allocationSize(value.`depth`)
                 + FfiConverterOptionalString.allocationSize(value.`listContextJson`)
+                + FfiConverterOptionalString.allocationSize(value.`textAlign`)
             )
         }
         is FfiViewerElement.BlockEnd -> {
@@ -3377,6 +3403,7 @@ public object FfiConverterTypeFfiViewerElement : FfiConverterRustBuffer<FfiViewe
                 FfiConverterOptionalString.write(value.`language`, buf)
                 FfiConverterUShort.write(value.`depth`, buf)
                 FfiConverterOptionalString.write(value.`listContextJson`, buf)
+                FfiConverterOptionalString.write(value.`textAlign`, buf)
                 Unit
             }
             is FfiViewerElement.BlockEnd -> {

@@ -1,3 +1,5 @@
+export type { TextAlign } from './TextAlignment';
+
 export {
     RichTextEditor,
     type RichTextEditorProps,

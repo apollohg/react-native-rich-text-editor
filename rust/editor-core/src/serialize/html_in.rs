@@ -360,6 +360,24 @@ fn extract_node_attrs(
     spec: &crate::schema::NodeSpec,
 ) -> HashMap<String, serde_json::Value> {
     let mut attrs = super::default_node_attrs(spec);
+    if crate::alignment::eligible(spec) {
+        if let Some(style) = element_attr(elem, "style") {
+            for declaration in style.split(';') {
+                if let Some((name, raw)) = declaration.split_once(':') {
+                    if name.trim().eq_ignore_ascii_case("text-align") {
+                        if let Some(align) =
+                            crate::alignment::TextAlign::parse(&raw.trim().to_ascii_lowercase())
+                        {
+                            attrs.insert(
+                                crate::alignment::TEXT_ALIGN_ATTR.to_owned(),
+                                serde_json::json!(align),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     if let Some(rules) = &spec.html_rules {
         for (attr_name, html_attr) in &rules.attr_map {

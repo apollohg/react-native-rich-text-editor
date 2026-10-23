@@ -67,6 +67,12 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         act(() => ref.current!.toggleBlockquote());
         expect(lastCommand()).toEqual({ type: 'toggleBlockquote' });
 
+        act(() => ref.current!.setTextAlign('center'));
+        expect(lastCommand()).toEqual({ type: 'setTextAlign', align: 'center' });
+
+        act(() => ref.current!.unsetTextAlign());
+        expect(lastCommand()).toEqual({ type: 'unsetTextAlign' });
+
         act(() => ref.current!.toggleHeading(2));
         expect(lastCommand()).toEqual({ type: 'toggleHeading', level: 2 });
 

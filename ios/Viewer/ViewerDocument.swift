@@ -247,6 +247,7 @@ struct ViewerBlock: Hashable {
     }
     let styleAncestors: [ViewerStyleAncestor]
     let language: String?
+    let textAlign: String?
     let isBlockAtom: Bool
     let nodeType: String
     let depth: UInt16
@@ -271,12 +272,14 @@ struct ViewerBlock: Hashable {
         isBlockAtom: Bool = false,
         styleAncestors: [ViewerStyleAncestor] = [],
         language: String? = nil,
+        textAlign: String? = nil,
         table: FfiViewerTable? = nil,
         frameTable: FfiTableRecord? = nil
     ) {
         self.frameTable = frameTable
         self.table = table
         self.language = language
+        self.textAlign = textAlign
         self.styleAncestors = styleAncestors
         self.isBlockAtom = isBlockAtom
         self.nodeType = nodeType
@@ -304,6 +307,7 @@ struct ViewerBlock: Hashable {
             isBlockAtom: isBlockAtom,
             styleAncestors: styleAncestors,
             language: language,
+            textAlign: textAlign,
             table: table,
             frameTable: frameTable
         )
@@ -325,6 +329,7 @@ struct ViewerDocument {
     let trailingEmptyTextBlockCount: Int
     let preparedTheme: PreparedProseTheme?
     let preferredTextBlockName: String
+    let textBlockNames: Set<String>
 
     var paragraphs: [ViewerParagraph] {
         blocks.compactMap { block in
@@ -359,6 +364,7 @@ struct ViewerDocument {
         trailingEmptyTextBlockCount = 0
         preparedTheme = nil
         preferredTextBlockName = "paragraph"
+        textBlockNames = ["paragraph"]
     }
 
     init(
@@ -372,7 +378,8 @@ struct ViewerDocument {
         tableRecords: [String: FfiViewerTable] = [:],
         frameIndex: EditorTableIndex? = nil,
         tableSourceIDs: [String: String] = [:],
-        preferredTextBlockName: String = "paragraph"
+        preferredTextBlockName: String = "paragraph",
+        textBlockNames: Set<String>? = nil
     ) {
         self.frameIndex = frameIndex
         self.tableAttributes = tableAttributes
@@ -385,6 +392,7 @@ struct ViewerDocument {
         self.trailingEmptyTextBlockCount = trailingEmptyTextBlockCount
         self.preparedTheme = preparedTheme
         self.preferredTextBlockName = preferredTextBlockName
+        self.textBlockNames = textBlockNames ?? EditorNodeTypes.headingTypes.union([preferredTextBlockName, "codeBlock"])
     }
 
     init(compiled: ViewerCompiledDocument) throws {
@@ -408,13 +416,17 @@ struct ViewerDocument {
         tableSourceIDs = [:]
         semanticKey = compiled.semanticKey()
         isEmpty = compiled.isEmpty()
-        retainedBytes = Int(compiled.retainedBytesDecimal()) ?? 0
         trailingEmptyTextBlockCount = Int(compiled.trailingEmptyTextBlockCount())
         preparedTheme = nil
         preferredTextBlockName = compiled.preferredTextBlockName()
+        textBlockNames = Set(compiled.textBlockNames())
+        let nativeTextBlockRetainedBytes = MemoryLayout<Set<String>>.stride
+            + textBlockNames.capacity * MemoryLayout<String>.stride
+            + textBlockNames.reduce(0) { $0 + $1.utf8.count }
+        retainedBytes = (Int(compiled.retainedBytesDecimal()) ?? 0) + nativeTextBlockRetainedBytes
         blocks = try Self.lowerElements(
             elements,
-            preferredTextBlockName: preferredTextBlockName,
+            textBlockNames: textBlockNames,
             tableRecords: tableRecords,
             isEmpty: isEmpty
         )
@@ -422,7 +434,7 @@ struct ViewerDocument {
 
     private static func lowerElements(
         _ elements: [FfiViewerElement],
-        preferredTextBlockName: String,
+        textBlockNames: Set<String>,
         tableRecords: [String: FfiViewerTable],
         frameIndex: EditorTableIndex? = nil,
         atomDocOffset: UInt32 = 0,
@@ -436,6 +448,7 @@ struct ViewerDocument {
         }
         struct Builder {
             let language: String?
+            let textAlign: String?
             let styleIdentity: Int
             let listStyleIdentity: Int?
             let listParentIdentity: Int
@@ -502,7 +515,7 @@ struct ViewerDocument {
                     throw ProseViewerError.hostContract(message: "The compiler returned a dangling semantic table reference.")
                 }
                 appendRenderableLeaf(nodeType: "table", inlines: [], isBlockAtom: true, table: table, frameTable: frameTable)
-            case let .blockStart(nodeType: nodeType, language: language, depth: depth, listContextJson: listContextJSON):
+            case let .blockStart(nodeType: nodeType, language: language, depth: depth, listContextJson: listContextJSON, textAlign: textAlign):
                 let listContext = Self.listContext(from: listContextJSON)
                 let parentIdentity = stack.last?.styleIdentity ?? -1
                 if listContext != nil, listStyleGroups[parentIdentity] == nil {
@@ -520,6 +533,7 @@ struct ViewerDocument {
                 stack.append(
                     Builder(
                         language: language,
+                        textAlign: textAlign,
                         styleIdentity: nextStyleIdentity,
                         listStyleIdentity: listContext == nil ? nil : listStyleGroups[parentIdentity],
                         listParentIdentity: parentIdentity,
@@ -549,7 +563,7 @@ struct ViewerDocument {
                 guard let builder = stack.popLast() else { continue }
                 if builder.listContext?.isLast == true { listStyleGroups.removeValue(forKey: builder.listParentIdentity) }
                 guard !builder.inlines.isEmpty ||
-                    builder.nodeType == preferredTextBlockName || builder.nodeType == "codeBlock"
+                    textBlockNames.contains(builder.nodeType)
                 else { continue }
                 let ancestors = stack + [builder]
                 let listContext = ancestors.reversed().compactMap(\.listContext).first
@@ -584,7 +598,8 @@ struct ViewerDocument {
                             guard let identity = builder.listStyleIdentity, let context = builder.listContext else { return [] }
                             return [ViewerStyleAncestor(identity: identity, nodeType: context.kind == "task" ? "taskList" : context.ordered ? "orderedList" : "bulletList")]
                         }(),
-                        language: builder.language
+                        language: builder.language,
+                        textAlign: builder.textAlign
                     )
                 )
                 if let listItemIdentity {
@@ -663,7 +678,7 @@ struct ViewerDocument {
         var plain = true
         for element in cell.elements {
             switch element {
-            case let .blockStart(nodeType, _, _, _):
+            case let .blockStart(nodeType, _, _, _, _):
                 if nodeType == "image" { plain = false }
                 depth += 1
             case .blockEnd:
@@ -717,7 +732,7 @@ struct ViewerDocument {
             semanticKey: "\(semanticKey):\(tableID):\(cell.sourceIndex):\(cell.contentKey)",
             blocks: try Self.lowerElements(
                 cell.elements,
-                preferredTextBlockName: preferredTextBlockName,
+                textBlockNames: textBlockNames,
                 tableRecords: tableRecords,
                 frameIndex: frameIndex,
                 atomDocOffset: atomDocOffset,
@@ -733,7 +748,8 @@ struct ViewerDocument {
             tableSourceIDs: Dictionary(uniqueKeysWithValues: identities.compactMap { key in
                 tableSourceIDs[key].map { (key, $0) }
             }),
-            preferredTextBlockName: preferredTextBlockName
+            preferredTextBlockName: preferredTextBlockName,
+            textBlockNames: textBlockNames
         )
     }
 
@@ -768,7 +784,8 @@ struct ViewerDocument {
             tableRecords: tableRecords,
             frameIndex: frameIndex,
             tableSourceIDs: tableSourceIDs,
-            preferredTextBlockName: preferredTextBlockName
+            preferredTextBlockName: preferredTextBlockName,
+            textBlockNames: textBlockNames
         )
     }
 

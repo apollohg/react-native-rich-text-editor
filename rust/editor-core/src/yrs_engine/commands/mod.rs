@@ -65,6 +65,10 @@ pub enum TypedCommand {
     ToggleHeading {
         level: u8,
     },
+    SetTextAlign {
+        align: crate::alignment::TextAlign,
+    },
+    UnsetTextAlign,
     ToggleCodeBlock,
     ToggleBlockquote,
     ApplyListType {
@@ -201,6 +205,8 @@ pub(crate) fn plan(
     command: TypedCommand,
 ) -> OperationResult<CommandPlan> {
     match command {
+        TypedCommand::SetTextAlign { align } => plan_alignment(context, Some(align)),
+        TypedCommand::UnsetTextAlign => plan_alignment(context, None),
         TypedCommand::DeleteBackward if tables::selection_is_a_cell_rectangle(&context) => {
             tables::plan_clear_cell_rectangle(context)
         }
@@ -347,4 +353,43 @@ pub(crate) fn table_action_plan_for_test(
         structural_representation_only: false,
     };
     table_action_transaction(&context, prepared)
+}
+
+fn plan_alignment(
+    context: PlanningContext<'_>,
+    align: Option<crate::alignment::TextAlign>,
+) -> OperationResult<CommandPlan> {
+    let selection = structure::selection(&context);
+    let targets = crate::alignment::targets(
+        context.document,
+        context.schema,
+        &selection,
+        context.resource_limits,
+    );
+    if targets.is_empty() {
+        return Ok(CommandPlan::NotApplicable);
+    }
+    let operations = targets
+        .into_iter()
+        .filter(|(_, node)| crate::alignment::value(node) != align)
+        .map(|(pos, node)| {
+            let mut attrs = node.attrs().clone();
+            attrs.insert(
+                crate::alignment::TEXT_ALIGN_ATTR.to_owned(),
+                align
+                    .map(|a| serde_json::Value::String(a.as_str().to_owned()))
+                    .unwrap_or(serde_json::Value::Null),
+            );
+            crate::command_planner::SemanticOperation::UpdateNodeAttrs { pos, attrs }
+        })
+        .collect();
+    text::semantic_transaction(
+        &context,
+        &selection,
+        crate::command_planner::SemanticCommandPlan {
+            operations,
+            selection_after: None,
+            history: crate::command_planner::SemanticCommandHistory::FormatBoundary,
+        },
+    )
 }

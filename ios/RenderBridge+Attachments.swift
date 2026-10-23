@@ -12,6 +12,7 @@ struct BlockContext {
     var styleStart: Int = 0
     var language: String?
     var sourceElementIndex: Int?
+    var textAlign: String?
 }
 
 // MARK: - HorizontalRuleAttachment

@@ -371,8 +371,8 @@ internal fun EditorEditText.applySelectionFromJSON(
                     ?: nodeSelectionDriver.scalarPositionForDoc(docPos)
                     ?: docPos.takeUnless { isTableCellInput }
                     ?: return
-                if (scalarPos == Int.MAX_VALUE) return
-                val localSelection = localScalarSelection(scalarPos, scalarPos + 1) ?: run {
+                val scalarEnd = nodeSelectionEndScalar(selection, scalarPos) ?: return
+                val localSelection = localScalarSelection(scalarPos, scalarEnd) ?: run {
                     if (rootTablePositionMap != null) rootTableSelectionInputBlocked = true
                     return
                 }

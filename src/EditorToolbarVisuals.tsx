@@ -48,6 +48,10 @@ export const MENU_BORDER = '#D1D1D6';
 export const MENU_SHADOW = '#000000';
 
 export const DEFAULT_GLYPH_ICONS: Record<EditorToolbarDefaultIconId, string> = {
+    alignLeft: '⇤',
+    alignCenter: '↔',
+    alignRight: '⇥',
+    alignReset: '↺',
     bold: 'B',
     italic: 'I',
     underline: 'U',
@@ -72,6 +76,10 @@ export const DEFAULT_GLYPH_ICONS: Record<EditorToolbarDefaultIconId, string> = {
 };
 
 export const DEFAULT_MATERIAL_DESIGN_ICONS: Partial<Record<EditorToolbarDefaultIconId, string>> = {
+    alignLeft: 'format-align-left',
+    alignCenter: 'format-align-center',
+    alignRight: 'format-align-right',
+    alignReset: 'format-clear',
     bold: 'format-bold',
     italic: 'format-italic',
     underline: 'format-underline',

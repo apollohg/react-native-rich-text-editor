@@ -1035,7 +1035,9 @@ mod engine_round_trip {
         assert!(
             cell_commands
                 .iter()
-                .filter(|(name, _)| !name.contains(TABLE_COMMAND_PREFIX))
+                .filter(|(name, _)| !name.contains(TABLE_COMMAND_PREFIX)
+                    && name.as_str() != "setTextAlign"
+                    && name.as_str() != "unsetTextAlign")
                 .all(|(_, applicable)| !*applicable),
             "no text structural command may be offered for a cell rectangle: {cell_commands:?}"
         );

@@ -29,6 +29,7 @@ internal fun inputElements(
                     "type",
                     "blockStart"
                 ).put("nodeType", element.nodeType).put("depth", element.depth.toInt())
+                element.textAlign?.let { value.put("textAlign", it) }
                 element.language?.let { value.put("language", it) }
                 element.listContextJson?.let { value.put("listContext", JSONObject(it)) }
             }

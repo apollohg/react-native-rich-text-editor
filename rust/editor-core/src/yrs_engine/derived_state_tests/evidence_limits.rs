@@ -437,6 +437,7 @@ fn active_state_retained_meter_has_exact_deep_capacity_depth_and_cardinality_bou
         }),
     );
     let state = ActiveState {
+            text_align: None,
         marks: [("bold".to_string(), true), ("link".to_string(), true)]
             .into_iter()
             .collect(),

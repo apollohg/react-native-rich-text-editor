@@ -375,7 +375,10 @@ extension EditorTextView: UITextInteractionDelegate {
         let anchor = selection.anchor
         let head = selection.head
         let sync: EditorV2SelectionSync?
-        if let image = selectedImageSelectionState() {
+        if let snapshot = EditorV2Registry.adapter(forLegacyId: editorId)?.cachedAtomicRenderSelection(),
+           let node = resolvedNodeSelection(snapshot), node.range == selectedRange {
+            sync = EditorV2Shadow.setNodeSelection(id: editorId, docPos: node.docPos)
+        } else if let image = selectedImageSelectionState() {
             sync = EditorV2Shadow.setNodeSelection(id: editorId, docPos: image.docPos)
         } else if let atom = selectedAtomAttachment() {
             sync = EditorV2Shadow.setNodeSelection(id: editorId, docPos: atom.docPos)
@@ -556,6 +559,38 @@ extension EditorTextView: UITextInteractionDelegate {
         return map.globalScalarRange(fromLocalScalar: fromLocal, toLocalScalar: toLocal)
     }
 
+    private struct ResolvedNodeSelection {
+        let docPos: UInt32
+        let scalar: UInt32
+        let range: NSRange
+    }
+
+    private func resolvedNodeSelection(_ selection: [String: Any]) -> ResolvedNodeSelection? {
+        guard selection["type"] as? String == "node",
+              let pos = v2ExactUInt32(selection["pos"] as? NSNumber) else { return nil }
+        let startScalar: UInt32
+        if let value = selection["posScalar"] {
+            guard let scalar = v2ExactUInt32(value as? NSNumber) else { return nil }
+            startScalar = scalar
+        } else {
+            startScalar = EditorV2Shadow.docToScalar(id: editorId, docPos: pos)
+        }
+        var scalarSelection = selection
+        scalarSelection["posScalar"] = startScalar
+        guard let bounds = EditorNodeSelection.scalarRange(scalarSelection) else { return nil }
+        func localScalar(_ scalar: UInt32) -> UInt32? {
+            guard let map = tableCellPositionMap else { return scalar }
+            guard let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
+                  adapter.baseDocumentRevision == map.binding.documentRevision,
+                  adapter.positionEpoch == map.binding.positionEpoch else { return nil }
+            return map.localScalar(forGlobalScalar: scalar, currentRevision: adapter.baseDocumentRevision, currentEpoch: adapter.positionEpoch)
+        }
+        guard let localStart = localScalar(bounds.start), let localEnd = localScalar(bounds.end) else { return nil }
+        let start = PositionBridge.scalarToUtf16Offset(localStart, in: self)
+        let length = max(0, PositionBridge.scalarToUtf16Offset(localEnd, in: self) - start)
+        return ResolvedNodeSelection(docPos: pos, scalar: startScalar, range: NSRange(location: start, length: length))
+    }
+
     /// Apply a selection from a parsed JSON selection object.
     ///
     /// The selection JSON matches the format from `serialize_editor_update`:
@@ -672,33 +707,12 @@ extension EditorTextView: UITextInteractionDelegate {
 
         case "node":
             let resolveStartedAt = DispatchTime.now().uptimeNanoseconds
-            guard let pos = v2ExactUInt32(selection["pos"] as? NSNumber) else {
+            guard let node = resolvedNodeSelection(selection) else {
                 return SelectionApplyTrace(totalNanos: 0, resolveNanos: 0, assignmentNanos: 0, chromeNanos: 0)
             }
-            let posScalar: UInt32
-            if let rawPosScalar = selection["posScalar"] {
-                guard let exactPosScalar = v2ExactUInt32(rawPosScalar as? NSNumber) else {
-                    return SelectionApplyTrace(totalNanos: 0, resolveNanos: 0, assignmentNanos: 0, chromeNanos: 0)
-                }
-                posScalar = exactPosScalar
-            } else {
-                posScalar = EditorV2Shadow.docToScalar(id: editorId, docPos: pos)
-            }
-            let localScalar: UInt32
-            if let map = tableCellPositionMap {
-                guard let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
-                      adapter.baseDocumentRevision == map.binding.documentRevision,
-                      adapter.positionEpoch == map.binding.positionEpoch,
-                      let resolved = map.localScalar(forGlobalScalar: posScalar, currentRevision: adapter.baseDocumentRevision, currentEpoch: adapter.positionEpoch)
-                else {
-                    return SelectionApplyTrace(totalNanos: 0, resolveNanos: 0, assignmentNanos: 0, chromeNanos: 0)
-                }
-                localScalar = resolved
-            } else {
-                localScalar = posScalar
-            }
-            let startUtf16 = PositionBridge.scalarToUtf16Offset(localScalar, in: self)
-            let targetRange = NSRange(location: startUtf16, length: 1)
+            let pos = node.docPos
+            let posScalar = node.scalar
+            let targetRange = node.range
             let resolveNanos = DispatchTime.now().uptimeNanoseconds - resolveStartedAt
             let assignmentStartedAt = DispatchTime.now().uptimeNanoseconds
             logicalSelectionScalarRange = nil

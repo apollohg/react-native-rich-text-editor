@@ -73,36 +73,36 @@ struct PositionEnvelope {
 
 #[derive(Debug, Clone, Copy, serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct CellPositionEnvelope {
+struct SelectionPositionEnvelope {
     offset: u32,
-    kind: CellOffsetKindEnvelope,
+    kind: SelectionOffsetKindEnvelope,
     #[serde(default)]
     affinity: Option<AffinityEnvelope>,
 }
 
 #[derive(Debug, Clone, Copy, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-enum CellOffsetKindEnvelope {
+enum SelectionOffsetKindEnvelope {
     Scalar,
     Utf16,
     Document,
 }
 
-impl From<CellPositionEnvelope> for crate::yrs_engine::CellSelectionPoint {
-    fn from(position: CellPositionEnvelope) -> Self {
+impl From<SelectionPositionEnvelope> for crate::yrs_engine::CellSelectionPoint {
+    fn from(position: SelectionPositionEnvelope) -> Self {
         let affinity = position_affinity(position.affinity);
         match position.kind {
-            CellOffsetKindEnvelope::Scalar => Self::Editor(RevisionedPosition {
+            SelectionOffsetKindEnvelope::Scalar => Self::Editor(RevisionedPosition {
                 offset: position.offset,
                 kind: EditorOffsetKind::Scalar,
                 affinity,
             }),
-            CellOffsetKindEnvelope::Utf16 => Self::Editor(RevisionedPosition {
+            SelectionOffsetKindEnvelope::Utf16 => Self::Editor(RevisionedPosition {
                 offset: position.offset,
                 kind: EditorOffsetKind::Utf16,
                 affinity,
             }),
-            CellOffsetKindEnvelope::Document => Self::Document {
+            SelectionOffsetKindEnvelope::Document => Self::Document {
                 opening: position.offset,
                 affinity,
             },
@@ -235,6 +235,8 @@ enum CommandEnvelope {
     ToggleHeading {
         level: u8,
     },
+    SetTextAlign { align: crate::alignment::TextAlign },
+    UnsetTextAlign,
     ToggleCodeBlock,
     ToggleBlockquote,
     ApplyListType {
@@ -539,6 +541,8 @@ impl From<CommandEnvelope> for TypedCommand {
                 at: at.map(Into::into),
             },
             CommandEnvelope::InsertNode { node_type } => Self::InsertNode { node_type },
+            CommandEnvelope::SetTextAlign { align } => Self::SetTextAlign { align },
+            CommandEnvelope::UnsetTextAlign => Self::UnsetTextAlign,
             CommandEnvelope::UpdateNodeAttrs { doc_pos, attrs } => {
                 Self::UpdateNodeAttrs { doc_pos, attrs }
             }
@@ -608,13 +612,13 @@ enum SelectionEnvelope {
         head: PositionEnvelope,
     },
     Node {
-        at: PositionEnvelope,
+        at: SelectionPositionEnvelope,
     },
     Cell {
         #[serde(rename = "anchorCell")]
-        anchor_cell: CellPositionEnvelope,
+        anchor_cell: SelectionPositionEnvelope,
         #[serde(rename = "headCell")]
-        head_cell: CellPositionEnvelope,
+        head_cell: SelectionPositionEnvelope,
     },
     Atom {
         #[serde(rename = "docPos")]

@@ -70,9 +70,31 @@ pub(super) fn planned_relative_selection<T: yrs::ReadTxn>(
     };
     let relative = match selection {
         yrs_engine::SelectionInput::Text { anchor, head } => text(*anchor, *head)?,
-        yrs_engine::SelectionInput::Node { at } => yrs_engine::RelativeSelection::Node {
-            point: relative_point("selection.at", *at)?,
-        },
+        yrs_engine::SelectionInput::Node { at } => {
+            let opening = resolve_node_opening(
+                context.document,
+                context.schema,
+                *at,
+                rendered,
+                map,
+                transaction.request_id,
+            )?;
+            let point = yrs_engine::position::doc_pos_to_relative_point(
+                txn,
+                fragment,
+                opening,
+                at.affinity(),
+                context.schema,
+            )
+            .ok_or_else(|| {
+                OperationError::selection_position_invalid(
+                    transaction.request_id,
+                    "selection.at",
+                    "node selection opening cannot be represented with the requested Yrs affinity",
+                )
+            })?;
+            yrs_engine::RelativeSelection::Node { point }
+        }
         yrs_engine::SelectionInput::Cell { anchor, head } => {
             let index = TableProjectionIndex::derive_or_fallback(
                 context.document,
@@ -263,16 +285,15 @@ pub(super) fn selection_plan(
                 ),
                 yrs_engine::SelectionInput::Node { at } => Selection::node(map_position(
                     composed_map,
-                    resolve_position(
-                        request_id,
-                        None,
-                        "selection.at",
+                    resolve_node_opening(
+                        context.document,
+                        context.schema,
                         *at,
                         rendered_text,
                         base_position_map,
-                        context.document,
+                        request_id,
                     )?,
-                    at.affinity,
+                    at.affinity(),
                 )),
                 yrs_engine::SelectionInput::Cell { anchor, head } => {
                     let index = TableProjectionIndex::derive_or_fallback(
@@ -314,13 +335,15 @@ pub(super) fn selection_plan(
 
     if let Some(Selection::Node { pos }) = candidate.as_ref() {
         let pos = *pos;
-        if !selectable_void_at(preview.root(), pos, 0, context.schema) {
+        if let Some(opening) = node_selection_position(preview, context.schema, pos) {
+            candidate = Some(Selection::node(opening));
+        } else {
             match intent {
                 SelectionIntent::Set(yrs_engine::SelectionInput::Node { .. }) => {
                     return Err(OperationError::selection_position_invalid(
                         request_id,
                         "selection.at",
-                        "node selection must target a selectable void or atom node",
+                        "node selection must target a selectable atom, paragraph, or heading",
                     ));
                 }
                 SelectionIntent::Preserve => {
@@ -466,4 +489,67 @@ pub(crate) fn selectable_void_at(
         offset = offset.saturating_add(child.node_size());
     }
     false
+}
+
+pub(crate) fn node_selection_position(
+    document: &Document,
+    schema: &Schema,
+    position: u32,
+) -> Option<u32> {
+    if selectable_void_at(document.root(), position, 0, schema) {
+        return Some(position);
+    }
+    if crate::yrs_engine::compiler::positions::direct_attribute_target(document, position)
+        .is_some_and(|node| {
+            schema
+                .node(node.node_type())
+                .is_some_and(crate::alignment::eligible)
+        })
+    {
+        return Some(position);
+    }
+    let resolved = document.resolve(position).ok()?;
+    let parent = resolved.parent(document);
+    (resolved.parent_offset == 0
+        && !resolved.node_path.is_empty()
+        && schema
+            .node(parent.node_type())
+            .is_some_and(crate::alignment::eligible))
+    .then(|| position.saturating_sub(1))
+}
+
+pub(crate) fn resolve_node_opening(
+    document: &Document,
+    schema: &Schema,
+    point: yrs_engine::NodeSelectionPoint,
+    rendered: &str,
+    map: &PositionMap,
+    request_id: u64,
+) -> OperationResult<u32> {
+    let invalid = || {
+        OperationError::selection_position_invalid(
+            request_id,
+            "selection.at",
+            "node selection must target a selectable atom, paragraph, or heading opening",
+        )
+    };
+    match point {
+        yrs_engine::NodeSelectionPoint::Document { opening, .. } => {
+            node_selection_position(document, schema, opening)
+                .filter(|canonical| *canonical == opening)
+                .ok_or_else(invalid)
+        }
+        yrs_engine::NodeSelectionPoint::Editor(point) => {
+            let position = resolve_position(
+                request_id,
+                None,
+                "selection.at",
+                point,
+                rendered,
+                map,
+                document,
+            )?;
+            node_selection_position(document, schema, position).ok_or_else(invalid)
+        }
+    }
 }

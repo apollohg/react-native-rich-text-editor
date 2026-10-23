@@ -724,6 +724,7 @@ fn generate_block_inner(
                 None
             };
             elements.push(RenderElement::BlockStart {
+                text_align: crate::alignment::render_value(node, schema),
                 node_type: node.node_type().to_string(),
                 language: node
                     .attrs()
@@ -753,6 +754,7 @@ fn generate_block_inner(
         }
         Some(NodeRole::TextBlock) => {
             elements.push(RenderElement::BlockStart {
+                text_align: crate::alignment::render_value(node, schema),
                 node_type: node.node_type().to_string(),
                 language: node
                     .attrs()
@@ -797,6 +799,7 @@ fn generate_block_inner(
         }
         Some(NodeRole::Block) => {
             elements.push(RenderElement::BlockStart {
+                text_align: crate::alignment::render_value(node, schema),
                 node_type: node.node_type().to_string(),
                 language: node
                     .attrs()

@@ -223,7 +223,12 @@ fn map_scalar_selection(
 
 /// The legacy update-JSON selection shape: doc positions plus the scalar
 /// round-trip (`anchorScalar`/`headScalar`).
-fn selection_json(document: &Document, position_map: &PositionMap, selection: &Selection) -> Value {
+fn selection_json(
+    document: &Document,
+    position_map: &PositionMap,
+    schema: &Schema,
+    selection: &Selection,
+) -> Value {
     let scalar = match selection {
         Selection::Text { anchor, head } => Selection::text(
             position_map.doc_to_scalar(*anchor, document),
@@ -233,7 +238,9 @@ fn selection_json(document: &Document, position_map: &PositionMap, selection: &S
         Selection::Cell { anchor, head } => Selection::cell(*anchor, *head),
         Selection::All => Selection::All,
     };
-    selection_to_json(selection, Some(&scalar))
+    let mut value = selection_to_json(selection, Some(&scalar));
+    append_node_extent(&mut value, document, position_map, schema, selection);
+    value
 }
 
 fn resolved_selection_to_legacy(selection: &ResolvedSelection) -> Selection {
@@ -245,8 +252,13 @@ fn resolved_selection_to_legacy(selection: &ResolvedSelection) -> Selection {
     }
 }
 
-fn resolved_selection_json(selection: &ResolvedSelection) -> Value {
-    match selection {
+fn resolved_selection_json(
+    selection: &ResolvedSelection,
+    document: &Document,
+    position_map: &PositionMap,
+    schema: &Schema,
+) -> Value {
+    let mut value = match selection {
         ResolvedSelection::Text { anchor, head } => serde_json::json!({
             "type": "text",
             "anchor": anchor.document,
@@ -265,6 +277,31 @@ fn resolved_selection_json(selection: &ResolvedSelection) -> Value {
             "headCell": head.document,
         }),
         ResolvedSelection::All => serde_json::json!({ "type": "all" }),
+    };
+    append_node_extent(
+        &mut value,
+        document,
+        position_map,
+        schema,
+        &resolved_selection_to_legacy(selection),
+    );
+    value
+}
+
+fn append_node_extent(
+    value: &mut Value,
+    document: &Document,
+    position_map: &PositionMap,
+    schema: &Schema,
+    selection: &Selection,
+) {
+    if let Selection::Node { pos } = selection {
+        if let Some((start, end)) =
+            crate::alignment::selection_scalar_range(document, schema, position_map, *pos)
+        {
+            value["posScalar"] = serde_json::json!(start);
+            value["endScalar"] = serde_json::json!(end);
+        }
     }
 }
 
@@ -434,14 +471,14 @@ fn render_state_fields(
     let (selection, selection_value, stored_marks) = match mirror {
         Some((anchor, head)) => {
             let selection = map_scalar_selection(document, position_map, anchor, head);
-            let value = selection_json(document, position_map, &selection);
+            let value = selection_json(document, position_map, engine.schema(), &selection);
             (selection, value, None)
         }
         None => {
             let resolved = engine.resolved_selection().ok_or_else(engine_not_ready)?;
             (
                 resolved_selection_to_legacy(resolved),
-                resolved_selection_json(resolved),
+                resolved_selection_json(resolved, document, position_map, schema),
                 engine.stored_marks(),
             )
         }
@@ -527,7 +564,7 @@ pub fn editor_v2_resolve_scalar_selection(
         let document = engine.document().ok_or_else(engine_not_ready)?;
         let position_map = engine.position_map().ok_or_else(engine_not_ready)?;
         let selection = map_scalar_selection(document, position_map, scalar_anchor, scalar_head);
-        Ok(selection_json(document, position_map, &selection).to_string())
+        Ok(selection_json(document, position_map, engine.schema(), &selection).to_string())
     }))
 }
 
@@ -794,6 +831,7 @@ fn serialize_render_element(
             obj
         }
         crate::render::RenderElement::BlockStart {
+            text_align,
             node_type,
             language,
             depth,
@@ -804,6 +842,9 @@ fn serialize_render_element(
                 "nodeType": node_type,
                 "depth": depth,
             });
+            if let Some(align) = text_align {
+                obj["textAlign"] = serde_json::json!(align);
+            }
             if let Some(language) = language {
                 obj["language"] = serde_json::Value::String(language.clone());
             }
@@ -892,6 +933,7 @@ fn serialize_active_state(active_state: &crate::editor_state::ActiveState) -> se
     serde_json::json!({
         "marks": &active_state.marks,
         "markAttrs": &active_state.mark_attrs,
+        "textAlign": &active_state.text_align,
         "nodes": &active_state.nodes,
         "commands": &active_state.commands,
         "allowedMarks": &active_state.allowed_marks,

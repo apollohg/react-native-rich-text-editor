@@ -84,6 +84,7 @@
           { "name": "semantic_key", "checksum": 2241 },
           { "name": "table_attributes", "checksum": 60903 },
           { "name": "table_records", "checksum": 27911 },
+          { "name": "text_block_names", "checksum": 7294 },
           { "name": "trailing_empty_text_block_count", "checksum": 11698 }
         ]
       }

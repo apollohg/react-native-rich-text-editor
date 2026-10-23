@@ -436,15 +436,15 @@ private struct EditorStyledSpan {
 
 extension RenderBridge {
     static func closeStyledBlock(_ context: BlockContext, ancestors: [BlockContext], in result: NSMutableAttributedString, theme: EditorTheme?, baseFont: UIFont, textColor: UIColor, omitBottomMargin: Bool = false) {
-        guard let sheet = theme?.styleSheet else { return }
+        let sheet = theme?.styleSheet
         var start = min(context.styleStart, result.length)
         while start < result.length, result.attribute(RenderBridgeAttributes.blockBoundary, at: start, effectiveRange: nil) != nil { start += 1 }
-        if start == result.length, !isTransparentContainer(context.nodeType), !isListItemNodeType(context.nodeType) {
+        if sheet != nil || context.textAlign != nil, start == result.length, !isTransparentContainer(context.nodeType), !isListItemNodeType(context.nodeType) {
             var attributes = applyBlockStyle(to: defaultAttributes(baseFont: resolvedFont(for: ancestors + [context], baseFont: baseFont, theme: theme), textColor: resolvedTextColor(for: ancestors + [context], textColor: textColor, theme: theme)), blockStack: ancestors + [context], theme: theme)
             attributes[RenderBridgeAttributes.syntheticPlaceholder] = true
             result.append(NSAttributedString(string: "\u{200B}", attributes: attributes))
         }
-        guard start < result.length else { return }
+        guard let sheet, start < result.length else { return }
         let range = NSRange(location: start, length: result.length - start)
         let outer = ancestors.enumerated().reduce(UIEdgeInsets.zero) { total, entry in
             total.adding(sheet.box(entry.element.nodeType, ancestors: ancestors.prefix(entry.offset).map(\.nodeType)).outerInsets)

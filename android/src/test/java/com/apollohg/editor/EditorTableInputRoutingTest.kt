@@ -91,6 +91,50 @@ class EditorTableInputRoutingTest {
         }
 
     @Test
+    fun `incoming node endpoint selects complete local cell text without scalar drift`() =
+        withCellInput { input, _, _, backend ->
+            input.applySelectionFromJSON(
+                JSONObject().put("type", "node").put("pos", 1)
+                    .put("posScalar", 40).put("endScalar", 44),
+                "4"
+            )
+            assertEquals(0, input.selectionStart)
+            assertEquals("a😀bc".length, input.selectionEnd)
+            backend.calls.clear()
+            input.syncCurrentSelectionToRust()
+            assertTrue("Cell node selection must remain engine-owned", backend.calls.isEmpty())
+        }
+
+    @Test
+    fun `incoming empty cell node endpoint selects its synthesized placeholder`() =
+        withCellInput { input, coordinator, _, _ ->
+            assertTrue(coordinator.invalidateBinding())
+            input.isApplyingRustState = true
+            input.setText(LayoutConstants.SYNTHETIC_PLACEHOLDER_CHARACTER)
+            input.isApplyingRustState = false
+            input.lastAuthorizedText = LayoutConstants.SYNTHETIC_PLACEHOLDER_CHARACTER
+            val binding = TableCellPositionMap.Binding("table", 10, "4", "9")
+            val map = TableCellPositionMap(binding, listOf(TableCellPositionMap.Segment(0, 2, 40)))
+            assertTrue(
+                coordinator.bind(
+                    EditorTableInputCoordinator.Target(binding),
+                    map,
+                    "4",
+                    "9",
+                    authority = { true },
+                    updateConsumer = { _, _, _ -> true }
+                )
+            )
+            input.applySelectionFromJSON(
+                JSONObject().put("type", "node").put("pos", 1)
+                    .put("posScalar", 40).put("endScalar", 41),
+                "4"
+            )
+            assertEquals(0, input.selectionStart)
+            assertEquals(LayoutConstants.SYNTHETIC_PLACEHOLDER_CHARACTER.length, input.selectionEnd)
+        }
+
+    @Test
     fun `cell input converts UTF-16 emoji coordinates and preserves reversed selection`() =
         withCellInput {
                 input,

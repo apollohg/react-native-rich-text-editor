@@ -342,6 +342,9 @@ internal fun RenderBridge.appendElements(
                     markerPending = isListItemContainer,
                     renderStart = state.result.length,
                     language = element.optNullableString("language"),
+                    textAlign = element.optNullableString("textAlign")?.takeIf {
+                        EditorTextAlignment.fromWireValue(it) != null
+                    },
                     sourceElementIndex = if (observeSourceElements &&
                         !isListItemNodeType(nodeType) && !isTransparentContainer
                     ) {
@@ -620,22 +623,21 @@ internal fun RenderBridge.appendElements(
                                     flags
                                 )
                             }
-                            val alignment = sheet.resolveText(
-                                endedBlock.nodeType,
-                                state.blockStack.map {
-                                    it.nodeType
-                                }
-                            ).textAlign
-                            if (alignment != null &&
-                                !isTransparentContainer(endedBlock.nodeType)
-                            ) {
-                                state.result.applyPhysicalTextAlignment(
-                                    alignment,
-                                    start,
-                                    state.result.length
-                                )
-                            }
                         }
+                    }
+                    val alignment = endedBlock.textAlign ?: theme?.styleSheet?.resolveText(
+                        endedBlock.nodeType,
+                        state.blockStack.map { it.nodeType }
+                    )?.textAlign ?: theme?.effectiveTextStyle(
+                        endedBlock.nodeType,
+                        state.blockStack.any { it.nodeType == "blockquote" }
+                    )?.textAlign
+                    if (alignment != null && !isTransparentContainer(endedBlock.nodeType)) {
+                        state.result.applyPhysicalTextAlignment(
+                            alignment,
+                            endedBlock.renderStart,
+                            state.result.length
+                        )
                     }
                     if (endedBlock.listContext != null) {
                         val spacing = if (endedBlock.listContext.optBoolean("isLast", false)) {

@@ -362,9 +362,9 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
     it('accepts the corrected physical Pixel commit snapshot with the exact public fields', () => {
         const updateJson = JSON.stringify(capturedPixelCommitSnapshot);
         const payload = { editorId: '1', documentRevision: capturedPixelFrame.documentVersion as string, updateJson };
-        expect(normalizeNativeEditorV2RenderUpdateValue(updateJson)).toEqual(capturedPixelCommitSnapshot);
+        expect(normalizeNativeEditorV2RenderUpdateValue(updateJson)).toEqual({ ...capturedPixelCommitSnapshot, activeState: { ...capturedPixelCommitSnapshot.activeState, textAlign: null } });
         const accepted = acceptNativeCommitPayload(payload, payload.editorId, null);
-        expect(accepted).toEqual({ documentRevision: payload.documentRevision, snapshot: capturedPixelCommitSnapshot });
+        expect(accepted).toEqual({ documentRevision: payload.documentRevision, snapshot: { ...capturedPixelCommitSnapshot, activeState: { ...capturedPixelCommitSnapshot.activeState, textAlign: null } } });
 
         expect(accepted?.snapshot.selection).toEqual({
             type: 'text', anchor: 770, head: 770, anchorScalar: 765, headScalar: 765,
@@ -598,7 +598,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         expect(onContentChange).toHaveBeenCalledWith('<p>hello!</p>');
         expect(onContentChangeJSON).toHaveBeenCalledWith({ type: 'doc', content: [ { type: 'paragraph', content: [ { type: 'text', text: 'hello!' } ] } ] });
         expect(onHistoryStateChange).toHaveBeenCalledWith({ canUndo: true, canRedo: false });
-        expect(onActiveStateChange).toHaveBeenLastCalledWith(atomicUpdate.activeState);
+        expect(onActiveStateChange).toHaveBeenLastCalledWith({ ...atomicUpdate.activeState, textAlign: null });
         expect(onLocalCommit).toHaveBeenCalledTimes(1);
         expect(mockNativeModule.editorV2GetContentSnapshot).toHaveBeenCalled();
         expect(getByTestId('native-editor-view').props.editorUpdateJson).toBeUndefined();

@@ -34,13 +34,16 @@ pub struct RevisionedPosition {
     pub affinity: Affinity,
 }
 
+pub type NodeSelectionPoint = StructuralSelectionPoint;
+pub type CellSelectionPoint = StructuralSelectionPoint;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CellSelectionPoint {
+pub enum StructuralSelectionPoint {
     Editor(RevisionedPosition),
     Document { opening: u32, affinity: Affinity },
 }
 
-impl CellSelectionPoint {
+impl StructuralSelectionPoint {
     pub fn affinity(self) -> Affinity {
         match self {
             Self::Editor(point) => point.affinity,
@@ -59,7 +62,7 @@ impl CellSelectionPoint {
     }
 }
 
-impl From<RevisionedPosition> for CellSelectionPoint {
+impl From<RevisionedPosition> for StructuralSelectionPoint {
     fn from(point: RevisionedPosition) -> Self {
         Self::Editor(point)
     }
@@ -115,7 +118,7 @@ pub enum SelectionInput {
         head: RevisionedPosition,
     },
     Node {
-        at: RevisionedPosition,
+        at: NodeSelectionPoint,
     },
     Cell {
         anchor: CellSelectionPoint,
@@ -441,6 +444,8 @@ pub(crate) fn active_state_bytes(state: &ActiveState) -> usize {
         })
     };
     bool_map(&state.marks)
+        .saturating_add(1)
+        .saturating_add(state.text_align.as_deref().map_or(0, string_bytes))
         .saturating_add(attrs)
         .saturating_add(bool_map(&state.nodes))
         .saturating_add(bool_map(&state.commands))
@@ -590,6 +595,7 @@ mod result_meter_tests {
                 },
             },
             active_state: ActiveState {
+                text_align: Some("center".into()),
                 marks: HashMap::from([("bold".into(), true)]),
                 mark_attrs: HashMap::from([(
                     "bold".into(),
@@ -613,7 +619,7 @@ mod result_meter_tests {
             }]]),
         };
 
-        assert_eq!(result.derived_output_bytes(), 225);
+        assert_eq!(result.derived_output_bytes(), 240);
     }
 }
 

@@ -4,7 +4,7 @@ import XCTest
 extension RenderBridgeTests {
     func testNativeCellPreservesHardBreakAndVoidBlockAlongsideOpaqueAtom() throws {
         let elements: [FfiViewerElement] = [
-            .blockStart(nodeType: "paragraph", language: nil, depth: 0, listContextJson: nil),
+            .blockStart(nodeType: "paragraph", language: nil, depth: 0, listContextJson: nil, textAlign: nil),
             .textRun(text: "x", marks: []),
             .inlineAtom(nodeType: "hardBreak", docPos: 3, attrsJson: "{}", label: "hardBreak"),
             .inlineAtom(nodeType: "mention", docPos: 4, attrsJson: "{}", label: "Ada"), .blockEnd,
@@ -613,4 +613,24 @@ extension RenderBridgeTests {
         )
     }
 
+}
+
+extension RenderBridgeTests {
+    func testNativeTableCellAlignmentSurvivesPreparedWireAndResets() throws {
+        for alignment in ["left", "center", "right"] {
+            let elements: [FfiViewerElement] = [
+                .blockStart(nodeType: "paragraph", language: nil, depth: 0, listContextJson: nil, textAlign: alignment),
+                .textRun(text: "שלום", marks: []), .blockEnd,
+                .blockStart(nodeType: "paragraph", language: nil, depth: 0, listContextJson: nil, textAlign: nil),
+                .textRun(text: "reset", marks: []), .blockEnd
+            ]
+            let input = try XCTUnwrap(RenderBridge.inputElements(elements, voidElementIndices: [], cellDocStart: 10))
+            XCTAssertEqual(input[0]["textAlign"] as? String, alignment)
+            let rendered = RenderBridge.renderElements(fromArray: input, baseFont: baseFont, textColor: textColor)
+            let expected: NSTextAlignment = alignment == "left" ? .left : alignment == "center" ? .center : .right
+            XCTAssertEqual((rendered.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle)?.alignment, expected)
+            let resetOffset = (rendered.string as NSString).range(of: "reset").location
+            XCTAssertEqual((rendered.attribute(.paragraphStyle, at: resetOffset, effectiveRange: nil) as? NSParagraphStyle)?.alignment, .natural)
+        }
+    }
 }

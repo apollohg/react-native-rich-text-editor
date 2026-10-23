@@ -114,6 +114,7 @@ fn test_plain_paragraph() {
         elements,
         vec![
             RenderElement::BlockStart {
+                text_align: None,
                 node_type: "paragraph".to_string(),
                 language: None,
                 depth: 0,
@@ -147,6 +148,7 @@ fn test_formatted_text_partial_bold() {
         elements,
         vec![
             RenderElement::BlockStart {
+                text_align: None,
                 node_type: "paragraph".to_string(),
                 language: None,
                 depth: 0,
@@ -187,6 +189,7 @@ fn test_multiple_marks_bold_italic() {
         elements,
         vec![
             RenderElement::BlockStart {
+                text_align: None,
                 node_type: "paragraph".to_string(),
                 language: None,
                 depth: 0,
@@ -217,6 +220,7 @@ fn test_two_paragraphs() {
         elements,
         vec![
             RenderElement::BlockStart {
+                text_align: None,
                 node_type: "paragraph".to_string(),
                 language: None,
                 depth: 0,
@@ -228,6 +232,7 @@ fn test_two_paragraphs() {
             },
             RenderElement::BlockEnd,
             RenderElement::BlockStart {
+                text_align: None,
                 node_type: "paragraph".to_string(),
                 language: None,
                 depth: 0,
@@ -329,6 +334,7 @@ fn test_bullet_list_two_items() {
         vec![
             // First list item
             RenderElement::BlockStart {
+                text_align: None,
                 node_type: "listItem".to_string(),
                 language: None,
                 depth: 0,
@@ -344,6 +350,7 @@ fn test_bullet_list_two_items() {
                 })),
             },
             RenderElement::BlockStart {
+                text_align: None,
                 node_type: "paragraph".to_string(),
                 language: None,
                 depth: 1,
@@ -357,6 +364,7 @@ fn test_bullet_list_two_items() {
             RenderElement::BlockEnd,
             // Second list item
             RenderElement::BlockStart {
+                text_align: None,
                 node_type: "listItem".to_string(),
                 language: None,
                 depth: 0,
@@ -372,6 +380,7 @@ fn test_bullet_list_two_items() {
                 })),
             },
             RenderElement::BlockStart {
+                text_align: None,
                 node_type: "paragraph".to_string(),
                 language: None,
                 depth: 1,
@@ -407,6 +416,7 @@ fn test_ordered_list_start_3() {
     assert_eq!(
         *first_block,
         RenderElement::BlockStart {
+            text_align: None,
             node_type: "listItem".to_string(),
             language: None,
             depth: 0,
@@ -443,6 +453,7 @@ fn test_ordered_list_start_3() {
     assert_eq!(
         *second_block,
         RenderElement::BlockStart {
+            text_align: None,
             node_type: "listItem".to_string(),
             language: None,
             depth: 0,
@@ -473,6 +484,7 @@ fn test_ordered_list_start_requires_exact_u32() {
     assert_eq!(
         max_elements[0],
         RenderElement::BlockStart {
+            text_align: None,
             node_type: "listItem".to_string(),
             language: None,
             depth: 0,
@@ -516,6 +528,7 @@ fn test_hard_break_in_paragraph() {
         elements,
         vec![
             RenderElement::BlockStart {
+                text_align: None,
                 node_type: "paragraph".to_string(),
                 language: None,
                 depth: 0,
@@ -557,6 +570,7 @@ fn test_horizontal_rule_between_paragraphs() {
         elements,
         vec![
             RenderElement::BlockStart {
+                text_align: None,
                 node_type: "paragraph".to_string(),
                 language: None,
                 depth: 0,
@@ -573,6 +587,7 @@ fn test_horizontal_rule_between_paragraphs() {
                 attrs: Box::new(HashMap::new()),
             },
             RenderElement::BlockStart {
+                text_align: None,
                 node_type: "paragraph".to_string(),
                 language: None,
                 depth: 0,
@@ -600,6 +615,7 @@ fn test_empty_paragraph() {
         elements,
         vec![
             RenderElement::BlockStart {
+                text_align:None,
                 node_type: "paragraph".to_string(),
                 language: None,
                 depth: 0,
@@ -639,6 +655,7 @@ fn test_incremental_regenerate_first_block_only() {
         patches[0].1,
         vec![
             RenderElement::BlockStart {
+                text_align: None,
                 node_type: "paragraph".to_string(),
                 language: None,
                 depth: 0,
@@ -699,6 +716,7 @@ fn test_incremental_middle_block() {
         patches[0].1,
         vec![
             RenderElement::BlockStart {
+                text_align: None,
                 node_type: "paragraph".to_string(),
                 language: None,
                 depth: 0,
@@ -730,6 +748,7 @@ fn test_list_item_paragraph_depth() {
     assert_eq!(
         elements[0],
         RenderElement::BlockStart {
+            text_align: None,
             node_type: "listItem".to_string(),
             language: None,
             depth: 0,
@@ -749,6 +768,7 @@ fn test_list_item_paragraph_depth() {
     assert_eq!(
         elements[1],
         RenderElement::BlockStart {
+            text_align: None,
             node_type: "paragraph".to_string(),
             language: None,
             depth: 1,
@@ -860,6 +880,7 @@ fn test_ordered_list_default_start() {
     assert_eq!(
         *first_li,
         RenderElement::BlockStart {
+            text_align: None,
             node_type: "listItem".to_string(),
             language: None,
             depth: 0,

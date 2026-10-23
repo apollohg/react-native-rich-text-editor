@@ -227,8 +227,8 @@ final class ViewerTableTests: XCTestCase {
 
     func testBackgroundCellEligibilityMatchesLoweredContent() throws {
         let document = ViewerDocument(semanticKey: "eligibility", blocks: [], isEmpty: true, retainedBytes: 0)
-        let paragraph = FfiViewerElement.blockStart(nodeType: "paragraph", language: nil, depth: 0, listContextJson: nil)
-        let image = FfiViewerElement.blockStart(nodeType: "image", language: nil, depth: 0, listContextJson: nil)
+        let paragraph = FfiViewerElement.blockStart(nodeType: "paragraph", language: nil, depth: 0, listContextJson: nil, textAlign: nil)
+        let image = FfiViewerElement.blockStart(nodeType: "image", language: nil, depth: 0, listContextJson: nil, textAlign: nil)
         let text = FfiViewerElement.textRun(text: "café 🦀 العربية", marks: [])
         let variants: [(String, [FfiViewerElement])] = [
             ("empty", []), ("plain", [paragraph, text, .blockEnd]),
@@ -2393,7 +2393,8 @@ final class ViewerTableTests: XCTestCase {
             trailingEmptyTextBlockCount: document.trailingEmptyTextBlockCount,
             tableAttributes: document.tableAttributes,
             tableRecords: document.tableRecords.merging(["t\(sourceTable.tablePos)": failedTable]) { _, replacement in replacement },
-            preferredTextBlockName: document.preferredTextBlockName
+            preferredTextBlockName: document.preferredTextBlockName,
+            textBlockNames: document.textBlockNames
         )
         let layout = try prepare(failureDocument)
         let table = try XCTUnwrap(layout.blocks.first { $0.tableSurface != nil })

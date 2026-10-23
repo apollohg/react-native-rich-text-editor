@@ -303,7 +303,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
 
         expect(ref.current!.getContentJson()).toEqual({
             type: 'doc',
-            content: [ { type: 'paragraph' } ],
+            content: [ { type: 'paragraph', attrs: { textAlign: null } } ],
         });
 
         handle.destroy();

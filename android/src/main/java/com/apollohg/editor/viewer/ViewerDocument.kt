@@ -81,7 +81,8 @@ internal data class ViewerBlock(
     val containers: List<ViewerContainerAncestor> = emptyList(),
     val language: String? = null,
     val table: FfiViewerTable? = null,
-    val frameRecord: FfiTableRecord? = null
+    val frameRecord: FfiTableRecord? = null,
+    val textAlign: String? = null
 ) {
     val tableKey: String? get() = frameRecord?.tableKey ?: table?.let { "t${it.tablePos}" }
     fun tableSource(): TableSurfaceSource? = frameRecord?.let(TableSurfaceSource::from)
@@ -403,6 +404,7 @@ private fun lowerElements(
         val listItemContext: ViewerListContext?,
         val identity: Int,
         val language: String? = null,
+        val textAlign: String? = null,
         val inlines: MutableList<ViewerInline> = mutableListOf()
     )
 
@@ -448,6 +450,7 @@ private fun lowerElements(
             table = table,
             frameRecord = frameRecord,
             language = ancestors.lastOrNull()?.language,
+            textAlign = ancestors.lastOrNull()?.textAlign,
             containers = ancestors.filter {
                 it.nodeType in CONTAINER_BLOCKS &&
                     it.nodeType != "doc"
@@ -521,7 +524,8 @@ private fun lowerElements(
                     identity,
                     if (identity == null) null else context,
                     nextContainerIdentity++,
-                    element.language
+                    element.language,
+                    element.textAlign
                 )
             }
 
@@ -683,13 +687,14 @@ internal class PlainTableCellDocument private constructor(
     private val originalText: String?,
     private val depth: UShort,
     private val language: String?,
+    val textAlign: String?,
     private val preferredTextBlockName: String
 ) {
     val text: String get() = originalText.orEmpty()
 
     fun materialize(): ViewerDocument {
         val elements = buildList {
-            add(FfiViewerElement.BlockStart("paragraph", language, depth, null))
+            add(FfiViewerElement.BlockStart("paragraph", language, depth, null, textAlign))
             originalText?.let { add(FfiViewerElement.TextRun(it, emptyList())) }
             add(FfiViewerElement.BlockEnd)
         }
@@ -735,6 +740,7 @@ internal class PlainTableCellDocument private constructor(
                 text,
                 start.depth,
                 start.language,
+                start.textAlign,
                 parent.preferredTextBlockName
             )
         }

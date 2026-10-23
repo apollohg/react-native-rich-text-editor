@@ -44,7 +44,7 @@ describe('task list schemas', () => {
                         {
                             type: 'taskItem',
                             attrs: { checked: false },
-                            content: [{ type: 'paragraph' }],
+                            content: [{ type: 'paragraph', attrs: { textAlign: null } }],
                         },
                     ],
                 },

@@ -113,6 +113,7 @@ export function useRichTextEditorPresentation(
             | 'atomOwnerRef'
             | 'commandToggleMark'
             | 'commandToggleList'
+            | 'commandSetTextAlign'
             | 'commandToggleHeading'
             | 'commandToggleBlockquote'
             | 'commandInsertNode'
@@ -203,6 +204,7 @@ export function useRichTextEditorPresentation(
         toolbarFrameOwnerId,
         commandToggleMark,
         commandToggleList,
+        commandSetTextAlign,
         commandToggleHeading,
         commandToggleBlockquote,
         commandInsertNode,
@@ -706,6 +708,7 @@ export function useRichTextEditorPresentation(
                             onToggleListType={(listType: EditorToolbarListType) =>
                                 commandToggleList(listType)
                             }
+                            onSetTextAlign={commandSetTextAlign}
                             onToggleHeading={commandToggleHeading}
                             onToggleBlockquote={commandToggleBlockquote}
                             onInsertNodeType={commandInsertNode}

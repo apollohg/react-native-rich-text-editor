@@ -347,11 +347,25 @@ fn semantic_transaction_impl(
     )? {
         return Ok(CommandPlan::Transaction(transaction));
     }
-    if admitted {
+    // Block openings may have no text coordinate; attribute edits must retain their XML nodes.
+    let attributes_only = plan.operations.iter().all(|operation| {
+        matches!(
+            operation,
+            crate::command_planner::SemanticOperation::UpdateNodeAttrs { .. }
+        )
+    });
+    if admitted || attributes_only {
         if let Some(transaction) = sealed_batch_transaction(context, selection, &plan, &simulated)?
         {
             return Ok(CommandPlan::Transaction(transaction));
         }
+    }
+    if attributes_only {
+        return Err(OperationError::engine_invariant_failed(
+            context.request_id,
+            None,
+            "attribute-only command could not retain its target XML nodes",
+        ));
     }
     let transaction = structural_fallback_transaction(
         context,
@@ -799,7 +813,12 @@ fn direct_selection_input(
             anchor: encoded(*anchor)?,
             head: encoded(*head)?,
         },
-        crate::selection::Selection::Node { pos } => SelectionInput::Node { at: encoded(*pos)? },
+        crate::selection::Selection::Node { pos } => SelectionInput::Node {
+            at: crate::yrs_engine::NodeSelectionPoint::Document {
+                opening: *pos,
+                affinity: crate::yrs_engine::DEFAULT_POSITION_AFFINITY,
+            },
+        },
         crate::selection::Selection::Cell { anchor, head } => SelectionInput::Cell {
             anchor: crate::yrs_engine::CellSelectionPoint::Document {
                 opening: *anchor,

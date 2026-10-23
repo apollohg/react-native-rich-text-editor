@@ -6,6 +6,7 @@ struct NativeToolbarState {
     let commands: [String: Bool]
     let allowedMarks: Set<String>
     let insertableNodes: Set<String>
+    let textAlign: String?
     let canUndo: Bool
     let canRedo: Bool
 
@@ -26,8 +27,10 @@ struct NativeToolbarState {
         allowedMarks: Set<String>,
         insertableNodes: Set<String>,
         canUndo: Bool,
-        canRedo: Bool
+        canRedo: Bool,
+        textAlign: String? = nil
     ) {
+        self.textAlign = textAlign
         self.marks = marks
         self.nodes = nodes
         self.commands = commands
@@ -57,7 +60,8 @@ struct NativeToolbarState {
             allowedMarks: Set((activeState["allowedMarks"] as? [String]) ?? []),
             insertableNodes: Set((activeState["insertableNodes"] as? [String]) ?? []),
             canUndo: (historyState["canUndo"] as? Bool) ?? false,
-            canRedo: (historyState["canRedo"] as? Bool) ?? false
+            canRedo: (historyState["canRedo"] as? Bool) ?? false,
+            textAlign: activeState["textAlign"] as? String
         )
     }
 
@@ -90,6 +94,10 @@ enum ToolbarListType: String {
 }
 
 enum ToolbarDefaultIconId: String {
+    case alignLeft
+    case alignCenter
+    case alignRight
+    case alignReset
     case bold
     case italic
     case underline
@@ -114,6 +122,7 @@ enum ToolbarDefaultIconId: String {
 }
 
 enum ToolbarItemKind: String {
+    case textAlign
     case mark
     case heading
     case blockquote
@@ -143,6 +152,10 @@ struct NativeToolbarIcon {
     let fallbackText: String?
 
     private static let defaultSFSymbolNames: [ToolbarDefaultIconId: String] = [
+        .alignLeft: "text.alignleft",
+        .alignCenter: "text.aligncenter",
+        .alignRight: "text.alignright",
+        .alignReset: "arrow.uturn.backward",
         .bold: "bold",
         .italic: "italic",
         .underline: "underline",
@@ -167,6 +180,10 @@ struct NativeToolbarIcon {
     ]
 
     private static let defaultGlyphs: [ToolbarDefaultIconId: String] = [
+        .alignLeft: "L",
+        .alignCenter: "C",
+        .alignRight: "R",
+        .alignReset: "↩",
         .bold: "B",
         .italic: "I",
         .underline: "U",
@@ -274,6 +291,7 @@ struct NativeToolbarItem {
     var icon: NativeToolbarIcon?
     var mark: String?
     var headingLevel: Int?
+    var textAlign: String?
     var listType: ToolbarListType?
     var command: ToolbarCommand?
     var nodeType: String?
@@ -290,6 +308,9 @@ struct NativeToolbarItem {
         NativeToolbarItem(type: .mark, label: "Italic", icon: .defaultIcon(.italic), mark: "italic"),
         NativeToolbarItem(type: .mark, label: "Underline", icon: .defaultIcon(.underline), mark: "underline"),
         NativeToolbarItem(type: .mark, label: "Strikethrough", icon: .defaultIcon(.strike), mark: "strike"),
+        NativeToolbarItem(type: .textAlign, label: "Align Left", icon: .defaultIcon(.alignLeft), textAlign: "left"),
+        NativeToolbarItem(type: .textAlign, label: "Align Center", icon: .defaultIcon(.alignCenter), textAlign: "center"),
+        NativeToolbarItem(type: .textAlign, label: "Align Right", icon: .defaultIcon(.alignRight), textAlign: "right"),
         NativeToolbarItem(type: .blockquote, label: "Blockquote", icon: .defaultIcon(.blockquote)),
         NativeToolbarItem(type: .separator),
         NativeToolbarItem(type: .list, label: "Bullet List", icon: .defaultIcon(.bulletList), listType: .legacyBulletList),
@@ -345,6 +366,13 @@ struct NativeToolbarItem {
                 placement: placement,
                 buttonStyle: buttonStyle
             )
+        case .textAlign:
+            guard rawItem["align"] is NSNull || EditorTextAlignment.isValid(rawItem["align"]),
+                  let label = rawItem["label"] as? String,
+                  let icon = NativeToolbarIcon.from(jsonValue: rawItem["icon"])
+            else { return nil }
+            return NativeToolbarItem(type: .textAlign, key: key, label: label, icon: icon,
+                textAlign: rawItem["align"] as? String, placement: placement, buttonStyle: buttonStyle)
         case .heading:
             guard let level = (rawItem["level"] as? NSNumber)?.intValue,
                   (1...6).contains(level),
@@ -491,6 +519,8 @@ struct NativeToolbarItem {
         switch type {
         case .mark:
             return "mark:\(mark ?? ""):\(index)"
+        case .textAlign:
+            return "textAlign:\(textAlign ?? "inherit"):\(index)"
         case .heading:
             return "heading:\(headingLevel ?? 0):\(index)"
         case .blockquote:

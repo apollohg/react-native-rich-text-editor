@@ -409,7 +409,7 @@ fn replacement_for_text_blocks(
         .map(|block| {
             Some(Node::element(
                 target_type.to_string(),
-                HashMap::new(),
+                super::compatible_declared_attrs(schema, target_type, block.attrs())?,
                 crate::editor_state::converted_text_block_content(schema, target_type, block)?,
             ))
         })

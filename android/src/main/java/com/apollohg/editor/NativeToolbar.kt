@@ -15,7 +15,8 @@ internal data class NativeToolbarState(
     val allowedMarks: Set<String>,
     val insertableNodes: Set<String>,
     val canUndo: Boolean,
-    val canRedo: Boolean
+    val canRedo: Boolean,
+    val textAlign: String? = null
 ) {
     companion object {
         val empty = NativeToolbarState(
@@ -53,7 +54,8 @@ internal data class NativeToolbarState(
                 allowedMarks = stringSet(activeState.optJSONArray("allowedMarks")),
                 insertableNodes = stringSet(activeState.optJSONArray("insertableNodes")),
                 canUndo = historyState.optBoolean("canUndo", false),
-                canRedo = historyState.optBoolean("canRedo", false)
+                canRedo = historyState.optBoolean("canRedo", false),
+                textAlign = activeState.toolbarNullableString("textAlign")
             )
         }
 
@@ -132,6 +134,10 @@ internal enum class ToolbarListType(val wireValue: String) {
 }
 
 internal enum class ToolbarDefaultIconId(val wireValue: String) {
+    ALIGN_LEFT("alignLeft"),
+    ALIGN_CENTER("alignCenter"),
+    ALIGN_RIGHT("alignRight"),
+    ALIGN_RESET("alignReset"),
     BOLD("bold"),
     ITALIC("italic"),
     UNDERLINE("underline"),
@@ -162,6 +168,7 @@ internal enum class ToolbarDefaultIconId(val wireValue: String) {
 }
 
 internal enum class ToolbarItemKind(val wireValue: String) {
+    TEXT_ALIGN("textAlign"),
     MARK("mark"),
     HEADING("heading"),
     BLOCKQUOTE("blockquote"),

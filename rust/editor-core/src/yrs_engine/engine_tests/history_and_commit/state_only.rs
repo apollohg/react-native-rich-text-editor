@@ -787,7 +787,7 @@ fn empty_skip_fast_path_matches_full_compiler_for_selection_forms_and_local_stat
             head: utf16(3, Affinity::After),
         }),
         SelectionIntent::Set(SelectionInput::Node {
-            at: scalar(4, Affinity::Before),
+            at: (scalar(4, Affinity::Before)).into(),
         }),
         SelectionIntent::Set(SelectionInput::All),
         SelectionIntent::Preserve,
@@ -864,7 +864,7 @@ fn empty_skip_fast_path_matches_full_compiler_for_selection_forms_and_local_stat
             head: scalar(2, Affinity::Before),
         }),
         SelectionIntent::Set(SelectionInput::Node {
-            at: scalar(4, Affinity::Before),
+            at: (scalar(4, Affinity::Before)).into(),
         }),
     ];
     for (index, intent) in stored_mark_intents.into_iter().enumerate() {

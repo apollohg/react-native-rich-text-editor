@@ -750,6 +750,9 @@ pub(crate) struct TableCommandSurface<'a> {
 }
 
 impl<'a> TableCommandSurface<'a> {
+    pub(crate) fn projection_index(&self) -> &TableProjectionIndex {
+        &self.index
+    }
     pub(crate) fn resolve(
         document: &'a Document,
         schema: &'a Schema,

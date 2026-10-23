@@ -711,3 +711,45 @@ extension PreparedProseLayoutTests {
     }
 
 }
+
+extension PreparedProseLayoutTests {
+    func testDocumentAlignmentOverridesViewerThemeAndSeparatesCachedLayouts() throws {
+        let theme = """
+        {"version":1,"styles":{"paragraph":{"textAlign":"center","paddingLeft":9,"paddingRight":11}}}
+        """
+        let registry = PreparedProseLayoutRegistry(compile: { request in
+            let alignment = request.source.value == "inherit" ? nil : request.source.value
+            let blocks = ["שלום", ""].map { text in
+                ViewerBlock(nodeType: "paragraph", depth: 0, inBlockquote: false, listContext: nil,
+                    listItemBoundary: nil, inlines: text.isEmpty ? [] : [.text(text: text, marks: [])], textAlign: alignment)
+            }
+            return ViewerDocument(semanticKey: request.compiledCacheKey, blocks: blocks, isEmpty: false,
+                retainedBytes: 0, trailingEmptyTextBlockCount: 1)
+        })
+        func measure(_ alignment: String) -> PreparedProseLayout {
+            registry.measure(request: ProseViewerRequest(source: .json(alignment),
+                configuration: ProseViewerConfiguration(configJSON: "{}", themeJSON: theme, collapsesWhenEmpty: false)), widthPoints: 300, scale: 2)
+        }
+        let left = measure("left")
+        let center = measure("center")
+        let right = measure("right")
+        let inherited = measure("inherit")
+        for layout in [left, center, right, inherited] {
+            XCTAssertNil(layout.error)
+            XCTAssertEqual(layout.blocks.count, 2)
+        }
+        for index in left.blocks.indices {
+            let leftText = try XCTUnwrap(left.blocks[index].fragments.first { $0.kind == .text })
+            let centerText = try XCTUnwrap(center.blocks[index].fragments.first { $0.kind == .text })
+            let rightText = try XCTUnwrap(right.blocks[index].fragments.first { $0.kind == .text })
+            let inheritedText = try XCTUnwrap(inherited.blocks[index].fragments.first { $0.kind == .text })
+            XCTAssertLessThan(leftText.bounds.minX, centerText.bounds.minX)
+            XCTAssertLessThan(centerText.bounds.minX, rightText.bounds.minX)
+            XCTAssertEqual(inheritedText.bounds.minX, centerText.bounds.minX)
+            XCTAssertEqual(rightText.origin.x, rightText.bounds.minX)
+        }
+        XCTAssertTrue(left === measure("left"))
+        XCTAssertFalse(left === right)
+        XCTAssertEqual(registry.layoutPreparationCount, 4)
+    }
+}

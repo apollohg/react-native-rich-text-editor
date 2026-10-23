@@ -384,6 +384,21 @@ fn localized_root_window_fails_closed_for_invalid_shapes_and_shallow_drift() {
             "{case}"
         );
     };
+    let mut nondefault_alignment = source.clone();
+    nondefault_alignment["content"][0]["attrs"] = json!({ "textAlign": "center" });
+    let nondefault_document =
+        from_prosemirror_json(&nondefault_alignment, &schema, UnknownTypeMode::Preserve).unwrap();
+    assert_alignment_fallback(
+        "missingNondefaultAlignment",
+        nondefault_document,
+        source.clone(),
+    );
+    assert_alignment_fallback(
+        "mismatchedAlignment",
+        document.clone(),
+        nondefault_alignment,
+    );
+
     let heading = from_prosemirror_json(
         &json!({
             "type": "doc",
