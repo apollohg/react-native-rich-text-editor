@@ -794,6 +794,89 @@ class PreparedProseRevisionTest {
         assertFalse(state.recordResourceFailure(0))
     }
 
+    @Test
+    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
+    fun `text style color overrides prose and table links while null restores them`() {
+        val config = org.json.JSONObject(tableFontMarkConfig())
+        config.getJSONObject("schema").put(
+            "marks",
+            org.json.JSONArray(
+                """[
+            {"name":"textStyle","attrs":{"color":{"default":null}}},
+            {"name":"link","attrs":{"href":{}}},{"name":"bold"},{"name":"code"}
+        ]"""
+            )
+        )
+        val themes = listOf(
+            """{"links":{"color":"#0000ffff"}}""",
+            """{"version":1,"styles":{"link":{"color":"#0000ffff"},"inlineCode":{"color":"#ffff00ff"}}}"""
+        )
+        val href = "https://example.test/color"
+        themes.forEach { theme ->
+            listOf("\"#12345680\"", "null").forEach { color ->
+                val paragraph = """{"type":"paragraph","content":[{"type":"text","text":"colored",
+                    "marks":[{"type":"textStyle","attrs":{"color":$color}},
+                    {"type":"link","attrs":{"href":"$href"}},{"type":"bold"},{"type":"code"}]}]}"""
+                val document = compileWithRust(
+                    ProseViewerRequest(
+                        ProseViewerSource.Json(
+                            """{"type":"doc","content":[$paragraph,
+                        {"type":"table","content":[{"type":"table_row","content":[
+                        {"type":"table_cell","content":[$paragraph]}]}]}]}"""
+                        ),
+                        ProseViewerConfiguration(config.toString())
+                    )
+                )
+                val layout = StaticLayoutAndroidProseLayoutEngine().prepare(
+                    document,
+                    ProseLayoutKey("color", 320, "color", 0, 0, 0, 0, "color"),
+                    PreparedProseTheme.resolve(theme, 1f),
+                    320,
+                    1f,
+                    false
+                )
+                val cell = layout.blocks.single {
+                    it.tableSurface != null
+                }.tableSurface!!.cells.single().content
+                val prose = layout.blocks.first().fragments.single {
+                    it.layout != null
+                }.layout!!.text
+                val cellText = cell.blocks.single().fragments.single {
+                    it.layout != null
+                }.layout!!.text
+                listOf(prose, cellText).forEach { text ->
+                    val spans = text as android.text.Spanned
+                    val paint = android.text.TextPaint().apply {
+                        typeface =
+                            android.graphics.Typeface.DEFAULT
+                    }
+                    spans.getSpans(0, 1, android.text.style.CharacterStyle::class.java).forEach {
+                        it.updateDrawState(paint)
+                    }
+                    assertEquals(
+                        "Explicit CSS RGBA wins in prose and table cells; null restores links",
+                        if (color ==
+                            "null"
+                        ) {
+                            android.graphics.Color.BLUE
+                        } else {
+                            0x80123456.toInt()
+                        },
+                        paint.color
+                    )
+                    assertTrue("The foreground override preserves bold", paint.typeface.isBold)
+                }
+                assertTrue(
+                    "The foreground override preserves link interactions",
+                    layout.interactions.any {
+                        it.href ==
+                            href
+                    }
+                )
+            }
+        }
+    }
+
     private fun tableFontMarkConfig(): String = """{"schema":{"nodes":[
             {"name":"doc","content":"block+","role":"doc"},
             {"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},

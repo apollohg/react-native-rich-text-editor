@@ -27,7 +27,10 @@ import com.apollohg.editor.EditorResolvedTextSpan
 import com.apollohg.editor.EditorTextStyle
 import com.apollohg.editor.OrderedListMarkerFormatter
 import com.apollohg.editor.ProseViewerError
+import com.apollohg.editor.TEXT_COLOR_ATTRIBUTE
+import com.apollohg.editor.TEXT_STYLE_MARK
 import com.apollohg.editor.applyPhysicalTextAlignment
+import com.apollohg.editor.parseColor
 import com.apollohg.editor.tables.PreparedTableCellContent
 import com.apollohg.editor.tables.TableCellPreparationWorker
 import com.apollohg.editor.tables.TableGridRecord
@@ -2623,7 +2626,8 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                         )
                     )
 
-                    "textStyle", "font" -> EditorTextStyle(
+                    TEXT_STYLE_MARK, "font" -> EditorTextStyle(
+                        color = parseColor(attrs?.optionalString(TEXT_COLOR_ATTRIBUTE)),
                         fontFamily = attrs?.optionalString("fontFamily"),
                         fontSize = attrs?.optDouble("fontSize", Double.NaN)?.takeIf {
                             it.isFinite() &&
@@ -2683,7 +2687,9 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                         )
                             ?: background
 
-                "textStyle", "font" -> {
+                TEXT_STYLE_MARK, "font" -> {
+                    explicitColor = parseColor(attrs?.optionalString(TEXT_COLOR_ATTRIBUTE))
+                        ?: explicitColor
                     family = attrs?.optionalString("fontFamily") ?: family
                     size =
                         attrs?.optDouble("fontSize", Double.NaN)?.takeIf {
@@ -3030,5 +3036,3 @@ internal fun Typeface.familyName(): String? = when (this) {
     Typeface.SANS_SERIF -> "sans"
     else -> null
 }
-private fun parseColor(raw: String?): Int? =
-    runCatching { raw?.takeIf { it.isNotBlank() }?.let(Color::parseColor) }.getOrNull()

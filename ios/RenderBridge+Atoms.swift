@@ -85,6 +85,7 @@ extension RenderBridge {
             attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
         }
         attrs[.font] = resolvedFont
+        if let color = EditorStyleSheet.explicitTextColor(marks) { attrs[.foregroundColor] = color }
         return attrs
     }
 

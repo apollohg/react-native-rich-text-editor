@@ -384,6 +384,17 @@ export function useRichTextEditorCommands(
         [ applyEngineCommand ]
     );
 
+    const commandSetMark = useCallback(
+        (markType: string, attrs: Record<string, unknown>) =>
+            applyEngineCommand({ type: 'setMark', markType, attrs }),
+        [ applyEngineCommand ]
+    );
+
+    const commandUnsetMark = useCallback(
+        (markType: string) => applyEngineCommand({ type: 'unsetMark', markType }),
+        [ applyEngineCommand ]
+    );
+
     const commandSetLink = useCallback(
         (href: string) => {
             const trimmedHref = href.trim();
@@ -392,18 +403,14 @@ export function useRichTextEditorCommands(
                 return;
             }
 
-            applyEngineCommand({
-                type: 'setMark',
-                markType: 'link',
-                attrs: { href: trimmedHref },
-            });
+            commandSetMark('link', { href: trimmedHref });
         },
-        [ applyEngineCommand ]
+        [ commandSetMark ]
     );
 
     const commandUnsetLink = useCallback(
-        () => applyEngineCommand({ type: 'unsetMark', markType: 'link' }),
-        [ applyEngineCommand ]
+        () => commandUnsetMark('link'),
+        [ commandUnsetMark ]
     );
 
     const commandToggleBlockquote = useCallback(
@@ -528,6 +535,8 @@ export function useRichTextEditorCommands(
                 return externalCompositionManager.begin(options);
             },
             toggleMark: commandToggleMark,
+            setMark: commandSetMark,
+            unsetMark: commandUnsetMark,
             setLink: commandSetLink,
             unsetLink: commandUnsetLink,
             toggleBlockquote: commandToggleBlockquote,
@@ -566,6 +575,8 @@ export function useRichTextEditorCommands(
             runTableCommand,
         }),
         [ commandToggleMark,
+            commandSetMark,
+            commandUnsetMark,
             commandSetLink,
             commandUnsetLink,
             commandToggleBlockquote,

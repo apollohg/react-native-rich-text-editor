@@ -93,7 +93,7 @@ fn normalize<'a>(
         let tags = semantic_mark_tags(schema);
         for (index, (tag, enabled)) in tags.iter().zip(marks).enumerate() {
             if let Some(tag) = tag.filter(|_| enabled) {
-                write_open_tag(output, tag, sources[index]);
+                write_open_tag(output, tag, sources[index], schema);
             }
         }
         if preserve_spaces {
@@ -213,11 +213,11 @@ fn normalize<'a>(
         None
     };
     if let Some(emitted) = emitted_tag {
-        write_open_tag(output, emitted, known.then_some(element));
+        write_open_tag(output, emitted, known.then_some(element), schema);
     }
     let task_item = node_spec.is_some_and(super::super::is_tiptap_task_item);
     if task_item {
-        write_open_tag(output, super::super::TASK_CONTENT_HTML_TAG, None);
+        write_open_tag(output, super::super::TASK_CONTENT_HTML_TAG, None, schema);
     }
     for child in content_node.children() {
         normalize(
@@ -260,12 +260,31 @@ fn semantic_mark_tags(schema: &Schema) -> [Option<&'static str>; 4] {
     })
 }
 
-fn write_open_tag(output: &mut String, tag: &str, source: Option<&scraper::node::Element>) {
+fn write_open_tag(
+    output: &mut String,
+    tag: &str,
+    source: Option<&scraper::node::Element>,
+    schema: &Schema,
+) {
     output.push('<');
     output.push_str(tag);
     if let Some(source) = source {
         for (key, value) in source.attrs() {
-            if key == "style" || key.starts_with("on") {
+            if key == "style" {
+                if tag == "span"
+                    && schema
+                        .mark(crate::text_color::TEXT_STYLE_MARK)
+                        .is_some_and(supports_text_color)
+                {
+                    if let Some(color) = crate::text_color::color_from_style(value) {
+                        output.push_str(" style=\"color:");
+                        escape_html_to(&color, output);
+                        output.push('"');
+                    }
+                }
+                continue;
+            }
+            if key.starts_with("on") {
                 continue;
             }
             output.push(' ');

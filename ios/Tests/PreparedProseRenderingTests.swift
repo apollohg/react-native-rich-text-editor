@@ -3,6 +3,34 @@ import UIKit
 import XCTest
 
 final class PreparedProseRenderingTests: XCTestCase {
+
+    func testTextStyleColorInPreparedProseAndTableText() throws {
+        let href = "https://example.com"
+        let themes: [String?] = [nil, "{\"version\":1,\"styles\":{\"link\":{\"color\":\"#ff0000ff\"},\"inlineCode\":{\"color\":\"#00ff00ff\"}}}"]
+        let engine = CoreTextProseLayoutEngine()
+        for themeJSON in themes {
+            let theme = PreparedProseTheme.resolve(themeJSON: themeJSON)
+            let otherMarks = [FfiViewerMark(markType: "link", attrsJson: "{\"href\":\"\(href)\"}"), FfiViewerMark(markType: "code", attrsJson: "{}"), FfiViewerMark(markType: "bold", attrsJson: "{}")]
+            for ancestors in [["paragraph"], ["table", "tableRow", "tableCell", "paragraph"]] {
+                for color in ["#12345680", "#00000000"] {
+                    let mark = FfiViewerMark(markType: "textStyle", attrsJson: "{\"color\":\"\(color)\"}")
+                    for marks in [[mark] + otherMarks, otherMarks + [mark]] {
+                        let block = ViewerBlock(nodeType: "paragraph", depth: 0, inBlockquote: false, listContext: nil, listItemBoundary: nil, inlines: [.text(text: "coloured", marks: marks)], styleAncestors: ancestors.dropLast().enumerated().map { ViewerStyleAncestor(identity: $0.offset, nodeType: $0.element) })
+                        let document = ViewerDocument(semanticKey: "text-style-test", blocks: [block], isEmpty: false, retainedBytes: 0)
+                        let layout = try prepare(document, themeJSON: themeJSON, cellMode: ancestors.contains("tableCell"))
+                        let run = try XCTUnwrap(layout.blocks.flatMap(\.fragments).compactMap(\.line).flatMap(coreTextRuns).first)
+                        XCTAssertEqual(UIColor(cgColor: try foreground(run)), EditorTheme.color(from: color))
+                        XCTAssertTrue(try fontTraits(run).contains(.traitBold))
+                        XCTAssertTrue(try fontTraits(run).contains(.traitMonoSpace))
+                        XCTAssertEqual(engine.href(in: marks), href)
+                    }
+                }
+                let baseline = engine.attributes(for: otherMarks, paint: theme.text, theme: theme, warningSemanticGeneration: "text-style-test", ancestors: ancestors)
+                let reset = engine.attributes(for: otherMarks + [FfiViewerMark(markType: "textStyle", attrsJson: "{\"color\":null}")], paint: theme.text, theme: theme, warningSemanticGeneration: "text-style-test", ancestors: ancestors)
+                XCTAssertTrue(NSDictionary(dictionary: baseline).isEqual(to: reset))
+            }
+        }
+    }
     func testCompilerBackedNestedTablesRetainFlatRecords() throws {
         let source = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"nested"}]}]}]}]}]}]}]}]}"#
         try withCompiledDocument(source: .json(source), configJSON: Self.tableConfig) { document in
@@ -701,7 +729,7 @@ final class PreparedProseRenderingTests: XCTestCase {
         }
     }
 
-    private func prepare(_ document: ViewerDocument, themeJSON: String?) throws -> PreparedProseLayout {
+    private func prepare(_ document: ViewerDocument, themeJSON: String?, cellMode: Bool = false) throws -> PreparedProseLayout {
         let themed = document.withPreparedTheme(PreparedProseTheme.resolve(themeJSON: themeJSON))
         let key = ProseLayoutKey(
             semanticKey: themed.semanticKey,
@@ -714,7 +742,7 @@ final class PreparedProseRenderingTests: XCTestCase {
             generationIdentity: "fixture",
             semanticGenerationIdentity: "fixture"
         )
-        return try CoreTextProseLayoutEngine().prepare(document: themed, key: key, widthPoints: 320, displayScale: 2)
+        return try CoreTextProseLayoutEngine().prepare(document: themed, key: key, widthPoints: 320, displayScale: 2, cellMode: cellMode)
     }
 
     private func preparedKinds(for document: ViewerDocument) throws -> Set<PreparedProseFragmentKind> {

@@ -490,11 +490,10 @@ class PreparedStyleSheetTest {
     @Test
     fun `stylesheet retains document foreground background and font marks`() {
         val marks = listOf(
-            uniffi.editor_core.FfiViewerMark("textColor", """{"color":"#ff0000"}"""),
             uniffi.editor_core.FfiViewerMark("highlight", """{"color":"#ffff00"}"""),
             uniffi.editor_core.FfiViewerMark(
                 "textStyle",
-                """{"fontFamily":"monospace","fontSize":29}"""
+                """{"color":"#ff000080","fontFamily":"monospace","fontSize":29}"""
             )
         )
         val document =
@@ -534,7 +533,7 @@ class PreparedStyleSheetTest {
             text.length,
             com.apollohg.editor.EditorResolvedTextSpan::class.java
         ).single().style
-        assertEquals(android.graphics.Color.RED, style.color)
+        assertEquals(0x80FF0000.toInt(), style.color)
         assertEquals(android.graphics.Color.YELLOW, style.backgroundColor)
         assertEquals(29f, style.fontSize)
         assertEquals("monospace", style.fontFamily)

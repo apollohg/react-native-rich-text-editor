@@ -17,7 +17,8 @@ const _: () = assert!(
 
 impl Mark {
     /// Create a new mark with the given type name and attributes.
-    pub fn new(mark_type: String, attrs: HashMap<String, serde_json::Value>) -> Self {
+    pub fn new(mark_type: String, mut attrs: HashMap<String, serde_json::Value>) -> Self {
+        crate::text_color::canonicalize_color_attrs(&mark_type, &mut attrs);
         Self {
             mark_type,
             attrs: Attrs::new(attrs),

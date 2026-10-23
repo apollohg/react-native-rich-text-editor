@@ -40,6 +40,7 @@ import { Editor, Extension, Node as TiptapNode } from '@tiptap/core';
 import Document from '@tiptap/extension-document';
 import Paragraph from '@tiptap/extension-paragraph';
 import Text from '@tiptap/extension-text';
+import { TextStyle, Color } from '@tiptap/extension-text-style';
 import Collaboration from '@tiptap/extension-collaboration';
 import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table';
 import {
@@ -71,6 +72,7 @@ const CELL_COLLISION = 'collision';
 const UNSET_COLUMN_WIDTH = 0;
 const INSERT_TEXT_COMMAND = 'insertText';
 const INSERT_NODE_COMMAND = 'insertNode';
+const SET_MARK_COMMAND = 'setMark';
 const TABLE_COMMAND = 'tableCommand';
 const AWARENESS_CURSOR_KEY = 'cursor';
 const AWARENESS_CELL_RECTANGLE_KEY = 'nativeEditorTableSelection';
@@ -266,6 +268,8 @@ function mountTiptap(
             Document,
             Paragraph,
             Text,
+            TextStyle,
+            Color,
             ...(tables ? [Table, TableRow, TableHeader, TableCell, TaskList, TaskItem] : []),
             Collaboration.configure({ document: sharedDocument, field: fragmentName }),
             instrumentation,
@@ -332,6 +336,20 @@ function applyCommand(editor: MountedEditor, command: Record<string, unknown>, o
     if (type === INSERT_TEXT_COMMAND) {
         const text = requireString(command['text'], 'command.text');
         editor.view.dispatch(editor.view.state.tr.insertText(text));
+        return;
+    }
+    if (type === SET_MARK_COMMAND) {
+        const { state } = editor.view;
+        const name = requireString(command['markType'], 'command.markType');
+        const attrs = requireRecord(command['attrs'], 'command.attrs');
+        const markType = state.schema.marks[name];
+        if (markType === undefined) {
+            throw new PeerOperationError(CONFIG_INVALID, `mark ${name} is unavailable`);
+        }
+        const mark = markType.create(attrs);
+        editor.view.dispatch(state.selection.empty
+            ? state.tr.addStoredMark(mark)
+            : state.tr.addMark(state.selection.from, state.selection.to, mark));
         return;
     }
     if (type === INSERT_NODE_COMMAND) {

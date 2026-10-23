@@ -384,13 +384,13 @@ fn test_from_html_bare_text_auto_wrapped() {
 #[test]
 fn test_from_html_unknown_inline_tag_preserved_as_opaque() {
     let d = from_html(
-        "<p>Hello <span>world</span></p>",
+        "<p>Hello <custom-inline>world</custom-inline></p>",
         &schema(),
         &default_opts(),
     )
     .unwrap();
     let p = d.root().child(0).unwrap();
-    // Should have text "Hello ", opaque node for <span>, in some form
+    // Should have text "Hello ", opaque node for <custom-inline>, in some form
     // The opaque node should preserve the tag name
     let mut found_opaque = false;
     for i in 0..p.child_count() {
@@ -398,14 +398,14 @@ fn test_from_html_unknown_inline_tag_preserved_as_opaque() {
         if child.node_type() == "__opaque" {
             found_opaque = true;
             let tag = child.attrs().get("html_tag").unwrap().as_str().unwrap();
-            assert_eq!(tag, "span", "opaque node should preserve tag name");
+            assert_eq!(tag, "custom-inline", "opaque node should preserve tag name");
             let text = child.attrs().get("text_content").unwrap().as_str().unwrap();
             assert_eq!(text, "world", "opaque node should preserve text content");
         }
     }
     assert!(
         found_opaque,
-        "unknown <span> should be preserved as opaque node"
+        "unknown <custom-inline> should be preserved as opaque node"
     );
 }
 
@@ -465,12 +465,12 @@ fn test_from_html_unknown_block_tag_preserved_as_opaque() {
 
 #[test]
 fn test_from_html_strict_mode_rejects_unknown_tag() {
-    let result = from_html("<p><span>text</span></p>", &schema(), &strict_opts());
+    let result = from_html("<p><custom-inline>text</custom-inline></p>", &schema(), &strict_opts());
     assert!(result.is_err(), "strict mode should reject unknown tags");
     if let Err(e) = result {
         let msg = e.to_string();
         assert!(
-            msg.contains("span"),
+            msg.contains("custom-inline"),
             "error message should mention the unknown tag, got: {}",
             msg
         );

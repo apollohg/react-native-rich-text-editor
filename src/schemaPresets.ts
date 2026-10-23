@@ -40,6 +40,9 @@ export const IMAGE_NODE_NAME = 'image';
 export const TASK_LIST_NODE_NAME = 'taskList';
 export const TASK_ITEM_NODE_NAME = 'taskItem';
 
+const TEXT_STYLE_MARK_NAME = 'textStyle';
+const COLOR_ATTRIBUTE = 'color';
+
 export const HEADING_LEVELS = [ 1,
     2,
     3,
@@ -237,6 +240,11 @@ export const tiptapCompatibleSchemaSpec: SchemaSpec = {
         strike: { parseDOM: [ { tag: 's' } ], toDOM: [ 's', 0 ] },
         code: { parseDOM: [ { tag: 'code' } ], toDOM: [ 'code', 0 ] },
         link: { attrs: { href: {} }, inclusive: false, parseDOM: [ { tag: 'a' } ], toDOM: [ 'a', 0 ] },
+        [TEXT_STYLE_MARK_NAME]: {
+            attrs: { [COLOR_ATTRIBUTE]: { default: null } },
+            parseDOM: [ { tag: 'span' } ],
+            toDOM: [ 'span', 0 ],
+        },
     },
 };
 

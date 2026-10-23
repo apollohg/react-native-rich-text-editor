@@ -15,6 +15,9 @@ import android.text.style.UnderlineSpan
 import android.view.View
 import org.json.JSONObject
 
+internal const val TEXT_STYLE_MARK = "textStyle"
+internal const val TEXT_COLOR_ATTRIBUTE = "color"
+
 /**
  * Apply spans to a text run based on its mark names and append to the builder.
  *
@@ -46,6 +49,10 @@ internal fun RenderBridge.appendStyledText(
 
     if (start == end) return
 
+    val explicitColor = marks.filterIsInstance<JSONObject>().firstOrNull {
+        it.optString("type") == TEXT_STYLE_MARK
+    }?.let { parseColor(it.optNullableString(TEXT_COLOR_ATTRIBUTE)) }
+
     theme?.styleSheet?.let { sheet ->
         val node = blockStack.lastOrNull()?.nodeType ?: "paragraph"
         val style = sheet.resolveText(
@@ -66,7 +73,7 @@ internal fun RenderBridge.appendStyledText(
                 EditorTextStyle(
                     fontSize = baseFontSize / density,
                     color = textColor
-                ).mergedWith(style),
+                ).mergedWith(style).mergedWith(EditorTextStyle(color = explicitColor)),
                 density
             ),
             start,
@@ -137,7 +144,7 @@ internal fun RenderBridge.appendStyledText(
     val effectiveTextStyle = textStyle?.mergedWith(linkTheme?.asTextStyle())
         ?: linkTheme?.asTextStyle()
     val resolvedTextSize = effectiveTextStyle?.fontSize?.times(density) ?: baseFontSize
-    val resolvedTextColor = if (isLink) {
+    val resolvedTextColor = explicitColor ?: if (isLink) {
         effectiveTextStyle?.color ?: LayoutConstants.DEFAULT_LINK_COLOR
     } else {
         effectiveTextStyle?.color ?: textColor
