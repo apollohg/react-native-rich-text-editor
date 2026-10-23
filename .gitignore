@@ -20,6 +20,7 @@ dist
 
 rust/android/*/libeditor_core.so
 rust/ios/EditorCore.xcframework
+rust/ios/*/libeditor_core.a
 rust/ios/sim-fat
 ios/EditorCore.xcframework
 

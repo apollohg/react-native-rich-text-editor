@@ -31,6 +31,14 @@ if [[ "${1:-}" == "--version" ]]; then
   printf '%s 1.95.0 (fixture)\n' "$tool"
   exit 0
 fi
+if [[ "$tool" == "rustc" && "$1" == "-vV" ]]; then
+    echo 'host: fixture-host'
+    exit 0
+fi
+if [[ "$tool" == "rustc" && "$1" == "--print" && "$2" == "sysroot" ]]; then
+    cd "$(dirname "$0")/.." && pwd
+    exit 0
+fi
 if [[ "$tool" == "cargo" && "${1:-}" == "ndk" ]]; then
   exec cargo-ndk "${@:2}"
 fi
@@ -39,6 +47,14 @@ SCRIPT
     chmod +x "$toolchain_dir/$tool"
   done
 
+  mkdir -p "$toolchain_dir/../lib/rustlib/fixture-host/bin"
+  cat > "$toolchain_dir/../lib/rustlib/fixture-host/bin/llvm-strip" <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == --strip-unneeded && "$2" == -o ]] || exit 1
+cp "$4" "$3"
+SCRIPT
+  chmod +x "$toolchain_dir/../lib/rustlib/fixture-host/bin/llvm-strip"
   printf '%s\n' "$toolchain_dir"
 }
 
@@ -113,6 +129,7 @@ SCRIPT
 
 arm64_dir="$(make_toolchain arm64-host)"
 x86_dir="$(make_toolchain x86_64-host)"
+space_dir="$(make_toolchain "toolchain with spaces")"
 mkdir -p "$fixture_root/other/bin"
 cp "$arm64_dir/cargo" "$fixture_root/other/bin/cargo"
 cp "$arm64_dir/rustc" "$fixture_root/other/bin/rustc"
@@ -211,18 +228,27 @@ cp "$repo_root/rust/build-android.sh" "$android_fixture_dir/build-android.sh"
 cp "$repo_root/rust/toolchain.sh" "$android_fixture_dir/toolchain.sh"
 cp "$repo_root/rust/v2-symbols.sh" "$android_fixture_dir/v2-symbols.sh"
 cp "$repo_root/rust/release-profile.sh" "$android_fixture_dir/release-profile.sh"
+cp "$repo_root/rust/strip-native-library.sh" "$android_fixture_dir/strip-native-library.sh"
 cargo_home="$fixture_root/cargo-home"
 mkdir -p "$cargo_home/bin"
 make_cargo_ndk "$cargo_home/bin"
 : > "$fixture_root/cargo-ndk.log"
 env -i \
   PATH="$fake_bin:/usr/bin:/bin" \
-  RUST_TOOLCHAIN_DIR="$arm64_dir" \
+  RUST_TOOLCHAIN_DIR="$space_dir" \
   CARGO_HOME="$cargo_home" \
   CARGO_NDK_FIXTURE_LOG="$fixture_root/cargo-ndk.log" \
   bash "$android_fixture_dir/build-android.sh"
-expected_cargo_ndk_log="$(printf 'CARGO=%s RUST_MIN_STACK=16777216\n' "$arm64_dir/cargo" "$arm64_dir/cargo" "$arm64_dir/cargo" "$arm64_dir/cargo")"
+expected_cargo_ndk_log="$(printf 'CARGO=%s RUST_MIN_STACK=16777216\n' "$space_dir/cargo" "$space_dir/cargo" "$space_dir/cargo" "$space_dir/cargo")"
 [[ "$(cat "$fixture_root/cargo-ndk.log")" == "$expected_cargo_ndk_log" ]] || \
   fail "cargo-ndk did not receive the pinned Cargo and Android release compiler stack"
+
+rm "$space_dir/../lib/rustlib/fixture-host/bin/llvm-strip"
+if RUST_TOOLCHAIN_DIR="$space_dir" bash "$android_fixture_dir/strip-native-library.sh" android \
+    "$android_fixture_dir/android/arm64-v8a/libeditor_core.so" "$fixture_root/missing-tool.so" > "$fixture_root/missing-strip.log" 2>&1; then
+    fail "accepted a toolchain without LLVM strip"
+fi
+assert_contains "$(cat "$fixture_root/missing-strip.log")" 'rustup component add llvm-tools-preview --toolchain 1.95.0'
+[[ ! -e "$fixture_root/missing-tool.so" ]] || fail "missing LLVM strip produced an artifact"
 
 echo "Toolchain discovery fixture tests passed."

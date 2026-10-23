@@ -63,7 +63,7 @@ require_native_artifacts() {
     echo "These are build outputs and are not tracked in git. Build them with:"
     echo "  npm run $build_script"
     echo
-    echo "This needs the pinned Rust toolchain (see rust/toolchain.sh)."
+    echo "This needs the pinned Rust toolchain (see rust/toolchain.sh) and its llvm-tools-preview component."
     [[ "$platform" == "android" ]] && echo "Android also needs ANDROID_NDK_HOME and cargo-ndk."
   } >&2
   return 1

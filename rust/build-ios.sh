@@ -27,12 +27,15 @@ for target in "${IOS_TARGETS[@]}"; do
     IPHONEOS_DEPLOYMENT_TARGET="$IOS_DEPLOYMENT_TARGET" \
         "$RUST_TOOLCHAIN_CARGO" rustc --manifest-path "$CRATE_DIR/Cargo.toml" --release \
         --target "$target" --target-dir "$TARGET_DIR" --crate-type staticlib
+    mkdir -p "$OUT_DIR/$target"
+    bash "$SCRIPT_DIR/strip-native-library.sh" ios \
+        "$TARGET_DIR/$target/release/$LIB_NAME" "$OUT_DIR/$target/$LIB_NAME"
 done
 
 echo "==> Verifying v2 symbols in every slice..."
 for target in "${IOS_TARGETS[@]}"; do
-    v2_count="$(nm -gU "$TARGET_DIR/$target/release/$LIB_NAME" 2>/dev/null | grep -c 'uniffi_editor_core_fn_func_editor_v2_' || true)"
-    legacy_lines="$(nm -gU "$TARGET_DIR/$target/release/$LIB_NAME" 2>/dev/null | grep -E 'uniffi_editor_core_(fn|checksum)_func_(editor_|collaboration_)' | grep -v 'editor_v2\|editor_core_version' || true)"
+    v2_count="$(nm -gU "$OUT_DIR/$target/$LIB_NAME" 2>/dev/null | grep -c 'uniffi_editor_core_fn_func_editor_v2_' || true)"
+    legacy_lines="$(nm -gU "$OUT_DIR/$target/$LIB_NAME" 2>/dev/null | grep -E 'uniffi_editor_core_(fn|checksum)_func_(editor_|collaboration_)' | grep -v 'editor_v2\|editor_core_version' || true)"
     echo "  $target: $v2_count editor_v2 symbols"
     if [ "$v2_count" -ne "${#V2_SYMBOLS[@]}" ]; then
         echo "ERROR: expected exactly ${#V2_SYMBOLS[@]} editor_v2 symbols in $target slice" >&2
@@ -50,8 +53,8 @@ echo "==> Creating fat library for simulator targets..."
 mkdir -p "$OUT_DIR/sim-fat" "$OUT_DIR"
 
 lipo -create \
-    "$TARGET_DIR/aarch64-apple-ios-sim/release/$LIB_NAME" \
-    "$TARGET_DIR/x86_64-apple-ios/release/$LIB_NAME" \
+    "$OUT_DIR/aarch64-apple-ios-sim/$LIB_NAME" \
+    "$OUT_DIR/x86_64-apple-ios/$LIB_NAME" \
     -output "$OUT_DIR/sim-fat/$LIB_NAME"
 
 echo "==> Creating XCFramework..."
@@ -60,7 +63,7 @@ echo "==> Creating XCFramework..."
 rm -rf "$OUT_DIR/EditorCore.xcframework"
 
 xcodebuild -create-xcframework \
-    -library "$TARGET_DIR/aarch64-apple-ios/release/$LIB_NAME" \
+    -library "$OUT_DIR/aarch64-apple-ios/$LIB_NAME" \
     -library "$OUT_DIR/sim-fat/$LIB_NAME" \
     -output "$OUT_DIR/EditorCore.xcframework"
 

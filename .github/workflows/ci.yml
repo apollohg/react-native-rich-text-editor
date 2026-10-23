@@ -68,6 +68,7 @@ jobs:
         uses: dtolnay/rust-toolchain@1.95.0
         with:
           targets: aarch64-linux-android, armv7-linux-androideabi, i686-linux-android, x86_64-linux-android
+          components: llvm-tools-preview
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -104,6 +105,9 @@ jobs:
 
       - name: Install cargo-ndk
         run: cargo install cargo-ndk --version 4.1.2 --locked
+
+      - name: Validate Android native stripping
+        run: bash scripts/tests/validate-native-stripping.sh android
 
       - name: Build editor-core for Android
         run: bash rust/build-android.sh
@@ -213,6 +217,7 @@ jobs:
         uses: dtolnay/rust-toolchain@1.95.0
         with:
           targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios
+          components: llvm-tools-preview
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -230,6 +235,9 @@ jobs:
       # rather than a tracked file.
       - name: Build editor-core for iOS
         run: npm run build:rust:ios
+
+      - name: Validate iOS native stripping
+        run: bash scripts/tests/validate-native-stripping.sh ios
 
       - name: Verify generated bindings are current
         run: git diff --exit-code -- rust/bindings ios/Generated_editor_core.swift ios/editor_coreFFI
