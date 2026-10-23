@@ -103,23 +103,6 @@ export function EditorScreen() {
 
 See [Getting Started](https://github.com/apollohg/react-native-rich-text-editor/wiki/Getting-Started) and the [RichTextEditor reference](https://github.com/apollohg/react-native-rich-text-editor/wiki/RichTextEditor-Reference) for the complete API.
 
-## Text colour
-
-The built-in schemas support Tiptap's `textStyle` mark with a nullable `color` attribute. Set or remove it through an editor ref:
-
-```tsx
-editorRef.current?.setMark('textStyle', { color: '#e53935' });
-editorRef.current?.unsetMark('textStyle');
-```
-
-A range applies the colour to selected text; a caret sets the colour for subsequent typing. Read the current attributes from `activeState.markAttrs.textStyle`. Explicit colour overrides theme and link colours in the editor and viewer on both platforms; removing it restores the theme.
-
-HTML uses `<span style="color:…">`. Hex colours, numeric `rgb()`/`rgba()`, and CSS named colours are normalised to `#rrggbbaa`; invalid command or document colours are rejected. Unsupported HTML colour declarations are ignored while retaining their text.
-
-For Tiptap, enable its `TextStyle` and `Color` extensions. Shared JSON uses `{ type: 'textStyle', attrs: { color: '#e53935ff' } }`; custom schemas must declare the same mark and attribute. Other Tiptap TextStyle attributes require matching custom schemas and are not provided by this colour feature. `unsetMark('textStyle')` removes the entire mark, including any custom attributes it carries.
-
-Adding this built-in mark changes the schema fingerprint. Open persisted collaboration snapshots with their original schema or migrate their content into the updated schema.
-
 ## Observing changes without exporting content
 
 Use `onDocumentChange` to mark a document dirty or schedule a save. It receives
