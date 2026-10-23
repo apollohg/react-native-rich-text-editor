@@ -207,6 +207,10 @@ extension EditorAccessoryToolbarView {
         configuration.background = background
     }
 
+    func resolvedButtonWidth(for item: NativeToolbarItem) -> CGFloat {
+        max(item.buttonStyle?.width ?? resolvedButtonSize, item.buttonStyle?.minWidth ?? 0)
+    }
+
     func resolvedButtonBorderRadius(for item: NativeToolbarItem) -> CGFloat {
         guard let radius = item.buttonStyle?.borderRadius, radius.isFinite else {
             return max(0, resolvedButtonBorderRadius)

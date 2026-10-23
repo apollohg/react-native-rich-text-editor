@@ -2,6 +2,8 @@ import './helpers/EditorToolbarFixture';
 import { renderToolbar } from './helpers/EditorToolbarFixture';
 
 import { StyleSheet } from 'react-native';
+import { fireEvent } from '@testing-library/react-native';
+import { BUTTON_HIT } from '../EditorToolbarRegistry';
 
 describe('EditorToolbar', () => {
     // Sizing contract shared with iOS (resolvedToolbarHeight/resolvedButtonSize)
@@ -10,6 +12,49 @@ describe('EditorToolbar', () => {
     // max(1, min(MAX_BUTTON_SIZE, height - BUTTON_HEIGHT_INSET)).
 
     describe('theme sizing', () => {
+        it('applies independent widths to text groups and their expanded children', () => {
+            const groupWidth = 120;
+            const childMinWidth = 100;
+            const { getByLabelText } = renderToolbar({
+                toolbarItems: [
+                    {
+                        type: 'group',
+                        key: 'text-style',
+                        label: 'Text style',
+                        icon: { type: 'glyph', text: 'Normal' },
+                        buttonStyle: { width: groupWidth },
+                        items: [
+                            {
+                                type: 'action',
+                                key: 'heading',
+                                label: 'Heading 1',
+                                icon: { type: 'glyph', text: 'Heading 1' },
+                                buttonStyle: { minWidth: childMinWidth },
+                            },
+                        ],
+                    },
+                    {
+                        type: 'action',
+                        key: 'default-size',
+                        label: 'Default size',
+                        icon: { type: 'glyph', text: 'B' },
+                    },
+                ],
+                onToolbarAction: jest.fn(),
+            });
+
+            expect(StyleSheet.flatten(getByLabelText('Text style').props.style).width).toBe(
+                groupWidth
+            );
+            fireEvent.press(getByLabelText('Text style'));
+            expect(StyleSheet.flatten(getByLabelText('Heading 1').props.style).minWidth).toBe(
+                childMinWidth
+            );
+            expect(StyleSheet.flatten(getByLabelText('Default size').props.style).width).toBe(
+                BUTTON_HIT
+            );
+        });
+
         it('honors theme heights below 40 instead of flooring them', () => {
             const { getByLabelText, toJSON } = renderToolbar({
                 theme: { height: 32 },

@@ -779,13 +779,19 @@ internal class EditorKeyboardToolbarView(context: Context) : FrameLayout(context
         val toolbarHeightDp = resolvedToolbarHeightDp(isNative)
         val buttonSizeDp = resolvedButtonSizeDp(isNative, toolbarHeightDp)
         val sizePx = dp(buttonSizeDp.roundToInt())
+        val requestedWidth = binding.item.buttonStyle?.width
+            ?.takeIf { it.isFinite() && it > 0f }
+        val requestedMinWidth = binding.item.buttonStyle?.minWidth
+            ?.takeIf { it.isFinite() && it > 0f }
+        val minimumWidthPx =
+            dp(maxOf(requestedMinWidth ?: 0f, requestedWidth ?: buttonSizeDp).roundToInt())
         val requestedIconSize = binding.item.buttonStyle?.iconSize ?: theme?.buttonIconSize
         button.textSize = requestedIconSize
             ?.takeIf { it.isFinite() && it > 0f }
             ?.coerceAtMost(buttonSizeDp)
             ?: if (isNative) NATIVE_BUTTON_ICON_SIZE_SP else 16f
-        button.minWidth = sizePx
-        button.minimumWidth = sizePx
+        button.minWidth = minimumWidthPx
+        button.minimumWidth = minimumWidthPx
         button.minHeight = sizePx
         button.minimumHeight = sizePx
         button.setPadding(
@@ -795,6 +801,11 @@ internal class EditorKeyboardToolbarView(context: Context) : FrameLayout(context
             if (isNative) 0 else dp(8)
         )
         (button.layoutParams as? LinearLayout.LayoutParams)?.let { params ->
+            params.width = if (requestedWidth != null) {
+                minimumWidthPx
+            } else {
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            }
             params.marginEnd = dp(if (isNative) NATIVE_ITEM_SPACING_DP else 6)
             button.layoutParams = params
         }

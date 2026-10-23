@@ -349,6 +349,8 @@ enum class EditorToolbarAppearance {
 }
 
 data class EditorToolbarButtonStyle(
+    val width: Float? = null,
+    val minWidth: Float? = null,
     val iconSize: Float? = null,
     val color: Int? = null,
     val backgroundColor: Int? = null,
@@ -362,6 +364,8 @@ data class EditorToolbarButtonStyle(
         fun fromJson(json: JSONObject?): EditorToolbarButtonStyle? {
             json ?: return null
             return EditorToolbarButtonStyle(
+                width = json.optNullableFloat("width"),
+                minWidth = json.optNullableFloat("minWidth"),
                 iconSize = json.optNullableFloat("iconSize"),
                 color = parseColor(json.optNullableString("color")),
                 backgroundColor = parseColor(json.optNullableString("backgroundColor")),

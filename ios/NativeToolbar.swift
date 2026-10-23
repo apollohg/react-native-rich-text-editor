@@ -323,7 +323,7 @@ final class EditorAccessoryToolbarView: UIView {
         }
         for binding in buttonBindings {
             binding.button.layer.cornerRadius = resolvedButtonBorderRadius(for: binding.item)
-            binding.widthConstraint.constant = resolvedButtonSize
+            binding.widthConstraint.constant = resolvedButtonWidth(for: binding.item)
             binding.heightConstraint.constant = resolvedButtonSize
         }
         for button in mentionButtons {
