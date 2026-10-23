@@ -6,6 +6,7 @@ import {
     createV2LocalHandle,
 } from './helpers/NativeRichTextEditorFixture';
 import { render, act } from '@testing-library/react-native';
+import { useEffect, useState } from 'react';
 import { NativeRichTextEditor } from '../NativeRichTextEditor';
 import * as EditorToolbarRegistry from '../EditorToolbarRegistry';
 import { type NativeEditorDocumentHandle } from '../NativeEditorBridge';
@@ -307,6 +308,52 @@ describe('native table selection geometry events', () => {
         ]);
         handle.destroy();
     });
+
+    it.each([ false, true ])(
+        'keeps document access safe during geometry cleanup (deferred owner destruction: %s)',
+        deferred => {
+            const snapshots: unknown[] = [];
+            const lifecycle: string[] = [];
+
+            function Owner() {
+                const [ handle ] = useState(() => createV2LocalHandle(V2_INITIAL_DOC));
+
+                useEffect(() => () => {
+                    const destroy = () => {
+                        lifecycle.push('destroy');
+                        handle.destroy();
+                    };
+
+                    if (deferred) {
+                        setTimeout(destroy, 0);
+                    } else {
+                        destroy();
+                    }
+                }, [ handle ]);
+
+                return <NativeRichTextEditor documentHandle={handle}
+                    onTableSelectionGeometryChange={geometry => {
+                        lifecycle.push(geometry == null ? 'clear' : 'geometry');
+                        snapshots.push(handle.bridge.getDocumentJson());
+                    }} />;
+            }
+
+            const view = render(<Owner />);
+            const nativeView = view.getByTestId('native-editor-view');
+
+            act(() => nativeView.props.onTableSelectionGeometry({
+                nativeEvent: nativeGeometry(nativeView.props.editorId),
+            }));
+
+            expect(snapshots).toHaveLength(1);
+
+            expect(() => view.unmount()).not.toThrow();
+            act(() => jest.runOnlyPendingTimers());
+            expect(snapshots).toEqual([ V2_INITIAL_DOC, V2_INITIAL_DOC ]);
+            expect(lifecycle).toEqual([ 'geometry', 'clear', 'destroy' ]);
+            expect(mockNativeModule.editorV2Destroy).toHaveBeenCalledTimes(1);
+        }
+    );
 
     it('delivers nothing on unmount when no geometry is shown', () => {
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
