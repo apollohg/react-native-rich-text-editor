@@ -1,6 +1,6 @@
+import CoreText
 @preconcurrency public import ExpoModulesCore
 import UIKit
-import CoreText
 
 /// Test-facing parser for the v2 create value. Handles are never bridged
 /// through signed native numbers: the frozen wire shape is a canonical

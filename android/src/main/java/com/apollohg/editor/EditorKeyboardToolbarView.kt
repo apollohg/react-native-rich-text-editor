@@ -290,12 +290,16 @@ internal class EditorKeyboardToolbarView(context: Context) : FrameLayout(context
                 continue
             }
 
-            val button = (if (item.icon?.imageSource != null) {
-                ToolbarImageButton(themedContext).apply {
-                    imageSource = item.icon.imageSource
-                    imageTintable = item.icon.tintable
+            val button = (
+                if (item.icon?.imageSource != null) {
+                    ToolbarImageButton(themedContext).apply {
+                        imageSource = item.icon.imageSource
+                        imageTintable = item.icon.tintable
+                    }
+                } else {
+                    AppCompatButton(themedContext)
                 }
-            } else AppCompatButton(themedContext)).apply {
+                ).apply {
                 val resolvedIcon = item.icon?.resolveForAndroid(themedContext)
                     ?: NativeToolbarResolvedIcon("?")
                 text = resolvedIcon.text
@@ -535,7 +539,9 @@ internal class EditorKeyboardToolbarView(context: Context) : FrameLayout(context
         val size = resolvedMenuIconSizePx(child)
         val aspect = if (drawable.intrinsicWidth > 0 && drawable.intrinsicHeight > 0) {
             drawable.intrinsicWidth.toFloat() / drawable.intrinsicHeight
-        } else 1f
+        } else {
+            1f
+        }
         val imageWidth = (if (aspect > 1f) size.toFloat() else size * aspect).roundToInt()
         val imageHeight = (if (aspect > 1f) size / aspect else size.toFloat()).roundToInt()
         // Menu ImageView layout uses intrinsic size, not the existing drawable bounds.
@@ -546,16 +552,20 @@ internal class EditorKeyboardToolbarView(context: Context) : FrameLayout(context
     }
 
     private fun resolvedMenuIconSizePx(item: NativeToolbarItem): Int {
-        val size = resolvedIconSizeSp(item, NATIVE_BUTTON_ICON_SIZE_SP, NATIVE_BUTTON_SIZE_DP.toFloat())
+        val size =
+            resolvedIconSizeSp(item, NATIVE_BUTTON_ICON_SIZE_SP, NATIVE_BUTTON_SIZE_DP.toFloat())
         return TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, size, resources.displayMetrics)
             .roundToInt().coerceIn(1, dp(NATIVE_BUTTON_SIZE_DP).coerceAtLeast(1))
     }
 
-    private fun resolvedIconSizeSp(item: NativeToolbarItem, defaultSize: Float, maximumSize: Float): Float =
-        (item.buttonStyle?.iconSize ?: theme?.buttonIconSize)
-            ?.takeIf { it.isFinite() && it > 0f }
-            ?.coerceAtMost(maximumSize)
-            ?: defaultSize
+    private fun resolvedIconSizeSp(
+        item: NativeToolbarItem,
+        defaultSize: Float,
+        maximumSize: Float
+    ): Float = (item.buttonStyle?.iconSize ?: theme?.buttonIconSize)
+        ?.takeIf { it.isFinite() && it > 0f }
+        ?.coerceAtMost(maximumSize)
+        ?: defaultSize
 
     override fun onDetachedFromWindow() {
         groupPopup?.dismiss()

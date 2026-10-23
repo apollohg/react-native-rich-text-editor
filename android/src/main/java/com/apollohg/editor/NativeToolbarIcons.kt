@@ -2,8 +2,8 @@ package com.apollohg.editor
 
 import android.content.Context
 import android.graphics.Typeface
-import org.json.JSONObject
 import com.facebook.react.common.assets.ReactFontManager
+import org.json.JSONObject
 
 internal data class NativeToolbarIcon(
     val defaultId: ToolbarDefaultIconId? = null,
@@ -90,8 +90,10 @@ internal data class NativeToolbarIcon(
                         ?: return null
                     NativeToolbarIcon(
                         imageSource = NativeToolbarImageSource(
-                            uri, source.toolbarPositiveNumber("width"),
-                            source.toolbarPositiveNumber("height"), source.toolbarPositiveNumber("scale")
+                            uri,
+                            source.toolbarPositiveNumber("width"),
+                            source.toolbarPositiveNumber("height"),
+                            source.toolbarPositiveNumber("scale")
                         ),
                         tintable = raw.optBoolean("tintable", true),
                         fallbackText = raw.toolbarNullableString("fallbackText")
@@ -144,7 +146,9 @@ internal object MaterialIconRegistry {
     fun reactIcon(context: Context, name: String): Map<String, String>? {
         if (name.isBlank()) return null
         val glyph = glyphForName(context, name)
-        check(!glyphMap.isNullOrEmpty()) { "NativeEditor could not load bundled toolbar icon glyph map" }
+        check(!glyphMap.isNullOrEmpty()) {
+            "NativeEditor could not load bundled toolbar icon glyph map"
+        }
         glyph ?: return null
         val font = typeface(context)
             ?: throw IllegalStateException("NativeEditor could not load bundled toolbar icon font")

@@ -150,7 +150,7 @@ struct NativeToolbarIcon {
     let glyphText: String?
     let iosSymbolName: String?
     let fallbackText: String?
-    var imageSource: ToolbarImageSource? = nil
+    var imageSource: ToolbarImageSource?
     var tintable = true
 
     private static let defaultSFSymbolNames: [ToolbarDefaultIconId: String] = [

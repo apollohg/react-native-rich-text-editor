@@ -33,24 +33,38 @@ internal class ToolbarImageRequest(
     private val request: DataSource<CloseableReference<CloseableImage>>
 
     init {
-        val uri = if (source.uri.startsWith("/")) Uri.fromFile(java.io.File(source.uri))
-            else ImageSource(context, source.uri).uri
+        val uri = if (source.uri.startsWith("/")) {
+            Uri.fromFile(java.io.File(source.uri))
+        } else {
+            ImageSource(context, source.uri).uri
+        }
         val imageRequest = ImageRequestBuilder.newBuilderWithSource(uri)
             .setResizeOptions(ResizeOptions(sizePx.coerceAtLeast(1), sizePx.coerceAtLeast(1)))
             .build()
         request = fetch(imageRequest, context)
-        request.subscribe(object : BaseDataSubscriber<CloseableReference<CloseableImage>>() {
-            override fun onNewResultImpl(dataSource: DataSource<CloseableReference<CloseableImage>>) {
-                if (!dataSource.isFinished || closed) return
-                image = dataSource.result
-                val bitmap = image?.get() as? CloseableBitmap
-                onImage(bitmap?.let { BitmapDrawable(context.resources, it.underlyingBitmap) })
-            }
+        request.subscribe(
+            object : BaseDataSubscriber<CloseableReference<CloseableImage>>() {
+                override fun onNewResultImpl(
+                    dataSource: DataSource<CloseableReference<CloseableImage>>
+                ) {
+                    if (!dataSource.isFinished || closed) return
+                    image = dataSource.result
+                    val bitmap = image?.get() as? CloseableBitmap
+                    onImage(
+                        bitmap?.let {
+                            BitmapDrawable(context.resources, it.underlyingBitmap)
+                        }
+                    )
+                }
 
-            override fun onFailureImpl(dataSource: DataSource<CloseableReference<CloseableImage>>) {
-                if (!closed) onImage(null)
-            }
-        }, UiThreadImmediateExecutorService.getInstance())
+                override fun onFailureImpl(
+                    dataSource: DataSource<CloseableReference<CloseableImage>>
+                ) {
+                    if (!closed) onImage(null)
+                }
+            },
+            UiThreadImmediateExecutorService.getInstance()
+        )
     }
 
     fun close() {
@@ -95,11 +109,17 @@ internal class ToolbarImageButton(context: Context) : AppCompatButton(context) {
             super.onDraw(canvas)
             return
         }
-        if (imageTintable) drawable.setColorFilter(currentTextColor, PorterDuff.Mode.SRC_IN)
-        else drawable.clearColorFilter()
+        if (imageTintable) {
+            drawable.setColorFilter(currentTextColor, PorterDuff.Mode.SRC_IN)
+        } else {
+            drawable.clearColorFilter()
+        }
         val edge = textSize.coerceAtMost(minOf(width, height).toFloat())
-        val aspect = if (drawable.intrinsicWidth > 0 && drawable.intrinsicHeight > 0)
-            drawable.intrinsicWidth.toFloat() / drawable.intrinsicHeight else 1f
+        val aspect = if (drawable.intrinsicWidth > 0 && drawable.intrinsicHeight > 0) {
+            drawable.intrinsicWidth.toFloat() / drawable.intrinsicHeight
+        } else {
+            1f
+        }
         val iconWidth = if (aspect > 1f) edge else edge * aspect
         val iconHeight = if (aspect > 1f) edge / aspect else edge
         val left = ((width - iconWidth) / 2).roundToInt()
