@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useLayoutEffect, useRef } from 'react';
 import { PixelRatio, Platform, type NativeSyntheticEvent } from 'react-native';
 import { normalizeNativeEditorV2DecimalId, type Selection } from './NativeEditorBridge';
 import { setActiveEditorToolbarFrameOwnerForEditor } from './EditorToolbar';
@@ -260,7 +260,8 @@ export function useRichTextEditorEvents(
 
     const deliveredTableSelectionGeometryRef = useRef<TableSelectionGeometry | null>(null);
 
-    useEffect(
+    // Clear overlays before an owner's passive cleanup destroys the document.
+    useLayoutEffect(
         () => () => {
             if (deliveredTableSelectionGeometryRef.current == null) {
                 return;
