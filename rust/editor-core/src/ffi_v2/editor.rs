@@ -486,6 +486,29 @@ pub fn editor_v2_get_document_html(editor_id: String) -> FfiJsonResult {
 }
 
 #[uniffi::export]
+pub fn editor_v2_get_document_text(editor_id: String) -> FfiJsonResult {
+    json_result(with_editor(&editor_id, |session| {
+        let text = session.get_text()?;
+        let result = serde_json::json!({ "text": text }).to_string();
+        let limit = session.engine.editing_limits().max_derived_output_bytes;
+        if result.len() > limit {
+            return Err(
+                BoundaryError::limit("DOCUMENT_LIMIT_EXCEEDED", limit, result.len()).into(),
+            );
+        }
+        Ok(result)
+    }))
+}
+
+#[uniffi::export]
+pub fn editor_v2_get_document_is_empty(editor_id: String) -> FfiJsonResult {
+    json_result(with_editor(&editor_id, |session| {
+        let is_empty = session.get_is_empty()?;
+        Ok(serde_json::json!({ "isEmpty": is_empty }).to_string())
+    }))
+}
+
+#[uniffi::export]
 pub fn editor_v2_get_document_markdown(editor_id: String, flavor: Option<String>) -> FfiJsonResult {
     json_result(with_editor(&editor_id, |session| {
         let flavor = match flavor.as_deref() {

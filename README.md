@@ -120,6 +120,78 @@ For Tiptap, enable its `TextStyle` and `Color` extensions. Shared JSON uses `{ t
 
 Adding this built-in mark changes the schema fingerprint. Open persisted collaboration snapshots with their original schema or migrate their content into the updated schema.
 
+## Observing changes without exporting content
+
+Use `onDocumentChange` to mark a document dirty or schedule a save. It receives
+`{ documentRevision, origin }` without exporting HTML or JSON. The revision is a
+decimal string; `origin` is `nativeView`, `jsApi`, `remoteCollaboration`, `history`,
+`restore`, or `import`.
+
+The callback runs once per newly observed revision after the initial ready
+baseline, including controlled replacements. Repeated refreshes and selection-only
+changes do not notify. Several engine commits observed together produce one event
+for the latest revision, even if its content equals an earlier revision. Remote
+changes are observed through the collaboration `editorBindings` (or the headless
+hook's `revisionSignal`). Rebinding to a different handle establishes a new baseline.
+
+For a debounced save, schedule the getter itself:
+
+```tsx
+import React, { useCallback, useEffect, useRef } from 'react';
+import {
+    RichTextEditor,
+    type DocumentJSON,
+    type NativeEditorDocumentHandle,
+} from '@apollohg/react-native-rich-text-editor';
+
+const SAVE_DELAY_MS = 500;
+
+export function AutosaveEditor({ documentHandle, save }: {
+    documentHandle: NativeEditorDocumentHandle;
+    save: (content: DocumentJSON) => void;
+}) {
+    const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const cancelSave = useCallback(() => {
+        if (timer.current !== null) clearTimeout(timer.current);
+        timer.current = null;
+    }, []);
+    const saveNow = useCallback(() => {
+        cancelSave();
+        if (!documentHandle.isDestroyed) {
+            save(documentHandle.bridge.getDocumentJson());
+        }
+    }, [cancelSave, documentHandle, save]);
+    const scheduleSave = useCallback(() => {
+        cancelSave();
+        timer.current = setTimeout(saveNow, SAVE_DELAY_MS);
+    }, [cancelSave, saveNow]);
+
+    useEffect(() => cancelSave, [cancelSave, documentHandle, save]);
+
+    return <RichTextEditor documentHandle={documentHandle}
+        onDocumentChange={scheduleSave} onBlur={saveNow} />;
+}
+```
+
+This local-document example saves on a typing pause or blur and cancels pending
+work on unmount; flush before navigation if the last edit must be saved. Getters
+read the current document when called, not a snapshot of an earlier event.
+
+`onContentChange` and `onContentChangeJSON` retain their eager export behaviour.
+Wrapping those callbacks in a debounce does not defer the exports. Controlled
+`value`/`valueJSON` reconciliation also still reads content; initialize the handle
+and omit controlled values and eager callbacks to avoid that work while typing.
+`useYjsCollaboration` still exports JSON for its public `documentJson` state when
+revisions advance; the lightweight event does not change that separate contract.
+`onLocalCommit` remains available for applications interested only in local mutations.
+
+`getTextContent()` now reads text directly from the engine: literal characters
+are preserved, text nodes are concatenated in document order, and block boundaries,
+hard breaks, and atom labels add no text. This replaces HTML stripping (including
+its escaped entities and HTML-rendered atom labels). Reading all text still takes
+work proportional to its length. `getIsEmpty()` directly queries the engine's
+structural definition; an image, rule, or other non-text content is not empty.
+
 ## Copy and paste
 
 Copy and cut publish an editor fragment, HTML, and plain text. Pasting between compatible editor schemas preserves selected marks, nodes, and atom attributes. External rich text imports supported HTML formatting and structure, with RTF conversion on iOS.
