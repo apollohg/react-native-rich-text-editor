@@ -711,17 +711,21 @@ impl MutationCompiler {
                     message.to_string(),
                 )
             })?;
-            self.delete_structural_range(
-                operation_index,
-                MutationDocumentContext {
-                    before: document,
-                    after: &deleted,
-                    schema,
-                    limits,
-                },
-                from,
-                to,
-            )?;
+            if self.delete(operation_index, from, to, &[])? == TextRangeDisposition::Structural {
+                self.delete_structural_range(
+                    operation_index,
+                    MutationDocumentContext {
+                        before: document,
+                        after: &deleted,
+                        schema,
+                        limits,
+                    },
+                    from,
+                    to,
+                )?;
+            } else if from != to {
+                self.rebuild_target_layout(operation_index, &deleted)?;
+            }
             return self.insert_tracked_replacement(
                 operation_index,
                 MutationDocumentContext {
