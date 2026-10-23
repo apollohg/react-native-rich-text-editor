@@ -105,7 +105,7 @@ fn multiline_replacement(
         super::preferred_text_blocks_for_parent(schema, parent_spec, &prefix, &suffix, &budget)
             .map_err(|()| TextReplacementPlanError::Inapplicable)?;
     for name in candidates {
-        let Some(attrs) = super::default_attrs(schema, &name) else {
+        let Some(attrs) = super::compatible_declared_attrs(schema, &name, block.attrs()) else {
             continue;
         };
         let blocks = parts

@@ -49,6 +49,7 @@ pub enum FfiViewerElement {
         language: Option<String>,
         depth: u16,
         list_context_json: Option<String>,
+        text_align: Option<String>,
     },
     BlockEnd,
 }
@@ -93,6 +94,7 @@ pub struct ViewerCompiledDocument {
     pub(crate) table_records: Vec<FfiViewerTable>,
     pub(crate) is_empty: bool,
     pub(crate) preferred_text_block_name: String,
+    pub(crate) text_block_names: Vec<String>,
     pub(crate) trailing_empty_text_block_count: u32,
     pub(crate) retained_bytes: usize,
 }
@@ -117,6 +119,10 @@ impl ViewerCompiledDocument {
 
     pub fn is_empty(&self) -> bool {
         self.is_empty
+    }
+
+    pub fn text_block_names(&self) -> Vec<String> {
+        self.text_block_names.clone()
     }
 
     pub fn preferred_text_block_name(&self) -> String {

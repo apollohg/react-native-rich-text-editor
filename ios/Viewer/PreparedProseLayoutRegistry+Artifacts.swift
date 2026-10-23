@@ -165,7 +165,8 @@ extension PreparedProseLayoutRegistry {
             trailingEmptyTextBlockCount: compiledDocument.trailingEmptyTextBlockCount,
             tableAttributes: compiledDocument.tableAttributes,
             tableRecords: compiledDocument.tableRecords,
-            preferredTextBlockName: compiledDocument.preferredTextBlockName
+            preferredTextBlockName: compiledDocument.preferredTextBlockName,
+            textBlockNames: compiledDocument.textBlockNames
         )
     }
 

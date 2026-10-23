@@ -55,6 +55,8 @@ extension NativeEditorExpoView {
         case .mark:
             guard let mark = item.mark else { return }
             input.performToolbarToggleMark(mark)
+        case .textAlign:
+            input.performToolbarTextAlign(item.textAlign)
         case .heading:
             guard let level = item.headingLevel else { return }
             input.performToolbarToggleHeading(level)

@@ -220,6 +220,7 @@ internal fun NativeEditorExpoView.handleToolbarItemPress(
     val needsEditorPreflight = when (item.type) {
         ToolbarItemKind.MARK,
         ToolbarItemKind.HEADING,
+        ToolbarItemKind.TEXT_ALIGN,
         ToolbarItemKind.BLOCKQUOTE,
         ToolbarItemKind.LIST,
         ToolbarItemKind.COMMAND,
@@ -272,6 +273,8 @@ internal fun NativeEditorExpoView.handleToolbarItemPress(
         ToolbarItemKind.MARK -> item.mark?.let { input.performToolbarToggleMark(it) }
 
         ToolbarItemKind.HEADING -> item.headingLevel?.let { input.performToolbarToggleHeading(it) }
+
+        ToolbarItemKind.TEXT_ALIGN -> input.performToolbarTextAlignImpl(item.align)
 
         ToolbarItemKind.BLOCKQUOTE -> input.performToolbarToggleBlockquote()
 

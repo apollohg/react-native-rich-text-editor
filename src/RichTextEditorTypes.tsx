@@ -1,3 +1,4 @@
+import type { TextAlign } from './TextAlignment';
 import { type NativeEditorResolvedSelectionFrame } from './NativeEditorTypes';
 import {
     type DocumentJSON,
@@ -259,6 +260,10 @@ export interface RichTextEditorRef {
     toggleBlockquote(): void;
     /** Toggle a heading level on the current block selection. */
     toggleHeading(level: EditorToolbarHeadingLevel): void;
+    /** Align selected paragraphs and headings. */
+    setTextAlign(align: TextAlign): void;
+    /** Restore theme alignment for selected paragraphs and headings. */
+    unsetTextAlign(): void;
     /** Toggle a list type supported by the active schema. */
     toggleList(listType: string): void;
     /** Indent the current list item. */

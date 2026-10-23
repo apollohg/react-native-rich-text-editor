@@ -192,9 +192,10 @@ final class RenderBridge {
             switch element {
             case let .table(tableId): result.append(["type": "table", "tableId": tableId])
             case .blockEnd: result.append(["type": "blockEnd"])
-            case let .blockStart(nodeType, language, depth, context):
+            case let .blockStart(nodeType, language, depth, context, textAlign):
                 var value: [String: Any] = ["type": "blockStart", "nodeType": nodeType, "depth": depth]
                 value["language"] = language
+                value["textAlign"] = textAlign
                 if let context {
                     guard let parsed = object(context) else { return nil }
                     value["listContext"] = parsed
@@ -549,7 +550,8 @@ final class RenderBridge {
                     topLevelChildIndex: topLevelChildIndex,
                     markerPending: isListItemContainer,
                     language: element["language"] as? String,
-                    sourceElementIndex: elementIndex
+                    sourceElementIndex: elementIndex,
+                    textAlign: element["textAlign"] as? String
                 )
                 let nestedListItemContainer =
                     isListItemContainer && (theme?.list?.itemSpacing != nil)

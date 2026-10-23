@@ -372,3 +372,46 @@ extension RichTextEditorViewTests {
     }
 
 }
+
+
+extension RichTextEditorViewTests {
+    func testAlignmentToolbarUsesExplicitStateAndEngineAvailability() {
+        let toolbar = EditorAccessoryToolbarView(frame: .zero)
+        let items = ["left", "center", "right"].map {
+            NativeToolbarItem(type: .textAlign, label: $0, textAlign: $0)
+        } + [NativeToolbarItem(type: .textAlign, label: "Reset")]
+        for alignment in ["left", "center", "right", "mixed", "inherit"] {
+            let state = NativeToolbarState(update: ["activeState": [
+                "textAlign": alignment == "inherit" ? NSNull() : alignment as Any,
+                "commands": ["setTextAlign": true, "unsetTextAlign": alignment != "inherit"]
+            ]])
+            for item in items {
+                let result = toolbar.buttonState(for: item, state: state)
+                XCTAssertEqual(result.active, item.textAlign == (alignment == "inherit" ? nil : alignment))
+                XCTAssertEqual(result.enabled, item.textAlign != nil || alignment != "inherit")
+            }
+        }
+        for item in items {
+            let result = toolbar.buttonState(for: item, state: .empty)
+            XCTAssertFalse(result.active)
+            XCTAssertFalse(result.enabled)
+        }
+    }
+}
+
+
+extension RichTextEditorViewTests {
+    func testAlignmentToolbarParsesResetAndRejectsUnsupportedItems() {
+        let parsed = NativeToolbarItem.from(json: """
+        [
+            {"type":"textAlign","align":"left","label":"Left","icon":{"type":"default","id":"alignLeft"}},
+            {"type":"textAlign","align":null,"label":"Reset","icon":{"type":"default","id":"alignReset"}},
+            {"type":"textAlign","align":"justify","label":"Invalid","icon":{"type":"default","id":"alignRight"}},
+            {"type":"textAlign","label":"Missing","icon":{"type":"default","id":"alignCenter"}}
+        ]
+        """)
+        XCTAssertEqual(parsed.map(\.label), ["Left", "Reset"])
+        XCTAssertEqual(parsed.map(\.textAlign), ["left", nil])
+        XCTAssertEqual(parsed.map { $0.icon?.resolvedSFSymbolName() }, ["text.alignleft", "arrow.uturn.backward"])
+    }
+}

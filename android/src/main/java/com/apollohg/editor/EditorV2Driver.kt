@@ -69,6 +69,8 @@ internal interface EditorV2Driver {
     fun toggleMark(markName: String, anchor: Int, head: Int): String?
     fun setMark(markName: String, attrsJson: String, anchor: Int, head: Int): String?
     fun unsetMark(markName: String, anchor: Int, head: Int): String?
+    fun setTextAlign(align: String, anchor: Int, head: Int): String?
+    fun unsetTextAlign(anchor: Int, head: Int): String?
     fun toggleHeading(level: Int, anchor: Int, head: Int): String?
     fun toggleCodeBlock(anchor: Int, head: Int): String?
     fun toggleBlockquote(anchor: Int, head: Int): String?

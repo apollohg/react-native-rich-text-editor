@@ -22,6 +22,8 @@ export function useEditorToolbarItems(
         | 'onToggleOrderedList'
         | 'onRequestLink'
         | 'onRequestImage'
+        | 'onSetTextAlign'
+        | 'textAlign'
         | 'onToggleHeading'
         | 'onToggleBlockquote'
         | 'onInsertNodeType'
@@ -57,6 +59,7 @@ export function useEditorToolbarItems(
         onToggleOrderedList,
         onRequestLink,
         onRequestImage,
+        onSetTextAlign,
         onToggleHeading,
         onToggleBlockquote,
         onInsertNodeType,
@@ -71,6 +74,7 @@ export function useEditorToolbarItems(
         isMarkActive,
         allowedMarks,
         insertableNodes,
+        textAlign,
         nodes,
         commands,
         canIndentList,
@@ -114,6 +118,8 @@ export function useEditorToolbarItems(
                     return onRequestLink ?? null;
                 case 'image':
                     return onRequestImage ?? null;
+                case 'textAlign':
+                    return onSetTextAlign ? () => onSetTextAlign(item.align) : null;
                 case 'heading':
                     return onToggleHeading ? () => onToggleHeading(item.level) : null;
                 case 'blockquote':
@@ -169,6 +175,7 @@ export function useEditorToolbarItems(
             onToggleBlockquote,
             onToggleBold,
             onToggleBulletList,
+            onSetTextAlign,
             onToggleHeading,
             onToggleItalic,
             onToggleListType,
@@ -182,8 +189,12 @@ export function useEditorToolbarItems(
     );
 
     const makeButtonKey = useCallback(
-        (item: EditorToolbarLeafItem, index: number, prefix = '') =>
-            item.key != null
+        (item: EditorToolbarLeafItem, index: number, prefix = '') => {
+            if (item.type === 'textAlign') {
+                return `${prefix}${item.key ?? `textAlign:${item.align ?? 'reset'}:${index}`}`;
+            }
+
+            return item.key != null
                 ? `${prefix}${item.key}`
                 : item.type === 'mark'
                     ? `${prefix}mark:${item.mark}:${index}`
@@ -201,7 +212,8 @@ export function useEditorToolbarItems(
                                             ? `${prefix}command:${item.command}:${index}`
                                             : item.type === 'node'
                                                 ? `${prefix}node:${item.nodeType}:${index}`
-                                                : `${prefix}action:${String(item.key)}:${index}`,
+                                                : `${prefix}action:${String(item.key)}:${index}`;
+        },
         []
     );
 
@@ -236,6 +248,10 @@ export function useEditorToolbarItems(
                     isDisabled = !insertableNodes.includes('image') || !onRequestImage;
                     break;
 
+                case 'textAlign':
+                    isActive = !!commands.setTextAlign && textAlign === item.align;
+                    isDisabled = !commands[item.align === null ? 'unsetTextAlign' : 'setTextAlign'];
+                    break;
                 case 'heading': {
                     const headingNodeType = `h${item.level}`;
                     isActive = !!nodes[headingNodeType];
@@ -308,6 +324,7 @@ export function useEditorToolbarItems(
             insertableNodes,
             isMarkActive,
             makeButtonKey,
+            textAlign,
             nodes,
             onRequestImage,
             onRequestLink,

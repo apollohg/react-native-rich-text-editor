@@ -72,7 +72,7 @@ export function validateAttribute(value: unknown, spec: AttrSpec, name: string):
         throw new Error(`invalid attribute '${name}': expected ${spec.type ?? 'finite number'}`);
     }
 
-    if (spec.enum != null && !spec.enum.some(entry => equal(entry, value))) {
+    if (spec.enum != null && !Array.prototype.some.call(spec.enum, (entry: unknown) => equal(entry, value))) {
         throw new Error(`invalid attribute '${name}': outside enum`);
     }
 
@@ -142,11 +142,11 @@ export function validateAttributeSpec(spec: AttrSpec, name: string): void {
             throw new Error(`invalid attribute '${name}' enum`);
         }
 
-        if (new Set(spec.enum.map(jsonType)).size !== 1) {
+        if (new Set(Array.from(spec.enum).filter(value => value !== null).map(jsonType)).size > 1) {
             throw new Error(`invalid attribute '${name}': enum values must share one JSON type`);
         }
 
-        for (const entry of spec.enum) {
+        for (const entry of Array.from(spec.enum)) {
             validateAttribute(entry, { ...spec, enum: undefined }, name);
         }
     }

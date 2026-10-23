@@ -196,14 +196,16 @@ extension EditorV2Adapter {
     func syncNodeSelection(docPos: UInt32) -> EditorV2SelectionSync? {
         guard beginRuntimeOperation() else { return nil }
         defer { endRuntimeOperation() }
-        guard let update = applySelectionEnvelope(["type": "atom", "docPos": Int(docPos), "edge": "node"]),
+        guard let update = applySelectionEnvelope(["type": "node", "at": ["kind": "document", "offset": Int(docPos)]]),
               let data = update.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let selection = object["selection"] as? [String: Any]
         else { return nil }
         if selection["type"] as? String == "node",
-           let pos = Self.uint32Field(selection, "pos") {
-            publishCollaborationSelection(docAnchor: pos, docHead: pos + 1)
+           let pos = Self.uint32Field(selection, "pos"),
+           let bounds = EditorNodeSelection.scalarRange(selection),
+           let end = documentPosition(forScalar: bounds.end) {
+            publishCollaborationSelection(docAnchor: pos, docHead: end)
             return EditorV2SelectionSync(docAnchor: pos, docHead: pos, refreshedUpdateJSON: update)
         }
         guard let mapping = Self.textDocumentSelection(from: update) else { return nil }

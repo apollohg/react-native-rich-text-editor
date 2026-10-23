@@ -175,9 +175,8 @@ internal fun EditorV2Adapter.selectAtomNode(docPos: Int): String? {
             invalidateCachedAtomicState(null)
             recoverNativeRender()?.also { update ->
                 val selection = runCatching { updateSelection(update) }.getOrNull()
-                val pos = exactV2ScalarInt(selection?.opt("pos") as? Number)
-                if (selection?.optString("type") == "node" && pos != null) {
-                    publishCollaborationSelection(pos, pos + 1)
+                selection?.let { nodeCollaborationRange(it) }?.let { (start, end) ->
+                    publishCollaborationSelection(start, end)
                 }
             }
         }
@@ -304,6 +303,20 @@ internal fun EditorV2Adapter.publishCollaborationCellsIfChanged() {
     }
 }
 
+private fun EditorV2Adapter.nodeCollaborationRange(selection: JSONObject): Pair<Int, Int>? {
+    if (selection.optString("type") != "node") return null
+    val start = scalarField(selection, "pos") ?: return null
+    val end = if (selection.has("endScalar")) {
+        val scalarStart = scalarField(selection, "posScalar") ?: return null
+        val scalarEnd = nodeSelectionEndScalar(selection, scalarStart) ?: return null
+        docPositionForScalar(scalarEnd) ?: return null
+    } else {
+        if (start == Int.MAX_VALUE) return null
+        start + 1
+    }
+    return (start to end).takeIf { end >= start }
+}
+
 internal fun EditorV2Adapter.publishCachedCollaborationSelection() {
     if (!roomBound) return
     val cells = cachedCollaborationCells()
@@ -313,6 +326,13 @@ internal fun EditorV2Adapter.publishCachedCollaborationSelection() {
                 .put("headCell", cells.second),
             cells
         )
+        return
+    }
+    val authoritative = cachedAtomicRenderSelection()
+    if (authoritative?.optString("type") == "node") {
+        nodeCollaborationRange(authoritative)?.let { (start, end) ->
+            publishCollaborationSelection(start, end)
+        }
         return
     }
     val selection = cachedAuthoritativeScalarSelection ?: return

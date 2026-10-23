@@ -577,7 +577,7 @@ describe('schema-aware document normalization', () => {
 
         expect(normalizeDocumentJson({ type: 'doc', content: [] }, empty)).toEqual({
             type: 'doc',
-            content: [ { type: 'paragraph' } ],
+            content: [ { type: 'paragraph', attrs: { textAlign: null } } ],
         });
     });
 

@@ -162,11 +162,11 @@ fn clipboard_atom_copy_paste_and_cut_keep_attrs_and_undo() {
             origin: TransactionOrigin::LocalApi,
             operations: vec![],
             selection_intent: SelectionIntent::Set(SelectionInput::Node {
-                at: RevisionedPosition {
+                at: (RevisionedPosition {
                     offset: 0,
                     kind: EditorOffsetKind::Scalar,
                     affinity: Affinity::After,
-                },
+                }).into(),
             }),
             history_policy: HistoryPolicy::Skip,
         })
@@ -221,11 +221,11 @@ fn clipboard_plain_node_selection_replaces_atom() {
             origin: TransactionOrigin::LocalApi,
             operations: vec![],
             selection_intent: SelectionIntent::Set(SelectionInput::Node {
-                at: RevisionedPosition {
+                at: (RevisionedPosition {
                     offset: 0,
                     kind: EditorOffsetKind::Scalar,
                     affinity: Affinity::After,
-                },
+                }).into(),
             }),
             history_policy: HistoryPolicy::Skip,
         })

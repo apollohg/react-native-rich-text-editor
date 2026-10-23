@@ -946,3 +946,59 @@ func unwrapCoreTextAttribute(_ value: Any?, as type: CTFont.Type) throws -> CTFo
     let font = CFGetTypeID(object) == CTFontGetTypeID() ? unsafeDowncast(object, to: type) : nil
     return try XCTUnwrap(font)
 }
+
+
+extension PreparedProseRenderingTests {
+    func testCompilerAlignmentProjectionKeepsEmptyHeadingsAndListBoundaries() throws {
+        let html = "<p style=\"text-align:left\">שלום</p><h2 style=\"text-align:right\"></h2><ul><li><p style=\"text-align:center\">item</p></li></ul>"
+        try withCompiledDocument(source: .html(html), configJSON: Fixture.localConfig) { document in
+            XCTAssertEqual(document.blocks.map(\.textAlign), ["left", "right", "center"])
+            XCTAssertEqual(document.blocks.map(\.nodeType), ["paragraph", "h2", "paragraph"])
+            XCTAssertNotNil(document.blocks.last?.listItemBoundary)
+            assertEmptyRenderedText(document.paragraphs[1].text)
+        }
+    }
+}
+
+
+extension PreparedProseRenderingTests {
+    func testCustomEmptyHeadingAlignmentAndResetMatchEditorAndViewer() throws {
+        let config = #"{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","htmlTag":"p","content":"inline*","group":"block","role":"textBlock","attrs":{"textAlign":{"default":null,"enum":[null,"left","center","right"]}}},{"name":"title","htmlTag":"h2","content":"inline*","group":"block","role":"textBlock","attrs":{"textAlign":{"default":null,"enum":[null,"left","center","right"]}}},{"name":"text","group":"inline","role":"text"}],"marks":[]},"initialization":{"type":"localEmpty"}}"#
+        let source = #"{"type":"doc","content":[{"type":"title","attrs":{"textAlign":"center"}},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"#
+        let themeJSON = #"{"version":1,"styles":{"title":{"textAlign":"right"}}}"#
+        let theme = try XCTUnwrap(EditorTheme.from(json: themeJSON))
+        let editorId = makeV2Editor(configJson: config)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        XCTAssertNotNil(adapter.setContentJson(source))
+        var origins: [CGFloat] = []
+        for reset in [false, true] {
+            if reset { XCTAssertNotNil(adapter.setTextAlign(nil, anchor: 0, head: 0)) }
+            let updateJSON = try XCTUnwrap(adapter.refreshFromRustState(mirrorSelection: nil))
+            let update = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(updateJSON.utf8)) as? [String: Any])
+            let blocks = try XCTUnwrap(update["renderBlocks"] as? [[NSDictionary]])
+            let rendered = RenderBridge.renderBlocks(fromArray: blocks, baseFont: .systemFont(ofSize: 16), textColor: .black, theme: theme)
+            let style = try XCTUnwrap(rendered.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle)
+            XCTAssertEqual(style.alignment, reset ? .right : .center)
+            try withCompiledDocument(source: .json(try XCTUnwrap(adapter.documentJson())), configJSON: config) { document in
+                XCTAssertEqual(document.blocks.count, 2)
+                let heading = try XCTUnwrap(document.blocks.first)
+                XCTAssertEqual(heading.nodeType, "title")
+                assertEmptyRenderedText(try XCTUnwrap(document.paragraphs.first?.text))
+                XCTAssertEqual(heading.textAlign, reset ? nil : "center")
+                let layout = try prepare(document, themeJSON: themeJSON)
+                let fragment = try XCTUnwrap(layout.blocks.first?.fragments.first { $0.kind == .text })
+                origins.append(fragment.origin.x)
+            }
+        }
+        XCTAssertLessThan(origins[0], origins[1])
+    }
+}
+
+
+extension PreparedProseRenderingTests {
+    private func assertEmptyRenderedText(_ text: String, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertTrue(text.isEmpty || text == String(EditorTextView.emptyBlockPlaceholderScalar),
+            "Empty block rendered visible content: \(text.debugDescription)", file: file, line: line)
+    }
+}

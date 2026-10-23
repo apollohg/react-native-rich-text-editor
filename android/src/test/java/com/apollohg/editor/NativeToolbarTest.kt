@@ -33,6 +33,34 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 class NativeToolbarTest {
     @Test
+    fun `alignment buttons reflect explicit mixed inherited and unavailable engine state`() {
+        val toolbar = EditorKeyboardToolbarView(RuntimeEnvironment.getApplication())
+        val items = NativeToolbarItem.fromJson(
+            """[{"type":"textAlign","align":"left","label":"Left","icon":{"type":"default","id":"alignLeft"}},
+                {"type":"textAlign","align":"center","label":"Centre","icon":{"type":"default","id":"alignCenter"}},
+                {"type":"textAlign","align":"right","label":"Right","icon":{"type":"default","id":"alignRight"}},
+                {"type":"textAlign","align":null,"label":"Reset","icon":{"type":"default","id":"alignReset"}}]"""
+        )
+        assertEquals("All alignment controls must survive native decoding", 4, items.size)
+        toolbar.setItems(items)
+        for (alignment in listOf("left", "center", "right", "mixed", null)) {
+            toolbar.applyState(NativeToolbarState.fromState(
+                org.json.JSONObject().put("textAlign", alignment ?: org.json.JSONObject.NULL)
+                    .put("commands", org.json.JSONObject().put("setTextAlign", true)
+                        .put("unsetTextAlign", alignment != null)), null
+            ))
+            listOf("left", "center", "right", null).forEachIndexed { index, value ->
+                val button = requireNotNull(toolbar.buttonAtForTesting(index))
+                assertEquals("active control for $alignment at $index", value == alignment, button.isSelected)
+                assertEquals("availability for $alignment at $index", index != 3 || alignment != null,
+                    button.isEnabled)
+            }
+        }
+        toolbar.applyState(NativeToolbarState.empty)
+        repeat(items.size) { assertFalse(requireNotNull(toolbar.buttonAtForTesting(it)).isEnabled) }
+    }
+
+    @Test
     fun `text button widths survive theme changes and respect minimum width`() {
         val context = RuntimeEnvironment.getApplication()
         val density = context.resources.displayMetrics.density
@@ -91,9 +119,9 @@ class NativeToolbarTest {
             )
         )
 
-        assertTrue(requireNotNull(toolbar.buttonAtForTesting(5)).isSelected)
-        assertTrue(requireNotNull(toolbar.buttonAtForTesting(9)).isEnabled)
-        assertTrue(requireNotNull(toolbar.buttonAtForTesting(10)).isEnabled)
+        assertTrue(requireNotNull(toolbar.buttonAtForTesting(8)).isSelected)
+        assertTrue(requireNotNull(toolbar.buttonAtForTesting(12)).isEnabled)
+        assertTrue(requireNotNull(toolbar.buttonAtForTesting(13)).isEnabled)
     }
 
     @Test

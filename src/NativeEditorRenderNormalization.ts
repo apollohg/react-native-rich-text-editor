@@ -27,6 +27,7 @@ import {
     normalizeRevisionField,
     normalizeNativeEditorV2Bytes,
 } from './NativeEditorResultNormalization';
+import { isTextAlign, isTextAlignState } from './TextAlignment';
 import { validEditorMentionTheme } from './EditorMentionThemeValidation';
 export function validListContext(value: unknown): value is ListContext {
     if (!isPlainRecord(value)) {
@@ -79,9 +80,11 @@ function validLeafRenderElement(value: unknown): value is RenderElement {
                     'depth',
                     'listContext',
                     'language',
+                    'textAlign',
                 ]) &&
                 typeof value.nodeType === 'string' &&
                 nativeEditorV2U32(value.depth) != null &&
+                (value.textAlign == null || isTextAlign(value.textAlign)) &&
                 (value.language === undefined ||
                     typeof value.language === 'string') &&
                 (value.listContext === undefined ||
@@ -294,7 +297,7 @@ export function normalizeRenderSelection(value: unknown): Selection | null {
     }
 
     if (value.type === 'node') {
-        if (!hasExactOwnKeys(value, ['type', 'pos', 'posScalar'])) {
+        if (!hasOnlyOwnKeys(value, ['type', 'pos', 'posScalar', 'endScalar'])) {
             return null;
         }
 
@@ -303,6 +306,14 @@ export function normalizeRenderSelection(value: unknown): Selection | null {
 
         if (pos == null || posScalar == null) {
             return null;
+        }
+
+        if (Object.prototype.hasOwnProperty.call(value, 'endScalar')) {
+            const endScalar = nativeEditorV2U32(value.endScalar);
+            if (endScalar == null || endScalar < posScalar) {
+                return null;
+            }
+            return { type: 'node', pos, posScalar, endScalar };
         }
 
         return { type: 'node', pos, posScalar };
@@ -317,7 +328,8 @@ export function normalizeRenderActiveState(value: unknown): ActiveState | null {
     }
 
     if (
-        !hasExactOwnKeys(value, [
+        !hasOnlyOwnKeys(value, [
+            'textAlign',
             'marks',
             'markAttrs',
             'nodes',
@@ -325,6 +337,7 @@ export function normalizeRenderActiveState(value: unknown): ActiveState | null {
             'allowedMarks',
             'insertableNodes',
         ]) ||
+        (value.textAlign !== undefined && !isTextAlignState(value.textAlign)) ||
         !booleanRecord(value.marks) ||
         !isPlainRecord(value.markAttrs) ||
         !Object.values(value.markAttrs).every(isPlainRecord) ||
@@ -337,6 +350,7 @@ export function normalizeRenderActiveState(value: unknown): ActiveState | null {
     }
 
     return {
+        textAlign: value.textAlign ?? null,
         marks: value.marks,
         markAttrs: value.markAttrs as ActiveState['markAttrs'],
         nodes: value.nodes,

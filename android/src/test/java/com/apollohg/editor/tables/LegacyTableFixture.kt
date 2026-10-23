@@ -89,7 +89,8 @@ internal fun legacyViewerTables(records: Map<String, JSONObject>): Map<String, F
                         element.string("nodeType") ?: return null,
                         element.string("language"),
                         depth.toUShort(),
-                        context
+                        context,
+                        element.string("textAlign")
                     )
                 }
 

@@ -3,6 +3,10 @@ import XCTest
 
 enum TableInputTestSchema {
     static let tableConfig = #"{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table","attrs":{"class":{"default":null}}},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"class":{"default":null},"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"class":{"default":null},"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"#
+    static let textAlignTableConfig = tableConfig.replacingOccurrences(
+        of: #""role":"textBlock""#,
+        with: #""role":"textBlock","attrs":{"textAlign":{"default":null,"enum":[null,"left","center","right"]}}"#
+    )
     static let strongMarkTableConfig = tableConfig.replacingOccurrences(
         of: #""marks":[]"#, with: #""marks":[{"name":"\#(TableToolbarTestItems.strongMark)"}]"#
     )

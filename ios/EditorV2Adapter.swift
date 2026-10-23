@@ -319,6 +319,7 @@ final class EditorV2Adapter {
     static let atomicRenderSnapshotKeys: Set<String> = renderStateKeys.union(["renderBlocks", "renderPatch"])
 
     static let activeStateKeys: Set<String> = [
+        "textAlign",
         "marks",
         "markAttrs",
         "nodes",

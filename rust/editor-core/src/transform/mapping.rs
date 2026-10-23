@@ -49,8 +49,24 @@ impl StepMap {
     /// Positions before the change are unaffected. Positions inside a deleted
     /// range collapse to the deletion point. Positions after the change are
     /// shifted by the net delta.
-    pub fn map_pos(&self, mut pos: u32) -> u32 {
+    pub fn map_pos(&self, pos: u32) -> u32 {
+        self.map_position(pos, false)
+            .expect("text positions always map")
+    }
+
+    pub(crate) fn map_node_pos(&self, pos: u32) -> Option<u32> {
+        self.map_position(pos, true)
+    }
+
+    fn map_position(&self, mut pos: u32, reject_deleted_node: bool) -> Option<u32> {
         for &(range_pos, deleted, inserted) in &self.ranges {
+            if reject_deleted_node
+                && deleted > 0
+                && pos >= range_pos
+                && pos < range_pos.saturating_add(deleted)
+            {
+                return None;
+            }
             if pos <= range_pos {
                 // Position is before (or exactly at the start of) this range.
                 // No shift needed from this entry.
@@ -70,7 +86,7 @@ impl StepMap {
                 pos = (pos as i64 + delta) as u32;
             }
         }
-        pos
+        Some(pos)
     }
 
     /// Access the raw range entries.

@@ -335,9 +335,12 @@ impl AttrSpec {
                 .as_array()
                 .filter(|v| !v.is_empty())
                 .ok_or("invalid attribute enum")?;
-            let kind = std::mem::discriminant(&values[0]);
+            let kind = values
+                .iter()
+                .find(|value| !value.is_null())
+                .map(std::mem::discriminant);
             for value in values {
-                if std::mem::discriminant(value) != kind {
+                if !value.is_null() && Some(std::mem::discriminant(value)) != kind {
                     return Err("attribute enum values must share one JSON type".into());
                 }
                 self.validate_value(value)?;

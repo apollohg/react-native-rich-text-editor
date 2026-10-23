@@ -257,11 +257,12 @@ fn clear(
                         origin: TransactionOrigin::LocalApi,
                         operations: Vec::new(),
                         selection_intent: SelectionIntent::Set(SelectionInput::Node {
-                            at: RevisionedPosition {
+                            at: (RevisionedPosition {
                                 offset,
                                 kind: EditorOffsetKind::Scalar,
                                 affinity: Affinity::Before,
-                            },
+                            })
+                            .into(),
                         }),
                         history_policy: HistoryPolicy::Skip,
                     })

@@ -336,6 +336,12 @@ struct PreparedProseTheme {
     }
 
     func paint(for block: ViewerBlock) -> PreparedTextPaint {
+        var paint = inheritedPaint(for: block)
+        if let alignment = block.textAlign { paint.textValues["textAlign"] = alignment }
+        return paint
+    }
+
+    private func inheritedPaint(for block: ViewerBlock) -> PreparedTextPaint {
         if let styleSheet {
             let ancestors = block.styleAncestors.map(\.nodeType)
             let style = styleSheet.textStyle(block.nodeType, ancestors: ancestors)

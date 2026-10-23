@@ -371,6 +371,12 @@ extension EditorV2AdapterTests {
                 selection["anchorScalar"] = NSNumber(value: UInt64(UInt32.max) + 1)
                 object["selection"] = selection
             }),
+            ("node selection reversed scalar end", {
+                $0["selection"] = ["type": "node", "pos": 0, "posScalar": 1, "endScalar": 0]
+            }),
+            ("node selection fractional scalar end", {
+                $0["selection"] = ["type": "node", "pos": 0, "posScalar": 0, "endScalar": 0.5]
+            }),
             ("node selection fractional scalar", {
                 $0["selection"] = ["type": "node", "pos": 1, "posScalar": 0.5]
             }),
@@ -481,6 +487,17 @@ extension EditorV2AdapterTests {
                     "deleteCount": 0,
                     "renderBlocks": object["renderBlocks"]!
                 ]
+            }),
+            ("block alignment unsupported value", { object in
+                var blocks = try XCTUnwrap(object["renderBlocks"] as? [[[String: Any]]])
+                let index = blocks[0].firstIndex { $0["type"] as? String == "blockStart" }!
+                blocks[0][index]["textAlign"] = "justify"
+                object["renderBlocks"] = blocks
+            }),
+            ("active-state invalid alignment", { object in
+                var active = try XCTUnwrap(object["activeState"] as? [String: Any])
+                active["textAlign"] = "justify"
+                object["activeState"] = active
             }),
             ("active-state extra field", { object in
                 var active = try XCTUnwrap(object["activeState"] as? [String: Any])

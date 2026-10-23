@@ -15,7 +15,7 @@ use crate::tables::commands::{
 use crate::tables::interchange::CellStep;
 use crate::transform::{Step, Transaction};
 
-const FIXED_COMMAND_ENTRIES: usize = 8;
+const FIXED_COMMAND_ENTRIES: usize = 10;
 const HEADING_COMMAND_LEVELS: u8 = 6;
 const TABLE_COMMAND_ENTRIES: usize = 18;
 pub(crate) const ACTIVE_COMMAND_ENTRIES: usize =
@@ -24,6 +24,7 @@ pub(crate) const ACTIVE_COMMAND_ENTRIES: usize =
 /// Which marks and node types are active at the current selection.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ActiveState {
+    pub text_align: Option<String>,
     pub marks: HashMap<String, bool>,
     pub mark_attrs: HashMap<String, serde_json::Value>,
     pub nodes: HashMap<String, bool>,
@@ -115,6 +116,10 @@ fn active_state_impl(
     let insertable_nodes = insertable_nodes_for_selection(document, schema, selection, limits);
 
     ActiveState {
+        text_align: crate::alignment::state(&crate::alignment::targets(
+            document, schema, selection, limits,
+        ))
+        .map(str::to_owned),
         marks,
         mark_attrs,
         nodes,
@@ -194,6 +199,25 @@ fn command_applicability_with_known_node_count_impl(
         .and_then(|(from, to)| selected_block_range(document, schema, from, to));
     let root_wrap_range = root_wrap_range(document, schema, selection);
     let mut commands = HashMap::new();
+    let table_surface = cached_table_commands.is_none().then(|| {
+        crate::yrs_engine::TableCommandSurface::resolve(document, schema, selection, limits)
+    });
+    let alignment_targets = crate::alignment::targets_in(
+        document,
+        schema,
+        selection,
+        limits,
+        table_surface
+            .as_ref()
+            .map(|surface| surface.projection_index()),
+    );
+    commands.insert("setTextAlign".into(), !alignment_targets.is_empty());
+    commands.insert(
+        "unsetTextAlign".into(),
+        alignment_targets
+            .iter()
+            .any(|(_, node)| crate::alignment::value(node).is_some()),
+    );
     commands.insert(
         "indentList".into(),
         list_context
@@ -268,8 +292,9 @@ fn command_applicability_with_known_node_count_impl(
     if let Some(table_commands) = cached_table_commands {
         commands.extend(table_commands);
     } else {
-        let table_commands =
-            crate::yrs_engine::TableCommandSurface::resolve(document, schema, selection, limits);
+        let table_commands = table_surface
+            .as_ref()
+            .expect("uncached table commands have a shared surface");
         for (name, command) in table_command_surface() {
             commands.insert(name.into(), table_commands.is_available(command));
         }

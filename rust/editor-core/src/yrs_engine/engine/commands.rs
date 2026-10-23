@@ -12,7 +12,7 @@ use crate::tables::selection::{
 use crate::yrs_engine;
 use crate::yrs_engine::compiler::{cell_admission_error, resolve_cell_opening};
 use crate::yrs_engine::compiler::{
-    selectable_void_at, CompiledTransaction, PreparedSemanticAdmission, SelectionPlan,
+    resolve_node_opening, CompiledTransaction, PreparedSemanticAdmission, SelectionPlan,
 };
 use crate::yrs_engine::derived_state::DerivedStateCache;
 use std::sync::Arc;
@@ -237,7 +237,16 @@ impl YrsDocumentEngine {
         };
         let resolved_point =
             |document: u32| -> yrs_engine::OperationResult<yrs_engine::ResolvedPoint> {
-                let scalar = state.position_map.doc_to_scalar(document, &state.document);
+                let scalar = crate::alignment::selection_scalar_range(
+                    &state.document,
+                    &self.schema,
+                    &state.position_map,
+                    document,
+                )
+                .map_or_else(
+                    || state.position_map.doc_to_scalar(document, &state.document),
+                    |(start, _)| start,
+                );
                 let utf16 =
                     yrs_engine::position::scalar_offset_to_utf16(&state.rendered_text, scalar)
                         .ok_or_else(|| {
@@ -272,23 +281,14 @@ impl YrsDocumentEngine {
                 })
             }
             yrs_engine::SelectionInput::Node { at } => {
-                let at = resolve("selection.at", *at)?;
-                let Selection::Node { pos } =
-                    Selection::node(at).normalized(&state.document, &state.position_map)
-                else {
-                    return Err(yrs_engine::OperationError::selection_position_invalid(
-                        request_id,
-                        "selection.at",
-                        "node selection did not resolve to a selectable node",
-                    ));
-                };
-                if !selectable_void_at(state.document.root(), pos, 0, &self.schema) {
-                    return Err(yrs_engine::OperationError::selection_position_invalid(
-                        request_id,
-                        "selection.at",
-                        "node selection must target a selectable void or atom node",
-                    ));
-                }
+                let pos = resolve_node_opening(
+                    &state.document,
+                    &self.schema,
+                    *at,
+                    &state.rendered_text,
+                    &state.position_map,
+                    request_id,
+                )?;
                 Ok(yrs_engine::ResolvedSelection::Node {
                     at: resolved_point(pos)?,
                 })

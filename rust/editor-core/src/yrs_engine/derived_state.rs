@@ -863,8 +863,24 @@ impl DerivedStateCache {
                     &table_projection_index,
                     block_branch_index.as_deref(),
                 );
-                if resolved_selection.is_none() {
-                    let fallback = preserved_fallback?;
+                let replaced_node = match (&self.legacy_selection, &resolved_selection) {
+                    (Selection::Node { pos }, Some(ResolvedSelection::Node { at })) => {
+                        super::compiler::node_at_opening(&self.document, *pos)
+                            .zip(super::compiler::node_at_opening(&document, at.document))
+                            .is_some_and(|(before, after)| before.node_type() != after.node_type())
+                    }
+                    _ => false,
+                };
+                let removed_node = matches!(&relative_selection, RelativeSelection::Node { .. })
+                    && matches!(preserved_fallback, Some(Selection::Text { .. }));
+                if resolved_selection.is_none() || replaced_node || removed_node {
+                    let replaced_fallback = replaced_node.then(|| {
+                        let Some(ResolvedSelection::Node { at }) = &resolved_selection else {
+                            unreachable!("replaced selection is a node")
+                        };
+                        Selection::cursor(at.document).normalized(&document, &position_map)
+                    });
+                    let fallback = replaced_fallback.as_ref().or(preserved_fallback)?;
                     relative_selection = preserve_with_mapped_fallback(
                         txn,
                         fragment,

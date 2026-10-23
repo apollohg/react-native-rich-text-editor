@@ -103,6 +103,23 @@ export function EditorScreen() {
 
 See [Getting Started](https://github.com/apollohg/react-native-rich-text-editor/wiki/Getting-Started) and the [RichTextEditor reference](https://github.com/apollohg/react-native-rich-text-editor/wiki/RichTextEditor-Reference) for the complete API.
 
+## Paragraph alignment
+
+The default toolbar includes left, centre, and right alignment for paragraphs and headings. The ref methods apply to the current block or the eligible blocks in the selection:
+
+```tsx
+editorRef.current?.setTextAlign('center');
+editorRef.current?.unsetTextAlign(); // Restore the theme's alignment.
+```
+
+Alignment is saved as `attrs.textAlign` in JSON and `style="text-align:center"` in HTML, and renders in both the editor and viewer. A missing or null attribute inherits the theme; explicit `'left'` overrides it. `ActiveState.textAlign` reports `'left'`, `'center'`, `'right'`, `'mixed'`, or `null` for inherited alignment. Check `commands.setTextAlign` for availability.
+
+Custom toolbars can use `{ type: 'textAlign', align: 'center', label: 'Align Center', icon: { type: 'default', id: 'alignCenter' } }`. Use `align: null` and the `alignReset` icon for a reset button. Standalone `EditorToolbar` components dispatch through `onSetTextAlign`, which receives the alignment or null for reset.
+
+Custom paragraph/heading schemas opt in with `textAlign: { default: null, enum: [null, 'left', 'center', 'right'] }`. Updated default schemas have a new fingerprint; collaborating peers must use compatible schemas.
+
+For Tiptap web editors, configure `@tiptap/extension-text-align` with `types: ['paragraph', 'heading']`, `alignments: ['left', 'center', 'right']`, and `defaultAlignment: null`. Plain ProseMirror schemas need the same nullable `textAlign` node attribute and HTML parsing/serialization rules. The native presets expose headings as the standard `heading` JSON node with a `level` attribute.
+
 ## Copy and paste
 
 Copy and cut publish an editor fragment, HTML, and plain text. Pasting between compatible editor schemas preserves selected marks, nodes, and atom attributes. External rich text imports supported HTML formatting and structure, with RTF conversion on iOS.

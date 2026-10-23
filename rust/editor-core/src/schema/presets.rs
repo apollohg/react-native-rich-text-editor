@@ -216,7 +216,11 @@ fn build_schema_parts(convention: &NamingConvention) -> (Vec<NodeSpec>, Vec<Mark
             name: "paragraph".to_string(),
             content: ContentRule::parse("inline*").unwrap(),
             group: Some("block".to_string()),
-            attrs: HashMap::new(),
+            attrs: [(
+                crate::alignment::TEXT_ALIGN_ATTR.to_owned(),
+                crate::alignment::attr_spec(),
+            )]
+            .into(),
             role: NodeRole::TextBlock,
             html_tag: Some("p".to_string()),
             html_rules: None,
@@ -233,7 +237,11 @@ fn build_schema_parts(convention: &NamingConvention) -> (Vec<NodeSpec>, Vec<Mark
             name: format!("h{level}"),
             content: ContentRule::parse("inline*").unwrap(),
             group: Some("block heading".to_string()),
-            attrs: HashMap::new(),
+            attrs: [(
+                crate::alignment::TEXT_ALIGN_ATTR.to_owned(),
+                crate::alignment::attr_spec(),
+            )]
+            .into(),
             role: NodeRole::TextBlock,
             html_tag: Some(format!("h{level}")),
             html_rules: None,

@@ -23,6 +23,20 @@ extension EditorV2Adapter {
         }
     }
 
+    func setTextAlign(_ alignment: String?, anchor: UInt32, head: UInt32) -> String? {
+        guard beginRuntimeOperation() else { return nil }
+        defer { endRuntimeOperation() }
+        if let alignment, !EditorTextAlignment.isValid(alignment) {
+            emit(contractError("Unsupported text alignment"))
+            return nil
+        }
+        let command: [String: Any] = alignment.map { ["type": "setTextAlign", "align": $0] } ?? ["type": "unsetTextAlign"]
+        if let type = cachedAtomicRenderSelection()?["type"] as? String, type != "text" {
+            return applyCommand(command)
+        }
+        return commandAtSelection(command, anchor: anchor, head: head)
+    }
+
     func toggleMark(_ markType: String, anchor: UInt32, head: UInt32) -> String? {
         guard beginRuntimeOperation() else { return nil }
         defer { endRuntimeOperation() }

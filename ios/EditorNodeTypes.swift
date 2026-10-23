@@ -1,4 +1,8 @@
+import Foundation
+
 enum EditorNodeTypes {
+    static let headingTypes: Set<String> = ["heading", "h1", "h2", "h3", "h4", "h5", "h6"]
+
     static func listItemType(for listType: String) -> String {
         switch listType {
         case "bullet_list", "ordered_list":
@@ -33,5 +37,31 @@ enum EditorNodeTypes {
 
     static func preferredHardBreak(in insertableNodes: Set<String>) -> String {
         insertableNodes.contains("hard_break") ? "hard_break" : "hardBreak"
+    }
+}
+
+
+enum EditorTextAlignment: String {
+    case left
+    case center
+    case right
+
+    static func isValid(_ value: Any?) -> Bool {
+        guard let value = value as? String else { return false }
+        return Self(rawValue: value) != nil
+    }
+}
+
+
+enum EditorNodeSelection {
+    static func scalarRange(_ selection: [String: Any]) -> (start: UInt32, end: UInt32)? {
+        guard selection["type"] as? String == "node",
+              let start = v2ExactUInt32(selection["posScalar"] as? NSNumber) else { return nil }
+        if let value = selection["endScalar"] {
+            guard let end = v2ExactUInt32(value as? NSNumber), end >= start else { return nil }
+            return (start, end)
+        }
+        guard start < UInt32.max else { return nil }
+        return (start, start + 1)
     }
 }

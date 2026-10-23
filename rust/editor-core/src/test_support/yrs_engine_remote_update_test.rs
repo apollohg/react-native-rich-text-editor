@@ -69,7 +69,9 @@ fn select_node(engine: &mut YrsDocumentEngine, request_id: u64, at: u32) {
             base_document_revision: engine.revision(),
             origin: TransactionOrigin::LocalApi,
             operations: vec![],
-            selection_intent: SelectionIntent::Set(SelectionInput::Node { at: point(at) }),
+            selection_intent: SelectionIntent::Set(SelectionInput::Node {
+                at: (point(at)).into(),
+            }),
             history_policy: HistoryPolicy::Skip,
         })
         .unwrap();

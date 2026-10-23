@@ -18,7 +18,8 @@ internal data class NativeToolbarItem(
     val presentation: ToolbarGroupPresentation? = null,
     val items: List<NativeToolbarItem> = emptyList(),
     val buttonStyle: EditorToolbarButtonStyle? = null,
-    val parentGroupKey: String? = null
+    val parentGroupKey: String? = null,
+    val align: String? = null
 ) {
     companion object {
         val defaults = listOf(
@@ -45,6 +46,24 @@ internal data class NativeToolbarItem(
                 label = "Strikethrough",
                 icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.STRIKE),
                 mark = "strike"
+            ),
+            NativeToolbarItem(
+                ToolbarItemKind.TEXT_ALIGN,
+                label = "Align left",
+                icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.ALIGN_LEFT),
+                align = EditorTextAlignment.LEFT.wireValue
+            ),
+            NativeToolbarItem(
+                ToolbarItemKind.TEXT_ALIGN,
+                label = "Align centre",
+                icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.ALIGN_CENTER),
+                align = EditorTextAlignment.CENTER.wireValue
+            ),
+            NativeToolbarItem(
+                ToolbarItemKind.TEXT_ALIGN,
+                label = "Align right",
+                icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.ALIGN_RIGHT),
+                align = EditorTextAlignment.RIGHT.wireValue
             ),
             NativeToolbarItem(
                 ToolbarItemKind.BLOCKQUOTE,
@@ -122,6 +141,16 @@ internal data class NativeToolbarItem(
                     } else {
                         NativeToolbarItem(type = type, key = key, placement = placement)
                     }
+                }
+
+                ToolbarItemKind.TEXT_ALIGN -> {
+                    val icon = NativeToolbarIcon.fromJson(rawItem.optJSONObject("icon")) ?: return null
+                    val label = rawItem.toolbarNullableString("label") ?: return null
+                    if (!rawItem.has("align")) return null
+                    val align = rawItem.toolbarNullableString("align")
+                    if (align != null && EditorTextAlignment.fromWireValue(align) == null) return null
+                    if (!rawItem.isNull("align") && rawItem.opt("align") !is String) return null
+                    NativeToolbarItem(type, key, label, icon, align = align, placement = placement)
                 }
 
                 ToolbarItemKind.MARK -> {

@@ -38,7 +38,7 @@ final class EditorTableIndexTests: XCTestCase {
             docSize: 5,
             scalarStride: stride,
             elements: [
-                .blockStart(nodeType: "paragraph", language: nil, depth: 0, listContextJson: nil),
+                .blockStart(nodeType: "paragraph", language: nil, depth: 0, listContextJson: nil, textAlign: nil),
                 .textRun(text: "a", marks: []),
                 .blockEnd
             ],

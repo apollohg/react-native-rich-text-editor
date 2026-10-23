@@ -1533,7 +1533,7 @@ final class CoreTextProseLayoutEngine {
             let alignment = paint.textValues["textAlign"] as? String
             let lineTextX = textX + (alignment == "center" ? max(0, availableWidth) / 2 : alignment == "right" ? max(0, availableWidth) : 0)
             let lineBounds = CGRect(x: lineTextX, y: textTop, width: 0, height: fallbackHeight)
-            fragments.append(.init(kind: .text, line: line, origin: CGPoint(x: textX, y: textTop + paint.font.ascender), bounds: lineBounds))
+            fragments.append(.init(kind: .text, line: line, origin: CGPoint(x: lineTextX, y: textTop + paint.font.ascender), bounds: lineBounds))
             if firstLineBounds == nil { firstLineBounds = lineBounds }
             textTop += fallbackHeight
         }

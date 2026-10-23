@@ -1,3 +1,4 @@
+import type { TextAlign } from './TextAlignment';
 import { useCallback, useImperativeHandle, useMemo, useRef } from 'react';
 import { type AtomAttrsUpdate } from './atoms';
 import { AtomUpdateAttrsError, type AtomInstance } from './atomInstances';
@@ -411,6 +412,18 @@ export function useRichTextEditorCommands(
         [ applyEngineCommand ]
     );
 
+    const commandSetTextAlign = useCallback(
+        (align: TextAlign | null) => applyEngineCommand(align === null
+            ? { type: 'unsetTextAlign' }
+            : { type: 'setTextAlign', align }),
+        [ applyEngineCommand ]
+    );
+
+    const commandUnsetTextAlign = useCallback(
+        () => commandSetTextAlign(null),
+        [ commandSetTextAlign ]
+    );
+
     const commandToggleHeading = useCallback(
         (level: EditorToolbarHeadingLevel) => applyEngineCommand({ type: 'toggleHeading', level }),
         [ applyEngineCommand ]
@@ -532,6 +545,8 @@ export function useRichTextEditorCommands(
             unsetLink: commandUnsetLink,
             toggleBlockquote: commandToggleBlockquote,
             toggleHeading: commandToggleHeading,
+            setTextAlign: commandSetTextAlign,
+            unsetTextAlign: commandUnsetTextAlign,
             toggleList: commandToggleList,
             indentListItem: commandIndentListItem,
             outdentListItem: commandOutdentListItem,
@@ -570,6 +585,8 @@ export function useRichTextEditorCommands(
             commandUnsetLink,
             commandToggleBlockquote,
             commandToggleHeading,
+            commandSetTextAlign,
+            commandUnsetTextAlign,
             commandToggleList,
             commandIndentListItem,
             commandOutdentListItem,
@@ -613,6 +630,7 @@ export function useRichTextEditorCommands(
         commandToggleMark,
         commandToggleList,
         commandToggleHeading,
+        commandSetTextAlign,
         commandToggleBlockquote,
         commandInsertNode,
         commandIndentListItem,

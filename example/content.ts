@@ -55,7 +55,8 @@ function showcaseCell(
 export const INITIAL_DOCUMENT: DocumentJSON = {
     type: 'doc',
     content: [
-        heading(1, 'Field notes'),
+        { ...heading(1, 'Field notes'), attrs: { level: 1, textAlign: 'center' } },
+        { ...paragraph(text('A right-aligned note')), attrs: { textAlign: 'right' } },
         paragraph(
             text('A native editor with a '),
             text('Rust core', BOLD),
@@ -235,6 +236,19 @@ export function buildToolbarItems({
                     label: 'Heading 6',
                     icon: { type: 'default', id: 'h6' },
                 },
+            ],
+        },
+        {
+            type: 'group',
+            key: 'alignment',
+            label: 'Alignment',
+            icon: { type: 'default', id: 'alignLeft' },
+            presentation: 'menu',
+            items: [
+                { type: 'textAlign', align: 'left', label: 'Align Left', icon: { type: 'default', id: 'alignLeft' } },
+                { type: 'textAlign', align: 'center', label: 'Align Center', icon: { type: 'default', id: 'alignCenter' } },
+                { type: 'textAlign', align: 'right', label: 'Align Right', icon: { type: 'default', id: 'alignRight' } },
+                { type: 'textAlign', align: null, label: 'Reset Alignment', icon: { type: 'default', id: 'alignReset' } },
             ],
         },
         { type: 'separator' },

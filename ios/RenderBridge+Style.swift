@@ -27,6 +27,14 @@ extension RenderBridge {
         blockTextStyle: EditorTextStyle? = nil
     ) -> NSMutableParagraphStyle {
         let style = NSMutableParagraphStyle()
+        defer {
+            switch context.textAlign {
+            case "left": style.alignment = .left
+            case "center": style.alignment = .center
+            case "right": style.alignment = .right
+            default: break
+            }
+        }
         if let sheet = theme?.styleSheet {
             let ancestors = blockStack.dropLast().map(\.nodeType)
             let text = blockTextStyle ?? sheet.textStyle(context.nodeType, ancestors: ancestors)

@@ -140,8 +140,9 @@ impl Selection {
                 anchor: step_map.map_pos(*anchor),
                 head: step_map.map_pos(*head),
             },
-            Self::Node { pos } => Self::Node {
-                pos: step_map.map_pos(*pos),
+            Self::Node { pos } => match step_map.map_node_pos(*pos) {
+                Some(pos) => Self::Node { pos },
+                None => Self::cursor(step_map.map_pos(*pos)),
             },
             Self::Cell { anchor, head } => Self::Cell {
                 anchor: step_map.map_pos(*anchor),

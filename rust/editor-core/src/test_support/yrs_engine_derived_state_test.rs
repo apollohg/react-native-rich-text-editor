@@ -250,7 +250,7 @@ fn node_all_empty_and_void_selections_are_derived_without_writing_yrs() {
         4,
         vec![],
         SelectionIntent::Set(SelectionInput::Node {
-            at: point(2, EditorOffsetKind::Scalar, Affinity::After),
+            at: (point(2, EditorOffsetKind::Scalar, Affinity::After)).into(),
         }),
     );
     assert!(engine.apply_typed_transaction(node).unwrap().changed);
@@ -275,7 +275,10 @@ fn node_all_empty_and_void_selections_are_derived_without_writing_yrs() {
         51,
         vec![],
         SelectionIntent::Set(SelectionInput::Node {
-            at: point(4, EditorOffsetKind::Scalar, Affinity::Before),
+            at: crate::yrs_engine::NodeSelectionPoint::Document {
+                opening: 4,
+                affinity: Affinity::Before,
+            },
         }),
     );
     assert_eq!(
@@ -565,7 +568,7 @@ fn preserved_node_selection_normalizes_after_its_atom_is_deleted() {
         70,
         vec![],
         SelectionIntent::Set(SelectionInput::Node {
-            at: point(0, EditorOffsetKind::Scalar, Affinity::Before),
+            at: (point(0, EditorOffsetKind::Scalar, Affinity::Before)).into(),
         }),
     );
     engine.apply_typed_transaction(select_node).unwrap();

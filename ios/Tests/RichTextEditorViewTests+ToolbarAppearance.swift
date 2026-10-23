@@ -107,10 +107,10 @@ extension RichTextEditorViewTests {
         }
         """)
 
-        XCTAssertEqual(toolbar.buttonLabelForTesting(5), "Bullet List")
+        XCTAssertEqual(toolbar.buttonLabelForTesting(8), "Bullet List")
         XCTAssertEqual(toolbar.selectedButtonCountForTesting, 1)
-        XCTAssertEqual(toolbar.buttonIsEnabledForTesting(9), true)
-        XCTAssertEqual(toolbar.buttonIsEnabledForTesting(10), true)
+        XCTAssertEqual(toolbar.buttonIsEnabledForTesting(12), true)
+        XCTAssertEqual(toolbar.buttonIsEnabledForTesting(13), true)
     }
 
     func testNativeToolbarCascadesGlobalAndPerButtonStyles() {

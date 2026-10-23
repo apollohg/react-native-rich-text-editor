@@ -10,6 +10,7 @@
                         "content": "inline*",
                         "group": "block",
                         "role": "textBlock",
+                        "attrs": { "textAlign": { "default": null, "enum": [null, "left", "center", "right"] } },
                         "htmlTag": "p"
                     },
                     {
@@ -17,6 +18,7 @@
                         "content": "inline*",
                         "group": "block heading",
                         "role": "textBlock",
+                        "attrs": { "textAlign": { "default": null, "enum": [null, "left", "center", "right"] } },
                         "htmlTag": "h1",
                         "json": { "type": "heading", "attrs": { "level": 1 } }
                     },
@@ -25,6 +27,7 @@
                         "content": "inline*",
                         "group": "block heading",
                         "role": "textBlock",
+                        "attrs": { "textAlign": { "default": null, "enum": [null, "left", "center", "right"] } },
                         "htmlTag": "h2",
                         "json": { "type": "heading", "attrs": { "level": 2 } }
                     },
@@ -33,6 +36,7 @@
                         "content": "inline*",
                         "group": "block heading",
                         "role": "textBlock",
+                        "attrs": { "textAlign": { "default": null, "enum": [null, "left", "center", "right"] } },
                         "htmlTag": "h3",
                         "json": { "type": "heading", "attrs": { "level": 3 } }
                     },
@@ -41,6 +45,7 @@
                         "content": "inline*",
                         "group": "block heading",
                         "role": "textBlock",
+                        "attrs": { "textAlign": { "default": null, "enum": [null, "left", "center", "right"] } },
                         "htmlTag": "h4",
                         "json": { "type": "heading", "attrs": { "level": 4 } }
                     },
@@ -49,6 +54,7 @@
                         "content": "inline*",
                         "group": "block heading",
                         "role": "textBlock",
+                        "attrs": { "textAlign": { "default": null, "enum": [null, "left", "center", "right"] } },
                         "htmlTag": "h5",
                         "json": { "type": "heading", "attrs": { "level": 5 } }
                     },
@@ -57,6 +63,7 @@
                         "content": "inline*",
                         "group": "block heading",
                         "role": "textBlock",
+                        "attrs": { "textAlign": { "default": null, "enum": [null, "left", "center", "right"] } },
                         "htmlTag": "h6",
                         "json": { "type": "heading", "attrs": { "level": 6 } }
                     },
@@ -173,7 +180,7 @@
                     { "name": "link", "attrs": { "href": {} }, "htmlTag": "a", "inclusive": false }
                 ]
             },
-            "expectedFingerprint": "b0cfe7c0c5d273e852ec930901762245c676d02876ce2b915d65449b154cd6d1"
+            "expectedFingerprint": "15e4677213e733cf703a3b2d82aa2559903b18600a6f649c075ff8d652681732"
         },
         {
             "name": "default ProseMirror schema",
@@ -185,6 +192,7 @@
                         "content": "inline*",
                         "group": "block",
                         "role": "textBlock",
+                        "attrs": { "textAlign": { "default": null, "enum": [null, "left", "center", "right"] } },
                         "htmlTag": "p"
                     },
                     {
@@ -192,6 +200,7 @@
                         "content": "inline*",
                         "group": "block heading",
                         "role": "textBlock",
+                        "attrs": { "textAlign": { "default": null, "enum": [null, "left", "center", "right"] } },
                         "htmlTag": "h1",
                         "json": { "type": "heading", "attrs": { "level": 1 } }
                     },
@@ -200,6 +209,7 @@
                         "content": "inline*",
                         "group": "block heading",
                         "role": "textBlock",
+                        "attrs": { "textAlign": { "default": null, "enum": [null, "left", "center", "right"] } },
                         "htmlTag": "h2",
                         "json": { "type": "heading", "attrs": { "level": 2 } }
                     },
@@ -208,6 +218,7 @@
                         "content": "inline*",
                         "group": "block heading",
                         "role": "textBlock",
+                        "attrs": { "textAlign": { "default": null, "enum": [null, "left", "center", "right"] } },
                         "htmlTag": "h3",
                         "json": { "type": "heading", "attrs": { "level": 3 } }
                     },
@@ -216,6 +227,7 @@
                         "content": "inline*",
                         "group": "block heading",
                         "role": "textBlock",
+                        "attrs": { "textAlign": { "default": null, "enum": [null, "left", "center", "right"] } },
                         "htmlTag": "h4",
                         "json": { "type": "heading", "attrs": { "level": 4 } }
                     },
@@ -224,6 +236,7 @@
                         "content": "inline*",
                         "group": "block heading",
                         "role": "textBlock",
+                        "attrs": { "textAlign": { "default": null, "enum": [null, "left", "center", "right"] } },
                         "htmlTag": "h5",
                         "json": { "type": "heading", "attrs": { "level": 5 } }
                     },
@@ -232,6 +245,7 @@
                         "content": "inline*",
                         "group": "block heading",
                         "role": "textBlock",
+                        "attrs": { "textAlign": { "default": null, "enum": [null, "left", "center", "right"] } },
                         "htmlTag": "h6",
                         "json": { "type": "heading", "attrs": { "level": 6 } }
                     },
@@ -314,7 +328,7 @@
                     { "name": "link", "attrs": { "href": {} }, "htmlTag": "a", "inclusive": false }
                 ]
             },
-            "expectedFingerprint": "b7142c59976d6d425c36daa30998f00d9756911794d4d5d7fb4c51377a683b11"
+            "expectedFingerprint": "9805afc92c4b9af1ab9d137a3a3ff2088d17a8a4d47196853bd7efc2c005ff7f"
         },
         {
             "name": "custom root schema",

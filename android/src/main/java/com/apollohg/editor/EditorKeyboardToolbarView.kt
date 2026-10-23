@@ -636,6 +636,11 @@ internal class EditorKeyboardToolbarView(context: Context) : FrameLayout(context
                 Pair(state.allowedMarks.contains(mark), state.marks[mark] == true)
             }
 
+            ToolbarItemKind.TEXT_ALIGN -> Pair(
+                state.commands[if (item.align == null) "unsetTextAlign" else "setTextAlign"] == true,
+                state.commands["setTextAlign"] == true && state.textAlign == item.align
+            )
+
             ToolbarItemKind.HEADING -> {
                 val level = item.headingLevel ?: return Pair(false, false)
                 Pair(

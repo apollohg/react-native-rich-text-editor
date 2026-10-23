@@ -160,11 +160,11 @@ fn block_kind(node: &Node, schema: &Schema, flavor: MarkdownFlavor) -> BlockKind
         }
         NodeRole::ListItem => BlockKind::Item,
         NodeRole::TextBlock => match node_tag(node, schema) {
-            Some("p") if node.attrs().is_empty() => BlockKind::Paragraph,
+            Some("p") if text_block_attrs_inherit(node) => BlockKind::Paragraph,
             Some("pre") => BlockKind::Code,
             Some(tag)
                 if matches!(tag, "h1" | "h2" | "h3" | "h4" | "h5" | "h6")
-                    && node.attrs().is_empty()
+                    && text_block_attrs_inherit(node)
                     && !node.content().is_some_and(|content| {
                         content.iter().any(|child| {
                             schema
@@ -398,4 +398,10 @@ fn table(node: &Node, schema: &Schema, flavor: MarkdownFlavor) -> String {
         }
     }
     lines.join("\n")
+}
+
+fn text_block_attrs_inherit(node: &Node) -> bool {
+    node.attrs()
+        .iter()
+        .all(|(name, value)| name == crate::alignment::TEXT_ALIGN_ATTR && value.is_null())
 }

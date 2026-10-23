@@ -50,7 +50,7 @@ internal class EditorTableIndexTest {
     private fun cell(column: UInt, stride: UInt) = FfiTableCellRecord(
         0u, 0u, column, 1u, 1u, false, ATTRIBUTE_KEY, "cell-$column", 5u, stride,
         listOf(
-            FfiViewerElement.BlockStart("paragraph", null, 0u, null),
+            FfiViewerElement.BlockStart("paragraph", null, 0u, null, null),
             FfiViewerElement.TextRun("a", emptyList()),
             FfiViewerElement.BlockEnd
         ),
@@ -187,7 +187,7 @@ internal class EditorTableIndexTest {
                     val changed = table.cells[step - 1].copy(
                         contentKey = "edited-$step",
                         elements = listOf(
-                            FfiViewerElement.BlockStart("paragraph", null, 0u, null),
+                            FfiViewerElement.BlockStart("paragraph", null, 0u, null, null),
                             FfiViewerElement.TextRun("b", emptyList()),
                             FfiViewerElement.BlockEnd
                         )

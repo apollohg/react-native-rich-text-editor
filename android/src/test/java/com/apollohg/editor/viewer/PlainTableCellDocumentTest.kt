@@ -25,7 +25,7 @@ class PlainTableCellDocumentTest {
             for (depth in listOf<UShort>(0u, 7u)) {
                 val elements =
                     mutableListOf<FfiViewerElement>(
-                        FfiViewerElement.BlockStart("paragraph", "language", depth, null)
+                        FfiViewerElement.BlockStart("paragraph", "language", depth, null, null)
                     )
                 val marks = mutableListOf<FfiViewerMark>()
                 if (text != null) elements += FfiViewerElement.TextRun(text, marks)
@@ -75,7 +75,7 @@ class PlainTableCellDocumentTest {
 
     @Test
     fun richNestedMalformedAndListSourcesKeepTheOrdinaryConversion() {
-        val start = FfiViewerElement.BlockStart("paragraph", null, 0u, null)
+        val start = FfiViewerElement.BlockStart("paragraph", null, 0u, null, null)
         val text = FfiViewerElement.TextRun("text", emptyList())
         val end = FfiViewerElement.BlockEnd
         val parent = ViewerDocument("parent", emptyList(), false, 0)
@@ -103,7 +103,7 @@ class PlainTableCellDocumentTest {
             val parent = ViewerDocument("parent", emptyList(), false, 0, frameIndex = index)
             val elements =
                 mutableListOf<FfiViewerElement>(
-                    FfiViewerElement.BlockStart("paragraph", null, 0u, null),
+                    FfiViewerElement.BlockStart("paragraph", null, 0u, null, null),
                     FfiViewerElement.TextRun("retained", emptyList()),
                     FfiViewerElement.BlockEnd
                 )

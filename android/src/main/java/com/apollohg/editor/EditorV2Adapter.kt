@@ -967,6 +967,29 @@ internal class EditorV2Adapter private constructor(
         head
     )
 
+    override fun setTextAlign(align: String, anchor: Int, head: Int): String? {
+        if (EditorTextAlignment.fromWireValue(align) == null) {
+            emit(contractError("setTextAlign requires left, center, or right"))
+            return null
+        }
+        return textAlignCommandAtSelection(
+            JSONObject().put("type", "setTextAlign").put("align", align), anchor, head
+        )
+    }
+
+    override fun unsetTextAlign(anchor: Int, head: Int): String? = textAlignCommandAtSelection(
+        JSONObject().put("type", "unsetTextAlign"), anchor, head
+    )
+
+    private fun textAlignCommandAtSelection(command: JSONObject, anchor: Int, head: Int): String? {
+        val selectionType = cachedAtomicRenderSelection()?.optString("type")
+        if (selectionType != null && selectionType != "text") {
+            if (selectionType == "cell" && selectedTableCellsMutationAdmission() == null) return null
+            return commandAdoptingEngineSelection(command)
+        }
+        return commandAtSelection(command, anchor, head)
+    }
+
     override fun toggleHeading(level: Int, anchor: Int, head: Int): String? = commandAtSelection(
         JSONObject().put("type", "toggleHeading").put("level", level),
         anchor,

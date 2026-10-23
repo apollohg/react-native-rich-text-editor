@@ -106,6 +106,7 @@ pub enum RenderElement {
     },
     /// Start of a block-level container (paragraph, listItem, etc.).
     BlockStart {
+        text_align: Option<crate::alignment::TextAlign>,
         node_type: String,
         language: Option<String>,
         depth: u16,
@@ -171,11 +172,13 @@ impl Clone for RenderElement {
                 attrs: Box::new(crate::boundary::clone_json_object_stack_safe(attrs)),
             },
             Self::BlockStart {
+                text_align,
                 node_type,
                 language,
                 depth,
                 list_context,
             } => Self::BlockStart {
+                text_align: *text_align,
                 node_type: node_type.clone(),
                 language: language.clone(),
                 depth: *depth,

@@ -45,6 +45,7 @@ import com.apollohg.editor.deleteTable
 import com.apollohg.editor.exactV2ScalarInt
 import com.apollohg.editor.hasAuthorizedNativeTableOwner
 import com.apollohg.editor.inputScalarSelection
+import com.apollohg.editor.nodeSelectionEndScalar
 import com.apollohg.editor.isAuthorizedForRootTableInput
 import com.apollohg.editor.isAuthorizedForTableCellInput
 import com.apollohg.editor.prepareForExternalInteractionMutation
@@ -2320,7 +2321,9 @@ internal class EditorTableSurface(private val host: RichTextEditorView) :
                 }
             }
 
-            "node" -> exactV2ScalarInt(selection.opt("posScalar") as? Number)?.let { it to it + 1 }
+            "node" -> exactV2ScalarInt(selection.opt("posScalar") as? Number)?.let { start ->
+                nodeSelectionEndScalar(selection, start)?.let { end -> start to end }
+            }
 
             else -> null
         }

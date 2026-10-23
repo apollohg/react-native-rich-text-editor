@@ -7,7 +7,7 @@ use crate::tables::selection::{
 use crate::yrs_engine;
 use crate::yrs_engine::compiler::{cell_admission_error, resolve_cell_opening};
 use crate::yrs_engine::compiler::{
-    selectable_void_at, CompilationContext, CompiledTransaction, RelativeSelectionPlan,
+    resolve_node_opening, CompilationContext, CompiledTransaction, RelativeSelectionPlan,
     SelectionPlan, StoredMarksPlan,
 };
 use crate::yrs_engine::derived_state::{
@@ -68,7 +68,7 @@ impl YrsDocumentEngine {
                     || head.kind == yrs_engine::EditorOffsetKind::Utf16
             }
             yrs_engine::SelectionIntent::Set(yrs_engine::SelectionInput::Node { at }) => {
-                at.kind == yrs_engine::EditorOffsetKind::Utf16
+                at.needs_rendered_text()
             }
             yrs_engine::SelectionIntent::Set(yrs_engine::SelectionInput::Cell { anchor, head }) => {
                 anchor.needs_rendered_text() || head.needs_rendered_text()
@@ -197,26 +197,16 @@ impl YrsDocumentEngine {
                 }
             }
             yrs_engine::SelectionIntent::Set(yrs_engine::SelectionInput::Node { at }) => {
-                let document_position = resolve_point("selection.at", *at)?;
-                let normalized = Selection::node(document_position)
-                    .normalized(&current.document, &current.position_map);
-                let Selection::Node { pos } = normalized else {
-                    return Err(yrs_engine::OperationError::engine_invariant_failed(
-                        request_id,
-                        None,
-                        "node selection did not compile to a node selection",
-                    ));
-                };
-                if !selectable_void_at(current.document.root(), pos, 0, &self.schema) {
-                    return Err(yrs_engine::OperationError::selection_position_invalid(
-                        request_id,
-                        "selection.at",
-                        "node selection must target a selectable void or atom node",
-                    ));
-                }
-                yrs_engine::RelativeSelection::Node {
-                    point: relative_point("selection.at", *at)?,
-                }
+                let pos = resolve_node_opening(
+                    &current.document,
+                    &self.schema,
+                    *at,
+                    rendered_text,
+                    &current.position_map,
+                    request_id,
+                )?;
+                let point = yrs_engine::position::doc_pos_to_relative_point(&txn, &fragment, pos, at.affinity(), &self.schema).ok_or_else(|| yrs_engine::OperationError::selection_position_invalid(request_id, "selection.at", "node selection opening cannot be represented with the requested Yrs affinity"))?;
+                yrs_engine::RelativeSelection::Node { point }
             }
             yrs_engine::SelectionIntent::Set(yrs_engine::SelectionInput::Cell { anchor, head }) => {
                 let opening = |field: &'static str, point| {

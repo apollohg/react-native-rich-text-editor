@@ -447,3 +447,21 @@ extension EditorV2AdapterTests {
     }
 
 }
+
+
+extension EditorV2AdapterTests {
+    func testAlignmentCommandKeepsTextAndRejectsUnsupportedPhysicalAlignment() throws {
+        let adapter = makeAdapter()
+        _ = adapter.setContentHtml("<p>שלום</p>")
+        let updated = try XCTUnwrap(adapter.setTextAlign("right", anchor: 1, head: 1))
+        let update = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(updated.utf8)) as? [String: Any])
+        XCTAssertEqual((update["activeState"] as? [String: Any])?["textAlign"] as? String, "right")
+        XCTAssertEqual(documentText(adapter), "שלום")
+        let original = documentJsonObject(adapter)
+        XCTAssertNil(adapter.setTextAlign("justify", anchor: 1, head: 1))
+        XCTAssertEqual(documentJsonObject(adapter) as NSDictionary, original as NSDictionary)
+        XCTAssertNotNil(adapter.setTextAlign(nil, anchor: 1, head: 1))
+        let paragraph = try XCTUnwrap((documentJsonObject(adapter)["content"] as? [[String: Any]])?.first)
+        XCTAssertTrue((paragraph["attrs"] as? [String: Any])?["textAlign"] == nil || (paragraph["attrs"] as? [String: Any])?["textAlign"] is NSNull)
+    }
+}

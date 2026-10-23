@@ -222,12 +222,7 @@ internal fun android.text.Spannable.applyPhysicalTextAlignment(
             paragraphStart,
             paragraphEnd - paragraphStart
         )
-        val resolved = when (alignment) {
-            "center" -> Layout.Alignment.ALIGN_CENTER
-            "left" -> if (rtl) Layout.Alignment.ALIGN_OPPOSITE else Layout.Alignment.ALIGN_NORMAL
-            "right" -> if (rtl) Layout.Alignment.ALIGN_NORMAL else Layout.Alignment.ALIGN_OPPOSITE
-            else -> Layout.Alignment.ALIGN_NORMAL
-        }
+        val resolved = physicalTextAlignment(alignment, rtl)
         setSpan(
             android.text.style.AlignmentSpan.Standard(resolved),
             paragraphStart,
@@ -253,3 +248,11 @@ internal fun EditorEditText.drawStyleSheetBoxes(canvas: Canvas) {
     }
     canvas.restoreToCount(saved)
 }
+
+internal fun physicalTextAlignment(alignment: String?, rtl: Boolean): Layout.Alignment =
+    when (alignment) {
+        "center" -> Layout.Alignment.ALIGN_CENTER
+        "left" -> if (rtl) Layout.Alignment.ALIGN_OPPOSITE else Layout.Alignment.ALIGN_NORMAL
+        "right" -> if (rtl) Layout.Alignment.ALIGN_NORMAL else Layout.Alignment.ALIGN_OPPOSITE
+        else -> Layout.Alignment.ALIGN_NORMAL
+    }

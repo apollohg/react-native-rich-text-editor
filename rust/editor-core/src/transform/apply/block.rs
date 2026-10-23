@@ -38,9 +38,18 @@ fn apply_split_block(
     // Build the two new blocks.
     // First block: same type as the original text block.
     let left_block = rebuild_element(text_block, left_children);
+    let mut right_attrs = crate::command_planner::default_attrs(schema, new_node_type).unwrap_or_default();
+    right_attrs.extend(new_attrs.clone());
+    if schema.node(new_node_type).is_some_and(crate::alignment::eligible) {
+        right_attrs.insert(
+            crate::alignment::TEXT_ALIGN_ATTR.to_owned(),
+            crate::alignment::value(text_block)
+                .map_or(serde_json::Value::Null, |align| serde_json::json!(align)),
+        );
+    }
     let right_block = Node::element(
         new_node_type.to_string(),
-        new_attrs.clone(),
+        right_attrs,
         Fragment::from(right_children),
     );
 

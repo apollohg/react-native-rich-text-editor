@@ -48,6 +48,7 @@ export const MOCK_ATOMIC_RENDER_SNAPSHOT = {
         type: 'text', anchor: 1, head: 1, anchorScalar: 0, headScalar: 0,
     },
     activeState: {
+        textAlign: null,
         marks: {},
         markAttrs: {},
         nodes: { paragraph: true },

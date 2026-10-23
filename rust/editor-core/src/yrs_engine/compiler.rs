@@ -62,7 +62,10 @@ pub(crate) use positions::map_position;
 pub(in crate::yrs_engine) use positions::node_boundary_position;
 use preview::LocalizedSemanticCompilation;
 #[allow(unused_imports)]
-pub(crate) use selection::{cell_admission_error, resolve_cell_opening, selectable_void_at};
+pub(crate) use selection::{
+    cell_admission_error, node_selection_position, resolve_cell_opening, resolve_node_opening,
+    selectable_void_at,
+};
 use semantic::compile_transaction_impl;
 use std::sync::Arc;
 use yrs::branch::{Branch, BranchPtr};
@@ -496,3 +499,5 @@ fn map_transform_error(
 #[cfg(test)]
 #[path = "compiler_tests.rs"]
 mod tests;
+
+pub(crate) use positions::direct_attribute_target as node_at_opening;

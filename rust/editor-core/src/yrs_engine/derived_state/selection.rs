@@ -12,7 +12,7 @@ use crate::schema::Schema;
 use crate::selection::Selection;
 use crate::tables::admission::TableProjectionIndex;
 use crate::tables::selection::{cell_pair_is_usable, snap_cell_selection, CellSelectionOrigin};
-use crate::yrs_engine::compiler::selectable_void_at;
+use crate::yrs_engine::compiler::node_selection_position;
 use crate::yrs_engine::position::{
     cursor_sticky_index_from_doc_pos, doc_pos_to_relative_point, doc_pos_to_sticky_index,
     relative_point_to_doc_pos,
@@ -217,7 +217,16 @@ pub(crate) fn resolved_from_legacy_with_view(
     table_index: &TableProjectionIndex,
 ) -> Option<ResolvedSelection> {
     let point = |document_position| {
-        let scalar = position_map.doc_to_scalar(document_position, document);
+        let scalar = crate::alignment::selection_scalar_range(
+            document,
+            schema,
+            position_map,
+            document_position,
+        )
+        .map_or_else(
+            || position_map.doc_to_scalar(document_position, document),
+            |(start, _)| start,
+        );
         Some(ResolvedPoint {
             document: document_position,
             scalar,
@@ -229,10 +238,9 @@ pub(crate) fn resolved_from_legacy_with_view(
             anchor: point(*anchor)?,
             head: point(*head)?,
         }),
-        Selection::Node { pos } if selectable_void_at(document.root(), *pos, 0, schema) => {
-            Some(ResolvedSelection::Node { at: point(*pos)? })
-        }
-        Selection::Node { .. } => None,
+        Selection::Node { pos } => Some(ResolvedSelection::Node {
+            at: point(node_selection_position(document, schema, *pos)?)?,
+        }),
         Selection::Cell { anchor, head } => {
             if !cell_pair_is_usable(table_index, *anchor, *head, CellSelectionOrigin::Preserved) {
                 return None;
@@ -388,7 +396,16 @@ pub(crate) fn resolve_selection<T: ReadTxn>(
         )
     }?;
     let point = |document_position| {
-        let scalar = position_map.doc_to_scalar(document_position, document);
+        let scalar = crate::alignment::selection_scalar_range(
+            document,
+            schema,
+            position_map,
+            document_position,
+        )
+        .map_or_else(
+            || position_map.doc_to_scalar(document_position, document),
+            |(start, _)| start,
+        );
         Some(ResolvedPoint {
             document: document_position,
             scalar,
@@ -400,10 +417,9 @@ pub(crate) fn resolve_selection<T: ReadTxn>(
             anchor: point(anchor)?,
             head: point(head)?,
         }),
-        Selection::Node { pos } if selectable_void_at(document.root(), pos, 0, schema) => {
-            Some(ResolvedSelection::Node { at: point(pos)? })
-        }
-        Selection::Node { .. } => None,
+        Selection::Node { pos } => Some(ResolvedSelection::Node {
+            at: point(node_selection_position(document, schema, pos)?)?,
+        }),
         Selection::Cell { anchor, head } => {
             if !cell_pair_is_usable(table_index, anchor, head, CellSelectionOrigin::Preserved) {
                 return None;
@@ -508,7 +524,7 @@ pub(crate) fn command_initial_selection_to_relative<T: ReadTxn>(
             ResolvedSelection::Text { anchor: a, head: h },
         ) => vec![(a.document, anchor.affinity), (h.document, head.affinity)],
         (crate::yrs_engine::SelectionInput::Node { at }, ResolvedSelection::Node { at: p }) => {
-            vec![(p.document, at.affinity)]
+            vec![(p.document, at.affinity())]
         }
         (
             crate::yrs_engine::SelectionInput::Cell { anchor, head },

@@ -39,6 +39,12 @@ pub(crate) fn compile(request: FfiViewerCompileRequest) -> FfiViewerCompileResul
             .preferred_text_block()
             .map(|spec| spec.name.clone())
             .unwrap_or_default();
+        let text_block_names = resolved
+            .schema
+            .all_nodes()
+            .filter(|spec| matches!(spec.role, crate::schema::NodeRole::TextBlock))
+            .map(|spec| spec.name.clone())
+            .collect::<Vec<_>>();
         let schema_key = schema_fingerprint(&resolved.schema);
         let render_cache = crate::render::incremental::CachedRenderBlocks::build_validated(
             &resolved.document,
@@ -93,6 +99,10 @@ pub(crate) fn compile(request: FfiViewerCompileRequest) -> FfiViewerCompileResul
             &table_records,
             &table_attributes,
             &preferred_text_block_name,
+            text_block_names
+                .capacity()
+                .saturating_mul(std::mem::size_of::<String>())
+                .saturating_add(text_block_names.iter().map(String::capacity).sum::<usize>()),
         );
 
         Ok::<_, crate::session::SessionError>(Arc::new(ViewerCompiledDocument {
@@ -102,6 +112,7 @@ pub(crate) fn compile(request: FfiViewerCompileRequest) -> FfiViewerCompileResul
             table_records,
             is_empty,
             preferred_text_block_name,
+            text_block_names,
             trailing_empty_text_block_count,
             retained_bytes,
         }))
@@ -294,11 +305,13 @@ pub(crate) fn viewer_leaf_element(
             attrs_json: canonical_attrs_json(&attrs),
         },
         RenderElement::BlockStart {
+            text_align,
             node_type,
             language,
             depth,
             list_context,
         } => FfiViewerElement::BlockStart {
+            text_align: text_align.map(|align| align.as_str().to_owned()),
             node_type,
             language,
             depth,
@@ -437,6 +450,7 @@ fn hash_element(digest: &mut Sha256, element: &FfiViewerElement) {
             hash_string(digest, label);
         }
         FfiViewerElement::BlockStart {
+            text_align,
             node_type,
             language,
             depth,
@@ -447,6 +461,7 @@ fn hash_element(digest: &mut Sha256, element: &FfiViewerElement) {
             digest.update(depth.to_be_bytes());
             hash_optional_string(digest, list_context_json.as_deref());
             hash_optional_string(digest, language.as_deref());
+            hash_optional_string(digest, text_align.as_deref());
         }
         FfiViewerElement::BlockEnd => digest.update([4]),
     }
@@ -588,11 +603,13 @@ fn retained_bytes(
     table_records: &[super::types::FfiViewerTable],
     table_attributes: &HashMap<String, String>,
     preferred_text_block_name: &str,
+    text_block_names_retained_bytes: usize,
 ) -> usize {
     let element_bytes = elements.iter().map(element_retained_bytes).sum::<usize>();
     std::mem::size_of::<ViewerCompiledDocument>()
         .saturating_add(semantic_key.len())
         .saturating_add(preferred_text_block_name.len())
+        .saturating_add(text_block_names_retained_bytes)
         .saturating_add(
             elements
                 .len()
@@ -724,6 +741,7 @@ fn element_retained_bytes(element: &FfiViewerElement) -> usize {
             .saturating_add(attrs_json.capacity())
             .saturating_add(label.capacity()),
         FfiViewerElement::BlockStart {
+            text_align,
             node_type,
             language,
             list_context_json,
@@ -731,7 +749,8 @@ fn element_retained_bytes(element: &FfiViewerElement) -> usize {
         } => node_type
             .capacity()
             .saturating_add(list_context_json.as_ref().map_or(0, String::capacity))
-            .saturating_add(language.as_ref().map_or(0, String::capacity)),
+            .saturating_add(language.as_ref().map_or(0, String::capacity))
+            .saturating_add(text_align.as_ref().map_or(0, String::capacity)),
         FfiViewerElement::BlockEnd => 0,
     }
 }

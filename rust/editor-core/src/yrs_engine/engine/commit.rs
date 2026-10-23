@@ -629,7 +629,7 @@ impl YrsDocumentEngine {
                 (
                     yrs_engine::SelectionInput::Node { at },
                     yrs_engine::RelativeSelection::Node { point },
-                ) => at.affinity == point.affinity,
+                ) => at.affinity() == point.affinity,
                 (
                     yrs_engine::SelectionInput::Cell { anchor, head },
                     yrs_engine::RelativeSelection::Cell {

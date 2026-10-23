@@ -3,11 +3,10 @@ use crate::position::PositionMap;
 
 use super::Selection;
 
-/// Normalize a selection by snapping its positions to the nearest cursorable
-/// doc positions via the `PositionMap`.
+/// Normalize a selection against the document and its `PositionMap`.
 ///
 /// - `Text`: both anchor and head are snapped independently.
-/// - `Node`: the pos is snapped.
+/// - `Node`: clamp to document bounds, preserving openings for schema admission.
 /// - `All`: returned as-is (it resolves lazily from the document).
 pub fn normalize_selection(
     selection: Selection,
@@ -23,10 +22,9 @@ pub fn normalize_selection(
                 head: norm_head,
             }
         }
-        Selection::Node { pos } => {
-            let norm_pos = pos_map.normalize_cursor_pos(pos, doc);
-            Selection::Node { pos: norm_pos }
-        }
+        Selection::Node { pos } => Selection::Node {
+            pos: pos.min(doc.content_size()),
+        },
         Selection::Cell { anchor, head } => Selection::Cell { anchor, head },
         Selection::All => Selection::All,
     }

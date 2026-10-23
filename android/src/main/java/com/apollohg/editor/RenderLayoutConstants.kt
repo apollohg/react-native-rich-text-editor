@@ -66,7 +66,8 @@ data class BlockContext(
     var renderStart: Int = 0,
     val language: String? = null,
     val sourceElementIndex: Int? = null,
-    var contentStart: Int = 0
+    var contentStart: Int = 0,
+    val textAlign: String? = null
 )
 
 data class AtomRenderConfiguration(

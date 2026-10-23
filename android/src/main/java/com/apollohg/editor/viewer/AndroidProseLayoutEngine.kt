@@ -881,7 +881,8 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                                         )?.let {
                                             PlainTableCellDocument.capture(document, it, tableKey)
                                         }
-                                        val text = detached?.text?.plainCellMeasurementText()
+                                        val text = detached?.takeIf { it.textAlign == null }
+                                            ?.text?.plainCellMeasurementText()
                                         if (text != null) {
                                             val childKey = key.copy(
                                                 semanticKey = detached.semanticKey,
@@ -2745,7 +2746,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
         if (block.nodeType != "paragraph" || block.inBlockquote || block.listContext != null ||
             block.listItemBoundary != null || block.listItemAncestors.isNotEmpty() ||
             block.containers.isNotEmpty() ||
-            block.isBlockAtom || block.tableKey != null
+            block.isBlockAtom || block.tableKey != null || block.textAlign != null
         ) {
             return null
         }
@@ -2820,7 +2821,12 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
             }
         }
         return StaticLayout.Builder.obtain(preparedText, 0, preparedText.length, resolved, width)
-            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+            .setAlignment(com.apollohg.editor.physicalTextAlignment(
+                paint.textAlign,
+                android.text.TextDirectionHeuristics.FIRSTSTRONG_LTR.isRtl(
+                    preparedText, 0, preparedText.length
+                )
+            ))
             .apply {
                 if (android.os.Build.VERSION.SDK_INT >=
                     26

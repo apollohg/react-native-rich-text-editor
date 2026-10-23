@@ -12,6 +12,10 @@ internal data class NativeToolbarIcon(
 ) {
     companion object {
         private val defaultGlyphs = mapOf(
+            ToolbarDefaultIconId.ALIGN_LEFT to "≡←",
+            ToolbarDefaultIconId.ALIGN_CENTER to "≡",
+            ToolbarDefaultIconId.ALIGN_RIGHT to "→≡",
+            ToolbarDefaultIconId.ALIGN_RESET to "↺",
             ToolbarDefaultIconId.BOLD to "B",
             ToolbarDefaultIconId.ITALIC to "I",
             ToolbarDefaultIconId.UNDERLINE to "U",
@@ -35,6 +39,10 @@ internal data class NativeToolbarIcon(
             ToolbarDefaultIconId.REDO to "↪"
         )
         private val defaultMaterialDesignIcons = mapOf(
+            ToolbarDefaultIconId.ALIGN_LEFT to "format-align-left",
+            ToolbarDefaultIconId.ALIGN_CENTER to "format-align-center",
+            ToolbarDefaultIconId.ALIGN_RIGHT to "format-align-right",
+            ToolbarDefaultIconId.ALIGN_RESET to "format-clear",
             ToolbarDefaultIconId.BOLD to "format-bold",
             ToolbarDefaultIconId.ITALIC to "format-italic",
             ToolbarDefaultIconId.UNDERLINE to "format-underline",

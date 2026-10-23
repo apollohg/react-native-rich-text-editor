@@ -125,6 +125,7 @@ fn walk_children(
                         None
                     };
                 elements.push(RenderElement::BlockStart {
+                    text_align: crate::alignment::render_value(child, schema),
                     node_type: child.node_type().to_string(),
                     language: child
                         .attrs()
@@ -141,6 +142,7 @@ fn walk_children(
             }
             Some(NodeRole::TextBlock) => {
                 elements.push(RenderElement::BlockStart {
+                    text_align: crate::alignment::render_value(child, schema),
                     node_type: child.node_type().to_string(),
                     language: child
                         .attrs()
@@ -172,6 +174,7 @@ fn walk_children(
             }
             Some(NodeRole::Block) => {
                 elements.push(RenderElement::BlockStart {
+                    text_align: crate::alignment::render_value(child, schema),
                     node_type: child.node_type().to_string(),
                     language: child
                         .attrs()

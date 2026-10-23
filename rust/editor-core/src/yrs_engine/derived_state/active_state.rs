@@ -111,6 +111,9 @@ pub(super) fn active_state_retained_bytes(
         items: 0,
     };
     meter.add_bytes(std::mem::size_of::<ActiveState>())?;
+    if let Some(align) = &state.text_align {
+        meter.string_heap(align)?;
+    }
     for map in [&state.marks, &state.nodes, &state.commands] {
         meter.add_items(map.len())?;
         meter.add_bytes(

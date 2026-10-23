@@ -1,3 +1,4 @@
+import { validateAttributeSpec } from './attributeValidation';
 import type { TableRole } from './TableTypes';
 import { withAtomsSchema, type AtomNodeDefinition } from './atoms';
 import { RESERVED_WIRE_NODE_TYPES } from './atomPolicy';
@@ -393,12 +394,18 @@ export function defineSchema(spec: SchemaSpec): SchemaDefinition {
 
                 names.add(tag);
                 const { [switched.switchOn]: _discriminator, ...variantAttrs } = node.attrs ?? {};
+                for (const [ attribute, declaration ] of Object.entries(variantAttrs)) {
+                    validateAttributeSpec(declaration, attribute);
+                }
 
+                // Native input rejects shared object references across variants.
                 nodes.push({
                     name: tag,
                     ...variantCommon,
                     group: appendGroup(node.group, name),
-                    ...(Object.keys(variantAttrs).length === 0 ? {} : { attrs: variantAttrs }),
+                    ...(Object.keys(variantAttrs).length === 0
+                        ? {}
+                        : { attrs: JSON.parse(JSON.stringify(variantAttrs)) as Record<string, AttrSpec> }),
                     htmlTag: tag,
                     json: {
                         type: name,
