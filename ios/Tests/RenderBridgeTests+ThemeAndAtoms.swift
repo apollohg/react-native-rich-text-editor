@@ -605,6 +605,103 @@ extension RenderBridgeTests {
         XCTAssertEqual(paragraphStyle?.paragraphSpacing ?? 0, 14, accuracy: 0.1)
     }
 
+    func testRender_defaultHeadingTypographyWithoutExplicitHeadingStyles() throws {
+        let themes: [(String, EditorTheme?)] = [
+            ("absent", nil),
+            ("empty", EditorTheme(dictionary: [:])),
+            ("partial", EditorTheme(dictionary: ["text": ["fontSize": 15, "color": "#112233"]])),
+            ("stylesheet", EditorTheme(dictionary: ["version": 1, "styles": [:]]))
+        ]
+        let headingSizes: [CGFloat] = [32, 28, 24, 21, 19, 17]
+        for (name, theme) in themes {
+            for quoted in [false, true] {
+                for (index, size) in headingSizes.enumerated() {
+                    let nodeType = "h\(index + 1)"
+                    let json = headingTypographyJSON(nodeType: nodeType, quoted: quoted)
+                    let result = RenderBridge.renderElements(fromJSON: json, baseFont: baseFont,
+                        textColor: textColor, theme: theme)
+                    let font = try XCTUnwrap(result.attribute(.font, at: 0, effectiveRange: nil) as? UIFont)
+                    let context = "\(name) \(nodeType), quoted=\(quoted)"
+                    XCTAssertEqual(font.pointSize, size, accuracy: 0.1, context)
+                    XCTAssertTrue(font.fontDescriptor.symbolicTraits.contains(.traitBold), context)
+                    if name == "partial" {
+                        XCTAssertEqual(result.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor,
+                            EditorTheme.color(from: "#112233"), context)
+                    }
+                }
+            }
+            let paragraph = RenderBridge.renderElements(fromJSON: headingTypographyJSON(nodeType: "paragraph"),
+                baseFont: baseFont, textColor: textColor, theme: theme)
+            let font = try XCTUnwrap(paragraph.attribute(.font, at: 0, effectiveRange: nil) as? UIFont)
+            XCTAssertEqual(font.pointSize, name == "partial" ? 15 : baseFont.pointSize, accuracy: 0.1, name)
+            XCTAssertFalse(font.fontDescriptor.symbolicTraits.contains(.traitBold), name)
+        }
+    }
+
+    func testRender_headingSizeAndWeightOverridesRemainIndependent() throws {
+        let overrides: [String: Any] = ["h2": ["fontSize": 35], "h3": ["fontWeight": "400"]]
+        let themes = [
+            EditorTheme(dictionary: ["headings": overrides]),
+            EditorTheme(dictionary: ["version": 1, "styles": overrides])
+        ]
+        for theme in themes {
+            for (nodeType, size, bold) in [("h2", CGFloat(35), true), ("h3", CGFloat(24), false)] {
+                let result = RenderBridge.renderElements(fromJSON: headingTypographyJSON(nodeType: nodeType),
+                    baseFont: baseFont, textColor: textColor, theme: theme)
+                let font = try XCTUnwrap(result.attribute(.font, at: 0, effectiveRange: nil) as? UIFont)
+                XCTAssertEqual(font.pointSize, size, accuracy: 0.1, nodeType)
+                XCTAssertEqual(font.fontDescriptor.symbolicTraits.contains(.traitBold), bold, nodeType)
+            }
+        }
+    }
+
+    func testRender_emptyHeadingRetainsTypingTypography() throws {
+        let headingSizes: [CGFloat] = [32, 28, 24, 21, 19, 17]
+        let textView = EditorTextView(frame: CGRect(x: 0, y: 0, width: 320, height: 120))
+        for (index, size) in headingSizes.enumerated() {
+            let json = headingTypographyJSON(nodeType: "h\(index + 1)")
+                .replacingOccurrences(of: "Heading typography", with: String(EditorTextView.emptyBlockPlaceholderScalar))
+            textView.applyRenderJSON(json)
+            textView.selectedRange = NSRange(location: 0, length: 0)
+            textView.refreshTypingAttributesForSelection()
+            let font = try XCTUnwrap(textView.typingAttributes[.font] as? UIFont)
+            XCTAssertEqual(font.pointSize, size, accuracy: 0.1, "Empty h\(index + 1)")
+            XCTAssertTrue(font.fontDescriptor.symbolicTraits.contains(.traitBold), "Empty h\(index + 1)")
+        }
+    }
+
+    func testRender_defaultHeadingTypographyVisualEvidence() {
+        let sample = NSMutableAttributedString()
+        for nodeType in ["paragraph", "h1", "h2", "h3", "h4", "h5", "h6"] {
+            let json = headingTypographyJSON(nodeType: nodeType)
+                .replacingOccurrences(of: "Heading typography", with: "\(nodeType): Default typography")
+            let rendered = RenderBridge.renderElements(fromJSON: json, baseFont: baseFont, textColor: textColor)
+            sample.append(rendered)
+            sample.append(NSAttributedString(string: "\n", attributes: rendered.attributes(at: 0, effectiveRange: nil)))
+        }
+        let canvasSize = CGSize(width: 480, height: 340)
+        let image = UIGraphicsImageRenderer(size: canvasSize).image { context in
+            UIColor.white.setFill()
+            context.fill(CGRect(origin: .zero, size: canvasSize))
+            sample.draw(in: CGRect(x: 20, y: 20, width: 440, height: 300))
+        }
+        let attachment = XCTAttachment(image: image)
+        attachment.name = "Default heading typography without a theme"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    private func headingTypographyJSON(nodeType: String, quoted: Bool = false) -> String {
+        let block = """
+        {"type":"blockStart","nodeType":"\(nodeType)","depth":\(quoted ? 1 : 0)},
+        {"type":"textRun","text":"Heading typography","marks":[]},
+        {"type":"blockEnd"}
+        """
+        return quoted
+            ? "[{\"type\":\"blockStart\",\"nodeType\":\"blockquote\",\"depth\":0},\(block),{\"type\":\"blockEnd\"}]"
+            : "[\(block)]"
+    }
+
     func testRender_themeOverridesSpecificHeadingLevelTypography() {
         let json = """
         [

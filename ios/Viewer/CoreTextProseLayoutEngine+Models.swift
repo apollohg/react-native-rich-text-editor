@@ -269,13 +269,9 @@ struct PreparedProseTheme {
             spacingAfter: text.spacingAfter
         )
         var headings: [String: PreparedTextPaint] = [:]
-        let defaults: [(String, CGFloat)] = [("h1", 32), ("h2", 28), ("h3", 24), ("h4", 21), ("h5", 19), ("h6", 17)]
-        for (name, size) in defaults {
-            let defaultHeading = EditorTextStyle(
-                fontSize: size,
-                fontWeight: "700",
-                spacingAfter: usesEditorParagraphSpacing ? nil : 10
-            )
+        for (name, style) in EditorTextStyle.defaultHeadingStyles {
+            var defaultHeading = style
+            defaultHeading.spacingAfter = usesEditorParagraphSpacing ? nil : 10
             headings[name] = paint(
                 theme.effectiveTextStyle(for: name, defaultStyle: defaultHeading),
                 fallback: usesEditorParagraphSpacing ? text : paragraph, nodeType: name

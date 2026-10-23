@@ -20,6 +20,15 @@ data class EditorTextStyle(
     val textDecorationStyle: String? = null
 ) {
     companion object {
+        internal val defaultHeadingStyles = mapOf(
+            "h1" to 32f,
+            "h2" to 28f,
+            "h3" to 24f,
+            "h4" to 21f,
+            "h5" to 19f,
+            "h6" to 17f
+        ).mapValues { (_, size) -> EditorTextStyle(fontSize = size, fontWeight = "700") }
+
         fun fromJson(json: JSONObject?): EditorTextStyle? {
             json ?: return null
             return EditorTextStyle(
@@ -547,7 +556,9 @@ data class EditorTheme(
         styleSheet?.let {
             return it.resolveText(nodeType, if (inBlockquote) listOf("blockquote") else emptyList())
         }
-        var style = text ?: EditorTextStyle()
+        var style = (text ?: EditorTextStyle()).mergedWith(
+            EditorTextStyle.defaultHeadingStyles[nodeType]
+        )
         style = style.mergedWith(if (inBlockquote) blockquote?.text else null)
         if (nodeType == "paragraph") {
             style = style.mergedWith(paragraph)

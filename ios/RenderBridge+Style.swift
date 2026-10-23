@@ -365,6 +365,7 @@ extension RenderBridge {
             return theme?.effectiveTextStyle(for: "paragraph", inBlockquote: inBlockquote)
         }
         return theme?.effectiveTextStyle(for: currentBlock.nodeType, inBlockquote: inBlockquote)
+            ?? EditorTextStyle.defaultHeadingStyles[currentBlock.nodeType]
     }
 
     static func blockquoteDepth(in blockStack: [BlockContext]) -> Int {
