@@ -13,6 +13,7 @@ import {
 } from './nativeEditorV2FakeRecords';
 import {
     fakeHtmlForDoc,
+    fakeTextForDoc,
     fakeDocForHtml,
     cloneDoc,
     appendText,
@@ -52,6 +53,14 @@ export function createFakeEditingModule(
         editorV2GetDocumentHtml: jest.fn((editorId: string) =>
             withSession(editorId, session =>
                 okRecord(JSON.stringify({ html: fakeHtmlForDoc(session.doc) })))),
+
+        editorV2GetDocumentText: jest.fn((editorId: string) =>
+            withSession(editorId, session =>
+                okRecord(JSON.stringify({ text: fakeTextForDoc(session.doc) })))),
+
+        editorV2GetDocumentIsEmpty: jest.fn((editorId: string) =>
+            withSession(editorId, session =>
+                okRecord(JSON.stringify({ isEmpty: fakeDocumentIsEmpty(session.doc) })))),
 
         editorV2GetContentSnapshot: jest.fn((editorId: string) =>
             withSession(editorId, session =>

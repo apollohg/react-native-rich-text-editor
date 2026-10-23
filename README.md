@@ -103,22 +103,77 @@ export function EditorScreen() {
 
 See [Getting Started](https://github.com/apollohg/react-native-rich-text-editor/wiki/Getting-Started) and the [RichTextEditor reference](https://github.com/apollohg/react-native-rich-text-editor/wiki/RichTextEditor-Reference) for the complete API.
 
-## Paragraph alignment
+## Observing changes without exporting content
 
-The default toolbar includes left, centre, and right alignment for paragraphs and headings. The ref methods apply to the current block or the eligible blocks in the selection:
+Use `onDocumentChange` to mark a document dirty or schedule a save. It receives
+`{ documentRevision, origin }` without exporting HTML or JSON. The revision is a
+decimal string; `origin` is `nativeView`, `jsApi`, `remoteCollaboration`, `history`,
+`restore`, or `import`.
+
+The callback runs once per newly observed revision after the initial ready
+baseline, including controlled replacements. Repeated refreshes and selection-only
+changes do not notify. Several engine commits observed together produce one event
+for the latest revision, even if its content equals an earlier revision. Remote
+changes are observed through the collaboration `editorBindings` (or the headless
+hook's `revisionSignal`). Rebinding to a different handle establishes a new baseline.
+
+For a debounced save, schedule the getter itself:
 
 ```tsx
-editorRef.current?.setTextAlign('center');
-editorRef.current?.unsetTextAlign(); // Restore the theme's alignment.
+import React, { useCallback, useEffect, useRef } from 'react';
+import {
+    RichTextEditor,
+    type DocumentJSON,
+    type NativeEditorDocumentHandle,
+} from '@apollohg/react-native-rich-text-editor';
+
+const SAVE_DELAY_MS = 500;
+
+export function AutosaveEditor({ documentHandle, save }: {
+    documentHandle: NativeEditorDocumentHandle;
+    save: (content: DocumentJSON) => void;
+}) {
+    const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const cancelSave = useCallback(() => {
+        if (timer.current !== null) clearTimeout(timer.current);
+        timer.current = null;
+    }, []);
+    const saveNow = useCallback(() => {
+        cancelSave();
+        if (!documentHandle.isDestroyed) {
+            save(documentHandle.bridge.getDocumentJson());
+        }
+    }, [cancelSave, documentHandle, save]);
+    const scheduleSave = useCallback(() => {
+        cancelSave();
+        timer.current = setTimeout(saveNow, SAVE_DELAY_MS);
+    }, [cancelSave, saveNow]);
+
+    useEffect(() => cancelSave, [cancelSave, documentHandle, save]);
+
+    return <RichTextEditor documentHandle={documentHandle}
+        onDocumentChange={scheduleSave} onBlur={saveNow} />;
+}
 ```
 
-Alignment is saved as `attrs.textAlign` in JSON and `style="text-align:center"` in HTML, and renders in both the editor and viewer. A missing or null attribute inherits the theme; explicit `'left'` overrides it. `ActiveState.textAlign` reports `'left'`, `'center'`, `'right'`, `'mixed'`, or `null` for inherited alignment. Check `commands.setTextAlign` for availability.
+This local-document example saves on a typing pause or blur and cancels pending
+work on unmount; flush before navigation if the last edit must be saved. Getters
+read the current document when called, not a snapshot of an earlier event.
 
-Custom toolbars can use `{ type: 'textAlign', align: 'center', label: 'Align Center', icon: { type: 'default', id: 'alignCenter' } }`. Use `align: null` and the `alignReset` icon for a reset button. Standalone `EditorToolbar` components dispatch through `onSetTextAlign`, which receives the alignment or null for reset.
+`onContentChange` and `onContentChangeJSON` retain their eager export behaviour.
+Wrapping those callbacks in a debounce does not defer the exports. Controlled
+`value`/`valueJSON` reconciliation also still reads content; initialize the handle
+and omit controlled values and eager callbacks to avoid that work while typing.
+`useYjsCollaboration` still exports JSON for its public `documentJson` state when
+revisions advance; the lightweight event does not change that separate contract.
+`onLocalCommit` remains available for applications interested only in local mutations.
 
-Custom paragraph/heading schemas opt in with `textAlign: { default: null, enum: [null, 'left', 'center', 'right'] }`. Updated default schemas have a new fingerprint; collaborating peers must use compatible schemas.
-
-For Tiptap web editors, configure `@tiptap/extension-text-align` with `types: ['paragraph', 'heading']`, `alignments: ['left', 'center', 'right']`, and `defaultAlignment: null`. Plain ProseMirror schemas need the same nullable `textAlign` node attribute and HTML parsing/serialization rules. The native presets expose headings as the standard `heading` JSON node with a `level` attribute.
+`getTextContent()` now reads text directly from the engine: literal characters
+are preserved, text nodes are concatenated in document order, and block boundaries,
+hard breaks, and atom labels add no text. This replaces HTML stripping (including
+its escaped entities and HTML-rendered atom labels). Reading all text still takes
+work proportional to its length. `getIsEmpty()` directly queries the engine's
+structural definition; an image, rule, or other non-text content is not empty.
 
 ## Copy and paste
 

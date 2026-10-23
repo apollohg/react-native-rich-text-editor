@@ -26,6 +26,8 @@ import {
     normalizeNativeEditorV2StateValue,
     normalizeNativeEditorV2HtmlValue,
     normalizeNativeEditorV2MarkdownValue,
+    normalizeNativeEditorV2TextValue,
+    normalizeNativeEditorV2IsEmptyValue,
     requireNativeEditorV2U32,
     type NativeEditorCommitInfo,
     normalizeNativeEditorV2CommitValue,
@@ -240,6 +242,20 @@ export class NativeEditorDocumentBridge {
         return this.callV2(
             () => invokeNativeEditorV2('editorV2GetDocumentHtml', this._editorId),
             normalizeNativeEditorV2HtmlValue
+        );
+    }
+
+    getDocumentText(): string {
+        return this.callV2(
+            () => invokeNativeEditorV2('editorV2GetDocumentText', this._editorId),
+            normalizeNativeEditorV2TextValue
+        );
+    }
+
+    getDocumentIsEmpty(): boolean {
+        return this.callV2(
+            () => invokeNativeEditorV2('editorV2GetDocumentIsEmpty', this._editorId),
+            normalizeNativeEditorV2IsEmptyValue
         );
     }
 

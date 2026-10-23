@@ -16,7 +16,7 @@ import { NativeRichTextEditor } from '../NativeRichTextEditor';
 import { type DocumentJSON } from '../NativeEditorBridge';
 
 import { useYjsCollaboration } from '../YjsCollaboration';
-import { V2_FAKE_STEP2_FRAME } from './helpers/nativeEditorV2Fake';
+import { V2_FAKE_STEP2_FRAME, V2_FAKE_UPDATE_FRAME } from './helpers/nativeEditorV2Fake';
 import { acceptNativeCommitPayload } from '../RichTextEditorSerialization';
 import { normalizeNativeEditorV2RenderUpdateValue } from '../NativeEditorRenderNormalization';
 
@@ -961,4 +961,61 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         expect(collaboration).not.toBeNull();
         handle.destroy();
     });
+});
+
+it('forwards lightweight document notifications for native commits without content exports', () => {
+    const handle = createV2LocalHandle(V2_INITIAL_DOC);
+    const onDocumentChange = jest.fn();
+    const editor = render(<NativeRichTextEditor documentHandle={handle} onDocumentChange={onDocumentChange} />);
+    expect(onDocumentChange).not.toHaveBeenCalled();
+    handle.bridge.replaceDocument({ setJson: V2_DOC_B, history: 'undoableBoundary' });
+    v2Runtime.session(handle.editorId).documentOrigin = 'nativeView';
+    const payload = {
+        editorId: handle.editorId,
+        updateJson: renderUpdateValue(handle.editorId),
+        documentRevision: handle.bridge.getState().documentRevision,
+    };
+    act(() => {
+        editor.getByTestId('native-editor-view').props.onEditorUpdate({ nativeEvent: payload });
+        editor.getByTestId('native-editor-view').props.onEditorUpdate({ nativeEvent: payload });
+    });
+    expect(onDocumentChange.mock.calls).toEqual([[{
+        documentRevision: payload.documentRevision, origin: 'nativeView',
+    }]]);
+    expect(mockNativeModule.editorV2GetContentSnapshot).not.toHaveBeenCalled();
+    expect(mockNativeModule.editorV2GetDocumentJson).not.toHaveBeenCalled();
+    expect(mockNativeModule.editorV2GetDocumentHtml).not.toHaveBeenCalled();
+    editor.unmount();
+    handle.destroy();
+});
+
+it('observes remote changes after initial room readiness without eager content callbacks', () => {
+    const handle = createV2RoomHandle({ withSnapshot: false });
+    const onDocumentChange = jest.fn();
+    function CollaborationBoundEditor() {
+        const collaboration = useYjsCollaboration({
+            documentId: 'doc-1', handle,
+            transport: { url: V2_TRANSPORT_URL, connect: true },
+        });
+        return <NativeRichTextEditor {...collaboration.editorBindings} onDocumentChange={onDocumentChange} />;
+    }
+    const editor = render(<CollaborationBoundEditor />);
+    act(() => {
+        v2Runtime.pushRemoteDoc(handle.editorId, V2_INITIAL_DOC);
+        v2Runtime.transportOpen(handle.editorId);
+        v2Runtime.transportReceive(handle.editorId, V2_FAKE_STEP2_FRAME);
+    });
+    expect(onDocumentChange).not.toHaveBeenCalled();
+    act(() => {
+        v2Runtime.pushRemoteDoc(handle.editorId, V2_DOC_B);
+        v2Runtime.transportReceive(handle.editorId, V2_FAKE_UPDATE_FRAME);
+    });
+    expect(onDocumentChange.mock.calls).toEqual([[{
+        documentRevision: handle.bridge.getState().documentRevision,
+        origin: 'remoteCollaboration',
+    }]]);
+    expect(mockNativeModule.editorV2GetContentSnapshot).not.toHaveBeenCalled();
+    expect(mockNativeModule.editorV2GetDocumentHtml).not.toHaveBeenCalled();
+    editor.unmount();
+    handle.destroy();
 });

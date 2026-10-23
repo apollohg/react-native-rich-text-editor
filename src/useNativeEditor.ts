@@ -14,6 +14,12 @@ import { NativeEditorOperationError } from './NativeEditorBoundaryError';
 
 // Controlled writes use the last rendered revision; conflicts refresh before retrying.
 
+/** A newly observed document revision; content is read separately through getters. */
+export interface NativeEditorDocumentChangeEvent {
+    documentRevision: string;
+    origin: NativeEditorDocumentOrigin;
+}
+
 /** Configuration for {@link useNativeEditorDocument}. */
 export interface UseNativeEditorDocumentOptions {
     /** The shared document session. The binding never creates or destroys it. */
@@ -26,6 +32,8 @@ export interface UseNativeEditorDocumentOptions {
     valueJSONUpdateMode?: 'replace' | 'reset';
     /** External revision signal (e.g. from the collaboration controller) forcing an engine re-read. */
     revisionSignal?: string | null;
+    /** Revision notification without content exports, including controlled and remote changes. */
+    onDocumentChange?: (event: NativeEditorDocumentChangeEvent) => void;
     onContentChange?: (html: string) => void;
     onContentChangeJSON?: (json: DocumentJSON) => void;
     onHistoryStateChange?: (state: HistoryState) => void;
@@ -59,7 +67,7 @@ export interface UseNativeEditorDocumentReturn {
     getContentMarkdown(options?: MarkdownExportOptions): string;
     /** The engine's own answer for whether the document holds no content. */
     getIsEmpty(): boolean;
-    /** Current document as plain text, with markup stripped. */
+    /** Concatenated document text, without markup, atom labels, or added block separators. */
     getTextContent(): string;
     /** Replace the document with HTML, as one undoable step. */
     setContent(html: string): void;
@@ -112,6 +120,8 @@ export function useNativeEditorDocument(
     _assertNativeEditorDocumentHandle(handle);
     const editorId = handle.editorId;
 
+    const onDocumentChangeRef = useRef(options.onDocumentChange);
+    onDocumentChangeRef.current = options.onDocumentChange;
     const onContentChangeRef = useRef(options.onContentChange);
     onContentChangeRef.current = options.onContentChange;
     const onContentChangeJSONRef = useRef(options.onContentChangeJSON);
@@ -286,6 +296,17 @@ export function useNativeEditorDocument(
             if (historyKey !== emitted.lastHistoryKey) {
                 emitted.lastHistoryKey = historyKey;
                 onHistoryStateChangeRef.current?.(historyState);
+            }
+
+            if (!isCurrentRefresh()) {
+                return;
+            }
+
+            if (ready && lastRevision != null && lastRevision !== state.documentRevision) {
+                onDocumentChangeRef.current?.({
+                    documentRevision: state.documentRevision,
+                    origin: state.documentOrigin,
+                });
             }
 
             if (!isCurrentRefresh()) {
@@ -582,7 +603,7 @@ export function useNativeEditorDocument(
             return true;
         }
 
-        return handle.bridge.renderState().documentIsEmpty;
+        return handle.bridge.getDocumentIsEmpty();
     }, [ handle ]);
 
     const getTextContent = useCallback((): string => {
@@ -594,7 +615,7 @@ export function useNativeEditorDocument(
             return '';
         }
 
-        return handle.bridge.getDocumentHtml().replace(/<[^>]+>/g, '');
+        return handle.bridge.getDocumentText();
     }, [ handle ]);
 
     const canUndo = useCallback((): boolean => {

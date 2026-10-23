@@ -4,6 +4,8 @@ V2_SYMBOLS=(
     editor_v2_get_state
     editor_v2_get_document_json
     editor_v2_get_document_html
+    editor_v2_get_document_text
+    editor_v2_get_document_is_empty
     editor_v2_get_document_markdown
     editor_v2_get_clipboard
     editor_v2_get_content_snapshot

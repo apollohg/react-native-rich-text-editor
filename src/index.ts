@@ -242,6 +242,7 @@ export {
 
 export {
     useNativeEditorDocument,
+    type NativeEditorDocumentChangeEvent,
     type UseNativeEditorDocumentOptions,
     type UseNativeEditorDocumentReturn,
 } from './useNativeEditor';
