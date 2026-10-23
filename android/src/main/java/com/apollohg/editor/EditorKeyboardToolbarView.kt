@@ -4,10 +4,13 @@ import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.InsetDrawable
 import android.graphics.drawable.RippleDrawable
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.MenuItem
 import android.view.View
 import android.view.ViewOutlineProvider
 import android.widget.FrameLayout
@@ -56,6 +59,7 @@ internal class EditorKeyboardToolbarView(context: Context) : FrameLayout(context
     private var mentionSuggestions: List<NativeMentionSuggestion> = emptyList()
     private var expandedGroupKey: String? = null
     private var rebuildGeneration: Int = 0
+    private var groupPopup: PopupMenu? = null
     private val bindings = mutableListOf<ButtonBinding>()
     private val separators = mutableListOf<View>()
     private val mentionChips = mutableListOf<MentionSuggestionChipView>()
@@ -234,6 +238,8 @@ internal class EditorKeyboardToolbarView(context: Context) : FrameLayout(context
     private fun rebuildContent(preserveScrollPosition: Boolean = true) {
         val targetScrollX = if (preserveScrollPosition) centerScrollView.scrollX else 0
         val generation = ++rebuildGeneration
+        groupPopup?.dismiss()
+        groupPopup = null
         bindings.clear()
         buttonBackgroundColors.clear()
         buttonCornerRadii.clear()
@@ -284,7 +290,16 @@ internal class EditorKeyboardToolbarView(context: Context) : FrameLayout(context
                 continue
             }
 
-            val button = AppCompatButton(themedContext).apply {
+            val button = (
+                if (item.icon?.imageSource != null) {
+                    ToolbarImageButton(themedContext).apply {
+                        imageSource = item.icon.imageSource
+                        imageTintable = item.icon.tintable
+                    }
+                } else {
+                    AppCompatButton(themedContext)
+                }
+                ).apply {
                 val resolvedIcon = item.icon?.resolveForAndroid(themedContext)
                     ?: NativeToolbarResolvedIcon("?")
                 text = resolvedIcon.text
@@ -461,13 +476,36 @@ internal class EditorKeyboardToolbarView(context: Context) : FrameLayout(context
     }
 
     private fun showGroupMenu(anchor: View, item: NativeToolbarItem) {
+        groupPopup?.dismiss()
         val popupMenu = PopupMenu(currentThemedContext(), anchor)
+        groupPopup = popupMenu
+        val requests = mutableListOf<ToolbarImageRequest>()
+        var dismissed = false
+        popupMenu.setOnDismissListener {
+            dismissed = true
+            for (index in 0 until popupMenu.menu.size()) {
+                popupMenu.menu.getItem(index).icon = null
+            }
+            requests.forEach { it.close() }
+            requests.clear()
+            if (groupPopup === popupMenu) groupPopup = null
+        }
+        popupMenu.setForceShowIcon(item.items.any { it.icon?.imageSource != null })
         item.items.forEachIndexed { index, child ->
             val (enabled, active) = buttonState(child, state)
             val menuItem = popupMenu.menu.add(0, index, index, child.label ?: child.key ?: "Item")
             menuItem.isEnabled = enabled
             menuItem.isCheckable = true
             menuItem.isChecked = active
+            child.icon?.imageSource?.let { source ->
+                val size = resolvedMenuIconSizePx(child)
+                val request = ToolbarImageRequest(context, source, size) { drawable ->
+                    if (!dismissed) {
+                        updateMenuItemImage(menuItem, child, drawable, enabled, active)
+                    }
+                }
+                requests.add(request)
+            }
         }
         popupMenu.setOnMenuItemClickListener { menuItem ->
             val child =
@@ -476,6 +514,63 @@ internal class EditorKeyboardToolbarView(context: Context) : FrameLayout(context
             true
         }
         popupMenu.show()
+    }
+
+    internal fun updateMenuItemImage(
+        menuItem: MenuItem,
+        child: NativeToolbarItem,
+        drawable: Drawable?,
+        enabled: Boolean,
+        active: Boolean
+    ) {
+        val icon = child.icon ?: return
+        if (drawable == null) {
+            menuItem.title = "${icon.resolvedGlyphText()} ${menuItem.title}"
+            return
+        }
+        if (icon.tintable) {
+            val color = when {
+                !enabled -> child.buttonStyle?.disabledColor ?: theme?.buttonDisabledColor
+                active -> child.buttonStyle?.activeColor ?: theme?.buttonActiveColor
+                else -> child.buttonStyle?.color ?: theme?.buttonColor
+            } ?: resolveColorAttr(android.R.attr.textColorPrimary)
+            drawable.setTint(color)
+        }
+        val size = resolvedMenuIconSizePx(child)
+        val aspect = if (drawable.intrinsicWidth > 0 && drawable.intrinsicHeight > 0) {
+            drawable.intrinsicWidth.toFloat() / drawable.intrinsicHeight
+        } else {
+            1f
+        }
+        val imageWidth = (if (aspect > 1f) size.toFloat() else size * aspect).roundToInt()
+        val imageHeight = (if (aspect > 1f) size / aspect else size.toFloat()).roundToInt()
+        // Menu ImageView layout uses intrinsic size, not the existing drawable bounds.
+        menuItem.icon = object : InsetDrawable(drawable, 0) {
+            override fun getIntrinsicWidth(): Int = imageWidth
+            override fun getIntrinsicHeight(): Int = imageHeight
+        }.apply { setBounds(0, 0, imageWidth, imageHeight) }
+    }
+
+    private fun resolvedMenuIconSizePx(item: NativeToolbarItem): Int {
+        val size =
+            resolvedIconSizeSp(item, NATIVE_BUTTON_ICON_SIZE_SP, NATIVE_BUTTON_SIZE_DP.toFloat())
+        return TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, size, resources.displayMetrics)
+            .roundToInt().coerceIn(1, dp(NATIVE_BUTTON_SIZE_DP).coerceAtLeast(1))
+    }
+
+    private fun resolvedIconSizeSp(
+        item: NativeToolbarItem,
+        defaultSize: Float,
+        maximumSize: Float
+    ): Float = (item.buttonStyle?.iconSize ?: theme?.buttonIconSize)
+        ?.takeIf { it.isFinite() && it > 0f }
+        ?.coerceAtMost(maximumSize)
+        ?: defaultSize
+
+    override fun onDetachedFromWindow() {
+        groupPopup?.dismiss()
+        groupPopup = null
+        super.onDetachedFromWindow()
     }
 
     private fun updateChrome() {
@@ -798,11 +893,11 @@ internal class EditorKeyboardToolbarView(context: Context) : FrameLayout(context
             ?.takeIf { it.isFinite() && it > 0f }
         val minimumWidthPx =
             dp(maxOf(requestedMinWidth ?: 0f, requestedWidth ?: buttonSizeDp).roundToInt())
-        val requestedIconSize = binding.item.buttonStyle?.iconSize ?: theme?.buttonIconSize
-        button.textSize = requestedIconSize
-            ?.takeIf { it.isFinite() && it > 0f }
-            ?.coerceAtMost(buttonSizeDp)
-            ?: if (isNative) NATIVE_BUTTON_ICON_SIZE_SP else 16f
+        button.textSize = resolvedIconSizeSp(
+            binding.item,
+            if (isNative) NATIVE_BUTTON_ICON_SIZE_SP else 16f,
+            buttonSizeDp
+        )
         button.minWidth = minimumWidthPx
         button.minimumWidth = minimumWidthPx
         button.minHeight = sizePx

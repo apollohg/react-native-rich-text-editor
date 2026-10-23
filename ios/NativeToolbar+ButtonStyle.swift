@@ -223,7 +223,7 @@ extension EditorAccessoryToolbarView {
         return max(0, radius)
     }
 
-    private func resolvedButtonIconSize(for item: NativeToolbarItem) -> CGFloat {
+    func resolvedButtonIconSize(for item: NativeToolbarItem) -> CGFloat {
         let requestedSize = item.buttonStyle?.iconSize ?? theme?.buttonIconSize
         guard let requestedSize, requestedSize.isFinite, requestedSize > 0 else {
             return 16
@@ -240,6 +240,10 @@ extension EditorAccessoryToolbarView {
         batchConfigurationUpdates: Bool
     ) {
         let iconSize = resolvedButtonIconSize(for: item)
+        if let source = item.icon?.imageSource, let image = imageLoader.image(for: source) {
+            button.setImage(ToolbarImageLoader.rendered(image, source: source, size: iconSize, tintable: item.icon?.tintable ?? true), for: .normal)
+            button.setTitle(nil, for: .normal)
+        }
         let font = UIFont.systemFont(ofSize: iconSize, weight: .semibold)
         if #available(iOS 15.0, *), var configuration = button.configuration {
             if batchConfigurationUpdates {

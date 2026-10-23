@@ -1,7 +1,5 @@
 import './helpers/NativeRichTextEditorFixture';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import glyphMap from '@react-native-vector-icons/material-design-icons/glyphmaps/MaterialDesignIcons.json';
+import glyphMap from '../../android/src/main/assets/editor-icons/MaterialDesignIcons.json';
 import { buildToolbarItems } from '../../example/content';
 import type { EditorToolbarItem } from '../EditorToolbarTypes';
 import { DEFAULT_MATERIAL_DESIGN_ICONS, resolveMaterialIconName } from '../EditorToolbarVisuals';
@@ -21,18 +19,10 @@ describe('toolbar icon assets', () => {
     }));
 
     it.each([...new Set([...Object.values(DEFAULT_MATERIAL_DESIGN_ICONS), ...exampleIconNames])])(
-        'resolves toolbar icon %s in the installed font',
+        'resolves toolbar icon %s in the bundled font map',
         name => {
             expect((glyphMap as Record<string, number>)[name]).toEqual(expect.any(Number));
         }
     );
 
-    it.each([
-        ['fonts', 'MaterialDesignIcons.ttf'],
-        ['glyphmaps', 'MaterialDesignIcons.json'],
-    ])('ships the same %s/%s for native and React toolbars', (directory, filename) => {
-        const installed = require.resolve(`@react-native-vector-icons/material-design-icons/${directory}/${filename}`);
-        const bundled = join(__dirname, '../../android/src/main/assets/editor-icons', filename);
-        expect(readFileSync(bundled).equals(readFileSync(installed))).toBe(true);
-    });
 });

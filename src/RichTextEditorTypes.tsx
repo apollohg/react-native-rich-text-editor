@@ -13,7 +13,7 @@ import { type ImageNodeAttributes } from './schemas';
 import { type ReactNode } from 'react';
 import { type TableCommand, type TableDirection, type TableSelectionGeometry } from './TableTypes';
 import { type TableToolbarState } from './useTableToolbar';
-import { type EditorToolbarHeadingLevel, type EditorToolbarItem } from './EditorToolbar';
+import { type EditorToolbarHeadingLevel, type EditorToolbarItem, type EditorToolbarIconRenderer } from './EditorToolbar';
 import { type EditorImageLoadingPolicy } from './ImageLoadingPolicy';
 import { type RichTextEditorFocusPreservingRefs } from './useFocusPreservingFrames';
 import { type StyleProp, type ViewStyle } from 'react-native';
@@ -170,6 +170,8 @@ export interface RichTextEditorProps {
     toolbarPlacement?: RichTextEditorToolbarPlacement;
     /** Displayed toolbar buttons, in order. Supports custom marks/nodes. */
     toolbarItems?: readonly EditorToolbarItem[];
+    /** Overrides inline React icons. Use image descriptors for native keyboard icons. */
+    renderToolbarIcon?: EditorToolbarIconRenderer;
     /** Called when a custom `action` toolbar item is pressed. */
     onToolbarAction?: (key: string) => void;
     /** Called when a toolbar link item is pressed so the host can collect/edit a URL. */

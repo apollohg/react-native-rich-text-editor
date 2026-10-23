@@ -150,6 +150,8 @@ struct NativeToolbarIcon {
     let glyphText: String?
     let iosSymbolName: String?
     let fallbackText: String?
+    var imageSource: ToolbarImageSource?
+    var tintable = true
 
     private static let defaultSFSymbolNames: [ToolbarDefaultIconId: String] = [
         .alignLeft: "text.alignleft",
@@ -244,6 +246,12 @@ struct NativeToolbarIcon {
                 return nil
             }
             return .glyph(text)
+        case "image":
+            guard let source = ToolbarImageSource(raw["source"]) else { return nil }
+            var icon = platform(iosSymbolName: nil, fallbackText: raw["fallbackText"] as? String)
+            icon.imageSource = source
+            icon.tintable = raw["tintable"] as? Bool ?? true
+            return icon
         case "platform":
             let iosSymbolName = ((raw["ios"] as? [String: Any]).flatMap { iosRaw -> String? in
                 guard (iosRaw["type"] as? String) == "sfSymbol",
@@ -548,5 +556,28 @@ struct NativeToolbarItem {
         copy.placement = placement ?? inheritedPlacement
         copy.parentGroupKey = parentGroupKey
         return copy
+    }
+}
+
+struct ToolbarImageSource: Hashable {
+    let uri: String
+    let width: Double?
+    let height: Double?
+    let scale: Double?
+
+    init?(_ value: Any?) {
+        guard let raw = value as? [String: Any],
+              let uri = raw["uri"] as? String,
+              !uri.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        self.uri = uri
+        func dimension(_ key: String) -> Double? {
+            guard let number = raw[key] as? NSNumber,
+                  CFGetTypeID(number) != CFBooleanGetTypeID(),
+                  number.doubleValue.isFinite, number.doubleValue > 0 else { return nil }
+            return number.doubleValue
+        }
+        width = dimension("width")
+        height = dimension("height")
+        scale = dimension("scale")
     }
 }

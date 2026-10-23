@@ -73,6 +73,7 @@ export function useRichTextEditorPresentation(
         | 'onRequestImage'
         | 'toolbarItemsSerializationCacheRef'
         | 'toolbarItems'
+        | 'renderToolbarIcon'
         | 'document'
         | 'toolbarPlacement'
         | 'showToolbar'
@@ -164,6 +165,7 @@ export function useRichTextEditorPresentation(
         onRequestImage,
         toolbarItemsSerializationCacheRef,
         toolbarItems,
+        renderToolbarIcon,
         document,
         toolbarPlacement,
         showToolbar,
@@ -701,6 +703,7 @@ export function useRichTextEditorPresentation(
                             activeState={activeState}
                             historyState={document.historyState}
                             toolbarItems={toolbarItems}
+                            renderToolbarIcon={renderToolbarIcon}
                             theme={theme?.toolbar}
                             showTopBorder={theme?.toolbar?.showTopBorder ?? false}
                             preserveEditorFocus={false}

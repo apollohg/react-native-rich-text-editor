@@ -412,7 +412,7 @@ jobs:
     security-ios:
         needs: build-package
         runs-on: macos-latest
-        timeout-minutes: 45
+        timeout-minutes: 90
         env:
             NATIVE_EDITOR_IOS_DERIVED_DATA: ${{ github.workspace }}/.ci/ios-security
         steps:

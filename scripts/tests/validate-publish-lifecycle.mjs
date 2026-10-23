@@ -344,7 +344,6 @@ assert.match(
 );
 
 for (const dependency of [
-  '@react-native-vector-icons/material-design-icons',
   'babel-preset-expo',
   'expo',
   'expo-modules-core',
@@ -481,7 +480,7 @@ assert.ok(iosBuildStep, 'release validation must build the complete iOS test hos
 assert.match(iosBuildStep, /^\s+run: npm run test:ios\s*$/m, 'the cached iOS test host must not retain a security-only test filter');
 assert.match(iosBuildStep, /NATIVE_EDITOR_IOS_TEST_ACTION: build-for-testing/);
 assert.match(iosBuildStep, /if: steps\.ios-test-build\.outputs\.cache-hit != 'true'/);
-assert.match(iosSecurityJob, /timeout-minutes:\s*45/, 'release iOS validation must allow the same full-suite budget as CI');
+assert.match(iosSecurityJob, /timeout-minutes:\s*90/, 'release iOS validation must allow the same full-suite budget as CI');
 const iosTestRestore = iosSecurityJob.split('- name: Restore compiled iOS test host')[1]?.split('\n            - name:')[0];
 assert.ok(iosTestRestore);
 assert.match(iosTestRestore, /ios-security-host-v2-.*steps\.ios-toolchain\.outputs\.xcode.*hashFiles/, 'release validation must invalidate previously filtered iOS test hosts');

@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react';
+import type { ImageRequireSource, ImageURISource } from 'react-native';
 import type { TextAlign } from './TextAlignment';
 import type { HistoryState, ReadonlyActiveState } from './NativeEditorBridge';
 import type { EditorToolbarTheme } from './EditorTheme';
@@ -66,15 +68,39 @@ export interface EditorToolbarMaterialIcon {
     name: string;
 }
 
+export interface EditorToolbarImageIcon {
+    type: 'image';
+    /** A bundled asset or URI supported by React Native Image. */
+    source: ImageRequireSource | (Pick<ImageURISource, 'width' | 'height' | 'scale'> & { uri: string });
+    /** Apply the resolved button colour. Defaults to true. */
+    tintable?: boolean;
+    fallbackText?: string;
+}
+
+export interface EditorToolbarIconRenderProps {
+    icon: EditorToolbarIcon;
+    /** Resolved key; group children use groupKey:childKey. */
+    key: string;
+    size: number;
+    color: string;
+    isActive: boolean;
+    isDisabled: boolean;
+}
+
+/** Return undefined to keep the built-in icon, or null to hide it. */
+export type EditorToolbarIconRenderer = (props: EditorToolbarIconRenderProps) => ReactNode;
+
 /**
  * A toolbar button's icon:
  *
  * - `default` : one of the package's built-in icons.
+ * - `image` : a bundled asset or URI, supported by both toolbar placements.
  * - `glyph` : arbitrary text or an emoji, drawn as-is.
  * - `platform` : per-platform native icons, with `fallbackText` when the
  *   platform cannot resolve the named icon.
  */
 export type EditorToolbarIcon =
+    | EditorToolbarImageIcon
     | {
           type: 'default';
           id: EditorToolbarDefaultIconId;
@@ -329,6 +355,8 @@ export interface EditorToolbarProps {
     onRequestImage?: () => void;
     /** Displayed toolbar items, in order. Defaults to the built-in toolbar. */
     toolbarItems?: readonly EditorToolbarItem[];
+    /** Overrides React toolbar icons; native keyboard toolbars use image descriptors. */
+    renderToolbarIcon?: EditorToolbarIconRenderer;
     /** Optional theme overrides for toolbar chrome and button colors. */
     theme?: EditorToolbarTheme;
     /** Whether to render the built-in top separator line. */

@@ -1,3 +1,7 @@
+jest.mock('expo-modules-core', () => ({
+    requireNativeModule: () => ({ getToolbarIcon: require('./toolbarIconNativeMock').getToolbarIcon }),
+}));
+
 //
 // Tests cover:
 // - Renders all 12 buttons (B, I, U, S, bullet list, ordered list, indent, outdent, line break, HR, undo, redo)

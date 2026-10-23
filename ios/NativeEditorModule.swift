@@ -1,3 +1,4 @@
+import CoreText
 @preconcurrency public import ExpoModulesCore
 import UIKit
 
@@ -516,6 +517,10 @@ public class NativeEditorModule: BaseModule, @preconcurrency AnyModule {
     @MainActor
     public func definition() -> ModuleDefinition {
         Name("NativeEditor")
+
+        Function("getToolbarIcon") { (name: String) throws -> [String: String]? in
+            try ToolbarIconFont.icon(named: name)
+        }
         // Benchmark-only controls are deterministic and surface-independent;
         // they never participate in a viewer draw or measurement path.
         Function("preparedProseBenchmarkBegin") {
@@ -892,5 +897,47 @@ public class NativeEditorModule: BaseModule, @preconcurrency AnyModule {
             }
         }
 
+    }
+}
+
+enum ToolbarIconFont {
+    private static let fontName = "MaterialDesignIcons"
+    private static let lock = NSLock()
+    private static var glyphs: [String: UInt32]?
+    private static var registered = false
+
+    static func icon(named name: String) throws -> [String: String]? {
+        lock.lock()
+        defer { lock.unlock() }
+        let ownerBundle = Bundle(for: NativeEditorModule.self)
+        guard let bundleURL = ownerBundle.url(forResource: "NativeEditorIcons", withExtension: "bundle")
+                ?? Bundle.main.url(forResource: "NativeEditorIcons", withExtension: "bundle"),
+              let bundle = Bundle(url: bundleURL) else {
+            throw fontError("NativeEditorIcons resource bundle is missing. Reinstall the iOS pods.")
+        }
+        if glyphs == nil {
+            guard let mapURL = bundle.url(forResource: fontName, withExtension: "json") else {
+                throw fontError("MaterialDesignIcons glyph map is missing from NativeEditorIcons.")
+            }
+            glyphs = try JSONDecoder().decode([String: UInt32].self, from: Data(contentsOf: mapURL))
+        }
+        guard let codePoint = glyphs?[name], let scalar = UnicodeScalar(codePoint) else { return nil }
+        if !registered {
+            guard let fontURL = bundle.url(forResource: fontName, withExtension: "ttf") else {
+                throw fontError("MaterialDesignIcons font is missing from NativeEditorIcons.")
+            }
+            var registrationError: Unmanaged<CFError>?
+            let success = CTFontManagerRegisterFontsForURL(fontURL as CFURL, .process, &registrationError)
+            let error = registrationError?.takeRetainedValue()
+            guard success || UIFont(name: fontName, size: UIFont.systemFontSize) != nil else {
+                throw fontError("Could not register MaterialDesignIcons: \(error.map { String(describing: $0) } ?? "unknown CoreText error")")
+            }
+            registered = true
+        }
+        return ["glyph": String(scalar), "fontFamily": fontName]
+    }
+
+    private static func fontError(_ message: String) -> NSError {
+        NSError(domain: "NativeEditor.ToolbarIconFont", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
     }
 }

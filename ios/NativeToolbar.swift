@@ -42,6 +42,7 @@ final class EditorAccessoryToolbarView: UIView {
     private var accessoryHeightConstraint: NSLayoutConstraint?
     private var accessoryBottomSafeAreaInset: CGFloat = 0
     private var accessoryHeightUpdateScheduled = false
+    let imageLoader = ToolbarImageLoader()
     var buttonBindings: [ButtonBinding] = []
     var separators: [UIView] = []
     var needsButtonRebuild = false

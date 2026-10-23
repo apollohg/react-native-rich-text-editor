@@ -2,13 +2,13 @@
 
 ## Scope
 
-The published root npm package has no `dependencies` and does not bundle its JavaScript framework packages. Its published sources import React (including `react/jsx-runtime`), React Native, Expo Modules Core, and `@react-native-vector-icons/material-design-icons`; Expo and vector-icons are declared peers. The Expo config plugin resolves `expo/config-plugins` at build time. The optional highlighting package imports Expo Modules Core and the editor's types, with no additional JavaScript library bundled.
+The published root npm package has no `dependencies` and does not bundle its JavaScript framework packages. Its published sources import React (including `react/jsx-runtime`), React Native and Expo Modules Core; Expo is a declared peer. Toolbar icons use the bundled font assets without an icon-package runtime dependency. The Expo config plugin resolves `expo/config-plugins` at build time. The optional highlighting package imports Expo Modules Core and the editor's types, with no additional JavaScript library bundled.
 
 Version numbers below describe this checkout's installed packages, not minimum requirements or guaranteed consuming-app versions. Consumers must retain the notices for their actual React Native/Expo/Metro/Hermes native and JavaScript dependency graph and any other icon fonts their app includes. Do not treat the development lockfile as a list of files distributed in the npm package, nor this framework overview as a complete app bundle inventory.
 
 ## Material Design Icons assets distributed by this package
 
-`android/src/main/assets/editor-icons/MaterialDesignIcons.ttf` and `MaterialDesignIcons.json` are byte-identical to `fonts/MaterialDesignIcons.ttf` and `glyphmaps/MaterialDesignIcons.json` in `@react-native-vector-icons/material-design-icons` 13.1.4. The package includes Pictogrammers Material Design Icons 7.4.47.
+`android/src/main/assets/editor-icons/MaterialDesignIcons.ttf` and `MaterialDesignIcons.json` are byte-identical to `fonts/MaterialDesignIcons.ttf` and `glyphmaps/MaterialDesignIcons.json` in `@react-native-vector-icons/material-design-icons` 13.1.4. The package includes Pictogrammers Material Design Icons 7.4.47. The iOS resource bundle and Android assets use these same files; React toolbar defaults resolve their glyphs through the native module.
 
 Font SHA-256: `61e8aba5a4e981fe22cf7c8e8bcdbea00476e75c62c37f01bf7ee33361d68428`
 
@@ -231,7 +231,7 @@ Scope: JS peer and source of copied Android glyphmap/font.
 
 Source: https://github.com/oblador/react-native-vector-icons/tree/master/packages/material-design-icons
 
-Exact local license: `node_modules/@react-native-vector-icons/material-design-icons/LICENSE`.
+The license below was copied from `@react-native-vector-icons/material-design-icons` 13.1.4.
 
 ```text
 MIT License

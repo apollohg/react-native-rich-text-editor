@@ -38,6 +38,7 @@ export const V2_ENVELOPE_VERSION = 1;
  * Uint8Array values (never JSON number arrays).
  */
 export interface NativeEditorModule {
+    getToolbarIcon(name: string): { glyph: string; fontFamily: string } | null;
     editorV2Create(configJson: string, snapshotState: Uint8Array | null): unknown;
     editorV2Destroy(editorId: string): unknown;
     editorV2GetState(editorId: string): unknown;

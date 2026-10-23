@@ -3,6 +3,11 @@ import UIKit
 extension EditorAccessoryToolbarView {
     func rebuildButtons() {
         needsButtonRebuild = false
+        imageLoader.reset()
+        imageLoader.onImageLoaded = { [weak self] in
+            guard let self else { return }
+            apply(state: currentState)
+        }
         if #available(iOS 16.0, *) {
             (editMenuPresenter as? ToolbarEditMenuPresenter)?.dismiss()
         }
@@ -141,8 +146,22 @@ extension EditorAccessoryToolbarView {
         guard item.type == .group else { return nil }
         let actions = item.items.compactMap { child -> UIAction? in
             let state = buttonState(for: child, state: currentState)
-            let image = child.icon?.resolvedSFSymbolName().flatMap { UIImage(systemName: $0) }
-            let title = child.label ?? child.icon?.resolvedGlyphText() ?? "Item"
+            let image: UIImage?
+            if let source = child.icon?.imageSource {
+                imageLoader.load(source)
+                image = imageLoader.image(for: source).map {
+                    ToolbarImageLoader.rendered($0, source: source, size: resolvedButtonIconSize(for: child), tintable: child.icon?.tintable ?? true)
+                }
+            } else {
+                image = child.icon?.resolvedSFSymbolName().flatMap { UIImage(systemName: $0) }
+            }
+            var title = child.label ?? child.icon?.resolvedGlyphText() ?? "Item"
+            if child.icon?.imageSource != nil, image == nil {
+                let fallback = child.icon?.resolvedGlyphText() ?? "?"
+                if fallback != title {
+                    title = "\(fallback) \(title)"
+                }
+            }
             return UIAction(
                 title: title,
                 image: image,
@@ -185,6 +204,9 @@ extension EditorAccessoryToolbarView {
         } else {
             button.setImage(nil, for: .normal)
             button.setTitle(item.icon?.resolvedGlyphText() ?? "?", for: .normal)
+        }
+        if let source = item.icon?.imageSource {
+            imageLoader.load(source)
         }
         let buttonSize = resolvedButtonSize
         let buttonWidth = resolvedButtonWidth(for: item)

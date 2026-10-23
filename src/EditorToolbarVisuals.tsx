@@ -1,9 +1,12 @@
 import type { MentionSuggestion } from './addons';
-import { StyleSheet, Text, View } from 'react-native';
-import { MaterialDesignIcons } from '@react-native-vector-icons/material-design-icons';
+import { useMemo, useState } from 'react';
+import { Image, StyleSheet, Text, View } from 'react-native';
+import { getNativeModule } from './NativeEditorNativeModule';
 import {
     type EditorToolbarDefaultIconId,
     type EditorToolbarIcon,
+    type EditorToolbarImageIcon,
+    type EditorToolbarIconRenderer,
     type ToolbarButton,
 } from './EditorToolbarTypes';
 import { type EditorToolbarTheme } from './EditorTheme';
@@ -185,30 +188,109 @@ export function resolveMentionSuggestionDisplayLabel(
     return trigger.length > 0 && !label.startsWith(trigger) ? `${trigger}${label}` : label;
 }
 
-export function ToolbarIcon({
+export const DEFAULT_TOOLBAR_ICON_SIZE = 20;
+
+function ToolbarImageIcon({
     icon,
     color,
     size,
 }: {
+    icon: EditorToolbarImageIcon;
+    color: string;
+    size: number;
+}) {
+    const [failed, setFailed] = useState(false);
+    return failed ? (
+        <Text style={[styles.iconText, { color, fontSize: size }]}>{icon.fallbackText ?? '?'}</Text>
+    ) : (
+        <Image
+            source={icon.source}
+            resizeMode="contain"
+            style={{
+                width: size,
+                height: size,
+                tintColor: icon.tintable === false ? undefined : color,
+            }}
+            onError={() => setFailed(true)}
+        />
+    );
+}
+
+export function ToolbarIcon({
+    icon,
+    color,
+    size,
+    itemKey,
+    isActive,
+    isDisabled,
+    renderToolbarIcon,
+}: {
     icon: EditorToolbarIcon;
     color: string;
     size?: number;
+    itemKey: string;
+    isActive: boolean;
+    isDisabled: boolean;
+    renderToolbarIcon?: EditorToolbarIconRenderer;
 }) {
-    const materialIconName = resolveMaterialIconName(icon);
-
-    if (materialIconName) {
+    const resolvedSize = size ?? DEFAULT_TOOLBAR_ICON_SIZE;
+    const customIcon = renderToolbarIcon?.({
+        icon,
+        color,
+        size: resolvedSize,
+        key: itemKey,
+        isActive,
+        isDisabled,
+    });
+    const materialIconName = customIcon === undefined ? resolveMaterialIconName(icon) : undefined;
+    const materialIcon = useMemo(() => {
+        if (!materialIconName) return null;
+        const nativeModule = getNativeModule();
+        if (typeof nativeModule.getToolbarIcon !== 'function') {
+            throw new Error(
+                'NativeEditor.getToolbarIcon is unavailable. Rebuild the native app after upgrading the editor.'
+            );
+        }
+        return nativeModule.getToolbarIcon(materialIconName);
+    }, [materialIconName]);
+    if (customIcon !== undefined) {
+        return <View style={styles.iconContainer}>{customIcon}</View>;
+    }
+    if (icon.type === 'image') {
         return (
             <View style={styles.iconContainer}>
-                <MaterialDesignIcons name={materialIconName as never} size={size ?? 20} color={color} />
+                <ToolbarImageIcon
+                    key={JSON.stringify(icon.source)}
+                    icon={icon}
+                    color={color}
+                    size={resolvedSize}
+                />
             </View>
         );
     }
-
+    if (materialIcon) {
+        return (
+            <View style={styles.iconContainer}>
+                <Text
+                    selectable={false}
+                    allowFontScaling={false}
+                    style={{
+                        fontFamily: materialIcon.fontFamily,
+                        fontSize: resolvedSize,
+                        color,
+                        fontWeight: 'normal',
+                        fontStyle: 'normal',
+                    }}
+                >
+                    {materialIcon.glyph}
+                </Text>
+            </View>
+        );
+    }
     const glyph = resolveGlyphText(icon) ?? '?';
-
     return (
         <View style={styles.iconContainer}>
-            <Text style={[ styles.iconText, size == null ? null : { fontSize: size }, { color } ]}>
+            <Text style={[styles.iconText, size == null ? null : { fontSize: size }, { color }]}>
                 {glyph}
             </Text>
         </View>
@@ -222,6 +304,7 @@ export function resolveMaterialIconName(icon: EditorToolbarIcon): string | undef
         case 'platform':
             return icon.android?.type === 'material' ? icon.android.name : undefined;
         case 'glyph':
+        case 'image':
             return undefined;
     }
 }
@@ -233,6 +316,7 @@ export function resolveGlyphText(icon: EditorToolbarIcon): string | undefined {
         case 'glyph':
             return icon.text;
         case 'platform':
+        case 'image':
             return icon.fallbackText;
     }
 }

@@ -191,6 +191,7 @@ beforeEach(() => {
     }
 
     Object.assign(mockNativeModule, v2Runtime.module);
+    mockNativeModule.getToolbarIcon = jest.fn(require('./toolbarIconNativeMock').getToolbarIcon);
     mockNativeFocus.mockClear();
     mockNativeBlur.mockClear();
     mockNativeGetCaretRect.mockReset();

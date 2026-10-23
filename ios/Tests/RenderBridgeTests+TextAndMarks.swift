@@ -30,7 +30,7 @@ extension RenderBridgeTests {
     func testTextStyleColorSurvivesTableCellElementConversion() throws {
         let color = "#12345680"
         let elements: [FfiViewerElement] = [
-            .blockStart(nodeType: "paragraph", language: nil, depth: 0, listContextJson: nil),
+            .blockStart(nodeType: "paragraph", language: nil, depth: 0, listContextJson: nil, textAlign: nil),
             .textRun(text: "cell", marks: [FfiViewerMark(markType: "textStyle", attrsJson: "{\"color\":\"\(color)\"}")]),
             .blockEnd
         ]

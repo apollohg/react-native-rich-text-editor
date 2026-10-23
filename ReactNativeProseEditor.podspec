@@ -22,6 +22,8 @@ Pod::Spec.new do |s|
   # a framework.
   s.static_framework = false
 
+  s.resource_bundles = { 'NativeEditorIcons' => ['android/src/main/assets/editor-icons/*.{ttf,json}'] }
+
   s.dependency 'ExpoModulesCore'
   s.dependency 'SVGgh', '~> 1.12.1'
 
