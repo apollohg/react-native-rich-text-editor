@@ -297,6 +297,8 @@ enum EditorToolbarAppearance: String {
 }
 
 struct EditorToolbarButtonStyle {
+    var width: CGFloat?
+    var minWidth: CGFloat?
     var iconSize: CGFloat?
     var color: UIColor?
     var backgroundColor: UIColor?
@@ -307,6 +309,8 @@ struct EditorToolbarButtonStyle {
     var borderRadius: CGFloat?
 
     init(dictionary: [String: Any]) {
+        width = EditorTheme.cgFloat(dictionary["width"]).flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+        minWidth = EditorTheme.cgFloat(dictionary["minWidth"]).flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
         iconSize = EditorTheme.cgFloat(dictionary["iconSize"])
         color = EditorTheme.color(from: dictionary["color"])
         backgroundColor = EditorTheme.color(from: dictionary["backgroundColor"])

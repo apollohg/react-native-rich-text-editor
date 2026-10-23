@@ -32,6 +32,39 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class NativeToolbarTest {
+    @Test
+    fun `text button widths survive theme changes and respect minimum width`() {
+        val context = RuntimeEnvironment.getApplication()
+        val density = context.resources.displayMetrics.density
+        val toolbar = EditorKeyboardToolbarView(context)
+        val requestedWidth = 120
+        val minimumWidth = 140
+        toolbar.setItems(
+            NativeToolbarItem.fromJson(
+                """
+            [
+              {"type":"action","key":"normal","label":"Normal",
+               "icon":{"type":"glyph","text":"Normal"},"buttonStyle":{"width":120}},
+              {"type":"action","key":"heading","label":"Heading 1",
+               "icon":{"type":"glyph","text":"Heading 1"},"buttonStyle":{"width":100,"minWidth":140}},
+              {"type":"action","key":"minimum","label":"Minimum",
+               "icon":{"type":"glyph","text":"Normal"},"buttonStyle":{"minWidth":140}}
+            ]
+                """.trimIndent()
+            )
+        )
+
+        for (height in listOf(32f, 60f)) {
+            toolbar.applyTheme(EditorToolbarTheme(height = height))
+            val normal = requireNotNull(toolbar.buttonAtForTesting(0))
+            val heading = requireNotNull(toolbar.buttonAtForTesting(1))
+            val minimum = requireNotNull(toolbar.buttonAtForTesting(2))
+            assertEquals((requestedWidth * density).toInt(), normal.layoutParams.width)
+            assertEquals((minimumWidth * density).toInt(), heading.layoutParams.width)
+            assertEquals(LinearLayout.LayoutParams.WRAP_CONTENT, minimum.layoutParams.width)
+            assertEquals((minimumWidth * density).toInt(), minimum.minimumWidth)
+        }
+    }
 
     @Test
     fun `default toolbar uses ProseMirror node names`() {

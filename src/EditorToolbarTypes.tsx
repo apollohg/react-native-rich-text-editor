@@ -87,6 +87,10 @@ export type EditorToolbarIcon =
 
 /** Visual overrides for one toolbar button. */
 export interface EditorToolbarButtonStyle {
+    /** Button width in points. Omit to keep the default sizing. */
+    width?: number;
+    /** Minimum button width in points; takes precedence over width. */
+    minWidth?: number;
     iconSize?: number;
     color?: string;
     backgroundColor?: string;

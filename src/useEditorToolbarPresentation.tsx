@@ -147,6 +147,8 @@ export function useEditorToolbarPresentation(
                     style={[
                         styles.button,
                         {
+                            width: visuals.width,
+                            minWidth: visuals.minWidth,
                             height: resolvedButtonHeight,
                             borderRadius: visuals.borderRadius,
                             backgroundColor: visuals.backgroundColor,

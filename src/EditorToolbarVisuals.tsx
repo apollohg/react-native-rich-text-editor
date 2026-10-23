@@ -139,8 +139,18 @@ export function resolveToolbarButtonVisuals(
         (button.isActive ? activeBackgroundColor : backgroundColor);
 
     const requestedIconSize = button.buttonStyle?.iconSize ?? theme?.buttonIconSize;
+    const requestedWidth = button.buttonStyle?.width;
+    const requestedMinWidth = button.buttonStyle?.minWidth;
 
     return {
+        width:
+            requestedWidth != null && Number.isFinite(requestedWidth) && requestedWidth > 0
+                ? requestedWidth
+                : BUTTON_HIT,
+        minWidth:
+            requestedMinWidth != null && Number.isFinite(requestedMinWidth) && requestedMinWidth > 0
+                ? requestedMinWidth
+                : undefined,
         color: button.isDisabled ? disabledColor : button.isActive ? activeColor : defaultColor,
         backgroundColor: button.isDisabled
             ? disabledBackgroundColor

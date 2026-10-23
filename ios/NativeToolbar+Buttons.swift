@@ -187,7 +187,10 @@ extension EditorAccessoryToolbarView {
             button.setTitle(item.icon?.resolvedGlyphText() ?? "?", for: .normal)
         }
         let buttonSize = resolvedButtonSize
-        let widthConstraint = button.widthAnchor.constraint(greaterThanOrEqualToConstant: buttonSize)
+        let buttonWidth = resolvedButtonWidth(for: item)
+        let widthConstraint = item.buttonStyle?.width != nil
+            ? button.widthAnchor.constraint(equalToConstant: buttonWidth)
+            : button.widthAnchor.constraint(greaterThanOrEqualToConstant: buttonWidth)
         let heightConstraint = button.heightAnchor.constraint(equalToConstant: buttonSize)
         widthConstraint.isActive = true
         heightConstraint.isActive = true

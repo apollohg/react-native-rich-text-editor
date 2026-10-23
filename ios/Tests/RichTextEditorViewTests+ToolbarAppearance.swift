@@ -2,6 +2,34 @@ import ExpoModulesCore
 import XCTest
 
 extension RichTextEditorViewTests {
+    func testToolbarButtonWidthsSurviveThemeChanges() {
+        let toolbar = EditorAccessoryToolbarView(frame: .zero)
+        let requestedWidth: CGFloat = 120
+        let minimumWidth: CGFloat = 140
+        toolbar.setItemsJSONForTesting("""
+        [
+            {"type":"action","key":"normal","label":"Normal",
+                "icon":{"type":"glyph","text":"Normal"},"buttonStyle":{"width":120}},
+            {"type":"action","key":"heading","label":"Heading 1",
+                "icon":{"type":"glyph","text":"Heading 1"},"buttonStyle":{"width":100,"minWidth":140}},
+            {"type":"action","key":"minimum","label":"Minimum",
+                "icon":{"type":"glyph","text":"Normal"},"buttonStyle":{"minWidth":140}}
+        ]
+        """)
+
+        for height in [32, 60] {
+            toolbar.apply(theme: EditorToolbarTheme(dictionary: ["height": height]))
+            let bindings = toolbar.constructedButtonBindings
+            XCTAssertEqual(bindings.count, 3)
+            guard bindings.count == 3 else { return }
+            XCTAssertEqual(bindings[0].widthConstraint.relation, .equal)
+            XCTAssertEqual(bindings[0].widthConstraint.constant, requestedWidth)
+            XCTAssertEqual(bindings[1].widthConstraint.constant, minimumWidth)
+            XCTAssertEqual(bindings[2].widthConstraint.relation, .greaterThanOrEqual)
+            XCTAssertEqual(bindings[2].widthConstraint.constant, minimumWidth)
+        }
+    }
+
     func testToolbarThemeParsesNativeAppearance() {
         let theme = EditorTheme(dictionary: [
             "toolbar": [

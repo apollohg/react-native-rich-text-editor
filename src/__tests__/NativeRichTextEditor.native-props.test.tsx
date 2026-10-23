@@ -178,6 +178,8 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
 
         const buttonStyle = {
+            width: 120,
+            minWidth: 100,
             iconSize: 22,
             color: '#111111',
             backgroundColor: '#121212',
