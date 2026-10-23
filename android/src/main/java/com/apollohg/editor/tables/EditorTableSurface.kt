@@ -45,9 +45,9 @@ import com.apollohg.editor.deleteTable
 import com.apollohg.editor.exactV2ScalarInt
 import com.apollohg.editor.hasAuthorizedNativeTableOwner
 import com.apollohg.editor.inputScalarSelection
-import com.apollohg.editor.nodeSelectionEndScalar
 import com.apollohg.editor.isAuthorizedForRootTableInput
 import com.apollohg.editor.isAuthorizedForTableCellInput
+import com.apollohg.editor.nodeSelectionEndScalar
 import com.apollohg.editor.prepareForExternalInteractionMutation
 import com.apollohg.editor.readOnlyParsedUpdate
 import com.apollohg.editor.renderedTextMatches

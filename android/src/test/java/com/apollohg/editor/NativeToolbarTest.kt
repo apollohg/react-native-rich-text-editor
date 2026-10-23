@@ -44,16 +44,29 @@ class NativeToolbarTest {
         assertEquals("All alignment controls must survive native decoding", 4, items.size)
         toolbar.setItems(items)
         for (alignment in listOf("left", "center", "right", "mixed", null)) {
-            toolbar.applyState(NativeToolbarState.fromState(
-                org.json.JSONObject().put("textAlign", alignment ?: org.json.JSONObject.NULL)
-                    .put("commands", org.json.JSONObject().put("setTextAlign", true)
-                        .put("unsetTextAlign", alignment != null)), null
-            ))
+            toolbar.applyState(
+                NativeToolbarState.fromState(
+                    org.json.JSONObject().put("textAlign", alignment ?: org.json.JSONObject.NULL)
+                        .put(
+                            "commands",
+                            org.json.JSONObject().put("setTextAlign", true)
+                                .put("unsetTextAlign", alignment != null)
+                        ),
+                    null
+                )
+            )
             listOf("left", "center", "right", null).forEachIndexed { index, value ->
                 val button = requireNotNull(toolbar.buttonAtForTesting(index))
-                assertEquals("active control for $alignment at $index", value == alignment, button.isSelected)
-                assertEquals("availability for $alignment at $index", index != 3 || alignment != null,
-                    button.isEnabled)
+                assertEquals(
+                    "active control for $alignment at $index",
+                    value == alignment,
+                    button.isSelected
+                )
+                assertEquals(
+                    "availability for $alignment at $index",
+                    index != 3 || alignment != null,
+                    button.isEnabled
+                )
             }
         }
         toolbar.applyState(NativeToolbarState.empty)

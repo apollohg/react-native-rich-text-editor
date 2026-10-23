@@ -2821,12 +2821,16 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
             }
         }
         return StaticLayout.Builder.obtain(preparedText, 0, preparedText.length, resolved, width)
-            .setAlignment(com.apollohg.editor.physicalTextAlignment(
-                paint.textAlign,
-                android.text.TextDirectionHeuristics.FIRSTSTRONG_LTR.isRtl(
-                    preparedText, 0, preparedText.length
+            .setAlignment(
+                com.apollohg.editor.physicalTextAlignment(
+                    paint.textAlign,
+                    android.text.TextDirectionHeuristics.FIRSTSTRONG_LTR.isRtl(
+                        preparedText,
+                        0,
+                        preparedText.length
+                    )
                 )
-            ))
+            )
             .apply {
                 if (android.os.Build.VERSION.SDK_INT >=
                     26

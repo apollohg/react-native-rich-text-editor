@@ -1,5 +1,6 @@
 package com.apollohg.editor.viewer
 
+import android.text.Layout.Alignment
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -15,10 +16,12 @@ internal class ParagraphAlignmentViewerTest {
         val block = ViewerBlock("paragraph", 0, false, null, null, emptyList())
         assertEquals("right", theme.paintFor(block).textAlign)
     }
+
     @Test
     fun `cell lowering and detached snapshots preserve explicit alignment over theme`() {
         val theme = PreparedProseTheme.resolve(
-            """{"version":1,"styles":{"paragraph":{"textAlign":"center"}}}""", 1f
+            """{"version":1,"styles":{"paragraph":{"textAlign":"center"}}}""",
+            1f
         )
         val parent = ViewerDocument("parent", emptyList(), false, 0)
         for (align in listOf("left", "center", "right", null)) {
@@ -34,48 +37,88 @@ internal class ParagraphAlignmentViewerTest {
             val block = document.blocks.single()
             assertEquals(align ?: "center", theme.paintFor(block).textAlign)
             assertEquals(align, PreparedProseTheme.resolve(null, 1f).paintFor(block).textAlign)
-            val editorElements = requireNotNull(com.apollohg.editor.tables.inputElements(
-                elements, emptyList()
-            ) { it })
+            val editorElements = requireNotNull(
+                com.apollohg.editor.tables.inputElements(
+                    elements,
+                    emptyList()
+                ) { it }
+            )
             assertEquals(align, editorElements.getJSONObject(0).opt("textAlign") as? String)
             val editorText = com.apollohg.editor.RenderBridge.buildSpannable(
-                editorElements.toString(), 16f, android.graphics.Color.BLACK,
+                editorElements.toString(),
+                16f,
+                android.graphics.Color.BLACK,
                 com.apollohg.editor.EditorTheme.fromJson(
                     """{"version":1,"styles":{"paragraph":{"textAlign":"center"}}}"""
                 )
             )
-            assertEquals(listOf(align ?: "center"), editorText.getSpans(0, editorText.length,
-                com.apollohg.editor.EditorParagraphAlignmentSpan::class.java).map { it.value })
+            assertEquals(
+                listOf(align ?: "center"),
+                editorText.getSpans(
+                    0,
+                    editorText.length,
+                    com.apollohg.editor.EditorParagraphAlignmentSpan::class.java
+                ).map { it.value }
+            )
             val detached = requireNotNull(PlainTableCellDocument.capture(parent, cell, "table"))
             elements.clear()
             assertEquals(document, detached.materialize())
-            assertEquals(align ?: "center", theme.paintFor(detached.materialize().blocks.single()).textAlign)
+            assertEquals(
+                align ?: "center",
+                theme.paintFor(detached.materialize().blocks.single()).textAlign
+            )
         }
     }
 
     @Test
     fun `empty and RTL viewer blocks use physical alignment and reset returns theme`() {
         val theme = PreparedProseTheme.resolve(
-            """{"version":1,"styles":{"paragraph":{"textAlign":"center"}}}""", 1f
+            """{"version":1,"styles":{"paragraph":{"textAlign":"center"}}}""",
+            1f
         )
         for (text in listOf("", "العربية")) {
             for (align in listOf("left", "center", "right", null)) {
-                val block = ViewerBlock("paragraph", 0, false, null, null,
-                    listOf(ViewerInline.Text(text, emptyList())), textAlign = align)
+                val block = ViewerBlock(
+                    "paragraph",
+                    0,
+                    false,
+                    null,
+                    null,
+                    listOf(ViewerInline.Text(text, emptyList())),
+                    textAlign = align
+                )
                 val document = ViewerDocument("document-$text-$align", listOf(block), false, 0)
                 val prepared = StaticLayoutAndroidProseLayoutEngine().prepare(
-                    document, ProseLayoutKey(document.semanticKey, 300, "theme", 0, 0, 0, 0, "test"),
-                    theme, 300, 1f, false
+                    document,
+                    ProseLayoutKey(document.semanticKey, 300, "theme", 0, 0, 0, 0, "test"),
+                    theme,
+                    300,
+                    1f,
+                    false
                 )
-                val layout = requireNotNull(prepared.blocks.single().fragments.first { it.layout != null }.layout)
+                val layout = requireNotNull(
+                    prepared.blocks.single().fragments.first {
+                        it.layout !=
+                            null
+                    }.layout
+                )
                 val expected = when (align) {
-                    "left" -> if (text.isEmpty()) android.text.Layout.Alignment.ALIGN_NORMAL else android.text.Layout.Alignment.ALIGN_OPPOSITE
-                    "right" -> if (text.isEmpty()) android.text.Layout.Alignment.ALIGN_OPPOSITE else android.text.Layout.Alignment.ALIGN_NORMAL
-                    else -> android.text.Layout.Alignment.ALIGN_CENTER
+                    "left" -> if (text.isEmpty()) {
+                        Alignment.ALIGN_NORMAL
+                    } else {
+                        Alignment.ALIGN_OPPOSITE
+                    }
+
+                    "right" -> if (text.isEmpty()) {
+                        Alignment.ALIGN_OPPOSITE
+                    } else {
+                        Alignment.ALIGN_NORMAL
+                    }
+
+                    else -> Alignment.ALIGN_CENTER
                 }
                 assertEquals("text=$text align=$align", expected, layout.alignment)
             }
         }
     }
-
 }

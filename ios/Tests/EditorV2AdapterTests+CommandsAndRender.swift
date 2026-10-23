@@ -448,7 +448,6 @@ extension EditorV2AdapterTests {
 
 }
 
-
 extension EditorV2AdapterTests {
     func testAlignmentCommandKeepsTextAndRejectsUnsupportedPhysicalAlignment() throws {
         let adapter = makeAdapter()

@@ -5099,7 +5099,6 @@ private extension EditorTableInputTests {
     static let selectionStateKeys: Set<String> = ["documentVersion", "stateRevision", "selection", "activeState", "historyState"]
 }
 
-
 extension EditorTableInputTests {
     func testAlignmentToolbarPreservesCellRectangleAndFormatsOnlySelectedCells() throws {
         try withMountedTable(document: fourCellDocument, configJSON: TableInputTestSchema.textAlignTableConfig, cellSelection: (0, 1)) { fixture in
@@ -5130,7 +5129,6 @@ extension EditorTableInputTests {
         }
     }
 }
-
 
 extension EditorTableInputTests {
     func testParagraphNodeSelectionKeepsWholeTableCellInputRangeAfterAlignment() throws {

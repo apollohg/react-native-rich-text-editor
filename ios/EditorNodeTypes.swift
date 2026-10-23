@@ -40,7 +40,6 @@ enum EditorNodeTypes {
     }
 }
 
-
 enum EditorTextAlignment: String {
     case left
     case center
@@ -51,7 +50,6 @@ enum EditorTextAlignment: String {
         return Self(rawValue: value) != nil
     }
 }
-
 
 enum EditorNodeSelection {
     static func scalarRange(_ selection: [String: Any]) -> (start: UInt32, end: UInt32)? {

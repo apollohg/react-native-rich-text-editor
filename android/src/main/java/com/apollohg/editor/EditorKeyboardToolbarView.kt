@@ -637,7 +637,15 @@ internal class EditorKeyboardToolbarView(context: Context) : FrameLayout(context
             }
 
             ToolbarItemKind.TEXT_ALIGN -> Pair(
-                state.commands[if (item.align == null) "unsetTextAlign" else "setTextAlign"] == true,
+                state.commands[
+                    if (item.align ==
+                        null
+                    ) {
+                        "unsetTextAlign"
+                    } else {
+                        "setTextAlign"
+                    }
+                ] == true,
                 state.commands["setTextAlign"] == true && state.textAlign == item.align
             )
 

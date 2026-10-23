@@ -22,7 +22,7 @@ internal class EditorV2AdapterCollaborationTest : EditorV2AdapterTestFixture() {
     }
 
     @Test
-    fun `node awareness publishes authoritative complete extent without replacing node selection`() {
+    fun `node awareness publishes full extent and preserves node selection`() {
         val adapter = makeRoomAdapter()
         for ((endScalar, expectedEnd) in listOf(4 to 5, null to 1)) {
             val node = JSONObject().put("type", "node").put("pos", 0).put("posScalar", 0)
@@ -36,8 +36,14 @@ internal class EditorV2AdapterCollaborationTest : EditorV2AdapterTestFixture() {
             assertEquals("text", awareness.getString("type"))
             assertEquals(0, awareness.getInt("anchor"))
             assertEquals(expectedEnd, awareness.getInt("head"))
-            assertEquals("node", requireNotNull(adapter.cachedAtomicRenderSelection()).getString("type"))
-            assertFalse("Awareness publication must not replace the engine selection", backend.calls.contains("setSelection"))
+            assertEquals(
+                "node",
+                requireNotNull(adapter.cachedAtomicRenderSelection()).getString("type")
+            )
+            assertFalse(
+                "Awareness publication must not replace the engine selection",
+                backend.calls.contains("setSelection")
+            )
         }
     }
 

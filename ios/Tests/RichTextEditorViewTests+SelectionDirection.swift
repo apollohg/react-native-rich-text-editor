@@ -323,7 +323,6 @@ extension RichTextEditorViewTests {
 
 }
 
-
 extension RichTextEditorViewTests {
     func testParagraphNodeSelectionHighlightsWholeBlockAndSurvivesAlignmentAndNativeSync() throws {
         let editorId = makeV2Editor()

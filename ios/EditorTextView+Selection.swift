@@ -559,7 +559,13 @@ extension EditorTextView: UITextInteractionDelegate {
         return map.globalScalarRange(fromLocalScalar: fromLocal, toLocalScalar: toLocal)
     }
 
-    private func resolvedNodeSelection(_ selection: [String: Any]) -> (docPos: UInt32, scalar: UInt32, range: NSRange)? {
+    private struct ResolvedNodeSelection {
+        let docPos: UInt32
+        let scalar: UInt32
+        let range: NSRange
+    }
+
+    private func resolvedNodeSelection(_ selection: [String: Any]) -> ResolvedNodeSelection? {
         guard selection["type"] as? String == "node",
               let pos = v2ExactUInt32(selection["pos"] as? NSNumber) else { return nil }
         let startScalar: UInt32
@@ -582,7 +588,7 @@ extension EditorTextView: UITextInteractionDelegate {
         guard let localStart = localScalar(bounds.start), let localEnd = localScalar(bounds.end) else { return nil }
         let start = PositionBridge.scalarToUtf16Offset(localStart, in: self)
         let length = max(0, PositionBridge.scalarToUtf16Offset(localEnd, in: self) - start)
-        return (pos, startScalar, NSRange(location: start, length: length))
+        return ResolvedNodeSelection(docPos: pos, scalar: startScalar, range: NSRange(location: start, length: length))
     }
 
     /// Apply a selection from a parsed JSON selection object.

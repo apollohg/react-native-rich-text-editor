@@ -1656,7 +1656,6 @@ extension RenderBridgeTests {
     }
 }
 
-
 extension RenderBridgeTests {
     func testDocumentAlignmentOverridesThemeAndResetRebuildsParagraphStyle() throws {
         let theme = try XCTUnwrap(EditorTheme.from(json: """
@@ -1666,8 +1665,8 @@ extension RenderBridgeTests {
             for text in ["שלום", ""] {
                 for (alignment, expected) in [("left", NSTextAlignment.left), ("center", .center), ("right", .right)] {
                     let elements: [[String: Any]] = [
-                        ["type":"blockStart", "nodeType":nodeType, "depth":0, "textAlign":alignment],
-                        ["type":"textRun", "text":text, "marks":[]], ["type":"blockEnd"]
+                        ["type": "blockStart", "nodeType": nodeType, "depth": 0, "textAlign": alignment],
+                        ["type": "textRun", "text": text, "marks": []], ["type": "blockEnd"]
                     ]
                     let rendered = RenderBridge.renderElements(fromArray: elements, baseFont: baseFont, textColor: textColor, theme: theme)
                     let style = try XCTUnwrap(rendered.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle)
@@ -1683,14 +1682,13 @@ extension RenderBridgeTests {
     }
 }
 
-
 extension RenderBridgeTests {
     func testPhysicalAlignmentMovesRTLTextKitLayoutWithoutTheme() throws {
         var origins: [CGFloat] = []
         for alignment in ["left", "center", "right"] {
             let rendered = RenderBridge.renderElements(fromArray: [
-                ["type":"blockStart", "nodeType":"paragraph", "depth":0, "textAlign":alignment],
-                ["type":"textRun", "text":"שלום", "marks":[]], ["type":"blockEnd"]
+                ["type": "blockStart", "nodeType": "paragraph", "depth": 0, "textAlign": alignment],
+                ["type": "textRun", "text": "שלום", "marks": []], ["type": "blockEnd"]
             ], baseFont: baseFont, textColor: textColor)
             let storage = NSTextStorage(attributedString: rendered)
             let manager = EditorLayoutManager()
@@ -1706,15 +1704,14 @@ extension RenderBridgeTests {
     }
 }
 
-
 extension RenderBridgeTests {
     func testAlignedTextKitCaretAndHitTestingFollowRebuiltEmptyParagraphs() throws {
         for text in ["abc", ""] {
             var caretOrigins: [CGFloat] = []
             for alignment in ["left", "center", "right"] {
                 let rendered = RenderBridge.renderElements(fromArray: [
-                    ["type":"blockStart", "nodeType":"paragraph", "depth":0, "textAlign":alignment],
-                    ["type":"textRun", "text":text, "marks":[]], ["type":"blockEnd"]
+                    ["type": "blockStart", "nodeType": "paragraph", "depth": 0, "textAlign": alignment],
+                    ["type": "textRun", "text": text, "marks": []], ["type": "blockEnd"]
                 ], baseFont: baseFont, textColor: textColor)
                 let view = UITextView(frame: CGRect(x: 0, y: 0, width: 300, height: 100))
                 view.textContainerInset = .zero
@@ -1734,26 +1731,31 @@ extension RenderBridgeTests {
     }
 }
 
-
 extension RenderBridgeTests {
     func testAdjacentDocumentAlignmentsRenderIndependentlyAndCaptureNativeView() throws {
-        let blocks: [(String, String, String, NSTextAlignment)] = [
-            ("h2", "Left aligned heading", "left", .left),
-            ("paragraph", "Physical left: Hello שלום", "left", .left),
-            ("h2", "Centred heading", "center", .center),
-            ("paragraph", "Centre: Hello שלום", "center", .center),
-            ("h2", "Right aligned heading", "right", .right),
-            ("paragraph", "Physical right: Hello שלום", "right", .right)
+        struct BlockCase {
+            let nodeType: String
+            let text: String
+            let alignment: String
+            let expected: NSTextAlignment
+        }
+        let blocks: [BlockCase] = [
+            .init(nodeType: "h2", text: "Left aligned heading", alignment: "left", expected: .left),
+            .init(nodeType: "paragraph", text: "Physical left: Hello שלום", alignment: "left", expected: .left),
+            .init(nodeType: "h2", text: "Centred heading", alignment: "center", expected: .center),
+            .init(nodeType: "paragraph", text: "Centre: Hello שלום", alignment: "center", expected: .center),
+            .init(nodeType: "h2", text: "Right aligned heading", alignment: "right", expected: .right),
+            .init(nodeType: "paragraph", text: "Physical right: Hello שלום", alignment: "right", expected: .right)
         ]
-        let elements: [[String: Any]] = blocks.flatMap { nodeType, text, alignment, _ in [
-            ["type":"blockStart", "nodeType":nodeType, "depth":0, "textAlign":alignment],
-            ["type":"textRun", "text":text, "marks":[]], ["type":"blockEnd"]
+        let elements: [[String: Any]] = blocks.flatMap { block in [
+            ["type": "blockStart", "nodeType": block.nodeType, "depth": 0, "textAlign": block.alignment],
+            ["type": "textRun", "text": block.text, "marks": []], ["type": "blockEnd"]
         ] }
         let rendered = RenderBridge.renderElements(fromArray: elements, baseFont: baseFont, textColor: .black)
-        for (_, text, _, alignment) in blocks {
-            let offset = (rendered.string as NSString).range(of: text).location
+        for block in blocks {
+            let offset = (rendered.string as NSString).range(of: block.text).location
             let style = try XCTUnwrap(rendered.attribute(.paragraphStyle, at: offset, effectiveRange: nil) as? NSParagraphStyle)
-            XCTAssertEqual(style.alignment, alignment, text)
+            XCTAssertEqual(style.alignment, block.expected, block.text)
         }
         let view = UITextView(frame: CGRect(x: 0, y: 0, width: 390, height: 360))
         view.backgroundColor = .white

@@ -973,18 +973,26 @@ internal class EditorV2Adapter private constructor(
             return null
         }
         return textAlignCommandAtSelection(
-            JSONObject().put("type", "setTextAlign").put("align", align), anchor, head
+            JSONObject().put("type", "setTextAlign").put("align", align),
+            anchor,
+            head
         )
     }
 
     override fun unsetTextAlign(anchor: Int, head: Int): String? = textAlignCommandAtSelection(
-        JSONObject().put("type", "unsetTextAlign"), anchor, head
+        JSONObject().put("type", "unsetTextAlign"),
+        anchor,
+        head
     )
 
     private fun textAlignCommandAtSelection(command: JSONObject, anchor: Int, head: Int): String? {
         val selectionType = cachedAtomicRenderSelection()?.optString("type")
         if (selectionType != null && selectionType != "text") {
-            if (selectionType == "cell" && selectedTableCellsMutationAdmission() == null) return null
+            if (selectionType == "cell" &&
+                selectedTableCellsMutationAdmission() == null
+            ) {
+                return null
+            }
             return commandAdoptingEngineSelection(command)
         }
         return commandAtSelection(command, anchor, head)

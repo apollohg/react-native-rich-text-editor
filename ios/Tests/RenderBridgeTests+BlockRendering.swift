@@ -615,7 +615,6 @@ extension RenderBridgeTests {
 
 }
 
-
 extension RenderBridgeTests {
     func testNativeTableCellAlignmentSurvivesPreparedWireAndResets() throws {
         for alignment in ["left", "center", "right"] {

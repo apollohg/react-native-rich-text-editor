@@ -373,7 +373,6 @@ extension RichTextEditorViewTests {
 
 }
 
-
 extension RichTextEditorViewTests {
     func testAlignmentToolbarUsesExplicitStateAndEngineAvailability() {
         let toolbar = EditorAccessoryToolbarView(frame: .zero)
@@ -398,7 +397,6 @@ extension RichTextEditorViewTests {
         }
     }
 }
-
 
 extension RichTextEditorViewTests {
     func testAlignmentToolbarParsesResetAndRejectsUnsupportedItems() {

@@ -314,8 +314,10 @@ private fun validStringArray(value: Any?): Boolean {
 }
 
 private fun validTextAlignment(value: Any?, allowMixed: Boolean = false): Boolean =
-    value === JSONObject.NULL || (value is String &&
-        (EditorTextAlignment.fromWireValue(value) != null || allowMixed && value == "mixed"))
+    value === JSONObject.NULL || (
+        value is String &&
+            (EditorTextAlignment.fromWireValue(value) != null || (allowMixed && value == "mixed"))
+        )
 
 private fun validActiveState(value: Any?): Boolean {
     val jsonObject = value as? JSONObject ?: return false
@@ -330,8 +332,10 @@ private fun validActiveState(value: Any?): Boolean {
     val attrs = jsonObject.opt("markAttrs") as? JSONObject ?: return false
     val attrsIterator = attrs.keys()
     while (attrsIterator.hasNext()) if (attrs.opt(attrsIterator.next()) !is JSONObject) return false
-    return (!jsonObject.has("textAlign") ||
-        validTextAlignment(jsonObject.opt("textAlign"), allowMixed = true)) &&
+    return (
+        !jsonObject.has("textAlign") ||
+            validTextAlignment(jsonObject.opt("textAlign"), allowMixed = true)
+        ) &&
         validBooleanRecord(jsonObject.opt("marks")) &&
         validBooleanRecord(jsonObject.opt("nodes")) &&
         validBooleanRecord(
@@ -370,8 +374,11 @@ private fun validSelection(value: Any?): Boolean {
     return when (selection.opt("type") as? String) {
         "text" -> scalarSelection(selection) != null
 
-        "node" -> exactKeys(selection, setOf("type", "pos", "posScalar") +
-            if (selection.has("endScalar")) setOf("endScalar") else emptySet()) &&
+        "node" -> exactKeys(
+            selection,
+            setOf("type", "pos", "posScalar") +
+                if (selection.has("endScalar")) setOf("endScalar") else emptySet()
+        ) &&
             scalarField(selection, "pos") != null &&
             scalarField(selection, "posScalar")?.let { start ->
                 nodeSelectionEndScalar(selection, start) != null

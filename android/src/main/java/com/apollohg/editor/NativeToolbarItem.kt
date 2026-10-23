@@ -144,11 +144,16 @@ internal data class NativeToolbarItem(
                 }
 
                 ToolbarItemKind.TEXT_ALIGN -> {
-                    val icon = NativeToolbarIcon.fromJson(rawItem.optJSONObject("icon")) ?: return null
+                    val icon =
+                        NativeToolbarIcon.fromJson(rawItem.optJSONObject("icon")) ?: return null
                     val label = rawItem.toolbarNullableString("label") ?: return null
                     if (!rawItem.has("align")) return null
                     val align = rawItem.toolbarNullableString("align")
-                    if (align != null && EditorTextAlignment.fromWireValue(align) == null) return null
+                    if (align != null &&
+                        EditorTextAlignment.fromWireValue(align) == null
+                    ) {
+                        return null
+                    }
                     if (!rawItem.isNull("align") && rawItem.opt("align") !is String) return null
                     NativeToolbarItem(type, key, label, icon, align = align, placement = placement)
                 }

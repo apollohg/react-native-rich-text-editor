@@ -947,7 +947,6 @@ func unwrapCoreTextAttribute(_ value: Any?, as type: CTFont.Type) throws -> CTFo
     return try XCTUnwrap(font)
 }
 
-
 extension PreparedProseRenderingTests {
     func testCompilerAlignmentProjectionKeepsEmptyHeadingsAndListBoundaries() throws {
         let html = "<p style=\"text-align:left\">שלום</p><h2 style=\"text-align:right\"></h2><ul><li><p style=\"text-align:center\">item</p></li></ul>"
@@ -959,7 +958,6 @@ extension PreparedProseRenderingTests {
         }
     }
 }
-
 
 extension PreparedProseRenderingTests {
     func testCustomEmptyHeadingAlignmentAndResetMatchEditorAndViewer() throws {
@@ -994,7 +992,6 @@ extension PreparedProseRenderingTests {
         XCTAssertLessThan(origins[0], origins[1])
     }
 }
-
 
 extension PreparedProseRenderingTests {
     private func assertEmptyRenderedText(_ text: String, file: StaticString = #filePath, line: UInt = #line) {

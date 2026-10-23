@@ -14,19 +14,28 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 internal class ParagraphNodeSelectionRenderingTest : EditorV2AdapterTestFixture() {
     @Test
-    fun `node selection endpoint admission accepts empty and complete ranges and rejects reversed or invalid`() {
+    fun `node endpoints accept valid ranges and reject reversed or invalid ranges`() {
         val adapter = makeAdapter()
         assertNotNull(adapter.setContentHtml("<p>example</p>"))
         val snapshot = JSONObject(requireNotNull(adapter.cachedAtomicRenderJson))
         for ((start, end) in listOf(0 to 0, 0 to 4, 3 to 7)) {
-            snapshot.put("selection", JSONObject().put("type", "node").put("pos", 0)
-                .put("posScalar", start).put("endScalar", end))
+            snapshot.put(
+                "selection",
+                JSONObject().put("type", "node").put("pos", 0)
+                    .put("posScalar", start).put("endScalar", end)
+            )
             assertNotNull("node range=$start..$end", parseAtomicRenderSnapshot(snapshot.toString()))
         }
         for (end in listOf(-1, 2, "4", JSONObject.NULL)) {
-            snapshot.put("selection", JSONObject().put("type", "node").put("pos", 0)
-                .put("posScalar", 3).put("endScalar", end))
-            org.junit.Assert.assertNull("Invalid endpoint=$end", parseAtomicRenderSnapshot(snapshot.toString()))
+            snapshot.put(
+                "selection",
+                JSONObject().put("type", "node").put("pos", 0)
+                    .put("posScalar", 3).put("endScalar", end)
+            )
+            org.junit.Assert.assertNull(
+                "Invalid endpoint=$end",
+                parseAtomicRenderSnapshot(snapshot.toString())
+            )
         }
     }
 
@@ -59,14 +68,24 @@ internal class ParagraphNodeSelectionRenderingTest : EditorV2AdapterTestFixture(
                 assertEquals(ImageSelectionRange(from, to), input.authoritativeNodeSelectionRange)
                 backend.calls.clear()
                 input.syncCurrentSelectionToRust()
-                assertTrue("Rendered node selection must stay authoritative", backend.calls.isEmpty())
+                assertTrue(
+                    "Rendered node selection must stay authoritative",
+                    backend.calls.isEmpty()
+                )
             }
             input.isApplyingRustState = true
             input.setText("\uFFFCnext")
             input.isApplyingRustState = false
-            input.applySelectionFromJSON(JSONObject().put("type", "node").put("pos", 0)
-                .put("posScalar", 0), adapter.baseDocumentRevision.toString())
-            assertEquals("Legacy atom snapshots keep one replacement character", 1, input.selectionEnd)
+            input.applySelectionFromJSON(
+                JSONObject().put("type", "node").put("pos", 0)
+                    .put("posScalar", 0),
+                adapter.baseDocumentRevision.toString()
+            )
+            assertEquals(
+                "Legacy atom snapshots keep one replacement character",
+                1,
+                input.selectionEnd
+            )
         } finally {
             input.v2Driver = null
             EditorV2Registry.remove(adapter.editorId)
