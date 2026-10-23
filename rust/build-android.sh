@@ -52,8 +52,12 @@ for pair in "${TARGET_ABI_PAIRS[@]}"; do
         --platform "$MIN_SDK_VERSION" \
         build --release --target-dir "$TARGET_DIR"
 
-    v2_count="$(nm -gU "$TARGET_DIR/$target/release/$LIB_NAME" 2>/dev/null | grep -c 'uniffi_editor_core_fn_func_editor_v2_' || true)"
-    legacy_lines="$(nm -gU "$TARGET_DIR/$target/release/$LIB_NAME" 2>/dev/null | grep -E 'uniffi_editor_core_(fn|checksum)_func_(editor_|collaboration_)' | grep -v 'editor_v2\|editor_core_version' || true)"
+    mkdir -p "$OUT_DIR/$abi"
+    bash "$SCRIPT_DIR/strip-native-library.sh" android \
+        "$TARGET_DIR/$target/release/$LIB_NAME" "$OUT_DIR/$abi/$LIB_NAME"
+
+    v2_count="$(nm -D -g "$OUT_DIR/$abi/$LIB_NAME" 2>/dev/null | grep -c 'uniffi_editor_core_fn_func_editor_v2_' || true)"
+    legacy_lines="$(nm -D -g "$OUT_DIR/$abi/$LIB_NAME" 2>/dev/null | grep -E 'uniffi_editor_core_(fn|checksum)_func_(editor_|collaboration_)' | grep -v 'editor_v2\|editor_core_version' || true)"
     echo "  $target: $v2_count editor_v2 symbols"
     if [ "$v2_count" -ne "${#V2_SYMBOLS[@]}" ]; then
         echo "ERROR: expected exactly ${#V2_SYMBOLS[@]} editor_v2 symbols in $target .so" >&2
@@ -65,9 +69,6 @@ for pair in "${TARGET_ABI_PAIRS[@]}"; do
         exit 1
     fi
 
-    # Copy .so to jniLibs layout
-    mkdir -p "$OUT_DIR/$abi"
-    cp "$TARGET_DIR/$target/release/$LIB_NAME" "$OUT_DIR/$abi/$LIB_NAME"
     test -s "$OUT_DIR/$abi/$LIB_NAME"
 done
 

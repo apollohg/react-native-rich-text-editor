@@ -229,7 +229,11 @@ def validate_elf(path, abi, expected, label)
   sections = elf_sections(data, elf_class, label)
   segments = elf_load_segments(data, elf_class, label)
   values = elf_symbol_values(data, elf_class, sections, expected, label)
-  expected.each { |name, checksum| decode_checksum_body(data, elf_file_offset(segments, values.fetch(name) & ~1, label, name), expected_machine[2], label, name, checksum) }
+  expected.each do |name, checksum|
+    address = values.fetch(name)
+    address &= ~1 if expected_machine[2] == "armv7"
+    decode_checksum_body(data, elf_file_offset(segments, address, label, name), expected_machine[2], label, name, checksum)
+  end
 end
 
 def macho_object_symbols(data, architecture, expected, label, remaining_symbol_work)

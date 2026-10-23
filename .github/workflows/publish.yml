@@ -75,6 +75,7 @@ jobs:
               uses: dtolnay/rust-toolchain@1.95.0
               with:
                   targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios, aarch64-linux-android, armv7-linux-androideabi, i686-linux-android, x86_64-linux-android
+                  components: llvm-tools-preview
 
             - name: Cache Cargo
               if: steps.native-build-cache.outputs.cache-hit != 'true'
