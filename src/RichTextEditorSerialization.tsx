@@ -1,3 +1,5 @@
+import { Image } from 'react-native';
+import type { EditorToolbarIcon } from './EditorToolbarTypes';
 import { isTextAlignState } from './TextAlignment';
 import { NativeEditorErrorBase, NativeEditorOperationError } from './NativeEditorBoundaryError';
 import { type EditorMentionTheme } from './EditorTheme';
@@ -265,6 +267,12 @@ export function acceptNativeCommitPayload(
     return { documentRevision: canonicalRevision, snapshot };
 }
 
+function mapToolbarIconForNative(icon: EditorToolbarIcon): EditorToolbarIcon {
+    if (icon.type !== 'image') return icon;
+    const source = Image.resolveAssetSource(icon.source);
+    return source?.uri ? { ...icon, source } : { type: 'glyph', text: icon.fallbackText ?? '?' };
+}
+
 export function mapToolbarChildForNative(
     item: EditorToolbarGroupChildItem,
     activeState: ReadonlyActiveState,
@@ -272,12 +280,13 @@ export function mapToolbarChildForNative(
     onRequestLink?: RichTextEditorProps['onRequestLink'],
     onRequestImage?: RichTextEditorProps['onRequestImage']
 ): EditorToolbarGroupChildItem {
+    const icon = mapToolbarIconForNative(item.icon);
     if (item.type === 'link') {
         return {
             type: 'action',
             key: LINK_TOOLBAR_ACTION_KEY,
             label: item.label,
-            icon: item.icon,
+            icon,
             buttonStyle: item.buttonStyle,
             placement: item.placement,
             isActive: activeState.marks.link === true,
@@ -290,7 +299,7 @@ export function mapToolbarChildForNative(
             type: 'action',
             key: IMAGE_TOOLBAR_ACTION_KEY,
             label: item.label,
-            icon: item.icon,
+            icon,
             buttonStyle: item.buttonStyle,
             placement: item.placement,
             isActive: false,
@@ -301,7 +310,7 @@ export function mapToolbarChildForNative(
         };
     }
 
-    return item;
+    return icon === item.icon ? item : { ...item, icon };
 }
 
 export function mapToolbarItemsForNative(
@@ -315,6 +324,7 @@ export function mapToolbarItemsForNative(
         if (item.type === 'group') {
             return {
                 ...item,
+                icon: mapToolbarIconForNative(item.icon),
                 items: item.items.map(child =>
                     mapToolbarChildForNative(
                         child,

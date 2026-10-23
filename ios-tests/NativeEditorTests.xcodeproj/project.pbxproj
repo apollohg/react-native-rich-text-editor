@@ -164,6 +164,7 @@
 		A0AE1287386D65E8B1F50402 /* EditorCodeHighlighting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E62357DAC39751F1D07D5D0 /* EditorCodeHighlighting.swift */; };
 		A4259B92E5A9421F60B75BE1 /* RichTextEditorViewTests+SelectionDirection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4865EE086F6C1588C1C7D818 /* RichTextEditorViewTests+SelectionDirection.swift */; };
 		A4BBF4B73D14F8EA0FCE189C /* PreparedProseLayoutTests+AtomsAndLists.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B7EE24267DC9972579B8437 /* PreparedProseLayoutTests+AtomsAndLists.swift */; };
+		A50FF57AE8EB10353563D640 /* ToolbarIconTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C13FFD837D7B5476BF448EE0 /* ToolbarIconTests.swift */; };
 		A5CC2A434974FCEBEC188106 /* viewer-performance-corpus.json in Resources */ = {isa = PBXBuildFile; fileRef = EAAEA72D6B36B64387DAC8D3 /* viewer-performance-corpus.json */; };
 		A61E6E2CEDC89871C1DD2372 /* EditorV2StagingViewTests+AtomSelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEFDBE0910903679CFEDB292 /* EditorV2StagingViewTests+AtomSelection.swift */; };
 		A82DE7042B07BB1D1396DDE7 /* NativeEditorExpoView+MentionRetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 834E58EF73DACF4BB8CF6ACB /* NativeEditorExpoView+MentionRetry.swift */; };
@@ -174,8 +175,10 @@
 		ABCDB7659F4A264929E5A916 /* PreparedProseLayoutTests+MeasurementAdmission.swift in Sources */ = {isa = PBXBuildFile; fileRef = B63C66ACEC0194639E02B6F7 /* PreparedProseLayoutTests+MeasurementAdmission.swift */; };
 		AC4EC346C4C73FCADFCEB1F4 /* PreparedProseLayoutCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCF83BC143D0A11E95F2C7A2 /* PreparedProseLayoutCache.swift */; };
 		ACC8FCDE2648109755A23C63 /* NativePerformanceTests+CollectionHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = 802F920B07B30D2066FF980C /* NativePerformanceTests+CollectionHarness.swift */; };
+		AD1368545711C4AB2144F2A7 /* ToolbarImageLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F098CB1F260949199323DD7 /* ToolbarImageLoader.swift */; };
 		AF767D66F3B881A46FB4E247 /* RenderBridgeTests+ThemeAndAtoms.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF66AC6AFC3C658534E4CFE3 /* RenderBridgeTests+ThemeAndAtoms.swift */; };
 		B006A68EE115A21674C7B973 /* EditorV2Adapter+Selection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76268D57638F0BFF366EE73D /* EditorV2Adapter+Selection.swift */; };
+		B011D5D36B08284BB8C6574F /* MaterialDesignIcons.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 605BE85E3BEE1E82F7B69093 /* MaterialDesignIcons.ttf */; };
 		B18CFFCE693C2C3693ED416C /* EditorV2AdapterTests+Transactions.swift in Sources */ = {isa = PBXBuildFile; fileRef = E006E76CEA2FF2AB42289315 /* EditorV2AdapterTests+Transactions.swift */; };
 		B38018A935CF0A1BFA0AF72E /* NativeEditorExpoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 786BFC8DCAD00895F167F944 /* NativeEditorExpoView.swift */; };
 		B395F75ECA953108E4D1ED72 /* RenderBridgeTests+TextAndMarks.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1DE28DA987146829212E6F5 /* RenderBridgeTests+TextAndMarks.swift */; };
@@ -193,6 +196,7 @@
 		BFCA5A8329F346741F3A17C6 /* editor-command-sequences.json in Resources */ = {isa = PBXBuildFile; fileRef = C9583136DCF0E8EDED5329A1 /* editor-command-sequences.json */; };
 		C06EA328AC4755F0F8863904 /* RenderBridgeTests+ImageTimeoutsAndCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12B5CFB5188A5B48F66E8CC0 /* RenderBridgeTests+ImageTimeoutsAndCache.swift */; };
 		C50EDB5792875BF19405A988 /* PreparedProseLayoutRegistry+FabricOwnership.swift in Sources */ = {isa = PBXBuildFile; fileRef = F23C7755EF7A26A9C6502D05 /* PreparedProseLayoutRegistry+FabricOwnership.swift */; };
+		C56823AB794353F5AD8B403C /* NativeEditorIcons.bundle in Resources */ = {isa = PBXBuildFile; fileRef = 30C91295C2D671361FEB332E /* NativeEditorIcons.bundle */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		C62CE1834E5B1908104BA36A /* TableAcceptanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFFA788E31BABD1C5ACF2A39 /* TableAcceptanceTests.swift */; };
 		CC265DD16B02BAC43147378D /* TableCellMeasurementCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CEC859D2579C150ADF0ADF3 /* TableCellMeasurementCache.swift */; };
 		CC84D7E19FCB58EEC4AE8CF6 /* EditorV2StagingViewTests+Lifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69D4CCD5C14E285FCBD6CED5 /* EditorV2StagingViewTests+Lifecycle.swift */; };
@@ -233,6 +237,7 @@
 		E7A1A68257F4045334FBD3B0 /* EditorTableInputTests+DragDrop.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86CC7730463131B0420F0B13 /* EditorTableInputTests+DragDrop.swift */; };
 		E8113660BB016ECF1B29C253 /* NativeToolbar+Diagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE4EBDA6A6691683EBAEFDE5 /* NativeToolbar+Diagnostics.swift */; };
 		EA387D65E4384CC4C498AFA2 /* EditorV2AdapterTests+DestroyContention.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AE8A5CC23EB5F00A661F7B9 /* EditorV2AdapterTests+DestroyContention.swift */; };
+		EA88F12B8BA6EDCCB17660E2 /* MaterialDesignIcons.json in Resources */ = {isa = PBXBuildFile; fileRef = DCA6841B4B33D3B3525C9CA2 /* MaterialDesignIcons.json */; };
 		EB11FB76E1507B40E286B298 /* EditorTextView+Commands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C0BC1E99B835EB86964CD28 /* EditorTextView+Commands.swift */; };
 		EC26EB648B1B09583A058344 /* EditorHighlightingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCC5810AD8601AC3F79D74C6 /* EditorHighlightingTests.swift */; };
 		EC599006B63E1763F73D649D /* RichTextEditorViewTests+NativeMutationTests+Lifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAD94F103AA57CE5ABF769AE /* RichTextEditorViewTests+NativeMutationTests+Lifecycle.swift */; };
@@ -255,6 +260,13 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		B29B707553C48E5BDB115F0E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 445105AA8CEBE0832E1578CA /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 75618FE8579FB10F29274FE9;
+			remoteInfo = NativeEditorIcons;
+		};
 		D64860C08EAE5AD2C0B7772C /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 445105AA8CEBE0832E1578CA /* Project object */;
@@ -309,6 +321,7 @@
 		2F0C0DD9A4FFD0F40B6F3EE2 /* PositionBridgeTests+VirtualListMarkerLookup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PositionBridgeTests+VirtualListMarkerLookup.swift"; sourceTree = "<group>"; };
 		2FCA6A8C4D5E74F429A77F08 /* RenderBridgeTests+AttachmentsAndMeasurement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RenderBridgeTests+AttachmentsAndMeasurement.swift"; sourceTree = "<group>"; };
 		300B4EB44D191A7609D40C59 /* NativeEditorExpoView+Diagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "NativeEditorExpoView+Diagnostics.swift"; sourceTree = "<group>"; };
+		30C91295C2D671361FEB332E /* NativeEditorIcons.bundle */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = NativeEditorIcons.bundle; sourceTree = BUILT_PRODUCTS_DIR; };
 		32EE109CBD7FA07A568DB912 /* NativeEditorExpoView+Mentions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "NativeEditorExpoView+Mentions.swift"; sourceTree = "<group>"; };
 		34ECEFA8AB5C6B6E0EEC3B9D /* RenderBridgeTests+BlockRendering.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RenderBridgeTests+BlockRendering.swift"; sourceTree = "<group>"; };
 		3615D60BE402338605A4E283 /* TableCellEditMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellEditMenu.swift; sourceTree = "<group>"; };
@@ -354,6 +367,7 @@
 		58E290D03767D3CDF7421683 /* ViewerTableSurface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewerTableSurface.swift; sourceTree = "<group>"; };
 		5B87A96C703617DB8635AEF2 /* PreparedProseRenderingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreparedProseRenderingTests.swift; sourceTree = "<group>"; };
 		5E63C46C171CF655D8A555A5 /* EditorStyleSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorStyleSheet.swift; sourceTree = "<group>"; };
+		605BE85E3BEE1E82F7B69093 /* MaterialDesignIcons.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = MaterialDesignIcons.ttf; sourceTree = "<group>"; };
 		609456B67A174C7062F4C3C9 /* security-contract-fixtures.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "security-contract-fixtures.json"; sourceTree = "<group>"; };
 		60974A57752913BD09A3A578 /* RichTextEditorViewTests+LayoutRenderingTests+TaskMarkers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RichTextEditorViewTests+LayoutRenderingTests+TaskMarkers.swift"; sourceTree = "<group>"; };
 		619D5E78F0F65CA7D5DE6A2E /* NativePerformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePerformanceTests.swift; sourceTree = "<group>"; };
@@ -402,6 +416,7 @@
 		8D8B03630D0C1D591A0E0592 /* WindowTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowTestSupport.swift; sourceTree = "<group>"; };
 		8E31CB4F83C7A9384D0887FD /* EditorV2AdapterTests+LifecycleAdmission.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditorV2AdapterTests+LifecycleAdmission.swift"; sourceTree = "<group>"; };
 		8E791E563D360879FD2F90DF /* RichTextEditorViewTests+ExternalCompositionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RichTextEditorViewTests+ExternalCompositionTests.swift"; sourceTree = "<group>"; };
+		8F098CB1F260949199323DD7 /* ToolbarImageLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolbarImageLoader.swift; sourceTree = "<group>"; };
 		906E921B519FF43C90FCAF43 /* EditorTableInputTests+CellElements.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditorTableInputTests+CellElements.swift"; sourceTree = "<group>"; };
 		90893D76853BA3695C587EE4 /* RenderBridge+Atoms.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RenderBridge+Atoms.swift"; sourceTree = "<group>"; };
 		9572B3EEFB6B7316A05D6C88 /* PreparedProseRevisionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreparedProseRevisionTests.swift; sourceTree = "<group>"; };
@@ -448,6 +463,7 @@
 		BED09B366E5AE6BFC7BDCD86 /* EditorTextView+Layout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditorTextView+Layout.swift"; sourceTree = "<group>"; };
 		BFE3BF8DBE2B7B09F4B1FC48 /* PreparedProseLayoutRegistry+Artifacts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PreparedProseLayoutRegistry+Artifacts.swift"; sourceTree = "<group>"; };
 		C070033E04E4F53BD8567E81 /* ViewerTableTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewerTableTests.swift; sourceTree = "<group>"; };
+		C13FFD837D7B5476BF448EE0 /* ToolbarIconTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolbarIconTests.swift; sourceTree = "<group>"; };
 		C197B5D6018B6381EFC8C250 /* NativeSVGImageDecoder.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = NativeSVGImageDecoder.h; sourceTree = "<group>"; };
 		C1DE28DA987146829212E6F5 /* RenderBridgeTests+TextAndMarks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RenderBridgeTests+TextAndMarks.swift"; sourceTree = "<group>"; };
 		C1E51012282A49CD1A2FE823 /* Pods-NativeEditorTestHost.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-NativeEditorTestHost.debug.xcconfig"; path = "Target Support Files/Pods-NativeEditorTestHost/Pods-NativeEditorTestHost.debug.xcconfig"; sourceTree = "<group>"; };
@@ -487,6 +503,7 @@
 		D99ED13C2FD3E806FCE96DB5 /* NativeEditorExpoView+Updates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "NativeEditorExpoView+Updates.swift"; sourceTree = "<group>"; };
 		DA1EB407C91860D059EBC58F /* EditorTableIndexTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTableIndexTests.swift; sourceTree = "<group>"; };
 		DAD94F103AA57CE5ABF769AE /* RichTextEditorViewTests+NativeMutationTests+Lifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RichTextEditorViewTests+NativeMutationTests+Lifecycle.swift"; sourceTree = "<group>"; };
+		DCA6841B4B33D3B3525C9CA2 /* MaterialDesignIcons.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = MaterialDesignIcons.json; sourceTree = "<group>"; };
 		DCC5810AD8601AC3F79D74C6 /* EditorHighlightingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorHighlightingTests.swift; sourceTree = "<group>"; };
 		DD37D8C11947B70CF5213BE3 /* prepared-prose-harness-static-fixtures.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "prepared-prose-harness-static-fixtures.json"; sourceTree = "<group>"; };
 		DDB75B1B14284B8A680C7686 /* EditorV2StagingViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorV2StagingViewTests.swift; sourceTree = "<group>"; };
@@ -635,6 +652,7 @@
 				47A255E0D6D0056A2815C3AF /* SharedNativeImagePipeline.swift */,
 				461809BBDC5479242FFE89D5 /* SharedNativeImagePipeline+Cache.swift */,
 				1B4123D964CBD0F82722D981 /* SharedNativeImagePipeline+Transport.swift */,
+				8F098CB1F260949199323DD7 /* ToolbarImageLoader.swift */,
 			);
 			path = ios;
 			sourceTree = "<group>";
@@ -650,6 +668,7 @@
 		1F4B898E39618084B1EF4DD5 /* Products */ = {
 			isa = PBXGroup;
 			children = (
+				30C91295C2D671361FEB332E /* NativeEditorIcons.bundle */,
 				08E2E15E6EE0B9E2C50A927D /* NativeEditorTestHost.app */,
 				AAFA4DB42F32DDE95171E72A /* NativeEditorTests.xctest */,
 			);
@@ -706,6 +725,14 @@
 				F45348350F5A254C31631661 /* libPods-NativeEditorTests.a */,
 			);
 			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		66415E4366CD2FC890D659F6 /* src */ = {
+			isa = PBXGroup;
+			children = (
+				F45340FEBD1D26ED6C5AD275 /* main */,
+			);
+			path = src;
 			sourceTree = "<group>";
 		};
 		67EB2F510C128DFEA0BBF7E8 /* Fabric */ = {
@@ -778,6 +805,14 @@
 				2D040353CE9DD4919DF31720 /* NativeEditorTestHost */,
 			);
 			name = ExpoModulesProviders;
+			sourceTree = "<group>";
+		};
+		9B6E6688D3751E74F25B1759 /* android */ = {
+			isa = PBXGroup;
+			children = (
+				66415E4366CD2FC890D659F6 /* src */,
+			);
+			path = android;
 			sourceTree = "<group>";
 		};
 		A1B0488D87C3F2E91B9D51E8 /* Tests */ = {
@@ -903,10 +938,20 @@
 				E2A5AE4688413A95FB52451B /* TableIntegrationTests.swift */,
 				2D22FE62AE04E9E338454B12 /* TablePerformanceTests.swift */,
 				B2E151B107B1C64D5D0F8EF3 /* TableTestSupport.swift */,
+				C13FFD837D7B5476BF448EE0 /* ToolbarIconTests.swift */,
 				C070033E04E4F53BD8567E81 /* ViewerTableTests.swift */,
 				8D8B03630D0C1D591A0E0592 /* WindowTestSupport.swift */,
 			);
 			path = Tests;
+			sourceTree = "<group>";
+		};
+		A5230BD1E32121A60CE459F3 /* editor-icons */ = {
+			isa = PBXGroup;
+			children = (
+				DCA6841B4B33D3B3525C9CA2 /* MaterialDesignIcons.json */,
+				605BE85E3BEE1E82F7B69093 /* MaterialDesignIcons.ttf */,
+			);
+			path = "editor-icons";
 			sourceTree = "<group>";
 		};
 		AD5DDF42BF333A2B2879EFA3 = {
@@ -922,6 +967,14 @@
 			);
 			sourceTree = "<group>";
 		};
+		CA4C0B131914ED00E4230AD9 /* assets */ = {
+			isa = PBXGroup;
+			children = (
+				A5230BD1E32121A60CE459F3 /* editor-icons */,
+			);
+			path = assets;
+			sourceTree = "<group>";
+		};
 		CF01A22BEFE8BCA34CEF8261 /* PreparedProseViewer */ = {
 			isa = PBXGroup;
 			children = (
@@ -933,6 +986,7 @@
 		D31F7825094A62DBE5804174 /* native-editor */ = {
 			isa = PBXGroup;
 			children = (
+				9B6E6688D3751E74F25B1759 /* android */,
 				003FDF7B9C54A068F74FB415 /* common */,
 				00410BC288424088D6F3C70B /* ios */,
 				781F9B5CBCFE6BF55B817DB0 /* scripts */,
@@ -975,6 +1029,14 @@
 			path = cpp;
 			sourceTree = "<group>";
 		};
+		F45340FEBD1D26ED6C5AD275 /* main */ = {
+			isa = PBXGroup;
+			children = (
+				CA4C0B131914ED00E4230AD9 /* assets */,
+			);
+			path = main;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -991,6 +1053,7 @@
 			);
 			dependencies = (
 				C4975DE97DE6AD3A4CA81758 /* PBXTargetDependency */,
+				DF06A61E84BCA9D5F1B0F246 /* PBXTargetDependency */,
 			);
 			name = NativeEditorTests;
 			productName = NativeEditorTests;
@@ -1018,6 +1081,22 @@
 			productReference = 08E2E15E6EE0B9E2C50A927D /* NativeEditorTestHost.app */;
 			productType = "com.apple.product-type.application";
 		};
+		75618FE8579FB10F29274FE9 /* NativeEditorIcons */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 89F7CEF40E073555F57EC31A /* Build configuration list for PBXNativeTarget "NativeEditorIcons" */;
+			buildPhases = (
+				E15D16531DCCEA77EC60048E /* Resources */,
+				AE80A6336D3D3E1C788FAF26 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = NativeEditorIcons;
+			productName = NativeEditorIcons;
+			productReference = 30C91295C2D671361FEB332E /* NativeEditorIcons.bundle */;
+			productType = "com.apple.product-type.bundle";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -1033,6 +1112,10 @@
 						TestTargetID = 36BE18DD6515FBAF43F806D5;
 					};
 					36BE18DD6515FBAF43F806D5 = {
+						DevelopmentTeam = "$(IOS_DEVELOPMENT_TEAM)";
+						ProvisioningStyle = Automatic;
+					};
+					75618FE8579FB10F29274FE9 = {
 						DevelopmentTeam = "$(IOS_DEVELOPMENT_TEAM)";
 						ProvisioningStyle = Automatic;
 					};
@@ -1052,6 +1135,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
+				75618FE8579FB10F29274FE9 /* NativeEditorIcons */,
 				36BE18DD6515FBAF43F806D5 /* NativeEditorTestHost */,
 				19C22BD2CB0BC83B9918257D /* NativeEditorTests */,
 			);
@@ -1079,6 +1163,16 @@
 				E24B75C91B410429B9FC271A /* shapes-and-text.svg in Resources */,
 				E0BFF3715EB94B510A0507AE /* table-toolbar-actions.json in Resources */,
 				A5CC2A434974FCEBEC188106 /* viewer-performance-corpus.json in Resources */,
+				C56823AB794353F5AD8B403C /* NativeEditorIcons.bundle in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E15D16531DCCEA77EC60048E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				EA88F12B8BA6EDCCB17660E2 /* MaterialDesignIcons.json in Resources */,
+				B011D5D36B08284BB8C6574F /* MaterialDesignIcons.ttf in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1428,12 +1522,21 @@
 				1292256F9E30C4E60AE0A061 /* TableStyle.swift in Sources */,
 				CF676BC9CF65054EE1C926BA /* TableSurfaceSource.swift in Sources */,
 				E0BB7397944C88AF1C4700C9 /* TableTestSupport.swift in Sources */,
+				A50FF57AE8EB10353563D640 /* ToolbarIconTests.swift in Sources */,
+				AD1368545711C4AB2144F2A7 /* ToolbarImageLoader.swift in Sources */,
 				81A987FAE78E964982371CDE /* ViewerDocument.swift in Sources */,
 				DF21563725718BD10927F352 /* ViewerFontEnvironment.swift in Sources */,
 				97C50B5BFA0AA550E225668C /* ViewerImagePipeline.swift in Sources */,
 				EE1BDA9CFD1775A08556EC94 /* ViewerTableSurface.swift in Sources */,
 				653A3EE830D6C48C215203C1 /* ViewerTableTests.swift in Sources */,
 				79B873D742EF1254B10BA017 /* WindowTestSupport.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AE80A6336D3D3E1C788FAF26 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1445,9 +1548,30 @@
 			target = 36BE18DD6515FBAF43F806D5 /* NativeEditorTestHost */;
 			targetProxy = D64860C08EAE5AD2C0B7772C /* PBXContainerItemProxy */;
 		};
+		DF06A61E84BCA9D5F1B0F246 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 75618FE8579FB10F29274FE9 /* NativeEditorIcons */;
+			targetProxy = B29B707553C48E5BDB115F0E /* PBXContainerItemProxy */;
+		};
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		1C14D68BB1EB4E8EC0B49650 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_DEBUG";
+				PRODUCT_BUNDLE_IDENTIFIER = com.apollohg.NativeEditorIcons;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
 		1DC8ACECC9EAFD09CE1BD287 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = C1E51012282A49CD1A2FE823 /* Pods-NativeEditorTestHost.debug.xcconfig */;
@@ -1538,6 +1662,22 @@
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_RELEASE";
 				PRODUCT_BUNDLE_IDENTIFIER = com.apollohg.NativeEditorTestHost;
 				PRODUCT_NAME = NativeEditorTestHost;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		613E9D3B9FEC77C854F3C159 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_RELEASE";
+				PRODUCT_BUNDLE_IDENTIFIER = com.apollohg.NativeEditorIcons;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -1755,6 +1895,15 @@
 			buildConfigurations = (
 				1DC8ACECC9EAFD09CE1BD287 /* Debug */,
 				5713D6574C27C924197974FA /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		89F7CEF40E073555F57EC31A /* Build configuration list for PBXNativeTarget "NativeEditorIcons" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1C14D68BB1EB4E8EC0B49650 /* Debug */,
+				613E9D3B9FEC77C854F3C159 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

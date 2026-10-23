@@ -13,6 +13,7 @@ module.exports = {
     setupFiles: [require.resolve('@react-native/jest-preset/jest/setup.js')],
     testEnvironment: require.resolve('@react-native/jest-preset/jest/react-native-env.js'),
     testMatch: ['<rootDir>/src/__tests__/**/*.test.ts', '<rootDir>/src/__tests__/**/*.test.tsx'],
+    modulePathIgnorePatterns: ['<rootDir>/android/build/', '<rootDir>/ios-tests/build/'],
     moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json'],
     moduleDirectories: ['node_modules'],
     moduleNameMapper: {
@@ -20,7 +21,6 @@ module.exports = {
         '^react-native$': REACT_NATIVE,
         '^react-native/(.*)$': path.join(REACT_NATIVE, '$1'),
         '^expo-modules-core$': EXPO_MODULES_CORE,
-        '^@react-native-vector-icons/material-design-icons$': '<rootDir>/test/mocks/expoVectorIcons.js',
     },
     transform: {
         '^.+\\.[jt]sx?$': 'babel-jest',

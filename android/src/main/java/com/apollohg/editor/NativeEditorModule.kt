@@ -343,6 +343,11 @@ class NativeEditorModule : Module() {
 
     override fun definition() = ModuleDefinition {
         Name("NativeEditor")
+        Function("getToolbarIcon") { name: String ->
+            val context = appContext.reactContext
+                ?: throw IllegalStateException("NativeEditor toolbar icon lookup requires a React context")
+            MaterialIconRegistry.reactIcon(context, name)
+        }
         // Benchmark controls remain outside measurement/drawing paths.
         Function("preparedProseBenchmarkBegin") {
             PreparedProseInstrumentation.beginBenchmark()

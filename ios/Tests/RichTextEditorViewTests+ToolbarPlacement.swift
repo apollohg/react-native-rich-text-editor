@@ -197,3 +197,18 @@ extension RichTextEditorViewTests {
     }
 
 }
+
+extension RichTextEditorViewTests {
+    func testImageToolbarDescriptorRetainsFallbackAndAcceptsResolvedSources() throws {
+        for uri in ["file:///tmp/icon.png", "https://example.com/icon.png", "data:image/png;base64,AA==", "bundle-icon"] {
+            let icon = try XCTUnwrap(NativeToolbarIcon.from(jsonValue: [
+                "type": "image", "source": ["uri": uri, "width": 48, "height": 24, "scale": 2],
+                "fallbackText": "Image"
+            ]))
+            XCTAssertEqual(icon.resolvedGlyphText(), "Image", "Image source \(uri) must preserve its loading/failure fallback")
+            XCTAssertNil(icon.resolvedSFSymbolName())
+        }
+        XCTAssertNil(NativeToolbarIcon.from(jsonValue: ["type": "image", "source": ["uri": ""]]))
+        XCTAssertNil(NativeToolbarIcon.from(jsonValue: ["type": "image", "source": 42]))
+    }
+}

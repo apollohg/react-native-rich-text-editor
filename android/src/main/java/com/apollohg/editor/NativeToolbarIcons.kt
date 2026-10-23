@@ -3,12 +3,15 @@ package com.apollohg.editor
 import android.content.Context
 import android.graphics.Typeface
 import org.json.JSONObject
+import com.facebook.react.common.assets.ReactFontManager
 
 internal data class NativeToolbarIcon(
     val defaultId: ToolbarDefaultIconId? = null,
     val glyphText: String? = null,
     val fallbackText: String? = null,
-    val materialIconName: String? = null
+    val materialIconName: String? = null,
+    val imageSource: NativeToolbarImageSource? = null,
+    val tintable: Boolean = true
 ) {
     companion object {
         private val defaultGlyphs = mapOf(
@@ -81,6 +84,20 @@ internal data class NativeToolbarIcon(
                     if (text.isBlank()) null else NativeToolbarIcon(glyphText = text)
                 }
 
+                "image" -> {
+                    val source = raw.optJSONObject("source") ?: return null
+                    val uri = source.toolbarNullableString("uri")?.takeIf { it.isNotBlank() }
+                        ?: return null
+                    NativeToolbarIcon(
+                        imageSource = NativeToolbarImageSource(
+                            uri, source.toolbarPositiveNumber("width"),
+                            source.toolbarPositiveNumber("height"), source.toolbarPositiveNumber("scale")
+                        ),
+                        tintable = raw.optBoolean("tintable", true),
+                        fallbackText = raw.toolbarNullableString("fallbackText")
+                    )
+                }
+
                 "platform" -> {
                     val materialName = raw.optJSONObject("android")
                         ?.takeIf { it.optString("type") == "material" }
@@ -122,6 +139,20 @@ internal object MaterialIconRegistry {
 
     @Volatile
     private var glyphMap: Map<String, String>? = null
+
+    @Synchronized
+    fun reactIcon(context: Context, name: String): Map<String, String>? {
+        if (name.isBlank()) return null
+        val glyph = glyphForName(context, name)
+        check(!glyphMap.isNullOrEmpty()) { "NativeEditor could not load bundled toolbar icon glyph map" }
+        glyph ?: return null
+        val font = typeface(context)
+            ?: throw IllegalStateException("NativeEditor could not load bundled toolbar icon font")
+        ReactFontManager.getInstance().setTypeface(REACT_FONT_FAMILY, Typeface.NORMAL, font)
+        return mapOf("glyph" to glyph, "fontFamily" to REACT_FONT_FAMILY)
+    }
+
+    private const val REACT_FONT_FAMILY = "NativeEditorMaterialDesignIcons"
 
     fun typeface(context: Context): Typeface? {
         val cached = typeface
@@ -183,3 +214,13 @@ internal fun JSONObject.toolbarNullableString(key: String): String? {
     if (!has(key) || isNull(key)) return null
     return optString(key).takeUnless { it == "null" }
 }
+
+internal data class NativeToolbarImageSource(
+    val uri: String,
+    val width: Double? = null,
+    val height: Double? = null,
+    val scale: Double? = null
+)
+
+private fun JSONObject.toolbarPositiveNumber(key: String): Double? =
+    optDouble(key).takeIf { it.isFinite() && it > 0 }

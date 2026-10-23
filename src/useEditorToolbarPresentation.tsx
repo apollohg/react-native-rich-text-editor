@@ -20,6 +20,7 @@ export function useEditorToolbarPresentation(
     context: Pick<
         ReturnType<typeof useEditorToolbarState>,
         | 'menuState'
+        | 'renderToolbarIcon'
         | 'theme'
         | 'windowHeight'
         | 'windowWidth'
@@ -48,6 +49,7 @@ export function useEditorToolbarPresentation(
     const {
         menuState,
         groupsByKey,
+        renderToolbarIcon,
         theme,
         windowHeight,
         windowWidth,
@@ -166,6 +168,10 @@ export function useEditorToolbarPresentation(
                     <View>
                         <ToolbarIcon
                             icon={button.icon}
+                            itemKey={button.key}
+                            isActive={button.isActive === true}
+                            isDisabled={button.isDisabled === true}
+                            renderToolbarIcon={renderToolbarIcon}
                             color={visuals.color}
                             size={visuals.iconSize}
                         />
@@ -427,6 +433,10 @@ export function useEditorToolbarPresentation(
                                     >
                                         <ToolbarIcon
                                             icon={button.icon}
+                                            itemKey={button.key}
+                                            isActive={button.isActive === true}
+                                            isDisabled={button.isDisabled === true}
+                                            renderToolbarIcon={renderToolbarIcon}
                                             color={visuals.color}
                                             size={visuals.iconSize}
                                         />

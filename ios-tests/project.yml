@@ -26,6 +26,20 @@ settings:
     "CODE_SIGNING_REQUIRED[sdk=iphonesimulator*]": NO
 
 targets:
+  NativeEditorIcons:
+    type: bundle
+    platform: iOS
+    sources:
+      - path: ../android/src/main/assets/editor-icons/MaterialDesignIcons.ttf
+        buildPhase: resources
+      - path: ../android/src/main/assets/editor-icons/MaterialDesignIcons.json
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.apollohg.NativeEditorIcons
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGNING_ALLOWED: NO
+
   NativeEditorTestHost:
     type: application
     platform: iOS
@@ -121,6 +135,8 @@ targets:
           - $(SRCROOT)/../ios/EditorCore.xcframework/ios-arm64_x86_64-simulator/libeditor_core.a
     dependencies:
       - target: NativeEditorTestHost
+      - target: NativeEditorIcons
+        embed: true
 
 schemes:
   NativeEditorTests:

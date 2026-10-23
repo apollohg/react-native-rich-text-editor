@@ -15,9 +15,7 @@
   "dependencies": {
     "@apollohg/react-native-rich-text-editor": "file:..",
     "@apollohg/react-native-rich-text-editor-code-highlighting": "file:../packages/code-highlighting",
-    "@react-native-vector-icons/material-design-icons": "^13.1.4",
     "expo": "^58.0.0-preview.6",
-    "expo-font": "~58.0.2",
     "expo-image-manipulator": "~58.0.7",
     "expo-image-picker": "~58.0.6",
     "expo-status-bar": "~58.0.1",
