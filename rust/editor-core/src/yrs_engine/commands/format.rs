@@ -22,6 +22,9 @@ fn validate_mark_request(
     crate::command_planner::validate_mark_request(context.schema, mark_type, attrs).map_err(
         |error| {
             let message = match error {
+                crate::command_planner::MarkRequestError::InvalidColor => {
+                    "invalid textStyle color".into()
+                }
                 crate::command_planner::MarkRequestError::UnknownMark => {
                     format!("unknown mark '{mark_type}'")
                 }
@@ -137,7 +140,21 @@ pub(super) fn plan(
                 super::text::semantic_transaction(&context, &selection, plan.semantic)
             }
         }
-        TypedCommand::SetMark { mark_type, attrs } => {
+        TypedCommand::SetMark {
+            mark_type,
+            mut attrs,
+        } => {
+            if mark_type == crate::text_color::TEXT_STYLE_MARK {
+                if let Some(spec) = context.schema.mark(&mark_type) {
+                    for (name, attr) in &spec.attrs {
+                        if let Some(default) = &attr.default {
+                            attrs.entry(name.clone()).or_insert_with(|| {
+                                crate::boundary::clone_json_value_stack_safe(default)
+                            });
+                        }
+                    }
+                }
+            }
             validate_mark_request(&context, &mark_type, &attrs)?;
             let Some(plan) = crate::command_planner::plan_set_mark(
                 context.document,

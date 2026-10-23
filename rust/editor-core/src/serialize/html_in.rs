@@ -108,17 +108,101 @@ fn mark_from_element(tag: &str, elem: &scraper::node::Element, schema: &Schema) 
         .flatten()
         .filter(|name| schema.mark(name).is_some())
         .or_else(|| tag_to_mark_type(tag).filter(|name| schema.mark(name).is_some()))
-        .or_else(|| schema.mark_by_html_tag(tag).map(|spec| spec.name.as_str()))?;
+        .or_else(|| {
+            schema
+                .all_marks()
+                .find(|spec| {
+                    spec.html_tag.as_deref() == Some(tag)
+                        && (tag != "span"
+                            || !supports_text_color(spec)
+                            || spec.attrs.keys().any(|name| {
+                                name != crate::text_color::COLOR_ATTR
+                                    && element_attr(elem, name).is_some()
+                            }))
+                })
+                .map(|spec| spec.name.as_str())
+        })?;
     let spec = schema.mark(mark_type)?;
-    let mut attrs = HashMap::new();
+    Some(Mark::new(
+        mark_type.to_string(),
+        mark_attrs_from_element(spec, elem, HashMap::new()),
+    ))
+}
+
+fn supports_text_color(spec: &crate::schema::MarkSpec) -> bool {
+    spec.name == crate::text_color::TEXT_STYLE_MARK
+        && spec.attrs.contains_key(crate::text_color::COLOR_ATTR)
+}
+
+fn mark_attrs_from_element(
+    spec: &crate::schema::MarkSpec,
+    elem: &scraper::node::Element,
+    mut attrs: HashMap<String, serde_json::Value>,
+) -> HashMap<String, serde_json::Value> {
     for (name, attr_spec) in &spec.attrs {
         if let Some(value) = element_attr(elem, name) {
             attrs.insert(name.clone(), parse_attr_value(name, attr_spec, value));
         } else if let Some(default) = &attr_spec.default {
-            attrs.insert(name.clone(), default.clone());
+            attrs.entry(name.clone()).or_insert_with(|| default.clone());
         }
     }
-    Some(Mark::new(mark_type.to_string(), attrs))
+    attrs
+}
+
+fn element_marks(
+    tag: &str,
+    elem: &scraper::node::Element,
+    schema: &Schema,
+    active_marks: &[Mark],
+) -> Option<Vec<Mark>> {
+    if tag == "span"
+        && (node_spec_for_element(tag, elem, schema).is_some()
+            || element_attr(elem, "data-native-editor-mention").is_some())
+    {
+        return None;
+    }
+    let mark = mark_from_element(tag, elem, schema);
+    let color_spec = schema
+        .mark(crate::text_color::TEXT_STYLE_MARK)
+        .filter(|spec| supports_text_color(spec));
+    let plain_span =
+        tag == "span" && color_spec.is_some() && elem.attrs().all(|(name, _)| name == "style");
+    let color = (tag == "span" && color_spec.is_some() && (plain_span || mark.is_some()))
+        .then(|| element_attr(elem, "style").and_then(crate::text_color::color_from_style))
+        .flatten();
+    if mark.is_none() && color.is_none() && !plain_span {
+        return None;
+    }
+    let mut marks = active_marks.to_vec();
+    let text_style_element = color_spec.is_some()
+        && mark
+            .as_ref()
+            .is_some_and(|mark| mark.mark_type() == crate::text_color::TEXT_STYLE_MARK);
+    if let Some(mark) = mark.filter(|_| !text_style_element) {
+        if !marks
+            .iter()
+            .any(|existing| existing.mark_type() == mark.mark_type())
+        {
+            marks.push(mark);
+        }
+    }
+    if let Some(spec) = color_spec.filter(|_| text_style_element || color.is_some()) {
+        let attrs = marks
+            .iter()
+            .find(|mark| mark.mark_type() == crate::text_color::TEXT_STYLE_MARK)
+            .map(|mark| mark.attrs().clone())
+            .unwrap_or_default();
+        let mut attrs = mark_attrs_from_element(spec, elem, attrs);
+        if let Some(color) = color {
+            attrs.insert(
+                crate::text_color::COLOR_ATTR.into(),
+                serde_json::Value::String(color),
+            );
+        }
+        marks.retain(|mark| mark.mark_type() != crate::text_color::TEXT_STYLE_MARK);
+        marks.push(Mark::new(crate::text_color::TEXT_STYLE_MARK.into(), attrs));
+    }
+    Some(marks)
 }
 
 // Known void HTML elements (self-closing / no content)
@@ -165,7 +249,19 @@ pub(crate) fn opaque_html_metadata_remains_opaque(
         return false;
     }
     if tag_to_mark_type(tag).is_some_and(|name| schema.mark(name).is_some())
-        || schema.mark_by_html_tag(tag).is_some()
+        || schema.all_marks().any(|spec| {
+            spec.html_tag.as_deref() == Some(tag)
+                && (tag != "span"
+                    || !supports_text_color(spec)
+                    || spec.attrs.keys().any(|name| {
+                        name != crate::text_color::COLOR_ATTR && attrs.contains_key(name)
+                    }))
+        })
+        || (tag == "span"
+            && schema
+                .mark(crate::text_color::TEXT_STYLE_MARK)
+                .is_some_and(supports_text_color)
+            && attrs.keys().all(|name| name == "style"))
     {
         return false;
     }
@@ -508,14 +604,7 @@ fn process_element(
     block_acc: &mut Vec<Node>,
     inline_acc: &mut Vec<Node>,
 ) -> Result<(), ParseError> {
-    if let Some(mark) = mark_from_element(tag, elem, schema) {
-        let mut new_marks = active_marks.to_vec();
-        if !new_marks
-            .iter()
-            .any(|existing| existing.mark_type() == mark.mark_type())
-        {
-            new_marks.push(mark);
-        }
+    if let Some(new_marks) = element_marks(tag, elem, schema, active_marks) {
         return process_children(node_ref, schema, options, &new_marks, block_acc, inline_acc);
     }
 
@@ -1012,14 +1101,7 @@ fn collect_inline_children(
                 continue;
             }
 
-            if let Some(mark) = mark_from_element(tag, elem, schema) {
-                let mut new_marks = active_marks.to_vec();
-                if !new_marks
-                    .iter()
-                    .any(|existing| existing.mark_type() == mark.mark_type())
-                {
-                    new_marks.push(mark);
-                }
+            if let Some(new_marks) = element_marks(tag, elem, schema, active_marks) {
                 let children = collect_inline_children(child, schema, options, &new_marks)?;
                 inline_nodes.extend(children);
                 continue;

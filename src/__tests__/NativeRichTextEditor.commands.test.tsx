@@ -43,6 +43,16 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         act(() => ref.current!.toggleMark('bold'));
         expect(lastCommand()).toEqual({ type: 'toggleMark', markType: 'bold' });
 
+        act(() => ref.current!.setMark('textStyle', { color: '#e53935' }));
+        expect(lastCommand()).toEqual({
+            type: 'setMark',
+            markType: 'textStyle',
+            attrs: { color: '#e53935' },
+        });
+
+        act(() => ref.current!.unsetMark('textStyle'));
+        expect(lastCommand()).toEqual({ type: 'unsetMark', markType: 'textStyle' });
+
         act(() => ref.current!.setLink('https://example.com'));
 
         expect(lastCommand()).toEqual({
@@ -295,6 +305,8 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
 
         const mutations: Array<() => void> = [
             () => ref.current!.toggleMark('bold'),
+            () => ref.current!.setMark('textStyle', { color: 'red' }),
+            () => ref.current!.unsetMark('textStyle'),
             () => ref.current!.setLink('https://example.com'),
             () => ref.current!.unsetLink(),
             () => ref.current!.toggleBlockquote(),

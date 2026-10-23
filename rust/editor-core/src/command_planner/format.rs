@@ -116,8 +116,9 @@ pub(crate) fn plan_set_mark(
     let to = (*anchor).max(*head);
     let mark_type = mark.mark_type().to_string();
     if from == to {
-        if let Some((range_from, range_to)) =
-            crate::editor_state::mark_range_at_position(document, from, &mark_type)
+        if let Some((range_from, range_to)) = (mark_type != crate::text_color::TEXT_STYLE_MARK)
+            .then(|| crate::editor_state::mark_range_at_position(document, from, &mark_type))
+            .flatten()
         {
             return Some(MarkCommandPlan {
                 semantic: SemanticCommandPlan {
@@ -195,8 +196,9 @@ pub(crate) fn plan_unset_mark(
     let from = (*anchor).min(*head);
     let to = (*anchor).max(*head);
     if from == to {
-        if let Some((range_from, range_to)) =
-            crate::editor_state::mark_range_at_position(document, from, mark_type)
+        if let Some((range_from, range_to)) = (mark_type != crate::text_color::TEXT_STYLE_MARK)
+            .then(|| crate::editor_state::mark_range_at_position(document, from, mark_type))
+            .flatten()
         {
             return Some(MarkCommandPlan {
                 semantic: SemanticCommandPlan {

@@ -393,6 +393,7 @@ version = "2.1.3"
 dependencies = [
  "base64",
  "cc",
+ "cssparser",
  "ego-tree",
  "html5ever",
  "jni-sys 0.3.1",

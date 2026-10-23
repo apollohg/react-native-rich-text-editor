@@ -13,6 +13,7 @@
         "test:native-structural-edits": "tsx run.ts --suite native-structural-edits",
         "test:native-acceptance-export": "tsx run.ts --suite native-acceptance-export",
         "test:native-mark-formats": "tsx run.ts --suite native-mark-formats",
+        "test:text-color": "tsx run.ts --suite text-color",
         "test:differential": "tsx run.ts --suite differential",
         "test:upstream-mutex": "tsx run.ts --suite upstream-mutex-repair-write-back",
         "reduce": "tsx reduce.ts"
@@ -24,6 +25,7 @@
         "@tiptap/extension-paragraph": "3.31.3",
         "@tiptap/extension-table": "3.31.3",
         "@tiptap/extension-text": "3.31.3",
+        "@tiptap/extension-text-style": "3.31.3",
         "playwright": "1.63.0",
         "prosemirror-commands": "1.7.2",
         "prosemirror-model": "1.25.11",

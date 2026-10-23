@@ -177,10 +177,11 @@
                     { "name": "underline", "htmlTag": "u" },
                     { "name": "strike", "htmlTag": "s" },
                     { "name": "code", "htmlTag": "code" },
-                    { "name": "link", "attrs": { "href": {} }, "htmlTag": "a", "inclusive": false }
+                    { "name": "link", "attrs": { "href": {} }, "htmlTag": "a", "inclusive": false },
+                    { "name": "textStyle", "attrs": { "color": { "default": null } }, "htmlTag": "span", "inclusive": true }
                 ]
             },
-            "expectedFingerprint": "15e4677213e733cf703a3b2d82aa2559903b18600a6f649c075ff8d652681732"
+            "expectedFingerprint": "db9ad5f70a9ceae64d0e4ec06bc3e26489ac8cc40d458329f40c611fcb5a73bb"
         },
         {
             "name": "default ProseMirror schema",
@@ -325,10 +326,11 @@
                     { "name": "underline", "htmlTag": "u" },
                     { "name": "strike", "htmlTag": "s" },
                     { "name": "code", "htmlTag": "code" },
-                    { "name": "link", "attrs": { "href": {} }, "htmlTag": "a", "inclusive": false }
+                    { "name": "link", "attrs": { "href": {} }, "htmlTag": "a", "inclusive": false },
+                    { "name": "textStyle", "attrs": { "color": { "default": null } }, "htmlTag": "span", "inclusive": true }
                 ]
             },
-            "expectedFingerprint": "9805afc92c4b9af1ab9d137a3a3ff2088d17a8a4d47196853bd7efc2c005ff7f"
+            "expectedFingerprint": "536bce3586dc25db63ab5448afdf1939fa2982ba8dbf23054c321dbd2ece35df"
         },
         {
             "name": "custom root schema",

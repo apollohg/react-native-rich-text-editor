@@ -51,6 +51,8 @@ mod serialize;
 mod session;
 #[path = "../src/tables/mod.rs"]
 mod tables;
+#[path = "../src/text_color.rs"]
+mod text_color;
 #[path = "../src/transform/mod.rs"]
 mod transform;
 #[path = "../src/viewer/mod.rs"]

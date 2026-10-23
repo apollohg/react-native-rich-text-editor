@@ -245,6 +245,7 @@ pub(crate) enum MarkRequestError {
     UnknownMark,
     RequiredAttribute(String),
     UndeclaredAttribute(String),
+    InvalidColor,
 }
 
 pub(crate) fn validate_mark_request(
@@ -253,6 +254,9 @@ pub(crate) fn validate_mark_request(
     attrs: &HashMap<String, serde_json::Value>,
 ) -> Result<(), MarkRequestError> {
     validate_mark_type(schema, mark_type)?;
+    if !crate::text_color::valid_color_attrs(mark_type, attrs) {
+        return Err(MarkRequestError::InvalidColor);
+    }
     let spec = schema
         .mark(mark_type)
         .expect("validated mark type must exist");

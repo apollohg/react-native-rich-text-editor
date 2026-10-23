@@ -425,6 +425,11 @@ fn parse_marks(
         }
 
         let attrs = parse_mark_attrs(mark_obj, schema.mark(mark_type));
+        if !crate::text_color::valid_color_attrs(mark_type, &attrs) {
+            return Err(JsonParseError::InvalidStructure(
+                "invalid textStyle color".into(),
+            ));
+        }
         marks.push(Mark::new(mark_type.to_string(), attrs));
     }
 

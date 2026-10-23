@@ -126,6 +126,16 @@ struct EditorStyleSheet {
         return result
     }
 
+    static let textStyleMark = "textStyle"
+    static let textColorAttribute = "color"
+
+    static func explicitTextColor(_ marks: [Any]) -> UIColor? {
+        for case let mark as [String: Any] in marks where mark["type"] as? String == textStyleMark {
+            if let color = EditorTheme.color(from: mark[textColorAttribute]) { return color }
+        }
+        return nil
+    }
+
     private static let inlineMarkNames = ["inlineCode", "bold", "italic", "link", "underline", "strike"]
 
     func inlineAttributes(_ marks: [Any], base: [NSAttributedString.Key: Any], scale: CGFloat = 1, ancestors: [String] = []) -> [NSAttributedString.Key: Any] {
@@ -154,6 +164,7 @@ struct EditorStyleSheet {
                 attributes[RenderBridgeAttributes.linkHref] = href
             }
         }
+        if let color = Self.explicitTextColor(marks) { attributes[.foregroundColor] = color }
         return attributes
     }
 

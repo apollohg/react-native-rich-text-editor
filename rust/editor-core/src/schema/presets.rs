@@ -544,6 +544,18 @@ fn build_schema_parts(convention: &NamingConvention) -> (Vec<NodeSpec>, Vec<Mark
             inclusive: false,
             allow_undeclared_attrs: false,
         },
+        MarkSpec {
+            name: crate::text_color::TEXT_STYLE_MARK.into(),
+            html_tag: Some("span".into()),
+            attrs: HashMap::from([(crate::text_color::COLOR_ATTR.into(), AttrSpec {
+                default: Some(serde_json::Value::Null),
+                has_default: true,
+                ..AttrSpec::default()
+            })]),
+            excludes: None,
+            inclusive: true,
+            allow_undeclared_attrs: false,
+        },
     ];
 
     (nodes, marks)

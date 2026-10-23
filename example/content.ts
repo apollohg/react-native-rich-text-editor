@@ -32,6 +32,7 @@ const REPOSITORY_URL = 'https://github.com/apollohg/react-native-rich-text-edito
 const COUNTER_CARD_NODE_NAME = 'counterCard';
 
 const REPOSITORY_LINK = link(REPOSITORY_URL);
+const SAMPLE_TEXT_COLOR = { type: 'textStyle', attrs: { color: '#c2410c' } };
 
 function taskItem(checked: boolean, label: string): DocumentJSON {
     return { type: TASK_ITEM_NODE_NAME, attrs: { checked }, content: [ paragraph(text(label)) ] };
@@ -68,6 +69,8 @@ export const INITIAL_DOCUMENT: DocumentJSON = {
             text('strikethrough', STRIKE),
             text(', and '),
             text('links', REPOSITORY_LINK),
+            text(', and '),
+            text('colour', SAMPLE_TEXT_COLOR),
             text('.')
         ),
         heading(2, 'Table'),
