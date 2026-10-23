@@ -602,6 +602,13 @@ extension EditorTextView {
         let postApplyTrace = performPostApplyMaintenance()
         let postApplyNanos = postApplyTrace.totalNanos
 
+        if !shouldSkipRender, !appliedPatch, !incomingRootTableIDs.isEmpty,
+           isFirstResponder, isInterceptingInput, let selection = selectedTextRange {
+            // Full table renders invalidate the layout preceding the accepted caret.
+            _ = caretRect(for: selection.end)
+            layoutIfNeeded()
+        }
+
         if captureApplyUpdateTraceForTesting {
             lastApplyUpdateTraceForTesting = ApplyUpdateTrace(
                 attemptedPatch: renderPatch != nil,
