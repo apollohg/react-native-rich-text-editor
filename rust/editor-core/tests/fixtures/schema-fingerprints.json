@@ -170,10 +170,10 @@
                     { "name": "underline", "htmlTag": "u" },
                     { "name": "strike", "htmlTag": "s" },
                     { "name": "code", "htmlTag": "code" },
-                    { "name": "link", "attrs": { "href": {} }, "htmlTag": "a" }
+                    { "name": "link", "attrs": { "href": {} }, "htmlTag": "a", "inclusive": false }
                 ]
             },
-            "expectedFingerprint": "aeb941c42d743cd9206f0117016465461e0106873347b50d09aa1da1e6fab2cf"
+            "expectedFingerprint": "b0cfe7c0c5d273e852ec930901762245c676d02876ce2b915d65449b154cd6d1"
         },
         {
             "name": "default ProseMirror schema",
@@ -311,10 +311,10 @@
                     { "name": "underline", "htmlTag": "u" },
                     { "name": "strike", "htmlTag": "s" },
                     { "name": "code", "htmlTag": "code" },
-                    { "name": "link", "attrs": { "href": {} }, "htmlTag": "a" }
+                    { "name": "link", "attrs": { "href": {} }, "htmlTag": "a", "inclusive": false }
                 ]
             },
-            "expectedFingerprint": "16334f711a4020e2cc375064ef668563152d7d1ddecf49ef30e3e270cdfcc5c7"
+            "expectedFingerprint": "b7142c59976d6d425c36daa30998f00d9756911794d4d5d7fb4c51377a683b11"
         },
         {
             "name": "custom root schema",

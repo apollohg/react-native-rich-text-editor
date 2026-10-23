@@ -45,6 +45,28 @@ const COUNTER_NODE: NodeSpec = {
 };
 
 describe('defineSchema', () => {
+    it('preserves mark inclusivity through authoring and native normalization', () => {
+        const schema = defineSchema({
+            ...tiptapCompatibleSchemaSpec,
+            marks: {
+                ...tiptapCompatibleSchemaSpec.marks,
+                link: { attrs: { href: {} }, inclusive: false },
+                bold: { inclusive: true },
+            },
+        });
+
+        for (const resolved of [ schema, resolveDocumentSchema(schema) ]) {
+            expect(resolved.marks.find(mark => mark.name === 'link')?.inclusive).toBe(false);
+            expect(resolved.marks.find(mark => mark.name === 'bold')?.inclusive).toBe(true);
+        }
+    });
+
+    it('defaults links to non-inclusive in both presets', () => {
+        for (const schema of [ prosemirrorSchema, tiptapCompatibleSchema ]) {
+            expect(schema.marks.find(mark => mark.name === 'link')?.inclusive).toBe(false);
+        }
+    });
+
     it('declares optional language metadata for code blocks in both presets', () => {
         for (const schema of [ prosemirrorSchema, tiptapCompatibleSchema ]) {
             expect(schema.nodes.find(node => node.name === 'codeBlock')?.attrs?.language)

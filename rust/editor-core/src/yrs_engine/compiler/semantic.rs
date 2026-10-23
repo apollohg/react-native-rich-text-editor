@@ -191,7 +191,16 @@ pub(super) fn compile_transaction_impl(
             else {
                 return None;
             };
-            (anchor.document == head.document).then_some((head.document, relative_head.affinity))
+            // Typing advances past inserted text even when the Yrs cursor associates before it.
+            let affinity = if matches!(
+                transaction.selection_intent,
+                SelectionIntent::UseOperationResult
+            ) {
+                yrs_engine::Affinity::After
+            } else {
+                relative_head.affinity
+            };
+            (anchor.document == head.document).then_some((head.document, affinity))
         })
     });
     let localized_derivations = None;

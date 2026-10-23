@@ -287,7 +287,11 @@ impl OperationCompiler<'_> {
                 // Captured against the pre-split document: these are the marks
                 // the next typed character would have inherited had Return not
                 // been pressed.
-                inherited_marks = Some(yrs_engine::derived_state::marks_at_position(&preview, pos));
+                inherited_marks = Some(yrs_engine::derived_state::marks_at_position(
+                    &preview,
+                    context.schema,
+                    pos,
+                ));
                 let step = Step::SplitBlock {
                     pos,
                     node_type: node_type.clone(),

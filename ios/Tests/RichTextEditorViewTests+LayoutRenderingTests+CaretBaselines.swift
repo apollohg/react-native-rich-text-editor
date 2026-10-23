@@ -464,7 +464,14 @@ extension RichTextEditorViewTests {
         try assertTypingAtDocumentEndKeepsHighlightingAndScrollPosition(withTable: true)
     }
 
-    private func assertTypingAtDocumentEndKeepsHighlightingAndScrollPosition(withTable: Bool = false) throws {
+    func testFullyLaidOutStyledContentSizeRetainsFinalMarginAndShrinksWithContent() throws {
+        try assertTypingAtDocumentEndKeepsHighlightingAndScrollPosition(
+            withTable: true, verifyContentSizePublications: true)
+    }
+
+    private func assertTypingAtDocumentEndKeepsHighlightingAndScrollPosition(
+        withTable: Bool = false, verifyContentSizePublications: Bool = false
+    ) throws {
         let provider = EditorHighlightingFixtureProvider()
         try NativeCodeHighlightingRegistry.register(provider: provider)
         let editorId: UInt64
@@ -524,15 +531,29 @@ extension RichTextEditorViewTests {
         XCTAssertTrue(textView.becomeFirstResponder())
         setCollapsedSelection(in: textView, utf16Offset: textView.textStorage.length)
         textView.layoutManager.ensureLayout(for: textView.textContainer)
-        _ = textView.layoutManager.usedRect(for: textView.textContainer)
+        let renderedContentHeight = ceil(textView.layoutManager.usedRect(for: textView.textContainer).maxY
+            + textView.textContainerInset.top + textView.textContainerInset.bottom)
         textView.layoutIfNeeded()
         func maximumOffset() -> CGFloat {
             textView.contentSize.height - textView.bounds.height + textView.adjustedContentInset.bottom
         }
+        XCTAssertEqual(textView.contentSize.height, renderedContentHeight, accuracy: 1,
+            "the scroll extent includes the rendered final paragraph margin")
         XCTAssertGreaterThan(maximumOffset(), 0, "the fixture must scroll")
         textView.setContentOffset(CGPoint(x: 0, y: maximumOffset()), animated: false)
         waitForHighlightedCode("scrolled")
         let bottomOffset = textView.contentOffset.y
+        if verifyContentSizePublications {
+            let finalParagraph = try XCTUnwrap(textView.textStorage.attribute(
+                .paragraphStyle, at: textView.textStorage.length - 1, effectiveRange: nil) as? NSParagraphStyle)
+            XCTAssertGreaterThan(finalParagraph.paragraphSpacing, 0)
+            textView.contentSize = CGSize(width: textView.contentSize.width,
+                height: renderedContentHeight - finalParagraph.paragraphSpacing)
+            XCTAssertEqual(textView.contentSize.height, renderedContentHeight, accuracy: 1,
+                "UIKit's shorter extent must retain the final rendered paragraph margin")
+            XCTAssertEqual(textView.contentOffset.y, bottomOffset, accuracy: 1,
+                "publishing the rendered extent must not clamp the bottom scroll position")
+        }
         XCTAssertEqual(bottomOffset, maximumOffset(), accuracy: 1, "scrolled to the end, contentSize=\(textView.contentSize)")
 
         var committedOffsets: [CGPoint] = []
@@ -553,6 +574,8 @@ extension RichTextEditorViewTests {
         XCTAssertTrue(textView.textStorage.string.hasSuffix(ExampleDocumentFixture.typedCharacters.joined()),
             textView.textStorage.string.debugDescription)
         XCTAssertFalse(committedOffsets.isEmpty)
+        XCTAssertTrue(committedOffsets.allSatisfy { abs($0.x - renderedContentHeight) < 1 },
+            "typing on the final line must retain its rendered content height=\(renderedContentHeight): \(committedOffsets)")
         XCTAssertTrue(committedOffsets.allSatisfy { abs($0.y - bottomOffset) < 1 },
             "no committed frame may scroll away from y=\(bottomOffset) while typing at the end (contentHeight, offset): \(committedOffsets)")
         XCTAssertEqual(provider.highlightCount, highlightCountBeforeTyping,
@@ -562,5 +585,35 @@ extension RichTextEditorViewTests {
         textView.insertText(ExampleDocumentFixture.typedCharacters[0])
         waitForHighlightedCode("after typing inside the code block")
         XCTAssertGreaterThan(provider.highlightCount, highlightCountBeforeTyping, "an edited code block is highlighted again")
+
+        if verifyContentSizePublications {
+            func assertContentShrank(from previousHeight: CGFloat, context: String) {
+                textView.layoutManager.ensureLayout(for: textView.textContainer)
+                var usedRect = textView.layoutManager.usedRect(for: textView.textContainer)
+                let extraLineFragmentRect = textView.layoutManager.extraLineFragmentRect
+                if !extraLineFragmentRect.isEmpty {
+                    usedRect = usedRect.union(extraLineFragmentRect)
+                }
+                let expectedHeight = ceil(usedRect.maxY
+                    + textView.textContainerInset.top + textView.textContainerInset.bottom)
+                textView.layoutIfNeeded()
+                XCTAssertEqual(textView.contentSize.height, expectedHeight, accuracy: 1, context)
+                XCTAssertLessThan(textView.contentSize.height, previousHeight, context)
+                XCTAssertLessThanOrEqual(textView.contentOffset.y,
+                    max(-textView.adjustedContentInset.top, maximumOffset()) + 1, context)
+            }
+            let shorterDocument = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"First"}]},{"type":"paragraph","content":[{"type":"text","text":"Second"}]}]}"#
+            XCTAssertTrue(textView.applyUpdateJSON(EditorV2Shadow.setJson(id: editorId, json: shorterDocument)))
+            XCTAssertEqual(textView.textStorage.string, "First\nSecond")
+            assertContentShrank(from: renderedContentHeight, context: "replacing the document uses the shorter rendered extent")
+            let shortHeight = textView.contentSize.height
+            setSelection(in: textView, utf16Range: NSRange(location: 0, length: textView.textStorage.length))
+            textView.deleteBackward()
+            assertContentShrank(from: shortHeight, context: "deleting the document shrinks to its empty paragraph")
+            let emptyParagraphHeight = textView.contentSize.height
+            textView.applyRenderJSON("[]")
+            XCTAssertEqual(textView.textStorage.length, 0)
+            assertContentShrank(from: emptyParagraphHeight, context: "resetting rendered content removes the final paragraph extent")
+        }
     }
 }

@@ -247,6 +247,7 @@ impl Schema {
                     .map(str::to_ascii_lowercase),
                 attrs,
                 excludes,
+                inclusive: mark_val.get("inclusive").and_then(|v| v.as_bool()).unwrap_or(true),
                 allow_undeclared_attrs,
             });
         }

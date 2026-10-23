@@ -326,6 +326,7 @@ fn comment_schema() -> Schema {
             name: "comment".to_string(),
             attrs: HashMap::new(),
             excludes: None,
+            inclusive: true,
             allow_undeclared_attrs: true,
             html_tag: None,
         });
@@ -342,6 +343,7 @@ fn custom_mark_names_are_never_emitted_as_raw_html_tags() {
         name: "custom<script".to_string(),
         attrs: HashMap::new(),
         excludes: None,
+            inclusive: true,
         allow_undeclared_attrs: false,
         html_tag: None,
     });

@@ -75,6 +75,8 @@ struct CanonicalMark<'a> {
     html_tag: Option<&'a str>,
     attrs: BTreeMap<&'a str, CanonicalAttr>,
     excludes: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    inclusive: Option<bool>,
     allow_undeclared_attrs: bool,
 }
 
@@ -223,6 +225,7 @@ impl<'a> From<&'a MarkSpec> for CanonicalMark<'a> {
                 .map(|(name, attr)| (name.as_str(), CanonicalAttr::from_spec(attr)))
                 .collect(),
             excludes: spec.excludes.as_deref(),
+            inclusive: (!spec.inclusive).then_some(false),
             allow_undeclared_attrs: spec.allow_undeclared_attrs,
         }
     }
@@ -613,6 +616,25 @@ mod tests {
         ]));
 
         assert_ne!(schema_fingerprint(&first), schema_fingerprint(&second));
+    }
+
+    #[test]
+    fn fingerprint_distinguishes_mark_inclusivity() {
+        let schema = |inclusive| {
+            Schema::from_json(&json!({
+                "nodes": [
+                    {"name":"doc", "content":"paragraph+", "role":"doc"},
+                    {"name":"paragraph", "content":"text*", "role":"textBlock"},
+                    {"name":"text", "role":"text"}
+                ],
+                "marks": [{"name":"custom", "inclusive":inclusive}]
+            }))
+            .unwrap()
+        };
+        assert_ne!(
+            schema_fingerprint(&schema(false)),
+            schema_fingerprint(&schema(true))
+        );
     }
 
     #[test]

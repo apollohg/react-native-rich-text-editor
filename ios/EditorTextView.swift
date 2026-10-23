@@ -421,6 +421,12 @@ class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegat
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        if !isResolvingContentSize {
+            let resolvedSize = resolvedContentSize(contentSize)
+            if resolvedSize != contentSize {
+                contentSize = resolvedSize
+            }
+        }
         updateKeyboardInset()
         if needsVisibleTextDisplayRefresh {
             needsVisibleTextDisplayRefresh = false
@@ -483,6 +489,34 @@ class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegat
     var keyboardBottomInset: CGFloat = 0
     var focusedTableCellInput: (() -> EditorTextView?)?
     var rootTableContains: ((CGPoint) -> Bool)?
+    private var isResolvingContentSize = false
+
+    private func resolvedContentSize(_ proposedSize: CGSize) -> CGSize {
+        guard !isPreviewingImageResize,
+              !textContainer.heightTracksTextView, textStorage.length > 0,
+              textStorage.attribute(editorStyledContentAttribute, at: textStorage.length - 1, effectiveRange: nil) != nil,
+              editorLayoutManager.firstUnlaidCharacterIndex() >= textStorage.length
+        else { return proposedSize }
+        // UIKit can omit the styled final paragraph margin after an edit.
+        let usedRect = editorLayoutManager.usedRect(for: textContainer)
+        var resolvedSize = proposedSize
+        resolvedSize.height = max(proposedSize.height,
+            ceil(usedRect.maxY + textContainerInset.top + textContainerInset.bottom))
+        return resolvedSize
+    }
+
+    override var contentSize: CGSize {
+        get { super.contentSize }
+        set {
+            guard !isResolvingContentSize else {
+                super.contentSize = newValue
+                return
+            }
+            isResolvingContentSize = true
+            defer { isResolvingContentSize = false }
+            super.contentSize = resolvedContentSize(newValue)
+        }
+    }
 
     override var contentOffset: CGPoint {
         didSet {

@@ -515,7 +515,7 @@ fn ranged_deletion_across_a_nested_table_keeps_selection_representable() {
 }
 
 #[test]
-fn inline_content_pasted_at_a_mark_boundary_inside_one_yrs_text_splits_that_text() {
+fn inline_content_pasted_inside_a_marked_run_in_one_yrs_text_splits_that_text() {
     let mut session = session_with_document(&json!({ "type": "doc", "content": [
         { "type": "paragraph", "content": [
             { "type": "text", "text": "bc" },
@@ -555,7 +555,8 @@ fn inline_content_pasted_at_a_mark_boundary_inside_one_yrs_text_splits_that_text
     assert_eq!(
         session.engine.document_json().unwrap()["content"],
         json!([{ "type": "paragraph", "content": [
-            { "type": "text", "text": "bcz" },
+            { "type": "text", "text": "bc" },
+            { "type": "text", "text": "z", "marks": italic() },
             mention_json(),
             { "type": "text", "text": " " },
             { "type": "text", "text": "xy", "marks": italic() },

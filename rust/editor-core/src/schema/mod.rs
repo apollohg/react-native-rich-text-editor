@@ -211,6 +211,8 @@ pub struct MarkSpec {
     /// Marks in the `excludes` set cannot coexist with this mark on the same
     /// text range. `None` means no exclusions.
     pub excludes: Option<String>,
+    /// Whether typing at the mark's edge inherits it. Defaults to true.
+    pub inclusive: bool,
     /// If `true`, JSON ingestion (`set_json`/`insert_content_json`) admits attrs
     /// on this mark that are not declared in `attrs`, instead of filtering them
     /// out. Default `false`. This is an opt-in escape hatch mirroring

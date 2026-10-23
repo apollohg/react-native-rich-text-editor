@@ -878,7 +878,11 @@ fn prepared_insert_applies_collapsed_stored_marks_in_one_compilation() {
             }]
         })
     );
-    assert_eq!(engine.stored_marks(), None);
+    assert_eq!(
+        engine.stored_marks(),
+        Some([Mark::new("bold".into(), HashMap::new())].as_slice()),
+        "compatible typing must retain the explicitly chosen mark for the next character"
+    );
 }
 
 #[test]
