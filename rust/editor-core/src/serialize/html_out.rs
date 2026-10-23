@@ -308,6 +308,21 @@ pub(super) fn serialize_mark_open(
         let mut names = spec.attrs.keys().collect::<Vec<_>>();
         names.sort_unstable();
         for name in names {
+            if mark.mark_type() == crate::text_color::TEXT_STYLE_MARK
+                && name == crate::text_color::COLOR_ATTR
+            {
+                if let Some(color) = mark
+                    .attrs()
+                    .get(name)
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(crate::text_color::canonical_color)
+                {
+                    buf.push_str(" style=\"color:");
+                    output.escape_attribute(&color, buf);
+                    buf.push('"');
+                }
+                continue;
+            }
             if let Some(value) = mark.attrs().get(name) {
                 let rendered = value
                     .as_str()

@@ -61,6 +61,34 @@ describe('defineSchema', () => {
         }
     });
 
+    it('accepts Tiptap textStyle colour marks and their null default in both presets', () => {
+        for (const schema of [ prosemirrorSchema, tiptapCompatibleSchema ]) {
+            expect(schema.marks.find(mark => mark.name === 'textStyle')).toMatchObject({
+                attrs: { color: { default: null } },
+                htmlTag: 'span',
+            });
+            const document = {
+                type: 'doc',
+                content: [ {
+                    type: 'paragraph',
+                    content: [
+                        {
+                            type: 'text',
+                            text: 'coloured',
+                            marks: [ { type: 'textStyle', attrs: { color: '#e53935' } } ],
+                        },
+                        {
+                            type: 'text',
+                            text: 'default',
+                            marks: [ { type: 'textStyle', attrs: { color: null } } ],
+                        },
+                    ],
+                } ],
+            };
+            expect(normalizeDocumentJson(document, schema)).toEqual(document);
+        }
+    });
+
     it('defaults links to non-inclusive in both presets', () => {
         for (const schema of [ prosemirrorSchema, tiptapCompatibleSchema ]) {
             expect(schema.marks.find(mark => mark.name === 'link')?.inclusive).toBe(false);

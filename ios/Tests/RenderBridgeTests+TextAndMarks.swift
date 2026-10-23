@@ -2,6 +2,42 @@ import CoreText
 import XCTest
 
 extension RenderBridgeTests {
+
+    func testTextStyleColorOverridesLinkAndCodeAndRestoresTheme() throws {
+        let explicit = "#12345680"
+        let href = "https://example.com"
+        let themes: [EditorTheme?] = [nil, EditorTheme(dictionary: [
+            "version": 1, "styles": ["link": ["color": "#ff0000ff"], "inlineCode": ["color": "#00ff00ff"]]
+        ])]
+        for theme in themes {
+            let otherMarks: [Any] = [["type": "link", "href": href], "code", "bold", "strike"]
+            let baseline = RenderBridge.attributesForMarks(otherMarks, baseFont: baseFont, textColor: textColor, theme: theme)
+            for color in [explicit, "#00000000"] {
+                let colorMark: [String: Any] = ["type": "textStyle", "color": color]
+                for marks in [[colorMark] + otherMarks, otherMarks + [colorMark]] {
+                    let attrs = RenderBridge.attributesForMarks(marks, baseFont: baseFont, textColor: textColor, theme: theme)
+                    XCTAssertEqual(attrs[.foregroundColor] as? UIColor, EditorTheme.color(from: color))
+                    XCTAssertEqual(attrs[RenderBridgeAttributes.linkHref] as? String, href)
+                    XCTAssertEqual(attrs[.font] as? UIFont, baseline[.font] as? UIFont)
+                    XCTAssertEqual(attrs[.strikethroughStyle] as? Int, baseline[.strikethroughStyle] as? Int)
+                }
+            }
+            let reset = RenderBridge.attributesForMarks(otherMarks + [["type": "textStyle", "color": NSNull()]], baseFont: baseFont, textColor: textColor, theme: theme)
+            XCTAssertEqual(reset[.foregroundColor] as? UIColor, baseline[.foregroundColor] as? UIColor)
+        }
+    }
+
+    func testTextStyleColorSurvivesTableCellElementConversion() throws {
+        let color = "#12345680"
+        let elements: [FfiViewerElement] = [
+            .blockStart(nodeType: "paragraph", language: nil, depth: 0, listContextJson: nil),
+            .textRun(text: "cell", marks: [FfiViewerMark(markType: "textStyle", attrsJson: "{\"color\":\"\(color)\"}")]),
+            .blockEnd
+        ]
+        let input = try XCTUnwrap(RenderBridge.inputElements(elements, voidElementIndices: [], cellDocStart: 0))
+        let rendered = RenderBridge.renderElements(fromArray: input, baseFont: baseFont, textColor: textColor)
+        XCTAssertEqual(rendered.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor, EditorTheme.color(from: color))
+    }
     /// A single paragraph with unstyled text should produce the text with base font.
     func testRender_plainParagraph() {
         let json = """

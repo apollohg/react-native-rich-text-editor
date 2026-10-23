@@ -227,6 +227,7 @@ extension CoreTextProseLayoutEngine {
                 default: break
                 }
             }
+            if let color = EditorStyleSheet.explicitTextColor(markValues) { resolved[.foregroundColor] = color }
             return coreTextAttributes(resolved)
         }
         if marks.isEmpty && paint.textValues.isEmpty { return baseAttributes(paint) }
@@ -258,7 +259,10 @@ extension CoreTextProseLayoutEngine {
                 explicitForeground = EditorTheme.color(from: values["color"] ?? values["textColor"]) ?? explicitForeground
             case "highlight", "backgroundColor":
                 background = EditorTheme.color(from: values["color"] ?? values["backgroundColor"]) ?? background
-            case "textStyle", "font":
+            case EditorStyleSheet.textStyleMark, "font":
+                if mark.markType == EditorStyleSheet.textStyleMark {
+                    explicitForeground = EditorTheme.color(from: values[EditorStyleSheet.textColorAttribute]) ?? explicitForeground
+                }
                 if let family = values["fontFamily"] as? String, !family.isEmpty { fontFamily = family }
                 if let markedSize = (values["fontSize"] as? NSNumber).map({ CGFloat(truncating: $0) }), markedSize.isFinite, markedSize > 0 {
                     fontSize = markedSize

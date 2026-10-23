@@ -16,6 +16,7 @@ mod android_allocator;
 mod availability_audit;
 pub(crate) mod boundary;
 pub(crate) mod clipboard;
+pub(crate) mod text_color;
 pub(crate) mod collaboration_runtime;
 pub(crate) mod command_planner;
 pub(crate) mod document_api;

@@ -205,6 +205,9 @@ fn validate_mark_set(
         let spec = schema
             .mark(mark.mark_type())
             .expect("ranked mark must have a schema spec");
+        if !crate::text_color::valid_color_attrs(mark.mark_type(), mark.attrs()) {
+            return Err(BoundaryError::new("DOCUMENT_INVALID", "invalid textStyle color"));
+        }
         validate_attrs(
             mark.attrs(),
             &spec.attrs,
@@ -560,6 +563,9 @@ fn validate_marks(
                 format!("unknown mark '{}'", mark.mark_type()),
             )
         })?;
+        if !crate::text_color::valid_color_attrs(mark.mark_type(), mark.attrs()) {
+            return Err(BoundaryError::new("DOCUMENT_INVALID", "invalid textStyle color"));
+        }
         validate_attrs(
             mark.attrs(),
             &spec.attrs,

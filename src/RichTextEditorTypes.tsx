@@ -254,6 +254,8 @@ export interface RichTextEditorRef {
     ): Promise<ExternalTextCompositionSession>;
     /** Toggle a formatting mark (e.g. 'bold', 'italic'). */
     toggleMark(markType: string): void;
+    setMark(markType: string, attrs: Record<string, unknown>): void;
+    unsetMark(markType: string): void;
     /** Apply or update a hyperlink on the current selection. */
     setLink(href: string): void;
     /** Remove a hyperlink from the current selection. */

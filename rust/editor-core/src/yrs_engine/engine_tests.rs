@@ -709,3 +709,6 @@ mod structural_representation;
 mod document_revision;
 #[path = "engine_tests/encoded_bound.rs"]
 mod encoded_bound;
+
+#[path = "engine_tests/text_color.rs"]
+mod text_color;
