@@ -206,7 +206,11 @@ fn deleting_a_list_items_leading_paragraph_text_keeps_a_paragraph_before_its_quo
         &doc(vec![
             paragraph(vec![text("x")]),
             bullet_list(vec![list_item(vec![
-                paragraph(vec![]),
+                Node::element(
+                    "paragraph".into(),
+                    crate::command_planner::default_attrs(&tiptap_schema(), "paragraph").unwrap(),
+                    Fragment::empty(),
+                ),
                 blockquote(vec![paragraph(vec![text("c")])]),
             ])]),
         ]),

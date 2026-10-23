@@ -194,6 +194,22 @@ fn localized_root_structural_parent<T: ReadTxn>(
             })?;
             attrs.push((Arc::<str>::from(key), value));
         }
+        for (key, expected) in semantic.attrs() {
+            if element.get_attribute(txn, key).is_none()
+                && wire_spec
+                    .and_then(|spec| spec.attrs.get(key))
+                    .and_then(|spec| spec.default.as_ref())
+                    == Some(expected)
+            {
+                normalized_attr_count = normalized_attr_count.checked_add(1).ok_or_else(|| {
+                    OperationError::engine_invariant_failed(
+                        request_id,
+                        None,
+                        "localized root normalized attribute count overflow",
+                    )
+                })?;
+            }
+        }
         if normalized_attr_count != semantic.attrs().len() {
             return Ok(None);
         }
