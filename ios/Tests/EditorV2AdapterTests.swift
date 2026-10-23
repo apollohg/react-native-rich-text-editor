@@ -296,3 +296,22 @@ extension EditorV2AdapterTests {
         XCTAssertEqual(parseObject(try XCTUnwrap(current.value))["markdown"] as? String, "Changed")
     }
 }
+
+extension EditorV2AdapterTests {
+    func testDocumentQueriesReadCurrentTextAndStructuralEmptiness() throws {
+        let adapter = makeAdapter(configJson: #"{"initialization":{"type":"localHtml","html":"<p>&lt;tag&gt; &amp; 👩🏽‍💻</p><p>tail</p>"}}"#)
+        XCTAssertNotNil(adapter.initialUpdateJSON())
+        let before = editorV2GetState(editorId: adapter.editorId).value
+        let text = editorV2GetDocumentText(editorId: adapter.editorId)
+        XCTAssertNil(text.error)
+        XCTAssertEqual(parseObject(try XCTUnwrap(text.value))["text"] as? String, "<tag> & 👩🏽‍💻tail")
+        let nonempty = editorV2GetDocumentIsEmpty(editorId: adapter.editorId)
+        XCTAssertNil(nonempty.error)
+        XCTAssertEqual(parseObject(try XCTUnwrap(nonempty.value))["isEmpty"] as? Bool, false)
+        XCTAssertEqual(editorV2GetState(editorId: adapter.editorId).value, before)
+        XCTAssertNotNil(adapter.setContentHtml("<p></p>"))
+        let empty = editorV2GetDocumentIsEmpty(editorId: adapter.editorId)
+        XCTAssertNil(empty.error)
+        XCTAssertEqual(parseObject(try XCTUnwrap(empty.value))["isEmpty"] as? Bool, true)
+    }
+}

@@ -245,3 +245,5 @@ include!("tests/create_admission.rs");
 include!("tests/wire_contract.rs");
 
 include!("tests/markdown_export.rs");
+
+include!("tests/document_queries.rs");
