@@ -80,11 +80,7 @@ private class OkHttpCollaborationSocket(
                     callbacks.onClosed(code)
                 }
 
-                override fun onFailure(
-                    webSocket: WebSocket,
-                    error: Throwable,
-                    response: Response?
-                ) {
+                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                     callbacks.onFailure()
                 }
             }

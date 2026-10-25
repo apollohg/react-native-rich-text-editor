@@ -92,7 +92,11 @@ private class ImeVisibleText(
     override fun subSequence(startIndex: Int, endIndex: Int): CharSequence =
         SpannableStringBuilder(this, startIndex, endIndex)
 
-    override fun toString(): String = String(CharArray(length).also { getChars(0, length, it, 0) })
+    override fun toString(): String = String(
+        CharArray(length).also {
+            android.text.TextUtils.getChars(this, 0, length, it, 0)
+        }
+    )
 
     private val spanned get() = raw as? Spanned
 

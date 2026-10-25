@@ -371,7 +371,7 @@ class EditorV2StagingViewTest {
             override fun onSelectionChanged(anchor: Int, head: Int) {
                 reported = anchor to head
             }
-            override fun onEditorUpdate(updateJson: String) {}
+            override fun onEditorUpdate(updateJSON: String) {}
         }
         editText.setSelection(3)
         assertNotNull(reported)

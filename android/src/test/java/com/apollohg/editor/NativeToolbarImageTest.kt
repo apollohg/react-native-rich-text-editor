@@ -104,7 +104,7 @@ class NativeToolbarImageTest {
             icon = NativeToolbarIcon(imageSource = NativeToolbarImageSource("missing"))
         )
         val row = menu.add("Insert")
-        val scale = context.resources.displayMetrics.scaledDensity
+        val metrics = context.resources.displayMetrics
         fun checkSize(themeSize: Float?, itemSize: Float?, expected: Float) {
             toolbar.applyTheme(EditorToolbarTheme(buttonIconSize = themeSize))
             toolbar.updateMenuItemImage(
@@ -114,14 +114,19 @@ class NativeToolbarImageTest {
                 enabled = true,
                 active = false
             )
+            val expectedSizePx = android.util.TypedValue.applyDimension(
+                android.util.TypedValue.COMPLEX_UNIT_SP,
+                expected,
+                metrics
+            ).toInt()
             assertEquals(
                 "Icon width for theme=$themeSize item=$itemSize",
-                (expected * scale).toInt(),
+                expectedSizePx,
                 requireNotNull(row.icon).bounds.width()
             )
             assertEquals(
                 "Menu ImageView must measure the requested icon size",
-                (expected * scale).toInt(),
+                expectedSizePx,
                 requireNotNull(row.icon).intrinsicWidth
             )
         }

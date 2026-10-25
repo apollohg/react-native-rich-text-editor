@@ -545,8 +545,6 @@ internal class RichTextEditorViewTest : RichTextEditorViewTestFixture() {
         editText.layout(0, 0, editText.measuredWidth, editText.measuredHeight)
 
         val layout = editText.layout
-        assertTrue("Expected layout for example content", layout != null)
-        layout ?: return
 
         val text = editText.text?.toString().orEmpty()
         var trailingBlankLines = 0

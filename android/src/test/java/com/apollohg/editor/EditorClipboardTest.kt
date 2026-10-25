@@ -252,7 +252,7 @@ class EditorClipboardTest : EditorInputConnectionTestSupport() {
                     null
                 )
             )
-            val info = AccessibilityNodeInfo.obtain()
+            val info = AccessibilityNodeInfo()
             harness.editText.onInitializeAccessibilityNodeInfo(info)
             assertFalse(info.actionList.any { it.id == AccessibilityNodeInfo.ACTION_PASTE })
             assertFalse(harness.backend.calls.contains("applyCommand"))

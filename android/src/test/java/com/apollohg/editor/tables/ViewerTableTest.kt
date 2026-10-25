@@ -67,7 +67,6 @@ import com.apollohg.editor.viewer.cellShapeKey
 import com.apollohg.editor.viewer.cellSupportsBackgroundPreparation
 import com.apollohg.editor.viewer.compileWithRust
 import com.apollohg.editor.viewer.sha256
-import com.facebook.react.bridge.BridgeReactContext
 import com.facebook.react.uimanager.ThemedReactContext
 import java.util.Locale
 import org.json.JSONArray
@@ -3592,6 +3591,8 @@ class ViewerTableTest {
 
     @Test
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    // This fixture uses the legacy RN context without a running React host.
+    @Suppress("DEPRECATION")
     fun fabricManagerPreparesMeasuredViewportWithoutRemeasuringTheDocument() {
         val width = 120
         val height = 80
@@ -3618,7 +3619,7 @@ class ViewerTableTest {
                 viewFactory = { activity ->
                     val context =
                         ThemedReactContext(
-                            BridgeReactContext(activity),
+                            com.facebook.react.bridge.BridgeReactContext(activity),
                             activity,
                             "tables",
                             token.surfaceId
@@ -3837,6 +3838,8 @@ class ViewerTableTest {
 
     @Test
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    // This fixture uses the legacy RN context without a running React host.
+    @Suppress("DEPRECATION")
     fun `deferred table image completion rejects an expired owner and publishes current owner`() {
         data class PendingImage(val ownerId: Long, val callback: (DecodedBitmapLease?) -> Unit)
 
@@ -3878,7 +3881,12 @@ class ViewerTableTest {
             height = firstTicket.artifact.heightPx.coerceAtLeast(1),
             viewFactory = { activity ->
                 val context =
-                    ThemedReactContext(BridgeReactContext(activity), activity, "tables", 390)
+                    ThemedReactContext(
+                        com.facebook.react.bridge.BridgeReactContext(activity),
+                        activity,
+                        "tables",
+                        390
+                    )
                 PreparedProseViewerManager::class.java.getDeclaredMethod(
                     "createViewInstance",
                     ThemedReactContext::class.java
@@ -4052,6 +4060,8 @@ class ViewerTableTest {
 
     @Test
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    // This fixture uses the legacy RN context without a running React host.
+    @Suppress("DEPRECATION")
     fun `mounted table offsets contribute to surface sidecar bytes and reset on replacement`() {
         val layout = prepare(
             """{"type":"doc","content":[{"type":"table",""" +
@@ -4073,7 +4083,12 @@ class ViewerTableTest {
             height = 80,
             viewFactory = { activity ->
                 val context =
-                    ThemedReactContext(BridgeReactContext(activity), activity, "tables", 390)
+                    ThemedReactContext(
+                        com.facebook.react.bridge.BridgeReactContext(activity),
+                        activity,
+                        "tables",
+                        390
+                    )
                 PreparedProseViewerManager::class.java.getDeclaredMethod(
                     "createViewInstance",
                     ThemedReactContext::class.java
@@ -5114,6 +5129,8 @@ class ViewerTableTest {
 
     @Test
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    // Verify parent-relative bounds and legacy heading metadata.
+    @Suppress("DEPRECATION")
     fun `viewer table exposes grid spans headers and logical order in both directions`() {
         val source = """{"type":"doc","content":[{"type":"table","content":[
             {"type":"table_row","content":[${tableHeader(
@@ -5260,6 +5277,8 @@ class ViewerTableTest {
 
     @Test
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    // Verify parent-relative accessibility bounds.
+    @Suppress("DEPRECATION")
     fun `public viewer exposes and activates cell links through its own accessibility provider`() {
         val config = JSONObject(CONFIG).apply {
             getJSONObject(
@@ -5427,6 +5446,8 @@ class ViewerTableTest {
 
     @Test
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    // Verify clipped parent-relative accessibility bounds.
+    @Suppress("DEPRECATION")
     fun `compiler backed first cell link clips touch and provider bounds with nonzero origin`() {
         val config = CONFIG.replace(
             "\"marks\":[{\"name\":\"bold\"}]",
@@ -5467,6 +5488,7 @@ class ViewerTableTest {
             )
             fun hrefOf(node: ViewerTablePresentedAccessibilityNode): String? =
                 node.node.interactionIndex?.let { node.layout.interactions.getOrNull(it)?.href }
+
             fun idFor(snapshot: ViewerTablePresentationSnapshot, href: String): Int =
                 requireNotNull(
                     view.accessibilityVirtualIdForTesting(
@@ -6330,6 +6352,8 @@ class ViewerTableTest {
         val generation = state.adopt(token, state.requestOrNull()!!)
         view.install(layout)
         state.installAtomArtifact(generation, layout)
+        // Reflection erases the private state map’s generic types.
+        @Suppress("UNCHECKED_CAST")
         val states = PreparedProseViewerManager::class.java.getDeclaredField("states").apply {
             isAccessible =
                 true
@@ -6398,6 +6422,8 @@ class ViewerTableTest {
 
     @Test
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    // This fixture uses the legacy RN context without a running React host.
+    @Suppress("DEPRECATION")
     fun `manager callbacks retain table atoms across viewport and owner changes`() {
         val source = """{"type":"doc","content":[{"type":"table",""" +
             """"content":[{"type":"table_row",""" +
@@ -6429,7 +6455,13 @@ class ViewerTableTest {
         val token = FabricSurfaceToken(74, 22)
         val registry = PreparedProseLayoutRegistry.shared
         withMountedDrawing(layout, width = 120, height = 80, viewFactory = { activity ->
-            val context = ThemedReactContext(BridgeReactContext(activity), activity, "tables", 74)
+            val context =
+                ThemedReactContext(
+                    com.facebook.react.bridge.BridgeReactContext(activity),
+                    activity,
+                    "tables",
+                    74
+                )
             PreparedProseViewerManager::class.java.getDeclaredMethod(
                 "createViewInstance",
                 ThemedReactContext::class.java
@@ -7013,7 +7045,7 @@ class ViewerTableTest {
             assertFalse("the public facade starts LTR", directSurface().isRightToLeft)
             val initialArtifact = viewer.preparedLayoutForTesting
 
-            Locale.setDefault(Locale("ar"))
+            Locale.setDefault(Locale.forLanguageTag("ar"))
             val directMirrored = directSurface()
             assertTrue(
                 "the public facade refreshes the owned artifact after locale changes",

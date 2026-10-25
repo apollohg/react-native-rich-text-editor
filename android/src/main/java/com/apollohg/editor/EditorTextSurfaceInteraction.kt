@@ -190,6 +190,8 @@ internal class EditorTextSurfaceInteraction(
         if (view.showSoftInputOnFocus &&
             (view as? EditorEditText)?.isEditable != false
         ) {
+            // Preserve implicit keyboard requests on older Android versions.
+            @Suppress("DEPRECATION")
             view.inputMethod.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
         }
     }
@@ -587,16 +589,20 @@ internal class EditorTextSurfaceInteraction(
             AccessibilityNodeInfo.MOVEMENT_GRANULARITY_WORD or
             AccessibilityNodeInfo.MOVEMENT_GRANULARITY_LINE or
             AccessibilityNodeInfo.MOVEMENT_GRANULARITY_PARAGRAPH
-        info.addAction(AccessibilityNodeInfo.ACTION_SET_SELECTION)
-        info.addAction(AccessibilityNodeInfo.ACTION_NEXT_AT_MOVEMENT_GRANULARITY)
-        info.addAction(AccessibilityNodeInfo.ACTION_PREVIOUS_AT_MOVEMENT_GRANULARITY)
-        info.addAction(AccessibilityNodeInfo.ACTION_COPY)
+        info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_SELECTION)
+        info.addAction(
+            AccessibilityNodeInfo.AccessibilityAction.ACTION_NEXT_AT_MOVEMENT_GRANULARITY
+        )
+        info.addAction(
+            AccessibilityNodeInfo.AccessibilityAction.ACTION_PREVIOUS_AT_MOVEMENT_GRANULARITY
+        )
+        info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_COPY)
         val editor = view as? EditorEditText
         if (info.isEditable) {
-            info.addAction(AccessibilityNodeInfo.ACTION_SET_TEXT)
-            info.addAction(AccessibilityNodeInfo.ACTION_CUT)
+            info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_TEXT)
+            info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_CUT)
             if (editor?.pasteMode != EditorPasteMode.DISABLED) {
-                info.addAction(AccessibilityNodeInfo.ACTION_PASTE)
+                info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_PASTE)
             }
         }
     }
@@ -727,6 +733,8 @@ internal class EditorTextSurfaceInteraction(
                     view.setSelection(next)
                 }
                 view.bringPointIntoView(next)
+                // Event constructors require API 30; keep API 24 support.
+                @Suppress("DEPRECATION")
                 val event = AccessibilityEvent.obtain(
                     AccessibilityEvent.TYPE_VIEW_TEXT_TRAVERSED_AT_MOVEMENT_GRANULARITY
                 )

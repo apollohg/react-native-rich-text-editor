@@ -29,6 +29,8 @@ internal fun NativeEditorExpoView.focusInternal(cancelPendingOutsideTapBlur: Boo
     richTextView.post {
         if (!canFocusCurrentEditor() || richTextView.activeTextInput !== input) return@post
         val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        // Preserve implicit keyboard requests on older Android versions.
+        @Suppress("DEPRECATION")
         imm?.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
     }
 }

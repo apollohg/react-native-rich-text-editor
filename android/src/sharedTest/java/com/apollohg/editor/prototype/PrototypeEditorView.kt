@@ -30,7 +30,11 @@ internal class PrototypeEditorView(context: Context, val session: PrototypeDocum
     PrototypeCursorReporter {
     private val density = resources.displayMetrics.density
     private val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-        textSize = 19f * resources.displayMetrics.scaledDensity
+        textSize = android.util.TypedValue.applyDimension(
+            android.util.TypedValue.COMPLEX_UNIT_SP,
+            19f,
+            resources.displayMetrics
+        )
         color = Color.rgb(27, 43, 51)
     }
     private val selectionPaint = Paint().apply { color = 0x55498DCA }
@@ -62,6 +66,8 @@ internal class PrototypeEditorView(context: Context, val session: PrototypeDocum
                     requestFocus()
                     val offset = documentLayout.offsetAt(event.x, event.y)
                     session.setSelection(offset, offset)
+                    // Preserve implicit keyboard requests on older Android versions.
+                    @Suppress("DEPRECATION")
                     inputMethod.showSoftInput(
                         this@PrototypeEditorView,
                         InputMethodManager.SHOW_IMPLICIT

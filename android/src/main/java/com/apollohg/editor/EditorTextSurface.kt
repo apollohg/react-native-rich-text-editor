@@ -232,6 +232,8 @@ open class EditorTextSurface @JvmOverloads constructor(
             shiftLayoutChangedRange(TextReplacement(start, before, count))
             invalidateTextLayout(start, start + count)
             watchers.toList().forEach { it.onTextChanged(s, start, before, count) }
+            // Event constructors require API 30; keep API 24 support.
+            @Suppress("DEPRECATION")
             val event = AccessibilityEvent.obtain(AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED)
             event.beforeText = textBeforeAccessibilityChange
             event.fromIndex = start
@@ -329,6 +331,8 @@ open class EditorTextSurface @JvmOverloads constructor(
             textChangeDepth--
         }
         if (previousText != buffer.toString()) {
+            // Event constructors require API 30; keep API 24 support.
+            @Suppress("DEPRECATION")
             val event = AccessibilityEvent.obtain(AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED)
             event.beforeText = previousText
             event.fromIndex = 0
@@ -755,6 +759,8 @@ open class EditorTextSurface @JvmOverloads constructor(
         val manager = context.getSystemService(
             Context.ACCESSIBILITY_SERVICE
         ) as android.view.accessibility.AccessibilityManager
+        // Events are pooled before API 33.
+        @Suppress("DEPRECATION")
         if (manager.isEnabled) sendAccessibilityEventUnchecked(event) else event.recycle()
     }
 

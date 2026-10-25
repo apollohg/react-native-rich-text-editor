@@ -3,6 +3,7 @@ package com.apollohg.editor
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.PorterDuff
+import android.graphics.PorterDuffColorFilter
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.net.Uri
@@ -85,6 +86,8 @@ internal class ToolbarImageButton(context: Context) : AppCompatButton(context) {
         }
     private var imageRequest: ToolbarImageRequest? = null
     private var requestGeneration = 0
+    private var imageColorFilter: PorterDuffColorFilter? = null
+    private var imageTintColor: Int? = null
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
@@ -110,7 +113,12 @@ internal class ToolbarImageButton(context: Context) : AppCompatButton(context) {
             return
         }
         if (imageTintable) {
-            drawable.setColorFilter(currentTextColor, PorterDuff.Mode.SRC_IN)
+            val color = currentTextColor
+            if (imageTintColor != color) {
+                imageTintColor = color
+                imageColorFilter = PorterDuffColorFilter(color, PorterDuff.Mode.SRC_IN)
+            }
+            drawable.colorFilter = imageColorFilter
         } else {
             drawable.clearColorFilter()
         }

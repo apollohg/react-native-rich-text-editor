@@ -640,6 +640,8 @@ internal class PreparedProseViewerManager(
         payload: WritableMap
     ) {
         val context = UIManagerHelper.getReactContext(view)
+        // The one-argument replacement is unavailable on RN 0.76.
+        @Suppress("DEPRECATION")
         UIManagerHelper.getEventDispatcherForReactTag(context, view.id)?.dispatchEvent(
             PreparedProseViewerEvent(
                 UIManagerHelper.getSurfaceId(view),

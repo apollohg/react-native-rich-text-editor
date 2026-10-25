@@ -179,7 +179,11 @@ internal class RenderedTextFragments(
         var destination = 0
         for (key in matching) {
             val span = spans[key.toInt()]
-            if (!filterByType || type.isInstance(span)) result[destination++] = type.cast(span)
+            if (!filterByType ||
+                type.isInstance(span)
+            ) {
+                result[destination++] = requireNotNull(type.cast(span))
+            }
         }
         return result
     }

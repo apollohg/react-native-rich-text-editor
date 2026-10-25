@@ -986,14 +986,12 @@ class EditorEditText @JvmOverloads constructor(
         if (!commitExternalTextCompositionBeforeInteractionIfNeeded()) return
         if (wasExternallyComposing) {
             val editable = text
-            if (editable != null) {
-                val restoredStart = selStart.coerceIn(0, editable.length)
-                val restoredEnd = selEnd.coerceIn(0, editable.length)
-                if (selectionStart != restoredStart || selectionEnd != restoredEnd) {
-                    runWithTransientInputMutationGuard {
-                        Selection.setSelection(editable, restoredStart, restoredEnd)
-                        true
-                    }
+            val restoredStart = selStart.coerceIn(0, editable.length)
+            val restoredEnd = selEnd.coerceIn(0, editable.length)
+            if (selectionStart != restoredStart || selectionEnd != restoredEnd) {
+                runWithTransientInputMutationGuard {
+                    Selection.setSelection(editable, restoredStart, restoredEnd)
+                    true
                 }
             }
         }
@@ -1125,10 +1123,10 @@ class EditorEditText @JvmOverloads constructor(
     internal var pendingTaskMarkerDownX: Float = 0f
     internal var pendingTaskMarkerDownY: Float = 0f
 
-    override fun onFocusChanged(focused: Boolean, direction: Int, previouslyFocusedRect: Rect?) {
-        super.onFocusChanged(focused, direction, previouslyFocusedRect)
-        updateImageSelectionHighlightAppearance(focused = focused)
-        if (focused) {
+    override fun onFocusChanged(gainFocus: Boolean, direction: Int, previouslyFocusedRect: Rect?) {
+        super.onFocusChanged(gainFocus, direction, previouslyFocusedRect)
+        updateImageSelectionHighlightAppearance(focused = gainFocus)
+        if (gainFocus) {
             clearNativeTextMutationAfterBlurWindow()
         } else {
             beginNativeTextMutationAfterBlurWindow()

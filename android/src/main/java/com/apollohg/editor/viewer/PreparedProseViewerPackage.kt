@@ -7,6 +7,8 @@ import com.facebook.react.uimanager.ViewManager
 
 /** Autolinked package that exposes only the Fabric PreparedProseViewer manager. */
 class PreparedProseViewerPackage : ReactPackage {
+    // RN 0.76 requires this interface method.
+    @Suppress("OVERRIDE_DEPRECATION")
     override fun createNativeModules(reactContext: ReactApplicationContext): List<NativeModule> =
         emptyList()
 

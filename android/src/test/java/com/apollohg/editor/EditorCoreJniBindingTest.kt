@@ -15,7 +15,9 @@ internal class EditorCoreJniBindingTest {
         )
         assertTrue("foreign library fixture exists at $foreignLibrary", foreignLibrary.isFile)
         val sources = listOf(EditorCoreJni::class.java, Unit::class.java).map {
-            it.protectionDomain.codeSource.location
+            val domain =
+                requireNotNull(it.protectionDomain) { "Missing protection domain for ${it.name}" }
+            requireNotNull(domain.codeSource) { "Missing code source for ${it.name}" }.location
         }
         val previousOverride = System.getProperty(LIBRARY_OVERRIDE_PROPERTY)
         System.setProperty(LIBRARY_OVERRIDE_PROPERTY, foreignLibrary.absolutePath)

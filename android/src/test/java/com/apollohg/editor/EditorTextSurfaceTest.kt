@@ -173,7 +173,7 @@ class EditorTextSurfaceTest {
     fun `accessibility advertises and changes text selection without replacing editable`() {
         val editor = measuredEditor("first second")
         val buffer = editor.editableText
-        val info = AccessibilityNodeInfo.obtain()
+        val info = AccessibilityNodeInfo()
         editor.onInitializeAccessibilityNodeInfo(info)
         assertTrue(info.isEditable)
         assertTrue(info.actionList.any { it.id == AccessibilityNodeInfo.ACTION_CLICK })

@@ -704,6 +704,8 @@ internal class EditorTableSurface(private val host: RichTextEditorView) :
         if (!nativeMenu && cellDragSource(x, y) == null) return
         val start = Runnable {
             pendingCellDrag = null
+            // Kotlin 1.9 cannot infer these null checks from nativeMenu.
+            @Suppress("SENSELESS_COMPARISON")
             if (nativeMenu && target != null && context != null) {
                 if (!host.tableEditMenuEnabled ||
                     tableMutationContext(target.first) != context
@@ -2252,6 +2254,8 @@ internal class EditorTableSurface(private val host: RichTextEditorView) :
             if (activeInput !== input || !input.hasFocus()) return@post
             val manager = host.context.getSystemService(Context.INPUT_METHOD_SERVICE)
                 as? InputMethodManager
+            // Preserve implicit keyboard requests on older Android versions.
+            @Suppress("DEPRECATION")
             manager?.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
         }
     }

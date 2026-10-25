@@ -81,7 +81,7 @@ internal fun EditorEditText.applyInputTraits() {
     setRawInputType(nextInputType)
 
     val editable = text
-    if (editable != null && authorizedSelection != null) {
+    if (authorizedSelection != null) {
         setSelection(
             authorizedSelection.first.coerceIn(0, editable.length),
             authorizedSelection.second.coerceIn(0, editable.length)

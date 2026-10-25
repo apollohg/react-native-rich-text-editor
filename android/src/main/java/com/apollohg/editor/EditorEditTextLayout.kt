@@ -8,7 +8,7 @@ internal fun EditorEditText.resolveAutoGrowHeightImpl(): Int {
         0
     )
     val placeholderHeight = resolvePlaceholderHeightForAvailableWidth(availableWidth)
-    val laidOutTextHeight = if (isLaidOut) layout?.height else null
+    val laidOutTextHeight = if (isLaidOut) layout.height else null
     if (laidOutTextHeight != null && laidOutTextHeight > 0) {
         return maxOf(
             laidOutTextHeight + compoundPaddingTop + compoundPaddingBottom,
@@ -17,7 +17,7 @@ internal fun EditorEditText.resolveAutoGrowHeightImpl(): Int {
     }
 
     val currentText = text
-    if (availableWidth > 0 && currentText != null) {
+    if (availableWidth > 0) {
         val staticLayout =
             EditorDocumentLayout(currentText, paint, availableWidth, includeFontPadding)
         val textHeight = staticLayout.height.takeIf { it > 0 } ?: lineHeight
@@ -66,14 +66,14 @@ internal fun EditorEditText.ensureSelectionVisible() {
 }
 
 private fun EditorEditText.revealSelectionInViewport() {
-    if (!hasFocus() || !isLaidOut || layout == null) return
+    if (!hasFocus() || !isLaidOut) return
     val selectionOffset = selectionEnd.takeIf { it >= 0 } ?: return
     val viewportBottomClearance = resolveViewportBottomClearancePx()
     if (heightBehavior == EditorHeightBehavior.FIXED) {
         bringPointIntoView(selectionOffset)
     }
 
-    val textLayout = layout ?: return
+    val textLayout = layout
     val clampedOffset = selectionOffset.coerceAtMost(textLayout.text.length)
     val line = textLayout.getLineForOffset(clampedOffset)
     val caretLeft = textLayout.getPrimaryHorizontal(clampedOffset).toInt()

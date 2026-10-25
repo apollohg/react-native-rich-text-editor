@@ -1227,6 +1227,8 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
             )
             fun clipped(region: RectF) =
                 RectF(region).apply { if (!intersect(RectF(window))) setEmpty() }
+            // Kotlin 1.9 cannot infer old is non-null from reusable.
+            @Suppress("SENSELESS_COMPARISON")
             if (!reusable) {
                 clearTableNodes()
                 recordTableNode(

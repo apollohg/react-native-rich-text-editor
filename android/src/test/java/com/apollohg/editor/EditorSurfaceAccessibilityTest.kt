@@ -25,7 +25,7 @@ class EditorSurfaceAccessibilityTest {
             child: View,
             event: AccessibilityEvent
         ): Boolean {
-            events += AccessibilityEvent.obtain(event)
+            events += AccessibilityEvent(event)
             return super.onRequestSendAccessibilityEvent(child, event)
         }
     }

@@ -71,7 +71,6 @@ internal fun EditorEditText.restoreSelectionFromAtomBoundaryIfNeeded(
         val editable = text
         val allowed = lastAllowedAtomCaretSelection
         if (
-            editable != null &&
             allowed != null &&
             allowed.first in 0..editable.length &&
             allowed.second in 0..editable.length &&

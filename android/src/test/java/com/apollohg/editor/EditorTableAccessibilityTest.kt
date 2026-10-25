@@ -246,6 +246,8 @@ internal class EditorTableAccessibilityTest {
     }
 
     @Test
+    // Verify parent-relative accessibility bounds.
+    @Suppress("DEPRECATION")
     fun `frames are ordered among drawn tables by document position`() =
         withTable(FRAME_BETWEEN_TABLES_DOCUMENT) { fixture ->
             val drawing = fixture.view.editorTableSurface.drawingView
@@ -294,6 +296,8 @@ internal class EditorTableAccessibilityTest {
         }
 
     @Test
+    // Verify parent-relative accessibility bounds.
+    @Suppress("DEPRECATION")
     fun `a detached frame follows its line without a presentation change`() =
         withTable(EMPTY_FRAME_DOCUMENT) { fixture ->
             val before = Rect().also(fixture.frameNode().second::getBoundsInParent)
@@ -401,6 +405,8 @@ internal class EditorTableAccessibilityTest {
         }
 
     @Test
+    // Verify parent-relative accessibility bounds.
+    @Suppress("DEPRECATION")
     fun `an empty frame beside a table deletes exactly that table in one mutation`() =
         withTable(FRAME_BESIDE_TABLE_DOCUMENT) { fixture ->
             val before = fixture.adapter.documentJson()

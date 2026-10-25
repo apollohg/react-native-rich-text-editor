@@ -42,7 +42,7 @@ internal class FrozenRenderedSpans(private val source: Spanned) :
 
         @Suppress("UNCHECKED_CAST")
         val result = java.lang.reflect.Array.newInstance(type, spans.size) as Array<T>
-        spans.forEachIndexed { index, span -> result[index] = type.cast(span) }
+        spans.forEachIndexed { index, span -> result[index] = requireNotNull(type.cast(span)) }
         return result
     }
 

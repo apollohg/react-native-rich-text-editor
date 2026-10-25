@@ -79,6 +79,8 @@ internal class ProgressiveFabricGeometryTest {
     }
 
     @Test
+    // This fixture uses the legacy RN context without a running React host.
+    @Suppress("DEPRECATION")
     fun deferredAccessibilityRevealSurvivesFabricMountAndTheFollowingPreDraw() {
         for (fontRace in listOf(false, true)) {
             val activity = org.robolectric.Robolectric.buildActivity(
