@@ -1,5 +1,27 @@
 # Changelog
 
+## [2.2.0] - 2026-10-25
+
+### Added
+
+- Added text colour marks and paragraph/heading alignment (#30, #31).
+- Added custom toolbar icon libraries and button widths (#28, #33).
+- Added lightweight `onDocumentChange` notifications without exporting content (#29).
+
+### Changed
+
+- Reduced native binary and package size (#34).
+
+### Fixed
+
+- Fixed typing at link boundaries extending links and inline paste inheriting incorrect marks (#26).
+- Fixed iOS scroll extents losing styled paragraph spacing during table input (#26).
+- Fixed table geometry cleanup accessing destroyed document handles (#27).
+- Fixed plain-text queries returning HTML entities and made emptiness checks independent of rendering (#29).
+- Fixed localized edits rejecting omitted default attributes (#31).
+- Fixed default heading typography when no theme is supplied (#32).
+- Fixed native build/test validation and Android compiler warnings; improved CI caching and test reuse (#35).
+
 ## [2.1.3] - 2026-10-22
 
 ### Fixed
@@ -772,6 +794,7 @@ This is a hard cutover to shared native document, collaboration, and viewer boun
 - Controlled and uncontrolled content modes (HTML and JSON).
 - Undo/redo history.
 
+[2.2.0]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.1.3...2.2.0
 [2.1.3]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.1.2...2.1.3
 [2.1.2]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.1.1...2.1.2
 [2.1.1]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.1.0...2.1.1
