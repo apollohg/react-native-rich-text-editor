@@ -19,13 +19,211 @@ on:
   pull_request:
     paths-ignore: *non-release-paths
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 env:
   GRADLE_OPTS: -Dorg.gradle.caching=true
 
 jobs:
-  js-and-android:
+  javascript:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            example/package-lock.json
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install example dependencies
+        run: npm --prefix example ci
+
+      - name: Typecheck package
+        run: npm run typecheck
+
+      - name: Build package
+        run: npm run build
+
+      - name: Typecheck example
+        run: npm run typecheck:example
+
+      - name: Run JavaScript tests
+        run: npm test
+
+      - name: Validate npm package contents
+        run: npm pack --dry-run
+
+  rust:
+    # The complete CRDT suite runs on every CI-triggering change.
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@1.95.0
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust/editor-core
+          shared-key: editor-core
+          cache-on-failure: true
+          cache-workspace-crates: true
+          key: ${{ github.job }}-${{ hashFiles('rust/editor-core/src/**', 'rust/editor-core/tests/**', 'rust/editor-core/benches/**') }}
+
+      - name: Run Rust tests
+        run: npm run test:rust
+
+  android-native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Setup Android NDK
+        run: |
+          sdkmanager --install 'ndk;27.1.12297006'
+          echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/27.1.12297006" >> "$GITHUB_ENV"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          targets: aarch64-linux-android, armv7-linux-androideabi, i686-linux-android, x86_64-linux-android
+          components: llvm-tools-preview
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust/editor-core
+          shared-key: editor-core
+          cache-on-failure: true
+          cache-workspace-crates: true
+          key: ${{ github.job }}-${{ hashFiles('rust/editor-core/src/**', 'rust/editor-core/tests/**', 'rust/editor-core/benches/**') }}
+
+      - name: Cache Android native outputs
+        id: native-build-cache
+        uses: actions/cache@v5
+        with:
+          path: rust/android
+          key: ci-native-android-v1-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-ndk-4.1.2-android-27.1.12297006-${{ hashFiles('rust/editor-core/src/**', 'rust/editor-core/*.toml', 'rust/editor-core/Cargo.lock', 'rust/editor-core/build.rs', 'rust/editor-core/.cargo/**', 'rust/vendor/**', 'rust/*.sh', 'rust/*.py', '.cargo/**', 'rust/.cargo/**', 'rust/bindings/**', 'ios/Generated_editor_core.swift', 'ios/editor_coreFFI/**') }}
+
+      - name: Install cargo-ndk
+        if: steps.native-build-cache.outputs.cache-hit != 'true'
+        run: cargo install cargo-ndk --version 4.1.2 --locked
+
+      - name: Validate Android native stripping
+        run: bash scripts/tests/validate-native-stripping.sh android
+
+      - name: Build editor-core for Android
+        if: steps.native-build-cache.outputs.cache-hit != 'true'
+        run: bash rust/build-android.sh
+
+      - name: Upload Android native outputs
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-android-native
+          path: rust/android
+          if-no-files-found: error
+          retention-days: 2
+
+  android:
+    needs: android-native
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            example/package-lock.json
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Setup Android NDK
+        run: sdkmanager --install 'ndk;27.1.12297006'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@1.95.0
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust/editor-core -> ../../android/build/host-editor-core
+          shared-key: editor-core
+          cache-on-failure: true
+          cache-workspace-crates: true
+          key: ${{ github.job }}-${{ hashFiles('rust/editor-core/src/**', 'rust/editor-core/tests/**', 'rust/editor-core/benches/**') }}
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install example dependencies
+        run: npm --prefix example ci
+
+      - name: Download Android native outputs
+        uses: actions/download-artifact@v8
+        with:
+          name: ci-android-native
+          path: rust/android
+
+      - name: Run Android unit tests
+        run: npm run test:android
+
+      - name: Lint Kotlin sources
+        run: npm run lint:kotlin
+
+      - name: Run Android lint
+        run: npm run lint:android
+
+      - name: Assemble release AAR
+        run: ./gradlew :apollohg_react-native-rich-text-editor:assembleRelease
+        working-directory: example/android
+
+  android-rn076:
+    needs: android-native
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -61,56 +259,17 @@ jobs:
       - name: Setup RN 0.76 Android SDK
         run: sdkmanager --install 'platforms;android-36' 'build-tools;34.0.0'
 
-      # editor-core owns the document model, CRDT convergence, awareness,
-      # and the transport state machine. Its suite is the primary gate on
-      # this package's correctness and must run on every CI-triggering change.
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@1.95.0
-        with:
-          targets: aarch64-linux-android, armv7-linux-androideabi, i686-linux-android, x86_64-linux-android
-          components: llvm-tools-preview
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: rust/editor-core
-          shared-key: editor-core
-          cache-on-failure: true
-          cache-workspace-crates: true
-          key: ${{ github.job }}-${{ hashFiles('rust/editor-core/src/**', 'rust/editor-core/tests/**', 'rust/editor-core/benches/**') }}
-
-      - name: Run Rust tests
-        run: npm run test:rust
-
       - name: Install root dependencies
         run: npm ci
-
-      - name: Install example dependencies
-        run: npm --prefix example ci
-
-      - name: Typecheck package
-        run: npm run typecheck
 
       - name: Build package
         run: npm run build
 
-      - name: Typecheck example
-        run: npm run typecheck:example
-
-      - name: Run JavaScript tests
-        run: npm test
-
-      - name: Validate npm package contents
-        run: npm pack --dry-run
-
-      - name: Install cargo-ndk
-        run: cargo install cargo-ndk --version 4.1.2 --locked
-
-      - name: Validate Android native stripping
-        run: bash scripts/tests/validate-native-stripping.sh android
-
-      - name: Build editor-core for Android
-        run: bash rust/build-android.sh
+      - name: Download Android native outputs
+        uses: actions/download-artifact@v8
+        with:
+          name: ci-android-native
+          path: rust/android
 
       - name: Pack Android release candidate
         run: |
@@ -125,18 +284,22 @@ jobs:
           tarball="$(find release-artifact -maxdepth 1 -type f -name '*.tgz' -print)"
           RELEASE_TARBALL="$tarball" npm run validate:package:android:rn076
 
-      - name: Run Android unit tests
-        run: npm run test:android
-
-      - name: Lint Kotlin sources
-        run: npm run lint:kotlin
-
-      - name: Run Android lint
-        run: npm run lint:android
-
-      - name: Assemble release AAR
-        run: ./gradlew :apollohg_react-native-rich-text-editor:assembleRelease
-        working-directory: example/android
+  js-and-android:
+    if: always()
+    needs: [javascript, rust, android-native, android, android-rn076]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require all JavaScript, Rust, and Android checks
+        env:
+          RESULTS: ${{ join(needs.*.result, ',') }}
+        run: |
+          for result in ${RESULTS//,/ }; do
+            if [ "$result" != success ]; then
+              echo "A required check did not succeed: $RESULTS" >&2
+              exit 1
+            fi
+          done
 
   android-api-24:
     runs-on: ubuntu-latest
@@ -200,6 +363,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Setup iOS compiler cache
+        id: ios-toolchain
         uses: ./.github/actions/ios-build-cache
 
       - name: Setup Node
@@ -232,9 +396,22 @@ jobs:
       - name: Install root dependencies
         run: npm ci
 
+      - name: Cache iOS native outputs
+        id: native-build-cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            rust/bindings
+            rust/ios
+            ios/Generated_editor_core.swift
+            ios/editor_coreFFI
+            ios/EditorCore.xcframework
+          key: ci-native-ios-v1-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-${{ steps.ios-toolchain.outputs.xcode }}-${{ hashFiles('rust/editor-core/src/**', 'rust/editor-core/*.toml', 'rust/editor-core/Cargo.lock', 'rust/editor-core/build.rs', 'rust/editor-core/.cargo/**', 'rust/vendor/**', 'rust/*.sh', 'rust/*.py', '.cargo/**', 'rust/.cargo/**', 'rust/bindings/**', 'ios/Generated_editor_core.swift', 'ios/editor_coreFFI/**') }}
+
       # The test host links EditorCore.xcframework, which is a build output
       # rather than a tracked file.
       - name: Build editor-core for iOS
+        if: steps.native-build-cache.outputs.cache-hit != 'true'
         run: npm run build:rust:ios
 
       - name: Validate iOS native stripping

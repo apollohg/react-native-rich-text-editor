@@ -4,6 +4,12 @@ version = "2.1.3"
 edition = "2021"
 rust-version = "1.95"
 
+# Keep exhaustive CRDT tests fast without disabling debug-only invariants.
+[profile.test]
+opt-level = 1
+debug-assertions = true
+overflow-checks = true
+
 [lib]
 crate-type = ["lib", "staticlib", "cdylib"]
 name = "editor_core"

@@ -154,9 +154,29 @@ assert.match(
 assert.match(buildJob, /release-artifact\/\*\.tgz/);
 assertRustCache(buildJob, 'build-package');
 
-for (const jobName of ['js-and-android', 'ios']) {
+for (const jobName of ['rust', 'android-native', 'android', 'ios']) {
   assertRustCache(requireCiJob(jobName), `CI ${jobName}`);
 }
+
+const ciAggregateJob = requireCiJob('js-and-android');
+assert.match(ciAggregateJob, /if: always\(\)/, 'The existing required check must report failures even when a dependency is skipped');
+const ciDependencies = ciAggregateJob.match(/needs: \[([^\]]+)\]/)?.[1].split(',').map((name) => name.trim());
+assert.deepEqual(ciDependencies, ['javascript', 'rust', 'android-native', 'android', 'android-rn076'],
+  'The existing required check must cover every split JavaScript, Rust, and Android job');
+const aggregateScript = ciAggregateJob.match(/run: \|\n([\s\S]+)/)?.[1];
+assert.ok(aggregateScript, 'The aggregate check must validate dependency results');
+for (const dependency of ciDependencies) {
+  for (const outcome of ['success', 'failure', 'cancelled', 'skipped']) {
+    const results = ciDependencies.map((name) => name === dependency ? outcome : 'success').join(',');
+    const result = spawnSync('bash', ['-euo', 'pipefail', '-c', aggregateScript], {
+      env: { ...process.env, RESULTS: results },
+      encoding: 'utf8',
+    });
+    assert.equal(result.status === 0, outcome === 'success',
+      `Aggregate check must propagate ${dependency}=${outcome}; results=${results}\n${result.stderr}`);
+  }
+}
+
 for (const jobName of [
   'package-contracts',
   'security-rust-typescript',
@@ -248,8 +268,8 @@ for (const jobName of [
 }
 
 assertGradleCache(
-  requireCiJob('js-and-android'),
-  'CI js-and-android',
+  requireCiJob('android'),
+  'CI android',
   "\\$\\{\\{ github\\.event_name == 'pull_request' \\}\\}",
 );
 assertGradleCache(
