@@ -333,7 +333,8 @@ final class EditorCommandSequenceTests: XCTestCase {
         }
     }
 
-    func testClosedSequenceFixtureReleasesNativeViewsAfterFocusMoves() throws {
+    @MainActor
+    func testClosedSequenceFixtureReleasesNativeViewsAfterFocusMoves() async throws {
         let corpus = try corpus()
         weak var retainedEditor: RichTextEditorView?
         weak var retainedRootInput: EditorTextView?
@@ -362,7 +363,7 @@ final class EditorCommandSequenceTests: XCTestCase {
         let released = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             retainedEditor == nil && retainedRootInput == nil && retainedCellInput == nil && retainedWindow == nil
         }, object: nil)
-        wait(for: [released], timeout: MountedEditorTestFixture.releaseTimeout)
+        await fulfillment(of: [released], timeout: MountedEditorTestFixture.releaseTimeout)
         XCTAssertNil(EditorV2Registry.adapter(forLegacyId: editorId), "closed fixture left its Rust adapter registered")
         XCTAssertNil(retainedEditor, "closed fixture retained its editor view")
         XCTAssertNil(retainedRootInput, "closed fixture retained its root input")
