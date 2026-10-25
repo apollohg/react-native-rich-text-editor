@@ -45,14 +45,14 @@ for platform in "${platforms[@]}"; do
     published="$fixture_root/$platform-published.$extension"
     cp "$original" "$original.saved"
     bash "$strip_script" "$platform" "$original" "$published"
-    cmp "$original" "$original.saved" || fail "$platform modified the compiler output"
     original_bytes="$(wc -c < "$original" | tr -d ' ')"
     published_bytes="$(wc -c < "$published" | tr -d ' ')"
     [[ "$published_bytes" -lt "$original_bytes" ]] || fail "$platform did not shrink: $original_bytes -> $published_bytes"
     if [[ "$platform" == android ]]; then
         for artifact in original published; do
             "$llvm_bin/llvm-nm" --dynamic --defined-only "$fixture_root/$platform-$artifact.$extension" > "$fixture_root/$artifact.symbols"
-            "$llvm_bin/llvm-objcopy" --dump-section ".text=$fixture_root/$artifact.text" "$fixture_root/$platform-$artifact.$extension"
+            "$llvm_bin/llvm-objcopy" --dump-section ".text=$fixture_root/$artifact.text" \
+                "$fixture_root/$platform-$artifact.$extension" "$fixture_root/$artifact.inspected.$extension"
         done
         cmp "$fixture_root/original.symbols" "$fixture_root/published.symbols" || fail "Android dynamic exports changed"
         cmp "$fixture_root/original.text" "$fixture_root/published.text" || fail "Android executable code changed"
@@ -85,6 +85,7 @@ for platform in "${platforms[@]}"; do
         xcrun clang -target arm64-apple-ios16.4 -isysroot "$sdk" -dynamiclib \
             "$fixture_root/consumer.c" "$published" -o "$fixture_root/consumer.dylib"
     fi
+    cmp "$original" "$original.saved" || fail "$platform inspection modified the compiler output"
     echo "$platform: $original_bytes -> $published_bytes bytes; compiler output preserved; consumer contract passed"
 done
 
