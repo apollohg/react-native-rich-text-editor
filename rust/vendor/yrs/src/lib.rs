@@ -1,3 +1,12 @@
+// Keep vendored dependency lint noise local to Yrs.
+#![allow(
+    dead_code,
+    mismatched_lifetime_syntaxes,
+    unused_assignments,
+    unused_imports,
+    unused_mut,
+    unused_variables
+)]
 #![doc(
     html_logo_url = "https://raw.githubusercontent.com/y-crdt/y-crdt/main/logo-yrs.svg",
     html_favicon_url = "https://raw.githubusercontent.com/y-crdt/y-crdt/main/logo-yrs.svg"
