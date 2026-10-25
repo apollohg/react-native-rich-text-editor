@@ -376,7 +376,7 @@ jobs:
 
     security-rust-typescript:
         needs: build-package
-        runs-on: ubuntu-latest
+        runs-on: linux-runner
         timeout-minutes: 15
         steps:
             - name: Checkout
@@ -394,6 +394,7 @@ jobs:
             - name: Cache Cargo
               uses: Swatinem/rust-cache@v2
               with:
+                  env-vars: ImageOS
                   workspaces: rust/editor-core
                   shared-key: editor-core
                   cache-on-failure: true
@@ -502,7 +503,7 @@ jobs:
 
     security-android:
         needs: build-package
-        runs-on: ubuntu-latest
+        runs-on: linux-runner
         timeout-minutes: 25
         steps:
             - name: Checkout
@@ -529,6 +530,7 @@ jobs:
             - name: Cache Cargo
               uses: Swatinem/rust-cache@v2
               with:
+                  env-vars: ImageOS
                   workspaces: rust/editor-core -> ../../android/build/host-editor-core
                   shared-key: editor-core-host
                   cache-workspace-crates: true
@@ -661,7 +663,7 @@ jobs:
 
     android-consumer-positive:
         needs: build-package
-        runs-on: ubuntu-latest
+        runs-on: linux-runner
         timeout-minutes: 25
         steps:
             - name: Checkout
@@ -720,7 +722,7 @@ jobs:
 
     android-consumer-negative:
         needs: build-package
-        runs-on: ubuntu-latest
+        runs-on: linux-runner
         timeout-minutes: 25
         steps:
             - name: Checkout
@@ -775,7 +777,7 @@ jobs:
             matrix:
                 check: [jvm-lint, rn076, api24]
         needs: [build-package, build-code-highlighting]
-        runs-on: ubuntu-latest
+        runs-on: linux-runner
         timeout-minutes: 60
         steps:
             - name: Checkout
@@ -802,6 +804,7 @@ jobs:
             - name: Cache Cargo
               uses: Swatinem/rust-cache@v2
               with:
+                  env-vars: ImageOS
                   workspaces: |
                       rust/editor-core
                       rust/editor-core -> ../../android/build/host-editor-core
@@ -903,7 +906,7 @@ jobs:
             - android-consumer-positive
             - android-consumer-negative
             - android-release-validation
-        runs-on: ubuntu-latest
+        runs-on: linux-runner
         timeout-minutes: 5
         permissions:
             contents: read

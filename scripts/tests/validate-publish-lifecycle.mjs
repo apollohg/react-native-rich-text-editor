@@ -210,7 +210,7 @@ assert.equal(packageJson.scripts?.['test:android:api24'], 'node scripts/run-andr
   'API 24 validation must run the strict file-backed instrumentation gate');
 const linuxKvmSetup =
   /- name: Enable KVM\s+(?:if: matrix\.check == 'api24'\s+)?run: \|\s+echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS\+="static_node=kvm"' \| sudo tee \/etc\/udev\/rules\.d\/99-kvm4all\.rules\s+sudo udevadm control --reload-rules\s+sudo udevadm trigger --name-match=kvm/;
-assert.match(androidReleaseJob, /runs-on:\s*ubuntu-latest/);
+assert.match(androidReleaseJob, /runs-on:\s*linux-runner/);
 assert.match(androidReleaseJob, /timeout-minutes:\s*60/);
 assert.match(androidReleaseJob, /sdkmanager --install ['"]ndk;27\.1\.12297006['"]/);
 assert.match(androidReleaseJob, /npm run test:android/);
@@ -226,7 +226,7 @@ assert.match(
 );
 assert.match(
   ciAndroidApi24Job,
-  /runs-on:\s*ubuntu-latest/,
+  /runs-on:\s*linux-runner/,
   'CI API 24 validation must use Linux',
 );
 assert.match(
