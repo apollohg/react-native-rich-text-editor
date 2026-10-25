@@ -56,8 +56,7 @@ function showcaseCell(
 export const INITIAL_DOCUMENT: DocumentJSON = {
     type: 'doc',
     content: [
-        { ...heading(1, 'Field notes'), attrs: { level: 1, textAlign: 'center' } },
-        { ...paragraph(text('A right-aligned note')), attrs: { textAlign: 'right' } },
+        heading(1, 'Field notes'),
         paragraph(
             text('A native editor with a '),
             text('Rust core', BOLD),

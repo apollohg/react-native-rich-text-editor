@@ -2,6 +2,45 @@ import ExpoModulesCore
 import XCTest
 
 extension RichTextEditorViewTests {
+    func testCompactToolbarFitsSelectedButtonsWithoutVerticalOverflow() throws {
+        let fixtureWidth: CGFloat = 390
+        let fixtureHeight: CGFloat = 844
+        let rowHeight: CGFloat = 44
+        let buttonHeight: CGFloat = 40
+        let toolbar = EditorAccessoryToolbarView(frame: .zero)
+        toolbar.apply(theme: EditorToolbarTheme(dictionary: ["appearance": "custom", "height": rowHeight]))
+        toolbar.applyBoldStateForTesting(active: true, enabled: true)
+        let host = Self.attachToFixedWidthHost(toolbar, width: fixtureWidth)
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: fixtureWidth, height: fixtureHeight))
+        let controller = UIViewController()
+        window.rootViewController = controller
+        controller.view.addSubview(host)
+        window.makeKeyAndVisible()
+        defer {
+            host.removeFromSuperview()
+            window.isHidden = true
+        }
+        window.layoutIfNeeded()
+        flushMainQueue()
+        window.layoutIfNeeded()
+        toolbar.layoutIfNeeded()
+        let scroll = toolbar.scrollView
+        let selected = try XCTUnwrap(toolbar.buttonBindings.first { $0.button.isSelected }?.button)
+        XCTAssertEqual(scroll.bounds.height, rowHeight, accuracy: NativeEditorExpoView.layoutEpsilon)
+        XCTAssertEqual(selected.bounds.height, buttonHeight, accuracy: NativeEditorExpoView.layoutEpsilon,
+            "A compact row must preserve the configured button size")
+        XCTAssertGreaterThanOrEqual(toolbar.stackView.bounds.height, selected.bounds.height,
+            "The button row must accommodate its buttons without conflicting constraints")
+        XCTAssertGreaterThan(scroll.contentSize.width, scroll.bounds.width,
+            "Overflowing buttons must remain horizontally reachable")
+        XCTAssertEqual(scroll.contentSize.height + scroll.adjustedContentInset.top + scroll.adjustedContentInset.bottom,
+            scroll.bounds.height, accuracy: NativeEditorExpoView.layoutEpsilon,
+            "A horizontal toolbar must not acquire a vertical scroll range")
+        let buttonFrame = selected.convert(selected.bounds, to: scroll)
+        XCTAssertGreaterThanOrEqual(buttonFrame.minY, scroll.bounds.minY, "Selected background is clipped at the top")
+        XCTAssertLessThanOrEqual(buttonFrame.maxY, scroll.bounds.maxY, "Selected background is clipped at the bottom")
+    }
+
     func testRepeatedEmptyMentionSuggestionsKeepMountedToolbarLayoutIdle() throws {
         let fixtureWidth: CGFloat = 320
         let fixtureHeight: CGFloat = 480
