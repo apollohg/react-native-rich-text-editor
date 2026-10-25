@@ -419,8 +419,6 @@ jobs:
         needs: build-package
         runs-on: macos-latest
         timeout-minutes: 90
-        env:
-            NATIVE_EDITOR_IOS_DERIVED_DATA: ${{ github.workspace }}/.ci/ios-security
         steps:
             - name: Checkout
               uses: actions/checkout@v5
@@ -449,37 +447,10 @@ jobs:
                   name: ${{ env.RELEASE_ARTIFACT_NAME }}
                   path: .
 
-            - name: Identify iOS codegen inputs
-              id: ios-codegen
-              run: |
-                  codegen_hash="$(node -p 'JSON.stringify(require("./package.json").codegenConfig)' | shasum -a 256 | cut -d ' ' -f 1)"
-                  echo "hash=$codegen_hash" >> "$GITHUB_OUTPUT"
-
-            - name: Restore compiled iOS test host
-              id: ios-test-build
-              uses: actions/cache/restore@v5
+            - name: Prepare iOS test host
+              uses: ./.github/actions/ios-test-host
               with:
-                  path: .ci/ios-security/Build/Products
-                  key: ios-security-host-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.ios-toolchain.outputs.xcode }}-${{ steps.ios-codegen.outputs.hash }}-${{ hashFiles('ios/**', 'ios-tests/**', 'scripts/tests/*.json', 'common/cpp/**', 'ReactNativeProseEditor.podspec', 'src/specs/**', 'react-native.config.js', 'example/package-lock.json', 'scripts/run-ios-tests.sh', 'scripts/require-native-artifacts.sh') }}
-
-            - name: Install iOS test dependencies
-              run: |
-                  npm run install:ios-test-pods
-                  mkdir -p test-results/ios
-
-
-            - name: Build iOS test host
-              if: steps.ios-test-build.outputs.cache-hit != 'true'
-              run: npm run test:ios
-              env:
-                  NATIVE_EDITOR_IOS_TEST_ACTION: build-for-testing
-
-            - name: Save compiled iOS test host
-              if: steps.ios-test-build.outputs.cache-hit != 'true'
-              uses: actions/cache/save@v5
-              with:
-                  path: .ci/ios-security/Build/Products
-                  key: ${{ steps.ios-test-build.outputs.cache-primary-key }}
+                  xcode: ${{ steps.ios-toolchain.outputs.xcode }}
 
             - name: Run iOS unit tests
               run: npm run test:ios -- -resultBundlePath test-results/ios/NativeEditorTests.xcresult

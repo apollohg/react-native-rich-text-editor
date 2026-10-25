@@ -399,11 +399,11 @@ jobs:
       - name: Install root dependencies
         run: npm ci
 
-      - name: Cache iOS native outputs
+      - name: Restore iOS native outputs
         id: native-build-cache
-        uses: actions/cache@v5
+        uses: actions/cache/restore@v5
         with:
-          path: |
+          path: &ios-native-cache-paths |
             rust/bindings
             rust/ios
             ios/Generated_editor_core.swift
@@ -423,12 +423,15 @@ jobs:
       - name: Verify generated bindings are current
         run: git diff --exit-code -- rust/bindings ios/Generated_editor_core.swift ios/editor_coreFFI
 
+      - name: Save iOS native outputs
+        if: steps.native-build-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: *ios-native-cache-paths
+          key: ${{ steps.native-build-cache.outputs.cache-primary-key }}
+
       - name: Install example dependencies
         run: npm --prefix example ci
-
-      - name: Install CocoaPods dependencies
-        run: pod install
-        working-directory: ios-tests
 
       - name: Prepare iOS simulator
         id: ios-simulator
@@ -507,14 +510,18 @@ jobs:
           echo "Using simulator destination id=$simulator_id"
           echo "destination=id=$simulator_id" >> "$GITHUB_OUTPUT"
 
+      - name: Prepare iOS test host
+        uses: ./.github/actions/ios-test-host
+        with:
+          xcode: ${{ steps.ios-toolchain.outputs.xcode }}
+        env:
+          IOS_DESTINATION: ${{ steps.ios-simulator.outputs.destination }}
+
       - name: Run iOS unit tests
-        run: >
-          xcodebuild test
-          -workspace ios-tests/NativeEditorTests.xcworkspace
-          -scheme NativeEditorTests
-          -sdk iphonesimulator
-          -destination '${{ steps.ios-simulator.outputs.destination }}'
-          -resultBundlePath test-results/ios/NativeEditorTests.xcresult
+        run: npm run test:ios -- -resultBundlePath test-results/ios/NativeEditorTests.xcresult
+        env:
+          IOS_DESTINATION: ${{ steps.ios-simulator.outputs.destination }}
+          NATIVE_EDITOR_IOS_TEST_ACTION: test-without-building
 
       - name: Upload iOS test results
         if: always()

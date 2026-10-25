@@ -476,8 +476,6 @@ try {
   await rm(fixture, { recursive: true, force: true });
 }
 
-console.log('npm publish lifecycle validation passed.');
-
 const highlightingJob = requireJob('build-code-highlighting');
 assert.match(highlightingJob, /key: highlighting-native-v1-/);
 assert.match(highlightingJob, /packages\/code-highlighting run test:rust/);
@@ -490,27 +488,65 @@ const androidBuildSource = await readFile(path.join(repoRoot, 'android/build.gra
 assert.match(androidBuildSource, /outputs\.cacheIf\s*\{\s*false\s*\}/, 'Fixture-driven JVM tests must execute instead of restoring cached results');
 assert.match(androidBuildSource, /outputs\.upToDateWhen\s*\{\s*false\s*\}/, 'JVM tests must re-read external security fixtures');
 const iosSecurityJob = requireJob('security-ios');
-const iosUnitTestStep = iosSecurityJob.split('- name: Run iOS unit tests')[1]?.split('\n            - name:')[0];
-assert.ok(iosUnitTestStep, 'release validation must run the complete iOS XCTest suite');
-assert.match(iosUnitTestStep, /^\s+run: npm run test:ios(?: -- -resultBundlePath test-results\/ios\/NativeEditorTests\.xcresult)?\s*$/m, 'release iOS tests must run without test filters');
-assert.match(iosUnitTestStep, /NATIVE_EDITOR_IOS_TEST_ACTION: test-without-building/);
-assert.doesNotMatch(iosUnitTestStep, /\bif:|continue-on-error:/, 'the complete iOS suite must gate publishing on every host cache hit');
-const iosBuildStep = iosSecurityJob.split('- name: Build iOS test host')[1]?.split('\n            - name:')[0];
-assert.ok(iosBuildStep, 'release validation must build the complete iOS test host');
-assert.match(iosBuildStep, /^\s+run: npm run test:ios\s*$/m, 'the cached iOS test host must not retain a security-only test filter');
+const iosCiJob = requireCiJob('ios');
+const iosNativeSaveIndex = iosCiJob.indexOf('- name: Save iOS native outputs');
+assert.ok(iosNativeSaveIndex > iosCiJob.indexOf('- name: Verify generated bindings are current'),
+  'CI must save validated native outputs immediately, so later cancellation does not discard the build');
+assert.ok(iosNativeSaveIndex < iosCiJob.indexOf('- name: Prepare iOS simulator'),
+  'Native outputs must be saved before simulator startup and XCTest');
+const iosNativeSave = iosCiJob.split('- name: Save iOS native outputs')[1]?.split(/\n\s+- name:/)[0];
+assert.match(iosNativeSave, /uses: actions\/cache\/save@v5/);
+assert.match(iosNativeSave, /key: \$\{\{ steps\.native-build-cache\.outputs\.cache-primary-key \}\}/);
+assert.match(iosNativeSave, /path: \*ios-native-cache-paths/);
+const iosTestHostAction = await readFile(path.join(repoRoot, '.github/actions/ios-test-host/action.yml'), 'utf8');
+for (const [job, name] of [[iosCiJob, 'CI'], [iosSecurityJob, 'release']]) {
+  assert.match(job, /timeout-minutes:\s*90/, `${name} must retain the full-suite time budget`);
+  const prepareStep = job.split('- name: Prepare iOS test host')[1]?.split(/\n\s+- name:/)[0];
+  assert.ok(prepareStep, `${name} must prepare the shared iOS test host`);
+  assert.match(prepareStep, /uses: \.\/\.github\/actions\/ios-test-host/);
+  assert.match(prepareStep, /xcode: \$\{\{ steps\.ios-toolchain\.outputs\.xcode \}\}/);
+  assert.doesNotMatch(prepareStep, /\bif:|continue-on-error:/);
+  const unitTestStep = job.split('- name: Run iOS unit tests')[1]?.split(/\n\s+- name:/)[0];
+  assert.ok(unitTestStep, `${name} validation must run the complete iOS XCTest suite`);
+  assert.match(unitTestStep, /^\s+run: npm run test:ios -- -resultBundlePath test-results\/ios\/NativeEditorTests\.xcresult\s*$/m,
+    `${name} iOS tests must run without test filters`);
+  assert.match(unitTestStep, /NATIVE_EDITOR_IOS_TEST_ACTION: test-without-building/);
+  assert.doesNotMatch(unitTestStep, /\bif:|continue-on-error:/,
+    `${name} must execute the full iOS suite on every host cache hit`);
+  assert.ok(job.indexOf('- name: Prepare iOS test host') < job.indexOf('- name: Run iOS unit tests'));
+}
+const iosBuildStep = iosTestHostAction.split('- name: Build iOS test host')[1]?.split(/\n\s+- name:/)[0];
+assert.ok(iosBuildStep, 'the shared action must build the complete iOS test host');
+assert.match(iosBuildStep, /^\s+run: npm run test:ios\s*$/m, 'the cached host must not retain a test filter');
 assert.match(iosBuildStep, /NATIVE_EDITOR_IOS_TEST_ACTION: build-for-testing/);
 assert.match(iosBuildStep, /if: steps\.ios-test-build\.outputs\.cache-hit != 'true'/);
-assert.match(iosSecurityJob, /timeout-minutes:\s*90/, 'release iOS validation must allow the same full-suite budget as CI');
-const iosTestRestore = iosSecurityJob.split('- name: Restore compiled iOS test host')[1]?.split('\n            - name:')[0];
+const iosTestRestore = iosTestHostAction.split('- name: Restore compiled iOS test host')[1]?.split(/\n\s+- name:/)[0];
 assert.ok(iosTestRestore);
-assert.match(iosTestRestore, /ios-security-host-v2-.*steps\.ios-toolchain\.outputs\.xcode.*hashFiles/, 'release validation must invalidate previously filtered iOS test hosts');
+assert.match(iosTestRestore, /ios-test-host-v1-.*inputs\.xcode.*hashFiles/);
 assert.doesNotMatch(iosTestRestore, /restore-keys:|github\.sha/);
-for (const input of ['ios/**', 'ios-tests/**', 'scripts/tests/*.json', 'common/cpp/**', 'ReactNativeProseEditor.podspec', 'src/specs/**', 'react-native.config.js', 'example/package-lock.json', 'scripts/run-ios-tests.sh']) {
+for (const input of [
+  'ios/**', 'ios-tests/**', 'scripts/tests/*.json', 'common/cpp/**', 'android/src/main/assets/editor-icons/**', 'ReactNativeProseEditor.podspec',
+  'src/specs/**', 'react-native.config.js', 'package.json', 'package-lock.json',
+  'example/package.json', 'example/package-lock.json', 'scripts/run-ios-tests.sh',
+  'scripts/require-native-artifacts.sh', '.github/actions/ios-test-host/**', '.github/actions/ios-build-cache/**',
+]) {
   assert.ok(iosTestRestore.includes(`'${input}'`), `iOS test host cache must include ${input}`);
 }
-assert.match(iosSecurityJob, /NATIVE_EDITOR_IOS_TEST_ACTION: build-for-testing/);
+assert.ok(iosTestHostAction.indexOf('- name: Restore compiled iOS test host') < iosTestHostAction.indexOf('- name: Install iOS test dependencies'),
+  'Hash pristine test-project inputs before CocoaPods mutates the project');
+const iosTestSave = iosTestHostAction.split('- name: Save compiled iOS test host')[1];
+assert.ok(iosTestSave, 'the compiled host must be saved before tests can fail or be cancelled');
+assert.match(iosTestSave, /uses: actions\/cache\/save@v5/);
+assert.match(iosTestSave, /key: \$\{\{ steps\.ios-test-build\.outputs\.cache-primary-key \}\}/);
+assert.equal(iosTestRestore.match(/path: ([^\n]+)/)?.[1], iosTestSave.match(/path: ([^\n]+)/)?.[1],
+  'The compiled host must be saved and restored from the same directory');
+assert.ok(iosTestHostAction.indexOf('- name: Save compiled iOS test host') > iosTestHostAction.indexOf('- name: Build iOS test host'));
+assert.match(iosTestHostAction, /NATIVE_EDITOR_IOS_DERIVED_DATA=\$GITHUB_WORKSPACE\/\.ci\/ios-tests/);
+assert.match(iosTestRestore, /path: \.ci\/ios-tests\/Build\/Products/);
 const iosTestStep = iosSecurityJob.split('- name: Validate iOS security behavior')[1];
 assert.match(iosTestStep, /NATIVE_EDITOR_IOS_TEST_ACTION: test-without-building/);
 assert.doesNotMatch(iosTestStep, /\bif:/, 'iOS security tests must run on every cache hit');
 
 assert.match(requireJob('package-contracts'), /node-version: 22/, 'Full Jest suite must use the supported Node 22 runtime');
+
+console.log('npm publish lifecycle validation passed.');

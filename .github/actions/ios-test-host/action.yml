@@ -1,0 +1,39 @@
+name: Prepare iOS test host
+description: Reuse an exact compiled XCTest host while executing tests separately on every run.
+inputs:
+    xcode:
+        description: Selected Xcode toolchain fingerprint.
+        required: true
+runs:
+    using: composite
+    steps:
+        - name: Configure iOS test build
+          shell: bash
+          run: |
+              echo "NATIVE_EDITOR_IOS_DERIVED_DATA=$GITHUB_WORKSPACE/.ci/ios-tests" >> "$GITHUB_ENV"
+              mkdir -p test-results/ios
+
+        - name: Restore compiled iOS test host
+          id: ios-test-build
+          uses: actions/cache/restore@v5
+          with:
+              path: .ci/ios-tests/Build/Products
+              key: ios-test-host-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.xcode }}-${{ hashFiles('ios/**', 'ios-tests/**', 'scripts/tests/*.json', 'common/cpp/**', 'android/src/main/assets/editor-icons/**', 'ReactNativeProseEditor.podspec', 'src/specs/**', 'react-native.config.js', 'package.json', 'package-lock.json', 'example/package.json', 'example/package-lock.json', 'scripts/run-ios-tests.sh', 'scripts/require-native-artifacts.sh', '.github/actions/ios-test-host/**', '.github/actions/ios-build-cache/**') }}
+
+        - name: Install iOS test dependencies
+          shell: bash
+          run: npm run install:ios-test-pods
+
+        - name: Build iOS test host
+          if: steps.ios-test-build.outputs.cache-hit != 'true'
+          shell: bash
+          run: npm run test:ios
+          env:
+              NATIVE_EDITOR_IOS_TEST_ACTION: build-for-testing
+
+        - name: Save compiled iOS test host
+          if: steps.ios-test-build.outputs.cache-hit != 'true'
+          uses: actions/cache/save@v5
+          with:
+              path: .ci/ios-tests/Build/Products
+              key: ${{ steps.ios-test-build.outputs.cache-primary-key }}
