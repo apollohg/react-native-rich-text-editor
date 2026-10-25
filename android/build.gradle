@@ -97,6 +97,7 @@ tasks.withType(Test).configureEach {
     dependsOn tasks.named('buildHostEditorCore')
     inputs.files(hostTestJnaClasspath).withPropertyName('hostTestJnaClasspath')
     maxHeapSize = unitTestMaxHeapSize
+    testLogging.exceptionFormat = 'full'
     systemProperty imeTraceRecordingProperty, 'true'
     systemProperty 'uniffi.component.editor_core.libraryOverride', hostEditorCoreLibrary.absolutePath
     doFirst {
