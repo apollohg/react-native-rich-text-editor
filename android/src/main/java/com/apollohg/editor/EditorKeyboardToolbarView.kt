@@ -495,8 +495,6 @@ internal class EditorKeyboardToolbarView(context: Context) : FrameLayout(context
             val (enabled, active) = buttonState(child, state)
             val menuItem = popupMenu.menu.add(0, index, index, child.label ?: child.key ?: "Item")
             menuItem.isEnabled = enabled
-            menuItem.isCheckable = true
-            menuItem.isChecked = active
             child.icon?.imageSource?.let { source ->
                 val size = resolvedMenuIconSizePx(child)
                 val request = ToolbarImageRequest(context, source, size) { drawable ->
