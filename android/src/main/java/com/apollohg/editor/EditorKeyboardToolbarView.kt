@@ -290,20 +290,15 @@ internal class EditorKeyboardToolbarView(context: Context) : FrameLayout(context
                 continue
             }
 
-            val button = (
-                if (item.icon?.imageSource != null) {
-                    ToolbarImageButton(themedContext).apply {
-                        imageSource = item.icon.imageSource
-                        imageTintable = item.icon.tintable
+            val button = ToolbarImageButton(themedContext).apply {
+                disclosure =
+                    if (item.type ==
+                        ToolbarItemKind.GROUP
+                    ) {
+                        item.disclosure
+                    } else {
+                        ToolbarGroupDisclosure.NONE
                     }
-                } else {
-                    AppCompatButton(themedContext)
-                }
-                ).apply {
-                val resolvedIcon = item.icon?.resolveForAndroid(themedContext)
-                    ?: NativeToolbarResolvedIcon("?")
-                text = resolvedIcon.text
-                typeface = resolvedIcon.typeface ?: Typeface.DEFAULT
                 gravity = Gravity.CENTER
                 background = GradientDrawable()
                 isAllCaps = false
@@ -633,6 +628,22 @@ internal class EditorKeyboardToolbarView(context: Context) : FrameLayout(context
         val buttonStyle = binding.item.buttonStyle
         val appearance = theme?.appearance ?: EditorToolbarAppearance.CUSTOM
         applyButtonLayout(binding, appearance)
+        val icon = if (binding.item.type == ToolbarItemKind.GROUP &&
+            binding.item.iconSource == ToolbarGroupIconSource.ACTIVE_CHILD
+        ) {
+            binding.item.items.filter { buttonState(it, state).second }.singleOrNull()?.icon
+                ?: binding.item.icon
+        } else {
+            binding.item.icon
+        }
+        val resolvedIcon = icon?.resolveForAndroid(button.context) ?: NativeToolbarResolvedIcon("?")
+        button.text = resolvedIcon.text
+        button.typeface = resolvedIcon.typeface ?: Typeface.DEFAULT
+        (button as ToolbarImageButton).apply {
+            imageTintable = icon?.tintable ?: true
+            imageSource = icon?.imageSource
+            refreshImageRequest()
+        }
         val textColor = when {
             !enabled ->
                 buttonStyle?.disabledColor
@@ -891,21 +902,38 @@ internal class EditorKeyboardToolbarView(context: Context) : FrameLayout(context
             ?.takeIf { it.isFinite() && it > 0f }
         val requestedMinWidth = binding.item.buttonStyle?.minWidth
             ?.takeIf { it.isFinite() && it > 0f }
-        val minimumWidthPx =
-            dp(maxOf(requestedMinWidth ?: 0f, requestedWidth ?: buttonSizeDp).roundToInt())
         button.textSize = resolvedIconSizeSp(
             binding.item,
             if (isNative) NATIVE_BUTTON_ICON_SIZE_SP else 16f,
             buttonSizeDp
         )
+        val minimumWidthPx =
+            dp(
+                maxOf(
+                    requestedMinWidth ?: 0f,
+                    requestedWidth ?: maxOf(
+                        buttonSizeDp,
+                        if ((button as ToolbarImageButton).showsDisclosure) {
+                            button.textSize / density + ToolbarImageButton.DISCLOSURE_SPACE_DP
+                        } else {
+                            buttonSizeDp
+                        }
+                    )
+                ).roundToInt()
+            )
         button.minWidth = minimumWidthPx
         button.minimumWidth = minimumWidthPx
         button.minHeight = sizePx
         button.minimumHeight = sizePx
+        val disclosurePadding = if ((button as ToolbarImageButton).showsDisclosure) {
+            dp((ToolbarImageButton.DISCLOSURE_SPACE_DP / 2).roundToInt())
+        } else {
+            0
+        }
         button.setPadding(
-            if (isNative) 0 else dp(10),
+            (if (isNative) 0 else dp(10)) + disclosurePadding,
             if (isNative) 0 else dp(8),
-            if (isNative) 0 else dp(10),
+            (if (isNative) 0 else dp(10)) + disclosurePadding,
             if (isNative) 0 else dp(8)
         )
         (button.layoutParams as? LinearLayout.LayoutParams)?.let { params ->

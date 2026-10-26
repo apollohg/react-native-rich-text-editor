@@ -180,7 +180,10 @@ extension EditorAccessoryToolbarView {
     }
 
     private func makeButton(item: NativeToolbarItem) -> UIButton {
-        let button = UIButton(type: .system)
+        let button: UIButton = item.type == .group && item.disclosure != .none
+            ? ToolbarDisclosureButton(type: .system)
+            : UIButton(type: .system)
+        (button as? ToolbarDisclosureButton)?.disclosure = item.disclosure
         button.translatesAutoresizingMaskIntoConstraints = false
         button.accessibilityLabel = item.label
         button.layer.cornerRadius = resolvedButtonBorderRadius(for: item)
@@ -196,17 +199,6 @@ extension EditorAccessoryToolbarView {
             button.configuration = configuration
         } else {
             button.contentEdgeInsets = UIEdgeInsets(top: 8, left: 10, bottom: 8, right: 10)
-        }
-        if let symbolName = item.icon?.resolvedSFSymbolName(),
-           let symbolImage = UIImage(systemName: symbolName) {
-            button.setImage(symbolImage, for: .normal)
-            button.setTitle(nil, for: .normal)
-        } else {
-            button.setImage(nil, for: .normal)
-            button.setTitle(item.icon?.resolvedGlyphText() ?? "?", for: .normal)
-        }
-        if let source = item.icon?.imageSource {
-            imageLoader.load(source)
         }
         let buttonSize = resolvedButtonSize
         let buttonWidth = resolvedButtonWidth(for: item)
@@ -251,4 +243,48 @@ extension EditorAccessoryToolbarView {
         return separator
     }
 
+}
+
+final class ToolbarDisclosureButton: UIButton {
+    static let disclosureSize: CGFloat = 8
+    static let disclosureGap: CGFloat = 4
+    static let contentPadding: CGFloat = 8
+    static let disclosureSpace = disclosureSize + disclosureGap
+
+    var disclosure: ToolbarGroupDisclosure = .down {
+        didSet {
+            disclosureView.image = UIImage(systemName: disclosure == .up ? "chevron.up" : "chevron.down")
+        }
+    }
+
+    private let disclosureView = UIImageView(image: UIImage(systemName: "chevron.down"))
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        disclosureView.isUserInteractionEnabled = false
+        disclosureView.isAccessibilityElement = false
+        disclosureView.accessibilityIdentifier = "toolbar-disclosure"
+        disclosureView.contentMode = .scaleAspectFit
+        addSubview(disclosureView)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func layoutSubviews() {
+        imageView?.transform = .identity
+        titleLabel?.transform = .identity
+        super.layoutSubviews()
+        let direction: CGFloat = effectiveUserInterfaceLayoutDirection == .rightToLeft ? -1 : 1
+        let primaryView: UIView? = image(for: .normal) == nil ? titleLabel : imageView
+        guard let primaryView else { return }
+        primaryView.transform = CGAffineTransform(translationX: -direction * Self.disclosureSpace / 2, y: 0)
+        let edge = direction > 0 ? primaryView.frame.maxX : primaryView.frame.minX
+        disclosureView.frame = CGRect(
+            x: edge + (direction > 0 ? Self.disclosureGap : -Self.disclosureSpace),
+            y: (bounds.height - Self.disclosureSize) / 2,
+            width: Self.disclosureSize,
+            height: Self.disclosureSize
+        )
+        disclosureView.tintColor = tintColor
+    }
 }

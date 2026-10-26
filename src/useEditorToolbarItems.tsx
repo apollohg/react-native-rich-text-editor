@@ -387,10 +387,16 @@ export function useEditorToolbarItems(
                 const isExpanded = presentation === 'expand' && expandedGroupKey === item.key;
                 const isMenuOpen = presentation === 'menu' && menuState?.groupKey === item.key;
 
+                const activeChildren = children.filter(child => child.isActive);
+                const icon = item.iconSource === 'activeChild' && activeChildren.length === 1
+                    ? activeChildren[0].icon
+                    : item.icon;
+
                 const group: ToolbarGroupButton = {
                     key: item.key,
                     label: item.label,
-                    icon: item.icon,
+                    icon,
+                    disclosure: item.disclosure ?? 'down',
                     buttonStyle: item.buttonStyle,
                     presentation,
                     placement,

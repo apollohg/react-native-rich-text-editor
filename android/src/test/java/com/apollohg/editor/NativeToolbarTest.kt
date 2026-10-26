@@ -33,6 +33,79 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 class NativeToolbarTest {
     @Test
+    fun `group icon follows live selection and falls back for ambiguous state`() {
+        val toolbar = EditorKeyboardToolbarView(RuntimeEnvironment.getApplication())
+        toolbar.setItems(
+            NativeToolbarItem.fromJson(
+                """
+            [{"type":"group","key":"format","label":"Format",
+              "icon":{"type":"glyph","text":"F"},"iconSource":"activeChild",
+              "items":[
+                {"type":"mark","mark":"bold","label":"Bold","icon":{"type":"glyph","text":"B"}},
+                {"type":"mark","mark":"italic","label":"Italic","icon":{"type":"glyph","text":"I"}}
+              ]}]
+        """
+            )
+        )
+        val button = requireNotNull(toolbar.buttonAtForTesting(0))
+        for ((marks, expected) in listOf(
+            """{"bold":true}""" to "B",
+            """{"italic":true}""" to "I",
+            """{"bold":true,"italic":true}""" to "F",
+            "{}" to "F"
+        )) {
+            toolbar.applyState(
+                NativeToolbarState.fromState(
+                    org.json.JSONObject("""{"marks":$marks,"allowedMarks":["bold","italic"]}"""),
+                    null
+                )
+            )
+            assertEquals("Group icon for $marks", expected, button.text.toString())
+            assertEquals("Format", button.contentDescription)
+        }
+    }
+
+    @Test
+    fun `group disclosure defaults on and hiding it preserves inline actions`() {
+        val toolbar = EditorKeyboardToolbarView(RuntimeEnvironment.getApplication())
+        val group = NativeToolbarItem.fromJson(
+            """
+            [{"type":"group","key":"format","label":"Format","icon":{"type":"glyph","text":"F"},
+              "items":[{"type":"action","key":"custom","label":"Custom","icon":{"type":"glyph","text":"C"}}]}]
+        """
+        ).single()
+        toolbar.setItems(listOf(group))
+        assertEquals(
+            ToolbarGroupDisclosure.DOWN,
+            (toolbar.buttonAtForTesting(0) as ToolbarImageButton).disclosure
+        )
+        for (direction in listOf("up", "down")) {
+            val decoded = NativeToolbarItem.fromJson(
+                """
+                [{"type":"group","key":"format","label":"Format","disclosure":"$direction",
+                  "icon":{"type":"glyph","text":"F"},"items":[
+                    {"type":"action","key":"custom","label":"Custom","icon":{"type":"glyph","text":"C"}}
+                  ]}]
+            """
+            ).single()
+            toolbar.setItems(listOf(decoded))
+            assertEquals(
+                direction,
+                (toolbar.buttonAtForTesting(0) as ToolbarImageButton).disclosure.wireValue
+            )
+        }
+        toolbar.setItems(listOf(group.copy(disclosure = ToolbarGroupDisclosure.NONE)))
+        assertFalse((toolbar.buttonAtForTesting(0) as ToolbarImageButton).showsDisclosure)
+        toolbar.buttonAtForTesting(0)!!.performClick()
+        assertEquals(2, toolbar.buttonCountForTesting())
+        var action: String? = null
+        toolbar.onPressItem = { action = it.key }
+        toolbar.buttonAtForTesting(1)!!.performClick()
+        assertEquals("custom", action)
+        assertEquals(1, toolbar.buttonCountForTesting())
+    }
+
+    @Test
     fun `alignment buttons reflect explicit mixed inherited and unavailable engine state`() {
         val toolbar = EditorKeyboardToolbarView(RuntimeEnvironment.getApplication())
         val items = NativeToolbarItem.fromJson(

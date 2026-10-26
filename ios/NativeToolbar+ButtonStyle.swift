@@ -213,7 +213,11 @@ extension EditorAccessoryToolbarView {
     }
 
     func resolvedButtonWidth(for item: NativeToolbarItem) -> CGFloat {
-        max(item.buttonStyle?.width ?? resolvedButtonSize, item.buttonStyle?.minWidth ?? 0)
+        let defaultWidth = item.type == .group && item.disclosure != .none
+            ? max(resolvedButtonSize, resolvedButtonIconSize(for: item) +
+                ToolbarDisclosureButton.disclosureSpace + ToolbarDisclosureButton.contentPadding)
+            : resolvedButtonSize
+        return max(item.buttonStyle?.width ?? defaultWidth, item.buttonStyle?.minWidth ?? 0)
     }
 
     func resolvedButtonBorderRadius(for item: NativeToolbarItem) -> CGFloat {
@@ -240,10 +244,21 @@ extension EditorAccessoryToolbarView {
         batchConfigurationUpdates: Bool
     ) {
         let iconSize = resolvedButtonIconSize(for: item)
-        if let source = item.icon?.imageSource, let image = imageLoader.image(for: source) {
-            button.setImage(ToolbarImageLoader.rendered(image, source: source, size: iconSize, tintable: item.icon?.tintable ?? true), for: .normal)
-            button.setTitle(nil, for: .normal)
+        let activeChildren = item.type == .group && item.iconSource == .activeChild
+            ? item.items.filter { buttonState(for: $0, state: currentState).active }
+            : []
+        let icon = activeChildren.count == 1 ? activeChildren[0].icon : item.icon
+        var image: UIImage?
+        if let source = icon?.imageSource {
+            imageLoader.load(source)
+            image = imageLoader.image(for: source).map {
+                ToolbarImageLoader.rendered($0, source: source, size: iconSize, tintable: icon?.tintable ?? true)
+            }
+        } else if let symbolName = icon?.resolvedSFSymbolName() {
+            image = UIImage(systemName: symbolName)
         }
+        button.setImage(image, for: .normal)
+        button.setTitle(image == nil ? icon?.resolvedGlyphText() ?? "?" : nil, for: .normal)
         let font = UIFont.systemFont(ofSize: iconSize, weight: .semibold)
         if #available(iOS 15.0, *), var configuration = button.configuration {
             if batchConfigurationUpdates {
@@ -259,6 +274,7 @@ extension EditorAccessoryToolbarView {
             button.configuration = configuration
             button.updateConfiguration()
         }
+        button.setNeedsLayout()
         button.titleLabel?.font = font
         if button.image(for: .normal) != nil {
             button.setPreferredSymbolConfiguration(

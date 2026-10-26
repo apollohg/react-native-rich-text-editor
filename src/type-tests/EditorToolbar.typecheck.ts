@@ -8,6 +8,8 @@ const textStyleMenu: EditorToolbarItem = {
     label: 'Text style',
     icon: { type: 'glyph', text: 'Normal' },
     presentation: 'menu',
+    disclosure: 'down',
+    iconSource: 'activeChild',
     buttonStyle: textButtonStyle,
     items: [
         {
@@ -50,3 +52,10 @@ void [imageIcon, inlineIcons];
 // @ts-expect-error URI sources must include a URI
 const missingUri: EditorToolbarIcon = { type: 'image', source: { width: 24 } };
 void missingUri;
+
+const leafDisclosure: EditorToolbarItem = {
+    type: 'action', key: 'custom', label: 'Custom', icon: imageIcon,
+    // @ts-expect-error disclosure belongs to groups, not leaf actions
+    disclosure: 'down',
+};
+void leafDisclosure;

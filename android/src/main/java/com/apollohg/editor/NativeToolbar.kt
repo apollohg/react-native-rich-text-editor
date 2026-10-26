@@ -197,6 +197,17 @@ internal enum class ToolbarGroupPresentation(val wireValue: String) {
     }
 }
 
+internal enum class ToolbarGroupDisclosure(val wireValue: String) {
+    UP("up"),
+    DOWN("down"),
+    NONE("none")
+}
+
+internal enum class ToolbarGroupIconSource(val wireValue: String) {
+    STATIC("static"),
+    ACTIVE_CHILD("activeChild")
+}
+
 internal enum class ToolbarItemPlacement(val wireValue: String) {
     START("start"),
     SCROLL("scroll"),

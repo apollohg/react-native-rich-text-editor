@@ -3,6 +3,8 @@ export {
     type EditorToolbarHeadingLevel,
     type EditorToolbarCommand,
     type EditorToolbarGroupPresentation,
+    type EditorToolbarGroupDisclosure,
+    type EditorToolbarGroupIconSource,
     type EditorToolbarItemPlacement,
     type EditorToolbarDefaultIconId,
     type EditorToolbarSFSymbolIcon,

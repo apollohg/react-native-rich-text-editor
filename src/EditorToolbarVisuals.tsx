@@ -13,6 +13,13 @@ import { type EditorToolbarTheme } from './EditorTheme';
 import { BUTTON_HIT } from './EditorToolbarRegistry';
 
 export const BUTTON_VISIBLE = 32;
+export const GROUP_DISCLOSURE_SIZE = 8;
+export const GROUP_DISCLOSURE_GAP = 4;
+export const GROUP_CONTENT_PADDING = 8;
+const GROUP_CHEVRON_EDGE = 5;
+const GROUP_CHEVRON_STROKE = 1.5;
+const GROUP_CHEVRON_ROTATION = '45deg';
+const GROUP_CHEVRON_UP_ROTATION = '225deg';
 
 export const TOOLBAR_PADDING_H = 12;
 
@@ -386,6 +393,7 @@ export const styles = StyleSheet.create({
         position: 'relative',
     },
     button: {
+        flexDirection: 'row',
         width: BUTTON_HIT,
         height: BUTTON_VISIBLE,
         justifyContent: 'center',
@@ -393,11 +401,21 @@ export const styles = StyleSheet.create({
         borderRadius: BUTTON_RADIUS,
     },
     groupDisclosure: {
-        position: 'absolute',
-        right: 5,
-        bottom: 2,
-        fontSize: 9,
-        fontWeight: '700',
+        marginStart: GROUP_DISCLOSURE_GAP,
+        width: GROUP_DISCLOSURE_SIZE,
+        height: GROUP_DISCLOSURE_SIZE,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    groupChevron: {
+        width: GROUP_CHEVRON_EDGE,
+        height: GROUP_CHEVRON_EDGE,
+        borderBottomWidth: GROUP_CHEVRON_STROKE,
+        borderRightWidth: GROUP_CHEVRON_STROKE,
+        transform: [{ rotate: GROUP_CHEVRON_ROTATION }],
+    },
+    groupChevronUp: {
+        transform: [{ rotate: GROUP_CHEVRON_UP_ROTATION }],
     },
     separator: {
         width: StyleSheet.hairlineWidth,

@@ -22,6 +22,84 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 class NativeToolbarImageTest {
     @Test
+    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
+    fun `disclosure stays separate from full colour artwork in both layout directions`() {
+        val applicationInfo = RuntimeEnvironment.getApplication().applicationInfo
+        val originalFlags = applicationInfo.flags
+        applicationInfo.flags =
+            originalFlags or android.content.pm.ApplicationInfo.FLAG_SUPPORTS_RTL
+        try {
+            val button = ToolbarImageButton(RuntimeEnvironment.getApplication())
+            button.disclosure = ToolbarGroupDisclosure.DOWN
+            button.background = null
+            button.setTextColor(Color.RED)
+            button.imageTintable = false
+            button.imageDrawable = ColorDrawable(Color.BLUE)
+            val edge = 80
+            button.layout(0, 0, edge, edge)
+            for (disclosure in listOf(ToolbarGroupDisclosure.UP, ToolbarGroupDisclosure.DOWN)) {
+                button.disclosure = disclosure
+                for (direction in listOf(
+                    android.view.View.LAYOUT_DIRECTION_LTR,
+                    android.view.View.LAYOUT_DIRECTION_RTL
+                )) {
+                    button.layoutDirection = direction
+                    button.layout(0, 0, edge, edge)
+                    assertEquals(
+                        "Test host must apply the requested direction",
+                        direction,
+                        button.layoutDirection
+                    )
+                    val bitmap = Bitmap.createBitmap(edge, edge, Bitmap.Config.ARGB_8888)
+                    button.draw(Canvas(bitmap))
+                    val redPixels = (0 until edge).flatMap { x ->
+                        (0 until edge).filter { y -> bitmap.getPixel(x, y) == Color.RED }.map { x }
+                    }
+                    assertTrue(
+                        "Chevron must render in the button foreground colour",
+                        redPixels.isNotEmpty()
+                    )
+                    val primaryCenter =
+                        edge / 2f +
+                            (if (direction == android.view.View.LAYOUT_DIRECTION_LTR) -1 else 1) *
+                            ToolbarImageButton.DISCLOSURE_SPACE_DP *
+                            button.resources.displayMetrics.density /
+                            2
+                    assertEquals(Color.BLUE, bitmap.getPixel(primaryCenter.toInt(), edge / 2))
+                    if (direction == android.view.View.LAYOUT_DIRECTION_LTR) {
+                        assertTrue("Chevron must sit after the artwork", redPixels.min() > edge / 2)
+                    } else {
+                        assertTrue(
+                            "RTL disclosure must sit before the artwork",
+                            redPixels.max() < edge / 2
+                        )
+                    }
+                    val centerX = (redPixels.min() + redPixels.max()) / 2
+                    val edgeX = redPixels.min() + 1
+                    fun redHeight(x: Int) = (0 until edge)
+                        .filter { y -> bitmap.getPixel(x, y) == Color.RED }.average()
+                    val centerHeight = redHeight(centerX)
+                    val edgeHeight = redHeight(edgeX)
+                    assertTrue(
+                        "Chevron tip must point $disclosure for layout direction $direction",
+                        if (disclosure ==
+                            ToolbarGroupDisclosure.UP
+                        ) {
+                            centerHeight < edgeHeight
+                        } else {
+                            centerHeight >
+                                edgeHeight
+                        }
+                    )
+                    bitmap.recycle()
+                }
+            }
+        } finally {
+            applicationInfo.flags = originalFlags
+        }
+    }
+
+    @Test
     fun `image descriptors preserve URI and fallback with default tinting`() {
         val icon = requireNotNull(
             NativeToolbarIcon.fromJson(
