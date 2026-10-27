@@ -146,7 +146,7 @@ for (const input of [
 }
 assert.match(buildJob, /xcodebuild -version/, 'native cache must identify the selected Xcode toolchain');
 for (const stepName of [
-  'Setup Java', 'Setup Rust', 'Cache Cargo', 'Install cargo-ndk',
+  'Setup Java', 'Setup Rust', 'Install cargo-ndk',
   'Setup Android SDK', 'Setup Android NDK', 'Build editor-core for all shipping targets',
 ]) {
   assert.match(buildJob, new RegExp(
@@ -175,11 +175,32 @@ assert.match(
   'restored and freshly built outputs must both be uploaded for validation',
 );
 assert.match(buildJob, /release-artifact\/\*\.tgz/);
-assertRustCache(buildJob, 'build-package');
 
-for (const jobName of ['rust', 'android-native', 'android', 'ios']) {
+for (const jobName of ['rust', 'android-native', 'android']) {
   assertRustCache(requireCiJob(jobName), `CI ${jobName}`);
 }
+
+const localCargoTarget = /CARGO_TARGET_DIR: \$\{\{ github\.workspace \}\}\/\.\.\/\.cargo-target/;
+const ciIosJob = requireCiJob('ios');
+assert.match(ciIosJob, localCargoTarget, 'CI iOS must keep Cargo build outputs outside checkout cleanup');
+assert.match(buildJob, /env: &macos-cargo-env\s+CARGO_TARGET_DIR: \$\{\{ github\.workspace \}\}\/\.\.\/\.cargo-target/,
+  'release builds must define the persistent Mac Cargo target');
+for (const jobName of ['build-code-highlighting', 'package-contracts']) {
+  assert.match(requireJob(jobName), /env: \*macos-cargo-env/,
+    `${jobName} must reuse the persistent Mac Cargo target`);
+}
+for (const [job, jobName] of [
+  [ciIosJob, 'CI iOS'],
+  [buildJob, 'build-package'],
+  ...['build-code-highlighting', 'package-contracts'].map((name) => [requireJob(name), name]),
+]) {
+  assert.doesNotMatch(job, /Swatinem\/rust-cache@v2/,
+    `${jobName} must not transfer persistent Cargo outputs through GitHub cache`);
+}
+const iosBuildCacheAction = await readFile(path.join(repoRoot, '.github/actions/ios-build-cache/action.yml'), 'utf8');
+assert.match(iosBuildCacheAction, /CCACHE_DIR=\$HOME\/\.cache\/native-editor-ccache/);
+assert.doesNotMatch(iosBuildCacheAction, /uses: actions\/cache@v5/,
+  'persistent Mac compiler and CocoaPods caches must stay local');
 
 const ciAggregateJob = requireCiJob('js-and-android');
 assert.match(ciAggregateJob, /if: always\(\)/, 'The existing required check must report failures even when a dependency is skipped');
@@ -201,7 +222,6 @@ for (const dependency of ciDependencies) {
 }
 
 for (const jobName of [
-  'package-contracts',
   'security-rust-typescript',
   'android-release-validation',
 ]) {

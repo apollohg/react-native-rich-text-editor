@@ -361,6 +361,8 @@ jobs:
     runs-on:
       group: native-editor-ios
       labels: [self-hosted, macOS, ARM64]
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/../.cargo-target
     # Includes cold Rust/native builds, XCTest, and result collection.
     timeout-minutes: 90
     steps:
@@ -388,15 +390,6 @@ jobs:
         with:
           targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios
           components: llvm-tools-preview
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: rust/editor-core
-          shared-key: editor-core
-          cache-on-failure: true
-          cache-workspace-crates: true
-          key: ${{ github.job }}-${{ hashFiles('rust/editor-core/src/**', 'rust/editor-core/tests/**', 'rust/editor-core/benches/**') }}
 
       - name: Install root dependencies
         run: npm ci

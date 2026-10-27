@@ -37,6 +37,8 @@ jobs:
         runs-on: &macos-runner
             group: native-editor-ios
             labels: [self-hosted, macOS, ARM64]
+        env: &macos-cargo-env
+            CARGO_TARGET_DIR: ${{ github.workspace }}/../.cargo-target
         timeout-minutes: 45
         steps:
             - name: Checkout
@@ -82,16 +84,6 @@ jobs:
               with:
                   targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios, aarch64-linux-android, armv7-linux-androideabi, i686-linux-android, x86_64-linux-android
                   components: llvm-tools-preview
-
-            - name: Cache Cargo
-              if: steps.native-build-cache.outputs.cache-hit != 'true'
-              uses: Swatinem/rust-cache@v2
-              with:
-                  workspaces: rust/editor-core
-                  shared-key: editor-core
-                  cache-on-failure: true
-                  cache-workspace-crates: true
-                  key: ${{ github.job }}-${{ hashFiles('rust/editor-core/src/**', 'rust/editor-core/tests/**', 'rust/editor-core/benches/**') }}
 
             - name: Install cargo-ndk
               if: steps.native-build-cache.outputs.cache-hit != 'true'
@@ -171,6 +163,7 @@ jobs:
 
     build-code-highlighting:
         runs-on: *macos-runner
+        env: *macos-cargo-env
         timeout-minutes: 45
         steps:
             - name: Checkout
@@ -213,15 +206,6 @@ jobs:
               uses: dtolnay/rust-toolchain@1.95.0
               with:
                   targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios, aarch64-linux-android, armv7-linux-androideabi, i686-linux-android, x86_64-linux-android
-
-            - name: Cache Cargo
-              uses: Swatinem/rust-cache@v2
-              with:
-                  workspaces: packages/code-highlighting/rust
-                  shared-key: code-highlighting
-                  cache-on-failure: true
-                  cache-workspace-crates: true
-                  key: ${{ github.job }}-${{ hashFiles('packages/code-highlighting/rust/src/**', 'packages/code-highlighting/rust/tests/**') }}
 
             - name: Install cargo-ndk
               if: steps.native-build-cache.outputs.cache-hit != 'true'
@@ -299,6 +283,7 @@ jobs:
     package-contracts:
         needs: build-package
         runs-on: *macos-runner
+        env: *macos-cargo-env
         timeout-minutes: 45
         steps:
             - name: Checkout
@@ -315,15 +300,6 @@ jobs:
 
             - name: Setup Rust
               uses: dtolnay/rust-toolchain@1.95.0
-
-            - name: Cache Cargo
-              uses: Swatinem/rust-cache@v2
-              with:
-                  workspaces: rust/editor-core
-                  shared-key: editor-core
-                  cache-on-failure: true
-                  cache-workspace-crates: true
-                  key: ${{ github.job }}-${{ hashFiles('rust/editor-core/src/**', 'rust/editor-core/tests/**', 'rust/editor-core/benches/**') }}
 
             - name: Install dependencies
               run: |
