@@ -8,9 +8,6 @@ extension EditorAccessoryToolbarView {
             guard let self else { return }
             apply(state: currentState)
         }
-        if #available(iOS 16.0, *) {
-            (editMenuPresenter as? ToolbarEditMenuPresenter)?.dismiss()
-        }
         buttonBindings.removeAll()
         separators.removeAll()
         for arrangedSubview in startPinnedStackView.arrangedSubviews {
@@ -106,7 +103,7 @@ extension EditorAccessoryToolbarView {
         )
     }
 
-    private func handleToolbarButtonPress(_ item: NativeToolbarItem) {
+    func handleToolbarButtonPress(_ item: NativeToolbarItem) {
         switch item.type {
         case .group:
             handleGroupPress(item)
@@ -129,54 +126,6 @@ extension EditorAccessoryToolbarView {
         case .menu:
             break
         }
-    }
-
-    private func presentGroupMenu(_ item: NativeToolbarItem, from sourceButton: UIButton) {
-        guard #available(iOS 16.0, *),
-              let presenter = editMenuPresenter as? ToolbarEditMenuPresenter
-        else {
-            return
-        }
-        presenter.toggle(from: sourceButton) { [weak self] in
-            self?.makeGroupMenu(item: item)
-        }
-    }
-
-    private func makeGroupMenu(item: NativeToolbarItem) -> UIMenu? {
-        guard item.type == .group else { return nil }
-        let actions = item.items.compactMap { child -> UIAction? in
-            let state = buttonState(for: child, state: currentState)
-            let image: UIImage?
-            if let source = child.icon?.imageSource {
-                imageLoader.load(source)
-                image = imageLoader.image(for: source).map {
-                    ToolbarImageLoader.rendered($0, source: source, size: resolvedButtonIconSize(for: child), tintable: child.icon?.tintable ?? true)
-                }
-            } else {
-                image = child.icon?.resolvedSFSymbolName().flatMap { UIImage(systemName: $0) }
-            }
-            var title = child.label ?? child.icon?.resolvedGlyphText() ?? "Item"
-            if child.icon?.imageSource != nil, image == nil {
-                let fallback = child.icon?.resolvedGlyphText() ?? "?"
-                if fallback != title {
-                    title = "\(fallback) \(title)"
-                }
-            }
-            return UIAction(
-                title: title,
-                image: image,
-                identifier: nil,
-                discoverabilityTitle: child.label,
-                attributes: state.enabled ? [] : [.disabled],
-                state: state.active ? .on : .off
-            ) { [weak self] _ in
-                self?.handleToolbarButtonPress(child)
-            }
-        }
-        guard !actions.isEmpty else { return nil }
-        let menu = UIMenu(title: item.label ?? "", children: actions)
-        menu.preferredElementSize = .large
-        return menu
     }
 
     private func makeButton(item: NativeToolbarItem) -> UIButton {
@@ -209,13 +158,15 @@ extension EditorAccessoryToolbarView {
         widthConstraint.isActive = true
         heightConstraint.isActive = true
         if item.type == .group,
-           (item.presentation ?? .expand) == .menu,
-           #available(iOS 16.0, *) {
+           (item.presentation ?? .expand) == .menu {
             button.accessibilityHint = "Shows menu"
-            button.addAction(UIAction { [weak self, weak button] _ in
-                guard let button else { return }
-                self?.presentGroupMenu(item, from: button)
-            }, for: .touchUpInside)
+            button.menu = UIMenu(title: item.label ?? "", children: [
+                UIDeferredMenuElement.uncached { [weak self] completion in
+                    completion(self?.makeGroupMenu(item: item)?.children ?? [])
+                }
+            ])
+            button.showsMenuAsPrimaryAction = true
+            button.preferredMenuElementOrder = .fixed
         } else {
             button.addAction(UIAction { [weak self] _ in
                 self?.handleToolbarButtonPress(item)

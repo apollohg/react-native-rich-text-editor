@@ -137,12 +137,11 @@ final class ToolbarIconTests: XCTestCase {
         toolbar.setItemsJSONForTesting("""
         [{"type":"group","key":"images","label":"Images","icon":{"type":"glyph","text":"I"},"presentation":"menu","items":[{"type":"action","key":"photo","label":"Photo","icon":{"type":"image","source":{"uri":"data:image/png;base64,\(png.base64EncodedString())"},"tintable":false}},{"type":"action","key":"missing","label":"Missing photo","icon":{"type":"image","source":{"uri":"data:image/png;base64,AA=="},"fallbackText":"!"}},{"type":"action","key":"default-fallback","label":"Unavailable photo","icon":{"type":"image","source":{"uri":"data:image/png;base64,AQ=="}}}]}]
         """)
-        let interaction = try XCTUnwrap(toolbar.interactions.compactMap { $0 as? UIEditMenuInteraction }.first)
-        defer { interaction.dismissMenu() }
-        toolbar.triggerButtonTapForTesting(0)
-        let configuration = UIEditMenuConfiguration(identifier: nil, sourcePoint: .zero)
+        toolbar.rebuildButtonsIfNeeded()
+        let button = try XCTUnwrap(toolbar.buttonBindings.first?.button)
+        let attachedMenu = button.menu
         func menuAction(at index: Int = 0) -> UIAction? {
-            interaction.delegate?.editMenuInteraction?(interaction, menuFor: configuration, suggestedActions: [])?.children.dropFirst(index).first as? UIAction
+            toolbar.makeGroupMenu(item: toolbar.items[0])?.children.dropFirst(index).first as? UIAction
         }
         XCTAssertEqual(menuAction()?.title, "? Photo")
         XCTAssertEqual(menuAction(at: 1)?.title, "! Missing photo")
@@ -153,7 +152,8 @@ final class ToolbarIconTests: XCTestCase {
         XCTAssertEqual(menuAction()?.image?.renderingMode, .alwaysOriginal)
         XCTAssertEqual(menuAction()?.state, .off)
         XCTAssertFalse(menuAction()?.attributes.contains(.disabled) ?? true)
-        XCTAssertEqual(toolbar.editMenuPresentationRequestCountForTesting, 1)
+        XCTAssertTrue(button.showsMenuAsPrimaryAction)
+        XCTAssertTrue(button.menu === attachedMenu)
         XCTAssertEqual(menuAction(at: 1)?.title, "! Missing photo", "Failed images retain fallback text without losing their label")
         XCTAssertEqual(menuAction(at: 1)?.discoverabilityTitle, "Missing photo")
         XCTAssertEqual(menuAction(at: 2)?.title, "? Unavailable photo", "Failed images without fallbackText use the default question mark")

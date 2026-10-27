@@ -53,7 +53,6 @@ final class EditorAccessoryToolbarView: UIView {
     var theme: EditorToolbarTheme?
     private var mentionTheme: EditorMentionTheme?
     private var didAnimateChromeTransition = false
-    var editMenuPresenter: AnyObject?
     var onPressItem: ((NativeToolbarItem) -> Void)?
     var onSelectMentionSuggestion: ((NativeMentionSuggestion) -> Void)?
     var onKeyboardGeometryMayChange: (() -> Void)?
@@ -105,11 +104,6 @@ final class EditorAccessoryToolbarView: UIView {
     var selectedButtonCountForTesting: Int {
         constructedButtonBindings.filter(\.button.isSelected).count
     }
-    var editMenuPresentationRequestCountForTesting: Int {
-        guard #available(iOS 16.0, *) else { return 0 }
-        return (editMenuPresenter as? ToolbarEditMenuPresenter)?.presentationRequestCount ?? 0
-    }
-
     override var intrinsicContentSize: CGSize {
         let contentHeight = mentionButtons.isEmpty ? resolvedToolbarHeight : Self.mentionRowHeight
         return CGSize(
@@ -152,11 +146,6 @@ final class EditorAccessoryToolbarView: UIView {
         backgroundColor = .clear
         isOpaque = false
         setupView()
-        if #available(iOS 16.0, *) {
-            let presenter = ToolbarEditMenuPresenter()
-            editMenuPresenter = presenter
-            addInteraction(presenter.interaction)
-        }
         setNeedsButtonRebuild()
     }
 
@@ -391,10 +380,13 @@ final class EditorAccessoryToolbarView: UIView {
             binding.button.isEnabled = buttonState.enabled
             binding.button.isSelected = buttonState.active
             binding.button.accessibilityTraits = buttonState.active ? [.button, .selected] : .button
+            if binding.item.type == .group, (binding.item.presentation ?? .expand) == .menu {
+                let item = binding.item
+                binding.button.contextMenuInteraction?.updateVisibleMenu { [weak self] visibleMenu in
+                    self?.makeGroupMenu(item: item) ?? visibleMenu
+                }
+            }
             updateButtonAppearance(binding.button, item: binding.item, enabled: buttonState.enabled, active: buttonState.active)
-        }
-        if #available(iOS 16.0, *) {
-            (editMenuPresenter as? ToolbarEditMenuPresenter)?.reloadVisibleMenu()
         }
     }
 
