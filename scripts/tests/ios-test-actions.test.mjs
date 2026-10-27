@@ -135,6 +135,58 @@ printf '%s\\n' "$@" > "$CAPTURE"
         assert.notEqual(run.status, 0, 'Unavailable simulators must fail without running tests');
         assert.ok(run.stderr.includes(discoveryDiagnostic), `Discovery exit ${discoveryStatus} must retain Xcode diagnostics: ${run.stderr}`);
     }
+
+    const ciWorkflow = readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8');
+    const simulatorStep = ciWorkflow.split('      - name: Prepare iOS simulator\n')[1]
+        ?.split('\n      - name: Prepare iOS test host')[0];
+    assert.ok(simulatorStep, 'CI must prepare an iOS simulator');
+    const simulatorScript = simulatorStep.split('        run: |\n')[1]
+        ?.split('\n').map((line) => line.startsWith('          ') ? line.slice(10) : line).join('\n');
+    assert.ok(simulatorScript, 'CI simulator preparation must have a shell script');
+    writeFileSync(join(root, 'bin/xcrun'), `#!/bin/bash
+case "$*" in
+    'simctl list runtimes available') printf '%s\\n' "$SIMCTL_RUNTIMES" ;;
+    'simctl list devicetypes') printf '%s\\n' "$SIMCTL_DEVICE_TYPES" ;;
+    'simctl list devices available') printf '%s\\n' "$SIMCTL_DEVICES" ;;
+    'simctl create '*)
+        printf '%s\\n' "$*" >> "$SIMCTL_CALLS"
+        if [ "$#" -ne 4 ]; then
+            printf 'Incompatible device\\n' >&2
+            exit 147
+        fi
+        printf '%s\\n' "$SIMULATOR_ID"
+        ;;
+    'simctl boot '*|'simctl bootstatus '*) printf '%s\\n' "$*" >> "$SIMCTL_CALLS" ;;
+    *) exit 1 ;;
+esac
+`, { mode: 0o755 });
+    for (const [scenario, devices, expectedCreate] of [
+        ['reuse an existing iPhone despite trailing whitespace', `== Devices ==\n-- iOS 27.0 --\n    iPhone 16 (${simulatorId}) (Shutdown) `, false],
+        ['create an iPhone using a compatible installed runtime', '== Devices ==', true],
+    ]) {
+        const simctlCalls = join(root, `ci-simctl-calls-${expectedCreate}`);
+        const githubOutput = join(root, `ci-github-output-${expectedCreate}`);
+        const run = spawnSync('bash', ['-euo', 'pipefail', '-c', simulatorScript], {
+            cwd: root,
+            env: {
+                ...process.env,
+                PATH: `${root}/bin:${process.env.PATH}`,
+                CAPTURE: join(root, 'args'),
+                GITHUB_OUTPUT: githubOutput,
+                SIMCTL_CALLS: simctlCalls,
+                SIMULATOR_ID: simulatorId,
+                SIMCTL_DEVICES: devices,
+                SIMCTL_RUNTIMES: '== Runtimes ==\niOS 26.5 (26.5 - 23F77) - com.apple.CoreSimulator.SimRuntime.iOS-26-5\niOS 27.0 (27.0 - 24A434) - com.apple.CoreSimulator.SimRuntime.iOS-27-0\niOS 27.1 (27.1 - 24A94425) - com.apple.CoreSimulator.SimRuntime.iOS-27-1',
+                SIMCTL_DEVICE_TYPES: 'iPhone 16 (com.apple.CoreSimulator.SimDeviceType.iPhone-16)',
+            },
+            encoding: 'utf8',
+        });
+        assert.equal(run.status, 0, `${scenario}\n${run.stdout}\n${run.stderr}`);
+        assert.equal(readFileSync(githubOutput, 'utf8').trim(), `destination=id=${simulatorId}`, scenario);
+        const calls = readFileSync(simctlCalls, 'utf8').trim().split('\n');
+        assert.equal(calls.some((call) => call.startsWith('simctl create ')), expectedCreate, scenario);
+        assert.ok(calls.includes(`simctl bootstatus ${simulatorId} -b`), scenario);
+    }
 } finally {
     rmSync(root, { recursive: true, force: true });
 }

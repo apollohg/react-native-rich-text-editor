@@ -103,7 +103,30 @@ assert.doesNotMatch(
 );
 
 const buildJob = requireJob('build-package');
-assert.match(buildJob, /runs-on:\s*macos-[^\s]+/);
+assert.match(
+  requireCiJob('ios'),
+  /runs-on:\s*group: native-editor-ios\s+labels: \[self-hosted, macOS, ARM64\]/,
+  'CI iOS must use the self-hosted Mac runner group',
+);
+assert.match(
+  buildJob,
+  /runs-on: &macos-runner\s+group: native-editor-ios\s+labels: \[self-hosted, macOS, ARM64\]/,
+  'release builds must define the self-hosted Mac runner group',
+);
+for (const jobName of [
+  'build-code-highlighting',
+  'package-contracts',
+  'security-ios',
+  'ios-consumer-positive',
+  'ios-consumer-negative',
+]) {
+  assert.match(requireJob(jobName), /runs-on: \*macos-runner/, `${jobName} must use the self-hosted Mac runner group`);
+}
+assert.doesNotMatch(
+  `${ciWorkflow}\n${publishWorkflow}`,
+  /runs-on:\s*macos-[^\s]+/,
+  'macOS jobs must not use GitHub-hosted runners',
+);
 assert.match(buildJob, /cargo install cargo-ndk --version 4\.1\.2 --locked/);
 assert.match(buildJob, /sdkmanager --install ['"]ndk;27\.1\.12297006['"]/);
 const nativeRestore = buildJob.split('- name: Restore native build cache')[1]?.split('\n            - name:')[0];

@@ -358,7 +358,9 @@ jobs:
           script: npm run test:android:api24
 
   ios:
-    runs-on: ${{ fromJSON(github.event_name == 'push' && '{"group":"native-editor-ios","labels":["self-hosted","macOS","ARM64"]}' || '"macos-latest"') }}
+    runs-on:
+      group: native-editor-ios
+      labels: [self-hosted, macOS, ARM64]
     # Includes cold Rust/native builds, XCTest, and result collection.
     timeout-minutes: 90
     steps:
@@ -450,23 +452,11 @@ jobs:
 
           simulator_id="$(
             printf '%s\n' "$devices" \
-              | sed -nE 's/^[[:space:]]+iPhone[^()]* \(([0-9A-F-]+)\) \((Booted|Shutdown|Creating)\)$/\1/p' \
+              | sed -nE 's/^[[:space:]]+iPhone[^()]* \(([0-9A-F-]+)\) \((Booted|Shutdown|Creating)\)[[:space:]]*$/\1/p' \
               | head -n 1
           )"
 
           if [ -z "$simulator_id" ]; then
-            runtime_identifier="$(
-              printf '%s\n' "$runtimes" \
-                | grep '^iOS ' \
-                | tail -n 1 \
-                | sed -nE 's/^.* - (com\.apple\.CoreSimulator\.SimRuntime\.iOS-[^[:space:]]+)$/\1/p'
-            )"
-
-            if [ -z "$runtime_identifier" ]; then
-              echo "No available iOS simulator runtimes were found on this runner." >&2
-              exit 1
-            fi
-
             device_type_identifier=""
             for preferred_name in \
               "iPhone 16" \
@@ -500,7 +490,7 @@ jobs:
             fi
 
             simulator_id="$(
-              xcrun simctl create "NativeEditor CI iPhone" "$device_type_identifier" "$runtime_identifier"
+              xcrun simctl create "NativeEditor CI iPhone" "$device_type_identifier"
             )"
           fi
 
