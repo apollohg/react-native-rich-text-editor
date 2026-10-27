@@ -26,6 +26,80 @@ private enum ExampleDocumentFixture {
 }
 
 extension RichTextEditorViewTests {
+    func testReturnPreservesEmptyParagraphAlignmentAndCaretPosition() throws {
+        let themes: [(String, EditorTheme?)] = [
+            ("default", nil),
+            ("toolbar only", EditorTheme(dictionary: ["version": 1, "toolbar": ["height": 44]])),
+            ("padded typography", EditorTheme(dictionary: ["version": 1, "styles": [
+                "content": ["paddingTop": 12, "paddingLeft": 20, "paddingRight": 20],
+                "text": ["fontSize": 22],
+                "paragraph": ["lineHeight": 32, "marginTop": 11, "marginBottom": 13]
+            ]]))
+        ]
+        for (name, theme) in themes {
+            for (alignment, expected) in [("center", NSTextAlignment.center), ("right", .right)] {
+                for hasFollowingParagraph in [false, true] {
+                    try XCTContext.runActivity(named: "\(name), \(alignment), following paragraph: \(hasFollowingParagraph)") { _ in
+                        try assertReturnPreservesAlignedCaret(
+                            alignment: alignment, expected: expected, theme: theme,
+                            hasFollowingParagraph: hasFollowingParagraph
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private func assertReturnPreservesAlignedCaret(
+        alignment: String, expected: NSTextAlignment, theme: EditorTheme?, hasFollowingParagraph: Bool
+    ) throws {
+        let editorId = makeV2Editor()
+        defer { destroyV2Editor(id: editorId) }
+        let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 320, height: 260))
+        view.editorId = editorId
+        let textView = view.textView
+        textView.theme = theme
+        let window = hostEditorView(view)
+        defer {
+            textView.resignFirstResponder()
+            window.isHidden = true
+        }
+        let followingHTML = hasFollowingParagraph ? "<p>after</p>" : ""
+        textView.bindEditor(id: editorId, initialHTML: "<p style=\"text-align: center\">fklflf</p><p>dldlldl</p><p style=\"text-align: \(alignment)\">llflfllfl</p>" + followingHTML)
+        XCTAssertTrue(textView.becomeFirstResponder())
+        flushMainQueue()
+        let originalText = "fklflf\ndldlldl\nllflfllfl"
+        var expectedSelection = originalText.utf16.count
+        textView.selectedRange = NSRange(location: expectedSelection, length: 0)
+
+        for _ in 0..<2 {
+            let previousCaret = textView.caretRect(for: try XCTUnwrap(textView.selectedTextRange).end)
+            textView.insertText("\n")
+            flushMainQueue()
+            textView.layoutIfNeeded()
+            expectedSelection += "\n\u{200B}".utf16.count
+            XCTAssertEqual(textView.selectedRange.location, expectedSelection,
+                "Return must select the new empty paragraph")
+            let placeholderIndex = expectedSelection - 1
+            let style = try XCTUnwrap(textView.textStorage.attribute(
+                .paragraphStyle, at: placeholderIndex, effectiveRange: nil
+            ) as? NSParagraphStyle)
+            XCTAssertEqual(style.alignment, expected, "Rendered empty paragraph")
+            XCTAssertEqual((textView.typingAttributes[.paragraphStyle] as? NSParagraphStyle)?.alignment,
+                expected, "Typing attributes")
+            let caret = textView.caretRect(for: try XCTUnwrap(textView.selectedTextRange).end)
+            XCTAssertGreaterThan(caret.minY, previousCaret.minY, "Return must move the caret down")
+            let expectedX = expected == .center ? textView.bounds.midX
+                : textView.bounds.maxX - textView.textContainerInset.right - textView.textContainer.lineFragmentPadding
+            XCTAssertEqual(caret.midX, expectedX, accuracy: 2, "Empty paragraph caret \(caret)")
+        }
+        let emptyCaret = textView.caretRect(for: try XCTUnwrap(textView.selectedTextRange).end)
+        textView.insertText("next")
+        XCTAssertEqual(textView.textStorage.string, originalText + "\n\u{200B}\nnext" + (hasFollowingParagraph ? "\nafter" : ""))
+        let typedCaret = textView.caretRect(for: try XCTUnwrap(textView.selectedTextRange).end)
+        XCTAssertEqual(typedCaret.minY, emptyCaret.minY, accuracy: 1, "Typing must stay on the same line")
+    }
+
     func testCaretAfterInvalidatingEarlierLayoutKeepsItsPosition() throws {
         let editorId = makeV2Editor()
         defer { destroyV2Editor(id: editorId) }

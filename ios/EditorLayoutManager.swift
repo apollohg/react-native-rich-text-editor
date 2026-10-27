@@ -5,6 +5,7 @@ import UIKit
 /// editable text storage. This keeps UIKit paragraph-start behaviors, such as
 /// sentence auto-capitalization, working naturally inside list items.
 final class EditorLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
+    private static let emptyLineUsedWidth: CGFloat = 1
     private weak var cachedStyledBoxStorage: NSTextStorage?
     private var cachedStyledBoxDrawGroups: [StyledBoxDrawGroup]?
     private var styledBoxEditGeneration: UInt64 = 0
@@ -71,6 +72,20 @@ final class EditorLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
     func layoutManager(_ layoutManager: NSLayoutManager, shouldSetLineFragmentRect lineFragmentRect: UnsafeMutablePointer<CGRect>, lineFragmentUsedRect: UnsafeMutablePointer<CGRect>, baselineOffset: UnsafeMutablePointer<CGFloat>, in textContainer: NSTextContainer, forGlyphRange glyphRange: NSRange) -> Bool {
         guard let storage = textStorage, storage.length > 0 else { return false }
         let characters = characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
+        let repairsEmptyLine = lineFragmentUsedRect.pointee.isEmpty
+            && (storage.string as NSString).substring(with: characters).trimmingCharacters(in: .newlines)
+                == String(EditorTextView.emptyBlockPlaceholderScalar)
+            && (storage.attribute(.paragraphStyle, at: characters.location, effectiveRange: nil) as? NSParagraphStyle)?.alignment == .right
+        if repairsEmptyLine {
+            // TextKit clips the zero-width placeholder at the right edge and loses its baseline origin.
+            lineFragmentUsedRect.pointee = CGRect(
+                x: lineFragmentRect.pointee.maxX - Self.emptyLineUsedWidth,
+                y: lineFragmentRect.pointee.minY,
+                width: Self.emptyLineUsedWidth,
+                height: lineFragmentRect.pointee.height
+            )
+            baselineOffset.pointee += lineFragmentRect.pointee.minY
+        }
         var height = lineFragmentUsedRect.pointee.height
         storage.enumerateAttribute(editorInlineLineHeightAttribute, in: characters, options: [.longestEffectiveRangeNotRequired]) { value, _, _ in
             height = max(height, EditorTheme.cgFloat(value) ?? 0)
@@ -100,7 +115,7 @@ final class EditorLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
                 }
             }
         }
-        guard extra != 0 || leading != 0 || overlap != 0 else { return false }
+        guard repairsEmptyLine || extra != 0 || leading != 0 || overlap != 0 else { return false }
         // TextKit clamps negative paragraph spacing; move the following fragment.
         lineFragmentRect.pointee.origin.y += overlap
         lineFragmentRect.pointee.size.height += extra + leading
