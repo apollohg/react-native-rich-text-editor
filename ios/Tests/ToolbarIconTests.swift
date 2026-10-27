@@ -3,6 +3,36 @@ import XCTest
 
 @MainActor
 final class ToolbarIconTests: XCTestCase {
+    func testGroupIconChangesBetweenLoadedImageSymbolAndFallback() throws {
+        let png = try samplePNG()
+        let toolbar = EditorAccessoryToolbarView(frame: .zero)
+        toolbar.setItemsJSONForTesting("""
+        [{"type":"group","key":"format","label":"Format","icon":{"type":"glyph","text":"F"},
+            "iconSource":"activeChild","items":[
+            {"type":"mark","mark":"bold","label":"Bold","icon":{"type":"image","source":{"uri":"data:image/png;base64,\(png.base64EncodedString())"},"tintable":false}},
+            {"type":"mark","mark":"italic","label":"Italic","icon":{"type":"default","id":"italic"}}
+            ]}]
+        """)
+        toolbar.rebuildButtonsIfNeeded()
+        let button = try XCTUnwrap(toolbar.buttonBindings.first?.button)
+        toolbar.applyStateJSONForTesting("""
+        {"activeState":{"marks":{"bold":true},"allowedMarks":["bold","italic"]}}
+        """)
+        let ready = expectation(for: NSPredicate { _, _ in button.image(for: .normal) != nil }, evaluatedWith: button)
+        wait(for: [ready], timeout: 5)
+        XCTAssertEqual(button.image(for: .normal)?.renderingMode, .alwaysOriginal)
+        toolbar.applyStateJSONForTesting("""
+        {"activeState":{"marks":{"italic":true},"allowedMarks":["bold","italic"]}}
+        """)
+        XCTAssertTrue(button.image(for: .normal)?.isSymbolImage == true)
+        toolbar.applyStateJSONForTesting("""
+        {"activeState":{"marks":{},"allowedMarks":["bold","italic"]}}
+        """)
+        XCTAssertNil(button.image(for: .normal), "The previous child's artwork must be cleared")
+        XCTAssertEqual(button.title(for: .normal), "F")
+        XCTAssertTrue(toolbar.buttonBindings.first?.button === button)
+    }
+
     func testPackagedFontResolvesNonBMPGlyphAndUnknownName() throws {
         let icon = try XCTUnwrap(ToolbarIconFont.icon(named: "format-bold"))
         XCTAssertEqual(icon["fontFamily"], "MaterialDesignIcons")

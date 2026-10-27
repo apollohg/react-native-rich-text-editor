@@ -19,6 +19,10 @@ export type EditorToolbarCommand = 'indentList' | 'outdentList' | 'undo' | 'redo
  */
 export type EditorToolbarGroupPresentation = 'expand' | 'menu';
 
+export type EditorToolbarGroupDisclosure = 'up' | 'down' | 'none';
+
+export type EditorToolbarGroupIconSource = 'static' | 'activeChild';
+
 /**
  * Which region of the toolbar an item sits in. `'start'` and `'end'` pin the
  * item to that edge; `'scroll'` (the default) puts it in the scrolling middle
@@ -246,6 +250,10 @@ export interface EditorToolbarGroupItem {
     icon: EditorToolbarIcon;
     /** How the children are revealed. Defaults to `'expand'`. */
     presentation?: EditorToolbarGroupPresentation;
+    /** Chevron direction inside the button, or 'none' to hide it. Defaults to 'down'. */
+    disclosure?: EditorToolbarGroupDisclosure;
+    /** Use the sole active child's icon; otherwise use this group's icon. Defaults to 'static'. */
+    iconSource?: EditorToolbarGroupIconSource;
     placement?: EditorToolbarItemPlacement;
     buttonStyle?: EditorToolbarButtonStyle;
     items: readonly EditorToolbarGroupChildItem[];
@@ -283,6 +291,7 @@ export interface ToolbarGroupButton {
     icon: EditorToolbarIcon;
     buttonStyle?: EditorToolbarButtonStyle;
     presentation: EditorToolbarGroupPresentation;
+    disclosure: EditorToolbarGroupDisclosure;
     placement: EditorToolbarItemPlacement;
     children: readonly ToolbarButton[];
     isActive: boolean;

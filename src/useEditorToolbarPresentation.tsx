@@ -3,6 +3,7 @@ import { type useEditorToolbarState } from './useEditorToolbarState';
 import { type useEditorToolbarItems } from './useEditorToolbarItems';
 import { type useEditorToolbarInteractions } from './useEditorToolbarInteractions';
 import {
+    GROUP_CONTENT_PADDING,
     MENU_MARGIN,
     MENU_WIDTH,
     resolveToolbarButtonVisuals,
@@ -14,7 +15,7 @@ import {
     TOOLBAR_BG,
     MENU_BORDER,
 } from './EditorToolbarVisuals';
-import { type ToolbarButton, type ToolbarRenderedItem } from './EditorToolbarTypes';
+import { type EditorToolbarGroupDisclosure, type ToolbarButton, type ToolbarRenderedItem } from './EditorToolbarTypes';
 
 export function useEditorToolbarPresentation(
     context: Pick<
@@ -117,12 +118,13 @@ export function useEditorToolbarPresentation(
         onPress: () => void,
         options?: {
             anchorGroupKey?: string;
-            showsDisclosure?: boolean;
+            disclosure?: EditorToolbarGroupDisclosure;
             expanded?: boolean;
         }
     ) => {
         const visuals = resolveButtonVisuals(button);
         const anchorGroupKey = options?.anchorGroupKey;
+        const sizesToContent = anchorGroupKey != null && button.buttonStyle?.width == null;
 
         return (
             <View
@@ -149,8 +151,11 @@ export function useEditorToolbarPresentation(
                     style={[
                         styles.button,
                         {
-                            width: visuals.width,
-                            minWidth: visuals.minWidth,
+                            width: sizesToContent ? undefined : visuals.width,
+                            minWidth: sizesToContent
+                                ? Math.max(visuals.width, visuals.minWidth ?? 0)
+                                : visuals.minWidth,
+                            paddingHorizontal: sizesToContent ? GROUP_CONTENT_PADDING / 2 : undefined,
                             height: resolvedButtonHeight,
                             borderRadius: visuals.borderRadius,
                             backgroundColor: visuals.backgroundColor,
@@ -162,7 +167,7 @@ export function useEditorToolbarPresentation(
                     accessibilityState={{
                         selected: button.isActive,
                         disabled: button.isDisabled,
-                        expanded: options?.showsDisclosure ? options.expanded : undefined,
+                        expanded: options?.expanded,
                     }}
                 >
                     <View>
@@ -176,12 +181,12 @@ export function useEditorToolbarPresentation(
                             size={visuals.iconSize}
                         />
                     </View>
+                    {options?.disclosure && options.disclosure !== 'none' ? (
+                        <View testID="toolbar-disclosure" accessible={false} style={styles.groupDisclosure}>
+                            <View style={[ styles.groupChevron, options.disclosure === 'up' && styles.groupChevronUp, { borderColor: visuals.color } ]} />
+                        </View>
+                    ) : null}
                 </TouchableOpacity>
-                {options?.showsDisclosure ? (
-                    <Text style={[ styles.groupDisclosure, { color: visuals.color } ]}>
-                        {'\u25BE'}
-                    </Text>
-                ) : null}
             </View>
         );
     };
@@ -216,7 +221,7 @@ export function useEditorToolbarPresentation(
                     () => handleGroupPress(item.group),
                     {
                         anchorGroupKey: item.group.key,
-                        showsDisclosure: true,
+                        disclosure: item.group.disclosure,
                         expanded: item.group.isOpen,
                     }
                 );

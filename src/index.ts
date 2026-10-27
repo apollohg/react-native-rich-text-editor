@@ -82,6 +82,8 @@ export {
     type EditorToolbarGroupChildItem,
     type EditorToolbarGroupItem,
     type EditorToolbarGroupPresentation,
+    type EditorToolbarGroupDisclosure,
+    type EditorToolbarGroupIconSource,
     type EditorToolbarIcon,
     type EditorToolbarImageIcon,
     type EditorToolbarIconRenderProps,

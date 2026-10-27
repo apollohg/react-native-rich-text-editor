@@ -243,6 +243,8 @@ export function buildToolbarItems({
         {
             type: 'group',
             key: 'alignment',
+            iconSource: 'activeChild',
+            disclosure: 'down',
             label: 'Alignment',
             icon: { type: 'default', id: 'alignLeft' },
             presentation: 'menu',

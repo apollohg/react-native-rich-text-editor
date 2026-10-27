@@ -413,3 +413,113 @@ extension RichTextEditorViewTests {
         XCTAssertEqual(parsed.map { $0.icon?.resolvedSFSymbolName() }, ["text.alignleft", "arrow.uturn.backward"])
     }
 }
+
+extension RichTextEditorViewTests {
+    func testGroupIconFollowsLiveSelectionAndFallsBackForAmbiguousState() {
+        let toolbar = EditorAccessoryToolbarView(frame: .zero)
+        toolbar.setItemsJSONForTesting("""
+        [{"type":"group","key":"format","label":"Format",
+            "icon":{"type":"glyph","text":"F"},"iconSource":"activeChild",
+            "items":[
+            {"type":"mark","mark":"bold","label":"Bold","icon":{"type":"glyph","text":"B"}},
+            {"type":"mark","mark":"italic","label":"Italic","icon":{"type":"glyph","text":"I"}}
+            ]}]
+        """)
+        toolbar.rebuildButtonsIfNeeded()
+        let button = toolbar.buttonBindings[0].button
+        for (marks, expected) in [
+            ("{\"bold\":true}", "B"), ("{\"italic\":true}", "I"),
+            ("{\"bold\":true,\"italic\":true}", "F"), ("{}", "F")
+        ] {
+            toolbar.applyStateJSONForTesting("""
+            {"activeState":{"marks":\(marks),"allowedMarks":["bold","italic"]}}
+            """)
+            XCTAssertEqual(button.title(for: .normal), expected, "Group icon for \(marks)")
+            XCTAssertEqual(button.accessibilityLabel, "Format")
+        }
+    }
+}
+
+extension RichTextEditorViewTests {
+    func testGroupDisclosureStaysInsideButtonAndCanBeHidden() {
+        let toolbar = EditorAccessoryToolbarView(frame: CGRect(x: 0, y: 0, width: 320, height: 56))
+        let groupJSON = """
+        [{"type":"group","key":"format","label":"Format","icon":{"type":"glyph","text":"F"},
+            "items":[{"type":"action","key":"custom","label":"Custom","icon":{"type":"glyph","text":"C"}}]}]
+        """
+        let group = NativeToolbarItem.from(json: groupJSON)[0]
+        for (name, icon) in [
+            ("text", NativeToolbarIcon.from(jsonValue: ["type": "glyph", "text": "Normal"])!),
+            ("alignment", NativeToolbarIcon.defaultIcon(.alignCenter))
+        ] {
+            var displayed = group
+            displayed.icon = icon
+            toolbar.setItems([displayed])
+            toolbar.layoutIfNeeded()
+            let button = toolbar.buttonBindings[0].button
+            for direction in [UISemanticContentAttribute.forceLeftToRight, .forceRightToLeft] {
+                button.semanticContentAttribute = direction
+                button.setNeedsLayout()
+                button.layoutIfNeeded()
+                let disclosure = button.subviews.first { $0.accessibilityIdentifier == "toolbar-disclosure" }
+                XCTAssertNotNil(disclosure)
+                if let disclosure {
+                    XCTAssertTrue(button.bounds.contains(disclosure.frame), "Disclosure must stay inside the rounded button")
+                    let primary: UIView? = button.image(for: .normal) == nil ? button.titleLabel : button.imageView
+                    if direction == .forceLeftToRight {
+                        XCTAssertGreaterThan(disclosure.frame.minX, primary?.frame.maxX ?? 0)
+                    } else {
+                        XCTAssertLessThan(disclosure.frame.maxX, primary?.frame.minX ?? 0)
+                    }
+                }
+                let image = UIGraphicsImageRenderer(size: button.bounds.size).image { context in
+                    button.layer.render(in: context.cgContext)
+                }
+                let attachment = XCTAttachment(image: image)
+                attachment.name = "toolbar-\(name)-\(direction.rawValue)"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+            }
+        }
+        var hidden = group
+        hidden.disclosure = .none
+        toolbar.setItems([hidden])
+        toolbar.rebuildButtonsIfNeeded()
+        XCTAssertFalse(toolbar.buttonBindings[0].button.subviews.contains { $0.accessibilityIdentifier == "toolbar-disclosure" })
+        toolbar.triggerButtonTapForTesting(0)
+        XCTAssertEqual(toolbar.buttonCountForTesting(), 2)
+        var action: String?
+        toolbar.onPressItem = { action = $0.key }
+        toolbar.triggerButtonTapForTesting(1)
+        XCTAssertEqual(action, "custom")
+        XCTAssertEqual(toolbar.buttonCountForTesting(), 1)
+    }
+}
+
+extension RichTextEditorViewTests {
+    func testGroupDisclosureUsesRequestedDirection() throws {
+        let toolbar = EditorAccessoryToolbarView(frame: CGRect(x: 0, y: 0, width: 320, height: 56))
+        for direction in ["up", "down"] {
+            toolbar.setItemsJSONForTesting("""
+            [{"type":"group","key":"format","label":"Format","disclosure":"\(direction)",
+                "icon":{"type":"glyph","text":"F"},"items":[
+                {"type":"action","key":"custom","label":"Custom","icon":{"type":"glyph","text":"C"}}
+                ]}]
+            """)
+            toolbar.layoutIfNeeded()
+            let button = try XCTUnwrap(toolbar.buttonBindings.first?.button)
+            let disclosure = try XCTUnwrap(button.subviews.first {
+                $0.accessibilityIdentifier == "toolbar-disclosure"
+            } as? UIImageView)
+            XCTAssertEqual(disclosure.image?.pngData(), UIImage(systemName: "chevron.\(direction)")?.pngData())
+            toolbar.triggerButtonTapForTesting(0)
+            XCTAssertEqual(toolbar.buttonCountForTesting(), 2)
+            let expandedButton = try XCTUnwrap(toolbar.buttonBindings.first?.button)
+            let expandedDisclosure = try XCTUnwrap(expandedButton.subviews.first {
+                $0.accessibilityIdentifier == "toolbar-disclosure"
+            } as? UIImageView)
+            XCTAssertEqual(expandedDisclosure.image?.pngData(), disclosure.image?.pngData())
+            toolbar.triggerButtonTapForTesting(0)
+        }
+    }
+}

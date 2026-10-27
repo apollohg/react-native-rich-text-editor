@@ -139,6 +139,17 @@ enum ToolbarGroupPresentation: String {
     case menu
 }
 
+enum ToolbarGroupDisclosure: String {
+    case up
+    case down
+    case none
+}
+
+enum ToolbarGroupIconSource: String {
+    case `static`
+    case activeChild
+}
+
 enum ToolbarItemPlacement: String {
     case start
     case scroll
@@ -307,6 +318,8 @@ struct NativeToolbarItem {
     var isDisabled: Bool = false
     var placement: ToolbarItemPlacement?
     var presentation: ToolbarGroupPresentation?
+    var disclosure: ToolbarGroupDisclosure = .down
+    var iconSource: ToolbarGroupIconSource = .static
     var items: [NativeToolbarItem] = []
     var buttonStyle: EditorToolbarButtonStyle?
     var parentGroupKey: String?
@@ -502,6 +515,10 @@ struct NativeToolbarItem {
                 icon: icon,
                 placement: placement,
                 presentation: presentation,
+                disclosure: (rawItem["disclosure"] as? String)
+                    .flatMap(ToolbarGroupDisclosure.init(rawValue:)) ?? .down,
+                iconSource: (rawItem["iconSource"] as? String)
+                    .flatMap(ToolbarGroupIconSource.init(rawValue:)) ?? .static,
                 items: children,
                 buttonStyle: buttonStyle
             )

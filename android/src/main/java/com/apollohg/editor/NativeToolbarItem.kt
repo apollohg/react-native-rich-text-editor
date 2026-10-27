@@ -16,6 +16,8 @@ internal data class NativeToolbarItem(
     val isDisabled: Boolean = false,
     val placement: ToolbarItemPlacement? = null,
     val presentation: ToolbarGroupPresentation? = null,
+    val disclosure: ToolbarGroupDisclosure = ToolbarGroupDisclosure.DOWN,
+    val iconSource: ToolbarGroupIconSource = ToolbarGroupIconSource.STATIC,
     val items: List<NativeToolbarItem> = emptyList(),
     val buttonStyle: EditorToolbarButtonStyle? = null,
     val parentGroupKey: String? = null,
@@ -279,6 +281,12 @@ internal data class NativeToolbarItem(
                         icon = icon,
                         placement = placement,
                         presentation = presentation,
+                        disclosure = ToolbarGroupDisclosure.entries.firstOrNull {
+                            it.wireValue == rawItem.toolbarNullableString("disclosure")
+                        } ?: ToolbarGroupDisclosure.DOWN,
+                        iconSource = ToolbarGroupIconSource.entries.firstOrNull {
+                            it.wireValue == rawItem.toolbarNullableString("iconSource")
+                        } ?: ToolbarGroupIconSource.STATIC,
                         items = children
                     )
                 }
