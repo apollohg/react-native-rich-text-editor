@@ -87,7 +87,11 @@ fn normalize<'a>(
                         .is_some_and(|element| is_clipboard_block(element.name()))
                 })
             });
-        if text.trim().is_empty() && block_children && at_block_boundary && !preserve_spaces {
+        if text.trim().is_empty()
+            && block_children
+            && (at_block_boundary || output.is_empty())
+            && !preserve_spaces
+        {
             return;
         }
         let tags = semantic_mark_tags(schema);
@@ -269,6 +273,11 @@ fn write_open_tag(
     output.push('<');
     output.push_str(tag);
     if let Some(source) = source {
+        // Source-only span attributes make the document parser preserve an opaque node.
+        let presentation_span = tag == "span"
+            && node_spec_for_element(tag, source, schema).is_none()
+            && mark_from_element(tag, source, schema).is_none()
+            && element_attr(source, "data-native-editor-mention").is_none();
         for (key, value) in source.attrs() {
             if key == "style" {
                 if tag == "span"
@@ -284,7 +293,7 @@ fn write_open_tag(
                 }
                 continue;
             }
-            if key.starts_with("on") {
+            if presentation_span || key.starts_with("on") {
                 continue;
             }
             output.push(' ');

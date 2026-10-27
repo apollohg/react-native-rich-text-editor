@@ -493,6 +493,76 @@ fn clipboard_html_imports_css_marks_and_discards_source_wrappers() {
 }
 
 #[test]
+fn clipboard_html_classed_spans_keep_supported_inline_formatting() {
+    let doc = crate::serialize::html_in::from_clipboard_html_with_limits(
+        r#"<p><span class="s1" id="source" lang="en" style="color:red;font-weight:bold">outer<span class="s2" style="color:blue">inner</span></span><span class="Apple-converted-space"> </span><unknown-inline>tail</unknown-inline></p>"#,
+        &schema(), &default_opts(), &ResourceLimits::default(),
+    ).unwrap();
+    let paragraph = doc.root().child(0).unwrap();
+    assert_eq!(paragraph.text_content(), "outerinner tail");
+    for (index, expected_color) in ["#ff0000ff", "#0000ffff"].iter().enumerate() {
+        let node = paragraph.child(index).unwrap();
+        assert!(node.marks().iter().any(|mark| mark.mark_type() == "bold"));
+        let color = node
+            .marks()
+            .iter()
+            .find(|mark| mark.mark_type() == crate::text_color::TEXT_STYLE_MARK)
+            .unwrap();
+        assert_eq!(
+            color.attrs()[crate::text_color::COLOR_ATTR],
+            *expected_color
+        );
+    }
+}
+
+#[test]
+fn clipboard_html_keeps_custom_span_mark_attributes() {
+    let base = schema();
+    let mut marks = base.all_marks().cloned().collect::<Vec<_>>();
+    marks
+        .iter_mut()
+        .find(|mark| mark.name == crate::text_color::TEXT_STYLE_MARK)
+        .unwrap()
+        .attrs
+        .insert(
+            "fontfamily".into(),
+            AttrSpec {
+                default: Some(serde_json::Value::Null),
+                has_default: true,
+                ..AttrSpec::default()
+            },
+        );
+    let schema = Schema::new(base.all_nodes().cloned().collect(), marks);
+    let doc = crate::serialize::html_in::from_clipboard_html_with_limits(
+        r#"<p><span class="s1" fontfamily="serif" style="color:red">custom</span></p>"#,
+        &schema,
+        &default_opts(),
+        &ResourceLimits::default(),
+    )
+    .unwrap();
+    let text = doc.root().child(0).unwrap().child(0).unwrap();
+    assert_eq!(text.text_str(), Some("custom"));
+    assert_eq!(text.marks()[0].attrs()["fontfamily"], "serif");
+    assert_eq!(
+        text.marks()[0].attrs()[crate::text_color::COLOR_ATTR],
+        "#ff0000ff"
+    );
+}
+
+#[test]
+fn clipboard_html_keeps_inline_spaces_beside_discarded_elements() {
+    let doc = crate::serialize::html_in::from_clipboard_html_with_limits(
+        "<b>one</b> <script>ignored</script><i>two</i><p>block</p>",
+        &schema(),
+        &default_opts(),
+        &ResourceLimits::default(),
+    )
+    .unwrap();
+    assert_eq!(doc.root().child(0).unwrap().text_content(), "one two");
+    assert_eq!(doc.root().child(1).unwrap().text_content(), "block");
+}
+
+#[test]
 fn clipboard_html_css_resets_inherited_marks_and_keeps_lists() {
     let doc = crate::serialize::html_in::from_clipboard_html_with_limits(
         r#"<ul><li><p><b>bold<span style="font-weight:normal"> normal</span></b></p></li></ul><script>bad()</script>"#,

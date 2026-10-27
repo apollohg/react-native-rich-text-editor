@@ -479,6 +479,76 @@ fn clipboard_partial_list_pastes_marks_into_paragraph() {
 }
 
 #[test]
+fn clipboard_cocoa_html_keeps_heading_text_and_spaces_before_links() {
+    let html = r#"<!DOCTYPE html><html><head>
+        <meta name="Generator" content="Cocoa HTML Writer">
+        <title>Clipboard title</title><style>span.s1 {font-size: 26px}</style>
+        </head><body><!--StartFragment-->
+        <h1><span class="s1">Join LinkedIn now — it's free!</span></h1>
+        <p>Email or phone number</p>
+        <p>LinkedIn<span class="s2"><span class="Apple-converted-space"> </span></span><a href="https://www.linkedin.com/legal/user-agreement">User Agreement</a>,<span class="Apple-converted-space"> </span><a href="https://www.linkedin.com/legal/privacy-policy">Privacy Policy</a>, and<span class="Apple-converted-space"> </span><a href="https://www.linkedin.com/legal/cookie-policy">Cookie Policy</a>.</p>
+        <!--EndFragment--></body></html>"#;
+    let mut engine = transaction_engine();
+    select_text(&mut engine, 1, 0, 0);
+    let before = engine.document_json();
+    engine
+        .apply_command(2, clipboard_paste(None, Some(html.into()), None, false))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        replacement_blocks(&engine),
+        vec![
+            ("h1".into(), "Join LinkedIn now — it's free!".into()),
+            ("paragraph".into(), "Email or phone number".into()),
+            (
+                "paragraph".into(),
+                "LinkedIn User Agreement, Privacy Policy, and Cookie Policy.".into()
+            ),
+        ],
+        "Cocoa wrappers must not replace visible text with opaque atoms"
+    );
+    let paragraph = engine.document().unwrap().root().child(2).unwrap();
+    let links = paragraph
+        .content()
+        .unwrap()
+        .iter()
+        .filter_map(|node| {
+            node.marks()
+                .iter()
+                .find(|mark| mark.mark_type() == "link")
+                .map(|mark| {
+                    (
+                        node.text_str().unwrap(),
+                        mark.attrs()["href"].as_str().unwrap(),
+                    )
+                })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        links,
+        vec![
+            (
+                "User Agreement",
+                "https://www.linkedin.com/legal/user-agreement"
+            ),
+            (
+                "Privacy Policy",
+                "https://www.linkedin.com/legal/privacy-policy"
+            ),
+            (
+                "Cookie Policy",
+                "https://www.linkedin.com/legal/cookie-policy"
+            ),
+        ]
+    );
+    let after = engine.document_json();
+    engine.undo_with_result(3).unwrap().unwrap();
+    assert_eq!(engine.document_json(), before);
+    engine.redo_with_result(4).unwrap().unwrap();
+    assert_eq!(engine.document_json(), after);
+}
+
+#[test]
 fn clipboard_external_headings_and_code_blocks_keep_structure() {
     for (html, expected_type) in [("<h1>Heading</h1>", "h1"), ("<pre>code</pre>", "codeBlock")] {
         let mut engine = transaction_engine();
