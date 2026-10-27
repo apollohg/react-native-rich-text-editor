@@ -1,101 +1,43 @@
 import UIKit
 
-@available(iOS 16.0, *)
-final class ToolbarEditMenuPresenter: NSObject, UIEditMenuInteractionDelegate {
-    private final class Presentation {
-        weak var sourceButton: UIButton?
-        let menuProvider: () -> UIMenu?
-
-        init(sourceButton: UIButton, menuProvider: @escaping () -> UIMenu?) {
-            self.sourceButton = sourceButton
-            self.menuProvider = menuProvider
-        }
-    }
-
-    lazy var interaction = UIEditMenuInteraction(delegate: self)
-
-    private var presentations: [String: Presentation] = [:]
-    private var activePresentationIdentifier: String?
-    var presentationRequestCount = 0
-
-    func toggle(from sourceButton: UIButton, menuProvider: @escaping () -> UIMenu?) {
-        if activePresentation?.sourceButton === sourceButton {
-            interaction.dismissMenu()
-            return
-        }
-        guard let hostView = interaction.view else { return }
-        let identifier = UUID().uuidString
-        presentations[identifier] = Presentation(
-            sourceButton: sourceButton,
-            menuProvider: menuProvider
-        )
-        activePresentationIdentifier = identifier
-        presentationRequestCount += 1
-        let sourcePoint = sourceButton.convert(
-            CGPoint(x: sourceButton.bounds.midX, y: sourceButton.bounds.midY),
-            to: hostView
-        )
-        interaction.presentEditMenu(
-            with: UIEditMenuConfiguration(identifier: identifier as NSString, sourcePoint: sourcePoint)
-        )
-    }
-
-    func reloadVisibleMenu() {
-        interaction.reloadVisibleMenu()
-    }
-
-    func dismiss() {
-        interaction.dismissMenu()
-        presentations.removeAll()
-        activePresentationIdentifier = nil
-    }
-
-    func editMenuInteraction(
-        _ interaction: UIEditMenuInteraction,
-        menuFor configuration: UIEditMenuConfiguration,
-        suggestedActions: [UIMenuElement]
-    ) -> UIMenu? {
-        presentation(for: configuration)?.menuProvider()
-    }
-
-    func editMenuInteraction(
-        _ interaction: UIEditMenuInteraction,
-        targetRectFor configuration: UIEditMenuConfiguration
-    ) -> CGRect {
-        guard let sourceButton = presentation(for: configuration)?.sourceButton,
-              let hostView = interaction.view
-        else {
-            return .null
-        }
-        return sourceButton.convert(sourceButton.bounds, to: hostView)
-    }
-
-    func editMenuInteraction(
-        _ interaction: UIEditMenuInteraction,
-        willDismissMenuFor configuration: UIEditMenuConfiguration,
-        animator: any UIEditMenuInteractionAnimating
-    ) {
-        guard let identifier = identifier(for: configuration) else { return }
-        animator.addCompletion { [weak self] in
-            guard let self else { return }
-            self.presentations.removeValue(forKey: identifier)
-            if self.activePresentationIdentifier == identifier {
-                self.activePresentationIdentifier = nil
+extension EditorAccessoryToolbarView {
+    func makeGroupMenu(item: NativeToolbarItem) -> UIMenu? {
+        guard item.type == .group else { return nil }
+        let actions = item.items.map { child in
+            let state = buttonState(for: child, state: currentState)
+            let image: UIImage?
+            if let source = child.icon?.imageSource {
+                imageLoader.load(source)
+                image = imageLoader.image(for: source).map {
+                    ToolbarImageLoader.rendered(
+                        $0,
+                        source: source,
+                        size: resolvedButtonIconSize(for: child),
+                        tintable: child.icon?.tintable ?? true
+                    )
+                }
+            } else {
+                image = child.icon?.resolvedSFSymbolName().flatMap { UIImage(systemName: $0) }
+            }
+            var title = child.label ?? child.icon?.resolvedGlyphText() ?? "Item"
+            if child.icon?.imageSource != nil, image == nil {
+                let fallback = child.icon?.resolvedGlyphText() ?? "?"
+                if fallback != title {
+                    title = "\(fallback) \(title)"
+                }
+            }
+            return UIAction(
+                title: title,
+                image: image,
+                identifier: nil,
+                discoverabilityTitle: child.label,
+                attributes: state.enabled ? [.keepsMenuPresented] : [.disabled],
+                state: state.active ? .on : .off
+            ) { [weak self] _ in
+                self?.handleToolbarButtonPress(child)
             }
         }
-    }
-
-    private var activePresentation: Presentation? {
-        guard let activePresentationIdentifier else { return nil }
-        return presentations[activePresentationIdentifier]
-    }
-
-    private func presentation(for configuration: UIEditMenuConfiguration) -> Presentation? {
-        guard let identifier = identifier(for: configuration) else { return activePresentation }
-        return presentations[identifier]
-    }
-
-    func identifier(for configuration: UIEditMenuConfiguration) -> String? {
-        (configuration.identifier as? NSString).map(String.init)
+        guard !actions.isEmpty else { return nil }
+        return UIMenu(title: item.label ?? "", children: actions)
     }
 }

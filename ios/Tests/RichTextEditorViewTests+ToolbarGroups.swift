@@ -2,6 +2,19 @@ import ExpoModulesCore
 import XCTest
 
 extension RichTextEditorViewTests {
+    private static var sixHeadingGroupJSON: String {
+        """
+        [{"type":"group","key":"headings","label":"Headings","icon":{"type":"glyph","text":"H"},"presentation":"menu","items":[
+            {"type":"heading","level":1,"label":"Heading 1","icon":{"type":"default","id":"h1"}},
+            {"type":"heading","level":2,"label":"Heading 2","icon":{"type":"default","id":"h2"}},
+            {"type":"heading","level":3,"label":"Heading 3","icon":{"type":"default","id":"h3"}},
+            {"type":"heading","level":4,"label":"Heading 4","icon":{"type":"default","id":"h4"}},
+            {"type":"heading","level":5,"label":"Heading 5","icon":{"type":"default","id":"h5"}},
+            {"type":"heading","level":6,"label":"Heading 6","icon":{"type":"default","id":"h6"}}
+        ]}]
+        """
+    }
+
     func testAccessoryToolbarExpandsGroupedButtonsInline() {
         let toolbar = EditorAccessoryToolbarView(frame: .zero)
         toolbar.setItemsJSONForTesting("""
@@ -57,7 +70,7 @@ extension RichTextEditorViewTests {
         XCTAssertEqual(toolbar.buttonLabelForTesting(2), "Heading 2")
     }
 
-    func testAccessoryToolbarMenuGroupUsesEditMenuWithoutAttachingMenuToVisibleButton() {
+    func testAccessoryToolbarMenuGroupUsesNativeButtonMenuWithActiveActions() {
         let toolbar = EditorAccessoryToolbarView(frame: CGRect(x: 0, y: 0, width: 320, height: 56))
         let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
         let viewController = UIViewController()
@@ -130,47 +143,90 @@ extension RichTextEditorViewTests {
             .first { $0.accessibilityLabel == "Headings" }
 
         XCTAssertNotNil(visibleButton)
-        XCTAssertNil(visibleButton?.menu, "the visible parent button must not become UIKit's hidden menu source")
+        XCTAssertNotNil(visibleButton?.menu)
         XCTAssertEqual(visibleButton?.accessibilityHint, "Shows menu")
-
-        guard let editMenuInteraction = toolbar.interactions.first(where: { $0 is UIEditMenuInteraction }) as? UIEditMenuInteraction else {
-            return XCTFail("the toolbar should own the edit-menu presentation interaction")
-        }
-        defer {
-            editMenuInteraction.dismissMenu()
-            RunLoop.main.run(until: Date().addingTimeInterval(0.35))
-        }
-        toolbar.triggerButtonTapForTesting(0)
-        RunLoop.main.run(until: Date().addingTimeInterval(0.35))
-        let configuration = UIEditMenuConfiguration(identifier: nil, sourcePoint: .zero)
-        let menu = editMenuInteraction.delegate?.editMenuInteraction?(
-            editMenuInteraction,
-            menuFor: configuration,
-            suggestedActions: []
-        )
+        XCTAssertTrue(visibleButton?.showsMenuAsPrimaryAction == true)
+        XCTAssertEqual(visibleButton?.preferredMenuElementOrder, .fixed)
+        XCTAssertTrue(visibleButton?.menu?.children.first is UIDeferredMenuElement)
+        let menu = toolbar.makeGroupMenu(item: toolbar.items[0])
         let headingAction = menu?.children.first as? UIAction
 
-        XCTAssertEqual(toolbar.editMenuPresentationRequestCountForTesting, 1)
         XCTAssertEqual(menu?.title, "Headings")
-        XCTAssertEqual(menu?.preferredElementSize, .large)
         XCTAssertEqual(headingAction?.title, "Heading 1")
         XCTAssertEqual(headingAction?.state, .on)
         XCTAssertFalse(headingAction?.attributes.contains(.disabled) ?? true)
+        XCTAssertTrue(headingAction?.attributes.contains(.keepsMenuPresented) == true)
+        let otherButton = descendants.compactMap { $0 as? UIButton }
+            .first { $0.accessibilityLabel == "Insert" }
+        XCTAssertTrue(otherButton?.menu?.children.first is UIDeferredMenuElement)
+        XCTAssertEqual((toolbar.makeGroupMenu(item: toolbar.items[1])?.children.first as? UIAction)?.title, "Custom")
+    }
 
-        toolbar.triggerButtonTapForTesting(1)
-        XCTAssertEqual(
-            toolbar.editMenuPresentationRequestCountForTesting,
-            2,
-            "tapping a different source should immediately request its menu"
-        )
-        RunLoop.main.run(until: Date().addingTimeInterval(0.35))
+    func testAccessoryToolbarSixItemGroupUsesNativeMenuWithPersistentActions() throws {
+        let toolbar = EditorAccessoryToolbarView(frame: CGRect(x: 0, y: 0, width: 390, height: 56))
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = UIViewController()
+        window.makeKeyAndVisible()
+        window.rootViewController?.view.addSubview(toolbar)
+        defer {
+            toolbar.removeFromSuperview()
+            window.isHidden = true
+        }
+        toolbar.setItemsJSONForTesting(Self.sixHeadingGroupJSON)
+        toolbar.applyStateJSONForTesting("""
+        {"activeState":{"commands":{"toggleHeading1":true,"toggleHeading2":true,"toggleHeading3":true,"toggleHeading4":true,"toggleHeading5":true,"toggleHeading6":true}}}
+        """)
+        toolbar.layoutIfNeeded()
 
-        toolbar.triggerButtonTapForTesting(1)
-        XCTAssertEqual(
-            toolbar.editMenuPresentationRequestCountForTesting,
-            2,
-            "tapping the active source should dismiss without requesting another presentation"
-        )
+        let button = try XCTUnwrap(toolbar.buttonBindings.first?.button)
+        XCTAssertTrue(button.menu?.children.first is UIDeferredMenuElement)
+        let menu = try XCTUnwrap(toolbar.makeGroupMenu(item: toolbar.items[0]))
+        let actions = menu.children.compactMap { $0 as? UIAction }
+        XCTAssertTrue(button.showsMenuAsPrimaryAction)
+        XCTAssertEqual(actions.map(\.title), (1...6).map { "Heading \($0)" })
+        XCTAssertTrue(actions.allSatisfy { $0.attributes.contains(.keepsMenuPresented) })
+
+        let attachedMenu = button.menu
+        toolbar.applyStateJSONForTesting("""
+        {"activeState":{"nodes":{"h6":true},"commands":{"toggleHeading1":true,"toggleHeading2":true,"toggleHeading3":true,"toggleHeading4":true,"toggleHeading5":true,"toggleHeading6":true}}}
+        """)
+        XCTAssertTrue(button.menu === attachedMenu, "state updates must not replace the menu while it is presented")
+        let updatedMenu = try XCTUnwrap(toolbar.makeGroupMenu(item: toolbar.items[0]))
+        XCTAssertEqual((updatedMenu.children.last as? UIAction)?.state, .on)
+    }
+
+    func testFocusedEditorTypingDoesNotReplaceNativeGroupMenu() throws {
+        let editorId = makeV2Editor()
+        defer { destroyV2Editor(id: editorId) }
+        let view = NativeEditorExpoView()
+        let window = hostNativeEditorExpoView(view)
+        view.frame = window.bounds
+        let input = view.richTextView.textView
+        defer {
+            _ = input.resignFirstResponder()
+            view.setEditorId(0)
+            view.removeFromSuperview()
+            window.isHidden = true
+        }
+        view.setEditorId(editorId)
+        view.setToolbarButtonsJson(Self.sixHeadingGroupJSON)
+        view.richTextView.setContent(html: "<p>hello</p>")
+        view.layoutIfNeeded()
+        XCTAssertTrue(input.becomeFirstResponder())
+        setCollapsedSelection(in: input, utf16Offset: "hello".utf16.count)
+        let accessoryMounted = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            input.isFirstResponder && view.accessoryToolbar.window != nil
+        }, object: view.accessoryToolbar)
+        wait(for: [accessoryMounted], timeout: MountedEditorTestFixture.releaseTimeout)
+
+        let button = try XCTUnwrap(view.accessoryToolbar.buttonBindings.first?.button)
+        let attachedMenu = try XCTUnwrap(button.menu)
+        XCTAssertTrue(button.showsMenuAsPrimaryAction)
+        input.insertText("!")
+        flushMainQueue()
+        XCTAssertTrue(input.isFirstResponder)
+        XCTAssertTrue(input.text.contains("!"))
+        XCTAssertTrue(button.menu === attachedMenu)
     }
 
     func testAccessoryToolbarGroupedChildrenCanOverrideParentPlacement() {
