@@ -246,7 +246,7 @@ extension EditorAccessoryToolbarView {
 }
 
 final class ToolbarDisclosureButton: UIButton {
-    static let disclosureSize: CGFloat = 8
+    static let disclosureSize: CGFloat = 12
     static let disclosureGap: CGFloat = 4
     static let contentPadding: CGFloat = 8
     static let disclosureSpace = disclosureSize + disclosureGap
