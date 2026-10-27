@@ -13,6 +13,7 @@ import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import androidx.appcompat.R as AppCompatR
 import androidx.appcompat.view.ContextThemeWrapper
+import androidx.appcompat.widget.PopupMenu
 import com.google.android.material.R as MaterialR
 import com.google.android.material.color.MaterialColors
 import kotlin.math.roundToInt
@@ -28,6 +29,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.util.ReflectionHelpers
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -103,6 +105,62 @@ class NativeToolbarTest {
         toolbar.buttonAtForTesting(1)!!.performClick()
         assertEquals("custom", action)
         assertEquals(1, toolbar.buttonCountForTesting())
+    }
+
+    @Test
+    fun `menu styles have no checkboxes and dispatch their original actions`() {
+        org.robolectric.Robolectric.buildActivity(
+            android.app.Activity::class.java
+        ).setup().use { controller ->
+            controller.get().setTheme(AppCompatR.style.Theme_AppCompat_Light_NoActionBar)
+            val toolbar = EditorKeyboardToolbarView(controller.get())
+            val items = NativeToolbarItem.fromJson(
+                """[{"type":"group","key":"styles","label":"Text Style","presentation":"menu","icon":{"type":"glyph","text":"T"},
+                    "items":[{"type":"action","key":"normal","label":"Normal","isActive":true,"icon":{"type":"glyph","text":"N"}},
+                        {"type":"heading","level":1,"label":"Heading 1","icon":{"type":"default","id":"h1"}},
+                        {"type":"heading","level":2,"label":"Heading 2","icon":{"type":"default","id":"h2"}}]}]"""
+            )
+            toolbar.setItems(items)
+            toolbar.applyState(
+                NativeToolbarState.fromState(
+                    org.json.JSONObject(
+                        """{"nodes":{"h1":true},"commands":{"toggleHeading1":true,"toggleHeading2":false}}"""
+                    ),
+                    null
+                )
+            )
+            controller.get().setContentView(toolbar)
+            val selected = mutableListOf<NativeToolbarItem>()
+            toolbar.onPressItem = { selected.add(it) }
+            requireNotNull(toolbar.buttonAtForTesting(0)).performClick()
+            val popup = ReflectionHelpers.getField<PopupMenu>(
+                toolbar,
+                "groupPopup"
+            )
+            try {
+                assertEquals(
+                    "The group stays a popup, without inline children",
+                    1,
+                    toolbar.buttonCountForTesting()
+                )
+                assertEquals(3, popup.menu.size())
+                items.single().items.forEachIndexed { index, child ->
+                    val row = popup.menu.getItem(index)
+                    assertEquals(child.label, row.title)
+                    assertFalse("${child.label} must not display a checkbox", row.isCheckable)
+                    assertFalse("${child.label} must not retain checked state", row.isChecked)
+                }
+                assertTrue(popup.menu.getItem(0).isEnabled)
+                assertTrue(popup.menu.getItem(1).isEnabled)
+                assertFalse(popup.menu.getItem(2).isEnabled)
+                assertTrue(popup.menu.performIdentifierAction(0, 0))
+                assertTrue(popup.menu.performIdentifierAction(1, 0))
+                assertFalse(popup.menu.performIdentifierAction(2, 0))
+                assertEquals(items.single().items.take(2), selected)
+            } finally {
+                popup.dismiss()
+            }
+        }
     }
 
     @Test
