@@ -419,16 +419,18 @@ extension RichTextEditorViewTests {
         let toolbar = EditorAccessoryToolbarView(frame: .zero)
         toolbar.setItemsJSONForTesting("""
         [{"type":"group","key":"format","label":"Format",
-          "icon":{"type":"glyph","text":"F"},"iconSource":"activeChild",
-          "items":[
+            "icon":{"type":"glyph","text":"F"},"iconSource":"activeChild",
+            "items":[
             {"type":"mark","mark":"bold","label":"Bold","icon":{"type":"glyph","text":"B"}},
             {"type":"mark","mark":"italic","label":"Italic","icon":{"type":"glyph","text":"I"}}
-          ]}]
+            ]}]
         """)
         toolbar.rebuildButtonsIfNeeded()
         let button = toolbar.buttonBindings[0].button
-        for (marks, expected) in [("{\"bold\":true}", "B"), ("{\"italic\":true}", "I"),
-                                  ("{\"bold\":true,\"italic\":true}", "F"), ("{}", "F")] {
+        for (marks, expected) in [
+            ("{\"bold\":true}", "B"), ("{\"italic\":true}", "I"),
+            ("{\"bold\":true,\"italic\":true}", "F"), ("{}", "F")
+        ] {
             toolbar.applyStateJSONForTesting("""
             {"activeState":{"marks":\(marks),"allowedMarks":["bold","italic"]}}
             """)
@@ -443,11 +445,13 @@ extension RichTextEditorViewTests {
         let toolbar = EditorAccessoryToolbarView(frame: CGRect(x: 0, y: 0, width: 320, height: 56))
         let groupJSON = """
         [{"type":"group","key":"format","label":"Format","icon":{"type":"glyph","text":"F"},
-          "items":[{"type":"action","key":"custom","label":"Custom","icon":{"type":"glyph","text":"C"}}]}]
+            "items":[{"type":"action","key":"custom","label":"Custom","icon":{"type":"glyph","text":"C"}}]}]
         """
         let group = NativeToolbarItem.from(json: groupJSON)[0]
-        for (name, icon) in [("text", NativeToolbarIcon.from(jsonValue: ["type": "glyph", "text": "Normal"])!),
-                             ("alignment", NativeToolbarIcon.defaultIcon(.alignCenter))] {
+        for (name, icon) in [
+            ("text", NativeToolbarIcon.from(jsonValue: ["type": "glyph", "text": "Normal"])!),
+            ("alignment", NativeToolbarIcon.defaultIcon(.alignCenter))
+        ] {
             var displayed = group
             displayed.icon = icon
             toolbar.setItems([displayed])
@@ -498,9 +502,9 @@ extension RichTextEditorViewTests {
         for direction in ["up", "down"] {
             toolbar.setItemsJSONForTesting("""
             [{"type":"group","key":"format","label":"Format","disclosure":"\(direction)",
-              "icon":{"type":"glyph","text":"F"},"items":[
+                "icon":{"type":"glyph","text":"F"},"items":[
                 {"type":"action","key":"custom","label":"Custom","icon":{"type":"glyph","text":"C"}}
-              ]}]
+                ]}]
             """)
             toolbar.layoutIfNeeded()
             let button = try XCTUnwrap(toolbar.buttonBindings.first?.button)

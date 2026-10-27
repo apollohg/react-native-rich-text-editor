@@ -148,7 +148,13 @@ internal class ToolbarImageButton(context: Context) : AppCompatButton(context) {
         val direction = if (layoutDirection == LAYOUT_DIRECTION_RTL) -1f else 1f
         val saved = canvas.save()
         canvas.translate(-direction * space / 2, 0f)
-        val primaryWidth = drawPrimaryIcon(canvas)
+        val drawable = imageDrawable
+        val primaryWidth = if (drawable == null) {
+            super.onDraw(canvas)
+            paint.measureText(text.toString())
+        } else {
+            drawImageIcon(canvas, drawable)
+        }
         canvas.restoreToCount(saved)
         if (!showsDisclosure) return
         val size = DISCLOSURE_SIZE_DP * density
@@ -164,12 +170,7 @@ internal class ToolbarImageButton(context: Context) : AppCompatButton(context) {
         canvas.drawPath(disclosurePath, disclosurePaint)
     }
 
-    private fun drawPrimaryIcon(canvas: Canvas): Float {
-        val drawable = imageDrawable
-        if (drawable == null) {
-            super.onDraw(canvas)
-            return paint.measureText(text.toString())
-        }
+    private fun drawImageIcon(canvas: Canvas, drawable: Drawable): Float {
         if (imageTintable) {
             val color = currentTextColor
             if (imageTintColor != color) {

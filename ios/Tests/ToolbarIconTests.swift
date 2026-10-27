@@ -8,10 +8,10 @@ final class ToolbarIconTests: XCTestCase {
         let toolbar = EditorAccessoryToolbarView(frame: .zero)
         toolbar.setItemsJSONForTesting("""
         [{"type":"group","key":"format","label":"Format","icon":{"type":"glyph","text":"F"},
-          "iconSource":"activeChild","items":[
+            "iconSource":"activeChild","items":[
             {"type":"mark","mark":"bold","label":"Bold","icon":{"type":"image","source":{"uri":"data:image/png;base64,\(png.base64EncodedString())"},"tintable":false}},
             {"type":"mark","mark":"italic","label":"Italic","icon":{"type":"default","id":"italic"}}
-          ]}]
+            ]}]
         """)
         toolbar.rebuildButtonsIfNeeded()
         let button = try XCTUnwrap(toolbar.buttonBindings.first?.button)
