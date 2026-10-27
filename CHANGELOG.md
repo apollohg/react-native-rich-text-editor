@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.2.1] - 2026-10-27
+
+### Added
+
+- Added configurable toolbar group disclosure indicators and active-child icons (#39).
+
+### Fixed
+
+- Removed unwanted checkboxes from Android toolbar group menus (#38).
+- Fixed the iOS caret jumping to the wrong position after Return in right-aligned paragraphs (#41).
+
 ## [2.2.0] - 2026-10-25
 
 ### Added
