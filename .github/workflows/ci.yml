@@ -358,7 +358,7 @@ jobs:
           script: npm run test:android:api24
 
   ios:
-    runs-on: macos-latest
+    runs-on: ${{ fromJSON(github.event_name == 'push' && '{"group":"native-editor-ios","labels":["self-hosted","macOS","ARM64"]}' || '"macos-latest"') }}
     # Includes cold Rust/native builds, XCTest, and result collection.
     timeout-minutes: 90
     steps:
