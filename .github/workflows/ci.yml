@@ -28,7 +28,7 @@ env:
 
 jobs:
   javascript:
-    runs-on: linux-runner
+    runs-on: &linux-runner [self-hosted, Linux, X64, native-editor-ci]
     timeout-minutes: 45
     steps:
       - name: Checkout
@@ -66,7 +66,7 @@ jobs:
 
   rust:
     # The complete CRDT suite runs on every CI-triggering change.
-    runs-on: linux-runner
+    runs-on: *linux-runner
     timeout-minutes: 45
     steps:
       - name: Checkout
@@ -89,7 +89,7 @@ jobs:
         run: npm run test:rust
 
   android-native:
-    runs-on: linux-runner
+    runs-on: *linux-runner
     timeout-minutes: 45
     steps:
       - name: Checkout
@@ -153,7 +153,7 @@ jobs:
 
   android:
     needs: android-native
-    runs-on: linux-runner
+    runs-on: *linux-runner
     timeout-minutes: 45
     steps:
       - name: Checkout
@@ -225,7 +225,7 @@ jobs:
 
   android-rn076:
     needs: android-native
-    runs-on: linux-runner
+    runs-on: *linux-runner
     timeout-minutes: 45
     steps:
       - name: Checkout
@@ -290,7 +290,7 @@ jobs:
   js-and-android:
     if: always()
     needs: [javascript, rust, android-native, android, android-rn076]
-    runs-on: linux-runner
+    runs-on: *linux-runner
     timeout-minutes: 5
     steps:
       - name: Require all JavaScript, Rust, and Android checks
@@ -305,7 +305,7 @@ jobs:
           done
 
   android-api-24:
-    runs-on: linux-runner
+    runs-on: *linux-runner
     timeout-minutes: 45
     steps:
       - name: Checkout
@@ -358,9 +358,7 @@ jobs:
           script: npm run test:android:api24
 
   ios:
-    runs-on:
-      group: native-editor-ios
-      labels: [self-hosted, macOS, ARM64]
+    runs-on: [self-hosted, macOS, ARM64, native-editor-ci]
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/../.cargo-target
     # Includes cold Rust/native builds, XCTest, and result collection.

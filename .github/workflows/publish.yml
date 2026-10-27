@@ -34,9 +34,7 @@ env:
 
 jobs:
     build-package:
-        runs-on: &macos-runner
-            group: native-editor-ios
-            labels: [self-hosted, macOS, ARM64]
+        runs-on: &macos-runner [self-hosted, macOS, ARM64, native-editor-ci]
         env: &macos-cargo-env
             CARGO_TARGET_DIR: ${{ github.workspace }}/../.cargo-target
         timeout-minutes: 45
@@ -354,7 +352,7 @@ jobs:
 
     security-rust-typescript:
         needs: build-package
-        runs-on: linux-runner
+        runs-on: &linux-runner [self-hosted, Linux, X64, native-editor-ci]
         timeout-minutes: 15
         steps:
             - name: Checkout
@@ -452,7 +450,7 @@ jobs:
 
     security-android:
         needs: build-package
-        runs-on: linux-runner
+        runs-on: *linux-runner
         timeout-minutes: 25
         steps:
             - name: Checkout
@@ -612,7 +610,7 @@ jobs:
 
     android-consumer-positive:
         needs: build-package
-        runs-on: linux-runner
+        runs-on: *linux-runner
         timeout-minutes: 25
         steps:
             - name: Checkout
@@ -671,7 +669,7 @@ jobs:
 
     android-consumer-negative:
         needs: build-package
-        runs-on: linux-runner
+        runs-on: *linux-runner
         timeout-minutes: 25
         steps:
             - name: Checkout
@@ -726,7 +724,7 @@ jobs:
             matrix:
                 check: [jvm-lint, rn076, api24]
         needs: [build-package, build-code-highlighting]
-        runs-on: linux-runner
+        runs-on: *linux-runner
         timeout-minutes: 60
         steps:
             - name: Checkout
@@ -855,7 +853,7 @@ jobs:
             - android-consumer-positive
             - android-consumer-negative
             - android-release-validation
-        runs-on: linux-runner
+        runs-on: *linux-runner
         timeout-minutes: 5
         permissions:
             contents: read

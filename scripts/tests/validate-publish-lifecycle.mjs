@@ -105,13 +105,13 @@ assert.doesNotMatch(
 const buildJob = requireJob('build-package');
 assert.match(
   requireCiJob('ios'),
-  /runs-on:\s*group: native-editor-ios\s+labels: \[self-hosted, macOS, ARM64\]/,
-  'CI iOS must use the self-hosted Mac runner group',
+  /runs-on: \[self-hosted, macOS, ARM64, native-editor-ci\]/,
+  'CI iOS must use the dedicated self-hosted Mac runner',
 );
 assert.match(
   buildJob,
-  /runs-on: &macos-runner\s+group: native-editor-ios\s+labels: \[self-hosted, macOS, ARM64\]/,
-  'release builds must define the self-hosted Mac runner group',
+  /runs-on: &macos-runner \[self-hosted, macOS, ARM64, native-editor-ci\]/,
+  'release builds must define the dedicated self-hosted Mac runner',
 );
 for (const jobName of [
   'build-code-highlighting',
@@ -120,12 +120,31 @@ for (const jobName of [
   'ios-consumer-positive',
   'ios-consumer-negative',
 ]) {
-  assert.match(requireJob(jobName), /runs-on: \*macos-runner/, `${jobName} must use the self-hosted Mac runner group`);
+  assert.match(requireJob(jobName), /runs-on: \*macos-runner/, `${jobName} must use the self-hosted Mac runner`);
+}
+assert.match(
+  requireCiJob('javascript'),
+  /runs-on: &linux-runner \[self-hosted, Linux, X64, native-editor-ci\]/,
+  'CI must define the dedicated self-hosted Linux runner',
+);
+for (const jobName of ['rust', 'android-native', 'android', 'android-rn076', 'js-and-android', 'android-api-24']) {
+  assert.match(requireCiJob(jobName), /runs-on: \*linux-runner/, `CI ${jobName} must use the self-hosted Linux runner`);
+}
+assert.match(
+  requireJob('security-rust-typescript'),
+  /runs-on: &linux-runner \[self-hosted, Linux, X64, native-editor-ci\]/,
+  'release validation must define the dedicated self-hosted Linux runner',
+);
+for (const jobName of [
+  'security-android', 'android-consumer-positive', 'android-consumer-negative',
+  'android-release-validation', 'publish',
+]) {
+  assert.match(requireJob(jobName), /runs-on: \*linux-runner/, `${jobName} must use the self-hosted Linux runner`);
 }
 assert.doesNotMatch(
   `${ciWorkflow}\n${publishWorkflow}`,
-  /runs-on:\s*macos-[^\s]+/,
-  'macOS jobs must not use GitHub-hosted runners',
+  /runs-on:\s*(?:macos-|linux-runner|ubuntu-)/,
+  'workflow jobs must not use GitHub-hosted runners',
 );
 assert.match(buildJob, /cargo install cargo-ndk --version 4\.1\.2 --locked/);
 assert.match(buildJob, /sdkmanager --install ['"]ndk;27\.1\.12297006['"]/);
@@ -253,7 +272,6 @@ assert.equal(packageJson.scripts?.['test:android:api24'], 'node scripts/run-andr
   'API 24 validation must run the strict file-backed instrumentation gate');
 const linuxKvmSetup =
   /- name: Enable KVM\s+(?:if: matrix\.check == 'api24'\s+)?run: \|\s+echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS\+="static_node=kvm"' \| sudo tee \/etc\/udev\/rules\.d\/99-kvm4all\.rules\s+sudo udevadm control --reload-rules\s+sudo udevadm trigger --name-match=kvm/;
-assert.match(androidReleaseJob, /runs-on:\s*linux-runner/);
 assert.match(androidReleaseJob, /timeout-minutes:\s*60/);
 assert.match(androidReleaseJob, /sdkmanager --install ['"]ndk;27\.1\.12297006['"]/);
 assert.match(androidReleaseJob, /npm run test:android/);
@@ -266,11 +284,6 @@ assert.match(
   androidReleaseJob,
   linuxKvmSetup,
   'publish API 24 validation must enable KVM on Linux',
-);
-assert.match(
-  ciAndroidApi24Job,
-  /runs-on:\s*linux-runner/,
-  'CI API 24 validation must use Linux',
 );
 assert.match(
   ciAndroidApi24Job,
