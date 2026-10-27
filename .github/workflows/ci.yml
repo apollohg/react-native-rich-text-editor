@@ -340,11 +340,8 @@ jobs:
       - name: Install example dependencies
         run: npm --prefix example ci
 
-      - name: Enable KVM
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
+      - name: Verify KVM access
+        run: bash scripts/require-kvm.sh
 
       - name: Validate API 24 instrumentation result handling
         run: node scripts/tests/android-api24-instrumentation.test.mjs

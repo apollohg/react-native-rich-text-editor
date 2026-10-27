@@ -270,8 +270,8 @@ const androidReleaseJob = requireJob('android-release-validation');
 const ciAndroidApi24Job = requireCiJob('android-api-24');
 assert.equal(packageJson.scripts?.['test:android:api24'], 'node scripts/run-android-api24-smoke.mjs',
   'API 24 validation must run the strict file-backed instrumentation gate');
-const linuxKvmSetup =
-  /- name: Enable KVM\s+(?:if: matrix\.check == 'api24'\s+)?run: \|\s+echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS\+="static_node=kvm"' \| sudo tee \/etc\/udev\/rules\.d\/99-kvm4all\.rules\s+sudo udevadm control --reload-rules\s+sudo udevadm trigger --name-match=kvm/;
+const linuxKvmCheck =
+  /- name: Verify KVM access\s+(?:if: matrix\.check == 'api24'\s+)?run: bash scripts\/require-kvm\.sh/;
 assert.match(androidReleaseJob, /timeout-minutes:\s*60/);
 assert.match(androidReleaseJob, /sdkmanager --install ['"]ndk;27\.1\.12297006['"]/);
 assert.match(androidReleaseJob, /npm run test:android/);
@@ -282,13 +282,13 @@ assert.match(androidReleaseJob, /reactivecircus\/android-emulator-runner@v2\.38\
 assert.match(androidReleaseJob, /api-level:\s*24/);
 assert.match(
   androidReleaseJob,
-  linuxKvmSetup,
-  'publish API 24 validation must enable KVM on Linux',
+  linuxKvmCheck,
+  'publish API 24 validation must verify KVM access on Linux',
 );
 assert.match(
   ciAndroidApi24Job,
-  linuxKvmSetup,
-  'CI API 24 validation must enable KVM on Linux',
+  linuxKvmCheck,
+  'CI API 24 validation must verify KVM access on Linux',
 );
 for (const [job, jobName] of [
   [androidReleaseJob, 'publish API 24 validation'],

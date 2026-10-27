@@ -820,12 +820,9 @@ jobs:
               if: matrix.check == 'rn076'
               run: npm run validate:package:android:rn076
 
-            - name: Enable KVM
+            - name: Verify KVM access
               if: matrix.check == 'api24'
-              run: |
-                  echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-                  sudo udevadm control --reload-rules
-                  sudo udevadm trigger --name-match=kvm
+              run: bash scripts/require-kvm.sh
 
             - name: Validate API 24 instrumentation result handling
               if: matrix.check == 'api24'
