@@ -32,12 +32,11 @@ env:
     GRADLE_OPTS: -Dorg.gradle.caching=true -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g"
     ORG_GRADLE_PROJECT_kotlin.compiler.execution.strategy: in-process
     RELEASE_ARTIFACT_NAME: release-package-${{ github.run_id }}
+    CARGO_TARGET_DIR: ${{ github.workspace }}/../.cargo-target
 
 jobs:
     build-package:
         runs-on: &macos-runner [self-hosted, macOS, ARM64, native-editor-ci]
-        env: &macos-cargo-env
-            CARGO_TARGET_DIR: ${{ github.workspace }}/../.cargo-target
         timeout-minutes: 45
         steps:
             - name: Checkout
@@ -162,7 +161,6 @@ jobs:
 
     build-code-highlighting:
         runs-on: *macos-runner
-        env: *macos-cargo-env
         timeout-minutes: 45
         steps:
             - name: Checkout
@@ -282,7 +280,6 @@ jobs:
     package-contracts:
         needs: build-package
         runs-on: *macos-runner
-        env: *macos-cargo-env
         timeout-minutes: 45
         steps:
             - name: Checkout
@@ -364,16 +361,6 @@ jobs:
 
             - name: Setup Rust
               uses: dtolnay/rust-toolchain@1.95.0
-
-            - name: Cache Cargo
-              uses: Swatinem/rust-cache@v2
-              with:
-                  env-vars: ImageOS
-                  workspaces: rust/editor-core
-                  shared-key: editor-core
-                  cache-on-failure: true
-                  cache-workspace-crates: true
-                  key: ${{ github.job }}-${{ hashFiles('rust/editor-core/src/**', 'rust/editor-core/tests/**', 'rust/editor-core/benches/**') }}
 
             - name: Install dependencies
               run: npm ci
@@ -477,15 +464,6 @@ jobs:
 
             - name: Setup Rust
               uses: dtolnay/rust-toolchain@1.95.0
-
-            - name: Cache Cargo
-              uses: Swatinem/rust-cache@v2
-              with:
-                  env-vars: ImageOS
-                  workspaces: rust/editor-core -> ../../android/build/host-editor-core
-                  shared-key: editor-core-host
-                  cache-workspace-crates: true
-                  key: ${{ hashFiles('rust/editor-core/src/**') }}
 
             - name: Setup Android SDK
               uses: android-actions/setup-android@v4
@@ -745,18 +723,6 @@ jobs:
 
             - name: Setup Rust
               uses: dtolnay/rust-toolchain@1.95.0
-
-            - name: Cache Cargo
-              uses: Swatinem/rust-cache@v2
-              with:
-                  env-vars: ImageOS
-                  workspaces: |
-                      rust/editor-core
-                      rust/editor-core -> ../../android/build/host-editor-core
-                  shared-key: editor-core
-                  cache-on-failure: true
-                  cache-workspace-crates: true
-                  key: ${{ github.job }}-${{ hashFiles('rust/editor-core/src/**', 'rust/editor-core/tests/**', 'rust/editor-core/benches/**') }}
 
             - name: Setup Android SDK
               uses: android-actions/setup-android@v4

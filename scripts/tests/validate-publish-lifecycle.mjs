@@ -50,29 +50,6 @@ const ciPushTrigger = ciWorkflow.split('\n  push:\n')[1]?.split('\n  pull_reques
 assert.ok(ciPushTrigger, 'CI must run after changes land on a release branch');
 assert.match(ciPushTrigger, /^\s+- v1\s*$/m, 'CI must validate pushes to the default v1 release branch');
 
-const assertRustCache = (job, jobName) => {
-  assert.match(
-    job,
-    /uses: Swatinem\/rust-cache@v2/,
-    `${jobName} must use the dependency-aware Rust cache`,
-  );
-  assert.match(
-    job,
-    /workspaces:\s*(?:\|\s*)?rust\/editor-core/,
-    `${jobName} must cache the editor-core workspace`,
-  );
-  assert.match(
-    job,
-    /shared-key:\s*editor-core/,
-    `${jobName} must share sanitized editor-core dependencies`,
-  );
-  assert.match(
-    job,
-    /cache-on-failure:\s*true/,
-    `${jobName} must preserve warmed Rust dependencies after failures`,
-  );
-};
-
 const assertGradleCache = (job, jobName, readOnlyExpression) => {
   assert.match(
     job,
@@ -195,26 +172,12 @@ assert.match(
 );
 assert.match(buildJob, /release-artifact\/\*\.tgz/);
 
-for (const jobName of ['rust', 'android-native', 'android']) {
-  assertRustCache(requireCiJob(jobName), `CI ${jobName}`);
-}
-
-const localCargoTarget = /CARGO_TARGET_DIR: \$\{\{ github\.workspace \}\}\/\.\.\/\.cargo-target/;
-const ciIosJob = requireCiJob('ios');
-assert.match(ciIosJob, localCargoTarget, 'CI iOS must keep Cargo build outputs outside checkout cleanup');
-assert.match(buildJob, /env: &macos-cargo-env\s+CARGO_TARGET_DIR: \$\{\{ github\.workspace \}\}\/\.\.\/\.cargo-target/,
-  'release builds must define the persistent Mac Cargo target');
-for (const jobName of ['build-code-highlighting', 'package-contracts']) {
-  assert.match(requireJob(jobName), /env: \*macos-cargo-env/,
-    `${jobName} must reuse the persistent Mac Cargo target`);
-}
-for (const [job, jobName] of [
-  [ciIosJob, 'CI iOS'],
-  [buildJob, 'build-package'],
-  ...['build-code-highlighting', 'package-contracts'].map((name) => [requireJob(name), name]),
-]) {
-  assert.doesNotMatch(job, /Swatinem\/rust-cache@v2/,
-    `${jobName} must not transfer persistent Cargo outputs through GitHub cache`);
+const localCargoTarget = /^\s+CARGO_TARGET_DIR: \$\{\{ github\.workspace \}\}\/\.\.\/\.cargo-target$/m;
+for (const [workflow, workflowName] of [[ciWorkflow, 'CI'], [publishWorkflow, 'publish']]) {
+  assert.match(workflow.split('\njobs:\n')[0], localCargoTarget,
+    `${workflowName} must keep Cargo build outputs outside checkout cleanup on every self-hosted runner`);
+  assert.doesNotMatch(workflow, /Swatinem\/rust-cache@v2/,
+    `${workflowName} must not transfer persistent Cargo outputs through GitHub cache`);
 }
 const iosBuildCacheAction = await readFile(path.join(repoRoot, '.github/actions/ios-build-cache/action.yml'), 'utf8');
 assert.match(iosBuildCacheAction, /CCACHE_DIR=\$HOME\/\.cache\/native-editor-ccache/);
@@ -238,13 +201,6 @@ for (const dependency of ciDependencies) {
     assert.equal(result.status === 0, outcome === 'success',
       `Aggregate check must propagate ${dependency}=${outcome}; results=${results}\n${result.stderr}`);
   }
-}
-
-for (const jobName of [
-  'security-rust-typescript',
-  'android-release-validation',
-]) {
-  assertRustCache(requireJob(jobName), jobName);
 }
 
 for (const jobName of [

@@ -17,7 +17,7 @@ def hostEditorCoreLibraryName = hostOsName.contains('mac') ? 'libeditor_core.dyl
     hostOsName.contains('linux') ? 'libeditor_core.so' :
     hostOsName.contains('windows') ? 'editor_core.dll' :
     'libeditor_core.so'
-def hostRustTargetDirectory = file("$buildDir/host-editor-core")
+def hostRustTargetDirectory = file("${System.getenv('CARGO_TARGET_DIR') ?: buildDir}/host-editor-core")
 def hostEditorCoreLibrary = file("$hostRustTargetDirectory/release/$hostEditorCoreLibraryName")
 def pinnedCargoScript = new File(repositoryRoot, 'rust/toolchain-cargo.sh').absolutePath
 // Native Windows needs a Bash host for the checked-in pinned-Cargo wrapper;
