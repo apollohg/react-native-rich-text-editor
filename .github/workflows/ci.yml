@@ -336,6 +336,12 @@ jobs:
         with:
           cache-read-only: ${{ github.event_name == 'pull_request' }}
 
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Setup Android NDK
+        run: sdkmanager --install 'ndk;27.1.12297006'
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@1.95.0
 
