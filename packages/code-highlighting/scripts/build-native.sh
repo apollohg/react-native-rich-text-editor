@@ -14,7 +14,7 @@ if [[ "$mode" == all || "$mode" == bindings ]]; then
     cargo build --release --locked --target-dir "$target_dir"
     cargo run --release --locked --features cli --bin uniffi-bindgen --target-dir "$target_dir" -- \
         generate --library "$target_dir/release/libnative_editor_highlighting.dylib" \
-        --language swift --out-dir "$target_dir/bindings/swift"
+        --language swift --no-format --out-dir "$target_dir/bindings/swift"
     cargo run --release --locked --features cli --bin uniffi-bindgen --target-dir "$target_dir" -- \
         generate --library "$target_dir/release/libnative_editor_highlighting.dylib" \
         --language kotlin --no-format --out-dir "$package_dir/android/src/main/java"

@@ -107,6 +107,7 @@ mkdir -p "$OUT_DIR/swift"
     --bin uniffi-bindgen -- \
     generate --library "$STATICLIB_PATH" \
     --language swift \
+    --no-format \
     --out-dir "$OUT_DIR/swift"
 python3 "$SCRIPT_DIR/optimize-swift-bindings.py" "$OUT_DIR/swift/editor_core.swift"
 normalize_header "$OUT_DIR/swift/editor_coreFFI.h"
