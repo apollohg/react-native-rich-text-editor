@@ -5,6 +5,14 @@ pub(crate) enum InitialContent {
     Html(String),
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum InitialSelection {
+    #[default]
+    Start,
+    End,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum EditorInitialization {
     Local {
@@ -298,6 +306,7 @@ pub(crate) struct EditorSessionConfig {
     pub(crate) schema_json: Option<String>,
     pub(crate) fragment_name: String,
     pub(crate) initialization: EditorInitialization,
+    pub(crate) initial_selection: InitialSelection,
     pub(crate) resource_limits: ResourceLimits,
     pub(crate) editing_limits: EditingLimits,
     pub(crate) collaboration_limits: CollaborationLimits,
@@ -331,6 +340,7 @@ impl EditorSessionConfig {
                 },
                 snapshot: envelope.snapshot,
             },
+            initial_selection: InitialSelection::Start,
             resource_limits: limits,
             editing_limits: EditingLimits::default(),
             collaboration_limits: CollaborationLimits::default(),
@@ -351,6 +361,7 @@ impl EditorSessionConfig {
             initialization: EditorInitialization::Local {
                 initial_content: InitialContent::Empty,
             },
+            initial_selection: InitialSelection::Start,
             resource_limits: ResourceLimits::default(),
             editing_limits: EditingLimits::default(),
             collaboration_limits: CollaborationLimits::default(),

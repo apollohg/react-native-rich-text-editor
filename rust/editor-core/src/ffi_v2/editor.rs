@@ -33,7 +33,7 @@ use crate::native_transaction_bridge::{
 use crate::registry;
 use crate::session::{
     CollaborationLimitOverrides, CollaborationLimits, EditorInitialization, EditorSession,
-    EditorSessionConfig, ErrorDomain, InitialContent, SessionError,
+    EditorSessionConfig, ErrorDomain, InitialContent, InitialSelection, SessionError,
 };
 use crate::viewer::FfiViewerSourceKind;
 use crate::yrs_engine::{
@@ -304,6 +304,8 @@ struct LocalJsonInitialization<'a> {
     _kind: InitializationKind,
     #[serde(borrow, deserialize_with = "deserialize_required_non_null_raw_value")]
     json: &'a RawValue,
+    #[serde(default, deserialize_with = "deserialize_non_null_option")]
+    selection: Option<InitialSelection>,
 }
 
 #[derive(serde::Deserialize)]
@@ -315,6 +317,8 @@ struct LocalHtmlInitialization<'a> {
     html: &'a RawValue,
     #[serde(default, deserialize_with = "deserialize_non_null_option")]
     snapshot_scope: Option<DocumentScope>,
+    #[serde(default, deserialize_with = "deserialize_non_null_option")]
+    selection: Option<InitialSelection>,
 }
 
 #[derive(serde::Deserialize)]

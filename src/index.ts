@@ -285,6 +285,7 @@ export {
     type NativeEditorCreateConfig,
     type NativeEditorState,
     type NativeEditorInitialization,
+    type NativeEditorInitialSelection,
     type NativeEditorPeerInfo,
     type NativeEditorRoomSnapshot,
     type NativeEditorSnapshotMetadata,

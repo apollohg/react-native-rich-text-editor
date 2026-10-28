@@ -20,6 +20,7 @@ import {
     V2_CREATE_EDITING_LIMIT_KEYS,
     V2_CREATE_COLLABORATION_LIMIT_KEYS,
     V2_CREATE_INITIALIZATION_KEYS,
+    V2_CREATE_INITIAL_SELECTIONS,
     V2_CREATE_ROOM_SNAPSHOT_KEYS,
     V2_CREATE_SNAPSHOT_SCOPE_KEYS,
     NativeEditorCreateConfigError,
@@ -112,6 +113,25 @@ function normalizeV2SnapshotScope(value: unknown): Record<string, unknown> {
     scope.documentId = documentId;
     scope.lineageId = lineageId;
     return scope;
+}
+
+function copyV2InitialSelection(
+    initialization: Record<string, unknown>,
+    target: Record<string, unknown>
+): void {
+    const selection = ownV2CreateValue(initialization, 'selection');
+
+    if (selection === undefined) {
+        return;
+    }
+
+    if (!V2_CREATE_INITIAL_SELECTIONS.has(selection)) {
+        throw invalidV2CreateRequestError(
+            'NativeEditorBridge: invalid initialization selection for v2 create'
+        );
+    }
+
+    target.selection = selection;
 }
 
 export function buildV2CreateRequestUnchecked(config: NativeEditorCreateConfig): {
@@ -226,6 +246,7 @@ export function buildV2CreateRequestUnchecked(config: NativeEditorCreateConfig):
             const localJson = emptyV2CreateRecord();
             localJson.type = 'localJson';
             localJson.json = normalizeV2JsonValue(json, 'localJson initialization', jsonTraversal);
+            copyV2InitialSelection(initialization, localJson);
             envelope.initialization = localJson;
             break;
         }
@@ -247,6 +268,7 @@ export function buildV2CreateRequestUnchecked(config: NativeEditorCreateConfig):
             if (snapshotScope !== undefined) {
                 localHtml.snapshotScope = normalizeV2SnapshotScope(snapshotScope);
             }
+            copyV2InitialSelection(initialization, localHtml);
             envelope.initialization = localHtml;
             break;
         }

@@ -506,6 +506,7 @@ impl RustPeer {
             schema_json: None,
             fragment_name: COLLABORATION_FRAGMENT_NAME.into(),
             initialization,
+            initial_selection: crate::session::InitialSelection::Start,
             resource_limits: ResourceLimits::default(),
             editing_limits: EditingLimits::default(),
             collaboration_limits: CollaborationLimits::default(),

@@ -64,6 +64,7 @@ pub fn create_session(options: SessionOptions) -> Result<u64, TestError> {
                 None => InitialContent::Empty,
             },
         },
+        initial_selection: crate::session::InitialSelection::Start,
         resource_limits: ResourceLimits::default(),
         editing_limits: EditingLimits::default(),
         collaboration_limits: crate::session::CollaborationLimits::default(),

@@ -651,3 +651,136 @@ fn input_filter_preserves_exact_semantics_and_replays_compile_errors() {
     }
     destroy_handle(&id);
 }
+
+#[test]
+fn create_places_initial_selection_from_local_initialization() {
+    let caret_of = |id: &str| {
+        let update = ok_json(&v2_render::editor_v2_render_update(
+            id.to_owned(),
+            None,
+            None,
+        ));
+        let selection = &update["selection"];
+        println!(
+            "initial selection for {id}: {selection} scalarLength={}",
+            update["scalarLength"]
+        );
+        (
+            selection["anchorScalar"].as_u64().unwrap(),
+            selection["headScalar"].as_u64().unwrap(),
+            update["scalarLength"].as_u64().unwrap(),
+        )
+    };
+
+    let id = create_handle(json!({
+        "initialization": { "type": "localHtml", "html": "<p>Hello</p><p>world</p>", "selection": "end" },
+    }));
+    let (anchor, head, length) = caret_of(&id);
+    assert_eq!(
+        (anchor, head),
+        (length, length),
+        "html end caret must sit at the document end"
+    );
+    let baseline = create_handle(json!({
+        "initialization": { "type": "localHtml", "html": "<p>Hello</p><p>world</p>" },
+    }));
+    assert_eq!(
+        state_of(&id)["documentRevision"],
+        state_of(&baseline)["documentRevision"],
+        "placing the caret is not a document change",
+    );
+    assert_eq!(
+        state_of(&id)["canUndo"],
+        false,
+        "placing the caret must not create undo history"
+    );
+    destroy_handle(&baseline);
+    ok_json(&v2::editor_v2_apply_input(
+        id.clone(),
+        input_envelope(7001, revision_of(&id), "!"),
+    ));
+    assert_eq!(
+        ok_json(&v2::editor_v2_get_document_html(id.clone()))["html"],
+        "<p>Hello</p><p>world!</p>",
+        "typing after an end caret appends to the last block",
+    );
+    destroy_handle(&id);
+
+    let id = create_handle(json!({
+        "initialization": { "type": "localHtml", "html": "<p>Hi</p><hr>", "selection": "end" },
+    }));
+    let (anchor, head, _) = caret_of(&id);
+    assert_eq!(
+        (anchor, head),
+        (2, 2),
+        "end caret lands in the last text block, not on a trailing void"
+    );
+    ok_json(&v2::editor_v2_apply_input(
+        id.clone(),
+        input_envelope(7002, revision_of(&id), "!"),
+    ));
+    assert_eq!(
+        ok_json(&v2::editor_v2_get_document_html(id.clone()))["html"],
+        "<p>Hi!</p><hr>",
+        "typing after an end caret appends to the last text block",
+    );
+    destroy_handle(&id);
+
+    let id = create_handle(json!({
+        "initialization": { "type": "localHtml", "html": "<ul><li><p>one</p></li></ul>", "selection": "end" },
+    }));
+    caret_of(&id);
+    ok_json(&v2::editor_v2_apply_input(
+        id.clone(),
+        input_envelope(7003, revision_of(&id), "!"),
+    ));
+    assert_eq!(
+        ok_json(&v2::editor_v2_get_document_html(id.clone()))["html"],
+        "<ul><li><p>one!</p></li></ul>",
+        "list markers must not shift the end caret",
+    );
+    destroy_handle(&id);
+
+    let id = create_handle(json!({
+        "initialization": {
+            "type": "localJson",
+            "json": serde_json::from_str::<Value>(JSON_SEED).unwrap(),
+            "selection": "end",
+        },
+    }));
+    let (anchor, head, length) = caret_of(&id);
+    assert_eq!(
+        (anchor, head),
+        (length, length),
+        "json end caret must sit at the document end"
+    );
+    destroy_handle(&id);
+
+    for selection in [json!("start"), Value::Null] {
+        let mut initialization = json!({ "type": "localHtml", "html": "<p>Hello</p>" });
+        if !selection.is_null() {
+            initialization["selection"] = selection.clone();
+        }
+        let id = create_handle(json!({ "initialization": initialization }));
+        assert_eq!(
+            caret_of(&id).0,
+            0,
+            "selection {selection} keeps the caret at the start"
+        );
+        destroy_handle(&id);
+    }
+
+    for initialization in [
+        json!({ "type": "localHtml", "html": "<p>Hello</p>", "selection": "middle" }),
+        json!({ "type": "localHtml", "html": "<p>Hello</p>", "selection": null }),
+        json!({ "type": "localEmpty", "selection": "end" }),
+    ] {
+        let result = v2::editor_v2_create(
+            json!({ "initialization": initialization }).to_string(),
+            None,
+        );
+        let error = err_json(&result);
+        println!("rejected {initialization}: {error:?}");
+        assert_error(&error, "boundary", "CONFIG_INVALID", None);
+    }
+}
