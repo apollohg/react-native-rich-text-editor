@@ -29,7 +29,8 @@ permissions:
     contents: read
 
 env:
-    GRADLE_OPTS: -Dorg.gradle.caching=true
+    GRADLE_OPTS: -Dorg.gradle.caching=true -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g"
+    ORG_GRADLE_PROJECT_kotlin.compiler.execution.strategy: in-process
     RELEASE_ARTIFACT_NAME: release-package-${{ github.run_id }}
 
 jobs:
