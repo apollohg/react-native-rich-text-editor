@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.2] - 2026-10-28
+
+### Fixed
+
+- iOS toolbar groups now open as native menus (#45).
+- Fixed text being dropped when pasting HTML containing classed `span` elements (#43).
+
 ## [2.2.1] - 2026-10-27
 
 ### Added
@@ -805,6 +812,8 @@ This is a hard cutover to shared native document, collaboration, and viewer boun
 - Controlled and uncontrolled content modes (HTML and JSON).
 - Undo/redo history.
 
+[2.2.2]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.2.1...2.2.2
+[2.2.1]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.2.0...2.2.1
 [2.2.0]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.1.3...2.2.0
 [2.1.3]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.1.2...2.1.3
 [2.1.2]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.1.1...2.1.2
