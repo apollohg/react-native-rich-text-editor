@@ -671,7 +671,7 @@ impl YrsDocumentEngine {
                         .drop_unrevertible_stack_tops(&self.doc, &fragment);
                 }
                 self.quarantined_remote_update = dependency_candidate;
-                self.derived_state = Some(next_state);
+                self.install_derived_state(Some(next_state));
                 self.durable_client_ids = durable_client_ids;
                 self.encoded_state_upper_bound = encoded_state_bytes;
                 self.revision = next_revision;

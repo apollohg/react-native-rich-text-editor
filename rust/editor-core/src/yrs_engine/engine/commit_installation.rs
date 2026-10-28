@@ -89,7 +89,7 @@ impl YrsDocumentEngine {
         let installed_unavailable_lookup_seed = next_derived_state
             .mutation_lookup_seed
             .is_unavailable_for_test();
-        self.derived_state = Some(next_derived_state);
+        self.install_derived_state(Some(next_derived_state));
         if prepared.publish_active_state_install {
             yrs_engine::derived_state::record_active_state_cache_install();
         }

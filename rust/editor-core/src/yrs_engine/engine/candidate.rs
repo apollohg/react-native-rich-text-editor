@@ -297,7 +297,7 @@ impl YrsDocumentEngine {
                 .map(|state| state.document_revision),
             Some(next_revision)
         );
-        self.derived_state = next_derived_state;
+        self.install_derived_state(next_derived_state);
         self.durable_client_ids = candidate.durable_client_ids;
         self.encoded_state_upper_bound = candidate.encoded_state_bytes;
         self.revision = next_revision;

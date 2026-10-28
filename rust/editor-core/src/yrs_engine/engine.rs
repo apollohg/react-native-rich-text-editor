@@ -302,6 +302,7 @@ impl YrsDocumentEngine {
             history_clock,
         );
 
+        Self::debug_assert_document_node_count(derived_state.as_ref());
         Ok(Self {
             encoded_state_upper_bound: candidate.encoded_state_bytes,
             doc: candidate.doc,
@@ -1165,11 +1166,21 @@ impl YrsDocumentEngine {
             debug_assert!(state
                 .render_blocks
                 .matches_identity(&state.document, &state.schema_fingerprint));
+        }
+    }
+
+    fn debug_assert_document_node_count(derived_state: Option<&DerivedStateCache>) {
+        if let Some(state) = derived_state {
             debug_assert_eq!(
                 state.document_node_count,
                 crate::editor_state::document_node_count(state.document.root())
             );
         }
+    }
+
+    fn install_derived_state(&mut self, derived_state: Option<DerivedStateCache>) {
+        Self::debug_assert_document_node_count(derived_state.as_ref());
+        self.derived_state = derived_state;
     }
 
     fn next_revision(&self) -> YrsEngineResult<u64> {

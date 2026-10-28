@@ -531,7 +531,7 @@ impl YrsDocumentEngine {
                 &self.editing_limits,
             );
         }
-        self.derived_state = Some(next);
+        self.install_derived_state(Some(next));
         self.state_revision = next_state_revision;
         self.last_committed_origin = Some(compiled.origin);
         if let Some(prepared) = prepared_boundary {

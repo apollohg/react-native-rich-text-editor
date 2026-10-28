@@ -462,7 +462,7 @@ impl YrsDocumentEngine {
             awareness.rebind_preserving_peers(&self.doc);
         }
         self.history = prepared.candidate_history;
-        self.derived_state = Some(prepared.candidate_state);
+        self.install_derived_state(Some(prepared.candidate_state));
         self.encoded_state_upper_bound = prepared.encoded_state_bytes;
         self.revision = prepared.next_document_revision;
         self.record_document_change(super::DocumentChangeScope::Document);
