@@ -243,6 +243,13 @@ fn boundary_split_compositions_match_their_previews() {
         range: range_for_test(from, to),
         content: Fragment::from(vec![Node::text("r".into(), vec![])]),
     };
+    let join = |at| TypedOperation::JoinBlocks {
+        at: point_for_test(at),
+    };
+    let insert_break = |at| TypedOperation::InsertNode {
+        at: point_for_test(at),
+        node: Node::void("hardBreak".into(), HashMap::new()),
+    };
     let cases = [
         (
             "a delete from a moved block into the next block keeps a hard break suffix",
@@ -268,6 +275,11 @@ fn boundary_split_compositions_match_their_previews() {
             "a split inside a moved block after a cross-block replace shifts the later delete",
             paragraphs(&[(1, Some(1)), (4, Some(3))]),
             vec![boundary_split(0), replace(0, 8), boundary_split(9)],
+        ),
+        (
+            "a hard break inserted before a cross-block replacement keeps a later join's suffix last",
+            paragraphs(&[(3, Some(1)), (2, Some(3)), (4, None), (3, Some(2)), (2, Some(3))]),
+            vec![replace(1, 33), join(38), insert_break(1)],
         ),
     ];
     for (label, source, operations) in cases {

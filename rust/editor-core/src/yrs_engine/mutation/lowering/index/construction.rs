@@ -32,6 +32,35 @@ impl MutationCompiler {
         insert_id
     }
 
+    fn structural_action_follows_prepared_insert(
+        &self,
+        insert_id: usize,
+        parent_id: &BranchID,
+    ) -> bool {
+        self.actions
+            .iter()
+            .skip_while(|slot| !matches!(slot, ActionSlot::PreparedInsert(id) if *id == insert_id))
+            .skip(1)
+            .any(|slot| match slot {
+                ActionSlot::PreparedInsert(id) => self
+                    .prepared_inserts
+                    .get(*id)
+                    .and_then(Option::as_ref)
+                    .is_some_and(|pending| pending.parent.id() == *parent_id),
+                ActionSlot::Concrete(action) => match action.as_ref() {
+                    YrsMutationAction::DeleteXmlChildren { parent, .. }
+                    | YrsMutationAction::InsertXmlChildren { parent, .. } => {
+                        parent.id() == *parent_id
+                    }
+                    YrsMutationAction::CreateText { parent, .. } => {
+                        AsRef::<Branch>::as_ref(parent).id() == *parent_id
+                    }
+                    _ => false,
+                },
+                ActionSlot::Tombstone => false,
+            })
+    }
+
     fn prepared_node_mut(
         &mut self,
         handle: &PreparedHandle,

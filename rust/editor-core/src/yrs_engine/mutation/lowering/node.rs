@@ -208,8 +208,12 @@ impl MutationCompiler {
                             (pending.parent.id() == target.parent.id()
                                 && pending.child_index == child_index
                                 && pending.semantic_parent_path == path
-                                && pending.first_semantic_index == semantic_index)
-                                .then_some(insert_id)
+                                && pending.first_semantic_index == semantic_index
+                                && !self.structural_action_follows_prepared_insert(
+                                    insert_id,
+                                    &target.parent.id(),
+                                ))
+                            .then_some(insert_id)
                         })
                     });
             if let Some(insert_id) = existing_insert_id {
