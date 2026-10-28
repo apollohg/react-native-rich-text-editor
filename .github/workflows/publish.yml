@@ -67,7 +67,7 @@ jobs:
               uses: actions/setup-node@v6
               with:
                   node-version: 24
-                  cache: npm
+                  package-manager-cache: false
 
             - name: Setup Java
               if: steps.native-build-cache.outputs.cache-hit != 'true'
@@ -191,7 +191,7 @@ jobs:
               uses: actions/setup-node@v6
               with:
                   node-version: 24
-                  cache: npm
+                  package-manager-cache: false
 
             - name: Setup Java
               if: steps.native-build-cache.outputs.cache-hit != 'true'
@@ -291,10 +291,7 @@ jobs:
               uses: actions/setup-node@v6
               with:
                   node-version: 22
-                  cache: npm
-                  cache-dependency-path: |
-                      package-lock.json
-                      example/package-lock.json
+                  package-manager-cache: false
 
             - name: Setup Rust
               uses: dtolnay/rust-toolchain@1.95.0
@@ -407,10 +404,7 @@ jobs:
               uses: actions/setup-node@v6
               with:
                   node-version: 24
-                  cache: npm
-                  cache-dependency-path: |
-                      package-lock.json
-                      example/package-lock.json
+                  package-manager-cache: false
 
             - name: Install dependencies
               run: |
@@ -423,14 +417,22 @@ jobs:
                   name: ${{ env.RELEASE_ARTIFACT_NAME }}
                   path: .
 
+            - name: Prepare iOS simulator
+              id: ios-simulator
+              shell: bash
+              run: bash scripts/prepare-ios-simulator.sh
+
             - name: Prepare iOS test host
               uses: ./.github/actions/ios-test-host
               with:
                   xcode: ${{ steps.ios-toolchain.outputs.xcode }}
+              env:
+                  IOS_DESTINATION: ${{ steps.ios-simulator.outputs.destination }}
 
             - name: Run iOS unit tests
               run: npm run test:ios -- -resultBundlePath test-results/ios/NativeEditorTests.xcresult
               env:
+                  IOS_DESTINATION: ${{ steps.ios-simulator.outputs.destination }}
                   NATIVE_EDITOR_IOS_TEST_ACTION: test-without-building
 
             - name: Upload iOS test results
@@ -446,6 +448,7 @@ jobs:
               run: npm run validate:security -- --release --behavior
               env:
                   SECURITY_BEHAVIOR_TARGETS: ios
+                  IOS_DESTINATION: ${{ steps.ios-simulator.outputs.destination }}
                   NATIVE_EDITOR_IOS_TEST_ACTION: test-without-building
 
     security-android:
@@ -528,10 +531,7 @@ jobs:
               uses: actions/setup-node@v6
               with:
                   node-version: 24
-                  cache: npm
-                  cache-dependency-path: |
-                      package-lock.json
-                      example/package-lock.json
+                  package-manager-cache: false
 
             - name: Install dependencies
               run: |
@@ -584,10 +584,7 @@ jobs:
               uses: actions/setup-node@v6
               with:
                   node-version: 24
-                  cache: npm
-                  cache-dependency-path: |
-                      package-lock.json
-                      example/package-lock.json
+                  package-manager-cache: false
 
             - name: Install dependencies
               run: |

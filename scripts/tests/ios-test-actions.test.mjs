@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 
 const root = mkdtempSync(join(tmpdir(), 'ios-test-actions-'));
 try {
-    for (const file of ['scripts/run-ios-tests.sh', 'scripts/run-ios-on-device.sh', 'scripts/require-native-artifacts.sh']) {
+    for (const file of ['scripts/run-ios-tests.sh', 'scripts/run-ios-on-device.sh', 'scripts/require-native-artifacts.sh', 'scripts/prepare-ios-simulator.sh']) {
         mkdirSync(dirname(join(root, file)), { recursive: true });
         copyFileSync(new URL(`../../${file}`, import.meta.url), join(root, file));
     }
@@ -60,6 +60,7 @@ try {
     );
 
     const simulatorId = 'A3615395-EDA9-4A60-982A-D428BCC5719B';
+    const otherSimulatorId = 'B548F91A-98D1-4F57-B9A6-42D802DC911F';
     writeFileSync(join(root, 'bin/xcrun'), `#!/bin/bash
 case "$*" in
     'simctl list devices available') printf '%s\\n' "$SIMCTL_DEVICES" ;;
@@ -137,12 +138,13 @@ printf '%s\\n' "$@" > "$CAPTURE"
     }
 
     const ciWorkflow = readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8');
-    const simulatorStep = ciWorkflow.split('      - name: Prepare iOS simulator\n')[1]
-        ?.split('\n      - name: Prepare iOS test host')[0];
-    assert.ok(simulatorStep, 'CI must prepare an iOS simulator');
-    const simulatorScript = simulatorStep.split('        run: |\n')[1]
-        ?.split('\n').map((line) => line.startsWith('          ') ? line.slice(10) : line).join('\n');
-    assert.ok(simulatorScript, 'CI simulator preparation must have a shell script');
+    const publishWorkflow = readFileSync(new URL('../../.github/workflows/publish.yml', import.meta.url), 'utf8');
+    const simulatorStep = /- name: Prepare iOS simulator\s+id: ios-simulator\s+shell: bash\s+run: bash scripts\/prepare-ios-simulator\.sh/;
+    assert.match(ciWorkflow, simulatorStep, 'CI must prepare an iOS simulator');
+    const securityIosJob = publishWorkflow.split('    security-ios:\n')[1]?.split('\n    security-android:')[0];
+    assert.ok(securityIosJob, 'Release validation must define the iOS security job');
+    assert.match(securityIosJob, simulatorStep, 'Release validation must reuse the CI simulator selection');
+    assert.match(securityIosJob, /IOS_DESTINATION: \$\{\{ steps\.ios-simulator\.outputs\.destination \}\}/);
     writeFileSync(join(root, 'bin/xcrun'), `#!/bin/bash
 case "$*" in
     'simctl list runtimes available') printf '%s\\n' "$SIMCTL_RUNTIMES" ;;
@@ -162,11 +164,13 @@ esac
 `, { mode: 0o755 });
     for (const [scenario, devices, expectedCreate] of [
         ['reuse an existing iPhone despite trailing whitespace', `== Devices ==\n-- iOS 27.0 --\n    iPhone 16 (${simulatorId}) (Shutdown) `, false],
+        ['reuse the first available iPhone across workflows', `== Devices ==\n-- iOS 27.0 --\n    iPhone 17 Pro (${simulatorId}) (Shutdown)\n    iPhone 17 (${otherSimulatorId}) (Shutdown)`, false],
         ['create an iPhone using a compatible installed runtime', '== Devices ==', true],
     ]) {
-        const simctlCalls = join(root, `ci-simctl-calls-${expectedCreate}`);
-        const githubOutput = join(root, `ci-github-output-${expectedCreate}`);
-        const run = spawnSync('bash', ['-euo', 'pipefail', '-c', simulatorScript], {
+        const fixtureName = scenario.replaceAll(' ', '-');
+        const simctlCalls = join(root, `ci-simctl-calls-${fixtureName}`);
+        const githubOutput = join(root, `ci-github-output-${fixtureName}`);
+        const run = spawnSync('bash', [join(root, 'scripts/prepare-ios-simulator.sh')], {
             cwd: root,
             env: {
                 ...process.env,
