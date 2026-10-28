@@ -159,6 +159,8 @@ jobs:
   android:
     needs: android-native
     runs-on: *linux-runner
+    env: &x86-64-example-app
+      ORG_GRADLE_PROJECT_reactNativeArchitectures: x86_64
     timeout-minutes: 45
     steps:
       - name: Checkout
@@ -311,6 +313,7 @@ jobs:
 
   android-api-24:
     runs-on: *linux-runner
+    env: *x86-64-example-app
     timeout-minutes: 45
     steps:
       - name: Checkout
