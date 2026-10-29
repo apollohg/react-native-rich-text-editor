@@ -6,6 +6,7 @@
 
 - iOS toolbar groups now open as native menus (#45).
 - Fixed text being dropped when pasting HTML containing classed `span` elements (#43).
+- Fixed the caret always starting at the beginning of existing content; `localHtml` and `localJson` initialization now accept `selection: 'end'` (#47).
 
 ## [2.2.1] - 2026-10-27
 
