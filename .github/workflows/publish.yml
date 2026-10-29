@@ -814,7 +814,7 @@ jobs:
             - android-consumer-positive
             - android-consumer-negative
             - android-release-validation
-        runs-on: *linux-runner
+        runs-on: linux-runner
         timeout-minutes: 5
         permissions:
             contents: read
