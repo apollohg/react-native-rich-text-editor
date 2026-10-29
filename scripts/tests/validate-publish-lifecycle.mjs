@@ -114,14 +114,14 @@ assert.match(
 );
 for (const jobName of [
   'security-android', 'android-consumer-positive', 'android-consumer-negative',
-  'android-release-validation', 'publish',
+  'android-release-validation',
 ]) {
   assert.match(requireJob(jobName), /runs-on: \*linux-runner/, `${jobName} must use the self-hosted Linux runner`);
 }
 assert.doesNotMatch(
-  `${ciWorkflow}\n${publishWorkflow}`,
+  `${ciWorkflow}\n${publishWorkflow.replace(requireJob('publish'), '')}`,
   /runs-on:\s*(?:macos-|linux-runner|ubuntu-)/,
-  'workflow jobs must not use GitHub-hosted runners',
+  'workflow jobs other than publish must not use GitHub-hosted runners',
 );
 assert.match(buildJob, /cargo install cargo-ndk --version 4\.1\.2 --locked/);
 assert.match(buildJob, /sdkmanager --install ['"]ndk;27\.1\.12297006['"]/);
@@ -316,6 +316,8 @@ for (const dependency of [
     `publish must require ${dependency}`,
   );
 }
+assert.match(publishJob, /runs-on: linux-runner\n/,
+  'npm provenance only accepts publishes from the GitHub-hosted Linux runner');
 assert.match(publishJob, /id-token:\s*write/);
 assert.match(publishJob, /actions\/download-artifact@v8/);
 assert.match(
