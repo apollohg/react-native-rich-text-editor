@@ -232,6 +232,43 @@ describe('NativeEditorBridge v2', () => {
             ).toThrow(NativeEditorEngineBoundaryError);
         });
 
+        it('forwards a local initialization selection and rejects unknown placements', () => {
+            createNativeEditorDocumentHandle({
+                initialization: { type: 'localHtml', html: '<p>draft</p>', selection: 'end' },
+            });
+            createNativeEditorDocumentHandle({
+                initialization: {
+                    type: 'localJson',
+                    json: { type: 'doc', content: [ { type: 'paragraph' } ] },
+                    selection: 'start',
+                },
+            });
+
+            const forwarded = mockNativeModule.editorV2Create.mock.calls.map(
+                ([ configJson ]: [string]) => JSON.parse(configJson).initialization.selection
+            );
+            expect(forwarded).toEqual([ 'end', 'start' ]);
+
+            for (const initialization of [
+                { type: 'localHtml', html: '<p>draft</p>', selection: 'middle' },
+                { type: 'localHtml', html: '<p>draft</p>', selection: null },
+                { type: 'localEmpty', selection: 'end' },
+                { type: 'room', documentId: 'doc', lineageId: 'lineage', selection: 'end' },
+            ]) {
+                const thrown = catchThrown(() =>
+                    createNativeEditorDocumentHandle({
+                        initialization,
+                    } as unknown as NativeEditorCreateConfig)
+                );
+                expect({ initialization, thrown }).toEqual({
+                    initialization,
+                    thrown: expect.any(NativeEditorEngineBoundaryError),
+                });
+            }
+
+            expect(mockNativeModule.editorV2Create).toHaveBeenCalledTimes(2);
+        });
+
         it('omits undefined optional fields from custom schemas', () => {
             createNativeEditorDocumentHandle({
                 initialization: { type: 'localEmpty' },

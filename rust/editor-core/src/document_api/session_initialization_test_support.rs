@@ -57,6 +57,7 @@ fn local_config(initial_content: InitialContent) -> EditorSessionConfig {
         schema_json: None,
         fragment_name: "prosemirror".into(),
         initialization: EditorInitialization::Local { initial_content },
+        initial_selection: crate::session::InitialSelection::Start,
         resource_limits: crate::boundary::ResourceLimits::default(),
         editing_limits: crate::yrs_engine::EditingLimits::default(),
         collaboration_limits: CollaborationLimits::default(),

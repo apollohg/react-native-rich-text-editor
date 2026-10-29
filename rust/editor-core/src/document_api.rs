@@ -5,6 +5,7 @@
 
 #[cfg(test)]
 use crate::boundary::{parse_json_value_stack_safe, BoundaryError, BoundedInput, InputKind};
+use crate::native_transaction_bridge::operation_error;
 use crate::registry::{self, SessionId};
 #[cfg(test)]
 use crate::schema::presets::tiptap_schema;
@@ -12,11 +13,12 @@ use crate::schema::Schema;
 use crate::serialize::FromHtmlOptions;
 use crate::session::{
     DocumentState, EditorInitialization, EditorSession, EditorSessionConfig, InitialContent,
-    SessionError, SessionPolicy,
+    InitialSelection, SessionError, SessionPolicy,
 };
 use crate::yrs_engine::{
-    InitializationMode, ReplacementHistory, TransactionCommit, TransactionOrigin,
-    YrsDocumentEngine, YrsEngineConfig,
+    Affinity, EditorOffsetKind, HistoryPolicy, InitializationMode, OperationError,
+    ReplacementHistory, RevisionedPosition, SelectionInput, SelectionIntent, TransactionCommit,
+    TransactionOrigin, TypedTransaction, YrsDocumentEngine, YrsEngineConfig,
 };
 
 pub(crate) struct DocumentApiFacade;
@@ -125,6 +127,9 @@ impl DocumentApiFacade {
                         )?;
                     }
                 }
+                if config.initial_selection == InitialSelection::End {
+                    select_document_end(&mut engine)?;
+                }
                 (engine, DocumentState::LocalReady)
             }
             EditorInitialization::Room { scope, snapshot } => {
@@ -149,6 +154,38 @@ impl DocumentApiFacade {
 
         EditorSession::new(engine, policy, document_state, config.collaboration_limits)
     }
+}
+
+fn select_document_end(engine: &mut YrsDocumentEngine) -> Result<(), SessionError> {
+    let not_ready = || operation_error(OperationError::engine_not_ready(0));
+    let map = engine.position_map().ok_or_else(not_ready)?;
+    let document = engine.document().ok_or_else(not_ready)?;
+    let Some(last_text_block) = (0..map.block_count())
+        .rev()
+        .find(|&index| map.block(index).is_some_and(|block| !block.is_void_block))
+    else {
+        return Ok(());
+    };
+    let end = map.doc_to_scalar(map.effective_doc_end(last_text_block), document);
+    let caret = RevisionedPosition {
+        offset: end,
+        kind: EditorOffsetKind::Scalar,
+        affinity: Affinity::Before,
+    };
+    engine
+        .apply_typed_transaction(TypedTransaction {
+            request_id: 0,
+            base_document_revision: engine.revision(),
+            origin: TransactionOrigin::LocalApi,
+            operations: Vec::new(),
+            selection_intent: SelectionIntent::Set(SelectionInput::Text {
+                anchor: caret,
+                head: caret,
+            }),
+            history_policy: HistoryPolicy::Skip,
+        })
+        .map_err(operation_error)?;
+    Ok(())
 }
 
 fn engine_config(

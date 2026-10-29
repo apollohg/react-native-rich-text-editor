@@ -866,6 +866,7 @@ fn seeded_session_with(initial_json: String, editing_limits: EditingLimits) -> E
             initialization: EditorInitialization::Local {
                 initial_content: InitialContent::Json(initial_json),
             },
+            initial_selection: crate::session::InitialSelection::Start,
             resource_limits: limits(),
             editing_limits,
             collaboration_limits: CollaborationLimits::default(),

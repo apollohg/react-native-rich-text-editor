@@ -310,12 +310,15 @@ export interface NativeEditorRoomSnapshot {
  * - `room` : a collaborative document. It renders nothing until the server's
  *   document arrives, unless a `snapshot` seeds it offline.
  */
+export type NativeEditorInitialSelection = 'start' | 'end';
+
 export type NativeEditorInitialization =
     | { type: 'localEmpty' }
-    | { type: 'localJson'; json: DocumentJSON }
+    | { type: 'localJson'; json: DocumentJSON; selection?: NativeEditorInitialSelection }
     | {
           type: 'localHtml';
           html: string;
+          selection?: NativeEditorInitialSelection;
           /** Enables local snapshot export and restore. */
           snapshotScope?: NativeEditorSnapshotScope;
       }

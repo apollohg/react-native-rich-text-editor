@@ -23,6 +23,7 @@ fn native_publication_fixture(document: &str) -> NativePublicationFixture {
         initialization: crate::session::EditorInitialization::Local {
             initial_content: crate::session::InitialContent::Empty,
         },
+        initial_selection: crate::session::InitialSelection::Start,
         resource_limits: ResourceLimits::default(),
         editing_limits: crate::yrs_engine::EditingLimits::default(),
         collaboration_limits: crate::session::CollaborationLimits::default(),

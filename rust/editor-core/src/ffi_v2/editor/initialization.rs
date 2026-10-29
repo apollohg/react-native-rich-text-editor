@@ -246,13 +246,14 @@ fn build_config(
     let schema_json = schema
         .map(|schema| materialize_raw_payload(schema, InputKind::Config, &resource_limits))
         .transpose()?;
-    let (initialization, room_bound) = match initialization_probe.kind {
+    let (initialization, initial_selection, room_bound) = match initialization_probe.kind {
         InitializationKind::LocalEmpty => {
             let _: LocalEmptyInitialization = parse_create_json(initialization_json.get())?;
             (
                 EditorInitialization::Local {
                     initial_content: InitialContent::Empty,
                 },
+                InitialSelection::Start,
                 false,
             )
         }
@@ -268,6 +269,7 @@ fn build_config(
                 EditorInitialization::Local {
                     initial_content: InitialContent::Json(json),
                 },
+                initialization.selection.unwrap_or_default(),
                 false,
             )
         }
@@ -275,6 +277,7 @@ fn build_config(
             let initialization: LocalHtmlInitialization<'_> =
                 parse_create_json(initialization_json.get())?;
             let html = materialize_html(initialization.html, &resource_limits)?;
+            let initial_selection = initialization.selection.unwrap_or_default();
             let initialization = match initialization.snapshot_scope {
                 Some(scope) => {
                     if scope.document_id.trim().is_empty() || scope.lineage_id.trim().is_empty() {
@@ -292,7 +295,7 @@ fn build_config(
                     initial_content: InitialContent::Html(html),
                 },
             };
-            (initialization, false)
+            (initialization, initial_selection, false)
         }
         InitializationKind::Room => {
             let initialization: RoomInitialization = parse_create_json(initialization_json.get())?;
@@ -317,6 +320,7 @@ fn build_config(
                     },
                     snapshot,
                 },
+                InitialSelection::Start,
                 true,
             )
         }
@@ -326,6 +330,7 @@ fn build_config(
             schema_json,
             fragment_name: fragment_name.unwrap_or_else(|| "prosemirror".into()),
             initialization,
+            initial_selection,
             resource_limits,
             editing_limits,
             collaboration_limits,

@@ -92,6 +92,7 @@ pub(crate) fn awaiting_session() -> EditorSession {
                 },
                 snapshot: None,
             },
+            initial_selection: crate::session::InitialSelection::Start,
             resource_limits: limits(),
             editing_limits: EditingLimits::default(),
             collaboration_limits: CollaborationLimits::default(),

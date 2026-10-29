@@ -25,6 +25,7 @@ export {
     type NativeEditorSnapshotScope,
     type NativeEditorRoomSnapshot,
     type NativeEditorInitialization,
+    type NativeEditorInitialSelection,
     type NativeEditorCreateConfig,
     type NativeEditorInputRequest,
     type NativeEditorCommandRequest,
