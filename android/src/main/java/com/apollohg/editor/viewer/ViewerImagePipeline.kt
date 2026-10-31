@@ -320,8 +320,7 @@ internal class ViewerImagePipeline(
             ) {
                 return@synchronized null
             }
-            receipts.values.forEach(RenderImageLoader.LoadHandle::cancel)
-            receipts.clear()
+            cancelReceiptsLocked()
             requested.toSet().also {
                 requested.clear()
                 requestPriorities.clear()
@@ -341,8 +340,7 @@ internal class ViewerImagePipeline(
             generation = ""
             ownerIdentity = ""
             enabled = false
-            receipts.values.forEach(RenderImageLoader.LoadHandle::cancel)
-            receipts.clear()
+            cancelReceiptsLocked()
             requested.toSet().also {
                 requested.clear()
                 requestPriorities.clear()
@@ -477,7 +475,14 @@ internal class ViewerImagePipeline(
         }
     }
 
-    private fun releasePrefetchForPressure() {
+    /** Each cancel runs its finish listener, which removes its own receipt; iterate a detached copy. */
+    private fun cancelReceiptsLocked() {
+        val pending = receipts.values.toList()
+        receipts.clear()
+        pending.forEach(RenderImageLoader.LoadHandle::cancel)
+    }
+
+        private fun releasePrefetchForPressure() {
         val released = synchronized(lock) {
             requestPriorities.asSequence()
                 .filter { it.value == DecodedBitmapPriority.PREFETCH }

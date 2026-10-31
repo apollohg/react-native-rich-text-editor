@@ -92,6 +92,35 @@ class PreparedProseRevisionTest {
     }
 
     @Test
+    fun cancellingPendingLoadsReleasesEveryReceiptWithoutConcurrentModification() {
+        var cancelled = 0
+        val pipeline = ViewerImagePipeline(
+            load = { _, _, _, _ -> RenderImageLoader.LoadHandle { cancelled += 1 } }
+        )
+        val attachments = listOf("first", "second", "third").mapIndexed { index, id ->
+            ViewerImageAttachment(
+                id,
+                "https://example.test/$id.png",
+                Rect(0, index * 20, 20, index * 20 + 20),
+                null,
+                ordinal = index
+            )
+        }
+
+        pipeline.begin("generation", true)
+        pipeline.updateVisibleRect(Rect(0, 0, 100, 100), attachments)
+        assertEquals(3, pipeline.requestCountForTesting)
+
+        pipeline.cancel()
+        assertEquals(3, cancelled)
+
+        pipeline.begin("next", true)
+        pipeline.updateVisibleRect(Rect(0, 0, 100, 100), attachments)
+        pipeline.begin("after-next", true)
+        assertEquals(6, cancelled)
+    }
+
+    @Test
     fun disabledImagesDoNotCreateRequests() {
         val pipeline = ViewerImagePipeline()
         pipeline.begin("disabled", false)
