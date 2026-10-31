@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.2.3] - 2026-11-01
+
+### Fixed
+
+- Fixed an Android viewer crash when cancelling pending image loads or switching document generations.
+
 ## [2.2.2] - 2026-10-28
 
 ### Fixed
@@ -813,6 +819,7 @@ This is a hard cutover to shared native document, collaboration, and viewer boun
 - Controlled and uncontrolled content modes (HTML and JSON).
 - Undo/redo history.
 
+[2.2.3]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.2.2...2.2.3
 [2.2.2]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.2.1...2.2.2
 [2.2.1]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.2.0...2.2.1
 [2.2.0]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.1.3...2.2.0

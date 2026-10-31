@@ -482,7 +482,7 @@ internal class ViewerImagePipeline(
         pending.forEach(RenderImageLoader.LoadHandle::cancel)
     }
 
-        private fun releasePrefetchForPressure() {
+    private fun releasePrefetchForPressure() {
         val released = synchronized(lock) {
             requestPriorities.asSequence()
                 .filter { it.value == DecodedBitmapPriority.PREFETCH }
