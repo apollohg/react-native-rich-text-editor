@@ -48,7 +48,7 @@ const requireCiJob = (jobName) => workflowJob(ciWorkflow, jobName, 'CI');
 
 const ciPushTrigger = ciWorkflow.split('\n  push:\n')[1]?.split('\n  pull_request:')[0];
 assert.ok(ciPushTrigger, 'CI must run after changes land on a release branch');
-assert.match(ciPushTrigger, /^\s+- v1\s*$/m, 'CI must validate pushes to the default v1 release branch');
+assert.match(ciPushTrigger, /^\s+- main\s*$/m, 'CI must validate pushes to the default main release branch');
 
 const assertGradleCache = (job, jobName, readOnlyExpression) => {
   assert.match(
