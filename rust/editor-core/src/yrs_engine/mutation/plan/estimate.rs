@@ -220,38 +220,143 @@ fn plan_may_delete_live(plan: &YrsMutationPlan) -> bool {
 // view of that exact text, so inspect only the run(s) touching the insertion
 // point. At a run boundary either side can supply Yrs' active formatting;
 // taking their union is the bounded conservative case.
-fn inherited_omitted_format_units(
-    runs: &[TextSignatureRun],
-    index_utf16: u32,
-    desired: &Attrs,
-) -> Option<u64> {
-    let mut run_start = 0u32;
-    let mut prior_touching: Option<&TextSignatureRun> = None;
-    let mut omitted_keys = 0u64;
-    for run in runs {
-        let run_len = u32::try_from(run.text.encode_utf16().count()).ok()?;
-        let run_end = run_start.checked_add(run_len)?;
-        if run_start <= index_utf16 && index_utf16 <= run_end {
-            for (key, _) in &run.attrs {
-                let already_requested = desired.contains_key(key.as_ref());
-                let already_counted = prior_touching.is_some_and(|prior| {
-                    prior
-                        .attrs
-                        .iter()
-                        .any(|(prior_key, _)| prior_key == key)
-                });
-                if !already_requested && !already_counted {
-                    omitted_keys = omitted_keys.checked_add(1)?;
-                }
-            }
-            prior_touching = Some(run);
-        }
-        run_start = run_end;
-        if run_start > index_utf16 {
-            break;
+#[derive(Debug, Clone)]
+struct FormattedRun {
+    len_utf16: u32,
+    keys: Vec<Arc<str>>,
+}
+
+#[derive(Debug, Clone)]
+struct FormattedText {
+    runs: Vec<FormattedRun>,
+}
+
+fn applied_format_keys(attrs: &Attrs) -> Vec<Arc<str>> {
+    attrs
+        .iter()
+        .filter(|(_, value)| !matches!(value, Any::Null | Any::Undefined))
+        .map(|(key, _)| Arc::clone(key))
+        .collect()
+}
+
+impl FormattedText {
+    fn from_signature(runs: &[TextSignatureRun]) -> Option<Self> {
+        let runs = runs
+            .iter()
+            .map(|run| {
+                Some(FormattedRun {
+                    len_utf16: u32::try_from(run.text.encode_utf16().count()).ok()?,
+                    keys: run.attrs.iter().map(|(key, _)| Arc::clone(key)).collect(),
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(Self { runs })
+    }
+
+    fn created(len_utf16: u32, attrs: &Attrs) -> Self {
+        Self {
+            runs: vec![FormattedRun {
+                len_utf16,
+                keys: applied_format_keys(attrs),
+            }],
         }
     }
-    omitted_keys.checked_mul(2)
+
+    fn omitted_format_units(&self, index_utf16: u32, desired: &Attrs) -> Option<u64> {
+        let mut run_start = 0u32;
+        let mut prior_touching: Option<&FormattedRun> = None;
+        let mut omitted_keys = 0u64;
+        for run in &self.runs {
+            let run_end = run_start.checked_add(run.len_utf16)?;
+            if run_start <= index_utf16 && index_utf16 <= run_end {
+                for key in &run.keys {
+                    let already_requested = desired.contains_key(key.as_ref());
+                    let already_counted =
+                        prior_touching.is_some_and(|prior| prior.keys.contains(key));
+                    if !already_requested && !already_counted {
+                        omitted_keys = omitted_keys.checked_add(1)?;
+                    }
+                }
+                prior_touching = Some(run);
+            }
+            run_start = run_end;
+            if run_start > index_utf16 {
+                break;
+            }
+        }
+        omitted_keys.checked_mul(2)
+    }
+
+    fn split_at(&mut self, index_utf16: u32) -> Option<usize> {
+        let mut run_start = 0u32;
+        for position in 0..self.runs.len() {
+            if run_start == index_utf16 {
+                return Some(position);
+            }
+            let run_len = self.runs[position].len_utf16;
+            let run_end = run_start.checked_add(run_len)?;
+            if index_utf16 < run_end {
+                let head_len = index_utf16 - run_start;
+                let tail = FormattedRun {
+                    len_utf16: run_len - head_len,
+                    keys: self.runs[position].keys.clone(),
+                };
+                self.runs[position].len_utf16 = head_len;
+                self.runs.insert(position + 1, tail);
+                return Some(position + 1);
+            }
+            run_start = run_end;
+        }
+        (run_start == index_utf16).then_some(self.runs.len())
+    }
+
+    fn insert(&mut self, index_utf16: u32, len_utf16: u32, attrs: &Attrs) -> Option<()> {
+        let position = self.split_at(index_utf16)?;
+        self.runs.insert(
+            position,
+            FormattedRun {
+                len_utf16,
+                keys: applied_format_keys(attrs),
+            },
+        );
+        Some(())
+    }
+
+    fn delete(&mut self, index_utf16: u32, len_utf16: u32) -> Option<()> {
+        let start = self.split_at(index_utf16)?;
+        let end = self.split_at(index_utf16.checked_add(len_utf16)?)?;
+        let mut residual_keys = Vec::<Arc<str>>::new();
+        for run in self.runs.drain(start..end) {
+            for key in run.keys {
+                if !residual_keys.contains(&key) {
+                    residual_keys.push(key);
+                }
+            }
+        }
+        if !residual_keys.is_empty() {
+            self.runs.insert(
+                start,
+                FormattedRun {
+                    len_utf16: 0,
+                    keys: residual_keys,
+                },
+            );
+        }
+        Some(())
+    }
+
+    fn format(&mut self, index_utf16: u32, len_utf16: u32, attrs: &Attrs) -> Option<()> {
+        let start = self.split_at(index_utf16)?;
+        let end = self.split_at(index_utf16.checked_add(len_utf16)?)?;
+        for run in &mut self.runs[start..end] {
+            for key in applied_format_keys(attrs) {
+                if !run.keys.contains(&key) {
+                    run.keys.push(key);
+                }
+            }
+        }
+        Some(())
+    }
 }
 
 #[cfg(test)]
@@ -265,24 +370,81 @@ mod inherited_format_bound_tests {
         }
     }
 
+    fn formatted(runs: &[TextSignatureRun]) -> FormattedText {
+        FormattedText::from_signature(runs).unwrap()
+    }
+
+    fn attrs(keys: &[&str]) -> Attrs {
+        keys.iter()
+            .map(|key| (Arc::<str>::from(*key), Any::Bool(true)))
+            .collect()
+    }
+
     #[test]
     fn touching_run_union_bounds_omitted_keys_at_start_inside_end_and_boundary() {
-        let bold = [run("a😀", "bold")];
+        let bold = formatted(&[run("a😀", "bold")]);
         let empty = Attrs::default();
-        assert_eq!(inherited_omitted_format_units(&bold, 0, &empty), Some(2));
-        assert_eq!(inherited_omitted_format_units(&bold, 1, &empty), Some(2));
-        assert_eq!(inherited_omitted_format_units(&bold, 3, &empty), Some(2));
+        assert_eq!(bold.omitted_format_units(0, &empty), Some(2));
+        assert_eq!(bold.omitted_format_units(1, &empty), Some(2));
+        assert_eq!(bold.omitted_format_units(3, &empty), Some(2));
 
-        let boundary = [run("a", "bold"), run("b", "italic")];
+        let boundary = formatted(&[run("a", "bold"), run("b", "italic")]);
+        assert_eq!(boundary.omitted_format_units(1, &empty), Some(4));
+        assert_eq!(boundary.omitted_format_units(1, &attrs(&["bold"])), Some(2));
+    }
+
+    #[test]
+    fn later_inserts_inherit_formatting_from_text_inserted_earlier_in_the_plan() {
+        let mut text = formatted(&[TextSignatureRun {
+            text: "a".into(),
+            attrs: Vec::new(),
+        }]);
+        text.insert(1, 1, &attrs(&["bold", "italic"])).unwrap();
         assert_eq!(
-            inherited_omitted_format_units(&boundary, 1, &empty),
-            Some(4)
+            text.omitted_format_units(2, &attrs(&["bold"])),
+            Some(2),
+            "italic inherited from the just-inserted run must be negated"
         );
-        let desired_bold = Attrs::from([(Arc::<str>::from("bold"), Any::Bool(true))]);
+        text.insert(2, 1, &attrs(&["bold"])).unwrap();
+        assert_eq!(text.omitted_format_units(3, &Attrs::default()), Some(2));
+    }
+
+    #[test]
+    fn deleted_text_leaves_its_formatting_at_the_deletion_point() {
+        let mut text = formatted(&[run("ab", "bold")]);
+        text.delete(0, 2).unwrap();
         assert_eq!(
-            inherited_omitted_format_units(&boundary, 1, &desired_bold),
-            Some(2)
+            text.omitted_format_units(0, &Attrs::default()),
+            Some(2),
+            "Yrs keeps the deleted run's bold markers, so a plain insert must negate them"
         );
+        assert!(text.insert(1, 1, &Attrs::default()).is_none());
+    }
+
+    #[test]
+    fn formatting_only_widens_the_keys_later_inserts_may_negate() {
+        let mut text = formatted(&[run("ab", "bold")]);
+        text.format(0, 1, &attrs(&["italic"])).unwrap();
+        assert_eq!(text.omitted_format_units(1, &Attrs::default()), Some(4));
+        text.format(0, 2, &Attrs::from([(Arc::<str>::from("bold"), Any::Null)]))
+            .unwrap();
+        assert_eq!(
+            text.omitted_format_units(1, &Attrs::default()),
+            Some(4),
+            "a removal is a ceiling-preserving no-op"
+        );
+    }
+}
+
+fn signed_text<'a>(
+    texts: &'a mut HashMap<BranchID, FormattedText>,
+    signature: &TargetSignature,
+) -> Option<&'a mut FormattedText> {
+    match texts.entry(signature.target.clone()) {
+        std::collections::hash_map::Entry::Occupied(entry) => Some(entry.into_mut()),
+        std::collections::hash_map::Entry::Vacant(entry) => {
+            Some(entry.insert(FormattedText::from_signature(&signature.runs)?))
+        }
     }
 }
 
@@ -294,12 +456,25 @@ pub(crate) fn planned_insertion_units(
         u64::try_from(attrs.len()).ok()?.checked_mul(2)
     }
 
+    let mut texts = HashMap::<BranchID, FormattedText>::new();
     let mut total = 0u64;
     for (index, action) in plan.actions.iter().enumerate() {
+        let invalid = || invalid_action_range(request_id, action.operation_index());
         let units = match action {
             YrsMutationAction::DeleteXmlChildren { .. }
-            | YrsMutationAction::RemoveXmlAttribute { .. }
-            | YrsMutationAction::DeleteText { .. } => 0,
+            | YrsMutationAction::RemoveXmlAttribute { .. } => 0,
+            YrsMutationAction::DeleteText {
+                index_utf16,
+                len_utf16,
+                signature,
+                ..
+            } => {
+                signed_text(&mut texts, signature)
+                    .ok_or_else(invalid)?
+                    .delete(*index_utf16, *len_utf16)
+                    .ok_or_else(invalid)?;
+                0
+            }
             YrsMutationAction::InsertXmlChildren { .. } => plan
                 .prepared_metrics
                 .get(index)
@@ -313,27 +488,54 @@ pub(crate) fn planned_insertion_units(
                 follow_up,
                 ..
             } => {
+                let mut created = FormattedText::created(*len_utf16, attrs);
                 let mut units = 1u64
                     .checked_add(u64::from(*len_utf16))
                     .and_then(|units| units.checked_add(format_units(attrs)?))
-                    .ok_or_else(|| invalid_action_range(request_id, action.operation_index()))?;
+                    .ok_or_else(invalid)?;
                 for follow in follow_up {
+                    let invalid_follow =
+                        || invalid_action_range(request_id, follow.operation_index());
                     let added = match follow {
                         CreatedTextAction::Insert {
-                            len_utf16, attrs, ..
+                            index_utf16,
+                            len_utf16,
+                            attrs,
+                            ..
                         } => {
-                            let formats = format_units(attrs).ok_or_else(|| {
-                                invalid_action_range(request_id, follow.operation_index())
-                            })?;
-                            u64::from(*len_utf16).checked_add(formats).ok_or_else(|| {
-                                invalid_action_range(request_id, follow.operation_index())
-                            })?
+                            let added = format_units(attrs)
+                                .and_then(|formats| u64::from(*len_utf16).checked_add(formats))
+                                .and_then(|units| {
+                                    units.checked_add(
+                                        created.omitted_format_units(*index_utf16, attrs)?,
+                                    )
+                                })
+                                .ok_or_else(invalid_follow)?;
+                            created
+                                .insert(*index_utf16, *len_utf16, attrs)
+                                .ok_or_else(invalid_follow)?;
+                            added
                         }
-                        CreatedTextAction::Delete { .. } => 0,
-                        CreatedTextAction::Format { attrs, .. } => {
-                            format_units(attrs).ok_or_else(|| {
-                                invalid_action_range(request_id, follow.operation_index())
-                            })?
+                        CreatedTextAction::Delete {
+                            index_utf16,
+                            len_utf16,
+                            ..
+                        } => {
+                            created
+                                .delete(*index_utf16, *len_utf16)
+                                .ok_or_else(invalid_follow)?;
+                            0
+                        }
+                        CreatedTextAction::Format {
+                            index_utf16,
+                            len_utf16,
+                            attrs,
+                            ..
+                        } => {
+                            created
+                                .format(*index_utf16, *len_utf16, attrs)
+                                .ok_or_else(invalid_follow)?;
+                            format_units(attrs).ok_or_else(invalid_follow)?
                         }
                     };
                     units = units.checked_add(added).ok_or_else(|| {
@@ -349,21 +551,30 @@ pub(crate) fn planned_insertion_units(
                 signature,
                 ..
             } => {
-                u64::from(*len_utf16)
-                    .checked_add(format_units(attrs).ok_or_else(|| {
-                        invalid_action_range(request_id, action.operation_index())
-                    })?)
+                let text = signed_text(&mut texts, signature).ok_or_else(invalid)?;
+                let units = u64::from(*len_utf16)
+                    .checked_add(format_units(attrs).ok_or_else(invalid)?)
                     .and_then(|units| {
-                        units.checked_add(inherited_omitted_format_units(
-                            &signature.runs,
-                            *index_utf16,
-                            attrs,
-                        )?)
+                        units.checked_add(text.omitted_format_units(*index_utf16, attrs)?)
                     })
-                    .ok_or_else(|| invalid_action_range(request_id, action.operation_index()))?
+                    .ok_or_else(invalid)?;
+                text.insert(*index_utf16, *len_utf16, attrs)
+                    .ok_or_else(invalid)?;
+                units
             }
-            YrsMutationAction::FormatText { attrs, .. } => format_units(attrs)
-                .ok_or_else(|| invalid_action_range(request_id, action.operation_index()))?,
+            YrsMutationAction::FormatText {
+                index_utf16,
+                len_utf16,
+                attrs,
+                signature,
+                ..
+            } => {
+                signed_text(&mut texts, signature)
+                    .ok_or_else(invalid)?
+                    .format(*index_utf16, *len_utf16, attrs)
+                    .ok_or_else(invalid)?;
+                format_units(attrs).ok_or_else(invalid)?
+            }
         };
         total = total
             .checked_add(units)

@@ -213,3 +213,18 @@ fn pasting_a_copied_list_back_over_its_own_text_is_a_no_op() {
     assert_eq!(paste_copy_over_itself(&mut session, (0, 7), (0, 7)), None);
     assert_eq!(session.engine.document_json().unwrap(), before);
 }
+
+#[test]
+fn pasting_differently_marked_text_at_its_own_start_inserts_a_copy() {
+    let document = json!({ "type": "doc", "content": [{ "type": "paragraph", "content": [
+        { "type": "text", "text": "a", "marks": [{ "type": "bold" }, { "type": "italic" }] },
+        { "type": "text", "text": "a", "marks": [{ "type": "bold" }] },
+        { "type": "text", "text": "a" }
+    ] }] });
+    let mut session = table_session_with_schema(&document.to_string(), tiptap_table_schema());
+    assert_eq!(paste_copy_over_itself(&mut session, (3, 0), (0, 0)), None);
+    assert_eq!(
+        session.engine.document().unwrap().root().text_content(),
+        "aaaaaa"
+    );
+}
