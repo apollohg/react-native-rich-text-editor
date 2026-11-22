@@ -4,6 +4,7 @@
 #include <ReactCommon/TurboModule.h>
 #include <jsi/jsi.h>
 #include <react/renderer/components/PreparedProseViewer/PreparedProseViewerComponentDescriptor.h>
+#include <react/renderer/components/ReactNativeProseEditorSpec/ComponentDescriptors.h>
 
 namespace facebook {
 namespace react {

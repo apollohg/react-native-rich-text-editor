@@ -632,6 +632,9 @@ RUBY
   grep -Fq '@"PreparedProseViewer": NSClassFromString(@"PREPPreparedProseViewerComponentView")' \
     "$provider_source" || \
     fail "iOS packed consumer codegen is missing the PreparedProseViewer third-party provider entry"
+  grep -Fq '@"NativeEditorFocusHost": NSClassFromString(@"NativeEditorFocusHostComponentView")' \
+    "$provider_source" || \
+    fail "iOS packed consumer codegen is missing the NativeEditorFocusHost third-party provider entry"
   grep -Fq '@apollohg/react-native-rich-text-editor' \
     "$provider_source" || \
     fail "iOS packed consumer provider entry is not attributed to the packed dependency"
@@ -775,7 +778,10 @@ validate_package_entries() {
     abort "codegen name drift" unless codegen.fetch("name") == "ReactNativeProseEditorSpec"
     abort "codegen must expose components" unless codegen.fetch("type") == "components"
     provider = codegen.fetch("ios").fetch("componentProvider")
-    abort "PreparedProseViewer provider entry is missing" unless provider == { "PreparedProseViewer" => "PREPPreparedProseViewerComponentView" }
+    abort "Fabric component provider entries drifted" unless provider == {
+      "NativeEditorFocusHost" => "NativeEditorFocusHostComponentView",
+      "PreparedProseViewer" => "PREPPreparedProseViewerComponentView",
+    }
     expo = JSON.parse(File.read(File.join(root, "expo-module.config.json")))
     abort "Expo must discover the package-root podspec" unless expo.fetch("ios").fetch("podspecPath") == "./ReactNativeProseEditor.podspec"
     podspec = File.read(File.join(root, "ReactNativeProseEditor.podspec"))

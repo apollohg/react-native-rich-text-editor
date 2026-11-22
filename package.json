@@ -109,6 +109,7 @@
         },
         "ios": {
             "componentProvider": {
+                "NativeEditorFocusHost": "NativeEditorFocusHostComponentView",
                 "PreparedProseViewer": "PREPPreparedProseViewerComponentView"
             }
         }

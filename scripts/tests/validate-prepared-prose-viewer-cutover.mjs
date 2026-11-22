@@ -171,7 +171,12 @@ assert.deepEqual(packageJson.codegenConfig, {
     type: 'components',
     jsSrcsDir: 'src/specs',
     android: { javaPackageName: 'com.apollohg.editor.viewer' },
-    ios: { componentProvider: { PreparedProseViewer: 'PREPPreparedProseViewerComponentView' } },
+    ios: {
+        componentProvider: {
+            NativeEditorFocusHost: 'NativeEditorFocusHostComponentView',
+            PreparedProseViewer: 'PREPPreparedProseViewerComponentView',
+        },
+    },
 });
 
 const viewerPodspec = read('ReactNativeProseEditor.podspec');
@@ -190,10 +195,10 @@ assert.doesNotMatch(
 );
 assert.match(
     viewerPodspec,
-    /s\.private_header_files\s*=\s*\[\s*'ios\/Viewer\/Fabric\/PREPPreparedProseViewerComponentView\.h',\s*'common\/cpp\/react\/renderer\/components\/PreparedProseViewer\/\*\*\/\*\.h',\s*\]/,
+    /s\.private_header_files\s*=\s*\[\s*'ios\/Fabric\/NativeEditorFocusHostComponentView\.h',\s*'ios\/Viewer\/Fabric\/PREPPreparedProseViewerComponentView\.h',\s*'common\/cpp\/react\/renderer\/components\/PreparedProseViewer\/\*\*\/\*\.h',\s*\]/,
     'all Fabric implementation headers must remain private to the pod implementation',
 );
-assert.match(viewerPodspec, /s\.source_files\s*=\s*\['ios\/\*\.swift', 'ios\/Viewer\/\*\*\/\*\.\{swift,h,mm\}', 'ios\/Tables\/\*\*\/\*\.swift', 'common\/cpp\/\*\*\/\*\.\{h,cpp\}'\]/);
+assert.match(viewerPodspec, /s\.source_files\s*=\s*\['ios\/\*\.swift', 'ios\/Fabric\/\*\.\{h,mm\}', 'ios\/Viewer\/\*\*\/\*\.\{swift,h,mm\}', 'ios\/Tables\/\*\*\/\*\.swift', 'common\/cpp\/\*\*\/\*\.\{h,cpp\}'\]/);
 assert.match(
     viewerPodspec,
     /s\.header_dir\s*=\s*'react\/renderer\/components\/PreparedProseViewer'/,

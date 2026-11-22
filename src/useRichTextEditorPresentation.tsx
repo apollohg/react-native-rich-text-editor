@@ -46,6 +46,8 @@ import {
     externalCompositionErrorPayload,
 } from './RichTextEditorSerialization';
 import { styles, NativeEditorView } from './RichTextEditorNativeView';
+import NativeEditorFocusHost from './specs/NativeEditorFocusHostNativeComponent';
+import { useTextInputStateFocus } from './useTextInputStateFocus';
 
 export function useRichTextEditorPresentation(
     context: Pick<
@@ -216,6 +218,10 @@ export function useRichTextEditorPresentation(
         openImageRequest,
         onToolbarAction,
     } = context;
+
+    const focusHostRef = useRef<ComponentRef<typeof NativeEditorFocusHost>>(null);
+
+    useTextInputStateFocus(focusHostRef, isFocused);
 
     const themeJson = useMemo(
         () => serializeEditorTheme(theme, mentionSuggestionTheme),
@@ -647,7 +653,7 @@ export function useRichTextEditorPresentation(
     );
 
     return (
-        <View style={[ styles.container, containerStyle ]}>
+        <View collapsable={false} style={[ styles.container, containerStyle ]}>
             <NativeEditorView
                 ref={nativeViewRef}
                 style={nativeViewStyle}
@@ -693,6 +699,11 @@ export function useRichTextEditorPresentation(
             >
                 {atomChildren}
             </NativeEditorView>
+            <NativeEditorFocusHost
+                ref={focusHostRef}
+                pointerEvents={'none'}
+                style={StyleSheet.absoluteFill}
+            />
             {shouldRenderJsToolbar ? (
                 <View
                     testID={'native-editor-js-toolbar'}
