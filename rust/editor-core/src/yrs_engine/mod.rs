@@ -46,6 +46,7 @@ pub(crate) use block_branch_index::BlockBranchIndex;
 pub(crate) use codec::YrsDocumentCodec;
 pub(crate) use commands::TableCommandSurface;
 pub use commands::{CommandPlan, MovedTableCells, TableCellDrop, TypedCommand};
+pub(crate) use editing_limits::max_length_rejects_growth;
 #[allow(unused_imports)]
 pub use editing_limits::{
     EditingLimitOverrides, EditingLimits, HARD_MAX_DERIVED_OUTPUT_BYTES,

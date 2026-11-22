@@ -215,9 +215,12 @@ fn deferred_limit_failure_preserves_quarantine_and_blocks_unrelated_update() {
     let mut target = engine_with(
         tiptap_schema(),
         InitializationMode::AwaitRemote,
-        ResourceLimits::default(),
+        ResourceLimits {
+            max_document_nodes: 2,
+            ..ResourceLimits::default()
+        },
         EditingLimits::default(),
-        Some(1),
+        None,
     );
     assert!(!target.apply_remote_update_v1(20, &delta_b).unwrap().changed);
     assert!(!target.apply_remote_update_v1(21, &delta_a).unwrap().changed);
@@ -225,8 +228,7 @@ fn deferred_limit_failure_preserves_quarantine_and_blocks_unrelated_update() {
     let before_dependencies = target.pending_remote_dependency_bytes();
     assert!(before_dependencies > 0);
     let error = target.apply_remote_update_v1(22, &base).unwrap_err();
-    assert_eq!(error.code, "DOCUMENT_LIMIT_EXCEEDED");
-    assert_eq!(error.details.as_ref().unwrap()["field"], "maxLength");
+    assert_eq!(error.code, "DOCUMENT_LIMIT_EXCEEDED", "{error:?}");
     assert_eq!(audit(&target), before);
     assert_eq!(
         target.pending_remote_dependency_bytes(),
@@ -254,6 +256,28 @@ fn deferred_limit_failure_preserves_quarantine_and_blocks_unrelated_update() {
     assert_eq!(target.pending_remote_dependency_bytes(), expected_retained,);
     assert!(!target.is_ready());
     assert!(target.document().is_none());
+}
+
+#[test]
+fn remote_updates_past_max_length_drain_quarantine_and_publish() {
+    let (base, delta_a, delta_b, _) = dependent_text_updates();
+    let mut target = engine_with(
+        tiptap_schema(),
+        InitializationMode::AwaitRemote,
+        ResourceLimits::default(),
+        EditingLimits::default(),
+        Some(1),
+    );
+    assert!(!target.apply_remote_update_v1(26, &delta_b).unwrap().changed);
+    assert!(!target.apply_remote_update_v1(27, &delta_a).unwrap().changed);
+
+    let commit = target
+        .apply_remote_update_v1(28, &base)
+        .unwrap_or_else(|error| panic!("peer state past maxLength was rejected: {error:?}"));
+
+    assert!(commit.changed);
+    assert_eq!(target.document().unwrap().root().text_content(), "ab");
+    assert_eq!(target.pending_remote_dependency_bytes(), 0);
 }
 
 #[test]

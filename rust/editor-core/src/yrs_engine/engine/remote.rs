@@ -285,18 +285,6 @@ impl YrsDocumentEngine {
             .map_err(|error| remote_validation_error(request_id, error))?;
         admit_table_shapes(&candidate_document, &self.schema, &self.resource_limits)
             .map_err(|error| remote_validation_error(request_id, error))?;
-        if let Some(limit) = self.max_length {
-            let actual = candidate_document.root().text_content().chars().count();
-            if actual > limit as usize {
-                return Err(yrs_engine::OperationError::document_limit_exceeded(
-                    request_id,
-                    None,
-                    "maxLength",
-                    u64::from(limit),
-                    actual as u64,
-                ));
-            }
-        }
         let canonical_artifact =
             self.canonical_schema
                 .derive(&candidate_document)

@@ -219,9 +219,11 @@ impl PreparedDerivedEvidence {
             || validation_stats.max_depth > proof.resource_limits.max_document_depth
             || proof.top_level_cardinality > validation_stats.node_count
             || self.validation_certificate.raw_text_scalars != expected_raw_scalars
-            || proof
-                .max_length
-                .is_some_and(|limit| expected_raw_scalars > u64::from(limit))
+            || proof.max_length.is_some_and(|limit| {
+                crate::yrs_engine::max_length_rejects_growth(limit, expected_raw_scalars, || {
+                    base_raw_scalars
+                })
+            })
             || !state
                 .render_blocks
                 .matches_identity(&state.document, schema_fingerprint)

@@ -407,8 +407,7 @@ impl YrsDocumentEngine {
             base_document_revision: self.revision,
             origin: TransactionOrigin::LocalApi,
             operations: vec![yrs_engine::TypedOperation::ReplaceStructure(
-                yrs_engine::StructuralReplacement::new(
-                    Vec::new(),
+                yrs_engine::StructuralReplacement::document_content(
                     start as u32,
                     previous_end as u32,
                     content,

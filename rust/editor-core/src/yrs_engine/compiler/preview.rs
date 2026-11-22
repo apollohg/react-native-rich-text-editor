@@ -114,6 +114,23 @@ pub(super) fn prepared_candidate_matches(
         })
 }
 
+pub(super) fn length_admission_context<'a>(
+    transaction: &TypedTransaction,
+    context: CompilationContext<'a>,
+) -> CompilationContext<'a> {
+    match transaction.operations.as_slice() {
+        [TypedOperation::ReplaceStructure(replacement)]
+            if replacement.replaces_document_content() =>
+        {
+            CompilationContext {
+                max_length: None,
+                ..context
+            }
+        }
+        _ => context,
+    }
+}
+
 pub(super) fn validate_preview(
     request_id: u64,
     operation_index: Option<usize>,
@@ -157,12 +174,14 @@ pub(super) fn validate_preview(
     }
     if let Some(limit) = context.max_length {
         let actual = preview.root().text_content().chars().count() as u64;
-        if actual > limit as u64 {
+        if crate::yrs_engine::max_length_rejects_growth(limit, actual, || {
+            context.document.root().text_content().chars().count() as u64
+        }) {
             return Err(OperationError::document_limit_exceeded(
                 request_id,
                 operation_index,
                 "maxLength",
-                limit as u64,
+                u64::from(limit),
                 actual,
             ));
         }

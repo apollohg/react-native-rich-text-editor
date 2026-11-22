@@ -670,18 +670,6 @@ impl YrsDocumentEngine {
             .map_err(|error| history_document_validation_error(request_id, error))?;
         admit_table_shapes(&document, &self.schema, &self.resource_limits)
             .map_err(|error| history_document_validation_error(request_id, error))?;
-        if let Some(limit) = self.max_length {
-            let actual = document.root().text_content().chars().count() as u64;
-            if actual > u64::from(limit) {
-                return Err(yrs_engine::OperationError::document_limit_exceeded(
-                    request_id,
-                    None,
-                    "maxLength",
-                    u64::from(limit),
-                    actual,
-                ));
-            }
-        }
         let canonical_artifact = self.canonical_schema.derive(&document).map_err(|error| {
             yrs_engine::OperationError::engine_invariant_failed(
                 request_id,

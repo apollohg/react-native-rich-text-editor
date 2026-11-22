@@ -155,6 +155,7 @@ pub struct StructuralReplacement {
     to_child: u32,
     content: Fragment,
     selection_after: crate::selection::Selection,
+    replaces_document_content: bool,
 }
 
 impl StructuralReplacement {
@@ -171,7 +172,28 @@ impl StructuralReplacement {
             to_child,
             content,
             selection_after,
+            replaces_document_content: false,
         }
+    }
+
+    pub(crate) fn document_content(
+        from_child: u32,
+        to_child: u32,
+        content: Fragment,
+        selection_after: crate::selection::Selection,
+    ) -> Self {
+        Self {
+            parent_path: Vec::new(),
+            from_child,
+            to_child,
+            content,
+            selection_after,
+            replaces_document_content: true,
+        }
+    }
+
+    pub(crate) fn replaces_document_content(&self) -> bool {
+        self.replaces_document_content
     }
 
     pub fn parent_path(&self) -> &[u32] {

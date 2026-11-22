@@ -13,7 +13,9 @@ use crate::yrs_engine::compiler::positions::{
     map_position, resolve_attribute_target_position, resolve_join_target_position,
     resolve_position, resolve_range, resolve_structural_window,
 };
-use crate::yrs_engine::compiler::preview::{prepared_candidate_matches, validate_preview};
+use crate::yrs_engine::compiler::preview::{
+    length_admission_context, prepared_candidate_matches, validate_preview,
+};
 use crate::yrs_engine::compiler::selection::selectable_void_at;
 use crate::yrs_engine::compiler::text_boundaries::text_boundaries;
 use crate::yrs_engine::compiler::{
@@ -109,7 +111,12 @@ impl OperationCompiler<'_> {
                         canonical_schema,
                     );
                 if (lowering.is_some() || localized_root_window.is_some()) && !candidate_matches {
-                    validate_preview(request_id, Some(operation_index), &next, context)?;
+                    validate_preview(
+                        request_id,
+                        Some(operation_index),
+                        &next,
+                        length_admission_context(transaction, context),
+                    )?;
                 }
                 operation_changed = next != *preview;
                 if operation_changed {

@@ -241,14 +241,16 @@ impl DeferredCommandAdmission {
             OperationError::document_invalid(context.request_id, None, "command", error.to_string())
         })?;
         if let Some(limit) = context.max_length {
-            let actual = simulated.document.root().text_content().chars().count();
-            if actual > limit as usize {
+            let actual = simulated.document.root().text_content().chars().count() as u64;
+            if crate::yrs_engine::max_length_rejects_growth(limit, actual, || {
+                context.document.root().text_content().chars().count() as u64
+            }) {
                 return Err(OperationError::document_limit_exceeded(
                     context.request_id,
                     None,
                     "maxLength",
                     u64::from(limit),
-                    actual as u64,
+                    actual,
                 ));
             }
         }

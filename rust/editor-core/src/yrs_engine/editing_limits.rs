@@ -39,6 +39,14 @@ impl Default for EditingLimits {
     }
 }
 
+pub(crate) fn max_length_rejects_growth(
+    limit: u32,
+    candidate_scalars: u64,
+    base_scalars: impl FnOnce() -> u64,
+) -> bool {
+    candidate_scalars > u64::from(limit) && candidate_scalars > base_scalars()
+}
+
 impl EditingLimits {
     pub fn resolve(overrides: EditingLimitOverrides) -> YrsEngineResult<Self> {
         let defaults = Self::default();

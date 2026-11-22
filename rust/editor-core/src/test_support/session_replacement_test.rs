@@ -516,16 +516,7 @@ fn invalid_replacements_reject_atomically_with_import_parity() {
     assert!(request_edit(id, 841, " typed").unwrap().can_undo);
     let audit = session_audit(id).unwrap();
 
-    let over_length = serde_json::json!({
-        "type": "doc",
-        "content": [{
-            "type": "paragraph",
-            "content": [{ "type": "text", "text": "x".repeat(65) }],
-        }],
-    })
-    .to_string();
-
-    let cases: [(&str, &str, &str, &str); 3] = [
+    let cases: [(&str, &str, &str, &str); 2] = [
         (
             "malformed json",
             JSON_MALFORMED,
@@ -537,12 +528,6 @@ fn invalid_replacements_reject_atomically_with_import_parity() {
             JSON_SCHEMA_INVALID,
             "document",
             "DOCUMENT_INVALID",
-        ),
-        (
-            "max length ceiling",
-            &over_length,
-            "document",
-            "DOCUMENT_LIMIT_EXCEEDED",
         ),
     ];
 
@@ -572,6 +557,61 @@ fn invalid_replacements_reject_atomically_with_import_parity() {
         serde_json::from_str::<serde_json::Value>(JSON_BEFORE).unwrap()
     );
 
+    destroy_session(id);
+    assert_eq!(registry_count(), baseline);
+}
+
+#[test]
+fn over_length_replacement_loads_with_import_parity_while_typing_stays_capped() {
+    let _guard = test_guard();
+    let baseline = registry_count();
+    let over_length = serde_json::json!({
+        "type": "doc",
+        "content": [{
+            "type": "paragraph",
+            "content": [{ "type": "text", "text": "x".repeat(65) }],
+        }],
+    });
+    let id = create_local_json_with_options(JSON_BEFORE, None, Some(64)).unwrap();
+
+    for mode in [
+        ReplacementHistory::UndoableBoundary,
+        ReplacementHistory::ResetAndClear,
+    ] {
+        write_json(id, 851, &over_length.to_string(), mode)
+            .unwrap_or_else(|error| panic!("over-length replacement {mode:?} failed: {error:?}"));
+        assert_eq!(get_json(id).unwrap(), over_length, "{mode:?}");
+    }
+
+    let mut appended = over_length.clone();
+    appended["content"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({
+            "type": "paragraph",
+            "content": [{ "type": "text", "text": "y".repeat(65) }],
+        }));
+    write_json(
+        id,
+        853,
+        &appended.to_string(),
+        ReplacementHistory::UndoableBoundary,
+    )
+    .unwrap_or_else(|error| panic!("prefix-sharing over-length replacement failed: {error:?}"));
+    assert_eq!(get_json(id).unwrap(), appended);
+
+    let imported =
+        create_local_json_with_options(&over_length.to_string(), None, Some(64)).unwrap();
+    assert_eq!(get_json(imported).unwrap(), over_length);
+
+    for session in [id, imported] {
+        let audit = session_audit(session).unwrap();
+        let error = request_edit(session, 852, "x").unwrap_err();
+        assert_eq!(error.code, "DOCUMENT_LIMIT_EXCEEDED", "{error:?}");
+        assert_eq!(session_audit(session).unwrap(), audit);
+    }
+
+    destroy_session(imported);
     destroy_session(id);
     assert_eq!(registry_count(), baseline);
 }

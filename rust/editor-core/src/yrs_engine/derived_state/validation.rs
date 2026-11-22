@@ -85,8 +85,6 @@ impl ValidatedDocumentEvidence {
             || validation.metrics.metadata_bytes > resource_limits.max_input_bytes
             || validation.metrics.validation_work
                 > resource_limits.max_document_nodes.saturating_mul(128)
-            || max_length
-                .is_some_and(|limit| canonical_artifact.text_scalar_len() > u64::from(limit))
         {
             return None;
         }

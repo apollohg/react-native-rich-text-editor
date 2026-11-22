@@ -145,7 +145,6 @@ impl YrsDocumentEngine {
     ) -> YrsEngineResult<EngineCommit> {
         self.canonical_splice_cache = None;
         admit_candidate_derived_output(&candidate, &self.editing_limits)?;
-        admit_candidate_max_length(&candidate, self.max_length)?;
         let candidate_document = match &candidate.state {
             EngineDocumentState::Ready { document, .. } => document,
             EngineDocumentState::AwaitingRemote => {
@@ -344,17 +343,6 @@ pub(super) fn build_derived_state_for_candidate(
             "ready Yrs document fragment is missing while deriving editor state",
         )
     })?;
-    if let Some(limit) = max_length {
-        let actual = canonical_artifact.text_scalar_len();
-        if actual > u64::from(limit) {
-            return Err(YrsEngineError::limit(
-                "DOCUMENT_LIMIT_EXCEEDED",
-                limit as usize,
-                usize::try_from(actual).unwrap_or(usize::MAX),
-            )
-            .with_details(json!({ "field": "maxLength" })));
-        }
-    }
     let initialized = if let Some(evidence) = validated_evidence {
         DerivedStateCache::initialize_validated_candidate(
             document.clone(),
@@ -415,31 +403,6 @@ pub(super) fn admit_candidate_derived_output(
         return Ok(());
     };
     admit_canonical_output(canonical_artifact, editing_limits)
-}
-
-fn admit_candidate_max_length(
-    candidate: &CandidateDocument,
-    max_length: Option<u32>,
-) -> YrsEngineResult<()> {
-    let (
-        EngineDocumentState::Ready {
-            canonical_artifact, ..
-        },
-        Some(limit),
-    ) = (&candidate.state, max_length)
-    else {
-        return Ok(());
-    };
-    let actual = canonical_artifact.text_scalar_len();
-    if actual > u64::from(limit) {
-        return Err(YrsEngineError::limit(
-            "DOCUMENT_LIMIT_EXCEEDED",
-            limit as usize,
-            usize::try_from(actual).unwrap_or(usize::MAX),
-        )
-        .with_details(json!({ "field": "maxLength" })));
-    }
-    Ok(())
 }
 
 pub(super) fn admit_canonical_output(

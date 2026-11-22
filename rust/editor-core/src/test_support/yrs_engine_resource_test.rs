@@ -1,8 +1,11 @@
 use crate::boundary::ResourceLimits;
+use crate::model::{Fragment, Node};
 use crate::schema::Schema;
 use crate::tiptap_schema;
 use crate::yrs_engine::{
-    DocumentScope, InitializationMode, TransactionOrigin, YrsDocumentEngine, YrsEngineConfig,
+    Affinity, DocumentScope, EditorOffsetKind, HistoryPolicy, InitializationMode,
+    RevisionedPosition, RevisionedRange, SelectionIntent, TransactionOrigin, TypedOperation,
+    TypedTransaction, YrsDocumentEngine, YrsEngineConfig,
 };
 use yrs::encoding::read::Read;
 use yrs::types::xml::{Xml, XmlElementPrelim, XmlFragment};
@@ -284,9 +287,31 @@ fn canonical_output_limit_counts_large_default_mark_attrs_per_text_node() {
     assert_eq!(audit(&rejected), before);
 }
 
+fn scalar_point(offset: u32) -> RevisionedPosition {
+    RevisionedPosition {
+        offset,
+        kind: EditorOffsetKind::Scalar,
+        affinity: Affinity::After,
+    }
+}
+
+fn local_edit(engine: &YrsDocumentEngine, operation: TypedOperation) -> TypedTransaction {
+    TypedTransaction {
+        request_id: 41,
+        base_document_revision: engine.revision(),
+        origin: TransactionOrigin::LocalInput,
+        operations: vec![operation],
+        selection_intent: SelectionIntent::Preserve,
+        history_policy: HistoryPolicy::Auto,
+    }
+}
+
+fn document_text(engine: &YrsDocumentEngine) -> String {
+    engine.document().unwrap().root().text_content()
+}
+
 #[test]
-fn max_length_accepts_exact_and_rejects_one_over_with_structured_error() {
-    let exact = r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"four"}]}]}"#;
+fn max_length_loads_over_limit_content_and_rejects_only_local_growth_past_it() {
     let over = r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"fives"}]}]}"#;
     let mut candidate = config(
         tiptap_schema(),
@@ -297,21 +322,90 @@ fn max_length_accepts_exact_and_rejects_one_over_with_structured_error() {
     let mut engine = YrsDocumentEngine::new(candidate).unwrap();
 
     engine
-        .import_json(exact, TransactionOrigin::DocumentImport)
-        .unwrap();
-    let before = audit(&engine);
-    let error = engine
         .import_json(over, TransactionOrigin::DocumentImport)
-        .unwrap_err();
+        .unwrap();
+    assert_eq!(
+        document_text(&engine),
+        "fives",
+        "over-limit import must load intact"
+    );
 
-    assert_eq!(error.code, "DOCUMENT_LIMIT_EXCEEDED");
-    assert_eq!(error.limit, Some(4));
-    assert_eq!(error.actual, Some(5));
+    let before_growth = audit(&engine);
+    let growth = local_edit(
+        &engine,
+        TypedOperation::InsertText {
+            at: scalar_point(5),
+            text: "!".into(),
+            marks: vec![],
+        },
+    );
+    let error = engine.apply_typed_transaction(growth).unwrap_err();
+    assert_eq!(error.code, "DOCUMENT_LIMIT_EXCEEDED", "{error:?}");
+    assert_eq!(error.limit, Some(4), "{error:?}");
+    assert_eq!(error.actual, Some(6), "{error:?}");
     assert_eq!(
         error.details,
         Some(serde_json::json!({ "field": "maxLength" }))
     );
-    assert_eq!(audit(&engine), before);
+    assert_eq!(
+        audit(&engine),
+        before_growth,
+        "rejected growth must be atomic"
+    );
+
+    engine
+        .apply_typed_transaction(local_edit(
+            &engine,
+            TypedOperation::ReplaceRange {
+                range: RevisionedRange {
+                    from: scalar_point(0),
+                    to: scalar_point(1),
+                },
+                content: Fragment::from(vec![Node::text("F".into(), vec![])]),
+            },
+        ))
+        .unwrap();
+    assert_eq!(
+        document_text(&engine),
+        "Fives",
+        "a same-length edit of an over-limit document must be admitted"
+    );
+
+    engine
+        .apply_typed_transaction(local_edit(
+            &engine,
+            TypedOperation::DeleteRange {
+                range: RevisionedRange {
+                    from: scalar_point(4),
+                    to: scalar_point(5),
+                },
+            },
+        ))
+        .unwrap();
+    assert_eq!(
+        document_text(&engine),
+        "Five",
+        "shortening an over-limit document must be admitted"
+    );
+
+    let before_regrowth = audit(&engine);
+    let error = engine
+        .apply_typed_transaction(local_edit(
+            &engine,
+            TypedOperation::InsertText {
+                at: scalar_point(4),
+                text: "s".into(),
+                marks: vec![],
+            },
+        ))
+        .unwrap_err();
+    assert_eq!(error.code, "DOCUMENT_LIMIT_EXCEEDED", "{error:?}");
+    assert_eq!(error.actual, Some(5), "{error:?}");
+    assert_eq!(
+        audit(&engine),
+        before_regrowth,
+        "growth back past the limit must be rejected"
+    );
 }
 
 #[test]

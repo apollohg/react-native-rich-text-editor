@@ -616,8 +616,6 @@ impl HistoryDocumentSnapshot {
                 <= resource_limits.max_document_nodes.saturating_mul(128)
             && self.document_text_bytes == self.validation_certificate.raw_text_utf8_bytes
             && self.canonical_artifact.serialized_len() <= editing_limits.max_derived_output_bytes
-            && max_length
-                .is_none_or(|limit| self.canonical_artifact.text_scalar_len() <= u64::from(limit))
     }
 
     #[allow(clippy::too_many_arguments)]

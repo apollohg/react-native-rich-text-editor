@@ -99,7 +99,11 @@ impl PreparedCandidateEvidence {
             || validation.stats.node_count == 0
             || validation.stats.node_count > resource_limits.max_document_nodes
             || validation.stats.max_depth > resource_limits.max_document_depth
-            || max_length.is_some_and(|limit| raw_text_scalars > u64::from(limit))
+            || max_length.is_some_and(|limit| {
+                crate::yrs_engine::max_length_rejects_growth(limit, raw_text_scalars, || {
+                    raw_text_scalars.saturating_sub(u64::from(inserted_scalar_delta))
+                })
+            })
             || inserted_scalar_delta == 0
             || base_document.root().child_count() != document.root().child_count()
             || target_top_level_index >= base_document.root().child_count()
@@ -322,7 +326,6 @@ impl PreparedCandidateEvidence {
             || canonical_artifact.text_scalar_len() != self.raw_text_scalars
             || canonical_artifact.text_utf8_bytes() != self.raw_text_utf8_bytes
             || self.document_text_bytes != self.raw_text_utf8_bytes
-            || max_length.is_some_and(|limit| self.raw_text_scalars > u64::from(limit))
         {
             return None;
         }
@@ -380,7 +383,6 @@ impl PreparedCandidateEvidence {
             || self.raw_text_scalars != raw_text_scalars
             || self.raw_text_utf8_bytes != raw_text_utf8_bytes
             || self.document_text_bytes != raw_text_utf8_bytes
-            || max_length.is_some_and(|limit| raw_text_scalars > u64::from(limit))
         {
             return None;
         }
@@ -458,8 +460,6 @@ impl PreparedCandidateValidation {
             || !canonical_artifact.matches_exact_source_document(document)
             || validation.stats.node_count > resource_limits.max_document_nodes
             || validation.stats.max_depth > resource_limits.max_document_depth
-            || max_length
-                .is_some_and(|limit| canonical_artifact.text_scalar_len() > u64::from(limit))
         {
             return None;
         }
@@ -523,8 +523,6 @@ impl PreparedCandidateValidation {
             || !canonical_artifact.matches_exact_source_document(document)
             || stats.node_count > resource_limits.max_document_nodes
             || stats.max_depth > resource_limits.max_document_depth
-            || max_length
-                .is_some_and(|limit| canonical_artifact.text_scalar_len() > u64::from(limit))
             || !render_blocks.matches_identity(document, schema_fingerprint)
             || rendered_scalars != position_map.total_scalars()
         {

@@ -346,7 +346,7 @@ export interface NativeEditorCreateConfig {
     fragmentName?: string;
     /** Engine-enforced editing policy. `RichTextEditor.editable` is a separate, per-view interaction gate. */
     policy?: {
-        /** Maximum document text length in Unicode scalars. A change that would exceed it is rejected. */
+        /** Maximum document text length in Unicode scalars. A local edit that lengthens the document past it is rejected; loaded content, `setContent`, undo/redo, and remote updates are not limited. */
         maxLength?: number;
         /** Whether the engine refuses every mutation, raising `MUTATION_REJECTED`. */
         readOnly?: boolean;

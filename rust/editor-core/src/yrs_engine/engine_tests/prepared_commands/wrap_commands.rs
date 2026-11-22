@@ -461,6 +461,7 @@ fn prepared_candidate_rejects_foreign_same_total_position_layout() {
         &engine.editing_limits,
         engine.max_length,
         &transaction,
+        engine.document().unwrap(),
         &proof.document,
         Some(foreign_seed),
         None,

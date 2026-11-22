@@ -427,7 +427,7 @@ fn history_restore_request_relabeling_precedes_forced_semantic_fallback_and_prob
 }
 
 #[test]
-fn history_specific_initialization_keeps_candidate_limit_rejection_atomic() {
+fn undo_and_redo_restore_a_document_past_max_length() {
     let mut engine = transaction_engine();
     engine
         .import_json(
@@ -459,18 +459,24 @@ fn history_specific_initialization_keeps_candidate_limit_rejection_atomic() {
             history_policy: HistoryPolicy::Boundary,
         })
         .unwrap();
-    let before = atomic_audit(&engine);
+    assert_eq!(engine.document().unwrap().root().text_content(), "ab");
 
-    let error = engine.undo_with_result(108_005).unwrap_err();
+    let undone = engine
+        .undo_with_result(108_005)
+        .unwrap_or_else(|error| panic!("undo past maxLength was rejected: {error:?}"))
+        .expect("undo restores the deleted character");
+    assert!(undone.changed);
+    assert_eq!(engine.document().unwrap().root().text_content(), "abc");
 
-    assert_eq!(error.code, "DOCUMENT_LIMIT_EXCEEDED");
-    assert_eq!(error.limit, Some(2));
-    assert_eq!(error.actual, Some(3));
-    assert_eq!(atomic_audit(&engine), before);
+    engine
+        .redo(108_011)
+        .unwrap_or_else(|error| panic!("redo was rejected: {error:?}"))
+        .expect("redo reapplies the deletion");
+    assert_eq!(engine.document().unwrap().root().text_content(), "ab");
 }
 
 #[test]
-fn second_history_pop_max_length_drift_rejects_before_live_pop() {
+fn consecutive_history_pops_restore_documents_past_max_length() {
     let mut engine = transaction_engine();
     engine
         .import_json(
@@ -510,21 +516,13 @@ fn second_history_pop_max_length_drift_rejects_before_live_pop() {
         .unwrap()
         .expect("first pop must restore the one-character document");
     assert_eq!(engine.document().unwrap().root().text_content(), "a");
-    let before = atomic_audit(&engine);
 
-    let error = engine.undo(108_009).unwrap_err();
-
-    assert_eq!(error.code, "DOCUMENT_LIMIT_EXCEEDED");
-    assert_eq!(error.limit, Some(1));
-    assert_eq!(error.actual, Some(2));
-    assert_eq!(error.details, Some(json!({ "field": "maxLength" })));
-    assert_eq!(atomic_audit(&engine), before);
-    let repeated = engine.undo(108_010).unwrap_err();
-    assert_eq!(repeated.code, error.code);
-    assert_eq!(repeated.limit, error.limit);
-    assert_eq!(repeated.actual, error.actual);
-    assert_eq!(repeated.details, error.details);
-    assert_eq!(atomic_audit(&engine), before);
+    engine
+        .undo(108_009)
+        .unwrap_or_else(|error| panic!("second pop past maxLength was rejected: {error:?}"))
+        .expect("second pop restores the two-character document");
+    assert_eq!(engine.document().unwrap().root().text_content(), "ab");
+    assert!(engine.undo(108_010).unwrap().is_none());
 }
 #[test]
 fn fingerprint_only_ordered_list_history_restores_the_full_selected_range() {

@@ -234,13 +234,16 @@ pub(super) fn prepare_command_contract_oracle(
 fn admit_max_length(
     request_id: u64,
     max_length: Option<u32>,
-    actual: impl FnOnce() -> u64,
+    base_document: &Document,
+    candidate_document: &Document,
 ) -> OperationResult<()> {
     let Some(limit) = max_length else {
         return Ok(());
     };
-    let actual = actual();
-    if actual > u64::from(limit) {
+    let actual = candidate_document.root().text_content().chars().count() as u64;
+    if yrs_engine::max_length_rejects_growth(limit, actual, || {
+        base_document.root().text_content().chars().count() as u64
+    }) {
         return Err(OperationError::document_limit_exceeded(
             request_id,
             None,
@@ -379,18 +382,6 @@ impl PreparedSemanticAdmission {
                 "import validation root does not match its source",
             ));
         }
-        if let Some(limit) = max_length {
-            let actual = source.canonical_artifact.text_scalar_len();
-            if actual > u64::from(limit) {
-                return Err(OperationError::document_limit_exceeded(
-                    request_id,
-                    None,
-                    "maxLength",
-                    u64::from(limit),
-                    actual,
-                ));
-            }
-        }
         let canonical_artifact = source.canonical_artifact.clone();
         let schema_fingerprint = canonical_artifact.schema_fingerprint();
         let candidate_validation = yrs_engine::derived_state::PreparedCandidateValidation::prepare(
@@ -445,6 +436,7 @@ impl PreparedSemanticAdmission {
         editing_limits: &EditingLimits,
         max_length: Option<u32>,
         transaction: &TypedTransaction,
+        base_document: &Document,
         expected_document: &Document,
         candidate_seed: Option<PreparedCandidateSeed>,
         known_canonical_serialized_len: Option<usize>,
@@ -456,9 +448,7 @@ impl PreparedSemanticAdmission {
                 .map_err(|error| {
                     OperationError::document_invalid(request_id, None, "command", error.to_string())
                 })?;
-        admit_max_length(request_id, max_length, || {
-            expected_document.root().text_content().chars().count() as u64
-        })?;
+        admit_max_length(request_id, max_length, base_document, expected_document)?;
         let command_contract_oracle = prepare_command_contract_oracle(
             request_id,
             transaction,
@@ -501,9 +491,6 @@ impl PreparedSemanticAdmission {
         candidate: yrs_engine::derived_state::LocalizedMarkCandidate,
         undo_units: u64,
     ) -> OperationResult<Self> {
-        admit_max_length(request_id, max_length, || {
-            candidate.canonical_artifact.text_scalar_len()
-        })?;
         let canonical_artifact = candidate.canonical_artifact.clone();
         let candidate_validation =
             yrs_engine::derived_state::PreparedCandidateValidation::prepare_localized_marks(

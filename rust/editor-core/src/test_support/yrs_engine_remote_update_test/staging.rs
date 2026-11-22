@@ -125,9 +125,12 @@ mod staging {
             engine_with(
                 tiptap_schema(),
                 mode,
-                ResourceLimits::default(),
+                ResourceLimits {
+                    max_document_nodes: 2,
+                    ..ResourceLimits::default()
+                },
                 EditingLimits::default(),
-                Some(1),
+                None,
             )
         };
         let mut one_shot = deferred_engine(InitializationMode::AwaitRemote);

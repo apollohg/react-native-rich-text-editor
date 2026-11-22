@@ -365,7 +365,12 @@ impl DerivedStateCache {
             .raw_text_scalars
             .checked_sub(u64::from(target.removed_scalars))?
             .checked_add(u64::from(inserted_scalars))?;
-        if max_length.is_some_and(|limit| next_raw_text_scalars > u64::from(limit)) {
+        let base_raw_text_scalars = self.validation_certificate.raw_text_scalars;
+        if max_length.is_some_and(|limit| {
+            crate::yrs_engine::max_length_rejects_growth(limit, next_raw_text_scalars, || {
+                base_raw_text_scalars
+            })
+        }) {
             return None;
         }
         let next_raw_text_utf8_bytes = self

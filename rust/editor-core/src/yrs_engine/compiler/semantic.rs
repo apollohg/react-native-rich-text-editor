@@ -9,7 +9,7 @@ use crate::yrs_engine::compiler::operations::OperationCompiler;
 use crate::yrs_engine::compiler::positions::map_position;
 use crate::yrs_engine::compiler::preview::{
     affected_top_level_blocks, derive_localized_preview_document, derive_preview_document,
-    prepared_candidate_matches, validate_preview,
+    length_admission_context, prepared_candidate_matches, validate_preview,
 };
 use crate::yrs_engine::compiler::selection::{position_update_mode, selection_plan};
 use crate::yrs_engine::compiler::{
@@ -287,7 +287,7 @@ pub(super) fn compile_transaction_impl(
             request_id,
             transaction.operations.len().checked_sub(1),
             &preview,
-            context,
+            length_admission_context(transaction, context),
         )?;
     }
     let prepared_candidate_validation = prepared_semantics
