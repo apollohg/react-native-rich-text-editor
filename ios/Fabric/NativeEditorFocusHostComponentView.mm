@@ -36,6 +36,10 @@ using namespace facebook::react;
   RCTNativeEditorFocusHostHandleCommand(self, commandName, args);
 }
 
+- (void)focus
+{
+}
+
 - (void)blur
 {
   [NativeEditorFocusHost blurEditorBesideHost:self];

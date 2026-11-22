@@ -219,9 +219,7 @@ export function useRichTextEditorPresentation(
         onToolbarAction,
     } = context;
 
-    const focusHostRef = useRef<ComponentRef<typeof NativeEditorFocusHost>>(null);
-
-    useTextInputStateFocus(focusHostRef, isFocused);
+    const focusHostRef = useTextInputStateFocus(isFocused);
 
     const themeJson = useMemo(
         () => serializeEditorTheme(theme, mentionSuggestionTheme),

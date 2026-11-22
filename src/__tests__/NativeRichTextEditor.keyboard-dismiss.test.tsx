@@ -1,9 +1,8 @@
 import './helpers/NativeRichTextEditorFixture';
 import { V2_INITIAL_DOC, createV2LocalHandle } from './helpers/NativeRichTextEditorFixture';
 import { render, act } from '@testing-library/react-native';
-import { Keyboard, type HostInstance } from 'react-native';
+import { Keyboard, TextInput, type HostInstance } from 'react-native';
 import { dispatchCommand } from 'react-native/Libraries/ReactNative/RendererProxy';
-import TextInputState from 'react-native/Libraries/Components/TextInput/TextInputState';
 import type { ReactTestInstance } from 'react-test-renderer';
 import { NativeRichTextEditor } from '../NativeRichTextEditor';
 import NativeEditorFocusHost from '../specs/NativeEditorFocusHostNativeComponent';
@@ -15,8 +14,7 @@ jest.mock('react-native/Libraries/ReactNative/RendererProxy', () => ({
 
 const mockedDispatchCommand = jest.mocked(dispatchCommand);
 
-const currentlyFocusedInput = (): HostInstance | null =>
-    (TextInputState as unknown as { currentlyFocusedInput(): HostInstance | null }).currentlyFocusedInput();
+const currentlyFocusedInput = (): HostInstance | null => TextInput.State.currentlyFocusedInput();
 
 function nearestHostParent(instance: ReactTestInstance): ReactTestInstance | null {
     let parent = instance.parent;
@@ -44,7 +42,7 @@ describe('NativeRichTextEditor React Native keyboard focus tracking', () => {
     });
 
     afterEach(() => {
-        TextInputState.blurInput(currentlyFocusedInput());
+        TextInput.State.blurTextInput(currentlyFocusedInput());
     });
 
     it('mounts the focus host beside the editor view so native blur can find its sibling', () => {
@@ -57,10 +55,17 @@ describe('NativeRichTextEditor React Native keyboard focus tracking', () => {
         handle.destroy();
     });
 
-    it('routes Keyboard.dismiss() to a blur command on the focused editor host', () => {
+    it('registers the focused editor host with React Native focus tracking', () => {
         const { handle, focusHost } = renderFocusedEditor();
 
         expect(currentlyFocusedInput()).toBe(focusHost);
+        expect(mockedDispatchCommand.mock.calls).toEqual([ [ focusHost, 'focus', [] ] ]);
+        handle.destroy();
+    });
+
+    it('routes Keyboard.dismiss() to a blur command on the focused editor host', () => {
+        const { handle, focusHost } = renderFocusedEditor();
+        mockedDispatchCommand.mockClear();
 
         Keyboard.dismiss();
 
@@ -69,36 +74,25 @@ describe('NativeRichTextEditor React Native keyboard focus tracking', () => {
         handle.destroy();
     });
 
-    it('stops routing Keyboard.dismiss() once the native editor reports blur', () => {
-        const { handle, emitFocus } = renderFocusedEditor();
-
-        emitFocus(false);
-        Keyboard.dismiss();
-
-        expect(currentlyFocusedInput()).toBeNull();
-        expect(mockedDispatchCommand).not.toHaveBeenCalled();
-        handle.destroy();
-    });
-
     it('keeps another input registered when the editor blur arrives after it took focus', () => {
         const { handle, emitFocus } = renderFocusedEditor();
         const otherInput = {} as HostInstance;
 
-        TextInputState.focusInput(otherInput);
+        TextInput.State.focusTextInput(otherInput);
         emitFocus(false);
 
         expect(currentlyFocusedInput()).toBe(otherInput);
         handle.destroy();
     });
 
-    it('releases the focused registration when the editor unmounts while focused', () => {
-        const { handle, rendered } = renderFocusedEditor();
+    it('blurs and releases the focused editor host when the editor unmounts', () => {
+        const { handle, rendered, focusHost } = renderFocusedEditor();
+        mockedDispatchCommand.mockClear();
 
         rendered.unmount();
-        Keyboard.dismiss();
 
+        expect(mockedDispatchCommand.mock.calls).toEqual([ [ focusHost, 'blur', [] ] ]);
         expect(currentlyFocusedInput()).toBeNull();
-        expect(mockedDispatchCommand).not.toHaveBeenCalled();
         handle.destroy();
     });
 });

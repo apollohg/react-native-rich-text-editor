@@ -11,11 +11,12 @@ export interface NativeProps extends ViewProps {}
 type NativeEditorFocusHostComponentType = HostComponent<NativeProps>;
 
 interface NativeCommands {
+    focus: (viewRef: React.ComponentRef<NativeEditorFocusHostComponentType>) => void;
     blur: (viewRef: React.ComponentRef<NativeEditorFocusHostComponentType>) => void;
 }
 
 export const Commands = codegenNativeCommands<NativeCommands>({
-    supportedCommands: [ 'blur' ],
+    supportedCommands: [ 'focus', 'blur' ],
 });
 
 export default codegenNativeComponent<NativeProps>('NativeEditorFocusHost');

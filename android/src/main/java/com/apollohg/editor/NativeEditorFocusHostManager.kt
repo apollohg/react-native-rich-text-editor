@@ -21,6 +21,8 @@ internal class NativeEditorFocusHostManager :
 
     override fun createViewInstance(context: ThemedReactContext): View = View(context)
 
+    override fun focus(view: View) = Unit
+
     override fun blur(view: View) {
         val parent = view.parent as? ViewGroup ?: return
         (0 until parent.childCount)

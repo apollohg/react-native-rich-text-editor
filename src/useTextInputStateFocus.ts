@@ -1,20 +1,27 @@
-import { useEffect, type RefObject } from 'react';
-import type { HostInstance } from 'react-native';
-import TextInputState from 'react-native/Libraries/Components/TextInput/TextInputState';
+import { useCallback, useEffect, useRef, type RefCallback } from 'react';
+import { TextInput, type HostInstance } from 'react-native';
 
-export function useTextInputStateFocus(
-    focusHostRef: RefObject<HostInstance | null>,
-    isFocused: boolean
-): void {
+export function useTextInputStateFocus(isFocused: boolean): RefCallback<HostInstance> {
+    const focusHostRef = useRef<HostInstance | null>(null);
+
     useEffect(() => {
         const focusHost = focusHostRef.current;
 
-        if (!isFocused || focusHost == null) {
+        if (isFocused && focusHost != null) {
+            TextInput.State.focusTextInput(focusHost);
+        }
+    }, [ isFocused ]);
+
+    return useCallback((focusHost: HostInstance | null) => {
+        if (focusHost == null) {
             return;
         }
 
-        TextInputState.focusInput(focusHost);
+        focusHostRef.current = focusHost;
 
-        return () => TextInputState.blurInput(focusHost);
-    }, [ focusHostRef, isFocused ]);
+        return () => {
+            focusHostRef.current = null;
+            TextInput.State.blurTextInput(focusHost);
+        };
+    }, []);
 }
