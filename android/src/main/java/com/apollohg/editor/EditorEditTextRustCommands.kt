@@ -19,7 +19,12 @@ internal fun EditorEditText.insertTextInRust(text: String, atScalarPos: Int) {
         if (isTableCellInput) {
             insertTableCellTextInRust(driver, text, globalPos, atScalarPos)
         } else {
-            driver.insertText(text, globalPos)?.let { applyRustUpdateJSON(it) }
+            val update = driver.insertText(text, globalPos)
+            if (update != null) {
+                applyRustUpdateJSON(update)
+            } else {
+                discardRejectedVisibleInput()
+            }
         }
     }
 }
@@ -186,11 +191,22 @@ internal fun EditorEditText.insertPlainTextRangeInRust(
     }
 
     if (scalarFrom != scalarTo) {
-        replaceTextRangeInRust(scalarFrom, scalarTo, text)
+        if (!replaceTextRangeInRust(scalarFrom, scalarTo, text)) {
+            discardRejectedVisibleInput()
+            return
+        }
     } else {
         insertTextInRust(text, scalarFrom)
     }
     applyRequestedCursorScalar(requestedCursorScalar)
+}
+
+private fun EditorEditText.discardRejectedVisibleInput() {
+    if (isTableCellInput || (text?.toString() ?: "") == lastAuthorizedText) return
+    pendingOptimisticRenderText = null
+    logicalSelectionSnapshot = null
+    currentRenderBlocksNeedFullApply = currentRenderBlocks != null
+    restoreAuthorizedTextIfNeeded()
 }
 
 internal fun EditorEditText.requestedCursorScalar(

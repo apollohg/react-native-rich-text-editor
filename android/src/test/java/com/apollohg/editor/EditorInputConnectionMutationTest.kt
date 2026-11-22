@@ -109,6 +109,36 @@ class EditorInputConnectionMutationTest : EditorInputConnectionTestSupport() {
     }
 
     @Test
+    fun `rejected optimistic commit restores the authorized text and caret`() {
+        val harness = externalCompositionHarness("ab")
+        try {
+            val authorizedText = harness.editText.text.toString()
+            val caret = authorizedText.indexOf("ab") + 2
+            Selection.setSelection(harness.editText.text, caret, caret)
+            harness.backend.nextApplyNativeIntentResult = EditorV2CallResult.Err(
+                EditorV2Error(
+                    domain = "document",
+                    code = "DOCUMENT_LIMIT_EXCEEDED",
+                    message = "maxLength exceeds limit 2: 3"
+                )
+            )
+
+            harness.editText.handleTextCommit("x")
+
+            assertEquals(
+                "a rejected keystroke must not stay visible",
+                authorizedText,
+                harness.editText.text.toString()
+            )
+            assertEquals(authorizedText, harness.editText.lastAuthorizedText)
+            assertEquals(caret, harness.editText.selectionStart)
+            assertEquals(caret, harness.editText.selectionEnd)
+        } finally {
+            harness.adapter.destroy()
+        }
+    }
+
+    @Test
     fun `deferred surrounding delete uses the optimistic Rust caret`() {
         val harness = externalCompositionHarness("a")
         try {
