@@ -1,5 +1,24 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Added a `setParagraph()` ref method, a `paragraph` toolbar item for "Normal text", and `activeState.commands.setParagraph` (#48).
+- Added a `blockSeparator` option to `getTextContent()` that separates paragraphs, headings and other text blocks (#50).
+- Added `htmlClassMap` to node schemas, which maps attribute values to HTML classes on import and export, such as another editor's alignment classes (#51).
+
+### Changed
+
+- `policy.maxLength` now only rejects local edits that lengthen the document. Over-limit content loads, and `setContent`, undo/redo and remote updates are no longer limited (#52).
+
+### Fixed
+
+- `Keyboard.dismiss()` now blurs a focused editor and hides the keyboard (#49).
+- Fixed typed text staying visible on Android after the editor rejected it, such as input past `maxLength`.
+- Fixed some pastes being rejected instead of inserted when the pasted text matched the text beside it but had different formatting.
+- Fixed Android selection highlights painting some rows twice and slowing down on long selections.
+
 ## [2.2.3] - 2026-11-01
 
 ### Fixed
