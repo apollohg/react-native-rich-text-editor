@@ -11,11 +11,14 @@ import {
     type AttrSpec,
     type NodeJSONProjection,
     type NodeHtmlRules,
+    type NodeHtmlClassMap,
     type SchemaDefinition,
     type MarkSpec,
     ALLOWED_MARK_HTML_TAGS,
 } from './schemaDefinition';
 import { NativeEditorBoundaryError } from './NativeEditorBoundaryError';
+
+const HTML_CLASS_NAME = /^[^\s\p{Cc}]+$/u;
 
 export function schemaBoundaryError(limit: number, actual: number): NativeEditorBoundaryError {
     return new NativeEditorBoundaryError(
@@ -322,6 +325,45 @@ export function normalizeNodeHtmlRules(value: unknown): NodeHtmlRules | null | u
     };
 }
 
+export function normalizeNodeHtmlClassMap(
+    value: unknown
+): NodeHtmlClassMap | null | undefined {
+    if (value === undefined) {
+        return undefined;
+    }
+
+    if (value == null || typeof value !== 'object' || Array.isArray(value)) {
+        return null;
+    }
+
+    const normalized: NodeHtmlClassMap = {};
+
+    for (const [ attr, classes ] of Object.entries(value)) {
+        if (
+            !isSafeHtmlAttr(attr) ||
+            classes == null ||
+            typeof classes !== 'object' ||
+            Array.isArray(classes)
+        ) {
+            return null;
+        }
+
+        const classNames: Record<string, string> = {};
+
+        for (const [ attrValue, className ] of Object.entries(classes as Record<string, unknown>)) {
+            if (typeof className !== 'string' || !HTML_CLASS_NAME.test(className)) {
+                return null;
+            }
+
+            classNames[attrValue] = className;
+        }
+
+        normalized[attr] = classNames;
+    }
+
+    return normalized;
+}
+
 export function projectionAttrsOverlap(
     left: Record<string, unknown>,
     right: Record<string, unknown>
@@ -392,6 +434,7 @@ export function normalizeSchemaDefinition(
         const raw = rawNode;
         const htmlTag = typeof raw.htmlTag === 'string' ? raw.htmlTag : undefined;
         const html = normalizeNodeHtmlRules(raw.html);
+        const htmlClassMap = normalizeNodeHtmlClassMap(raw.htmlClassMap);
         const attrs = normalizeAttrs(raw.attrs);
         const json = normalizeNodeJSONProjection(raw.json);
         const tableRole = normalizeTableRole(raw.tableRole);
@@ -399,6 +442,7 @@ export function normalizeSchemaDefinition(
         if (
             (htmlTag != null && !isSafeHtmlTag(htmlTag)) ||
             html === null ||
+            htmlClassMap === null ||
             json === null ||
             Object.keys(attrs).some(name => !isSafeHtmlAttr(name))
         ) {
@@ -414,6 +458,7 @@ export function normalizeSchemaDefinition(
             ...(tableRole == null ? {} : { tableRole }),
             ...(htmlTag == null ? {} : { htmlTag }),
             ...(html == null ? {} : { html }),
+            ...(htmlClassMap == null ? {} : { htmlClassMap }),
             ...(json == null ? {} : { json }),
             isVoid: typeof raw.isVoid === 'boolean' ? raw.isVoid : false,
             ...(typeof raw.deletableOnBackspace === 'boolean'

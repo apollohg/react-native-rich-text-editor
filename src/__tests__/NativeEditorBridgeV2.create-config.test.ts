@@ -17,6 +17,7 @@ import {
     type NativeEditorErrorBase,
 } from '../NativeEditorBoundaryError';
 import { HARD_EDITOR_RESOURCE_LIMITS } from '../ResourceLimits';
+import { defineSchema, tiptapCompatibleSchemaSpec, type NodeSpec } from '../schemas';
 
 describe('NativeEditorBridge v2', () => {
     describe('document handle lifecycle', () => {
@@ -267,6 +268,42 @@ describe('NativeEditorBridge v2', () => {
             }
 
             expect(mockNativeModule.editorV2Create).toHaveBeenCalledTimes(2);
+        });
+
+        it('forwards one htmlClassMap shared by paragraph and heading authoring specs', () => {
+            const htmlClassMap = {
+                textAlign: {
+                    center: 'ql-align-center',
+                    right: 'ql-align-right',
+                },
+            };
+
+            const schema = defineSchema({
+                ...tiptapCompatibleSchemaSpec,
+                nodes: {
+                    ...tiptapCompatibleSchemaSpec.nodes,
+                    paragraph: {
+                        ...tiptapCompatibleSchemaSpec.nodes.paragraph,
+                        htmlClassMap,
+                    },
+                    heading: {
+                        ...tiptapCompatibleSchemaSpec.nodes.heading,
+                        htmlClassMap,
+                    },
+                },
+            });
+
+            createNativeEditorDocumentHandle({
+                initialization: { type: 'localEmpty' },
+                schema,
+            });
+
+            const [ configJson ] = mockNativeModule.editorV2Create.mock.calls[0];
+            const forwarded = (JSON.parse(configJson).schema.nodes as NodeSpec[])
+                .filter(node => node.htmlClassMap != null)
+                .map(node => node.name);
+
+            expect(forwarded).toEqual([ 'paragraph', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6' ]);
         });
 
         it('omits undefined optional fields from custom schemas', () => {

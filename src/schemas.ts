@@ -5,6 +5,7 @@ export {
     type AttributeDOMOutputSpec,
     type NodeJSONProjection,
     type NodeHtmlRules,
+    type NodeHtmlClassMap,
     type NodeSpec,
     type MarkSpec,
     type SchemaDefinition,

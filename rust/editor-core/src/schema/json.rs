@@ -196,6 +196,9 @@ impl Schema {
                 }
             }
 
+            let html_class_map =
+                parse_html_class_map(node_val.get("htmlClassMap"), &attrs, &budget, work_limit)?;
+
             nodes.push(NodeSpec {
                 name: name.to_string(),
                 content,
@@ -204,6 +207,7 @@ impl Schema {
                 role,
                 html_tag,
                 html_rules,
+                html_class_map,
                 json_projection,
                 is_void,
                 deletable_on_backspace,

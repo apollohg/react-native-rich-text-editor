@@ -336,6 +336,7 @@ fn corpus_schema() -> Schema {
         role,
         html_tag: None,
         html_rules: None,
+        html_class_map: Vec::new(),
         json_projection: None,
         is_void,
         deletable_on_backspace: None,

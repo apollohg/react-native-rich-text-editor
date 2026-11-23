@@ -173,6 +173,18 @@ fn scalar_attribute(value: &serde_json::Value) -> Option<String> {
     }
 }
 
+fn joined_class_names(classes: &[&crate::schema::HtmlClassRule]) -> String {
+    classes
+        .iter()
+        .map(|rule| rule.class_name.as_str())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn is_class_mapped(classes: &[&crate::schema::HtmlClassRule], attr: &str) -> bool {
+    classes.iter().any(|rule| rule.attr == attr)
+}
+
 fn serialize_html_rules_node_open(
     node: &Node,
     spec: &crate::schema::NodeSpec,
@@ -187,7 +199,14 @@ fn serialize_html_rules_node_open(
         .iter()
         .map(|(name, value)| (name.as_str(), value.clone()))
         .collect::<Vec<_>>();
+    let classes = super::matched_html_class_rules(node, spec);
+    if !classes.is_empty() {
+        attrs.push((crate::schema::HTML_CLASS_ATTR, joined_class_names(&classes)));
+    }
     for (attr_name, html_attr) in &rules.attr_map {
+        if is_class_mapped(&classes, attr_name) {
+            continue;
+        }
         let Some(value) = node.attrs().get(attr_name).or_else(|| {
             spec.attrs
                 .get(attr_name)
@@ -201,7 +220,9 @@ fn serialize_html_rules_node_open(
         let rendered = scalar_attribute(value).unwrap_or_else(|| json_value_string(value));
         attrs.push((html_attr.as_str(), rendered));
     }
-    if crate::alignment::eligible(spec) {
+    if crate::alignment::eligible(spec)
+        && !is_class_mapped(&classes, crate::alignment::TEXT_ALIGN_ATTR)
+    {
         if let Some(align) = crate::alignment::value(node) {
             let declaration = format!("text-align:{}", align.as_str());
             if let Some((_, style)) = attrs.iter_mut().find(|(name, _)| *name == "style") {
@@ -233,7 +254,15 @@ fn serialize_node_attrs(
     buf: &mut String,
     output: HtmlOutput,
 ) {
-    if crate::alignment::eligible(spec) {
+    let classes = super::matched_html_class_rules(node, spec);
+    if !classes.is_empty() {
+        buf.push_str(" class=\"");
+        output.escape_attribute(&joined_class_names(&classes), buf);
+        buf.push('"');
+    }
+    if crate::alignment::eligible(spec)
+        && !is_class_mapped(&classes, crate::alignment::TEXT_ALIGN_ATTR)
+    {
         if let Some(align) = crate::alignment::value(node) {
             buf.push_str(" style=\"text-align:");
             buf.push_str(align.as_str());
@@ -243,7 +272,7 @@ fn serialize_node_attrs(
     let mut keys = spec.attrs.keys().collect::<Vec<_>>();
     keys.sort_unstable();
     for key in keys {
-        if key == crate::alignment::TEXT_ALIGN_ATTR {
+        if key == crate::alignment::TEXT_ALIGN_ATTR || is_class_mapped(&classes, key) {
             continue;
         }
         let Some(value) = node.attrs().get(key) else {

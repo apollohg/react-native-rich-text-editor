@@ -41,6 +41,8 @@ export interface NodeHtmlRules {
     attrMap?: Record<string, string>;
 }
 
+export type NodeHtmlClassMap = Record<string, Record<string, string>>;
+
 /** Declaration of one node type in a {@link SchemaDefinition}. */
 export interface NodeSpec {
     /** Native node type name. `json` may expose a different public document type. */
@@ -65,6 +67,7 @@ export interface NodeSpec {
     htmlTag?: string;
     /** Declarative tag discriminators and attribute mappings for HTML round trips. */
     html?: NodeHtmlRules;
+    htmlClassMap?: NodeHtmlClassMap;
     /** Whether the node holds no content of its own (an image or rule, say). */
     isVoid?: boolean;
     /** Whether collapsed backspace may remove this void block from an adjacent caret. */
@@ -131,6 +134,7 @@ export interface SchemaNodeSpec {
     parseDOM?: readonly ParseDOMRule[];
     toDOM?: DOMOutputSpec | AttributeDOMOutputSpec;
     html?: NodeHtmlRules;
+    htmlClassMap?: NodeHtmlClassMap;
     isVoid?: boolean;
     deletableOnBackspace?: boolean;
     allowUndeclaredAttrs?: boolean;
@@ -352,6 +356,7 @@ export function defineSchema(spec: SchemaSpec): SchemaDefinition {
             role: schemaNodeRole(name, node),
             ...(node.tableRole == null ? {} : { tableRole: node.tableRole }),
             ...(node.html == null ? {} : { html: node.html }),
+            ...(node.htmlClassMap == null ? {} : { htmlClassMap: node.htmlClassMap }),
             ...(node.isVoid == null ? {} : { isVoid: node.isVoid }),
             ...(node.deletableOnBackspace == null
                 ? {}
@@ -406,6 +411,9 @@ export function defineSchema(spec: SchemaSpec): SchemaDefinition {
                     ...(Object.keys(variantAttrs).length === 0
                         ? {}
                         : { attrs: JSON.parse(JSON.stringify(variantAttrs)) as Record<string, AttrSpec> }),
+                    ...(node.htmlClassMap == null
+                        ? {}
+                        : { htmlClassMap: JSON.parse(JSON.stringify(node.htmlClassMap)) as NodeHtmlClassMap }),
                     htmlTag: tag,
                     json: {
                         type: name,

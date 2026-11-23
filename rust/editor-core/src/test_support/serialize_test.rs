@@ -43,3 +43,5 @@ include!("serialize_test/json_roundtrip.rs");
 include!("serialize_test/markdown_output.rs");
 
 include!("serialize_test/text_output.rs");
+
+include!("serialize_test/html_class_map.rs");

@@ -92,6 +92,7 @@ pub struct NodeSpec {
     pub role: NodeRole,
     pub html_tag: Option<String>,
     pub html_rules: Option<HtmlRules>,
+    pub html_class_map: Vec<HtmlClassRule>,
     pub json_projection: Option<NodeJsonProjection>,
     /// If `true`, this node has no editable content (e.g. horizontal rule, hard break).
     pub is_void: bool,
@@ -106,6 +107,15 @@ pub struct NodeSpec {
     /// HTML ingestion path (`extract_node_attrs`).
     pub allow_undeclared_attrs: bool,
     pub table_role: Option<TableRole>,
+}
+
+pub(crate) const HTML_CLASS_ATTR: &str = "class";
+
+#[derive(Debug, Clone)]
+pub struct HtmlClassRule {
+    pub attr: String,
+    pub value: serde_json::Value,
+    pub class_name: String,
 }
 
 #[derive(Debug, Clone)]
@@ -258,6 +268,43 @@ impl AttrSpec {
         spec.validate_definition()
             .map_err(|message| BoundaryError::new("SCHEMA_INVALID", message))?;
         Ok(spec)
+    }
+
+    pub(crate) fn coerce_html_value(&self, raw: &str) -> serde_json::Value {
+        if let Some(kind) = self.declared_type() {
+            if kind == "string" {
+                return serde_json::Value::String(raw.to_string());
+            }
+            return serde_json::from_str(raw)
+                .unwrap_or_else(|_| serde_json::Value::String(raw.to_string()));
+        }
+        if let Some(values) = self.constraints.get("enum").and_then(|v| v.as_array()) {
+            if values.iter().any(|value| value.as_str() == Some(raw)) {
+                return serde_json::Value::String(raw.to_string());
+            }
+            if let Ok(value) = serde_json::from_str(raw) {
+                if self.validate_value(&value).is_ok() {
+                    return value;
+                }
+            }
+        }
+        match self.default.as_ref() {
+            Some(serde_json::Value::Number(_)) => raw
+                .parse::<i64>()
+                .map(serde_json::Value::from)
+                .or_else(|_| raw.parse::<f64>().map(serde_json::Value::from))
+                .unwrap_or_else(|_| serde_json::Value::String(raw.to_string())),
+            Some(serde_json::Value::Bool(_)) => match raw {
+                "true" => serde_json::Value::Bool(true),
+                "false" => serde_json::Value::Bool(false),
+                _ => serde_json::Value::String(raw.to_string()),
+            },
+            Some(serde_json::Value::Array(_)) | Some(serde_json::Value::Object(_)) => {
+                serde_json::from_str(raw)
+                    .unwrap_or_else(|_| serde_json::Value::String(raw.to_string()))
+            }
+            _ => serde_json::Value::String(raw.to_string()),
+        }
     }
 
     pub fn declared_type(&self) -> Option<&str> {
@@ -502,6 +549,45 @@ fn parse_html_rules(
         static_attrs: parse_map("staticAttrs")?,
         attr_map: parse_map("attrMap")?,
     }))
+}
+
+fn parse_html_class_map(
+    value: Option<&serde_json::Value>,
+    attrs: &HashMap<String, AttrSpec>,
+    budget: &WorkBudget,
+    work_limit: usize,
+) -> BoundaryResult<Vec<HtmlClassRule>> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let invalid = || {
+        BoundaryError::new(
+            "SCHEMA_INVALID",
+            "node htmlClassMap must map attributes to class names",
+        )
+    };
+    let mut rules = Vec::new();
+    for (attr, classes) in value.as_object().ok_or_else(invalid)? {
+        admit_schema_string(attr, budget, work_limit)?;
+        for (raw_value, class_name) in classes.as_object().ok_or_else(invalid)? {
+            let class_name = class_name.as_str().ok_or_else(invalid)?;
+            admit_schema_string(raw_value, budget, work_limit)?;
+            admit_schema_string(class_name, budget, work_limit)?;
+            rules.push(HtmlClassRule {
+                attr: attr.clone(),
+                value: attrs.get(attr).map_or_else(
+                    || serde_json::Value::String(raw_value.clone()),
+                    |spec| spec.coerce_html_value(raw_value),
+                ),
+                class_name: class_name.to_string(),
+            });
+        }
+    }
+    rules.sort_by(|left, right| {
+        (left.attr.as_str(), left.class_name.as_str())
+            .cmp(&(right.attr.as_str(), right.class_name.as_str()))
+    });
+    Ok(rules)
 }
 
 fn admit_schema_value(

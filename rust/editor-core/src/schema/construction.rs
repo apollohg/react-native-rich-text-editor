@@ -111,6 +111,7 @@ impl Schema {
                     node.name
                 )));
             }
+            validate_html_class_map(node)?;
             if let Some(projection) = &node.json_projection {
                 if projection.node_type.is_empty()
                     || matches!(
@@ -516,4 +517,65 @@ impl Schema {
         }
         Ok(())
     }
+}
+
+fn validate_html_class_map(node: &NodeSpec) -> Result<(), SchemaValidationError> {
+    if node.html_class_map.is_empty() {
+        return Ok(());
+    }
+    let class_attr_in_use = node.attrs.contains_key(HTML_CLASS_ATTR)
+        || node.html_rules.as_ref().is_some_and(|rules| {
+            rules
+                .static_attrs
+                .iter()
+                .chain(&rules.attr_map)
+                .any(|(name, target)| name == HTML_CLASS_ATTR || target == HTML_CLASS_ATTR)
+        });
+    if class_attr_in_use {
+        return Err(SchemaValidationError::semantic(format!(
+            "node '{}' htmlClassMap conflicts with another use of the class attribute",
+            node.name
+        )));
+    }
+    let mut class_names = HashSet::new();
+    for (index, rule) in node.html_class_map.iter().enumerate() {
+        let Some(attr) = node.attrs.get(&rule.attr) else {
+            return Err(SchemaValidationError::semantic(format!(
+                "node '{}' htmlClassMap names undeclared attribute '{}'",
+                node.name, rule.attr
+            )));
+        };
+        if attr.validate_value(&rule.value).is_err() {
+            return Err(SchemaValidationError::semantic(format!(
+                "node '{}' htmlClassMap maps unsupported value {} of attribute '{}'",
+                node.name, rule.value, rule.attr
+            )));
+        }
+        if rule.class_name.is_empty()
+            || rule
+                .class_name
+                .chars()
+                .any(|ch| ch.is_whitespace() || ch.is_control())
+        {
+            return Err(SchemaValidationError::semantic(format!(
+                "node '{}' htmlClassMap has invalid class name '{}'",
+                node.name, rule.class_name
+            )));
+        }
+        if !class_names.insert(rule.class_name.as_str()) {
+            return Err(SchemaValidationError::semantic(format!(
+                "node '{}' htmlClassMap maps class '{}' more than once",
+                node.name, rule.class_name
+            )));
+        }
+        if node.html_class_map[..index].iter().any(|earlier| {
+            earlier.attr == rule.attr && json_projection_values_equal(&earlier.value, &rule.value)
+        }) {
+            return Err(SchemaValidationError::semantic(format!(
+                "node '{}' htmlClassMap maps value {} of attribute '{}' more than once",
+                node.name, rule.value, rule.attr
+            )));
+        }
+    }
+    Ok(())
 }

@@ -219,6 +219,7 @@ export {
     type SchemaMarkSpec,
     type NodeSpec,
     type NodeHtmlRules,
+    type NodeHtmlClassMap,
     type NodeJSONProjection,
     type MarkSpec,
     type AttrSpec,

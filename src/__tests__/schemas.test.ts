@@ -45,6 +45,64 @@ const COUNTER_NODE: NodeSpec = {
 };
 
 describe('defineSchema', () => {
+    it('keeps htmlClassMap through authoring, heading projections, and native normalization', () => {
+        const htmlClassMap = {
+            textAlign: {
+                center: 'ql-align-center',
+                right: 'ql-align-right',
+            },
+        };
+
+        const schema = defineSchema({
+            ...tiptapCompatibleSchemaSpec,
+            nodes: {
+                ...tiptapCompatibleSchemaSpec.nodes,
+                paragraph: {
+                    ...tiptapCompatibleSchemaSpec.nodes.paragraph,
+                    htmlClassMap,
+                },
+                heading: {
+                    ...tiptapCompatibleSchemaSpec.nodes.heading,
+                    htmlClassMap,
+                },
+            },
+        });
+
+        const classMappedNodes = [ 'paragraph', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6' ];
+
+        for (const resolved of [ schema, resolveDocumentSchema(schema) ]) {
+            expect(resolved).not.toBe(defaultSchema);
+
+            for (const name of classMappedNodes) {
+                expect(resolved.nodes.find(node => node.name === name)?.htmlClassMap).toEqual(
+                    htmlClassMap
+                );
+            }
+        }
+
+        const headingMaps = schema.nodes
+            .filter(node => /^h[1-6]$/.test(node.name))
+            .map(node => node.htmlClassMap);
+
+        expect(new Set(headingMaps).size).toBe(headingMaps.length);
+    });
+
+    it.each([
+        [ 'a string instead of a value map', { textAlign: 'ql-align-center' } ],
+        [ 'a class name with whitespace', { textAlign: { center: 'ql align' } } ],
+        [ 'an empty class name', { textAlign: { center: '' } } ],
+        [ 'a non-string class name', { textAlign: { center: 1 } } ],
+        [ 'an unsafe attribute name', { 'text align': { center: 'ql-align-center' } } ],
+    ])('rejects a schema whose htmlClassMap has %s', (_label, htmlClassMap) => {
+        const schema = {
+            ...tiptapCompatibleSchema,
+            nodes: tiptapCompatibleSchema.nodes.map(node => (
+                node.name === 'paragraph' ? { ...node, htmlClassMap } : node)),
+        } as SchemaDefinition;
+
+        expect(resolveDocumentSchema(schema)).toBe(defaultSchema);
+    });
+
     it('preserves mark inclusivity through authoring and native normalization', () => {
         const schema = defineSchema({
             ...tiptapCompatibleSchemaSpec,

@@ -302,6 +302,7 @@ fn mention_schema() -> Schema {
             role: NodeRole::Inline,
             html_tag: None,
             html_rules: None,
+            html_class_map: Vec::new(),
             json_projection: None,
             is_void: true,
             deletable_on_backspace: None,

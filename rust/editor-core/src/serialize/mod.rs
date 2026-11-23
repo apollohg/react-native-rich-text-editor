@@ -32,6 +32,29 @@ fn is_tiptap_task_item(spec: &crate::schema::NodeSpec) -> bool {
         })
 }
 
+pub(crate) fn matched_html_class_rules<'a>(
+    node: &crate::model::Node,
+    spec: &'a crate::schema::NodeSpec,
+) -> Vec<&'a crate::schema::HtmlClassRule> {
+    let mut matched = Vec::<&crate::schema::HtmlClassRule>::new();
+    for rule in &spec.html_class_map {
+        if matched.iter().any(|earlier| earlier.attr == rule.attr) {
+            continue;
+        }
+        let value = node.attrs().get(&rule.attr).or_else(|| {
+            spec.attrs
+                .get(&rule.attr)
+                .and_then(|attr| attr.default.as_ref())
+        });
+        if value
+            .is_some_and(|value| crate::schema::json_projection_values_equal(value, &rule.value))
+        {
+            matched.push(rule);
+        }
+    }
+    matched
+}
+
 fn reset_unset_attr(
     attrs: &mut std::collections::HashMap<String, serde_json::Value>,
     spec: &crate::schema::NodeSpec,

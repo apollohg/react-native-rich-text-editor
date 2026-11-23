@@ -360,6 +360,7 @@ fn extract_node_attrs(
     spec: &crate::schema::NodeSpec,
 ) -> HashMap<String, serde_json::Value> {
     let mut attrs = super::default_node_attrs(spec);
+    apply_html_class_map(elem, spec, &mut attrs);
     if crate::alignment::eligible(spec) {
         if let Some(style) = element_attr(elem, "style") {
             for declaration in style.split(';') {
@@ -389,7 +390,7 @@ fn extract_node_attrs(
                 );
             } else if let Some(raw) = raw {
                 if let Some(attr_spec) = spec.attrs.get(attr_name) {
-                    attrs.insert(attr_name.clone(), coerce_rule_attr_value(attr_spec, raw));
+                    attrs.insert(attr_name.clone(), attr_spec.coerce_html_value(raw));
                 }
             }
         }
@@ -678,39 +679,25 @@ fn node_spec_for_element<'a>(
     schema.node_by_html_tag(tag)
 }
 
-fn coerce_rule_attr_value(spec: &crate::schema::AttrSpec, raw: &str) -> serde_json::Value {
-    if let Some(kind) = spec.declared_type() {
-        if kind == "string" {
-            return serde_json::Value::String(raw.to_string());
-        }
-        return serde_json::from_str(raw)
-            .unwrap_or_else(|_| serde_json::Value::String(raw.to_string()));
+fn apply_html_class_map(
+    elem: &scraper::node::Element,
+    spec: &crate::schema::NodeSpec,
+    attrs: &mut HashMap<String, serde_json::Value>,
+) {
+    if spec.html_class_map.is_empty() {
+        return;
     }
-    if let Some(values) = spec.constraints.get("enum").and_then(|v| v.as_array()) {
-        if values.iter().any(|value| value.as_str() == Some(raw)) {
-            return serde_json::Value::String(raw.to_string());
+    let Some(classes) = element_attr(elem, crate::schema::HTML_CLASS_ATTR) else {
+        return;
+    };
+    for class_name in classes.split_ascii_whitespace() {
+        for rule in spec
+            .html_class_map
+            .iter()
+            .filter(|rule| rule.class_name == class_name)
+        {
+            attrs.insert(rule.attr.clone(), rule.value.clone());
         }
-        if let Ok(value) = serde_json::from_str(raw) {
-            if spec.validate_value(&value).is_ok() {
-                return value;
-            }
-        }
-    }
-    match spec.default.as_ref() {
-        Some(serde_json::Value::Number(_)) => raw
-            .parse::<i64>()
-            .map(serde_json::Value::from)
-            .or_else(|_| raw.parse::<f64>().map(serde_json::Value::from))
-            .unwrap_or_else(|_| serde_json::Value::String(raw.to_string())),
-        Some(serde_json::Value::Bool(_)) => match raw {
-            "true" => serde_json::Value::Bool(true),
-            "false" => serde_json::Value::Bool(false),
-            _ => serde_json::Value::String(raw.to_string()),
-        },
-        Some(serde_json::Value::Array(_)) | Some(serde_json::Value::Object(_)) => {
-            serde_json::from_str(raw).unwrap_or_else(|_| serde_json::Value::String(raw.to_string()))
-        }
-        _ => serde_json::Value::String(raw.to_string()),
     }
 }
 
@@ -1355,7 +1342,7 @@ mod atom_enum_tests {
                 constraints: [("enum".to_owned(), values)].into_iter().collect(),
                 ..Default::default()
             };
-            assert_eq!(super::coerce_rule_attr_value(&spec, raw), expected);
+            assert_eq!(spec.coerce_html_value(raw), expected);
         }
     }
 }
