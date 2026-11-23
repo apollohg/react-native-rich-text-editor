@@ -202,7 +202,8 @@ internal fun EditorEditText.insertPlainTextRangeInRust(
 }
 
 private fun EditorEditText.discardRejectedVisibleInput() {
-    if (isTableCellInput || (text?.toString() ?: "") == lastAuthorizedText) return
+    if (isTableCellInput || v2Driver?.isEngineDestroyed() != false) return
+    if ((text?.toString() ?: "") == lastAuthorizedText) return
     pendingOptimisticRenderText = null
     logicalSelectionSnapshot = null
     currentRenderBlocksNeedFullApply = currentRenderBlocks != null

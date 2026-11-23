@@ -524,6 +524,8 @@ internal class EditorV2Adapter private constructor(
         }
     }
 
+    override fun isEngineDestroyed(): Boolean = destroyed
+
     override fun historyCanUndo(): Boolean? =
         cachedHistoryState?.let { exactBool(it.opt("canUndo")) }
 

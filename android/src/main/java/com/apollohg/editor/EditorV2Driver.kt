@@ -91,6 +91,7 @@ internal interface EditorV2Driver {
     fun scalarPositionForDoc(docPos: Int): Int?
     fun docPositionForScalar(scalar: Int): Int?
 
+    fun isEngineDestroyed(): Boolean
     fun currentStateJson(): String?
     fun currentSelectionState(): EditorSelectionState?
     fun currentSelectionStateJson(): String? = currentSelectionState()?.json()
