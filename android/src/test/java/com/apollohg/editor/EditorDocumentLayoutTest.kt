@@ -622,15 +622,14 @@ class EditorDocumentLayoutTest {
         )
     }
 
-    private fun spacedSelectionLayout(text: String) =
-        EditorDocumentLayout(
-            text,
-            paint().apply { textSize = 37.3f },
-            517,
-            includeFontPadding = true,
-            spacingMultiplier = 1.13f,
-            spacingAdd = 3.7f
-        )
+    private fun spacedSelectionLayout(text: String) = EditorDocumentLayout(
+        text,
+        paint().apply { textSize = 37.3f },
+        517,
+        includeFontPadding = true,
+        spacingMultiplier = 1.13f,
+        spacingAdd = 3.7f
+    )
 
     @Test
     @Config(sdk = [24])
