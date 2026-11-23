@@ -9,6 +9,7 @@ import {
 } from './helpers/NativeEditorBridgeV2Fixture';
 import {
     NativeEditorDocumentError,
+    NativeEditorEngineBoundaryError,
     NativeEditorNonRetryableError
 } from '../NativeEditorBoundaryError';
 
@@ -57,7 +58,8 @@ it('accepts empty text and false emptiness, forwards the handle, and preserves t
     expect(handle.bridge.getDocumentText()).toBe('');
     expect(handle.bridge.getDocumentIsEmpty()).toBe(false);
     expect(mockNativeModule[TEXT_METHOD]).toHaveBeenLastCalledWith(
-        handle.editorId
+        handle.editorId,
+        null
     );
     expect(mockNativeModule[EMPTY_METHOD]).toHaveBeenLastCalledWith(
         handle.editorId
@@ -80,4 +82,48 @@ it('accepts empty text and false emptiness, forwards the handle, and preserves t
     expect(() => handle.bridge.getDocumentIsEmpty()).toThrow();
     expect(mockNativeModule[TEXT_METHOD]).toHaveBeenCalledTimes(2);
     expect(mockNativeModule[EMPTY_METHOD]).toHaveBeenCalledTimes(1);
+});
+
+it.each([
+    [ undefined, null ],
+    [ {}, null ],
+    [ { blockSeparator: undefined }, null ],
+    [ { blockSeparator: '' }, '' ],
+    [ { blockSeparator: '\n' }, '\n' ],
+    [ { blockSeparator: ' | ' }, ' | ' ],
+])('forwards text options %p as block separator %p', (options, blockSeparator) => {
+    const handle = createHandle();
+
+    mockNativeModule[TEXT_METHOD].mockReturnValue(
+        okRecord(JSON.stringify({ text: 'Title\nBody' }))
+    );
+
+    expect(handle.bridge.getDocumentText(options)).toBe('Title\nBody');
+
+    expect(mockNativeModule[TEXT_METHOD]).toHaveBeenLastCalledWith(
+        handle.editorId,
+        blockSeparator
+    );
+
+    handle.destroy();
+});
+
+it.each([
+    null,
+    '\n',
+    [],
+    { blockSeparator: 1 },
+    { blockSeparator: null },
+    { separator: '\n' },
+    { blockSeparator: '\n', flavor: 'gfm' },
+])('rejects invalid text options %p without calling native', options => {
+    const handle = createHandle();
+
+    expect(() => handle.bridge.getDocumentText(options as never)).toThrow(
+        NativeEditorEngineBoundaryError
+    );
+
+    expect(mockNativeModule[TEXT_METHOD]).not.toHaveBeenCalled();
+
+    handle.destroy();
 });

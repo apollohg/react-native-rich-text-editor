@@ -44,7 +44,7 @@ export interface NativeEditorModule {
     editorV2GetState(editorId: string): unknown;
     editorV2GetDocumentJson(editorId: string): unknown;
     editorV2GetDocumentHtml(editorId: string): unknown;
-    editorV2GetDocumentText(editorId: string): unknown;
+    editorV2GetDocumentText(editorId: string, blockSeparator: string | null): unknown;
     editorV2GetDocumentIsEmpty(editorId: string): unknown;
     editorV2GetDocumentMarkdown(editorId: string, flavor: string | null): unknown;
     editorV2GetContentSnapshot(editorId: string): unknown;

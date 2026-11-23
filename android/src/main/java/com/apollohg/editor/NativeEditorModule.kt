@@ -414,8 +414,8 @@ class NativeEditorModule : Module() {
         Function("editorV2GetDocumentHtml") { editorId: String ->
             editorV2GetDocumentHtml(editorId).toJSMap()
         }
-        Function("editorV2GetDocumentText") { editorId: String ->
-            editorV2GetDocumentText(editorId).toJSMap()
+        Function("editorV2GetDocumentText") { editorId: String, blockSeparator: String? ->
+            editorV2GetDocumentText(editorId, blockSeparator).toJSMap()
         }
         Function("editorV2GetDocumentIsEmpty") { editorId: String ->
             editorV2GetDocumentIsEmpty(editorId).toJSMap()

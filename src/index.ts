@@ -263,6 +263,7 @@ export type {
     DocumentJSON,
     MarkdownFlavor,
     MarkdownExportOptions,
+    TextContentOptions,
     CollaborationPeer,
 } from './NativeEditorBridge';
 

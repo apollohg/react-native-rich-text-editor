@@ -302,9 +302,12 @@ extension EditorV2AdapterTests {
         let adapter = makeAdapter(configJson: #"{"initialization":{"type":"localHtml","html":"<p>&lt;tag&gt; &amp; 👩🏽‍💻</p><p>tail</p>"}}"#)
         XCTAssertNotNil(adapter.initialUpdateJSON())
         let before = editorV2GetState(editorId: adapter.editorId).value
-        let text = editorV2GetDocumentText(editorId: adapter.editorId)
+        let text = editorV2GetDocumentText(editorId: adapter.editorId, blockSeparator: nil)
         XCTAssertNil(text.error)
         XCTAssertEqual(parseObject(try XCTUnwrap(text.value))["text"] as? String, "<tag> & 👩🏽‍💻tail")
+        let separated = editorV2GetDocumentText(editorId: adapter.editorId, blockSeparator: "\n")
+        XCTAssertNil(separated.error)
+        XCTAssertEqual(parseObject(try XCTUnwrap(separated.value))["text"] as? String, "<tag> & 👩🏽‍💻\ntail")
         let nonempty = editorV2GetDocumentIsEmpty(editorId: adapter.editorId)
         XCTAssertNil(nonempty.error)
         XCTAssertEqual(parseObject(try XCTUnwrap(nonempty.value))["isEmpty"] as? Bool, false)

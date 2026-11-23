@@ -3,7 +3,9 @@ pub mod html_out;
 pub mod json_in;
 pub mod json_out;
 pub mod markdown_out;
+pub mod text_out;
 pub use markdown_out::{to_markdown, MarkdownFlavor};
+pub use text_out::{text_byte_len, to_text};
 
 #[allow(unused_imports)]
 pub use html_in::{from_html, from_html_with_limits, FromHtmlOptions, ParseError};

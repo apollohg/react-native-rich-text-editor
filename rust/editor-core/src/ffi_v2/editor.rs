@@ -490,9 +490,12 @@ pub fn editor_v2_get_document_html(editor_id: String) -> FfiJsonResult {
 }
 
 #[uniffi::export]
-pub fn editor_v2_get_document_text(editor_id: String) -> FfiJsonResult {
+pub fn editor_v2_get_document_text(
+    editor_id: String,
+    block_separator: Option<String>,
+) -> FfiJsonResult {
     json_result(with_editor(&editor_id, |session| {
-        let text = session.get_text()?;
+        let text = session.get_text(block_separator.as_deref().unwrap_or_default())?;
         let result = serde_json::json!({ "text": text }).to_string();
         let limit = session.engine.editing_limits().max_derived_output_bytes;
         if result.len() > limit {

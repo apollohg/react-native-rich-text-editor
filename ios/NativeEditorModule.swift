@@ -612,9 +612,9 @@ public class NativeEditorModule: BaseModule, @preconcurrency AnyModule {
                 editorV2GetDocumentHtml(editorId: editorId)
             })
         }
-        Function("editorV2GetDocumentText") { (editorId: String) -> [String: Any] in
+        Function("editorV2GetDocumentText") { (editorId: String, blockSeparator: String?) -> [String: Any] in
             v2JsonResultDictionary(performEditorV2JsonOperation(editorId: editorId) {
-                editorV2GetDocumentText(editorId: editorId)
+                editorV2GetDocumentText(editorId: editorId, blockSeparator: blockSeparator)
             })
         }
         Function("editorV2GetDocumentIsEmpty") { (editorId: String) -> [String: Any] in

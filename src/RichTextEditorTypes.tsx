@@ -4,6 +4,7 @@ import { type NativeEditorResolvedSelectionFrame } from './NativeEditorTypes';
 import {
     type DocumentJSON,
     type MarkdownExportOptions,
+    type TextContentOptions,
     type HistoryState,
     type NativeEditorDocumentHandle,
     type ReadonlyActiveState,
@@ -302,8 +303,8 @@ export interface RichTextEditorRef {
     getContentMarkdown(options?: MarkdownExportOptions): string;
     /** Ask the Rust editor core whether the current document is empty. */
     getIsEmpty(): boolean;
-    /** Concatenated text nodes, without markup, atom labels, or added block separators. */
-    getTextContent(): string;
+    /** Document text without markup or atom labels; blockSeparator goes between text blocks. */
+    getTextContent(options?: TextContentOptions): string;
     /** Get the current caret rectangle in editor-local layout coordinates. */
     getCaretRect(): Promise<RichTextEditorCaretRect | null>;
     /** Undo the last operation. */

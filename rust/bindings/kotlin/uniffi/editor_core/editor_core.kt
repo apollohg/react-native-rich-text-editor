@@ -1058,7 +1058,7 @@ fun uniffi_editor_core_fn_func_editor_v2_get_document_json(`editorId`: RustBuffe
 ): RustBuffer.ByValue
 fun uniffi_editor_core_fn_func_editor_v2_get_document_markdown(`editorId`: RustBuffer.ByValue,`flavor`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
-fun uniffi_editor_core_fn_func_editor_v2_get_document_text(`editorId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+fun uniffi_editor_core_fn_func_editor_v2_get_document_text(`editorId`: RustBuffer.ByValue,`blockSeparator`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
 fun uniffi_editor_core_fn_func_editor_v2_get_state(`editorId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
@@ -1296,7 +1296,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_editor_core_checksum_func_editor_v2_get_document_markdown() != 51295.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_editor_core_checksum_func_editor_v2_get_document_text() != 51195.toShort()) {
+    if (lib.uniffi_editor_core_checksum_func_editor_v2_get_document_text() != 44170.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_editor_core_checksum_func_editor_v2_get_state() != 43856.toShort()) {
@@ -4685,11 +4685,11 @@ public object FfiConverterMapStringString: FfiConverterRustBuffer<Map<kotlin.Str
     )
     }
 
- fun `editorV2GetDocumentText`(`editorId`: kotlin.String): FfiJsonResult {
+ fun `editorV2GetDocumentText`(`editorId`: kotlin.String, `blockSeparator`: kotlin.String?): FfiJsonResult {
             return FfiConverterTypeFfiJsonResult.lift(
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_editor_core_fn_func_editor_v2_get_document_text(
-        FfiConverterString.lower(`editorId`),_status)
+        FfiConverterString.lower(`editorId`),FfiConverterOptionalString.lower(`blockSeparator`),_status)
 }
     )
     }

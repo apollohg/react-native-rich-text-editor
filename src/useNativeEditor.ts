@@ -5,6 +5,7 @@ import {
     _getNativeEditorDocumentHandleDescriptor,
     type DocumentJSON,
     type MarkdownExportOptions,
+    type TextContentOptions,
     type HistoryState,
     type NativeEditorDocumentHandle,
     type NativeEditorDocumentOrigin,
@@ -67,8 +68,8 @@ export interface UseNativeEditorDocumentReturn {
     getContentMarkdown(options?: MarkdownExportOptions): string;
     /** The engine's own answer for whether the document holds no content. */
     getIsEmpty(): boolean;
-    /** Concatenated document text, without markup, atom labels, or added block separators. */
-    getTextContent(): string;
+    /** Document text without markup or atom labels; blockSeparator goes between text blocks. */
+    getTextContent(options?: TextContentOptions): string;
     /** Replace the document with HTML, as one undoable step. */
     setContent(html: string): void;
     /** Replace the document with JSON, as one undoable step. */
@@ -606,7 +607,7 @@ export function useNativeEditorDocument(
         return handle.bridge.getDocumentIsEmpty();
     }, [ handle ]);
 
-    const getTextContent = useCallback((): string => {
+    const getTextContent = useCallback((options?: TextContentOptions): string => {
         if (
             handle.isDestroyed ||
             readyRef.current.editorId !== handle.editorId ||
@@ -615,7 +616,7 @@ export function useNativeEditorDocument(
             return '';
         }
 
-        return handle.bridge.getDocumentText();
+        return handle.bridge.getDocumentText(options);
     }, [ handle ]);
 
     const canUndo = useCallback((): boolean => {

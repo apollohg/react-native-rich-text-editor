@@ -4631,10 +4631,11 @@ public func editorV2GetDocumentMarkdown(editorId: String, flavor: String?) -> Ff
     )
 })
 }
-public func editorV2GetDocumentText(editorId: String) -> FfiJsonResult  {
+public func editorV2GetDocumentText(editorId: String, blockSeparator: String?) -> FfiJsonResult  {
     return try!  FfiConverterTypeFfiJsonResult_lift(try! rustCall() {
     uniffi_editor_core_fn_func_editor_v2_get_document_text(
-        FfiConverterString.lower(editorId),$0
+        FfiConverterString.lower(editorId),
+        FfiConverterOptionString.lower(blockSeparator),$0
     )
 })
 }
@@ -4865,7 +4866,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_editor_core_checksum_func_editor_v2_get_document_markdown() != 51295) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_editor_core_checksum_func_editor_v2_get_document_text() != 51195) {
+    if (uniffi_editor_core_checksum_func_editor_v2_get_document_text() != 44170) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_editor_core_checksum_func_editor_v2_get_state() != 43856) {

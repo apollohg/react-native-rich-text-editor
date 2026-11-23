@@ -439,3 +439,7 @@ export interface MarkdownExportOptions {
     /** Defaults to vanilla CommonMark. */
     flavor?: MarkdownFlavor;
 }
+
+export interface TextContentOptions {
+    blockSeparator?: string;
+}

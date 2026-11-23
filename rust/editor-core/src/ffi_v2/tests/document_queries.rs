@@ -11,7 +11,7 @@ fn document_queries_read_text_without_html_escaping_or_implicit_separators() {
         ]
     }}}));
     let before = super::editor::editor_v2_get_state(editor_id.clone()).value;
-    let text = super::editor::editor_v2_get_document_text(editor_id.clone());
+    let text = super::editor::editor_v2_get_document_text(editor_id.clone(), None);
     assert!(text.error.is_none(), "text query failed: {text:?}");
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&text.value.unwrap()).unwrap(),
@@ -68,7 +68,7 @@ fn document_queries_preserve_lifecycle_errors() {
         json!({"initialization":{"type":"room", "documentId":"query-doc", "lineageId":"query-lineage"}}),
     );
     for result in [
-        super::editor::editor_v2_get_document_text(room.clone()),
+        super::editor::editor_v2_get_document_text(room.clone(), None),
         super::editor::editor_v2_get_document_is_empty(room.clone()),
     ] {
         assert_eq!(
@@ -78,7 +78,7 @@ fn document_queries_preserve_lifecycle_errors() {
     }
     super::editor::editor_v2_destroy(room.clone());
     for result in [
-        super::editor::editor_v2_get_document_text(room.clone()),
+        super::editor::editor_v2_get_document_text(room.clone(), None),
         super::editor::editor_v2_get_document_is_empty(room.clone()),
     ] {
         assert!(result.error.is_some(), "query after destroy must fail");
@@ -95,7 +95,7 @@ fn document_queries_return_escaped_text_within_the_admitted_output_budget() {
         "initialization":{"type":"localJson", "json":{"type":"doc", "content":[{"type":"paragraph", "content":[{"type":"text", "text":text}]}]}}
     }));
     let before = super::editor::editor_v2_get_state(editor_id.clone()).value;
-    let result = super::editor::editor_v2_get_document_text(editor_id.clone());
+    let result = super::editor::editor_v2_get_document_text(editor_id.clone(), None);
     assert!(
         result.error.is_none(),
         "admitted text query failed: {result:?}"
@@ -109,6 +109,69 @@ fn document_queries_return_escaped_text_within_the_admitted_output_budget() {
     assert_eq!(
         super::editor::editor_v2_get_state(editor_id.clone()).value,
         before
+    );
+    super::editor::editor_v2_destroy(editor_id);
+}
+
+#[test]
+fn document_queries_forward_the_block_separator_to_the_text_query() {
+    let editor_id = create_editor(json!({"initialization":{"type":"localJson", "json":{
+        "type":"doc", "content":[
+            {"type":"heading", "attrs":{"level":2}, "content":[{"type":"text", "text":"Title"}]},
+            {"type":"paragraph"},
+            {"type":"paragraph", "content":[{"type":"text", "text":"Body"}]}
+        ]
+    }}}));
+    for (block_separator, expected) in [
+        (None, "TitleBody"),
+        (Some(""), "TitleBody"),
+        (Some("\n"), "Title\n\nBody"),
+        (Some(" | "), "Title |  | Body"),
+    ] {
+        let result = super::editor::editor_v2_get_document_text(
+            editor_id.clone(),
+            block_separator.map(str::to_string),
+        );
+        assert!(
+            result.error.is_none(),
+            "text query with separator {block_separator:?} failed: {result:?}"
+        );
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&result.value.unwrap()).unwrap(),
+            json!({ "text": expected }),
+            "text for separator {block_separator:?}"
+        );
+    }
+    super::editor::editor_v2_destroy(editor_id);
+}
+
+#[test]
+fn document_queries_reject_separated_text_beyond_the_output_budget_before_building_it() {
+    const OUTPUT_LIMIT: usize = 64 * 1024;
+    const PARAGRAPH_COUNT: usize = 3;
+    let separator = "-".repeat(OUTPUT_LIMIT / 2 + 1);
+    let paragraph = json!({"type":"paragraph", "content":[{"type":"text", "text":"x"}]});
+    let editor_id = create_editor(json!({
+        "limits":{"editing":{"maxDerivedOutputBytes":OUTPUT_LIMIT}},
+        "initialization":{"type":"localJson", "json":{"type":"doc", "content":vec![paragraph; PARAGRAPH_COUNT]}}
+    }));
+    let result =
+        super::editor::editor_v2_get_document_text(editor_id.clone(), Some(separator.clone()));
+    let error = result
+        .error
+        .expect("separated text beyond the budget must be rejected");
+    assert_eq!(error.code, "DOCUMENT_LIMIT_EXCEEDED");
+    assert_eq!(
+        error.limit.as_deref(),
+        Some(OUTPUT_LIMIT.to_string().as_str())
+    );
+    assert_eq!(
+        error.actual.as_deref(),
+        Some(
+            (PARAGRAPH_COUNT + (PARAGRAPH_COUNT - 1) * separator.len())
+                .to_string()
+                .as_str()
+        )
     );
     super::editor::editor_v2_destroy(editor_id);
 }

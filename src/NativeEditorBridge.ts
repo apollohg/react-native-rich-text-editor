@@ -17,6 +17,7 @@ export {
     type DocumentJSON,
     type MarkdownFlavor,
     type MarkdownExportOptions,
+    type TextContentOptions,
     type CollaborationPeer,
     type CommandBlockedReason,
     type CommandBlockedInfo,

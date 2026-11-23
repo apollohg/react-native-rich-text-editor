@@ -177,6 +177,9 @@ it('reads raw text and emptiness without HTML or render-state exports', () => {
     const rawText = '<tag> & café 👩🏽‍💻';
     act(() => document.setContentJson(fakeDocForText(rawText)));
     expect(document.getTextContent()).toBe(rawText);
+    expect(mockNativeModule.editorV2GetDocumentText).toHaveBeenLastCalledWith(handle.editorId, null);
+    document.getTextContent({ blockSeparator: '\n' });
+    expect(mockNativeModule.editorV2GetDocumentText).toHaveBeenLastCalledWith(handle.editorId, '\n');
     expect(document.getIsEmpty()).toBe(false);
     act(() => document.clearContent());
     expect(document.getTextContent()).toBe('');

@@ -1,4 +1,5 @@
 import { requireMarkdownFlavor } from './MarkdownExportOptions';
+import { requireBlockSeparator } from './TextContentOptions';
 import {
     type NativeEditorErrorBase,
     NativeEditorNonRetryableError,
@@ -44,6 +45,7 @@ import {
 import {
     type DocumentJSON,
     type MarkdownExportOptions,
+    type TextContentOptions,
     type ContentSnapshot,
     type NativeEditorAtomicRenderSnapshot,
     type NativeEditorAtomicRenderState,
@@ -245,9 +247,12 @@ export class NativeEditorDocumentBridge {
         );
     }
 
-    getDocumentText(): string {
+    getDocumentText(options?: TextContentOptions): string {
+        this.assertAlive();
+        const blockSeparator = requireBlockSeparator(options);
+
         return this.callV2(
-            () => invokeNativeEditorV2('editorV2GetDocumentText', this._editorId),
+            () => invokeNativeEditorV2('editorV2GetDocumentText', this._editorId, blockSeparator),
             normalizeNativeEditorV2TextValue
         );
     }

@@ -28,11 +28,17 @@ internal class DocumentQueriesTest {
         try {
             val before = editorV2GetState(editorId)
             assertNull(before.error)
-            val text = editorV2GetDocumentText(editorId)
+            val text = editorV2GetDocumentText(editorId, null)
             assertNull(text.error)
             assertEquals(
                 "<tag> & 👩🏽‍💻tail",
                 JSONObject(requireNotNull(text.value)).getString("text")
+            )
+            val separated = editorV2GetDocumentText(editorId, "\n")
+            assertNull(separated.error)
+            assertEquals(
+                "<tag> & 👩🏽‍💻\ntail",
+                JSONObject(requireNotNull(separated.value)).getString("text")
             )
             val nonempty = editorV2GetDocumentIsEmpty(editorId)
             assertNull(nonempty.error)

@@ -13,9 +13,15 @@ impl EditorSession {
         self.engine.document_html().ok_or_else(engine_not_ready)
     }
 
-    pub(crate) fn get_text(&self) -> Result<String, SessionError> {
+    pub(crate) fn get_text(&self, block_separator: &str) -> Result<String, SessionError> {
         let document = self.engine.document().ok_or_else(engine_not_ready)?;
-        Ok(document.root().text_content())
+        let schema = self.engine.schema();
+        let limit = self.engine.editing_limits().max_derived_output_bytes;
+        let length = crate::serialize::text_byte_len(document, schema, block_separator);
+        if length > limit {
+            return Err(BoundaryError::limit("DOCUMENT_LIMIT_EXCEEDED", limit, length).into());
+        }
+        Ok(crate::serialize::to_text(document, schema, block_separator))
     }
 
     pub(crate) fn get_is_empty(&self) -> Result<bool, SessionError> {
