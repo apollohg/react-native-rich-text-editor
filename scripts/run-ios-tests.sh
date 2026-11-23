@@ -205,6 +205,7 @@ fi
 
 echo "Running iOS tests with destination: $destination"
 
+derived_data_build_location="-IDEBuildLocationStyle=Unique"
 test_action="${NATIVE_EDITOR_IOS_TEST_ACTION:-test}"
 case "$test_action" in
   test|build-for-testing|test-without-building) ;;
@@ -221,7 +222,10 @@ xcodebuild_args=(
 )
 
 if [[ -n "${NATIVE_EDITOR_IOS_DERIVED_DATA:-}" ]]; then
-  xcodebuild_args+=(-derivedDataPath "$NATIVE_EDITOR_IOS_DERIVED_DATA")
+  xcodebuild_args+=(
+    -derivedDataPath "$NATIVE_EDITOR_IOS_DERIVED_DATA"
+    "$derived_data_build_location"
+  )
 fi
 
 device_build_settings=()

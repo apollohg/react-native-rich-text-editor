@@ -26,6 +26,7 @@ try {
         const args = readFileSync(join(root, 'args'), 'utf8').trim().split('\n');
         assert.equal(args[0], action);
         assert.equal(args[args.indexOf('-derivedDataPath') + 1], join(root, 'derived'));
+        assert.ok(args.includes('-IDEBuildLocationStyle=Unique'), 'derived data must hold build products despite a custom Xcode build location');
         assert.ok(args.includes('-only-testing:NativeEditorTests/RenderBridgeTests'));
     }
     const deviceRun = spawnSync(

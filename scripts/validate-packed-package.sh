@@ -643,7 +643,7 @@ RUBY
     fail "CocoaPods did not generate a valid iOS consumer workspace"
   (
     cd "$ios_project"
-    xcodebuild -workspace PackedConsumer.xcworkspace -scheme PackedConsumer -configuration Debug -sdk iphonesimulator -derivedDataPath "$work_dir/ios-derived-data" -jobs "${NATIVE_EDITOR_XCODE_JOBS:-2}" CLANG_ENABLE_EXPLICIT_MODULES=NO SWIFT_ENABLE_EXPLICIT_MODULES=NO ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+    xcodebuild -workspace PackedConsumer.xcworkspace -scheme PackedConsumer -configuration Debug -sdk iphonesimulator -derivedDataPath "$work_dir/ios-derived-data" -IDEBuildLocationStyle=Unique -jobs "${NATIVE_EDITOR_XCODE_JOBS:-2}" CLANG_ENABLE_EXPLICIT_MODULES=NO SWIFT_ENABLE_EXPLICIT_MODULES=NO ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
   ) || fail "iOS consumer xcodebuild failed"
 }
 
