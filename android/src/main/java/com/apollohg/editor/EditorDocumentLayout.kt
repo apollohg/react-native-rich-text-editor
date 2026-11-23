@@ -597,68 +597,74 @@ internal class EditorDocumentLayout(
         val from = minOf(start, end).coerceIn(0, content.length)
         val to = maxOf(start, end).coerceIn(from, content.length)
         if (from == to) return
-        for (fragment in fragments) {
-            if (from > fragment.end || to <= fragment.start) continue
-            val localFrom = (from - fragment.start).coerceAtLeast(0)
-            val localTo = (to - fragment.start).coerceAtMost(fragment.end - fragment.start)
-            for (localLine in fragment.layout.getLineForOffset(
-                localFrom
-            )..fragment.layout.getLineForOffset(localTo)) {
-                val lineFrom = maxOf(localFrom, fragment.layout.getLineStart(localLine))
-                val lineTo = minOf(localTo, fragment.layout.getLineEnd(localLine))
-                if (lineFrom >= lineTo) continue
-                val localPath = Path()
-                fragment.layout.getSelectionPath(lineFrom, lineTo, localPath)
-                val line = fragment.firstLine + localLine
-                val matrix = Matrix()
-                matrix.setRectToRect(
-                    RectF(
-                        0f,
-                        fragment.layout.getLineTop(localLine).toFloat(),
-                        1f,
-                        fragment.layout.getLineBottom(localLine).toFloat()
-                    ),
-                    RectF(
-                        fragment.x,
-                        textLineTop(line).toFloat(),
-                        fragment.x + 1,
-                        textLineBottom(line).toFloat()
-                    ),
-                    Matrix.ScaleToFit.FILL
-                )
-                localPath.transform(matrix)
-                dest.addPath(localPath)
-            }
-            if (to > fragment.end && fragment.end < content.length) {
-                val line = fragment.firstLine + fragment.layout.lineCount - 1
-                val x = getPrimaryHorizontal(fragment.end)
-                val edge = if (getParagraphDirection(line) <
-                    0
-                ) {
-                    contentLeft(line)
-                } else {
-                    contentRight(line)
-                }
-                dest.addRect(
-                    minOf(x, edge),
+        for (fragment in fragments) addSelectionPath(fragment, from, to, dest)
+    }
+
+    private fun addSelectionPath(fragment: Fragment, from: Int, to: Int, dest: Path) {
+        if (from > fragment.end || to <= fragment.start) return
+        val localFrom = (from - fragment.start).coerceAtLeast(0)
+        val localTo = (to - fragment.start).coerceAtMost(fragment.end - fragment.start)
+        for (localLine in fragment.layout.getLineForOffset(
+            localFrom
+        )..fragment.layout.getLineForOffset(localTo)) {
+            val lineFrom = maxOf(localFrom, fragment.layout.getLineStart(localLine))
+            val lineTo = minOf(localTo, fragment.layout.getLineEnd(localLine))
+            if (lineFrom >= lineTo) continue
+            val localPath = Path()
+            fragment.layout.getSelectionPath(lineFrom, lineTo, localPath)
+            val line = fragment.firstLine + localLine
+            val matrix = Matrix()
+            matrix.setRectToRect(
+                RectF(
+                    0f,
+                    fragment.layout.getLineTop(localLine).toFloat(),
+                    1f,
+                    fragment.layout.getLineBottom(localLine).toFloat()
+                ),
+                RectF(
+                    fragment.x,
                     textLineTop(line).toFloat(),
-                    maxOf(x + 1, edge),
-                    textLineBottom(line).toFloat(),
-                    Path.Direction.CW
-                )
+                    fragment.x + 1,
+                    textLineBottom(line).toFloat()
+                ),
+                Matrix.ScaleToFit.FILL
+            )
+            localPath.transform(matrix)
+            dest.addPath(localPath)
+        }
+        if (to > fragment.end && fragment.end < content.length) {
+            val line = fragment.firstLine + fragment.layout.lineCount - 1
+            val x = getPrimaryHorizontal(fragment.end)
+            val edge = if (getParagraphDirection(line) <
+                0
+            ) {
+                contentLeft(line)
+            } else {
+                contentRight(line)
             }
+            dest.addRect(
+                minOf(x, edge),
+                textLineTop(line).toFloat(),
+                maxOf(x + 1, edge),
+                textLineBottom(line).toFloat(),
+                Path.Direction.CW
+            )
         }
     }
 
-    override fun draw(canvas: Canvas) = draw(canvas, null, null, 0)
-    override fun draw(
+    override fun draw(canvas: Canvas) = drawWithSelection(canvas, 0, 0, null)
+
+    fun drawWithSelection(
         canvas: Canvas,
-        highlight: Path?,
-        highlightPaint: Paint?,
-        cursorOffsetVertical: Int
+        selectionStart: Int,
+        selectionEnd: Int,
+        selectionPaint: Paint?
     ) {
         val clip = Rect()
         if (!canvas.getClipBounds(clip)) return
+        val from = minOf(selectionStart, selectionEnd).coerceIn(0, content.length)
+        val to = maxOf(selectionStart, selectionEnd).coerceIn(from, content.length)
+        val highlight = if (selectionPaint != null && from < to) Path() else null
         boxes.forEach { EditorBoxDrawing.draw(canvas, it.bounds, it.style) }
         for (fragment in fragments) {
             if (fragment.y >= clip.bottom ||
@@ -668,17 +674,10 @@ internal class EditorDocumentLayout(
             }
             val saved = canvas.save()
             canvas.translate(fragment.x, fragment.y.toFloat())
-            val localHighlight = highlight?.let {
-                Path(it).apply {
-                    offset(-fragment.x, -fragment.y.toFloat())
-                    val bounds = RectF()
-                    computeBounds(bounds, true)
-                    bounds.top = fragment.topTrim.toFloat()
-                    bounds.bottom =
-                        (fragment.layout.height - fragment.bottomTrim + fragment.afterSpacing)
-                            .toFloat()
-                    op(Path().apply { addRect(bounds, Path.Direction.CW) }, Path.Op.INTERSECT)
-                }
+            highlight?.run {
+                reset()
+                addSelectionPath(fragment, from, to, this)
+                offset(-fragment.x, -fragment.y.toFloat())
             }
             if (Build.VERSION.SDK_INT >= 34) {
                 // Android 14+ skips selection drawing when both highlight lists are null.
@@ -686,12 +685,12 @@ internal class EditorDocumentLayout(
                     canvas,
                     emptyList(),
                     emptyList(),
-                    localHighlight,
-                    highlightPaint,
-                    cursorOffsetVertical
+                    highlight,
+                    selectionPaint,
+                    0
                 )
             } else {
-                fragment.layout.draw(canvas, localHighlight, highlightPaint, cursorOffsetVertical)
+                fragment.layout.draw(canvas, highlight, selectionPaint, 0)
             }
             canvas.restoreToCount(saved)
         }

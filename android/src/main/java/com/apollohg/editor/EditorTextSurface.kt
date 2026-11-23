@@ -7,7 +7,6 @@ import android.content.res.ColorStateList
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Typeface
@@ -88,7 +87,6 @@ open class EditorTextSurface @JvmOverloads constructor(
     internal val interaction by lazy { EditorTextSurfaceInteraction(this, attrs, defStyleAttr) }
     private val dragDrop by lazy { EditorTextSurfaceDragDrop(this) }
     private val selectionPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val selectionPath = Path()
     private var viewportObserver: ViewTreeObserver? = null
     private val drawingViewport = Rect()
     private val observedViewport = Rect()
@@ -103,7 +101,8 @@ open class EditorTextSurface @JvmOverloads constructor(
     val editableText: Editable get() = buffer
     val selectionStart: Int get() = Selection.getSelectionStart(buffer)
     val selectionEnd: Int get() = Selection.getSelectionEnd(buffer)
-    val layout: Layout
+    val layout: Layout get() = documentLayout
+    private val documentLayout: EditorDocumentLayout
         get() {
             val available = (
                 (
@@ -589,7 +588,7 @@ open class EditorTextSurface @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        val layout = layout
+        val layout = documentLayout
         val save = canvas.save()
         try {
             if (canvas.isHardwareAccelerated && readDrawingViewport(drawingViewport)) {
@@ -598,15 +597,12 @@ open class EditorTextSurface @JvmOverloads constructor(
             canvas.translate(compoundPaddingLeft.toFloat(), compoundPaddingTop.toFloat())
             val start = selectionStart
             val end = selectionEnd
-            val selection = if (start >= 0 && end >= 0 && start != end && hasFocus()) {
-                selectionPath.reset()
-                layout.getSelectionPath(minOf(start, end), maxOf(start, end), selectionPath)
+            if (start >= 0 && end >= 0 && start != end && hasFocus()) {
                 selectionPaint.color = highlightColor
-                selectionPath
+                layout.drawWithSelection(canvas, start, end, selectionPaint)
             } else {
-                null
+                layout.draw(canvas)
             }
-            layout.draw(canvas, selection, selectionPaint, 0)
             if (!canvas.isHardwareAccelerated || !isCaretDrawnSeparately) drawCaret(canvas)
             interaction.drawHandles(canvas)
         } finally {

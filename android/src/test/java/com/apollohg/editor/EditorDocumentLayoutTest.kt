@@ -1,5 +1,6 @@
 package com.apollohg.editor
 
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -572,6 +573,66 @@ class EditorDocumentLayoutTest {
     }
 
     @Test
+    @Config(sdk = [26, 34])
+    fun `selection across padded and spaced paragraphs paints every selected row exactly once`() {
+        val text = (0 until 12).joinToString("\n") { "paragraph $it" }
+        val layout = spacedSelectionLayout(text)
+        val selectionPaint = Paint().apply { color = Color.argb(128, 51, 102, 255) }
+        val once = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888).apply {
+            eraseColor(Color.WHITE)
+            Canvas(this).drawPaint(selectionPaint)
+        }.getPixel(0, 0)
+        val bitmap = Bitmap.createBitmap(layout.width, layout.height, Bitmap.Config.ARGB_8888)
+        bitmap.eraseColor(Color.WHITE)
+        layout.drawWithSelection(Canvas(bitmap), 0, text.length, selectionPaint)
+        val column = layout.width - 2
+        val lastFullLine = layout.lineCount - 2
+        for (y in layout.textLineTop(0) until layout.textLineBottom(lastFullLine)) {
+            val line = layout.getLineForVertical(y)
+            assertEquals(
+                "row $y on line $line (top=${layout.textLineTop(line)} " +
+                    "bottom=${layout.textLineBottom(line)}) must be highlighted exactly once",
+                Integer.toHexString(once),
+                Integer.toHexString(bitmap.getPixel(column, y))
+            )
+        }
+        assertEquals(
+            "rows below the selection must stay unhighlighted",
+            Color.WHITE,
+            bitmap.getPixel(column, layout.textLineBottom(layout.lineCount - 1) - 1)
+        )
+    }
+
+    @Test
+    fun `long selection draws within a frame budget`() {
+        val text = (0 until LONG_SELECTION_PARAGRAPHS).joinToString("\n") { paragraph ->
+            (0 until 3 + paragraph % 17).joinToString(" ") { "word${(it * 7 + paragraph) % 10}" }
+        }
+        val layout = spacedSelectionLayout(text)
+        val bitmap = Bitmap.createBitmap(layout.width, layout.height, Bitmap.Config.ARGB_8888)
+        val selectionPaint = Paint().apply { color = Color.argb(85, 51, 102, 255) }
+        layout.draw(Canvas(bitmap))
+        val started = System.nanoTime()
+        layout.drawWithSelection(Canvas(bitmap), 0, text.length, selectionPaint)
+        val elapsedMillis = (System.nanoTime() - started) / NANOS_PER_MILLI
+        assertTrue(
+            "drawing ${layout.lineCount} selected lines across $LONG_SELECTION_PARAGRAPHS " +
+                "paragraphs took ${elapsedMillis}ms, budget ${SELECTION_DRAW_BUDGET_MILLIS}ms",
+            elapsedMillis < SELECTION_DRAW_BUDGET_MILLIS
+        )
+    }
+
+    private fun spacedSelectionLayout(text: String) =
+        EditorDocumentLayout(
+            text,
+            paint().apply { textSize = 37.3f },
+            517,
+            includeFontPadding = true,
+            spacingMultiplier = 1.13f,
+            spacingAdd = 3.7f
+        )
+
+    @Test
     @Config(sdk = [24])
     fun `empty paragraphs retain independent line positions on minimum SDK`() {
         val layout = EditorDocumentLayout("\n\n", paint(), 200)
@@ -581,5 +642,11 @@ class EditorDocumentLayoutTest {
         assertEquals(2, layout.getLineStart(2))
         assertTrue(layout.height > 0)
         assertTrue(layout.getLineBaseline(1) > layout.getLineBaseline(0))
+    }
+
+    private companion object {
+        const val LONG_SELECTION_PARAGRAPHS = 160
+        const val SELECTION_DRAW_BUDGET_MILLIS = 500L
+        const val NANOS_PER_MILLI = 1_000_000L
     }
 }
