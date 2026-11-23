@@ -60,6 +60,8 @@ extension NativeEditorExpoView {
         case .heading:
             guard let level = item.headingLevel else { return }
             input.performToolbarToggleHeading(level)
+        case .paragraph:
+            input.performToolbarSetParagraph()
         case .blockquote:
             input.performToolbarToggleBlockquote()
         case .list:

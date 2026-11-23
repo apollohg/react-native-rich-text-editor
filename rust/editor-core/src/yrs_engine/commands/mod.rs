@@ -65,6 +65,7 @@ pub enum TypedCommand {
     ToggleHeading {
         level: u8,
     },
+    SetParagraph,
     SetTextAlign {
         align: crate::alignment::TextAlign,
     },
@@ -223,6 +224,7 @@ pub(crate) fn plan(
         | TypedCommand::SetMark { .. }
         | TypedCommand::UnsetMark { .. }
         | TypedCommand::ToggleHeading { .. }
+        | TypedCommand::SetParagraph
         | TypedCommand::ToggleCodeBlock
         | TypedCommand::ToggleBlockquote) => format::plan(context, command),
         command @ (TypedCommand::ApplyListType { .. }

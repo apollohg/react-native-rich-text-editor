@@ -214,6 +214,10 @@ enum EditorV2Shadow {
         adapter(for: id)?.toggleHeading(level: level, anchor: scalarAnchor, head: scalarHead) ?? "{}"
     }
 
+    static func setParagraphAtSelectionScalar(id: UInt64, scalarAnchor: UInt32, scalarHead: UInt32) -> String {
+        adapter(for: id)?.setParagraph(anchor: scalarAnchor, head: scalarHead) ?? "{}"
+    }
+
     static func wrapInListAtSelectionScalar(id: UInt64, scalarAnchor: UInt32, scalarHead: UInt32, listType: String) -> String {
         let itemType = EditorNodeTypes.listItemType(for: listType)
         return adapter(for: id)?.wrapInList(listType: listType, itemType: itemType, anchor: scalarAnchor, head: scalarHead) ?? "{}"

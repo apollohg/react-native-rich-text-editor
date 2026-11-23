@@ -70,6 +70,15 @@ internal fun EditorEditText.performToolbarToggleHeadingImpl(level: Int) {
     }
 }
 
+internal fun EditorEditText.performToolbarSetParagraphImpl() {
+    if (!prepareForToolbarCommandWithExternalOwner()) return
+    val selection =
+        currentScalarSelection()?.let { inputScalarSelection(it.first, it.second) } ?: return
+    v2Driver?.let { driver ->
+        driver.setParagraph(selection.first, selection.second)?.let { applyUpdateJSON(it) }
+    }
+}
+
 internal fun EditorEditText.performToolbarIndentListItemImpl() {
     if (!prepareForToolbarCommandWithExternalOwner()) return
     val selection =

@@ -110,6 +110,7 @@ enum ToolbarDefaultIconId: String {
     case h4
     case h5
     case h6
+    case paragraph
     case blockquote
     case bulletList
     case orderedList
@@ -125,6 +126,7 @@ enum ToolbarItemKind: String {
     case textAlign
     case mark
     case heading
+    case paragraph
     case blockquote
     case list
     case command
@@ -188,6 +190,7 @@ struct NativeToolbarIcon {
         .h4: "paragraphsign",
         .h5: "paragraphsign",
         .h6: "paragraphsign",
+        .paragraph: "paragraphsign",
         .undo: "arrow.uturn.backward",
         .redo: "arrow.uturn.forward"
     ]
@@ -209,6 +212,7 @@ struct NativeToolbarIcon {
         .h4: "H4",
         .h5: "H5",
         .h6: "H6",
+        .paragraph: "¶",
         .blockquote: "❝",
         .bulletList: "•≡",
         .orderedList: "1.",
@@ -411,14 +415,14 @@ struct NativeToolbarItem {
                 placement: placement,
                 buttonStyle: buttonStyle
             )
-        case .blockquote:
+        case .paragraph, .blockquote:
             guard let label = rawItem["label"] as? String,
                   let icon = NativeToolbarIcon.from(jsonValue: rawItem["icon"])
             else {
                 return nil
             }
             return NativeToolbarItem(
-                type: .blockquote,
+                type: type,
                 key: key,
                 label: label,
                 icon: icon,
@@ -548,6 +552,8 @@ struct NativeToolbarItem {
             return "textAlign:\(textAlign ?? "inherit"):\(index)"
         case .heading:
             return "heading:\(headingLevel ?? 0):\(index)"
+        case .paragraph:
+            return "paragraph:\(index)"
         case .blockquote:
             return "blockquote:\(index)"
         case .list:

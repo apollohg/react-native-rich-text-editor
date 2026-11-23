@@ -15,7 +15,7 @@ use crate::tables::commands::{
 use crate::tables::interchange::CellStep;
 use crate::transform::{Step, Transaction};
 
-const FIXED_COMMAND_ENTRIES: usize = 10;
+const FIXED_COMMAND_ENTRIES: usize = 11;
 const HEADING_COMMAND_LEVELS: u8 = 6;
 const TABLE_COMMAND_ENTRIES: usize = 18;
 pub(crate) const ACTIVE_COMMAND_ENTRIES: usize =
@@ -252,6 +252,10 @@ fn command_applicability_with_known_node_count_impl(
         can_toggle_code_block(document, schema, block_range.as_ref()),
     );
     commands.insert(
+        "setParagraph".into(),
+        can_set_paragraph(document, schema, block_range.as_ref()),
+    );
+    commands.insert(
         "toggleTaskItem".into(),
         text_position.is_some_and(|pos| can_toggle_task_item(document, schema, pos, limits)),
     );
@@ -323,6 +327,7 @@ pub(crate) enum StructuralCommand<'a> {
     ToggleBlockquote,
     ToggleCodeBlock,
     ToggleHeading(u8),
+    SetParagraph,
     ApplyListType(&'a str),
     WrapInList {
         list_type: &'a str,
@@ -355,6 +360,9 @@ pub(crate) fn structural_command_is_available(
         }
         StructuralCommand::ToggleHeading(level) => {
             can_toggle_heading(document, schema, block_range.as_ref(), level)
+        }
+        StructuralCommand::SetParagraph => {
+            can_set_paragraph(document, schema, block_range.as_ref())
         }
         StructuralCommand::ApplyListType(list_type) => can_apply_list_type_local(
             document,

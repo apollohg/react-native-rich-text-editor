@@ -77,6 +77,19 @@ extension EditorTextView {
         }
     }
 
+    func performToolbarSetParagraph() {
+        guard prepareForToolbarCommand() else { return }
+        guard let selection = currentScalarSelection() else { return }
+        performInterceptedInput {
+            let updateJSON = EditorV2Shadow.setParagraphAtSelectionScalar(
+                id: editorId,
+                scalarAnchor: selection.anchor,
+                scalarHead: selection.head
+            )
+            applyUpdateJSON(updateJSON)
+        }
+    }
+
     func performToolbarIndentListItem() {
         guard prepareForToolbarCommand() else { return }
         guard let selection = currentScalarSelection() else { return }

@@ -48,6 +48,7 @@ export type EditorToolbarDefaultIconId =
     | 'h4'
     | 'h5'
     | 'h6'
+    | 'paragraph'
     | 'blockquote'
     | 'bulletList'
     | 'orderedList'
@@ -144,6 +145,8 @@ export interface EditorToolbarButtonStyle {
  * - `mark` : toggles the named mark; active and enabled state come from the engine.
  * - `link` / `image` : calls the editor's `onRequestLink` / `onRequestImage`.
  * - `heading` : toggles the given heading level.
+ * - `paragraph` : turns the selected blocks into paragraphs; active while the
+ *   selection starts in a paragraph.
  * - `blockquote` : toggles blockquote wrapping.
  * - `list` : toggles the given list type.
  * - `command` : runs an {@link EditorToolbarCommand}.
@@ -185,6 +188,13 @@ export type EditorToolbarLeafItem = (
     | {
           type: 'heading';
           level: EditorToolbarHeadingLevel;
+          label: string;
+          icon: EditorToolbarIcon;
+          key?: string;
+          placement?: EditorToolbarItemPlacement;
+      }
+    | {
+          type: 'paragraph';
           label: string;
           icon: EditorToolbarIcon;
           key?: string;
@@ -350,6 +360,7 @@ export interface EditorToolbarProps {
     onToggleListType?: (listType: EditorToolbarListType) => void;
     /** Generic heading toggle handler used by configurable heading buttons. */
     onToggleHeading?: (level: EditorToolbarHeadingLevel) => void;
+    onSetParagraph?: () => void;
     /** Null restores alignment inherited from the theme. */
     onSetTextAlign?: (align: TextAlign | null) => void;
     /** Generic node insertion handler used by configurable node buttons. */

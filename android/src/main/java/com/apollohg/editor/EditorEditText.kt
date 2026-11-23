@@ -889,6 +889,8 @@ class EditorEditText @JvmOverloads constructor(
 
     fun performToolbarToggleHeading(level: Int) = performToolbarToggleHeadingImpl(level)
 
+    fun performToolbarSetParagraph() = performToolbarSetParagraphImpl()
+
     fun performToolbarIndentListItem() = performToolbarIndentListItemImpl()
 
     fun performToolbarOutdentListItem() = performToolbarOutdentListItemImpl()

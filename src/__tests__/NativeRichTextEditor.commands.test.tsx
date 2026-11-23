@@ -76,6 +76,9 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         act(() => ref.current!.toggleHeading(2));
         expect(lastCommand()).toEqual({ type: 'toggleHeading', level: 2 });
 
+        act(() => ref.current!.setParagraph());
+        expect(lastCommand()).toEqual({ type: 'setParagraph' });
+
         act(() => ref.current!.toggleList('bulletList'));
 
         expect(lastCommand()).toEqual({

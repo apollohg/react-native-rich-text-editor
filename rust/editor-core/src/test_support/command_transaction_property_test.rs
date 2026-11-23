@@ -160,6 +160,7 @@ fn editor_command_strategy() -> impl Strategy<Value = Value> {
             json!({ "type": "unsetMark", "markType": "link" }),
             json!({ "type": "toggleHeading", "level": 1 }),
             json!({ "type": "toggleHeading", "level": 2 }),
+            json!({ "type": "setParagraph" }),
             json!({ "type": "toggleBlockquote" }),
             json!({ "type": "toggleCodeBlock" }),
             json!({ "type": "applyListType", "listType": "bulletList" }),

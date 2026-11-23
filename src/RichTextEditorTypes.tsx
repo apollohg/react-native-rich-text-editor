@@ -267,6 +267,7 @@ export interface RichTextEditorRef {
     toggleBlockquote(): void;
     /** Toggle a heading level on the current block selection. */
     toggleHeading(level: EditorToolbarHeadingLevel): void;
+    setParagraph(): void;
     /** Align selected paragraphs and headings. */
     setTextAlign(align: TextAlign): void;
     /** Restore theme alignment for selected paragraphs and headings. */

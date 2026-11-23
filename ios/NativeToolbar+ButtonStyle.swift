@@ -24,6 +24,12 @@ extension EditorAccessoryToolbarView {
                 enabled: state.commands["toggleHeading\(level)"] == true,
                 active: state.nodes[headingType] == true
             )
+        case .paragraph:
+            let active = state.nodes["paragraph"] == true
+            return (
+                enabled: active || state.commands["setParagraph"] == true,
+                active: active
+            )
         case .blockquote:
             return (
                 enabled: state.commands["toggleBlockquote"] == true,

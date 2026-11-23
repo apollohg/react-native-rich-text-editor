@@ -138,6 +138,24 @@ fn can_toggle_heading(
     can_replace_selected_text_blocks(document, schema, range, replacement_type)
 }
 
+fn can_set_paragraph(
+    document: &Document,
+    schema: &Schema,
+    range: Option<&BlockSelectionRange>,
+) -> bool {
+    let Some(paragraph_type) = paragraph_node_name(schema) else {
+        return false;
+    };
+    let Some(range) = range.filter(|range| selected_blocks_are_text_blocks(schema, range)) else {
+        return false;
+    };
+    range
+        .selected_blocks
+        .iter()
+        .any(|block| block.node_type() != paragraph_type)
+        && can_replace_selected_text_blocks(document, schema, range, paragraph_type)
+}
+
 fn can_toggle_code_block(
     document: &Document,
     schema: &Schema,

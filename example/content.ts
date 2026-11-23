@@ -203,6 +203,11 @@ export function buildToolbarItems({
             presentation: 'menu',
             items: [
                 {
+                    type: 'paragraph',
+                    label: 'Normal text',
+                    icon: { type: 'default', id: 'paragraph' },
+                },
+                {
                     type: 'heading',
                     level: 1,
                     label: 'Heading 1',

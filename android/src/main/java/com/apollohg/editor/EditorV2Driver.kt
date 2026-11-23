@@ -72,6 +72,7 @@ internal interface EditorV2Driver {
     fun setTextAlign(align: String, anchor: Int, head: Int): String?
     fun unsetTextAlign(anchor: Int, head: Int): String?
     fun toggleHeading(level: Int, anchor: Int, head: Int): String?
+    fun setParagraph(anchor: Int, head: Int): String?
     fun toggleCodeBlock(anchor: Int, head: Int): String?
     fun toggleBlockquote(anchor: Int, head: Int): String?
     fun applyListType(listType: String, anchor: Int, head: Int): String?

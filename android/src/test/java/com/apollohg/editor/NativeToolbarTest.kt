@@ -453,6 +453,72 @@ class NativeToolbarTest {
     }
 
     @Test
+    fun `native toolbar paragraph button stays pressable in paragraphs`() {
+        val items = NativeToolbarItem.fromJson(
+            """
+            [
+              {
+                "type": "paragraph",
+                "label": "Normal text",
+                "icon": { "type": "default", "id": "paragraph" }
+              }
+            ]
+            """.trimIndent()
+        )
+        assertEquals(ToolbarItemKind.PARAGRAPH, items.single().type)
+        assertEquals("¶", items.single().icon?.resolvedGlyphText())
+        assertEquals("format-pilcrow", items.single().icon?.resolvedMaterialIconName())
+
+        val toolbar = EditorKeyboardToolbarView(RuntimeEnvironment.getApplication())
+        toolbar.setItems(items)
+        data class Case(
+            val selection: String,
+            val nodes: Map<String, Boolean>,
+            val offered: Boolean,
+            val enabled: Boolean,
+            val selected: Boolean
+        )
+        listOf(
+            Case(
+                selection = "heading",
+                nodes = mapOf("h2" to true),
+                offered = true,
+                enabled = true,
+                selected = false
+            ),
+            Case(
+                selection = "paragraph",
+                nodes = mapOf("paragraph" to true),
+                offered = false,
+                enabled = true,
+                selected = true
+            ),
+            Case(
+                selection = "image",
+                nodes = mapOf("image" to true),
+                offered = false,
+                enabled = false,
+                selected = false
+            )
+        ).forEach { case ->
+            toolbar.applyState(
+                NativeToolbarState(
+                    marks = emptyMap(),
+                    nodes = case.nodes,
+                    commands = mapOf("setParagraph" to case.offered),
+                    allowedMarks = emptySet(),
+                    insertableNodes = emptySet(),
+                    canUndo = false,
+                    canRedo = false
+                )
+            )
+            val button = requireNotNull(toolbar.buttonAtForTesting(0))
+            assertEquals("enabled in ${case.selection}", case.enabled, button.isEnabled)
+            assertEquals("selected in ${case.selection}", case.selected, button.isSelected)
+        }
+    }
+
+    @Test
     fun `native toolbar enables list depth commands for task lists`() {
         val context = RuntimeEnvironment.getApplication()
         val toolbar = EditorKeyboardToolbarView(context)

@@ -235,6 +235,7 @@ enum CommandEnvelope {
     ToggleHeading {
         level: u8,
     },
+    SetParagraph,
     SetTextAlign { align: crate::alignment::TextAlign },
     UnsetTextAlign,
     ToggleCodeBlock,
@@ -524,6 +525,7 @@ impl From<CommandEnvelope> for TypedCommand {
             CommandEnvelope::SetMark { mark_type, attrs } => Self::SetMark { mark_type, attrs },
             CommandEnvelope::UnsetMark { mark_type } => Self::UnsetMark { mark_type },
             CommandEnvelope::ToggleHeading { level } => Self::ToggleHeading { level },
+            CommandEnvelope::SetParagraph => Self::SetParagraph,
             CommandEnvelope::ToggleCodeBlock => Self::ToggleCodeBlock,
             CommandEnvelope::ToggleBlockquote => Self::ToggleBlockquote,
             CommandEnvelope::ApplyListType { list_type } => Self::ApplyListType { list_type },

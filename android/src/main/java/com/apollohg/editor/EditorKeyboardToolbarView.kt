@@ -761,6 +761,11 @@ internal class EditorKeyboardToolbarView(context: Context) : FrameLayout(context
                 )
             }
 
+            ToolbarItemKind.PARAGRAPH -> {
+                val active = state.nodes["paragraph"] == true
+                Pair(active || state.commands["setParagraph"] == true, active)
+            }
+
             ToolbarItemKind.BLOCKQUOTE -> Pair(
                 state.commands["toggleBlockquote"] == true,
                 state.nodes["blockquote"] == true

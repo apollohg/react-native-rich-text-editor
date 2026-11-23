@@ -118,6 +118,7 @@ export function useRichTextEditorPresentation(
             | 'commandToggleList'
             | 'commandSetTextAlign'
             | 'commandToggleHeading'
+            | 'commandSetParagraph'
             | 'commandToggleBlockquote'
             | 'commandInsertNode'
             | 'commandIndentListItem'
@@ -210,6 +211,7 @@ export function useRichTextEditorPresentation(
         commandToggleList,
         commandSetTextAlign,
         commandToggleHeading,
+        commandSetParagraph,
         commandToggleBlockquote,
         commandInsertNode,
         commandIndentListItem,
@@ -722,6 +724,7 @@ export function useRichTextEditorPresentation(
                             }
                             onSetTextAlign={commandSetTextAlign}
                             onToggleHeading={commandToggleHeading}
+                            onSetParagraph={commandSetParagraph}
                             onToggleBlockquote={commandToggleBlockquote}
                             onInsertNodeType={commandInsertNode}
                             onRunCommand={(command: EditorToolbarCommand) => {

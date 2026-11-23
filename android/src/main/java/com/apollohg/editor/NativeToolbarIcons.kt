@@ -31,6 +31,7 @@ internal data class NativeToolbarIcon(
             ToolbarDefaultIconId.H4 to "H4",
             ToolbarDefaultIconId.H5 to "H5",
             ToolbarDefaultIconId.H6 to "H6",
+            ToolbarDefaultIconId.PARAGRAPH to "¶",
             ToolbarDefaultIconId.BLOCKQUOTE to "❝",
             ToolbarDefaultIconId.BULLET_LIST to "•≡",
             ToolbarDefaultIconId.ORDERED_LIST to "1.",
@@ -65,6 +66,7 @@ internal data class NativeToolbarIcon(
             ToolbarDefaultIconId.H4 to "format-title",
             ToolbarDefaultIconId.H5 to "format-title",
             ToolbarDefaultIconId.H6 to "format-title",
+            ToolbarDefaultIconId.PARAGRAPH to "format-pilcrow",
             ToolbarDefaultIconId.UNDO to "undo",
             ToolbarDefaultIconId.REDO to "redo"
         )

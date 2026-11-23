@@ -92,6 +92,46 @@ describe('EditorToolbar', () => {
             expect(getByLabelText('Heading 2')).toBeTruthy();
         });
 
+        it.each([
+            {
+                where: 'in a heading',
+                activeState: { nodes: { h2: true }, commands: { setParagraph: true } },
+                expected: { selected: false, disabled: false },
+                presses: 1,
+            },
+            {
+                where: 'in a paragraph',
+                activeState: { nodes: { paragraph: true }, commands: { setParagraph: false } },
+                expected: { selected: true, disabled: false },
+                presses: 1,
+            },
+            {
+                where: 'on a selection with no text block to convert',
+                activeState: { nodes: { image: true }, commands: { setParagraph: false } },
+                expected: { selected: false, disabled: true },
+                presses: 0,
+            },
+        ])('shows the paragraph item $where as $expected', ({ activeState, expected, presses }) => {
+            const { getByLabelText, props } = renderToolbar({
+                toolbarItems: [
+                    {
+                        type: 'paragraph',
+                        label: 'Normal text',
+                        icon: { type: 'default', id: 'paragraph' },
+                    },
+                ],
+                activeState,
+            });
+
+            expect(getByLabelText('Normal text').props.accessibilityState).toEqual(
+                expect.objectContaining(expected)
+            );
+
+            fireEvent.press(getByLabelText('Normal text'));
+
+            expect(props.onSetParagraph).toHaveBeenCalledTimes(presses);
+        });
+
         it('renders grouped toolbar items as a single button until expanded', () => {
             const { getByLabelText, queryByLabelText } = renderToolbar({
                 toolbarItems: [

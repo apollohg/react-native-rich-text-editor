@@ -71,6 +71,12 @@ extension EditorV2Adapter {
         return commandAtSelection(["type": "toggleHeading", "level": Int(level)], anchor: anchor, head: head)
     }
 
+    func setParagraph(anchor: UInt32, head: UInt32) -> String? {
+        guard beginRuntimeOperation() else { return nil }
+        defer { endRuntimeOperation() }
+        return commandAtSelection(["type": "setParagraph"], anchor: anchor, head: head)
+    }
+
     func toggleCodeBlock(anchor: UInt32, head: UInt32) -> String? {
         guard beginRuntimeOperation() else { return nil }
         defer { endRuntimeOperation() }

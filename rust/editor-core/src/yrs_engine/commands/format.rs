@@ -226,6 +226,34 @@ pub(super) fn plan(
                 },
             )
         }
+        TypedCommand::SetParagraph => {
+            if !context.structural_command_is_available(
+                &selection,
+                crate::editor_state::StructuralCommand::SetParagraph,
+            ) {
+                return Ok(CommandPlan::NotApplicable);
+            }
+            let Some(plan) = crate::command_planner::plan_set_paragraph(
+                context.document,
+                context.schema,
+                &selection,
+            ) else {
+                return Ok(CommandPlan::NotApplicable);
+            };
+            super::text::semantic_transaction(
+                &context,
+                &selection,
+                crate::command_planner::SemanticCommandPlan {
+                    operations: vec![crate::command_planner::SemanticOperation::ReplaceRange {
+                        from: plan.from,
+                        to: plan.to,
+                        content: plan.content,
+                    }],
+                    selection_after: Some(plan.selection_after),
+                    history: crate::command_planner::SemanticCommandHistory::FormatBoundary,
+                },
+            )
+        }
         TypedCommand::ToggleCodeBlock => {
             if !context.structural_command_is_available(
                 &selection,

@@ -1004,6 +1004,9 @@ internal class EditorV2Adapter private constructor(
         head
     )
 
+    override fun setParagraph(anchor: Int, head: Int): String? =
+        commandAtSelection(JSONObject().put("type", "setParagraph"), anchor, head)
+
     override fun toggleCodeBlock(anchor: Int, head: Int): String? =
         commandAtSelection(JSONObject().put("type", "toggleCodeBlock"), anchor, head)
 

@@ -14,8 +14,9 @@ mod format;
 mod structure;
 mod text;
 pub(crate) use format::{
-    code_block_node_name, plan_set_mark, plan_toggle_blockquote, plan_toggle_code_block,
-    plan_toggle_heading, plan_toggle_mark, plan_unset_mark, CommandReplacement, MarkCommandPlan,
+    code_block_node_name, plan_set_mark, plan_set_paragraph, plan_toggle_blockquote,
+    plan_toggle_code_block, plan_toggle_heading, plan_toggle_mark, plan_unset_mark,
+    CommandReplacement, MarkCommandPlan,
 };
 pub(crate) use structure::{
     compatible_declared_attrs, default_attrs, empty_text_block_range, plan_apply_list_type,

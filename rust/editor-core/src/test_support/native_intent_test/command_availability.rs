@@ -9,6 +9,7 @@ fn toolbar_commands() -> Vec<(&'static str, Value)> {
     vec![
         ("toggleBlockquote", json!({ "type": "toggleBlockquote" })),
         ("toggleCodeBlock", json!({ "type": "toggleCodeBlock" })),
+        ("setParagraph", json!({ "type": "setParagraph" })),
         (
             "toggleHeading1",
             json!({ "type": "toggleHeading", "level": 1 }),
@@ -61,15 +62,25 @@ fn availability_documents() -> Vec<Value> {
     ]
 }
 
-fn submit_at(session: &mut EditorSession, request_id: u64, caret: u32, mut intent: Value) -> Value {
-    intent["anchor"] = json!(caret);
-    intent["head"] = json!(caret);
+fn submit_at(session: &mut EditorSession, request_id: u64, caret: u32, intent: Value) -> Value {
+    submit_over(session, request_id, caret, caret, intent)
+}
+
+fn submit_over(
+    session: &mut EditorSession,
+    request_id: u64,
+    anchor: u32,
+    head: u32,
+    mut intent: Value,
+) -> Value {
+    intent["anchor"] = json!(anchor);
+    intent["head"] = json!(head);
     let request = native_intent_request(session, AVAILABILITY_OWNER, request_id, intent.clone());
     let outcome = NativeTransactionBridge::new(session)
         .submit_native_intent(&request)
         .unwrap_or_else(|error| {
             panic!(
-                "{intent} at {caret} on {} was refused: {} {}",
+                "{intent} over {anchor}..{head} on {} was refused: {} {}",
                 session.engine.document_json().unwrap(),
                 error.code,
                 error.message
@@ -164,4 +175,43 @@ fn node_insertion_applies_exactly_when_the_toolbar_lists_the_node_as_insertable(
             }
         }
     }
+}
+
+#[test]
+fn set_paragraph_turns_every_selected_text_block_into_a_paragraph() {
+    let text = |value: &str| json!({ "type": "text", "text": value });
+    let bold = json!({ "type": "text", "text": "Title", "marks": [{ "type": "bold" }] });
+    let document = json!({ "type": "doc", "content": [
+        { "type": "heading", "attrs": { "level": 2, "textAlign": "center" }, "content": [bold] },
+        { "type": "codeBlock", "content": [text("code")] },
+        { "type": "paragraph", "content": [text("body")] }
+    ] });
+    let mut session = table_session_with_schema(&document.to_string(), mention_table_schema());
+    let total = session.engine.position_map().unwrap().total_scalars();
+
+    let outcome = submit_over(
+        &mut session,
+        FIRST_AVAILABILITY_REQUEST,
+        0,
+        total,
+        json!({ "type": "command", "command": { "type": "setParagraph" } }),
+    );
+    let converted = session.engine.document_json().unwrap();
+
+    assert_eq!(
+        converted,
+        json!({ "type": "doc", "content": [
+            { "type": "paragraph", "attrs": { "textAlign": "center" }, "content": [
+                { "type": "text", "text": "Title", "marks": [{ "type": "bold" }] }
+            ] },
+            { "type": "paragraph", "content": [text("code")] },
+            { "type": "paragraph", "content": [text("body")] }
+        ] }),
+        "{outcome}"
+    );
+    assert_eq!(
+        session.engine.active_state().unwrap().commands["setParagraph"],
+        false,
+        "an all-paragraph selection has nothing left to convert: {converted}"
+    );
 }

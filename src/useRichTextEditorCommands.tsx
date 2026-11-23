@@ -436,6 +436,11 @@ export function useRichTextEditorCommands(
         [ applyEngineCommand ]
     );
 
+    const commandSetParagraph = useCallback(
+        () => applyEngineCommand({ type: 'setParagraph' }),
+        [ applyEngineCommand ]
+    );
+
     const commandToggleList = useCallback(
         (listType: string) => {
             if (activeStateRef.current.nodes[listType] === true) {
@@ -554,6 +559,7 @@ export function useRichTextEditorCommands(
             unsetLink: commandUnsetLink,
             toggleBlockquote: commandToggleBlockquote,
             toggleHeading: commandToggleHeading,
+            setParagraph: commandSetParagraph,
             setTextAlign: commandSetTextAlign,
             unsetTextAlign: commandUnsetTextAlign,
             toggleList: commandToggleList,
@@ -596,6 +602,7 @@ export function useRichTextEditorCommands(
             commandUnsetLink,
             commandToggleBlockquote,
             commandToggleHeading,
+            commandSetParagraph,
             commandSetTextAlign,
             commandUnsetTextAlign,
             commandToggleList,
@@ -641,6 +648,7 @@ export function useRichTextEditorCommands(
         commandToggleMark,
         commandToggleList,
         commandToggleHeading,
+        commandSetParagraph,
         commandSetTextAlign,
         commandToggleBlockquote,
         commandInsertNode,

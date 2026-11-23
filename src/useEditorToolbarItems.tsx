@@ -25,6 +25,7 @@ export function useEditorToolbarItems(
         | 'onSetTextAlign'
         | 'textAlign'
         | 'onToggleHeading'
+        | 'onSetParagraph'
         | 'onToggleBlockquote'
         | 'onInsertNodeType'
         | 'onInsertLineBreak'
@@ -61,6 +62,7 @@ export function useEditorToolbarItems(
         onRequestImage,
         onSetTextAlign,
         onToggleHeading,
+        onSetParagraph,
         onToggleBlockquote,
         onInsertNodeType,
         onInsertLineBreak,
@@ -122,6 +124,8 @@ export function useEditorToolbarItems(
                     return onSetTextAlign ? () => onSetTextAlign(item.align) : null;
                 case 'heading':
                     return onToggleHeading ? () => onToggleHeading(item.level) : null;
+                case 'paragraph':
+                    return onSetParagraph ?? null;
                 case 'blockquote':
                     return onToggleBlockquote ?? null;
 
@@ -175,6 +179,7 @@ export function useEditorToolbarItems(
             onToggleBlockquote,
             onToggleBold,
             onToggleBulletList,
+            onSetParagraph,
             onSetTextAlign,
             onToggleHeading,
             onToggleItalic,
@@ -204,7 +209,9 @@ export function useEditorToolbarItems(
                             ? `${prefix}image:${index}`
                             : item.type === 'heading'
                                 ? `${prefix}heading:${item.level}:${index}`
-                                : item.type === 'blockquote'
+                                : item.type === 'paragraph'
+                                    ? `${prefix}paragraph:${index}`
+                                    : item.type === 'blockquote'
                                     ? `${prefix}blockquote:${index}`
                                     : item.type === 'list'
                                         ? `${prefix}list:${item.listType}:${index}`
@@ -258,6 +265,11 @@ export function useEditorToolbarItems(
                     isDisabled = !commands[`toggleHeading${item.level}`];
                     break;
                 }
+
+                case 'paragraph':
+                    isActive = !!nodes['paragraph'];
+                    isDisabled = !isActive && !commands['setParagraph'];
+                    break;
 
                 case 'blockquote':
                     isActive = !!nodes['blockquote'];

@@ -579,3 +579,45 @@ extension RichTextEditorViewTests {
         }
     }
 }
+
+extension RichTextEditorViewTests {
+    func testParagraphToolbarItemStaysPressableInParagraphsAndConvertsSelectedBlocks() throws {
+        let item = try XCTUnwrap(NativeToolbarItem.from(json: """
+        [{"type":"paragraph","label":"Normal text","icon":{"type":"default","id":"paragraph"}}]
+        """).first)
+        XCTAssertEqual(item.type, .paragraph)
+        XCTAssertEqual(item.icon?.resolvedSFSymbolName(), "paragraphsign")
+
+        let toolbar = EditorAccessoryToolbarView(frame: .zero)
+        let cases: [String: (activeState: [String: Any], expected: (enabled: Bool, active: Bool))] = [
+            "heading": (["nodes": ["h2": true], "commands": ["setParagraph": true]], (true, false)),
+            "paragraph": (["nodes": ["paragraph": true], "commands": ["setParagraph": false]], (true, true)),
+            "image": (["nodes": ["image": true], "commands": ["setParagraph": false]], (false, false))
+        ]
+        for (selection, testCase) in cases {
+            let state = NativeToolbarState(update: ["activeState": testCase.activeState])
+            let result = toolbar.buttonState(for: item, state: state)
+            XCTAssertEqual(result.enabled, testCase.expected.enabled, "enabled in \(selection)")
+            XCTAssertEqual(result.active, testCase.expected.active, "active in \(selection)")
+        }
+
+        let editorId = makeV2Editor()
+        defer { destroyV2Editor(id: editorId) }
+        let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
+        let window = hostEditorView(view)
+        let textView = view.textView
+        defer {
+            _ = textView.resignFirstResponder()
+            view.removeFromSuperview()
+            window.isHidden = true
+        }
+        view.editorId = editorId
+        view.setContent(html: "<h2>Title</h2><pre>code</pre><p>body</p>")
+        XCTAssertTrue(textView.becomeFirstResponder())
+        setSelection(in: textView, utf16Range: NSRange(location: 0, length: textView.textStorage.length))
+
+        textView.performToolbarSetParagraph()
+
+        XCTAssertEqual(EditorV2Shadow.getHtml(id: editorId), "<p>Title</p><p>code</p><p>body</p>")
+    }
+}

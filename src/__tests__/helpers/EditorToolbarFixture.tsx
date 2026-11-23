@@ -85,6 +85,7 @@ export function renderToolbar(
         onToggleBlockquote: jest.fn(),
         onToggleBulletList: jest.fn(),
         onToggleHeading: jest.fn(),
+        onSetParagraph: jest.fn(),
         onToggleOrderedList: jest.fn(),
         onIndentList: jest.fn(),
         onOutdentList: jest.fn(),

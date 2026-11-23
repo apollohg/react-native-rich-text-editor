@@ -184,6 +184,7 @@ internal data class NativeToolbarItem(
                     )
                 }
 
+                ToolbarItemKind.PARAGRAPH,
                 ToolbarItemKind.BLOCKQUOTE -> {
                     val icon =
                         NativeToolbarIcon.fromJson(rawItem.optJSONObject("icon")) ?: return null

@@ -323,6 +323,23 @@ pub(crate) fn plan_toggle_heading(
     replacement_for_text_blocks(document, schema, selection, range, replacement_type)
 }
 
+pub(crate) fn plan_set_paragraph(
+    document: &Document,
+    schema: &Schema,
+    selection: &Selection,
+) -> Option<CommandReplacement> {
+    let paragraph_type = crate::editor_state::paragraph_node_name(schema)?;
+    let range = crate::editor_state::selected_text_block_range(document, schema, selection)?;
+    if range
+        .selected_blocks
+        .iter()
+        .all(|block| block.node_type() == paragraph_type)
+    {
+        return None;
+    }
+    replacement_for_text_blocks(document, schema, selection, range, paragraph_type)
+}
+
 pub(crate) fn plan_toggle_code_block(
     document: &Document,
     schema: &Schema,
