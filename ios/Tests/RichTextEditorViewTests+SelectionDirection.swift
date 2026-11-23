@@ -155,7 +155,7 @@ extension RichTextEditorViewTests {
     func testBindEditorFailedInitialHTMLRebindFallsBackToNewEditorState() {
         let firstEditorId = makeV2Editor()
         let secondEditorId = makeV2Editor(
-            configJson: #"{"initialization":{"type":"localEmpty"},"policy":{"maxLength":3}}"#
+            configJson: #"{"initialization":{"type":"localEmpty"},"limits":{"resource":{"maxInputBytes":64}}}"#
         )
         defer {
             destroyV2Editor(id: firstEditorId)
@@ -164,7 +164,10 @@ extension RichTextEditorViewTests {
         let textView = EditorTextView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
         textView.bindEditor(id: firstEditorId, initialHTML: "<p>first</p>")
 
-        textView.bindEditor(id: secondEditorId, initialHTML: "<p>too long</p>")
+        textView.bindEditor(
+            id: secondEditorId,
+            initialHTML: "<p>" + String(repeating: "too long ", count: 8) + "</p>"
+        )
 
         XCTAssertEqual(EditorV2Shadow.getHtml(id: secondEditorId), "<p></p>")
         XCTAssertEqual(textView.textStorage.string, "\u{200B}")
