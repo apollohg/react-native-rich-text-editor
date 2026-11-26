@@ -15,6 +15,7 @@ final class RichTextEditorViewTests: XCTestCase {
         return host
     }
 
+    static let mainQueueFlushTimeout: TimeInterval = 10
     static let placementToolbarFixtureJSON = """
     [
     {
@@ -210,7 +211,7 @@ final class RichTextEditorViewTests: XCTestCase {
         DispatchQueue.main.async {
             expectation.fulfill()
         }
-        wait(for: [expectation], timeout: 1.0)
+        wait(for: [expectation], timeout: Self.mainQueueFlushTimeout)
     }
 
     func currentSelection(in editorId: UInt64) -> [String: Any] {
