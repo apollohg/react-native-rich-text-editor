@@ -50,6 +50,29 @@ const ciPushTrigger = ciWorkflow.split('\n  push:\n')[1]?.split('\n  pull_reques
 assert.ok(ciPushTrigger, 'CI must run after changes land on a release branch');
 assert.match(ciPushTrigger, /^\s+- main\s*$/m, 'CI must validate pushes to the default main release branch');
 
+const assertRustCache = (job, jobName) => {
+  assert.match(
+    job,
+    /uses: Swatinem\/rust-cache@v2/,
+    `${jobName} must use the dependency-aware Rust cache`,
+  );
+  assert.match(
+    job,
+    /workspaces:\s*(?:\|\s*)?rust\/editor-core/,
+    `${jobName} must cache the editor-core workspace`,
+  );
+  assert.match(
+    job,
+    /shared-key:\s*editor-core/,
+    `${jobName} must share sanitized editor-core dependencies`,
+  );
+  assert.match(
+    job,
+    /cache-on-failure:\s*true/,
+    `${jobName} must preserve warmed Rust dependencies after failures`,
+  );
+};
+
 const assertGradleCache = (job, jobName, readOnlyExpression) => {
   assert.match(
     job,
@@ -80,49 +103,7 @@ assert.doesNotMatch(
 );
 
 const buildJob = requireJob('build-package');
-assert.match(
-  requireCiJob('ios'),
-  /runs-on: \[self-hosted, macOS, ARM64, native-editor-ci\]/,
-  'CI iOS must use the dedicated self-hosted Mac runner',
-);
-assert.match(
-  buildJob,
-  /runs-on: &macos-runner \[self-hosted, macOS, ARM64, native-editor-ci\]/,
-  'release builds must define the dedicated self-hosted Mac runner',
-);
-for (const jobName of [
-  'build-code-highlighting',
-  'package-contracts',
-  'security-ios',
-  'ios-consumer-positive',
-  'ios-consumer-negative',
-]) {
-  assert.match(requireJob(jobName), /runs-on: \*macos-runner/, `${jobName} must use the self-hosted Mac runner`);
-}
-assert.match(
-  requireCiJob('javascript'),
-  /runs-on: &linux-runner \[self-hosted, Linux, X64, native-editor-ci\]/,
-  'CI must define the dedicated self-hosted Linux runner',
-);
-for (const jobName of ['rust', 'android-native', 'android', 'android-rn076', 'js-and-android', 'android-api-24']) {
-  assert.match(requireCiJob(jobName), /runs-on: \*linux-runner/, `CI ${jobName} must use the self-hosted Linux runner`);
-}
-assert.match(
-  requireJob('security-rust-typescript'),
-  /runs-on: &linux-runner \[self-hosted, Linux, X64, native-editor-ci\]/,
-  'release validation must define the dedicated self-hosted Linux runner',
-);
-for (const jobName of [
-  'security-android', 'android-consumer-positive', 'android-consumer-negative',
-  'android-release-validation',
-]) {
-  assert.match(requireJob(jobName), /runs-on: \*linux-runner/, `${jobName} must use the self-hosted Linux runner`);
-}
-assert.doesNotMatch(
-  `${ciWorkflow}\n${publishWorkflow.replace(requireJob('publish'), '')}`,
-  /runs-on:\s*(?:macos-|linux-runner|ubuntu-)/,
-  'workflow jobs other than publish must not use GitHub-hosted runners',
-);
+assert.match(buildJob, /runs-on:\s*macos-[^\s]+/);
 assert.match(buildJob, /cargo install cargo-ndk --version 4\.1\.2 --locked/);
 assert.match(buildJob, /sdkmanager --install ['"]ndk;27\.1\.12297006['"]/);
 const nativeRestore = buildJob.split('- name: Restore native build cache')[1]?.split('\n            - name:')[0];
@@ -142,7 +123,7 @@ for (const input of [
 }
 assert.match(buildJob, /xcodebuild -version/, 'native cache must identify the selected Xcode toolchain');
 for (const stepName of [
-  'Setup Java', 'Setup Rust', 'Install cargo-ndk',
+  'Setup Java', 'Setup Rust', 'Cache Cargo', 'Install cargo-ndk',
   'Setup Android SDK', 'Setup Android NDK', 'Build editor-core for all shipping targets',
 ]) {
   assert.match(buildJob, new RegExp(
@@ -171,18 +152,11 @@ assert.match(
   'restored and freshly built outputs must both be uploaded for validation',
 );
 assert.match(buildJob, /release-artifact\/\*\.tgz/);
+assertRustCache(buildJob, 'build-package');
 
-const localCargoTarget = /^\s+CARGO_TARGET_DIR: \$\{\{ github\.workspace \}\}\/\.\.\/\.cargo-target$/m;
-for (const [workflow, workflowName] of [[ciWorkflow, 'CI'], [publishWorkflow, 'publish']]) {
-  assert.match(workflow.split('\njobs:\n')[0], localCargoTarget,
-    `${workflowName} must keep Cargo build outputs outside checkout cleanup on every self-hosted runner`);
-  assert.doesNotMatch(workflow, /Swatinem\/rust-cache@v2/,
-    `${workflowName} must not transfer persistent Cargo outputs through GitHub cache`);
+for (const jobName of ['rust', 'android-native', 'android', 'ios']) {
+  assertRustCache(requireCiJob(jobName), `CI ${jobName}`);
 }
-const iosBuildCacheAction = await readFile(path.join(repoRoot, '.github/actions/ios-build-cache/action.yml'), 'utf8');
-assert.match(iosBuildCacheAction, /CCACHE_DIR=\$HOME\/\.cache\/native-editor-ccache/);
-assert.doesNotMatch(iosBuildCacheAction, /uses: actions\/cache@v5/,
-  'persistent Mac compiler and CocoaPods caches must stay local');
 
 const ciAggregateJob = requireCiJob('js-and-android');
 assert.match(ciAggregateJob, /if: always\(\)/, 'The existing required check must report failures even when a dependency is skipped');
@@ -201,6 +175,14 @@ for (const dependency of ciDependencies) {
     assert.equal(result.status === 0, outcome === 'success',
       `Aggregate check must propagate ${dependency}=${outcome}; results=${results}\n${result.stderr}`);
   }
+}
+
+for (const jobName of [
+  'package-contracts',
+  'security-rust-typescript',
+  'android-release-validation',
+]) {
+  assertRustCache(requireJob(jobName), jobName);
 }
 
 for (const jobName of [
@@ -226,8 +208,9 @@ const androidReleaseJob = requireJob('android-release-validation');
 const ciAndroidApi24Job = requireCiJob('android-api-24');
 assert.equal(packageJson.scripts?.['test:android:api24'], 'node scripts/run-android-api24-smoke.mjs',
   'API 24 validation must run the strict file-backed instrumentation gate');
-const linuxKvmCheck =
-  /- name: Verify KVM access\s+(?:if: matrix\.check == 'api24'\s+)?run: bash scripts\/require-kvm\.sh/;
+const linuxKvmSetup =
+  /- name: Enable KVM\s+(?:if: matrix\.check == 'api24'\s+)?run: \|\s+echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS\+="static_node=kvm"' \| sudo tee \/etc\/udev\/rules\.d\/99-kvm4all\.rules\s+sudo udevadm control --reload-rules\s+sudo udevadm trigger --name-match=kvm/;
+assert.match(androidReleaseJob, /runs-on:\s*linux-runner/);
 assert.match(androidReleaseJob, /timeout-minutes:\s*60/);
 assert.match(androidReleaseJob, /sdkmanager --install ['"]ndk;27\.1\.12297006['"]/);
 assert.match(androidReleaseJob, /npm run test:android/);
@@ -238,13 +221,18 @@ assert.match(androidReleaseJob, /reactivecircus\/android-emulator-runner@v2\.38\
 assert.match(androidReleaseJob, /api-level:\s*24/);
 assert.match(
   androidReleaseJob,
-  linuxKvmCheck,
-  'publish API 24 validation must verify KVM access on Linux',
+  linuxKvmSetup,
+  'publish API 24 validation must enable KVM on Linux',
 );
 assert.match(
   ciAndroidApi24Job,
-  linuxKvmCheck,
-  'CI API 24 validation must verify KVM access on Linux',
+  /runs-on:\s*linux-runner/,
+  'CI API 24 validation must use Linux',
+);
+assert.match(
+  ciAndroidApi24Job,
+  linuxKvmSetup,
+  'CI API 24 validation must enable KVM on Linux',
 );
 for (const [job, jobName] of [
   [androidReleaseJob, 'publish API 24 validation'],
