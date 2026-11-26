@@ -37,6 +37,7 @@ install_nm_shim() {
 package_fixture="$fixture_root/package entries"
 mkdir -p \
   "$package_fixture/dist" \
+  "$package_fixture/ios/Fabric" \
   "$package_fixture/ios/Viewer/Fabric" \
   "$package_fixture/android/src/debug/java/com/apollohg/editor/viewer" \
   "$package_fixture/android/src/release/java/com/apollohg/editor/viewer"
@@ -61,6 +62,8 @@ for viewer_source in \
   "ios/Viewer/ViewerDocument.swift" \
   "ios/Viewer/ViewerFontEnvironment.swift" \
   "ios/Viewer/ViewerImagePipeline.swift" \
+  "ios/Fabric/NativeEditorFocusHostComponentView.h" \
+  "ios/Fabric/NativeEditorFocusHostComponentView.mm" \
   "ios/Viewer/Fabric/PREPPreparedProseViewerComponentView.h" \
   "ios/Viewer/Fabric/PREPPreparedProseViewerComponentView.mm" \
   "ios/Viewer/Fabric/PreparedProseMeasurementsManager.mm"
