@@ -389,7 +389,7 @@ dependencies = [
 
 [[package]]
 name = "editor-core"
-version = "2.2.4"
+version = "2.2.5"
 dependencies = [
  "base64",
  "cc",

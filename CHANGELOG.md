@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.2.5] - 2026-11-26
+
+### Fixed
+
+- Fixed iOS apps crashing at launch on 2.2.4 because the published package left out the native focus host component.
+- Fixed codegen failing on React Native 0.76 over the focus host command types.
+- Android no longer rolls back visible text when input arrives after the editor has been destroyed.
+
 ## [2.2.4] - 2026-11-23
 
 ### Added
@@ -838,6 +846,7 @@ This is a hard cutover to shared native document, collaboration, and viewer boun
 - Controlled and uncontrolled content modes (HTML and JSON).
 - Undo/redo history.
 
+[2.2.5]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.2.4...2.2.5
 [2.2.4]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.2.3...2.2.4
 [2.2.3]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.2.2...2.2.3
 [2.2.2]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.2.1...2.2.2
