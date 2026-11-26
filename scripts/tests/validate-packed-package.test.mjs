@@ -596,6 +596,18 @@ try {
       ),
       /obsolete collaboration API createWebSocket/,
     );
+    for (const [componentName, componentClass] of Object.entries(packageManifest.codegenConfig.ios.componentProvider)) {
+      const unshippedComponent = makePackageEntriesFixture(`unshipped-${componentName}`);
+      const implementation = `${componentClass}.mm`;
+      const shipped = readdirSync(join(unshippedComponent, "ios"), { recursive: true }).filter((path) => path.endsWith(implementation));
+      assert.equal(shipped.length, 1, `expected exactly one ${implementation} in the fixture, found ${shipped.join(", ")}`);
+      rmSync(join(unshippedComponent, "ios", shipped[0]));
+      expectFailure(
+        `Fabric component ${componentName} implementation missing`,
+        run("--validate-package-entries", unshippedComponent),
+        new RegExp(`missing the Fabric component source ${componentClass}\\.mm`),
+      );
+    }
     runNativeParserBoundsFixtures();
 
     const missingFunction = makeFixture("missing-function");

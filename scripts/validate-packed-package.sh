@@ -782,6 +782,12 @@ validate_package_entries() {
       "NativeEditorFocusHost" => "NativeEditorFocusHostComponentView",
       "PreparedProseViewer" => "PREPPreparedProseViewerComponentView",
     }
+    provider.each_value do |component_class|
+      ["h", "mm"].each do |extension|
+        implementation = "#{component_class}.#{extension}"
+        abort "packed package is missing the Fabric component source #{implementation}" if Dir.glob(File.join(root, "ios", "**", implementation)).empty?
+      end
+    end
     expo = JSON.parse(File.read(File.join(root, "expo-module.config.json")))
     abort "Expo must discover the package-root podspec" unless expo.fetch("ios").fetch("podspecPath") == "./ReactNativeProseEditor.podspec"
     podspec = File.read(File.join(root, "ReactNativeProseEditor.podspec"))
@@ -821,8 +827,6 @@ validate_package_entries() {
     "ios/Viewer/ViewerDocument.swift" \
     "ios/Viewer/ViewerFontEnvironment.swift" \
     "ios/Viewer/ViewerImagePipeline.swift" \
-    "ios/Viewer/Fabric/PREPPreparedProseViewerComponentView.h" \
-    "ios/Viewer/Fabric/PREPPreparedProseViewerComponentView.mm" \
     "ios/Viewer/Fabric/PreparedProseMeasurementsManager.mm"
   do
     require_file "$root" "$viewer_source"
